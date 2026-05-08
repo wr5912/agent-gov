@@ -199,15 +199,7 @@ volumes:
 - `docker/volume/workspace/.worktreeinclude`
 - `docker/volume/workspace/agent.yaml`
 
-`docker/volume/data/` 保存 API 运行态数据，目录含义如下：
-
-- `docker/volume/data/sessions/`: API session 到 Claude SDK session 的本地 JSON 映射，用于续接会话。
-- `docker/volume/data/transcripts/`: 预留的 transcript 持久化目录。
-- `docker/volume/data/uploads/`: 预留的用户上传文件目录。
-- `docker/volume/data/outputs/`: 预留的 Agent 输出文件目录。
-- `docker/volume/data/agent-memory/`: 预留的 API 侧 Agent 记忆/缓存目录。
-
-这些目录中的运行态文件默认不提交到 git；仓库只保留 `.gitkeep` 以固定目录结构。
+`docker/volume/data/` 中的运行态文件默认不提交到 git；仓库只保留 `.gitkeep` 以固定目录结构。
 
 ## subagent 文件格式
 

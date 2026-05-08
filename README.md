@@ -66,7 +66,7 @@ make setup
 
 ```bash
 MODEL_PROVIDER_API_KEY=sk-ant-xxxx
-API_KEY=change-me
+API_KEY=<your-runtime-api-key>
 HOST_PORT=58080
 API_PORT=8080
 AGENT_MODEL=claude-sonnet-4-5
@@ -101,16 +101,17 @@ make smoke
 - OpenAPI JSON: `http://localhost:58080/openapi.json`
 
 如果你在 `docker/.env` 中修改了 `HOST_PORT`，把上面的 `58080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
-当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `docker/.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer <API_KEY>`。
+当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `docker/.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer $API_KEY`。
 
 ## 聊天 API
 
 ```bash
 export API_BASE=http://localhost:58080
+export API_KEY="$(awk -F= '$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' docker/.env)"
 
 curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer change-me" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
     "skills_mode": "all"
@@ -122,7 +123,7 @@ curl -X POST "$API_BASE/api/chat" \
 ```bash
 curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer change-me" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "agent": "security-triage",
     "skills": ["threat-triage"],
@@ -137,7 +138,7 @@ curl -X POST "$API_BASE/api/chat" \
 ```bash
 curl -N -X POST "$API_BASE/api/chat/stream" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer change-me" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{"message":"你好，先介绍你的能力", "skills_mode":"all"}'
 ```
 
@@ -148,7 +149,7 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
 ```bash
 curl -X POST "$API_BASE/v1/chat/completions" \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer change-me" \
+  -H "Authorization: Bearer $API_KEY" \
   -d '{
     "model": "claude-sonnet-4-5",
     "messages": [
@@ -162,10 +163,10 @@ curl -X POST "$API_BASE/v1/chat/completions" \
 ## 管理 API
 
 ```bash
-curl -H "Authorization: Bearer change-me" "$API_BASE/api/agents"
-curl -H "Authorization: Bearer change-me" "$API_BASE/api/skills"
-curl -H "Authorization: Bearer change-me" "$API_BASE/api/config"
-curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
+curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/agents"
+curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/skills"
+curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/config"
+curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/sessions"
 ```
 
 ## 配置挂载说明

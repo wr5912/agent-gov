@@ -85,6 +85,7 @@ make smoke
 - OpenAPI JSON: `http://localhost:8080/openapi.json`
 
 如果你在 `.env` 中修改了 `HOST_PORT`，把上面的 `8080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
+当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer <API_KEY>`。
 
 ## 聊天 API
 

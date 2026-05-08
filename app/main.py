@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from typing import Annotated
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.runtime.agent_loader import discover_agents, discover_skills
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -16,6 +16,7 @@ from app.runtime.settings import get_settings
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
 runtime = ClaudeRuntime(settings, session_store)
+bearer_auth = HTTPBearer(auto_error=False)
 
 app = FastAPI(
     title="Claude Agent Runtime API",
@@ -43,11 +44,10 @@ app.add_middleware(
 )
 
 
-def require_api_key(authorization: Annotated[str | None, Header()] = None) -> None:
+def require_api_key(credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth)) -> None:
     if not settings.api_key:
         return
-    expected = f"Bearer {settings.api_key}"
-    if authorization != expected:
+    if not credentials or credentials.scheme.lower() != "bearer" or credentials.credentials != settings.api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 

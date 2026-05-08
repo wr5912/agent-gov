@@ -1,0 +1,272 @@
+# Claude Agent Runtime API
+
+一个极简的 **Docker 化 Claude Agent Runtime API** 项目。
+
+目标：
+
+- 不重写 Claude Agent loop。
+- 通过 Docker 容器封装 Claude Agent SDK / Claude Code Runtime。
+- `CLAUDE.md`、`.claude/settings.json`、`.claude/agents/*.md`、`.claude/skills/*/SKILL.md`、`.mcp.json` 全部通过 volume 挂载。
+- 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。
+
+## 目录结构
+
+```text
+.
+├── app/
+│   ├── main.py                         # FastAPI API
+│   └── runtime/
+│       ├── claude_runtime.py            # Claude Agent SDK 适配层
+│       ├── agent_loader.py              # 从 .claude/agents 解析 subagents
+│       ├── policy.py                    # SDK hook / tool permission guard
+│       ├── session_store.py             # API session -> Claude SDK session 映射
+│       └── schemas.py
+├── workspace/
+│   ├── CLAUDE.md                        # 主 Agent 指令
+│   ├── agent.yaml                       # 平台自定义元配置
+│   ├── .mcp.json                        # 项目级 MCP 配置
+│   ├── .claude/
+│   │   ├── settings.json                # Claude Code 权限配置
+│   │   ├── agents/                      # subagents
+│   │   └── skills/                      # skills
+│   ├── hooks/                           # 可选外部 hook 脚本
+│   └── mcp_servers/                     # 示例 MCP server
+├── data/
+│   ├── sessions/
+│   ├── transcripts/
+│   ├── uploads/
+│   ├── outputs/
+│   └── agent-memory/
+├── Dockerfile
+├── docker-compose.yml
+└── requirements.txt
+```
+
+## 快速启动
+
+```bash
+make setup
+```
+
+编辑 `.env`：
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-xxxx
+API_KEY=change-me
+AGENT_MODEL=claude-sonnet-4-5
+```
+
+启动：
+
+```bash
+make build
+make up
+make logs
+```
+
+健康检查：
+
+```bash
+curl http://localhost:8080/health
+```
+
+## 聊天 API
+
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer change-me" \
+  -d '{
+    "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
+    "skills_mode": "all"
+  }'
+```
+
+指定 subagent 和 skill：
+
+```bash
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer change-me" \
+  -d '{
+    "agent": "security-triage",
+    "skills": ["threat-triage"],
+    "message": "分析这个告警：rundll32.exe 加载 WININET.dll，父进程为 EdgeUpdate，命令行为 DispatchAPICall 1",
+    "allowed_tools": ["Read", "Grep", "Glob"],
+    "permission_mode": "dontAsk"
+  }'
+```
+
+流式接口：
+
+```bash
+curl -N -X POST http://localhost:8080/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer change-me" \
+  -d '{"message":"你好，先介绍你的能力", "skills_mode":"all"}'
+```
+
+## OpenAI Compatible 简易接口
+
+项目额外提供了一个最小的非流式 OpenAI Compatible shim：
+
+```bash
+curl -X POST http://localhost:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer change-me" \
+  -d '{
+    "model": "claude-sonnet-4-5",
+    "messages": [
+      {"role": "user", "content": "请介绍当前 Agent Runtime 的能力"}
+    ]
+  }'
+```
+
+注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现；真正的 Agent 参数，如 `agent`、`skills`、`allowed_tools`，建议使用 `/api/chat`。
+
+## 管理 API
+
+```bash
+curl -H "Authorization: Bearer change-me" http://localhost:8080/api/agents
+curl -H "Authorization: Bearer change-me" http://localhost:8080/api/skills
+curl -H "Authorization: Bearer change-me" http://localhost:8080/api/sessions
+```
+
+## 配置挂载说明
+
+`docker-compose.yml` 默认挂载：
+
+```yaml
+volumes:
+  - ./workspace:/workspace
+  - ./data:/data
+  - ./claude-home:/home/agentuser/.claude
+```
+
+你可以只改宿主机目录，不需要改镜像：
+
+- `workspace/CLAUDE.md`
+- `workspace/.claude/settings.json`
+- `workspace/.claude/agents/*.md`
+- `workspace/.claude/skills/*/SKILL.md`
+- `workspace/.mcp.json`
+- `workspace/agent.yaml`
+
+## subagent 文件格式
+
+示例：`workspace/.claude/agents/security-triage.md`
+
+```markdown
+---
+name: security-triage
+description: 用于分析安全告警、日志、IOC、资产上下文，并给出处置建议。
+tools: Read, Grep, Glob
+model: sonnet
+permissionMode: dontAsk
+maxTurns: 8
+skills:
+  - threat-triage
+  - ocsf-mapping
+memory: project
+---
+
+# Role
+
+你是一个安全运营告警研判子 Agent。
+```
+
+项目会在启动请求时解析 `.claude/agents/*.md`，并通过 Claude Agent SDK 的 `agents` 参数传入运行时；同时文件仍保留在 Claude 原生目录结构中，兼容 Claude Code 自身发现机制。
+
+## skill 文件格式
+
+示例：`workspace/.claude/skills/threat-triage/SKILL.md`
+
+```markdown
+---
+name: threat-triage
+description: 当用户需要分析安全告警、IOC、攻击链、主机行为、进程链或安全工单时使用。
+allowed-tools:
+  - Read
+  - Grep
+  - Glob
+---
+
+# Threat Triage Skill
+
+## 工作流程
+
+1. 识别输入数据类型。
+2. 提取关键实体。
+3. 判断攻击阶段。
+4. 组织证据链。
+5. 给出风险等级和处置建议。
+```
+
+## 权限与安全
+
+默认 `.env.example` 中设置：
+
+```bash
+DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob
+DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
+PERMISSION_MODE=dontAsk
+```
+
+这意味着：
+
+- 默认只允许读文件、搜索文件。
+- 默认不允许 Bash、WebFetch、WebSearch。
+- 任何未预先允许的工具不会弹交互式确认，而是拒绝。
+
+`app/runtime/policy.py` 还提供了 SDK 级 PreToolUse hook，用于阻断高危 Bash 命令。
+
+不要把宿主机敏感目录挂入容器，例如：
+
+```yaml
+# 不要这样做
+- /:/host
+- /var/run/docker.sock:/var/run/docker.sock
+- ~/.ssh:/home/agentuser/.ssh
+```
+
+## 会话机制
+
+API 维护一个轻量 JSON session store：
+
+```text
+data/sessions/*.json
+```
+
+它保存：
+
+- API 层 `session_id`
+- Claude SDK 返回的 `sdk_session_id`
+- 创建/更新时间
+- turns
+
+下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。
+
+## 生产化建议
+
+这个项目是 MVP，不是完整企业平台。生产化前建议补充：
+
+1. 更严格的鉴权和租户隔离。
+2. 每个租户独立 workspace/data volume。
+3. 独立 MCP Gateway，不让 Agent 直连高危 MCP。
+4. OpenTelemetry / Langfuse / Phoenix trace。
+5. 高危工具 Human-in-the-loop 审批。
+6. 上传文件病毒扫描和敏感信息检测。
+7. 容器 seccomp/AppArmor/gVisor/Firecracker 隔离。
+8. Agent package 签名与审核机制。
+
+## 本地开发
+
+```bash
+make setup
+source .venv/bin/activate
+export ANTHROPIC_API_KEY=sk-ant-xxxx
+export API_KEY=change-me
+export WORKSPACE_DIR=$PWD/workspace
+export DATA_DIR=$PWD/data
+.venv/bin/python -m uvicorn app.main:app --reload --port 8080
+```

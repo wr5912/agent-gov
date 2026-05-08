@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(./**)",
+      "Grep(./**)",
+      "Glob(./**)",
+      "Read(/data/uploads/**)",
+      "Read(/data/outputs/**)"
+    ],
+    "ask": [
+      "Write(/data/outputs/**)",
+      "Edit(/data/outputs/**)",
+      "Bash(python /workspace/hooks/*.py *)",
+      "Bash(python /workspace/.claude/skills/*/scripts/*.py *)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/home/agentuser/.claude/.credentials.json)",
+      "Bash(rm *)",
+      "Bash(curl *)",
+      "Bash(wget *)",
+      "Bash(ssh *)",
+      "Bash(scp *)",
+      "Bash(kubectl *)",
+      "Bash(docker *)"
+    ]
+  }
+}

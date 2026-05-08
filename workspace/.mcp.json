@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "local-security-kb": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["/workspace/mcp_servers/local_security_kb.py"]
+    }
+  }
+}

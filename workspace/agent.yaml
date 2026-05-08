@@ -1,0 +1,39 @@
+name: security-soc-agent
+version: 0.1.0
+runtime: claude-agent-sdk
+entry_agent: security-triage
+
+default_model: claude-sonnet-4-5
+default_tools:
+  - Read
+  - Grep
+  - Glob
+
+subagents:
+  - security-triage
+  - ocsf-mapper
+  - report-writer
+
+skills:
+  - threat-triage
+  - ocsf-mapping
+  - incident-report
+
+mcp_servers:
+  - local-security-kb
+
+permissions:
+  mode: readonly-first
+  allow_write_paths:
+    - /data/outputs
+  deny_paths:
+    - /workspace/secrets
+    - /workspace/.env
+
+observability:
+  transcript_dir: /data/transcripts
+  audit_log: /data/audit.log
+
+memory:
+  enabled: true
+  path: /data/agent-memory

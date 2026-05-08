@@ -1,0 +1,21 @@
+services:
+  claude-agent-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: claude-agent-runtime-api:0.1.0
+    container_name: claude-agent-runtime-api
+    ports:
+      - "8080:8080"
+    env_file:
+      - .env
+    environment:
+      WORKSPACE_DIR: /workspace
+      DATA_DIR: /data
+      CLAUDE_HOME: /home/agentuser/.claude
+      CLAUDE_CONFIG_DIR: /data/claude-config
+    volumes:
+      - ./workspace:/workspace
+      - ./data:/data
+      - ./claude-home:/home/agentuser/.claude
+    restart: unless-stopped

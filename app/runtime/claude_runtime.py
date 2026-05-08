@@ -104,8 +104,11 @@ class ClaudeRuntime:
         if self.settings.provider_api_url:
             env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = "claude-agent-runtime-api/0.1.0"
-        env["CLAUDE_CONFIG_DIR"] = str(self.settings.resolved_claude_config_dir)
-        Path(env["CLAUDE_CONFIG_DIR"]).mkdir(parents=True, exist_ok=True)
+        if self.settings.resolved_claude_config_dir:
+            env["CLAUDE_CONFIG_DIR"] = str(self.settings.resolved_claude_config_dir)
+            Path(env["CLAUDE_CONFIG_DIR"]).mkdir(parents=True, exist_ok=True)
+        else:
+            env.pop("CLAUDE_CONFIG_DIR", None)
 
         agents = None
         if self.settings.enable_programmatic_agents:

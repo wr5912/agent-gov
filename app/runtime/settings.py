@@ -38,6 +38,9 @@ class AppSettings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     host_port: int = Field(default=8080, alias="HOST_PORT")
+    host_workspace_mount: str = Field(default="./workspace", alias="HOST_WORKSPACE_MOUNT")
+    host_data_mount: str = Field(default="./data", alias="HOST_DATA_MOUNT")
+    host_claude_root_mount: str = Field(default="./claude-root", alias="HOST_CLAUDE_ROOT_MOUNT")
 
     workspace_dir: Path = Field(default=Path("/workspace"), alias="WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
@@ -65,7 +68,7 @@ class AppSettings(BaseSettings):
     claude_mcp_config_path: Optional[Path] = Field(default=None, alias="CLAUDE_MCP_CONFIG_PATH")
     strict_mcp_config: bool = Field(default=False, alias="STRICT_MCP_CONFIG")
 
-    enable_programmatic_agents: bool = Field(default=True, alias="ENABLE_PROGRAMMATIC_AGENTS")
+    enable_programmatic_agents: bool = Field(default=False, alias="ENABLE_PROGRAMMATIC_AGENTS")
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
     enable_policy_hooks: bool = Field(default=True, alias="ENABLE_POLICY_HOOKS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
@@ -79,7 +82,7 @@ class AppSettings(BaseSettings):
     claude_betas_raw: Optional[str] = Field(default=None, alias="CLAUDE_BETAS")
     permission_prompt_tool_name: Optional[str] = Field(default=None, alias="PERMISSION_PROMPT_TOOL_NAME")
     claude_user: Optional[str] = Field(default=None, alias="CLAUDE_USER")
-    setting_sources_raw: Optional[str] = Field(default=None, alias="CLAUDE_SETTING_SOURCES")
+    setting_sources_raw: Optional[str] = Field(default="user,project,local", alias="CLAUDE_SETTING_SOURCES")
     max_thinking_tokens: Optional[int] = Field(default=None, alias="MAX_THINKING_TOKENS")
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(default=None, alias="EFFORT")
     enable_file_checkpointing: bool = Field(default=False, alias="ENABLE_FILE_CHECKPOINTING")
@@ -98,22 +101,32 @@ class AppSettings(BaseSettings):
         return self.model_provider_api_url or self.anthropic_base_url
 
     @property
-    def resolved_claude_config_dir(self) -> Path:
-        return self.claude_config_dir or self.data_dir / "claude-config"
+    def resolved_claude_config_dir(self) -> Optional[Path]:
+        return self.claude_config_dir
+
+    @property
+    def claude_config_mode(self) -> str:
+        return "redirected" if self.claude_config_dir else "native"
+
+    @property
+    def claude_global_config_file(self) -> Path:
+        if self.claude_config_dir:
+            return self.claude_config_dir / ".claude.json"
+        return self.claude_home.parent / ".claude.json"
+
+    @property
+    def claude_projects_dir(self) -> Path:
+        return (self.claude_config_dir or self.claude_home) / "projects"
 
     @property
     def claude_settings_file(self) -> Optional[Path]:
-        if self.claude_settings_path:
-            return self.claude_settings_path
-        path = self.workspace_dir / ".claude" / "settings.json"
-        return path if path.exists() else None
+        return self.claude_settings_path
 
     @property
-    def claude_mcp_servers(self) -> str | dict[str, Any]:
+    def claude_mcp_servers(self) -> str | dict[str, Any] | None:
         if self.claude_mcp_config_path:
             return str(self.claude_mcp_config_path)
-        path = self.workspace_dir / ".mcp.json"
-        return str(path) if path.exists() else {}
+        return None
 
     @property
     def claude_tools(self) -> Optional[list[str]]:
@@ -143,8 +156,9 @@ class AppSettings(BaseSettings):
 
     @property
     def setting_sources(self) -> Optional[list[str]]:
-        sources = _csv(self.setting_sources_raw)
-        return sources or None
+        if self.setting_sources_raw is None:
+            return None
+        return _csv(self.setting_sources_raw)
 
     @property
     def claude_env(self) -> dict[str, str]:
@@ -175,7 +189,9 @@ class AppSettings(BaseSettings):
 def get_settings() -> AppSettings:
     settings = AppSettings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)
+    settings.claude_home.mkdir(parents=True, exist_ok=True)
+    if settings.resolved_claude_config_dir:
+        settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)
     settings.transcript_dir.mkdir(parents=True, exist_ok=True)
     settings.session_dir.mkdir(parents=True, exist_ok=True)
     settings.output_dir.mkdir(parents=True, exist_ok=True)

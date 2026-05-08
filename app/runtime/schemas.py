@@ -69,6 +69,26 @@ class SkillInfo(BaseModel):
     description: Optional[str] = None
 
 
+class ConfigMappingItem(BaseModel):
+    scope: str
+    kind: str
+    container_path: str
+    host_mount: Optional[str] = None
+    exists: bool
+    loaded_by_default: bool
+    git_policy: str
+    notes: Optional[str] = None
+
+
+class ConfigMappingResponse(BaseModel):
+    claude_config_mode: str
+    claude_home: str
+    claude_global_config_file: str
+    claude_config_dir: Optional[str] = None
+    setting_sources_effective: Optional[list[str]] = None
+    mappings: list[ConfigMappingItem]
+
+
 class OpenAIChatMessage(BaseModel):
     role: str
     content: str

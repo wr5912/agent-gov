@@ -9,7 +9,19 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.runtime.agent_loader import discover_agents, discover_skills
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.schemas import AgentInfo, ChatRequest, ChatResponse, SessionInfo, SkillInfo, OpenAIChatCompletionRequest, OpenAIChatCompletionResponse, OpenAIChatCompletionChoice, OpenAIChatMessage
+from app.runtime.config_mapping import build_config_mapping
+from app.runtime.schemas import (
+    AgentInfo,
+    ChatRequest,
+    ChatResponse,
+    ConfigMappingResponse,
+    OpenAIChatCompletionChoice,
+    OpenAIChatCompletionRequest,
+    OpenAIChatCompletionResponse,
+    OpenAIChatMessage,
+    SessionInfo,
+    SkillInfo,
+)
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
 
@@ -29,6 +41,7 @@ app = FastAPI(
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
+        {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
     ],
@@ -76,7 +89,10 @@ async def health() -> dict[str, object]:
         "workspace_dir": str(settings.workspace_dir),
         "data_dir": str(settings.data_dir),
         "claude_home": str(settings.claude_home),
-        "claude_config_dir": str(settings.resolved_claude_config_dir),
+        "claude_config_mode": settings.claude_config_mode,
+        "claude_config_dir": str(settings.resolved_claude_config_dir) if settings.resolved_claude_config_dir else None,
+        "claude_global_config_file": str(settings.claude_global_config_file),
+        "setting_sources_effective": settings.setting_sources,
         "model": settings.agent_model,
         "default_agent": settings.default_agent,
         "default_skills_mode": settings.default_skills_mode,
@@ -102,6 +118,18 @@ async def health() -> dict[str, object]:
 async def chat(req: ChatRequest) -> ChatResponse:
     result = await runtime.run(req)
     return ChatResponse(**result)
+
+
+@app.get(
+    "/api/config",
+    response_model=ConfigMappingResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["config"],
+    summary="Inspect Claude Code configuration mapping",
+    description="Returns path, mount, scope, load, and git-policy metadata without exposing sensitive file contents.",
+)
+async def config_mapping() -> ConfigMappingResponse:
+    return build_config_mapping(settings)
 
 
 @app.post(

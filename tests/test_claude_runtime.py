@@ -9,17 +9,16 @@ from app.runtime.settings import AppSettings
 def _settings(tmp_path):
     workspace = tmp_path / "workspace"
     data = tmp_path / "data"
-    claude_home = tmp_path / "claude-home"
+    claude_root = tmp_path / "claude-root"
+    claude_home = claude_root / ".claude"
     workspace.mkdir()
-    claude_home.mkdir()
+    claude_home.mkdir(parents=True)
     return AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
         DATA_DIR=data,
         CLAUDE_HOME=claude_home,
-        CLAUDE_CONFIG_DIR=data / "claude-config",
         ENABLE_POLICY_HOOKS=True,
-        ENABLE_PROGRAMMATIC_AGENTS=False,
     )
 
 
@@ -58,6 +57,77 @@ def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
             "session_id": "default",
         }
     ]
+
+
+def test_default_options_use_native_claude_code_config(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/tmp/should-not-leak")
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+    options = seen["options"]
+
+    assert result["errors"] == []
+    assert options.setting_sources == ["user", "project", "local"]
+    assert options.settings is None
+    assert options.mcp_servers == {}
+    assert options.agents is None
+    assert "CLAUDE_CONFIG_DIR" not in options.env
+
+
+def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings_path = tmp_path / "settings.override.json"
+    mcp_path = tmp_path / "mcp.override.json"
+    config_dir = tmp_path / "claude-config"
+    settings_path.write_text("{}", encoding="utf-8")
+    mcp_path.write_text('{"mcpServers": {}}', encoding="utf-8")
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_HOME=base.claude_home,
+        CLAUDE_SETTINGS_PATH=settings_path,
+        CLAUDE_MCP_CONFIG_PATH=mcp_path,
+        CLAUDE_CONFIG_DIR=config_dir,
+        ENABLE_POLICY_HOOKS=True,
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+    options = seen["options"]
+
+    assert result["errors"] == []
+    assert options.settings == str(settings_path)
+    assert options.mcp_servers == str(mcp_path)
+    assert options.env["CLAUDE_CONFIG_DIR"] == str(config_dir)
 
 
 def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):

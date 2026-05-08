@@ -6,7 +6,7 @@
 
 - 不重写 Claude Agent loop。
 - 通过 Docker 容器封装 Claude Agent SDK / Claude Code Runtime。
-- `CLAUDE.md`、`.claude/settings.json`、`.claude/agents/*.md`、`.claude/skills/*/SKILL.md`、`.mcp.json` 全部通过 volume 挂载。
+- 容器内 Claude Code 配置路径与原生 Claude Code 保持一致：`/root/.claude/*`、`/root/.claude.json`、`/workspace/*`。
 - 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。
 
 ## 目录结构
@@ -23,14 +23,23 @@
 │       └── schemas.py
 ├── workspace/
 │   ├── CLAUDE.md                        # 主 Agent 指令
+│   ├── CLAUDE.local.md                  # 本地私有指令，默认 gitignored
 │   ├── agent.yaml                       # 平台自定义元配置
 │   ├── .mcp.json                        # 项目级 MCP 配置
+│   ├── .worktreeinclude                 # Claude Code worktree 复制规则
 │   ├── .claude/
 │   │   ├── settings.json                # Claude Code 权限配置
+│   │   ├── settings.local.json          # 本地私有配置，默认 gitignored
 │   │   ├── agents/                      # subagents
-│   │   └── skills/                      # skills
+│   │   ├── skills/                      # skills
+│   │   ├── commands/                    # custom commands
+│   │   ├── rules/
+│   │   └── output-styles/
 │   ├── hooks/                           # 可选外部 hook 脚本
 │   └── mcp_servers/                     # 示例 MCP server
+├── claude-root/
+│   ├── .claude/                         # 用户级 Claude Code 配置
+│   └── .claude.json                     # Claude Code 全局状态，不提交
 ├── data/
 │   ├── sessions/
 │   ├── transcripts/
@@ -62,7 +71,7 @@ AGENT_MODEL=claude-sonnet-4-5
 
 Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `.env` 中的 `APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `data/`、`claude-home/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `data/`、`claude-root/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 
@@ -150,6 +159,7 @@ curl -X POST "$API_BASE/v1/chat/completions" \
 ```bash
 curl -H "Authorization: Bearer change-me" "$API_BASE/api/agents"
 curl -H "Authorization: Bearer change-me" "$API_BASE/api/skills"
+curl -H "Authorization: Bearer change-me" "$API_BASE/api/config"
 curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
 ```
 
@@ -161,16 +171,27 @@ curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
 volumes:
   - ./workspace:/workspace
   - ./data:/data
-  - ./claude-home:/root/.claude
+  - ./claude-root:/root
 ```
 
 你可以只改宿主机目录，不需要改镜像：
 
+- `claude-root/.claude/settings.json`
+- `claude-root/.claude/CLAUDE.md`
+- `claude-root/.claude/agents/*.md`
+- `claude-root/.claude/skills/*/SKILL.md`
+- `claude-root/.claude.json`
 - `workspace/CLAUDE.md`
+- `workspace/CLAUDE.local.md`
 - `workspace/.claude/settings.json`
+- `workspace/.claude/settings.local.json`
 - `workspace/.claude/agents/*.md`
 - `workspace/.claude/skills/*/SKILL.md`
+- `workspace/.claude/commands/*.md`
+- `workspace/.claude/rules/*`
+- `workspace/.claude/output-styles/*.md`
 - `workspace/.mcp.json`
+- `workspace/.worktreeinclude`
 - `workspace/agent.yaml`
 
 ## subagent 文件格式
@@ -196,7 +217,7 @@ memory: project
 你是一个安全运营告警研判子 Agent。
 ```
 
-项目会在启动请求时解析 `.claude/agents/*.md`，并通过 Claude Agent SDK 的 `agents` 参数传入运行时；同时文件仍保留在 Claude 原生目录结构中，兼容 Claude Code 自身发现机制。
+默认情况下，项目依赖 Claude Code 原生发现机制加载 `.claude/agents/*.md`。如需 SDK-only 显式注入，可把 `.env` 中的 `ENABLE_PROGRAMMATIC_AGENTS` 改为 `true`。
 
 ## skill 文件格式
 
@@ -224,6 +245,8 @@ allowed-tools:
 ```
 
 ## 权限与安全
+
+`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界以请求中的 `allowed_tools` 和 `.env` 的 `DEFAULT_ALLOWED_TOOLS` 为准。
 
 默认 `.env.example` 中设置：
 

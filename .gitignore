@@ -11,6 +11,7 @@ data/sessions/*
 data/uploads/*
 data/outputs/*
 data/agent-memory/*
+data/claude-config/*
 !data/transcripts/.gitkeep
 !data/sessions/.gitkeep
 !data/uploads/.gitkeep

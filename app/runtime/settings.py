@@ -41,7 +41,7 @@ class AppSettings(BaseSettings):
 
     workspace_dir: Path = Field(default=Path("/workspace"), alias="WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
-    claude_home: Path = Field(default=Path("/home/agentuser/.claude"), alias="CLAUDE_HOME")
+    claude_home: Path = Field(default=Path("/root/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")

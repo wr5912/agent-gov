@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Optional
+from typing import Any, Optional
 
 from .agent_loader import load_programmatic_agents
 from .message_utils import extract_text, message_event_name, to_plain
@@ -40,6 +41,14 @@ class ClaudeRuntime:
         parts.append(req.message)
         return "\n\n".join(parts)
 
+    async def _single_prompt_stream(self, prompt: str) -> AsyncIterator[dict[str, Any]]:
+        yield {
+            "type": "user",
+            "message": {"role": "user", "content": prompt},
+            "parent_tool_use_id": None,
+            "session_id": "default",
+        }
+
     def _skills_option(self, req: ChatRequest) -> Any:
         skills_mode = req.skills_mode or self.settings.default_skills_mode
         if skills_mode == "all":
@@ -51,6 +60,39 @@ class ClaudeRuntime:
         if self.settings.default_skills:
             return self.settings.default_skills
         return None
+
+    def _result_errors(self, msg: Any) -> list[str]:
+        raw_errors = getattr(msg, "errors", None) or []
+        if raw_errors:
+            return [str(error) for error in raw_errors]
+        if not getattr(msg, "is_error", False):
+            return []
+
+        result = getattr(msg, "result", None)
+        if isinstance(result, str) and result.strip():
+            status = getattr(msg, "api_error_status", None)
+            status_part = f" ({status})" if status else ""
+            return [f"Claude Code API error{status_part}: {result.strip()}"]
+
+        subtype = getattr(msg, "subtype", None) or "unknown"
+        return [f"Claude Code returned an error result: {subtype}"]
+
+    def _should_suppress_exception(self, exc: Exception, errors: list[str]) -> bool:
+        if not errors:
+            return False
+        text = str(exc)
+        return text.startswith("Claude Code returned an error result:")
+
+    def _dedupe_answer_parts(self, parts: list[str]) -> str:
+        seen: set[str] = set()
+        unique: list[str] = []
+        for part in parts:
+            text = part.strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            unique.append(text)
+        return "\n".join(unique).strip()
 
     def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
@@ -157,7 +199,7 @@ class ClaudeRuntime:
         sdk_session_id: Optional[str] = session.sdk_session_id
 
         try:
-            async for msg in query(prompt=prompt, options=options):
+            async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
                 plain = to_plain(msg)
                 plain["event"] = message_event_name(msg)
                 messages.append(plain)
@@ -173,10 +215,10 @@ class ClaudeRuntime:
                     usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
                     total_cost_usd = getattr(msg, "total_cost_usd", None)
                     stop_reason = getattr(msg, "stop_reason", None)
-                    if getattr(msg, "errors", None):
-                        errors.extend([str(e) for e in msg.errors])
+                    errors.extend(self._result_errors(msg))
         except Exception as exc:
-            errors.append(f"{exc.__class__.__name__}: {exc}")
+            if not self._should_suppress_exception(exc, errors):
+                errors.append(f"{exc.__class__.__name__}: {exc}")
 
         if sdk_session_id:
             session.sdk_session_id = sdk_session_id
@@ -185,8 +227,7 @@ class ClaudeRuntime:
             session.title = req.message[:80]
         self.session_store.save(session)
 
-        # Deduplicate ResultMessage.result when it equals concatenated text from assistant messages.
-        answer = "\n".join(part for part in answer_parts if part).strip()
+        answer = self._dedupe_answer_parts(answer_parts)
         return {
             "session_id": session.session_id,
             "sdk_session_id": session.sdk_session_id,
@@ -210,7 +251,7 @@ class ClaudeRuntime:
         errors: list[str] = []
 
         try:
-            async for msg in query(prompt=prompt, options=options):
+            async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 plain = to_plain(msg)
                 event = message_event_name(msg)
@@ -221,6 +262,8 @@ class ClaudeRuntime:
                     sdk_session_id = candidate_session_id
 
                 if isinstance(msg, ResultMessage):
+                    result_errors = self._result_errors(msg)
+                    errors.extend(result_errors)
                     yield {
                         "event": "result",
                         "data": {
@@ -229,12 +272,13 @@ class ClaudeRuntime:
                             "usage": getattr(msg, "usage", None) or getattr(msg, "model_usage", None),
                             "total_cost_usd": getattr(msg, "total_cost_usd", None),
                             "stop_reason": getattr(msg, "stop_reason", None),
-                            "errors": getattr(msg, "errors", None) or [],
+                            "errors": result_errors,
                         },
                     }
         except Exception as exc:
-            errors.append(f"{exc.__class__.__name__}: {exc}")
-            yield {"event": "error", "data": {"errors": errors}}
+            if not self._should_suppress_exception(exc, errors):
+                errors.append(f"{exc.__class__.__name__}: {exc}")
+                yield {"event": "error", "data": {"errors": errors}}
         finally:
             if sdk_session_id:
                 session.sdk_session_id = sdk_session_id

@@ -16,7 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     API_PORT=8080 \
     WORKSPACE_DIR=/workspace \
     DATA_DIR=/data \
-    CLAUDE_HOME=/home/agentuser/.claude \
+    CLAUDE_HOME=/root/.claude \
     CLAUDE_CONFIG_DIR=/data/claude-config
 
 WORKDIR /app
@@ -53,10 +53,6 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY app /app/app
 
-RUN useradd -m -u 10001 agentuser \
-    && mkdir -p /workspace /data /data/claude-config /home/agentuser/.claude \
-    && chown -R agentuser:agentuser /workspace /data /home/agentuser/.claude /app
-
-USER agentuser
+RUN mkdir -p /workspace /data /data/claude-config /root/.claude
 
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

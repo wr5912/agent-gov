@@ -62,6 +62,8 @@ AGENT_MODEL=claude-sonnet-4-5
 
 Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `.env` 中的 `APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。
 
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `data/`、`claude-home/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+
 启动：
 
 ```bash
@@ -159,7 +161,7 @@ curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
 volumes:
   - ./workspace:/workspace
   - ./data:/data
-  - ./claude-home:/home/agentuser/.claude
+  - ./claude-home:/root/.claude
 ```
 
 你可以只改宿主机目录，不需要改镜像：
@@ -246,7 +248,7 @@ ENABLE_POLICY_HOOKS=true
 # 不要这样做
 - /:/host
 - /var/run/docker.sock:/var/run/docker.sock
-- ~/.ssh:/home/agentuser/.ssh
+- ~/.ssh:/root/.ssh
 ```
 
 ## 会话机制

@@ -18,9 +18,6 @@ data/claude-config/*
 !data/outputs/.gitkeep
 !data/agent-memory/.gitkeep
 claude-root/
-claude-home/
-claude-home/.credentials.json
-claude-home/.credentials.*
 workspace/CLAUDE.local.md
 workspace/.claude/settings.local.json
 workspace/.claude/agent-memory-local/

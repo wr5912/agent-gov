@@ -48,11 +48,11 @@
 │       │   ├── .claude/                 # 用户级 Claude Code 配置
 │       │   └── .claude.json             # Claude Code 全局状态，不提交
 │       └── data/
-│           ├── sessions/
-│           ├── transcripts/
-│           ├── uploads/
-│           ├── outputs/
-│           └── agent-memory/
+│           ├── sessions/                # API session -> Claude SDK session 映射
+│           ├── transcripts/             # 预留 transcript 持久化目录
+│           ├── uploads/                 # 预留用户上传文件目录
+│           ├── outputs/                 # 预留 Agent 输出文件目录
+│           └── agent-memory/            # 预留 API 侧 Agent 记忆/缓存目录
 └── requirements.txt
 ```
 

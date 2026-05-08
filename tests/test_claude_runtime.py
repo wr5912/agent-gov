@@ -7,11 +7,11 @@ from app.runtime.settings import AppSettings
 
 
 def _settings(tmp_path):
-    workspace = tmp_path / "workspace"
-    data = tmp_path / "data"
-    claude_root = tmp_path / "claude-root"
+    workspace = tmp_path / "docker" / "volume" / "workspace"
+    data = tmp_path / "docker" / "volume" / "data"
+    claude_root = tmp_path / "docker" / "volume" / "claude-root"
     claude_home = claude_root / ".claude"
-    workspace.mkdir()
+    workspace.mkdir(parents=True)
     claude_home.mkdir(parents=True)
     return AppSettings(
         _env_file=None,

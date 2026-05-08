@@ -10,7 +10,7 @@ class ChatRequest(BaseModel):
     skills: Optional[list[str]] = Field(default=None, description="Skill names to enable. Omit to use DEFAULT_SKILLS.")
     skills_mode: Optional[Literal["all", "default", "none"]] = Field(
         default=None,
-        description="Skill loading mode. Omit to use DEFAULT_SKILLS_MODE from .env.",
+        description="Skill loading mode. Omit to use DEFAULT_SKILLS_MODE from docker/.env.",
     )
     allowed_tools: Optional[list[str]] = Field(default=None, description="Per-request allow list. Defaults to DEFAULT_ALLOWED_TOOLS.")
     disallowed_tools: Optional[list[str]] = Field(default=None, description="Per-request deny list. Defaults to DEFAULT_DISALLOWED_TOOLS.")

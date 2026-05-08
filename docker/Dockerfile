@@ -1,4 +1,6 @@
-FROM python:3.11-slim
+# 基础镜像镜像源依赖部署环境；如内部仓库提供国内 Python 镜像，可在 docker/.env 覆盖 PYTHON_IMAGE。
+ARG PYTHON_IMAGE=python:3.11-slim
+FROM ${PYTHON_IMAGE}
 
 ARG APT_MIRROR=https://mirrors.aliyun.com/debian
 ARG APT_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
@@ -11,6 +13,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_INDEX_URL=${PIP_INDEX_URL} \
     PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    UV_INDEX_URL=${PIP_INDEX_URL} \
     NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
@@ -47,8 +50,9 @@ RUN set -eux; \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip \
-    && pip install --no-cache-dir -r /app/requirements.txt
+# python:slim 不内置 uv；这里仅用阿里 PyPI bootstrap uv，项目依赖安装仍统一走 uv。
+RUN python -m pip install --no-cache-dir uv \
+    && uv pip install --system --no-cache -r /app/requirements.txt
 
 COPY app /app/app
 

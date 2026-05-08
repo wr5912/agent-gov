@@ -4,13 +4,13 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 env_value() {
   local key=$1
-  [[ -f "$ROOT_DIR/.env" ]] || return 0
-  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$ROOT_DIR/.env"
+  [[ -f "$ROOT_DIR/docker/.env" ]] || return 0
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); print; exit}' "$ROOT_DIR/docker/.env"
 }
 
 HOST_PORT=${HOST_PORT:-$(env_value HOST_PORT)}
 API_BASE=${API_BASE:-$(env_value API_BASE)}
-API_BASE=${API_BASE:-http://localhost:${HOST_PORT:-8080}}
+API_BASE=${API_BASE:-http://localhost:${HOST_PORT:-58080}}
 API_KEY=${API_KEY:-$(env_value API_KEY)}
 API_KEY=${API_KEY:-change-me}
 MESSAGE=${1:-"你好，请说明你当前可用的 agents 和 skills。"}

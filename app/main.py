@@ -113,7 +113,7 @@ async def health() -> dict[str, object]:
     dependencies=[Depends(require_api_key)],
     tags=["chat"],
     summary="Run a Claude Agent task and return the full result",
-    description="Runs one Claude Agent SDK query using defaults from .env and optional per-request overrides.",
+    description="Runs one Claude Agent SDK query using defaults from docker/.env and optional per-request overrides.",
 )
 async def chat(req: ChatRequest) -> ChatResponse:
     result = await runtime.run(req)

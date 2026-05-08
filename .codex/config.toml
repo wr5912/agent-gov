@@ -1,0 +1,19 @@
+# Codex 项目级配置模板
+#
+# 目标：
+# - 保持团队共享配置安全、通用、可迁移。
+# - 不在项目配置中写入个人模型偏好、账号信息、API key 或本机绝对路径。
+# - 个人偏好应放在用户级 `~/.codex/config.toml`。
+
+# 默认允许在工作区内读写，仍由审批策略控制高风险命令。
+sandbox_mode = "workspace-write"
+
+# 非只读命令和可能影响环境的操作由 Agent 按需请求确认。
+approval_policy = "on-request"
+
+# 保持推理强度适中；复杂任务可由用户在会话中临时提高。
+model_reasoning_effort = "medium"
+plan_mode_reasoning_effort = "medium"
+
+# 建议：不要在团队项目配置中固定模型名称。
+# model = "gpt-5.5"

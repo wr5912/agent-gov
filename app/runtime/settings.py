@@ -33,14 +33,14 @@ def _optional_string_dict(value: dict[str, Any]) -> dict[str, str | None]:
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(env_file="docker/.env", extra="ignore")
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
-    host_port: int = Field(default=8080, alias="HOST_PORT")
-    host_workspace_mount: str = Field(default="./workspace", alias="HOST_WORKSPACE_MOUNT")
-    host_data_mount: str = Field(default="./data", alias="HOST_DATA_MOUNT")
-    host_claude_root_mount: str = Field(default="./claude-root", alias="HOST_CLAUDE_ROOT_MOUNT")
+    host_port: int = Field(default=58080, alias="HOST_PORT")
+    host_workspace_mount: str = Field(default="./docker/volume/workspace", alias="HOST_WORKSPACE_MOUNT")
+    host_data_mount: str = Field(default="./docker/volume/data", alias="HOST_DATA_MOUNT")
+    host_claude_root_mount: str = Field(default="./docker/volume/claude-root", alias="HOST_CLAUDE_ROOT_MOUNT")
 
     workspace_dir: Path = Field(default=Path("/workspace"), alias="WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")

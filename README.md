@@ -21,33 +21,38 @@
 │       ├── policy.py                    # SDK hook / tool permission guard
 │       ├── session_store.py             # API session -> Claude SDK session 映射
 │       └── schemas.py
-├── workspace/
-│   ├── CLAUDE.md                        # 主 Agent 指令
-│   ├── CLAUDE.local.md                  # 本地私有指令，默认 gitignored
-│   ├── agent.yaml                       # 平台自定义元配置
-│   ├── .mcp.json                        # 项目级 MCP 配置
-│   ├── .worktreeinclude                 # Claude Code worktree 复制规则
-│   ├── .claude/
-│   │   ├── settings.json                # Claude Code 权限配置
-│   │   ├── settings.local.json          # 本地私有配置，默认 gitignored
-│   │   ├── agents/                      # subagents
-│   │   ├── skills/                      # skills
-│   │   ├── commands/                    # custom commands
-│   │   ├── rules/
-│   │   └── output-styles/
-│   ├── hooks/                           # 可选外部 hook 脚本
-│   └── mcp_servers/                     # 示例 MCP server
-├── claude-root/
-│   ├── .claude/                         # 用户级 Claude Code 配置
-│   └── .claude.json                     # Claude Code 全局状态，不提交
-├── data/
-│   ├── sessions/
-│   ├── transcripts/
-│   ├── uploads/
-│   ├── outputs/
-│   └── agent-memory/
-├── Dockerfile
-├── docker-compose.yml
+├── docker/
+│   ├── Dockerfile
+│   ├── Dockerfile.dockerignore
+│   ├── docker-compose.yml
+│   ├── .env.example
+│   ├── .env                           # 本地环境变量，不提交
+│   └── volume/
+│       ├── workspace/
+│       │   ├── CLAUDE.md                # 主 Agent 指令
+│       │   ├── CLAUDE.local.md          # 本地私有指令，默认 gitignored
+│       │   ├── agent.yaml               # 平台自定义元配置
+│       │   ├── .mcp.json                # 项目级 MCP 配置
+│       │   ├── .worktreeinclude         # Claude Code worktree 复制规则
+│       │   ├── .claude/
+│       │   │   ├── settings.json        # Claude Code 权限配置
+│       │   │   ├── settings.local.json  # 本地私有配置，默认 gitignored
+│       │   │   ├── agents/              # subagents
+│       │   │   ├── skills/              # skills
+│       │   │   ├── commands/            # custom commands
+│       │   │   ├── rules/
+│       │   │   └── output-styles/
+│       │   ├── hooks/                   # 可选外部 hook 脚本
+│       │   └── mcp_servers/             # 示例 MCP server
+│       ├── claude-root/
+│       │   ├── .claude/                 # 用户级 Claude Code 配置
+│       │   └── .claude.json             # Claude Code 全局状态，不提交
+│       └── data/
+│           ├── sessions/
+│           ├── transcripts/
+│           ├── uploads/
+│           ├── outputs/
+│           └── agent-memory/
 └── requirements.txt
 ```
 
@@ -57,21 +62,21 @@
 make setup
 ```
 
-编辑 `.env`：
+编辑 `docker/.env`：
 
 ```bash
 MODEL_PROVIDER_API_KEY=sk-ant-xxxx
 API_KEY=change-me
-HOST_PORT=8080
+HOST_PORT=58080
 API_PORT=8080
 AGENT_MODEL=claude-sonnet-4-5
 ```
 
-`.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口映射为 `HOST_PORT:API_PORT`。
+`docker/.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口映射为 `58080:8080`，符合项目端口规则 `50000 + 容器端口`。
 
-Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `.env` 中的 `APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。
+Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，uv/pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `docker/.env` 中的 `PYTHON_IMAGE`、`APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。`PYTHON_IMAGE` 默认使用官方 Python 镜像；如果你的环境提供国内基础镜像，可在 `docker/.env` 中覆盖。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `data/`、`claude-root/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `docker/volume/data/`、`docker/volume/claude-root/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 
@@ -91,17 +96,17 @@ make smoke
 
 容器启动后，FastAPI 自动提供详细 OpenAPI 文档：
 
-- Swagger UI: `http://localhost:8080/docs`
-- ReDoc: `http://localhost:8080/redoc`
-- OpenAPI JSON: `http://localhost:8080/openapi.json`
+- Swagger UI: `http://localhost:58080/docs`
+- ReDoc: `http://localhost:58080/redoc`
+- OpenAPI JSON: `http://localhost:58080/openapi.json`
 
-如果你在 `.env` 中修改了 `HOST_PORT`，把上面的 `8080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
-当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer <API_KEY>`。
+如果你在 `docker/.env` 中修改了 `HOST_PORT`，把上面的 `58080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
+当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `docker/.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer <API_KEY>`。
 
 ## 聊天 API
 
 ```bash
-export API_BASE=http://localhost:8080
+export API_BASE=http://localhost:58080
 
 curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
@@ -165,38 +170,38 @@ curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
 
 ## 配置挂载说明
 
-`docker-compose.yml` 默认挂载：
+`docker/docker-compose.yml` 默认挂载：
 
 ```yaml
 volumes:
-  - ./workspace:/workspace
-  - ./data:/data
-  - ./claude-root:/root
+  - ./volume/workspace:/workspace
+  - ./volume/data:/data
+  - ./volume/claude-root:/root
 ```
 
 你可以只改宿主机目录，不需要改镜像：
 
-- `claude-root/.claude/settings.json`
-- `claude-root/.claude/CLAUDE.md`
-- `claude-root/.claude/agents/*.md`
-- `claude-root/.claude/skills/*/SKILL.md`
-- `claude-root/.claude.json`
-- `workspace/CLAUDE.md`
-- `workspace/CLAUDE.local.md`
-- `workspace/.claude/settings.json`
-- `workspace/.claude/settings.local.json`
-- `workspace/.claude/agents/*.md`
-- `workspace/.claude/skills/*/SKILL.md`
-- `workspace/.claude/commands/*.md`
-- `workspace/.claude/rules/*`
-- `workspace/.claude/output-styles/*.md`
-- `workspace/.mcp.json`
-- `workspace/.worktreeinclude`
-- `workspace/agent.yaml`
+- `docker/volume/claude-root/.claude/settings.json`
+- `docker/volume/claude-root/.claude/CLAUDE.md`
+- `docker/volume/claude-root/.claude/agents/*.md`
+- `docker/volume/claude-root/.claude/skills/*/SKILL.md`
+- `docker/volume/claude-root/.claude.json`
+- `docker/volume/workspace/CLAUDE.md`
+- `docker/volume/workspace/CLAUDE.local.md`
+- `docker/volume/workspace/.claude/settings.json`
+- `docker/volume/workspace/.claude/settings.local.json`
+- `docker/volume/workspace/.claude/agents/*.md`
+- `docker/volume/workspace/.claude/skills/*/SKILL.md`
+- `docker/volume/workspace/.claude/commands/*.md`
+- `docker/volume/workspace/.claude/rules/*`
+- `docker/volume/workspace/.claude/output-styles/*.md`
+- `docker/volume/workspace/.mcp.json`
+- `docker/volume/workspace/.worktreeinclude`
+- `docker/volume/workspace/agent.yaml`
 
 ## subagent 文件格式
 
-示例：`workspace/.claude/agents/security-triage.md`
+示例：`docker/volume/workspace/.claude/agents/security-triage.md`
 
 ```markdown
 ---
@@ -217,11 +222,11 @@ memory: project
 你是一个安全运营告警研判子 Agent。
 ```
 
-默认情况下，项目依赖 Claude Code 原生发现机制加载 `.claude/agents/*.md`。如需 SDK-only 显式注入，可把 `.env` 中的 `ENABLE_PROGRAMMATIC_AGENTS` 改为 `true`。
+默认情况下，项目依赖 Claude Code 原生发现机制加载 `.claude/agents/*.md`。如需 SDK-only 显式注入，可把 `docker/.env` 中的 `ENABLE_PROGRAMMATIC_AGENTS` 改为 `true`。
 
 ## skill 文件格式
 
-示例：`workspace/.claude/skills/threat-triage/SKILL.md`
+示例：`docker/volume/workspace/.claude/skills/threat-triage/SKILL.md`
 
 ```markdown
 ---
@@ -246,9 +251,9 @@ allowed-tools:
 
 ## 权限与安全
 
-`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界以请求中的 `allowed_tools` 和 `.env` 的 `DEFAULT_ALLOWED_TOOLS` 为准。
+`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界以请求中的 `allowed_tools` 和 `docker/.env` 的 `DEFAULT_ALLOWED_TOOLS` 为准。
 
-默认 `.env.example` 中设置：
+默认 `docker/.env.example` 中设置：
 
 ```bash
 DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob
@@ -279,7 +284,7 @@ ENABLE_POLICY_HOOKS=true
 API 维护一个轻量 JSON session store：
 
 ```text
-data/sessions/*.json
+docker/volume/data/sessions/*.json
 ```
 
 它保存：
@@ -309,7 +314,8 @@ data/sessions/*.json
 ```bash
 make setup
 source .venv/bin/activate
-export WORKSPACE_DIR=$PWD/workspace
-export DATA_DIR=$PWD/data
+export WORKSPACE_DIR=$PWD/docker/volume/workspace
+export DATA_DIR=$PWD/docker/volume/data
+export CLAUDE_HOME=$PWD/docker/volume/claude-root/.claude
 .venv/bin/python -m uvicorn app.main:app --reload --host "${API_HOST:-127.0.0.1}" --port "${API_PORT:-8080}"
 ```

@@ -51,10 +51,16 @@ make setup
 编辑 `.env`：
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-xxxx
+MODEL_PROVIDER_API_KEY=sk-ant-xxxx
 API_KEY=change-me
+HOST_PORT=8080
+API_PORT=8080
 AGENT_MODEL=claude-sonnet-4-5
 ```
+
+`.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口映射为 `HOST_PORT:API_PORT`。
+
+Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `.env` 中的 `APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。
 
 启动：
 
@@ -67,13 +73,25 @@ make logs
 健康检查：
 
 ```bash
-curl http://localhost:8080/health
+make smoke
 ```
+
+## API 文档
+
+容器启动后，FastAPI 自动提供详细 OpenAPI 文档：
+
+- Swagger UI: `http://localhost:8080/docs`
+- ReDoc: `http://localhost:8080/redoc`
+- OpenAPI JSON: `http://localhost:8080/openapi.json`
+
+如果你在 `.env` 中修改了 `HOST_PORT`，把上面的 `8080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
 
 ## 聊天 API
 
 ```bash
-curl -X POST http://localhost:8080/api/chat \
+export API_BASE=http://localhost:8080
+
+curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer change-me" \
   -d '{
@@ -85,7 +103,7 @@ curl -X POST http://localhost:8080/api/chat \
 指定 subagent 和 skill：
 
 ```bash
-curl -X POST http://localhost:8080/api/chat \
+curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer change-me" \
   -d '{
@@ -100,7 +118,7 @@ curl -X POST http://localhost:8080/api/chat \
 流式接口：
 
 ```bash
-curl -N -X POST http://localhost:8080/api/chat/stream \
+curl -N -X POST "$API_BASE/api/chat/stream" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer change-me" \
   -d '{"message":"你好，先介绍你的能力", "skills_mode":"all"}'
@@ -111,7 +129,7 @@ curl -N -X POST http://localhost:8080/api/chat/stream \
 项目额外提供了一个最小的非流式 OpenAI Compatible shim：
 
 ```bash
-curl -X POST http://localhost:8080/v1/chat/completions \
+curl -X POST "$API_BASE/v1/chat/completions" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer change-me" \
   -d '{
@@ -127,9 +145,9 @@ curl -X POST http://localhost:8080/v1/chat/completions \
 ## 管理 API
 
 ```bash
-curl -H "Authorization: Bearer change-me" http://localhost:8080/api/agents
-curl -H "Authorization: Bearer change-me" http://localhost:8080/api/skills
-curl -H "Authorization: Bearer change-me" http://localhost:8080/api/sessions
+curl -H "Authorization: Bearer change-me" "$API_BASE/api/agents"
+curl -H "Authorization: Bearer change-me" "$API_BASE/api/skills"
+curl -H "Authorization: Bearer change-me" "$API_BASE/api/sessions"
 ```
 
 ## 配置挂载说明
@@ -210,6 +228,7 @@ allowed-tools:
 DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob
 DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
 PERMISSION_MODE=dontAsk
+ENABLE_POLICY_HOOKS=true
 ```
 
 这意味着：
@@ -264,9 +283,7 @@ data/sessions/*.json
 ```bash
 make setup
 source .venv/bin/activate
-export ANTHROPIC_API_KEY=sk-ant-xxxx
-export API_KEY=change-me
 export WORKSPACE_DIR=$PWD/workspace
 export DATA_DIR=$PWD/data
-.venv/bin/python -m uvicorn app.main:app --reload --port 8080
+.venv/bin/python -m uvicorn app.main:app --reload --host "${API_HOST:-127.0.0.1}" --port "${API_PORT:-8080}"
 ```

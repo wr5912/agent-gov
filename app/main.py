@@ -21,6 +21,17 @@ app = FastAPI(
     title="Claude Agent Runtime API",
     version="0.1.0",
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    openapi_tags=[
+        {"name": "health", "description": "Service status and documentation discovery."},
+        {"name": "chat", "description": "Claude Agent task execution endpoints."},
+        {"name": "catalog", "description": "Discover configured subagents and skills."},
+        {"name": "sessions", "description": "List and delete API session mappings."},
+        {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
+    ],
+    swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
 )
 
 app.add_middleware(
@@ -40,24 +51,66 @@ def require_api_key(authorization: Annotated[str | None, Header()] = None) -> No
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
-@app.get("/health")
-async def health() -> dict[str, object]:
+@app.get("/", include_in_schema=False)
+async def root() -> dict[str, object]:
     return {
-        "status": "ok",
-        "workspace_dir": str(settings.workspace_dir),
-        "data_dir": str(settings.data_dir),
-        "model": settings.agent_model,
-        "programmatic_agents": settings.enable_programmatic_agents,
+        "name": "Claude Agent Runtime API",
+        "health": "/health",
+        "docs": app.docs_url,
+        "redoc": app.redoc_url,
+        "openapi": app.openapi_url,
     }
 
 
-@app.post("/api/chat", response_model=ChatResponse, dependencies=[Depends(require_api_key)])
+@app.get(
+    "/health",
+    tags=["health"],
+    summary="Check service health and discover API documentation URLs",
+)
+async def health() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "api_host": settings.api_host,
+        "api_port": settings.api_port,
+        "host_port": settings.host_port,
+        "workspace_dir": str(settings.workspace_dir),
+        "data_dir": str(settings.data_dir),
+        "claude_home": str(settings.claude_home),
+        "claude_config_dir": str(settings.resolved_claude_config_dir),
+        "model": settings.agent_model,
+        "default_agent": settings.default_agent,
+        "default_skills_mode": settings.default_skills_mode,
+        "provider_api_url_configured": bool(settings.provider_api_url),
+        "provider_api_key_configured": bool(settings.provider_api_key),
+        "programmatic_agents": settings.enable_programmatic_agents,
+        "docs": {
+            "swagger": app.docs_url,
+            "redoc": app.redoc_url,
+            "openapi": app.openapi_url,
+        },
+    }
+
+
+@app.post(
+    "/api/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["chat"],
+    summary="Run a Claude Agent task and return the full result",
+    description="Runs one Claude Agent SDK query using defaults from .env and optional per-request overrides.",
+)
 async def chat(req: ChatRequest) -> ChatResponse:
     result = await runtime.run(req)
     return ChatResponse(**result)
 
 
-@app.post("/api/chat/stream", dependencies=[Depends(require_api_key)])
+@app.post(
+    "/api/chat/stream",
+    dependencies=[Depends(require_api_key)],
+    tags=["chat"],
+    summary="Run a Claude Agent task as server-sent events",
+    description="Streams session, message, result, error, and done events as text/event-stream.",
+)
 async def chat_stream(req: ChatRequest) -> StreamingResponse:
     async def event_stream():
         async for item in runtime.stream(req):
@@ -68,7 +121,14 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
-@app.post("/v1/chat/completions", response_model=OpenAIChatCompletionResponse, dependencies=[Depends(require_api_key)])
+@app.post(
+    "/v1/chat/completions",
+    response_model=OpenAIChatCompletionResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["openai-compatible"],
+    summary="Run a non-streaming OpenAI-compatible chat completion",
+    description="Maps OpenAI-style messages into one Claude Agent prompt. Agent-specific controls should use /api/chat.",
+)
 async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAIChatCompletionResponse:
     # Minimal OpenAI-compatible shim for non-streaming chat.
     # It maps all prior messages into a single prompt and delegates to /api/chat.
@@ -94,7 +154,13 @@ async def openai_chat_completions(req: OpenAIChatCompletionRequest) -> OpenAICha
     )
 
 
-@app.get("/api/agents", response_model=list[AgentInfo], dependencies=[Depends(require_api_key)])
+@app.get(
+    "/api/agents",
+    response_model=list[AgentInfo],
+    dependencies=[Depends(require_api_key)],
+    tags=["catalog"],
+    summary="List configured Claude subagents",
+)
 async def list_agents() -> list[AgentInfo]:
     return [
         AgentInfo(
@@ -109,7 +175,13 @@ async def list_agents() -> list[AgentInfo]:
     ]
 
 
-@app.get("/api/skills", response_model=list[SkillInfo], dependencies=[Depends(require_api_key)])
+@app.get(
+    "/api/skills",
+    response_model=list[SkillInfo],
+    dependencies=[Depends(require_api_key)],
+    tags=["catalog"],
+    summary="List configured Claude skills",
+)
 async def list_skills() -> list[SkillInfo]:
     return [
         SkillInfo(
@@ -121,12 +193,23 @@ async def list_skills() -> list[SkillInfo]:
     ]
 
 
-@app.get("/api/sessions", response_model=list[SessionInfo], dependencies=[Depends(require_api_key)])
+@app.get(
+    "/api/sessions",
+    response_model=list[SessionInfo],
+    dependencies=[Depends(require_api_key)],
+    tags=["sessions"],
+    summary="List API session mappings",
+)
 async def list_sessions() -> list[SessionInfo]:
     return [SessionInfo(**session.__dict__) for session in session_store.list()]
 
 
-@app.delete("/api/sessions/{session_id}", dependencies=[Depends(require_api_key)])
+@app.delete(
+    "/api/sessions/{session_id}",
+    dependencies=[Depends(require_api_key)],
+    tags=["sessions"],
+    summary="Delete one API session mapping",
+)
 async def delete_session(session_id: str) -> dict[str, object]:
     deleted = session_store.delete(session_id)
     return {"deleted": deleted, "session_id": session_id}

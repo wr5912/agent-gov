@@ -1,7 +1,19 @@
 FROM python:3.11-slim
 
+ARG APT_MIRROR=https://mirrors.aliyun.com/debian
+ARG APT_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
+ARG NPM_REGISTRY=https://registry.npmmirror.com
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
+    PIP_INDEX_URL=${PIP_INDEX_URL} \
+    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    API_HOST=0.0.0.0 \
+    API_PORT=8080 \
     WORKSPACE_DIR=/workspace \
     DATA_DIR=/data \
     CLAUDE_HOME=/home/agentuser/.claude \
@@ -9,7 +21,23 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN set -eux; \
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i \
+            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|https://deb.debian.org/debian|${APT_MIRROR}|g" \
+            /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i \
+            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|https://deb.debian.org/debian|${APT_MIRROR}|g" \
+            /etc/apt/sources.list; \
+    fi; \
+    apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
     curl \
@@ -31,6 +59,4 @@ RUN useradd -m -u 10001 agentuser \
 
 USER agentuser
 
-EXPOSE 8080
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

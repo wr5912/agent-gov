@@ -6,7 +6,7 @@ from typing import Any, AsyncIterator, Optional
 
 from .agent_loader import load_programmatic_agents
 from .message_utils import extract_text, message_event_name, to_plain
-from .policy import build_default_hooks
+from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
@@ -28,33 +28,41 @@ class ClaudeRuntime:
 
     def _build_prompt(self, req: ChatRequest) -> str:
         parts: list[str] = []
-        if req.agent:
+        agent = req.agent or self.settings.default_agent
+        skills = req.skills if req.skills is not None else self.settings.default_skills
+        if agent:
             parts.append(
-                f"请优先委派或使用名为 `{req.agent}` 的 Claude Code subagent 处理本次任务；"
+                f"请优先委派或使用名为 `{agent}` 的 Claude Code subagent 处理本次任务；"
                 "如果运行时无法直接切换到该 subagent，则按该 subagent 的职责边界执行。"
             )
-        if req.skills:
-            parts.append(f"本次任务优先使用这些 Skills：{', '.join(req.skills)}。")
+        if skills:
+            parts.append(f"本次任务优先使用这些 Skills：{', '.join(skills)}。")
         parts.append(req.message)
         return "\n\n".join(parts)
 
     def _skills_option(self, req: ChatRequest) -> Any:
-        if req.skills_mode == "all":
+        skills_mode = req.skills_mode or self.settings.default_skills_mode
+        if skills_mode == "all":
             return "all"
-        if req.skills_mode == "none":
+        if skills_mode == "none":
             return []
         if req.skills:
             return req.skills
+        if self.settings.default_skills:
+            return self.settings.default_skills
         return None
 
     def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
         env = dict(os.environ)
-        if self.settings.anthropic_api_key:
-            env["ANTHROPIC_API_KEY"] = self.settings.anthropic_api_key
+        env.update(self.settings.claude_env)
+        if self.settings.provider_api_key:
+            env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
+        if self.settings.provider_api_url:
+            env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = "claude-agent-runtime-api/0.1.0"
-        env.setdefault("CLAUDE_CONFIG_DIR", str(self.settings.data_dir / "claude-config"))
+        env["CLAUDE_CONFIG_DIR"] = str(self.settings.resolved_claude_config_dir)
         Path(env["CLAUDE_CONFIG_DIR"]).mkdir(parents=True, exist_ok=True)
 
         agents = None
@@ -64,9 +72,12 @@ class ClaudeRuntime:
             except Exception as exc:  # Do not prevent service use because of malformed agent file.
                 print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
 
+        system_append = "\n\n".join(
+            part for part in [self.settings.claude_system_append, req.system_append] if part
+        )
         system_prompt = {"type": "preset", "preset": "claude_code"}
-        if req.system_append:
-            system_prompt = {"type": "preset", "preset": "claude_code", "append": req.system_append}
+        if system_append:
+            system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
 
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
         disallowed_tools = (
@@ -76,6 +87,7 @@ class ClaudeRuntime:
         )
 
         kwargs: dict[str, Any] = {
+            "tools": self.settings.claude_tools,
             "cwd": self.settings.workspace_dir,
             "model": req.model or self.settings.agent_model,
             "fallback_model": self.settings.fallback_model,
@@ -86,14 +98,28 @@ class ClaudeRuntime:
             "max_budget_usd": self.settings.max_budget_usd,
             "system_prompt": system_prompt,
             "env": env,
-            "settings": str(self.settings.workspace_dir / ".claude" / "settings.json"),
-            "mcp_servers": str(self.settings.workspace_dir / ".mcp.json")
-            if (self.settings.workspace_dir / ".mcp.json").exists()
-            else {},
+            "settings": str(self.settings.claude_settings_file) if self.settings.claude_settings_file else None,
+            "mcp_servers": self.settings.claude_mcp_servers,
+            "strict_mcp_config": self.settings.strict_mcp_config,
             "skills": self._skills_option(req),
             "include_hook_events": self.settings.include_hook_events,
-            "hooks": build_default_hooks(),
+            "include_partial_messages": self.settings.include_partial_messages,
+            "hooks": build_default_hooks() if self.settings.enable_policy_hooks else None,
+            "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
             "agents": agents,
+            "cli_path": self.settings.claude_cli_path,
+            "add_dirs": self.settings.claude_add_dirs,
+            "betas": self.settings.claude_betas,
+            "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
+            "max_buffer_size": self.settings.max_buffer_size,
+            "user": self.settings.claude_user,
+            "setting_sources": self.settings.setting_sources,
+            "extra_args": self.settings.claude_extra_args,
+            "max_thinking_tokens": self.settings.max_thinking_tokens,
+            "effort": self.settings.effort,
+            "enable_file_checkpointing": self.settings.enable_file_checkpointing,
+            "session_store_flush": self.settings.session_store_flush,
+            "load_timeout_ms": self.settings.load_timeout_ms,
         }
 
         # Resume the previous Claude Code session when possible. The API session id

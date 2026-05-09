@@ -1,0 +1,16 @@
+# 本地私有指令示例
+
+> 复制为 `CLAUDE.local.md` 后使用。该文件应加入 `.gitignore`，不要提交。
+
+## 本地环境
+
+- SOC API: `http://host.docker.internal:8080`
+- 知识库 API: `http://host.docker.internal:8090`
+- 默认查询租户：`dev-tenant`
+- 默认时间范围：最近 24 小时
+
+## 本地偏好
+
+- 所有执行动作默认只做 dry-run。
+- 报告输出到 `/data/outputs`。
+- 本地测试时可使用 `mcp_servers/*/sample_*.json` 中的样例数据。

@@ -1,39 +1,80 @@
-name: security-soc-agent
-version: 0.1.0
-runtime: claude-agent-sdk
-entry_agent: security-triage
+agent:
+  id: ai-secops-operator
+  name: AI智能化网络安全运营智能体
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: defensive-secops
 
-default_model: claude-sonnet-4-5
-default_tools:
-  - Read
-  - Grep
-  - Glob
+capabilities:
+  - data_query_statistics
+  - alert_triage
+  - threat_hunting
+  - incident_response_planning
+  - policy_change_planning
+  - security_knowledge_retrieval
+  - report_generation
+  - ocsf_stix_threat_modeling
+
+paths:
+  workspace: /workspace
+  claude_home: /root/.claude
+  data_root: /data
+  sessions: /data/sessions
+  transcripts: /data/transcripts
+  uploads: /data/uploads
+  outputs: /data/outputs
+  agent_memory: /data/agent-memory
+
+mcp:
+  default_transport: stdio
+  servers:
+    soc-data:
+      purpose: 查询 SOC/SIEM/EDR/NDR/日志平台中的告警、资产、进程、网络连接和统计数据
+      risk: read-only
+    security-kb:
+      purpose: 查询内部 SOP、知识库、检测规则说明、ATT&CK 映射和处置手册
+      risk: read-only
+    response-orchestrator:
+      purpose: 生成处置计划、执行 dry-run、在审批后对接 SOAR/EDR/防火墙执行动作
+      risk: high
+      default_mode: dry-run
+    report-template:
+      purpose: 加载模板并生成安全运营日报、事件报告、复盘报告
+      risk: low
 
 subagents:
-  - security-triage
-  - ocsf-mapper
-  - report-writer
+  alert_triage: soc-analyst
+  threat_hunting: threat-hunter
+  incident_response: incident-responder
+  detection_rule: detection-engineer
+  policy_change: policy-operator
+  report: report-writer
+  knowledge: knowledge-curator
 
-skills:
-  - threat-triage
-  - ocsf-mapping
-  - incident-report
-
-mcp_servers:
-  - local-security-kb
-
-permissions:
-  mode: readonly-first
-  allow_write_paths:
-    - /data/outputs
-  deny_paths:
-    - /workspace/secrets
-    - /workspace/.env
+approval_policy:
+  require_confirmation:
+    - isolate_host
+    - disable_user
+    - block_ip
+    - block_domain
+    - block_hash
+    - kill_process
+    - delete_file
+    - update_production_policy
+    - deploy_detection_rule
+  always_dry_run_first: true
+  require_rollback_plan: true
+  require_evidence: true
 
 observability:
-  transcript_dir: /data/transcripts
-  audit_log: /data/audit.log
+  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
+  response_plan_dir: /data/outputs/response-plans
+  report_dir: /data/outputs/reports
 
-memory:
-  enabled: true
-  path: /data/agent-memory
+extension_points:
+  add_mcp_server: docs/MCP_REPLACEMENT_GUIDE.md
+  add_skill: .claude/skills/<skill-name>/SKILL.md
+  add_subagent: .claude/agents/<agent-name>.md
+  add_command: .claude/commands/<command-name>.md
+  add_rule: .claude/rules/<rule-name>.md

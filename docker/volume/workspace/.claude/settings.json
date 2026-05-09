@@ -1,34 +1,122 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
     "allow": [
       "Read(./**)",
-      "Grep(./**)",
-      "Glob(./**)",
-      "Read(/data/uploads/**)",
-      "Read(/data/outputs/**)"
+      "Glob",
+      "Grep",
+      "Bash(python mcp_servers/**)",
+      "Bash(python -m pytest *)",
+      "Bash(jq *)",
+      "Bash(cat templates/**)",
+      "mcp__soc-data__.*",
+      "mcp__security-kb__.*",
+      "mcp__report-template__.*",
+      "mcp__response-orchestrator__create_response_plan",
+      "mcp__response-orchestrator__dry_run_action"
     ],
     "ask": [
-      "Write(/data/outputs/**)",
-      "Edit(/data/outputs/**)",
-      "Bash(python /workspace/hooks/*.py *)",
-      "Bash(python /workspace/.claude/skills/*/scripts/*.py *)"
+      "Bash(*)",
+      "Edit(./**)",
+      "Write(./**)",
+      "mcp__response-orchestrator__execute_.*",
+      "mcp__.*__.*write.*",
+      "mcp__.*__.*update.*",
+      "mcp__.*__.*delete.*"
     ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
-      "Read(/root/.claude/.credentials.json)",
-      "Read(/root/.claude/.credentials.*)",
-      "Read(/root/.claude.json)",
-      "Read(/data/claude-config/.claude.json)",
-      "Read(/data/claude-config/backups/**)",
-      "Bash(rm *)",
-      "Bash(curl *)",
-      "Bash(wget *)",
-      "Bash(ssh *)",
-      "Bash(scp *)",
-      "Bash(kubectl *)",
-      "Bash(docker *)"
+      "Read(../claude-root/.claude.json)",
+      "Read(../claude-root/.claude/projects/**)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(:(){ :|:& };:*)",
+      "Bash(curl *|sh*)",
+      "Bash(wget *|sh*)"
     ]
-  }
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "检查安全运营动作风险"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/post_tool_audit.py\"",
+            "async": true,
+            "timeout": 10,
+            "statusMessage": "记录工具调用审计摘要"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/session_start.py\"",
+            "timeout": 5,
+            "statusMessage": "加载安全运营会话提示"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": {
+      "allowWrite": [
+        "/data/outputs",
+        "/data/transcripts",
+        "./"
+      ],
+      "denyRead": [
+        "./.env",
+        "./secrets",
+        "../claude-root/.claude.json"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "localhost",
+        "host.docker.internal",
+        "*.internal",
+        "*.corp"
+      ],
+      "deniedDomains": []
+    }
+  },
+  "skillOverrides": {
+    "policy-change": "user-invocable-only",
+    "incident-response": "user-invocable-only"
+  },
+  "spinnerTipsOverride": {
+    "excludeDefault": false,
+    "tips": [
+      "安全运营任务默认先收集证据，再给结论。",
+      "生产处置动作需要审批、dry-run、回滚和验证。"
+    ]
+  },
+  "includeGitInstructions": false
 }

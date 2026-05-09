@@ -16,6 +16,7 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
         _env_file=None,
         WORKSPACE_DIR=workspace,
         DATA_DIR=data,
+        CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
         HOST_WORKSPACE_MOUNT="./docker/volume/workspace",
         HOST_CLAUDE_ROOT_MOUNT="./docker/volume/claude-root",
@@ -25,6 +26,7 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     by_kind = {(item.scope, item.kind): item for item in response.mappings}
 
     assert response.claude_config_mode == "native"
+    assert response.claude_root == str(claude_root)
     assert response.claude_config_dir is None
     assert response.claude_global_config_file == str(claude_root / ".claude.json")
     assert response.setting_sources_effective == ["user", "project", "local"]

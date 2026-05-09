@@ -19,6 +19,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     API_PORT=8080 \
     WORKSPACE_DIR=/workspace \
     DATA_DIR=/data \
+    CLAUDE_ROOT=/root \
     CLAUDE_HOME=/root/.claude
 
 WORKDIR /app

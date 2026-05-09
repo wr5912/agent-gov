@@ -88,6 +88,7 @@ async def health() -> dict[str, object]:
         "host_port": settings.host_port,
         "workspace_dir": str(settings.workspace_dir),
         "data_dir": str(settings.data_dir),
+        "claude_root": str(settings.claude_root),
         "claude_home": str(settings.claude_home),
         "claude_config_mode": settings.claude_config_mode,
         "claude_config_dir": str(settings.resolved_claude_config_dir) if settings.resolved_claude_config_dir else None,

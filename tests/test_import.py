@@ -6,6 +6,8 @@ def test_import_app(monkeypatch):
     monkeypatch.setenv("WORKSPACE_DIR", str(root / "docker" / "volume" / "workspace"))
     monkeypatch.setenv("DATA_DIR", str(root / "docker" / "volume" / "data"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    monkeypatch.setenv("CLAUDE_HOME", str(root / "docker" / "volume" / "claude-root" / ".claude"))
+    claude_root = root / "docker" / "volume" / "claude-root"
+    monkeypatch.setenv("CLAUDE_ROOT", str(claude_root))
+    monkeypatch.setenv("CLAUDE_HOME", str(claude_root / ".claude"))
 
     import app.main  # noqa: F401

@@ -10,7 +10,7 @@ def _host_path(path: Path, settings: AppSettings) -> str | None:
     pairs = [
         (settings.workspace_dir, settings.host_workspace_mount),
         (settings.data_dir, settings.host_data_mount),
-        (settings.claude_home.parent, settings.host_claude_root_mount),
+        (settings.claude_root, settings.host_claude_root_mount),
     ]
     for container_root, host_root in pairs:
         try:
@@ -225,6 +225,7 @@ def build_config_mapping(settings: AppSettings) -> ConfigMappingResponse:
 
     return ConfigMappingResponse(
         claude_config_mode=settings.claude_config_mode,
+        claude_root=str(settings.claude_root),
         claude_home=str(settings.claude_home),
         claude_global_config_file=str(settings.claude_global_config_file),
         claude_config_dir=str(settings.resolved_claude_config_dir) if settings.resolved_claude_config_dir else None,

@@ -319,6 +319,7 @@ make setup
 source .venv/bin/activate
 export WORKSPACE_DIR=$PWD/docker/volume/workspace
 export DATA_DIR=$PWD/docker/volume/data
-export CLAUDE_HOME=$PWD/docker/volume/claude-root/.claude
+export CLAUDE_ROOT=$PWD/docker/volume/claude-root
+export CLAUDE_HOME=$CLAUDE_ROOT/.claude
 .venv/bin/python -m uvicorn app.main:app --reload --host "${API_HOST:-127.0.0.1}" --port "${API_PORT:-8080}"
 ```

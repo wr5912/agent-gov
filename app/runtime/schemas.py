@@ -82,6 +82,7 @@ class ConfigMappingItem(BaseModel):
 
 class ConfigMappingResponse(BaseModel):
     claude_config_mode: str
+    claude_root: str
     claude_home: str
     claude_global_config_file: str
     claude_config_dir: Optional[str] = None

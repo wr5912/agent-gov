@@ -44,6 +44,7 @@ class AppSettings(BaseSettings):
 
     workspace_dir: Path = Field(default=Path("/workspace"), alias="WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
+    claude_root: Path = Field(default=Path("/root"), alias="CLAUDE_ROOT")
     claude_home: Path = Field(default=Path("/root/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
@@ -112,7 +113,7 @@ class AppSettings(BaseSettings):
     def claude_global_config_file(self) -> Path:
         if self.claude_config_dir:
             return self.claude_config_dir / ".claude.json"
-        return self.claude_home.parent / ".claude.json"
+        return self.claude_root / ".claude.json"
 
     @property
     def claude_projects_dir(self) -> Path:

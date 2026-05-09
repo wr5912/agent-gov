@@ -27,9 +27,10 @@ services:
       HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/workspace}
       DATA_DIR: ${DATA_DIR:-/data}
-      CLAUDE_HOME: ${CLAUDE_HOME:-/root/.claude}
+      CLAUDE_ROOT: ${CLAUDE_ROOT:-/root}
+      CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/root}/.claude}
     volumes:
       - ${HOST_WORKSPACE_MOUNT:-./volume/workspace}:${WORKSPACE_DIR:-/workspace}
       - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}:/root
+      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}:${CLAUDE_ROOT:-/root}
     restart: unless-stopped

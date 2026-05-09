@@ -17,6 +17,7 @@ def _settings(tmp_path):
         _env_file=None,
         WORKSPACE_DIR=workspace,
         DATA_DIR=data,
+        CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
         ENABLE_POLICY_HOOKS=True,
     )
@@ -113,6 +114,7 @@ def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
         _env_file=None,
         WORKSPACE_DIR=base.workspace_dir,
         DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
         CLAUDE_SETTINGS_PATH=settings_path,
         CLAUDE_MCP_CONFIG_PATH=mcp_path,

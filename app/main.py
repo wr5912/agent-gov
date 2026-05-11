@@ -100,6 +100,12 @@ async def health() -> dict[str, object]:
         "provider_api_url_configured": bool(settings.provider_api_url),
         "provider_api_key_configured": bool(settings.provider_api_key),
         "programmatic_agents": settings.enable_programmatic_agents,
+        "langfuse_enabled": settings.langfuse_enabled,
+        "langfuse_base_url": settings.langfuse_base_url,
+        "langfuse_otel_endpoint_configured": bool(settings.langfuse_otel_endpoint),
+        "langfuse_public_key_configured": bool(settings.langfuse_public_key),
+        "langfuse_secret_key_configured": bool(settings.langfuse_secret_key),
+        "langfuse_otel_signals": settings.langfuse_otel_signals,
         "docs": {
             "swagger": app.docs_url,
             "redoc": app.redoc_url,

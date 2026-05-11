@@ -47,12 +47,17 @@
 │       ├── claude-root/
 │       │   ├── .claude/                 # 用户级 Claude Code 配置
 │       │   └── .claude.json             # Claude Code 全局状态，不提交
-│       └── data/
-│           ├── sessions/                # API session -> Claude SDK session 映射
-│           ├── transcripts/             # 预留 transcript 持久化目录
-│           ├── uploads/                 # 预留用户上传文件目录
-│           ├── outputs/                 # 预留 Agent 输出文件目录
-│           └── agent-memory/            # 预留 API 侧 Agent 记忆/缓存目录
+│       ├── data/
+│       │   ├── sessions/                # API session -> Claude SDK session 映射
+│       │   ├── transcripts/             # 预留 transcript 持久化目录
+│       │   ├── uploads/                 # 预留用户上传文件目录
+│       │   ├── outputs/                 # 预留 Agent 输出文件目录
+│       │   └── agent-memory/            # 预留 API 侧 Agent 记忆/缓存目录
+│       └── langfuse/                    # 可选 Langfuse profile 运行数据，不提交
+│           ├── postgres/
+│           ├── clickhouse/
+│           ├── redis/
+│           └── minio/
 └── requirements.txt
 ```
 
@@ -91,6 +96,87 @@ make logs
 ```bash
 make smoke
 ```
+
+## Langfuse 监控
+
+本项目通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse，不额外引入 Python tracing SDK。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。
+
+接入 Langfuse Cloud 或既有自托管实例时，最小配置为：
+
+```bash
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=pk-lf-xxxx
+LANGFUSE_SECRET_KEY=sk-lf-xxxx
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_OTEL_SIGNALS=traces,metrics,logs
+```
+
+其他区域或自托管环境：
+
+```bash
+# US Cloud
+LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
+
+# 自托管
+LANGFUSE_BASE_URL=http://langfuse.example.com
+# 或显式指定 OTLP endpoint
+LANGFUSE_OTEL_ENDPOINT=http://langfuse.example.com/api/public/otel
+```
+
+### 本地 Langfuse Docker profile
+
+Langfuse 自托管 profile 默认不随 API 启动。它按 Langfuse 官方 v3 低规模 Docker Compose 形态运行：`langfuse-web`、`langfuse-worker`、Postgres、ClickHouse、Redis、MinIO。持久化数据统一写入 `docker/volume/langfuse/`。ClickHouse 默认固定为 `24.3`，满足 Langfuse v3 的最低版本要求。
+
+启动本地 Langfuse：
+
+```bash
+make langfuse-up
+make langfuse-smoke
+```
+
+默认访问地址：
+
+- Langfuse UI: `http://localhost:53000`
+- MinIO API: `http://localhost:59000`
+- MinIO Console: `http://localhost:59001`
+
+这些端口均可在 `docker/.env` 中调整：`LANGFUSE_HOST_PORT`、`LANGFUSE_MINIO_HOST_PORT`、`LANGFUSE_MINIO_CONSOLE_HOST_PORT`。因为容器内端口 `3000`、`9000`、`9001` 均小于 `10000`，默认宿主机端口遵循项目规则 `50000 + 容器端口`。
+
+让 API 容器把 Claude Code telemetry 写入本地 Langfuse profile：
+
+```bash
+LANGFUSE_ENABLED=true
+LANGFUSE_PUBLIC_KEY=pk-lf-local-dev
+LANGFUSE_SECRET_KEY=sk-lf-local-dev
+LANGFUSE_BASE_URL=http://langfuse-web:3000
+```
+
+然后重启 API 并发起一次请求：
+
+```bash
+make up
+make smoke
+make chat
+```
+
+`docker/.env.example` 中提供了 headless initialization 默认值，会在首次启动 Langfuse 时创建本地开发用组织、项目、API key 和管理员账号。生产环境必须替换 `LANGFUSE_NEXTAUTH_SECRET`、`LANGFUSE_SALT`、`LANGFUSE_ENCRYPTION_KEY`、数据库密码、Redis 密码、MinIO 密码和初始化用户密码。
+
+停止 Langfuse profile：
+
+```bash
+make langfuse-stop
+```
+
+默认只导出结构化 telemetry。下面这些内容采集开关默认关闭，因为它们会把 prompt、工具输入输出或原始 API body 送到 Langfuse/OTEL 后端：
+
+```bash
+# OTEL_LOG_USER_PROMPTS=1
+# OTEL_LOG_TOOL_DETAILS=1
+# OTEL_LOG_TOOL_CONTENT=1
+# OTEL_LOG_RAW_API_BODIES=1
+```
+
+容器启动后可通过 `/health` 查看脱敏状态字段：`langfuse_enabled`、`langfuse_public_key_configured`、`langfuse_secret_key_configured`、`langfuse_otel_signals`。不要把真实 Langfuse key 写入 `docker/.env.example` 或提交到仓库。
 
 ## API 文档
 
@@ -306,7 +392,7 @@ docker/volume/data/sessions/*.json
 1. 更严格的鉴权和租户隔离。
 2. 每个租户独立 workspace/data volume。
 3. 独立 MCP Gateway，不让 Agent 直连高危 MCP。
-4. OpenTelemetry / Langfuse / Phoenix trace。
+4. Langfuse/OpenTelemetry 采样、脱敏、告警和保留策略。
 5. 高危工具 Human-in-the-loop 审批。
 6. 上传文件病毒扫描和敏感信息检测。
 7. 容器 seccomp/AppArmor/gVisor/Firecracker 隔离。

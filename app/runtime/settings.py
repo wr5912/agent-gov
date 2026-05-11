@@ -1,3 +1,4 @@
+import base64
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -93,6 +94,17 @@ class AppSettings(BaseSettings):
     claude_env_json: Optional[str] = Field(default=None, alias="CLAUDE_ENV_JSON")
     claude_extra_args_json: Optional[str] = Field(default=None, alias="CLAUDE_EXTRA_ARGS_JSON")
 
+    langfuse_enabled: bool = Field(default=False, alias="LANGFUSE_ENABLED")
+    langfuse_public_key: Optional[str] = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key: Optional[str] = Field(default=None, alias="LANGFUSE_SECRET_KEY")
+    langfuse_base_url: str = Field(default="https://cloud.langfuse.com", alias="LANGFUSE_BASE_URL")
+    langfuse_otel_endpoint: Optional[str] = Field(default=None, alias="LANGFUSE_OTEL_ENDPOINT")
+    langfuse_otel_signals_raw: str = Field(default="traces,metrics,logs", alias="LANGFUSE_OTEL_SIGNALS")
+    langfuse_service_name: str = Field(default="claude-agent-runtime-api", alias="LANGFUSE_SERVICE_NAME")
+    langfuse_deployment_environment: str = Field(default="local", alias="LANGFUSE_DEPLOYMENT_ENVIRONMENT")
+    langfuse_resource_attributes_raw: Optional[str] = Field(default=None, alias="LANGFUSE_RESOURCE_ATTRIBUTES")
+    langfuse_export_interval_ms: int = Field(default=1000, alias="LANGFUSE_EXPORT_INTERVAL_MS")
+
     @property
     def provider_api_key(self) -> Optional[str]:
         return self.model_provider_api_key or self.anthropic_api_key
@@ -168,6 +180,29 @@ class AppSettings(BaseSettings):
     @property
     def claude_extra_args(self) -> dict[str, str | None]:
         return _optional_string_dict(_json_object(self.claude_extra_args_json))
+
+    @property
+    def langfuse_otel_signals(self) -> list[str]:
+        allowed = {"traces", "metrics", "logs"}
+        return [signal for signal in _csv(self.langfuse_otel_signals_raw) if signal in allowed]
+
+    @property
+    def langfuse_effective_otel_endpoint(self) -> str:
+        if self.langfuse_otel_endpoint:
+            return self.langfuse_otel_endpoint
+        return f"{self.langfuse_base_url.rstrip('/')}/api/public/otel"
+
+    @property
+    def langfuse_otel_headers(self) -> str:
+        auth = base64.b64encode(f"{self.langfuse_public_key}:{self.langfuse_secret_key}".encode()).decode()
+        return f"Authorization=Basic {auth},x-langfuse-ingestion-version=4"
+
+    @property
+    def langfuse_resource_attributes(self) -> str:
+        parts = [f"deployment.environment={self.langfuse_deployment_environment}"]
+        if self.langfuse_resource_attributes_raw:
+            parts.append(self.langfuse_resource_attributes_raw.strip())
+        return ",".join(part for part in parts if part)
 
     @property
     def transcript_dir(self) -> Path:

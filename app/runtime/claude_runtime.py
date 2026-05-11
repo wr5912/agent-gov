@@ -98,6 +98,7 @@ class ClaudeRuntime:
         from claude_agent_sdk import ClaudeAgentOptions
 
         env = dict(os.environ)
+        env.update(self._build_langfuse_env())
         env.update(self.settings.claude_env)
         if self.settings.provider_api_key:
             env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
@@ -186,13 +187,41 @@ class ClaudeRuntime:
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return ClaudeAgentOptions(**kwargs)
 
+    def _build_langfuse_env(self) -> dict[str, str]:
+        if not self.settings.langfuse_enabled:
+            return {}
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            raise ValueError("LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY")
+
+        signals = set(self.settings.langfuse_otel_signals)
+        if not signals:
+            raise ValueError("LANGFUSE_OTEL_SIGNALS must include at least one of: traces, metrics, logs")
+
+        env = {
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": self.settings.langfuse_effective_otel_endpoint,
+            "OTEL_EXPORTER_OTLP_HEADERS": self.settings.langfuse_otel_headers,
+            "OTEL_SERVICE_NAME": self.settings.langfuse_service_name,
+            "OTEL_RESOURCE_ATTRIBUTES": self.settings.langfuse_resource_attributes,
+            "OTEL_METRIC_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_LOGS_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_TRACES_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+        }
+        if "traces" in signals:
+            env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
+            env["OTEL_TRACES_EXPORTER"] = "otlp"
+        if "metrics" in signals:
+            env["OTEL_METRICS_EXPORTER"] = "otlp"
+        if "logs" in signals:
+            env["OTEL_LOGS_EXPORTER"] = "otlp"
+        return env
+
     async def run(self, req: ChatRequest) -> dict[str, Any]:
         from claude_agent_sdk import ResultMessage, query
 
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         prompt = self._build_prompt(req)
-        options = self._build_options(req, session)
-
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
         usage: Optional[dict[str, Any]] = None
@@ -202,6 +231,7 @@ class ClaudeRuntime:
         sdk_session_id: Optional[str] = session.sdk_session_id
 
         try:
+            options = self._build_options(req, session)
             async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
                 plain = to_plain(msg)
                 plain["event"] = message_event_name(msg)
@@ -249,11 +279,11 @@ class ClaudeRuntime:
         yield {"event": "session", "data": {"session_id": session.session_id, "sdk_session_id": session.sdk_session_id}}
 
         prompt = self._build_prompt(req)
-        options = self._build_options(req, session)
         sdk_session_id: Optional[str] = session.sdk_session_id
         errors: list[str] = []
 
         try:
+            options = self._build_options(req, session)
             async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 plain = to_plain(msg)

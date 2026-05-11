@@ -1,4 +1,5 @@
 import asyncio
+import base64
 
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.schemas import ChatRequest
@@ -11,8 +12,8 @@ def _settings(tmp_path):
     data = tmp_path / "docker" / "volume" / "data"
     claude_root = tmp_path / "docker" / "volume" / "claude-root"
     claude_home = claude_root / ".claude"
-    workspace.mkdir(parents=True)
-    claude_home.mkdir(parents=True)
+    workspace.mkdir(parents=True, exist_ok=True)
+    claude_home.mkdir(parents=True, exist_ok=True)
     return AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
@@ -87,6 +88,7 @@ def test_default_options_use_native_claude_code_config(tmp_path, monkeypatch):
     assert options.mcp_servers == {}
     assert options.agents is None
     assert "CLAUDE_CONFIG_DIR" not in options.env
+    assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
 def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
@@ -130,6 +132,161 @@ def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
     assert options.settings == str(settings_path)
     assert options.mcp_servers == str(mcp_path)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(config_dir)
+
+
+def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        ENABLE_POLICY_HOOKS=True,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        LANGFUSE_BASE_URL="https://us.cloud.langfuse.com",
+        LANGFUSE_OTEL_SIGNALS="traces,metrics,logs",
+        LANGFUSE_SERVICE_NAME="runtime-test",
+        LANGFUSE_DEPLOYMENT_ENVIRONMENT="test",
+        LANGFUSE_RESOURCE_ATTRIBUTES="service.version=0.1.0",
+        LANGFUSE_EXPORT_INTERVAL_MS=500,
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+    env = seen["options"].env
+    expected_auth = base64.b64encode(b"pk-test:sk-test").decode()
+
+    assert result["errors"] == []
+    assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
+    assert env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] == "1"
+    assert env["OTEL_TRACES_EXPORTER"] == "otlp"
+    assert env["OTEL_METRICS_EXPORTER"] == "otlp"
+    assert env["OTEL_LOGS_EXPORTER"] == "otlp"
+    assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://us.cloud.langfuse.com/api/public/otel"
+    assert env["OTEL_EXPORTER_OTLP_HEADERS"] == (
+        f"Authorization=Basic {expected_auth},x-langfuse-ingestion-version=4"
+    )
+    assert env["OTEL_SERVICE_NAME"] == "runtime-test"
+    assert env["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=test,service.version=0.1.0"
+    assert env["OTEL_TRACES_EXPORT_INTERVAL"] == "500"
+    assert "OTEL_LOG_USER_PROMPTS" not in env
+    assert "OTEL_LOG_TOOL_CONTENT" not in env
+    assert "OTEL_LOG_RAW_API_BODIES" not in env
+
+
+def test_langfuse_requires_keys_when_enabled(tmp_path):
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+
+    assert result["answer"] == ""
+    assert result["errors"] == [
+        "ValueError: LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
+    ]
+
+
+def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        ENABLE_POLICY_HOOKS=True,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        CLAUDE_ENV_JSON='{"OTEL_EXPORTER_OTLP_ENDPOINT":"http://collector:4318","OTEL_LOG_USER_PROMPTS":"1"}',
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+    env = seen["options"].env
+
+    assert result["errors"] == []
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
+    assert env["OTEL_LOG_USER_PROMPTS"] == "1"
+
+
+def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
+    from app.runtime.settings import get_settings
+
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path / "docker" / "volume" / "workspace"))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "docker" / "volume" / "data"))
+    monkeypatch.setenv("CLAUDE_ROOT", str(tmp_path / "docker" / "volume" / "claude-root"))
+    monkeypatch.setenv("CLAUDE_HOME", str(tmp_path / "docker" / "volume" / "claude-root" / ".claude"))
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    get_settings.cache_clear()
+
+    from app import main
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        LANGFUSE_OTEL_ENDPOINT="http://langfuse.local/api/public/otel",
+        LANGFUSE_OTEL_SIGNALS="traces,logs",
+    )
+    monkeypatch.setattr(main, "settings", settings)
+
+    result = asyncio.run(main.health())
+
+    assert result["langfuse_enabled"] is True
+    assert result["langfuse_otel_endpoint_configured"] is True
+    assert result["langfuse_public_key_configured"] is True
+    assert result["langfuse_secret_key_configured"] is True
+    assert result["langfuse_otel_signals"] == ["traces", "logs"]
+    serialized = str(result)
+    assert "pk-test" not in serialized
+    assert "sk-test" not in serialized
+    assert "OTEL_EXPORTER_OTLP_HEADERS" not in serialized
 
 
 def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):

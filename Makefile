@@ -3,7 +3,7 @@ PYTHON ?= $(VENV)/bin/python
 UV ?= uv
 COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 
-.PHONY: setup build up down logs test smoke zip chat langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
+.PHONY: setup build up down logs test smoke zip chat ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
 
 setup: langfuse-dirs
 	cp -n docker/.env.example docker/.env || true
@@ -28,6 +28,33 @@ down:
 
 logs:
 	$(COMPOSE) logs -f claude-agent-api
+
+ui-build:
+	$(COMPOSE) build claude-agent-ui
+
+ui-up:
+	$(COMPOSE) up -d claude-agent-ui
+
+ui-stop:
+	$(COMPOSE) stop claude-agent-ui
+
+ui-logs:
+	$(COMPOSE) logs -f claude-agent-ui
+
+ui-smoke:
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-55173}}; \
+	i=1; \
+	while [ $$i -le 30 ]; do \
+		if curl -fsS "$$frontend_url" >/dev/null; then \
+			echo "Frontend OK: $$frontend_url"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+		i=$$((i + 1)); \
+	done; \
+	echo "Frontend failed: $$frontend_url" >&2; \
+	exit 1
 
 langfuse-dirs:
 	mkdir -p docker/volume/langfuse/postgres docker/volume/langfuse/clickhouse/data docker/volume/langfuse/clickhouse/logs

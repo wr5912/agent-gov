@@ -85,6 +85,28 @@ services:
       - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}:${CLAUDE_ROOT:-/root}
     restart: unless-stopped
 
+  claude-agent-ui:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    image: claude-agent-runtime-ui:0.1.0
+    container_name: claude-agent-runtime-ui
+    ports:
+      - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"
+    env_file:
+      - .env
+    environment:
+      FRONTEND_PORT: ${FRONTEND_PORT:-5173}
+      VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:58080}
+      VITE_RUNTIME_API_KEY: ${FRONTEND_RUNTIME_API_KEY:-${API_KEY:-}}
+      VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
+    depends_on:
+      - claude-agent-api
+    restart: unless-stopped
+
   langfuse-worker:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}

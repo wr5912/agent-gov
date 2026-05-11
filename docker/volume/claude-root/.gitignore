@@ -1,0 +1,17 @@
+# 仅跟踪可共享的 Claude Code 用户级配置和 skills baseline。
+# 认证状态、会话、遥测、缓存和运行日志必须保持本地私有。
+.claude.json
+.claude/backups/
+.claude/sessions/
+.claude/projects/
+.claude/telemetry/
+.claude/session-env/
+.claude/logs/
+.claude/todos/
+.claude/ide/
+.claude/statsig/
+.claude/shell-snapshots/
+.claude/.credentials.json
+.claude/.last-cleanup
+.npm/
+.cache/

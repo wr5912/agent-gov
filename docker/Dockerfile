@@ -56,7 +56,10 @@ RUN python -m pip install --no-cache-dir uv \
     && uv pip install --system --no-cache -r /app/requirements.txt
 
 COPY app /app/app
+COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
-RUN mkdir -p /workspace /data /root/.claude
+RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
+    && mkdir -p /workspace /data /root/.claude
 
+ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

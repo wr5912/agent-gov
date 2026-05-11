@@ -81,7 +81,7 @@ AGENT_MODEL=claude-sonnet-4-5
 
 Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，uv/pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `docker/.env` 中的 `PYTHON_IMAGE`、`APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。`PYTHON_IMAGE` 默认使用官方 Python 镜像；如果你的环境提供国内基础镜像，可在 `docker/.env` 中覆盖。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，方便直接写入 `docker/volume/data/`、`docker/volume/claude-root/` 和其他挂载目录。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `docker/volume/data/`、`docker/volume/claude-root/`、`docker/volume/workspace/` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 

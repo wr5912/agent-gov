@@ -24,6 +24,8 @@
 ├── docker/
 │   ├── Dockerfile
 │   ├── Dockerfile.dockerignore
+│   ├── frontend.Dockerfile
+│   ├── frontend.Dockerfile.dockerignore
 │   ├── docker-compose.yml
 │   ├── .env.example
 │   ├── .env                           # 本地环境变量，不提交
@@ -58,6 +60,10 @@
 │           ├── clickhouse/
 │           ├── redis/
 │           └── minio/
+├── frontend/                            # React/Vite Playground UI
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.ts
 └── requirements.txt
 ```
 
@@ -100,6 +106,57 @@ make logs
 ```bash
 make smoke
 ```
+
+## 前端 Playground UI
+
+`frontend/` 是一个轻量 React/Vite 前端，用于对接本项目已有的 Claude Agent Runtime API。它提供 Runtime 健康状态展示、流式聊天、会话列表和删除、subagents/skills 发现、Claude 配置映射摘要，以及浏览器本地保存的 Playground 消息记录和 API 设置。前端默认使用 Claude 暖色系界面。
+
+先启动后端：
+
+```bash
+make up
+```
+
+启动前端开发服务：
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+打开：
+
+```text
+http://localhost:5173
+```
+
+Runtime API 设置默认读取前端环境变量：`VITE_RUNTIME_API_BASE` 默认是 `http://localhost:58080`，`VITE_RUNTIME_API_KEY` 可填后端 `docker/.env` 中的 `API_KEY`。开发模式下，Vite 会把 `/api`、`/health`、`/v1` 代理到 `VITE_DEV_PROXY_TARGET`，默认也是 `http://localhost:58080`。
+
+前端构建检查：
+
+```bash
+npm run build
+npm run preview
+```
+
+Docker Compose 前端服务使用 `docker/.env` 注入配置：
+
+```bash
+make ui-build
+make ui-up
+make ui-smoke
+```
+
+默认访问地址：
+
+```text
+http://localhost:55173
+```
+
+相关配置项为 `FRONTEND_HOST_PORT`、`FRONTEND_RUNTIME_API_BASE`、`FRONTEND_RUNTIME_API_KEY`。`FRONTEND_RUNTIME_API_KEY` 留空时，Compose 会复用 `API_KEY`。
+
+这个 UI 只做 Playground，不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。所有执行都通过后端 Runtime API 完成。
 
 ## Langfuse 监控
 

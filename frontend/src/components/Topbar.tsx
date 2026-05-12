@@ -3,12 +3,13 @@ import type { RuntimeHealth } from "../types/runtime";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
+  apiDocsUrl: string;
   loading: boolean;
   onRefresh: () => void;
   onOpenSettings: () => void;
 }
 
-export function Topbar({ health, loading, onRefresh, onOpenSettings }: TopbarProps) {
+export function Topbar({ health, apiDocsUrl, loading, onRefresh, onOpenSettings }: TopbarProps) {
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -19,7 +20,7 @@ export function Topbar({ health, loading, onRefresh, onOpenSettings }: TopbarPro
       </div>
       <div className="topbar-actions">
         <button className="ghost-button" onClick={onRefresh} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /> 刷新</button>
-        <a className="ghost-button" href="/docs" target="_blank" rel="noreferrer"><BookOpen size={15} /> API Docs</a>
+        <a className="ghost-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><BookOpen size={15} /> API Docs</a>
         <button className="ghost-button" onClick={onOpenSettings}><Settings size={15} /> 设置</button>
       </div>
     </header>

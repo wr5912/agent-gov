@@ -88,11 +88,13 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   createdAt: string;
+  /** 当前 assistant 回复捕获到的完整 SSE 时间线。 */
   events?: StreamLogEvent[];
 }
 
 export interface StreamLogEvent {
   id: string;
+  /** 原始 SSE 事件名，例如 session、message、result、error 或 done。 */
   event: string;
   text?: string;
   data?: unknown;

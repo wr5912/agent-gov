@@ -55,8 +55,23 @@ COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --no-cache-dir uv \
     && uv pip install --system --no-cache -r /app/requirements.txt
 
+COPY docker/a2ui-requirements.txt /app/docker/a2ui-requirements.txt
+COPY docker/vendor/A2UI /app/vendor/A2UI
+# a2ui-agent-sdk 来自 Google A2UI v0.9 的 agent_sdks/python 子目录。
+# 源码已 vendor 到仓库，避免镜像构建依赖 GitHub；PyPI 依赖仍在 build 阶段下载。
+RUN set -eux; \
+    uv pip install --system --no-cache \
+        -r /app/docker/a2ui-requirements.txt \
+        /app/vendor/A2UI/agent_sdks/python; \
+    LITELLM_LOCAL_MODEL_COST_MAP=True python -c "import importlib; [importlib.import_module(name) for name in ('a2a', 'google.adk', 'google.genai', 'litellm', 'jsonschema', 'dotenv', 'click', 'a2ui')]"
+
+ENV LITELLM_LOCAL_MODEL_COST_MAP=True
+
 COPY app /app/app
+COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
-RUN mkdir -p /workspace /data /root/.claude
+RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
+    && mkdir -p /workspace /data /root/.claude
 
+ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

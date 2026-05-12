@@ -1,0 +1,37 @@
+{
+  "name": "a2ui-adk",
+  "version": "1.0.0",
+  "description": "Agent skill for building Google ADK agents with A2UI declarative UI format. Includes Tailwind CSS + shadcn/ui design system for beautiful, modern components.",
+  "keywords": [
+    "skill",
+    "agent-skill",
+    "claude-code",
+    "cursor",
+    "windsurf",
+    "cline",
+    "a2ui",
+    "adk",
+    "google-adk",
+    "agent-to-user-interface",
+    "declarative-ui",
+    "server-driven-ui",
+    "a2a-protocol",
+    "tailwind",
+    "shadcn",
+    "shadcn-ui",
+    "genui",
+    "agent-ui",
+    "google-agent-development-kit",
+    "llm-ui",
+    "agentic-ui",
+    "ai-agent",
+    "ai-coding"
+  ],
+  "author": "coolxeo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/coolxeo/a2ui-adk"
+  },
+  "homepage": "https://github.com/coolxeo/a2ui-adk#readme"
+}

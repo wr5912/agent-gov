@@ -189,7 +189,7 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
 
   if (envelope.event === "message" && isRecord(envelope.data)) {
     const text = stringOrUndefined(envelope.data.text) || "";
-    if (text) handlers.onText?.(text, envelope.data.raw ?? envelope.data);
+    if (text && shouldAppendMessageText(envelope.data)) handlers.onText?.(text, envelope.data.raw ?? envelope.data);
     return;
   }
 
@@ -217,4 +217,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function shouldAppendMessageText(data: Record<string, unknown>): boolean {
+  const sdkEvent = stringOrUndefined(data.event);
+  if (!sdkEvent) return true;
+  return sdkEvent.startsWith("AssistantMessage");
 }

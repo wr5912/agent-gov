@@ -1,3 +1,4 @@
+.idea
 /.env
 docker/.env
 .venv/
@@ -9,7 +10,6 @@ __pycache__/
 .data/
 /data/
 /claude-root/
-docker/volume/claude-root/
 docker/volume/langfuse/
 docker/volume/data/claude-config/
 docker/volume/data/sessions/*

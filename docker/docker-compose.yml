@@ -79,6 +79,7 @@ services:
       DATA_DIR: ${DATA_DIR:-/data}
       CLAUDE_ROOT: ${CLAUDE_ROOT:-/root}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/root}/.claude}
+      LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
     volumes:
       - ${HOST_WORKSPACE_MOUNT:-./volume/workspace}:${WORKSPACE_DIR:-/workspace}
       - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}

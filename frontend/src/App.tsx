@@ -6,7 +6,7 @@ import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import type { AgentInfo, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamLogEvent } from "./types/runtime";
+import type { AgentInfo, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import "./styles.css";
 
 function newId(prefix: string) {
@@ -16,6 +16,22 @@ function newId(prefix: string) {
 
 function parseCsv(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function makeApiDocsUrl(apiBase: string): string {
+  const base = apiBase.trim().replace(/\/$/, "");
+  if (!base) return "/docs";
+  return `${base}/docs`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function messageTextFromEnvelope(envelope: StreamEnvelope): string | undefined {
+  if (envelope.event !== "message" || !isRecord(envelope.data)) return undefined;
+  const text = envelope.data.text;
+  return typeof text === "string" ? text : undefined;
 }
 
 export default function App() {
@@ -48,6 +64,7 @@ export default function App() {
     apiBase: clientConfig.apiBase || runtimeDefaults.apiBase,
     apiKey: clientConfig.apiKey || runtimeDefaults.apiKey,
   }), [clientConfig, runtimeDefaults]);
+  const apiDocsUrl = useMemo(() => makeApiDocsUrl(effectiveClientConfig.apiBase), [effectiveClientConfig.apiBase]);
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
 
@@ -160,6 +177,21 @@ export default function App() {
     const controller = new AbortController();
     abortRef.current = controller;
 
+    const appendAssistantEvent = (event: StreamLogEvent) => {
+      setStreamEvents((prev) => [...prev.slice(-199), event]);
+      updateSessionMessages(sessionId, (prev) => {
+        const next = [...prev];
+        const last = next[next.length - 1];
+        if (last?.role === "assistant") {
+          next[next.length - 1] = {
+            ...last,
+            events: [...(last.events || []), event],
+          };
+        }
+        return next;
+      });
+    };
+
     try {
       await streamChat(
         effectiveClientConfig,
@@ -186,20 +218,13 @@ export default function App() {
             const event: StreamLogEvent = {
               id: newId("evt"),
               event: envelope.event,
+              text: messageTextFromEnvelope(envelope),
               data: envelope.data,
               createdAt: new Date().toISOString(),
             };
-            setStreamEvents((prev) => [...prev.slice(-199), event]);
+            appendAssistantEvent(event);
           },
-          onText: (text, raw) => {
-            const event: StreamLogEvent = {
-              id: newId("evt"),
-              event: "message",
-              text,
-              data: raw,
-              createdAt: new Date().toISOString(),
-            };
-            setStreamEvents((prev) => [...prev.slice(-199), event]);
+          onText: (text) => {
             updateSessionMessages(sessionId, (prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
@@ -207,20 +232,10 @@ export default function App() {
                 next[next.length - 1] = {
                   ...last,
                   content: `${last.content}${text}`,
-                  events: [...(last.events || []), event],
                 };
               }
               return next;
             });
-          },
-          onResult: (result) => {
-            const event: StreamLogEvent = {
-              id: newId("evt"),
-              event: "result",
-              data: result,
-              createdAt: new Date().toISOString(),
-            };
-            setStreamEvents((prev) => [...prev.slice(-199), event]);
           },
           onError: (messageText) => {
             setLastError(messageText);
@@ -244,6 +259,12 @@ export default function App() {
     } catch (error) {
       if ((error as Error).name !== "AbortError") {
         const messageText = error instanceof Error ? error.message : String(error);
+        appendAssistantEvent({
+          id: newId("evt"),
+          event: "error",
+          data: { message: messageText },
+          createdAt: new Date().toISOString(),
+        });
         setLastError(messageText);
         updateSessionMessages(sessionId, (prev) => {
           const next = [...prev];
@@ -268,7 +289,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Topbar health={health} loading={loading} onRefresh={refresh} onOpenSettings={() => setSettingsOpen(true)} />
+      <Topbar health={health} apiDocsUrl={apiDocsUrl} loading={loading} onRefresh={refresh} onOpenSettings={() => setSettingsOpen(true)} />
       <div className="layout">
         <Sidebar
           sessions={mergedSessions}

@@ -24,6 +24,10 @@ function makeApiDocsUrl(apiBase: string): string {
   return `${base}/docs`;
 }
 
+function defaultLangfuseUrl(): string {
+  return (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -65,6 +69,7 @@ export default function App() {
     apiKey: clientConfig.apiKey || runtimeDefaults.apiKey,
   }), [clientConfig, runtimeDefaults]);
   const apiDocsUrl = useMemo(() => makeApiDocsUrl(effectiveClientConfig.apiBase), [effectiveClientConfig.apiBase]);
+  const langfuseUrl = useMemo(() => defaultLangfuseUrl(), []);
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
 
@@ -289,7 +294,14 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      <Topbar health={health} apiDocsUrl={apiDocsUrl} loading={loading} onRefresh={refresh} onOpenSettings={() => setSettingsOpen(true)} />
+      <Topbar
+        health={health}
+        apiDocsUrl={apiDocsUrl}
+        langfuseUrl={langfuseUrl}
+        loading={loading}
+        onRefresh={refresh}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
       <div className="layout">
         <Sidebar
           sessions={mergedSessions}

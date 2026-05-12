@@ -103,6 +103,7 @@ services:
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
       VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:58080}
       VITE_RUNTIME_API_KEY: ${FRONTEND_RUNTIME_API_KEY:-${API_KEY:-}}
+      VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}}
       VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
     depends_on:
       - claude-agent-api

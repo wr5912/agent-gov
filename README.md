@@ -154,7 +154,7 @@ make ui-smoke
 http://localhost:55173
 ```
 
-相关配置项为 `FRONTEND_HOST_PORT`、`FRONTEND_RUNTIME_API_BASE`、`FRONTEND_RUNTIME_API_KEY`。`FRONTEND_RUNTIME_API_KEY` 留空时，Compose 会复用 `API_KEY`。
+相关配置项为 `FRONTEND_HOST_PORT`、`FRONTEND_RUNTIME_API_BASE`、`FRONTEND_RUNTIME_API_KEY`、`FRONTEND_LANGFUSE_URL`。`FRONTEND_RUNTIME_API_KEY` 留空时，Compose 会复用 `API_KEY`。
 
 这个 UI 只做 Playground，不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。所有执行都通过后端 Runtime API 完成。
 

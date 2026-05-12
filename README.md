@@ -160,7 +160,7 @@ http://localhost:55173
 
 ## Langfuse 监控
 
-本项目通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse，不额外引入 Python tracing SDK。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。
+本项目优先通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。
 
 接入 Langfuse Cloud 或既有自托管实例时，最小配置为：
 
@@ -183,6 +183,17 @@ LANGFUSE_BASE_URL=http://langfuse.example.com
 # 或显式指定 OTLP endpoint
 LANGFUSE_OTEL_ENDPOINT=http://langfuse.example.com/api/public/otel
 ```
+
+### Runtime enrich 与 input/output
+
+仅依赖 Claude Code OTEL 时，Langfuse 中可能可以看到 `claude_code.interaction`、`claude_code.llm_request`、tool span、metrics 和 logs，但标准 observation 的 `input` / `output` 不一定完整。原因是 Claude Code OTEL 主要导出 Claude Code 自身的链路结构和事件，trace 顶层 `input` / `output` 需要由 Runtime 在 API 调用结束后补齐。
+
+为补齐 API 层可读的请求和响应，Runtime 会在启用 Langfuse 且配置了 public/secret key 时额外创建两类 observation：
+
+- `runtime.chat`：API 层根 span，记录请求输入、最终回答、SDK 消息、usage、cost、stop_reason 和 errors，并写入 trace-level `input` / `output`。
+- `runtime.claude_sdk_query`：Claude SDK 调用 generation，记录实际 prompt/model，并在调用结束后写入输出、token usage、成本和错误状态。
+
+本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`，并把 Runtime enrich 的请求/响应原样写入 Langfuse，便于在同一条 trace 中查看 prompt、工具参数、工具结果、raw API body 和最终输出。
 
 ### 本地 Langfuse Docker profile
 
@@ -228,16 +239,16 @@ make chat
 make langfuse-stop
 ```
 
-默认只导出结构化 telemetry。下面这些内容采集开关默认关闭，因为它们会把 prompt、工具输入输出或原始 API body 送到 Langfuse/OTEL 后端：
+启用 Langfuse 后，Runtime 默认把以下 Claude Code 内容采集开关传给子进程：
 
 ```bash
-# OTEL_LOG_USER_PROMPTS=1
-# OTEL_LOG_TOOL_DETAILS=1
-# OTEL_LOG_TOOL_CONTENT=1
-# OTEL_LOG_RAW_API_BODIES=1
+OTEL_LOG_USER_PROMPTS=1
+OTEL_LOG_TOOL_DETAILS=1
+OTEL_LOG_TOOL_CONTENT=1
+OTEL_LOG_RAW_API_BODIES=1
 ```
 
-容器启动后可通过 `/health` 查看脱敏状态字段：`langfuse_enabled`、`langfuse_public_key_configured`、`langfuse_secret_key_configured`、`langfuse_otel_signals`。不要把真实 Langfuse key 写入 `docker/.env.example` 或提交到仓库。
+容器启动后可通过 `/health` 查看状态字段：`langfuse_enabled`、`langfuse_public_key_configured`、`langfuse_secret_key_configured`、`langfuse_otel_signals`。不要把真实 Langfuse key 写入 `docker/.env.example` 或提交到仓库。
 
 ## API 文档
 
@@ -453,7 +464,7 @@ docker/volume/data/sessions/*.json
 1. 更严格的鉴权和租户隔离。
 2. 每个租户独立 workspace/data volume。
 3. 独立 MCP Gateway，不让 Agent 直连高危 MCP。
-4. Langfuse/OpenTelemetry 采样、脱敏、告警和保留策略。
+4. 线上 OpenTelemetry 后端的采样、告警和保留策略。
 5. 高危工具 Human-in-the-loop 审批。
 6. 上传文件病毒扫描和敏感信息检测。
 7. 容器 seccomp/AppArmor/gVisor/Firecracker 隔离。

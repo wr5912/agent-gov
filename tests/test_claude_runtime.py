@@ -7,6 +7,41 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
 
+class FakeLangfuseObservation:
+    def __init__(self, kwargs):
+        self.kwargs = kwargs
+        self.updates = []
+        self.trace_io_updates = []
+        self.exited = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        self.exited = True
+        return False
+
+    def update(self, **kwargs):
+        self.updates.append(kwargs)
+
+    def set_trace_io(self, **kwargs):
+        self.trace_io_updates.append(kwargs)
+
+
+class FakeLangfuseClient:
+    def __init__(self):
+        self.observations = []
+        self.flushed = False
+
+    def start_as_current_observation(self, **kwargs):
+        observation = FakeLangfuseObservation(kwargs)
+        self.observations.append(observation)
+        return observation
+
+    def flush(self):
+        self.flushed = True
+
+
 def _settings(tmp_path):
     workspace = tmp_path / "docker" / "volume" / "workspace"
     data = tmp_path / "docker" / "volume" / "data"
@@ -124,6 +159,7 @@ def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
         ENABLE_POLICY_HOOKS=True,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     options = seen["options"]
@@ -167,6 +203,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         LANGFUSE_EXPORT_INTERVAL_MS=500,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     env = seen["options"].env
@@ -186,9 +223,10 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
     assert env["OTEL_SERVICE_NAME"] == "runtime-test"
     assert env["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=test,service.version=0.1.0"
     assert env["OTEL_TRACES_EXPORT_INTERVAL"] == "500"
-    assert "OTEL_LOG_USER_PROMPTS" not in env
-    assert "OTEL_LOG_TOOL_CONTENT" not in env
-    assert "OTEL_LOG_RAW_API_BODIES" not in env
+    assert env["OTEL_LOG_USER_PROMPTS"] == "1"
+    assert env["OTEL_LOG_TOOL_DETAILS"] == "1"
+    assert env["OTEL_LOG_TOOL_CONTENT"] == "1"
+    assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
 
 
 def test_langfuse_requires_keys_when_enabled(tmp_path):
@@ -247,6 +285,9 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
     assert result["errors"] == []
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
     assert env["OTEL_LOG_USER_PROMPTS"] == "1"
+    assert env["OTEL_LOG_TOOL_DETAILS"] == "1"
+    assert env["OTEL_LOG_TOOL_CONTENT"] == "1"
+    assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
 
 
 def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
@@ -324,3 +365,124 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
 
     assert result["answer"] == "bad model"
     assert result["errors"] == ["Claude Code API error (404): bad model"]
+
+
+def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text="hello answer")],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="hello answer",
+            usage={"input_tokens": 3, "output_tokens": 5},
+            total_cost_usd=0.01,
+            stop_reason="end_turn",
+        )
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        ENABLE_POLICY_HOOKS=True,
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    fake_langfuse = FakeLangfuseClient()
+    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: fake_langfuse)
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello", metadata={"api_key": "secret"})))
+
+    assert result["answer"] == "hello answer"
+    assert fake_langfuse.flushed is True
+    assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
+        "runtime.chat",
+        "runtime.claude_sdk_query",
+    ]
+    root, generation = fake_langfuse.observations
+    assert root.kwargs["input"]["message"] == "hello"
+    assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
+    assert root.updates[-1]["output"]["answer"] == "hello answer"
+    assert root.updates[-1]["output"]["messages"][0]["event"] == "AssistantMessage"
+    assert root.trace_io_updates[-1]["input"]["metadata"]["api_key"] == "secret"
+    assert root.trace_io_updates[-1]["output"]["answer"] == "hello answer"
+    assert generation.updates[-1]["usage_details"] == {"input_tokens": 3, "output_tokens": 5}
+    assert generation.updates[-1]["cost_details"] == {"total_cost_usd": 0.01}
+
+
+def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text="stream answer")],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="stream answer",
+            usage={"input_tokens": 7, "output_tokens": 11},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        return [item async for item in runtime.stream(ChatRequest(message="stream"))]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        ENABLE_POLICY_HOOKS=True,
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    fake_langfuse = FakeLangfuseClient()
+    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: fake_langfuse)
+
+    events = asyncio.run(collect(runtime))
+
+    assert [event["event"] for event in events] == ["session", "message", "message", "result", "done"]
+    assert fake_langfuse.flushed is True
+    root, generation = fake_langfuse.observations
+    assert root.updates[-1]["output"]["answer"] == "stream answer"
+    assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
+    assert root.trace_io_updates[-1]["input"]["message"] == "stream"
+    assert root.trace_io_updates[-1]["output"]["answer"] == "stream answer"
+    assert generation.updates[-1]["usage_details"] == {"input_tokens": 7, "output_tokens": 11}

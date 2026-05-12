@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import warnings
+from contextlib import nullcontext
 from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Optional
@@ -26,6 +28,8 @@ class ClaudeRuntime:
     def __init__(self, settings: AppSettings, session_store: LocalSessionStore) -> None:
         self.settings = settings
         self.session_store = session_store
+        self._langfuse_client: Any | None = None
+        self._langfuse_unavailable = False
 
     def _build_prompt(self, req: ChatRequest) -> str:
         parts: list[str] = []
@@ -93,6 +97,135 @@ class ClaudeRuntime:
             seen.add(text)
             unique.append(text)
         return "\n".join(unique).strip()
+
+    def _request_telemetry_input(self, req: ChatRequest, prompt: str, session: LocalSession) -> dict[str, Any]:
+        allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
+        disallowed_tools = (
+            req.disallowed_tools
+            if req.disallowed_tools is not None
+            else self.settings.default_disallowed_tools
+        )
+        return {
+            "message": req.message,
+            "prompt": prompt,
+            "api_session_id": session.session_id,
+            "sdk_session_id": session.sdk_session_id,
+            "agent": req.agent or self.settings.default_agent,
+            "skills": req.skills if req.skills is not None else self.settings.default_skills,
+            "skills_mode": req.skills_mode or self.settings.default_skills_mode,
+            "allowed_tools": allowed_tools,
+            "disallowed_tools": disallowed_tools,
+            "max_turns": req.max_turns or self.settings.max_turns,
+            "model": req.model or self.settings.agent_model,
+            "permission_mode": req.permission_mode or self.settings.permission_mode,
+            "system_append": req.system_append,
+            "metadata": req.metadata,
+        }
+
+    def _runtime_output_payload(
+        self,
+        *,
+        session: LocalSession,
+        sdk_session_id: Optional[str],
+        answer: str,
+        messages: list[dict[str, Any]],
+        usage: Any,
+        total_cost_usd: Optional[float],
+        stop_reason: Optional[str],
+        errors: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "api_session_id": session.session_id,
+            "sdk_session_id": sdk_session_id,
+            "answer": answer,
+            "messages": messages,
+            "usage": to_plain(usage),
+            "total_cost_usd": total_cost_usd,
+            "stop_reason": stop_reason,
+            "errors": errors,
+        }
+
+    def _usage_details(self, usage: Any) -> Optional[dict[str, int]]:
+        plain = to_plain(usage)
+        if not isinstance(plain, dict):
+            return None
+        details: dict[str, int] = {}
+        for key, value in plain.items():
+            if isinstance(value, bool):
+                continue
+            if isinstance(value, int):
+                details[str(key)] = value
+        return details or None
+
+    def _cost_details(self, total_cost_usd: Optional[float]) -> Optional[dict[str, float]]:
+        if total_cost_usd is None:
+            return None
+        return {"total_cost_usd": float(total_cost_usd)}
+
+    def _get_langfuse_client(self) -> Any | None:
+        if not self.settings.langfuse_enabled or self._langfuse_unavailable:
+            return None
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            return None
+        if self._langfuse_client is not None:
+            return self._langfuse_client
+        try:
+            from langfuse import Langfuse
+
+            self._langfuse_client = Langfuse(
+                public_key=self.settings.langfuse_public_key,
+                secret_key=self.settings.langfuse_secret_key,
+                base_url=self.settings.langfuse_base_url,
+                environment=self.settings.langfuse_deployment_environment,
+                flush_interval=max(self.settings.langfuse_export_interval_ms / 1000, 0.1),
+            )
+            return self._langfuse_client
+        except Exception as exc:
+            self._langfuse_unavailable = True
+            print(f"[WARN] failed to initialize Langfuse runtime enrichment: {exc}", flush=True)
+            return None
+
+    def _start_langfuse_observation(self, **kwargs: Any) -> Any:
+        client = self._get_langfuse_client()
+        if client is None:
+            return nullcontext(None)
+        try:
+            return client.start_as_current_observation(**kwargs)
+        except Exception as exc:
+            print(f"[WARN] failed to start Langfuse observation: {exc}", flush=True)
+            return nullcontext(None)
+
+    def _update_langfuse_observation(self, observation: Any, **kwargs: Any) -> None:
+        if observation is None:
+            return
+        clean = {key: value for key, value in kwargs.items() if value is not None}
+        try:
+            observation.update(**clean)
+        except Exception as exc:
+            print(f"[WARN] failed to update Langfuse observation: {exc}", flush=True)
+
+    def _set_langfuse_trace_io(self, observation: Any, *, input: Any, output: Any) -> None:
+        if observation is None:
+            return
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Trace-level input/output is deprecated.*",
+                    category=DeprecationWarning,
+                )
+                observation.set_trace_io(input=input, output=output)
+        except Exception as exc:
+            print(f"[WARN] failed to set Langfuse trace input/output: {exc}", flush=True)
+
+    def _flush_langfuse(self) -> None:
+        client = self._langfuse_client or self._get_langfuse_client()
+        if client is None:
+            return
+        try:
+            client.flush()
+        except Exception as exc:
+            print(f"[WARN] failed to flush Langfuse runtime enrichment: {exc}", flush=True)
 
     def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
@@ -207,6 +340,10 @@ class ClaudeRuntime:
             "OTEL_METRIC_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
             "OTEL_LOGS_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
             "OTEL_TRACES_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_LOG_USER_PROMPTS": "1",
+            "OTEL_LOG_TOOL_DETAILS": "1",
+            "OTEL_LOG_TOOL_CONTENT": "1",
+            "OTEL_LOG_RAW_API_BODIES": "1",
         }
         if "traces" in signals:
             env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
@@ -222,6 +359,7 @@ class ClaudeRuntime:
 
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         prompt = self._build_prompt(req)
+        telemetry_input = self._request_telemetry_input(req, prompt, session)
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
         usage: Optional[dict[str, Any]] = None
@@ -230,28 +368,73 @@ class ClaudeRuntime:
         errors: list[str] = []
         sdk_session_id: Optional[str] = session.sdk_session_id
 
-        try:
-            options = self._build_options(req, session)
-            async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
-                plain = to_plain(msg)
-                plain["event"] = message_event_name(msg)
-                messages.append(plain)
-                text = extract_text(msg)
-                if text:
-                    answer_parts.append(text)
+        with self._start_langfuse_observation(
+            as_type="span",
+            name="runtime.chat",
+            input=telemetry_input,
+            metadata={"api_session_id": session.session_id, "mode": "non_stream"},
+        ) as root_span:
+            with self._start_langfuse_observation(
+                as_type="generation",
+                name="runtime.claude_sdk_query",
+                input={"prompt": prompt, "model": req.model or self.settings.agent_model},
+                model=req.model or self.settings.agent_model,
+            ) as generation:
+                try:
+                    options = self._build_options(req, session)
+                    async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
+                        plain = to_plain(msg)
+                        plain["event"] = message_event_name(msg)
+                        messages.append(plain)
+                        text = extract_text(msg)
+                        if text:
+                            answer_parts.append(text)
 
-                candidate_session_id = getattr(msg, "session_id", None)
-                if candidate_session_id:
-                    sdk_session_id = candidate_session_id
+                        candidate_session_id = getattr(msg, "session_id", None)
+                        if candidate_session_id:
+                            sdk_session_id = candidate_session_id
 
-                if isinstance(msg, ResultMessage):
-                    usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
-                    total_cost_usd = getattr(msg, "total_cost_usd", None)
-                    stop_reason = getattr(msg, "stop_reason", None)
-                    errors.extend(self._result_errors(msg))
-        except Exception as exc:
-            if not self._should_suppress_exception(exc, errors):
-                errors.append(f"{exc.__class__.__name__}: {exc}")
+                        if isinstance(msg, ResultMessage):
+                            usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
+                            total_cost_usd = getattr(msg, "total_cost_usd", None)
+                            stop_reason = getattr(msg, "stop_reason", None)
+                            errors.extend(self._result_errors(msg))
+                except Exception as exc:
+                    if not self._should_suppress_exception(exc, errors):
+                        errors.append(f"{exc.__class__.__name__}: {exc}")
+
+                answer = self._dedupe_answer_parts(answer_parts)
+                output = self._runtime_output_payload(
+                    session=session,
+                    sdk_session_id=sdk_session_id,
+                    answer=answer,
+                    messages=messages,
+                    usage=usage,
+                    total_cost_usd=total_cost_usd,
+                    stop_reason=stop_reason,
+                    errors=errors,
+                )
+                self._update_langfuse_observation(
+                    generation,
+                    output=output,
+                    usage_details=self._usage_details(usage),
+                    cost_details=self._cost_details(total_cost_usd),
+                    level="ERROR" if errors else "DEFAULT",
+                    status_message="\n".join(errors) if errors else None,
+                )
+            self._update_langfuse_observation(
+                root_span,
+                input=telemetry_input,
+                output=output,
+                level="ERROR" if errors else "DEFAULT",
+                status_message="\n".join(errors) if errors else None,
+            )
+            self._set_langfuse_trace_io(
+                root_span,
+                input=telemetry_input,
+                output=output,
+            )
+        self._flush_langfuse()
 
         if sdk_session_id:
             session.sdk_session_id = sdk_session_id
@@ -259,8 +442,6 @@ class ClaudeRuntime:
         if not session.title:
             session.title = req.message[:80]
         self.session_store.save(session)
-
-        answer = self._dedupe_answer_parts(answer_parts)
         return {
             "session_id": session.session_id,
             "sdk_session_id": session.sdk_session_id,
@@ -276,47 +457,104 @@ class ClaudeRuntime:
         from claude_agent_sdk import ResultMessage, query
 
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
-        yield {"event": "session", "data": {"session_id": session.session_id, "sdk_session_id": session.sdk_session_id}}
-
         prompt = self._build_prompt(req)
+        telemetry_input = self._request_telemetry_input(req, prompt, session)
         sdk_session_id: Optional[str] = session.sdk_session_id
+        messages: list[dict[str, Any]] = []
+        answer_parts: list[str] = []
+        usage: Any = None
+        total_cost_usd: Optional[float] = None
+        stop_reason: Optional[str] = None
         errors: list[str] = []
 
-        try:
-            options = self._build_options(req, session)
-            async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
-                text = extract_text(msg)
-                plain = to_plain(msg)
-                event = message_event_name(msg)
-                yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
+        with self._start_langfuse_observation(
+            as_type="span",
+            name="runtime.chat",
+            input=telemetry_input,
+            metadata={"api_session_id": session.session_id, "mode": "stream"},
+        ) as root_span:
+            yield {"event": "session", "data": {"session_id": session.session_id, "sdk_session_id": session.sdk_session_id}}
+            with self._start_langfuse_observation(
+                as_type="generation",
+                name="runtime.claude_sdk_query",
+                input={"prompt": prompt, "model": req.model or self.settings.agent_model},
+                model=req.model or self.settings.agent_model,
+            ) as generation:
+                try:
+                    options = self._build_options(req, session)
+                    async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
+                        text = extract_text(msg)
+                        plain = to_plain(msg)
+                        event = message_event_name(msg)
+                        plain["event"] = event
+                        messages.append(plain)
+                        if text:
+                            answer_parts.append(text)
+                        yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
 
-                candidate_session_id = getattr(msg, "session_id", None)
-                if candidate_session_id:
-                    sdk_session_id = candidate_session_id
+                        candidate_session_id = getattr(msg, "session_id", None)
+                        if candidate_session_id:
+                            sdk_session_id = candidate_session_id
 
-                if isinstance(msg, ResultMessage):
-                    result_errors = self._result_errors(msg)
-                    errors.extend(result_errors)
-                    yield {
-                        "event": "result",
-                        "data": {
-                            "session_id": session.session_id,
-                            "sdk_session_id": sdk_session_id,
-                            "usage": getattr(msg, "usage", None) or getattr(msg, "model_usage", None),
-                            "total_cost_usd": getattr(msg, "total_cost_usd", None),
-                            "stop_reason": getattr(msg, "stop_reason", None),
-                            "errors": result_errors,
-                        },
-                    }
-        except Exception as exc:
-            if not self._should_suppress_exception(exc, errors):
-                errors.append(f"{exc.__class__.__name__}: {exc}")
-                yield {"event": "error", "data": {"errors": errors}}
-        finally:
-            if sdk_session_id:
-                session.sdk_session_id = sdk_session_id
-            session.turns += 1
-            if not session.title:
-                session.title = req.message[:80]
-            self.session_store.save(session)
-            yield {"event": "done", "data": "[DONE]"}
+                        if isinstance(msg, ResultMessage):
+                            usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
+                            total_cost_usd = getattr(msg, "total_cost_usd", None)
+                            stop_reason = getattr(msg, "stop_reason", None)
+                            result_errors = self._result_errors(msg)
+                            errors.extend(result_errors)
+                            yield {
+                                "event": "result",
+                                "data": {
+                                    "session_id": session.session_id,
+                                    "sdk_session_id": sdk_session_id,
+                                    "usage": usage,
+                                    "total_cost_usd": total_cost_usd,
+                                    "stop_reason": stop_reason,
+                                    "errors": result_errors,
+                                },
+                            }
+                except Exception as exc:
+                    if not self._should_suppress_exception(exc, errors):
+                        errors.append(f"{exc.__class__.__name__}: {exc}")
+                        yield {"event": "error", "data": {"errors": errors}}
+                finally:
+                    if sdk_session_id:
+                        session.sdk_session_id = sdk_session_id
+                    session.turns += 1
+                    if not session.title:
+                        session.title = req.message[:80]
+                    self.session_store.save(session)
+
+                    answer = self._dedupe_answer_parts(answer_parts)
+                    output = self._runtime_output_payload(
+                        session=session,
+                        sdk_session_id=sdk_session_id,
+                        answer=answer,
+                        messages=messages,
+                        usage=usage,
+                        total_cost_usd=total_cost_usd,
+                        stop_reason=stop_reason,
+                        errors=errors,
+                    )
+                    self._update_langfuse_observation(
+                        generation,
+                        output=output,
+                        usage_details=self._usage_details(usage),
+                        cost_details=self._cost_details(total_cost_usd),
+                        level="ERROR" if errors else "DEFAULT",
+                        status_message="\n".join(errors) if errors else None,
+                    )
+                    self._update_langfuse_observation(
+                        root_span,
+                        input=telemetry_input,
+                        output=output,
+                        level="ERROR" if errors else "DEFAULT",
+                        status_message="\n".join(errors) if errors else None,
+                    )
+                    self._set_langfuse_trace_io(
+                        root_span,
+                        input=telemetry_input,
+                        output=output,
+                    )
+                    yield {"event": "done", "data": "[DONE]"}
+        self._flush_langfuse()

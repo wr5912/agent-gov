@@ -5,9 +5,7 @@ tools:
   - Read
   - Grep
   - Glob
-  - mcp__soc-data__.*
-  - mcp__security-kb__.*
-  - mcp__report-template__.*
+  - mcp__sec-ops-data__*
 model: inherit
 ---
 

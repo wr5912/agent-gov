@@ -158,6 +158,8 @@ http://localhost:55173
 
 这个 UI 只做 Playground，不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。所有执行都通过后端 Runtime API 完成。
 
+每条 Claude Agent 回复的“回复细节”会保留完整流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。
+
 ## Langfuse 监控
 
 本项目优先通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。
@@ -193,7 +195,7 @@ LANGFUSE_OTEL_ENDPOINT=http://langfuse.example.com/api/public/otel
 - `runtime.chat`：API 层根 span，记录请求输入、最终回答、SDK 消息、usage、cost、stop_reason 和 errors，并写入 trace-level `input` / `output`。
 - `runtime.claude_sdk_query`：Claude SDK 调用 generation，记录实际 prompt/model，并在调用结束后写入输出、token usage、成本和错误状态。
 
-本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`，并把 Runtime enrich 的请求/响应原样写入 Langfuse，便于在同一条 trace 中查看 prompt、工具参数、工具结果、raw API body 和最终输出。
+本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`，并把 Runtime enrich 的请求/响应原样写入 Langfuse，便于在同一条 trace 中查看 prompt、工具参数、工具结果、raw API body 和最终输出。Runtime 输出中的 `agent_activity` 字段会额外汇总 requested skills、实际 Skill 调用、tool calls 和 tool results。
 
 ### 本地 Langfuse Docker profile
 
@@ -417,7 +419,7 @@ allowed-tools:
 默认 `docker/.env.example` 中设置：
 
 ```bash
-DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob
+DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,mcp__sec-ops-data__*
 DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
 PERMISSION_MODE=dontAsk
 ENABLE_POLICY_HOOKS=true

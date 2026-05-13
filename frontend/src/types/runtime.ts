@@ -81,6 +81,17 @@ export interface ChatRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface AgentActivity {
+  requested_skills: string[];
+  skills_mode?: string;
+  allowed_tools: string[];
+  disallowed_tools: string[];
+  tool_names: string[];
+  tool_calls: Record<string, unknown>[];
+  tool_results: Record<string, unknown>[];
+  skill_calls: Record<string, unknown>[];
+}
+
 export type ChatRole = "user" | "assistant" | "system";
 
 export interface ChatMessage {

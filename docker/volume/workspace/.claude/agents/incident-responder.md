@@ -5,10 +5,7 @@ tools:
   - Read
   - Grep
   - Glob
-  - mcp__soc-data__.*
-  - mcp__security-kb__.*
-  - mcp__response-orchestrator__create_response_plan
-  - mcp__response-orchestrator__dry_run_action
+  - mcp__sec-ops-data__*
 model: inherit
 ---
 

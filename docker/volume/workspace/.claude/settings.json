@@ -11,20 +11,15 @@
       "Bash(python -m pytest *)",
       "Bash(jq *)",
       "Bash(cat templates/**)",
-      "mcp__soc-data__.*",
-      "mcp__security-kb__.*",
-      "mcp__report-template__.*",
-      "mcp__response-orchestrator__create_response_plan",
-      "mcp__response-orchestrator__dry_run_action"
+      "mcp__sec-ops-data__*"
     ],
     "ask": [
       "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
-      "mcp__response-orchestrator__execute_.*",
-      "mcp__.*__.*write.*",
-      "mcp__.*__.*update.*",
-      "mcp__.*__.*delete.*"
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*"
     ],
     "deny": [
       "Read(./.env)",

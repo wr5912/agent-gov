@@ -124,8 +124,23 @@ http://host.docker.internal:9000/mcp
 ```
 
 注意：
+- Claude Agent SDK 当前使用 `type: "http"` / `type: "stdio"` 标识 MCP server 类型；如果其他工具示例使用 `transport: "http"`，在本 runtime 中应改为 `type: "http"`。
 - 如果 `${SOC_MCP_TOKEN}` 没有默认值且环境变量未设置，Claude Code 会解析失败。
 - 开发环境可先去掉 `headers`，生产环境必须接入鉴权。
+- 如果 Claude Code 运行在 Docker 容器内，`127.0.0.1` 指向容器自身，不是宿主机。访问宿主机端口时优先使用 `http://host.docker.internal:<port>/mcp`，并确保 compose 为 API 容器配置了 `host.docker.internal:host-gateway`。
+
+当前网络安全运营模拟数据服务示例：
+
+```json
+{
+  "mcpServers": {
+    "sec-ops-data": {
+      "type": "http",
+      "url": "http://host.docker.internal:58001/mcp"
+    }
+  }
+}
+```
 
 ## 4. 同步权限配置
 
@@ -139,8 +154,8 @@ volume/workspace/.claude/settings.json
 
 ```json
 "allow": [
-  "mcp__soc-data__.*",
-  "mcp__security-kb__.*"
+  "mcp__soc-data__*",
+  "mcp__security-kb__*"
 ]
 ```
 
@@ -148,10 +163,10 @@ volume/workspace/.claude/settings.json
 
 ```json
 "ask": [
-  "mcp__response-orchestrator__execute_.*",
-  "mcp__.*__.*write.*",
-  "mcp__.*__.*update.*",
-  "mcp__.*__.*delete.*"
+  "mcp__response-orchestrator__execute_*",
+  "mcp__*__*write*",
+  "mcp__*__*update*",
+  "mcp__*__*delete*"
 ]
 ```
 
@@ -170,7 +185,7 @@ mcp__soc-data__query_alerts
 为了 MVP 阶段快速迭代，可以先允许：
 
 ```json
-"mcp__soc-data__.*"
+"mcp__sec-ops-data__*"
 ```
 
 生产环境建议收敛到具体工具名。

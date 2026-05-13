@@ -31,11 +31,8 @@
 ## 3. 工具使用原则
 
 优先级：
-1. `mcp__soc-data__*`：查询 SOC / SIEM / EDR / NDR / 日志平台数据。
-2. `mcp__security-kb__*`：查询内部知识库、SOP、处置手册、检测规则说明。
-3. `mcp__report-template__*`：读取报告模板并生成结构化报告。
-4. `mcp__response-orchestrator__*`：仅用于生成处置计划或 dry-run；执行类工具必须获得用户明确授权。
-5. 本地文件读取：读取 `templates/`、`docs/`、`.claude/rules/` 中的指导材料。
+1. `mcp__sec-ops-data__*`：查询网络安全运营模拟数据，包括告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
+2. 本地文件读取：读取 `templates/`、`docs/`、`.claude/rules/` 中的指导材料。
 
 当工具结果不足时，必须说明缺口，不要猜测。
 

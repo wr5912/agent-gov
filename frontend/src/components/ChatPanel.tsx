@@ -62,7 +62,7 @@ export function ChatPanel({
         </label>
         <label className="wide-control">
           <span>Allowed Tools</span>
-          <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="Read,Grep,Glob" />
+          <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="Read,Grep,Glob,mcp__sec-ops-data__*" />
         </label>
         <label className="wide-control">
           <span>Disallowed Tools</span>

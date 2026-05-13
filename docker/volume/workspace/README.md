@@ -78,14 +78,11 @@ export RESPONSE_EXECUTION_ENABLED=false
 
 ## 内置 MCP 服务
 
-`.mcp.json` 默认配置了四个 stdio MCP 服务：
+`.mcp.json` 默认配置为网络安全运营模拟数据 HTTP MCP 服务：
 
-- `soc-data`：安全运营数据查询。
-- `security-kb`：知识库/SOP 查询。
-- `response-orchestrator`：处置计划、dry-run、审批后执行扩展点。
-- `report-template`：报告模板读取和报告文件生成。
+- `sec-ops-data`：通过 `http://host.docker.internal:58001/mcp` 查询告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
 
-生产落地时，应把这些示例服务替换为你本地开发或企业内部的 MCP 服务。详见：[MCP_REPLACEMENT_GUIDE.md](docs/MCP_REPLACEMENT_GUIDE.md)。
+生产落地时，应把该服务替换为你本地开发或企业内部的 MCP 服务。stdio 与 HTTP MCP 配置方式详见：[MCP_REPLACEMENT_GUIDE.md](docs/MCP_REPLACEMENT_GUIDE.md)。
 
 ## 安全设计
 

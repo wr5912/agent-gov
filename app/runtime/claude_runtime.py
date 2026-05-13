@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import warnings
 from contextlib import nullcontext
@@ -129,6 +130,7 @@ class ClaudeRuntime:
         sdk_session_id: Optional[str],
         answer: str,
         messages: list[dict[str, Any]],
+        agent_activity: dict[str, Any],
         usage: Any,
         total_cost_usd: Optional[float],
         stop_reason: Optional[str],
@@ -139,11 +141,196 @@ class ClaudeRuntime:
             "sdk_session_id": sdk_session_id,
             "answer": answer,
             "messages": messages,
+            "agent_activity": agent_activity,
             "usage": to_plain(usage),
             "total_cost_usd": total_cost_usd,
             "stop_reason": stop_reason,
             "errors": errors,
         }
+
+    def _agent_activity_payload(self, req: ChatRequest, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
+        disallowed_tools = (
+            req.disallowed_tools
+            if req.disallowed_tools is not None
+            else self.settings.default_disallowed_tools
+        )
+        requested_skills = req.skills if req.skills is not None else self.settings.default_skills
+        tool_calls: list[dict[str, Any]] = []
+        tool_results: list[dict[str, Any]] = []
+        seen_calls: set[str] = set()
+        seen_results: set[str] = set()
+
+        for message in messages:
+            for record in self._walk_records(message):
+                tool_call = self._tool_call_from_record(record)
+                if tool_call:
+                    self._append_unique(tool_calls, tool_call, seen_calls)
+
+                tool_result = self._tool_result_from_record(record)
+                if tool_result:
+                    self._append_unique(tool_results, tool_result, seen_results)
+
+        tool_names = self._unique_strings(
+            name for call in tool_calls for name in [self._string_value(call.get("name"))] if name
+        )
+        skill_calls = [
+            skill_call
+            for call in tool_calls
+            for skill_call in [self._skill_call_from_tool_call(call)]
+            if skill_call
+        ]
+
+        return {
+            "requested_skills": list(requested_skills or []),
+            "skills_mode": req.skills_mode or self.settings.default_skills_mode,
+            "allowed_tools": allowed_tools,
+            "disallowed_tools": disallowed_tools,
+            "tool_names": tool_names,
+            "tool_calls": tool_calls,
+            "tool_results": tool_results,
+            "skill_calls": skill_calls,
+        }
+
+    def _walk_records(self, value: Any) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        if isinstance(value, dict):
+            records.append(value)
+            for item in value.values():
+                records.extend(self._walk_records(item))
+        elif isinstance(value, list):
+            for item in value:
+                records.extend(self._walk_records(item))
+        return records
+
+    def _tool_call_from_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        record_type = self._string_value(record.get("type")) or ""
+        hook_event = self._hook_event(record) or ""
+        name = self._tool_name(record)
+        is_tool_use = "tool_use" in record_type.lower()
+        has_tool_use_shape = bool(name and "input" in record and any(key in record for key in ("id", "tool_use_id", "toolUseID")))
+        is_hook_tool_use = hook_event in {"PreToolUse", "PermissionRequest"}
+        if not name or not (is_tool_use or has_tool_use_shape or is_hook_tool_use):
+            return None
+
+        entry: dict[str, Any] = {"name": name}
+        self._copy_first(record, entry, ("id", "tool_use_id", "toolUseID"), "tool_use_id")
+        self._copy_first(record, entry, ("input", "tool_input", "toolInput"), "input")
+        self._copy_first(record, entry, ("agent_id", "agentId"), "agent_id")
+        self._copy_first(record, entry, ("agent_type", "agentType"), "agent_type")
+        self._copy_first(record, entry, ("session_id", "sessionId"), "session_id")
+        if hook_event:
+            entry["hook_event_name"] = hook_event
+        return entry
+
+    def _tool_result_from_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
+        record_type = self._string_value(record.get("type")) or ""
+        hook_event = self._hook_event(record) or ""
+        is_tool_result = "tool_result" in record_type.lower()
+        has_tool_result_shape = "tool_use_id" in record and "content" in record
+        is_hook_result = hook_event in {"PostToolUse", "PostToolUseFailure"}
+        if not (is_tool_result or has_tool_result_shape or is_hook_result):
+            return None
+
+        entry: dict[str, Any] = {}
+        self._copy_first(record, entry, ("tool_use_id", "toolUseID", "id"), "tool_use_id")
+        self._copy_first(record, entry, ("tool_name", "toolName", "name"), "name")
+        self._copy_first(record, entry, ("content", "tool_response", "toolResponse", "error"), "content")
+        self._copy_first(record, entry, ("agent_id", "agentId"), "agent_id")
+        self._copy_first(record, entry, ("agent_type", "agentType"), "agent_type")
+        if "name" not in entry:
+            name = self._tool_name(record)
+            if name:
+                entry["name"] = name
+        if hook_event:
+            entry["hook_event_name"] = hook_event
+        return entry or None
+
+    def _skill_call_from_tool_call(self, call: dict[str, Any]) -> dict[str, Any] | None:
+        tool_name = self._string_value(call.get("name")) or ""
+        if tool_name != "Skill" and not tool_name.startswith("Skill("):
+            return None
+
+        skill_name = None
+        if tool_name.startswith("Skill(") and tool_name.endswith(")"):
+            skill_name = tool_name.removeprefix("Skill(").removesuffix(")")
+
+        input_value = call.get("input")
+        if isinstance(input_value, dict):
+            skill_name = (
+                self._string_value(input_value.get("skill"))
+                or self._string_value(input_value.get("name"))
+                or self._string_value(input_value.get("skill_name"))
+                or skill_name
+            )
+
+        entry = {"tool_name": tool_name}
+        if skill_name:
+            entry["name"] = skill_name
+        if "tool_use_id" in call:
+            entry["tool_use_id"] = call["tool_use_id"]
+        if "input" in call:
+            entry["input"] = call["input"]
+        return entry
+
+    def _tool_name(self, record: dict[str, Any]) -> str | None:
+        direct = (
+            self._string_value(record.get("name"))
+            or self._string_value(record.get("tool_name"))
+            or self._string_value(record.get("toolName"))
+        )
+        if direct:
+            return direct
+
+        hook_name = self._string_value(record.get("hook_name"))
+        if hook_name and ":" in hook_name:
+            return hook_name.split(":", 1)[1] or None
+        return None
+
+    def _hook_event(self, record: dict[str, Any]) -> str | None:
+        direct = (
+            self._string_value(record.get("hook_event_name"))
+            or self._string_value(record.get("hook_event"))
+        )
+        if direct:
+            return direct
+
+        hook_name = self._string_value(record.get("hook_name"))
+        if hook_name and ":" in hook_name:
+            return hook_name.split(":", 1)[0] or None
+        return None
+
+    def _copy_first(
+        self,
+        source: dict[str, Any],
+        target: dict[str, Any],
+        candidates: tuple[str, ...],
+        target_key: str,
+    ) -> None:
+        for key in candidates:
+            if key in source:
+                target[target_key] = source[key]
+                return
+
+    def _append_unique(self, items: list[dict[str, Any]], entry: dict[str, Any], seen: set[str]) -> None:
+        key = json.dumps(entry, sort_keys=True, ensure_ascii=False, default=str)
+        if key in seen:
+            return
+        seen.add(key)
+        items.append(entry)
+
+    def _unique_strings(self, values: Any) -> list[str]:
+        result: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            if not isinstance(value, str) or not value or value in seen:
+                continue
+            seen.add(value)
+            result.append(value)
+        return result
+
+    def _string_value(self, value: Any) -> str | None:
+        return value if isinstance(value, str) and value else None
 
     def _usage_details(self, usage: Any) -> Optional[dict[str, int]]:
         plain = to_plain(usage)
@@ -404,11 +591,13 @@ class ClaudeRuntime:
                         errors.append(f"{exc.__class__.__name__}: {exc}")
 
                 answer = self._dedupe_answer_parts(answer_parts)
+                agent_activity = self._agent_activity_payload(req, messages)
                 output = self._runtime_output_payload(
                     session=session,
                     sdk_session_id=sdk_session_id,
                     answer=answer,
                     messages=messages,
+                    agent_activity=agent_activity,
                     usage=usage,
                     total_cost_usd=total_cost_usd,
                     stop_reason=stop_reason,
@@ -447,6 +636,7 @@ class ClaudeRuntime:
             "sdk_session_id": session.sdk_session_id,
             "answer": answer,
             "messages": messages,
+            "agent_activity": agent_activity,
             "usage": usage,
             "total_cost_usd": total_cost_usd,
             "stop_reason": stop_reason,
@@ -502,11 +692,13 @@ class ClaudeRuntime:
                             stop_reason = getattr(msg, "stop_reason", None)
                             result_errors = self._result_errors(msg)
                             errors.extend(result_errors)
+                            agent_activity = self._agent_activity_payload(req, messages)
                             yield {
                                 "event": "result",
                                 "data": {
                                     "session_id": session.session_id,
                                     "sdk_session_id": sdk_session_id,
+                                    "agent_activity": agent_activity,
                                     "usage": usage,
                                     "total_cost_usd": total_cost_usd,
                                     "stop_reason": stop_reason,
@@ -526,11 +718,13 @@ class ClaudeRuntime:
                     self.session_store.save(session)
 
                     answer = self._dedupe_answer_parts(answer_parts)
+                    agent_activity = self._agent_activity_payload(req, messages)
                     output = self._runtime_output_payload(
                         session=session,
                         sdk_session_id=sdk_session_id,
                         answer=answer,
                         messages=messages,
+                        agent_activity=agent_activity,
                         usage=usage,
                         total_cost_usd=total_cost_usd,
                         stop_reason=stop_reason,

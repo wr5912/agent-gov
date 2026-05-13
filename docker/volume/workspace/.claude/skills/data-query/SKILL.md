@@ -2,7 +2,7 @@
 name: data-query
 description: 查询和统计安全运营数据，包括告警、资产、进程、网络连接、用户行为和处置记录。
 allowed-tools:
-  - mcp__soc-data__.*
+  - mcp__sec-ops-data__*
 ---
 
 ## 查询要求

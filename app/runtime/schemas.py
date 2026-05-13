@@ -38,6 +38,7 @@ class ChatResponse(BaseModel):
     sdk_session_id: Optional[str] = None
     answer: str
     messages: list[dict[str, Any]] = Field(default_factory=list)
+    agent_activity: dict[str, Any] = Field(default_factory=dict)
     usage: Optional[dict[str, Any]] = None
     total_cost_usd: Optional[float] = None
     stop_reason: Optional[str] = None

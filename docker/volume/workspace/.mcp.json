@@ -1,53 +1,8 @@
 {
   "mcpServers": {
-    "soc-data": {
-      "type": "stdio",
-      "command": "${PYTHON_BIN:-python}",
-      "args": [
-        "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/soc_data_mcp/server.py"
-      ],
-      "env": {
-        "SOC_API_URL": "${SOC_API_URL:-http://host.docker.internal:8080}",
-        "SOC_API_TOKEN": "${SOC_API_TOKEN:-}",
-        "SOC_TENANT": "${SOC_TENANT:-default}",
-        "SOC_SAMPLE_DATA": "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/soc_data_mcp/sample_alerts.json"
-      }
-    },
-    "security-kb": {
-      "type": "stdio",
-      "command": "${PYTHON_BIN:-python}",
-      "args": [
-        "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/security_kb_mcp/server.py"
-      ],
-      "env": {
-        "SECURITY_KB_API_URL": "${SECURITY_KB_API_URL:-}",
-        "SECURITY_KB_API_TOKEN": "${SECURITY_KB_API_TOKEN:-}",
-        "SECURITY_KB_FILE": "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/security_kb_mcp/kb.yaml"
-      }
-    },
-    "response-orchestrator": {
-      "type": "stdio",
-      "command": "${PYTHON_BIN:-python}",
-      "args": [
-        "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/response_orchestrator_mcp/server.py"
-      ],
-      "env": {
-        "SOAR_API_URL": "${SOAR_API_URL:-http://host.docker.internal:8081}",
-        "SOAR_API_TOKEN": "${SOAR_API_TOKEN:-}",
-        "RESPONSE_EXECUTION_ENABLED": "${RESPONSE_EXECUTION_ENABLED:-false}",
-        "RESPONSE_PLAN_DIR": "${RESPONSE_PLAN_DIR:-/data/outputs/response-plans}"
-      }
-    },
-    "report-template": {
-      "type": "stdio",
-      "command": "${PYTHON_BIN:-python}",
-      "args": [
-        "${CLAUDE_WORKSPACE:-/workspace}/mcp_servers/report_template_mcp/server.py"
-      ],
-      "env": {
-        "REPORT_TEMPLATE_DIR": "${REPORT_TEMPLATE_DIR:-/workspace/templates/reports}",
-        "REPORT_OUTPUT_DIR": "${REPORT_OUTPUT_DIR:-/data/outputs/reports}"
-      }
+    "sec-ops-data": {
+      "type": "http",
+      "url": "http://host.docker.internal:58001/mcp"
     }
   }
 }

@@ -3,9 +3,7 @@ name: report-generation
 description: 基于模板生成安全运营日报、周报、事件报告、复盘报告或管理层汇报。
 allowed-tools:
   - Read
-  - mcp__soc-data__.*
-  - mcp__security-kb__.*
-  - mcp__report-template__.*
+  - mcp__sec-ops-data__*
 context: fork
 agent: report-writer
 ---

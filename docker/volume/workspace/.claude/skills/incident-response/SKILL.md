@@ -4,10 +4,7 @@ description: 生成事件响应处置计划、dry-run、回滚方案和验证步
 disable-model-invocation: true
 allowed-tools:
   - Read
-  - mcp__soc-data__.*
-  - mcp__security-kb__.*
-  - mcp__response-orchestrator__create_response_plan
-  - mcp__response-orchestrator__dry_run_action
+  - mcp__sec-ops-data__*
 context: fork
 agent: incident-responder
 ---

@@ -373,6 +373,41 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-skill",
+                    "name": "Skill",
+                    "input": {"skill": "trace-debugger", "prompt": "inspect trace"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu-read",
+                    "name": "Read",
+                    "input": {"file_path": "README.md"},
+                },
+                {
+                    "id": "call-mcp-assets",
+                    "name": "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
+                    "input": {"count": 1},
+                },
+            ],
+        }
+        yield {
+            "type": "user",
+            "content": [
+                {
+                    "tool_use_id": "toolu-read",
+                    "content": "README contents",
+                }
+            ],
+        }
+        yield {
+            "hook_event_name": "PostToolUse",
+            "hook_name": "PostToolUse:mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
+        }
         yield AssistantMessage(
             content=[TextBlock(text="hello answer")],
             model="<synthetic>",
@@ -414,6 +449,17 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     result = asyncio.run(runtime.run(ChatRequest(message="hello", metadata={"api_key": "secret"})))
 
     assert result["answer"] == "hello answer"
+    assert result["agent_activity"]["requested_skills"] == []
+    assert result["agent_activity"]["tool_names"] == [
+        "Skill",
+        "Read",
+        "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
+    ]
+    assert result["agent_activity"]["skill_calls"][0]["name"] == "trace-debugger"
+    assert result["agent_activity"]["tool_results"][0]["tool_use_id"] == "toolu-read"
+    assert result["agent_activity"]["tool_results"][1]["name"] == (
+        "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get"
+    )
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
         "runtime.chat",
@@ -423,9 +469,15 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
     assert root.updates[-1]["output"]["answer"] == "hello answer"
-    assert root.updates[-1]["output"]["messages"][0]["event"] == "AssistantMessage"
+    assert root.updates[-1]["output"]["messages"][3]["event"] == "AssistantMessage"
+    assert root.updates[-1]["output"]["agent_activity"]["tool_names"] == [
+        "Skill",
+        "Read",
+        "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
+    ]
     assert root.trace_io_updates[-1]["input"]["metadata"]["api_key"] == "secret"
     assert root.trace_io_updates[-1]["output"]["answer"] == "hello answer"
+    assert root.trace_io_updates[-1]["output"]["agent_activity"]["skill_calls"][0]["name"] == "trace-debugger"
     assert generation.updates[-1]["usage_details"] == {"input_tokens": 3, "output_tokens": 5}
     assert generation.updates[-1]["cost_details"] == {"total_cost_usd": 0.01}
 
@@ -436,6 +488,12 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        yield {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Read",
+            "tool_input": {"file_path": "README.md"},
+            "tool_use_id": "toolu-read",
+        }
         yield AssistantMessage(
             content=[TextBlock(text="stream answer")],
             model="<synthetic>",
@@ -478,7 +536,9 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
 
     events = asyncio.run(collect(runtime))
 
-    assert [event["event"] for event in events] == ["session", "message", "message", "result", "done"]
+    assert [event["event"] for event in events] == ["session", "message", "message", "message", "result", "done"]
+    result_event = next(event for event in events if event["event"] == "result")
+    assert result_event["data"]["agent_activity"]["tool_names"] == ["Read"]
     assert fake_langfuse.flushed is True
     root, generation = fake_langfuse.observations
     assert root.updates[-1]["output"]["answer"] == "stream answer"

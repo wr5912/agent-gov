@@ -27,21 +27,11 @@ paths:
   agent_memory: /data/agent-memory
 
 mcp:
-  default_transport: stdio
+  default_transport: http
   servers:
-    soc-data:
-      purpose: 查询 SOC/SIEM/EDR/NDR/日志平台中的告警、资产、进程、网络连接和统计数据
+    sec-ops-data:
+      purpose: 通过网络安全运营模拟数据 MCP 服务查询告警、资产、事件、漏洞、IOC、事件单和仪表盘统计
       risk: read-only
-    security-kb:
-      purpose: 查询内部 SOP、知识库、检测规则说明、ATT&CK 映射和处置手册
-      risk: read-only
-    response-orchestrator:
-      purpose: 生成处置计划、执行 dry-run、在审批后对接 SOAR/EDR/防火墙执行动作
-      risk: high
-      default_mode: dry-run
-    report-template:
-      purpose: 加载模板并生成安全运营日报、事件报告、复盘报告
-      risk: low
 
 subagents:
   alert_triage: soc-analyst

@@ -51,7 +51,7 @@ export default function App() {
   const [configMapping, setConfigMapping] = useState<ConfigMappingResponse | null>(null);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [allowedTools, setAllowedTools] = useState("Read,Grep,Glob");
+  const [allowedTools, setAllowedTools] = useState("Read,Grep,Glob,mcp__sec-ops-data__*");
   const [disallowedTools, setDisallowedTools] = useState("Bash,WebFetch,WebSearch");
   const [skillsMode, setSkillsMode] = useState<"all" | "default" | "none">("default");
   const [maxTurns, setMaxTurns] = useState(8);

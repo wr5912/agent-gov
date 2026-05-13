@@ -551,6 +551,7 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  margin-top: 12px;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--line);
 }
@@ -561,6 +562,73 @@ button:disabled {
   background: var(--panel-2);
   border: 1px solid var(--line);
   font-size: 12px;
+}
+.detail-agent-activity {
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 250, 243, 0.68);
+  padding: 12px;
+}
+.detail-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.detail-section-head strong { color: var(--brand-2); font-size: 13px; }
+.detail-section-head span { color: var(--muted); font-size: 12px; }
+.detail-activity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.detail-activity-card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  padding: 9px;
+}
+.detail-activity-card span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.detail-activity-card p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.detail-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fffdf8;
+  padding: 0 10px;
+  color: var(--muted);
+}
+.detail-search input {
+  flex: 1;
+  height: 38px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+}
+.detail-search span {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
 }
 .detail-timeline {
   min-height: 0;
@@ -618,8 +686,6 @@ button:disabled {
 }
 .detail-json {
   margin: 10px 0 0;
-  max-height: 240px;
-  overflow: auto;
   border-radius: 10px;
   border: 1px solid var(--line);
   background: rgba(47, 38, 31, 0.04);
@@ -630,6 +696,20 @@ button:disabled {
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
+}
+.detail-json mark, .detail-event-summary mark, .detail-event-head mark {
+  border-radius: 4px;
+  background: rgba(201, 100, 66, 0.24);
+  color: inherit;
+  padding: 0 2px;
+}
+.detail-empty {
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  padding: 18px;
+  color: var(--muted);
+  text-align: center;
+  font-size: 13px;
 }
 
 .spin { animation: spin 1s linear infinite; }

@@ -5,8 +5,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - mcp__soc-data__.*
-  - mcp__security-kb__.*
+  - mcp__sec-ops-data__*
 context: fork
 agent: soc-analyst
 ---

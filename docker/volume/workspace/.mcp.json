@@ -2,7 +2,7 @@
   "mcpServers": {
     "sec-ops-data": {
       "type": "http",
-      "url": "http://host.docker.internal:58001/mcp"
+      "url": "http://198.19.65.206:58001/mcp"
     }
   }
 }

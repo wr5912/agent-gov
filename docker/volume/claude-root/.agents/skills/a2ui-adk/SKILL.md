@@ -15,7 +15,7 @@ Core principles:
 - **Security first**: Declarative data format, not executable code. Clients maintain a catalog of trusted, pre-approved UI components.
 - **LLM-friendly**: Flat list of components with ID references, easy for LLMs to generate incrementally.
 - **Framework-agnostic**: Same JSON payload renders on any supported client framework.
-- **Currently v0.8 (Public Preview)**, v0.9 also available.
+- **AI-SOC project policy**: use A2UI v0.8 only for the first production path. Do not advertise v0.9, emit v0.9 message shapes, or generate `createSurface` / `updateComponents` payloads unless the project policy is explicitly changed.
 
 ## Architecture Overview
 
@@ -54,7 +54,7 @@ a2ui-agent = { path = "../../../agent_sdks/python", editable = true }
 
 ```python
 # Schema management
-from a2ui.core.schema.constants import VERSION_0_8, VERSION_0_9, A2UI_OPEN_TAG, A2UI_CLOSE_TAG
+from a2ui.core.schema.constants import VERSION_0_8, A2UI_OPEN_TAG, A2UI_CLOSE_TAG
 from a2ui.core.schema.manager import A2uiSchemaManager
 from a2ui.core.schema.common_modifiers import remove_strict_validation
 
@@ -413,7 +413,9 @@ A2UI responses are wrapped in `<a2ui-json>` and `</a2ui-json>` tags within LLM o
 - **`beginRendering`**: Start a new UI surface (with `surfaceId`)
 - **`surfaceUpdate`**: Update components within a surface
 - **`dataModelUpdate`**: Update data bindings
-- **`endRendering`**: Signal rendering is complete
+- **`deleteSurface`**: Remove a UI surface
+
+For AI-SOC, these v0.9 message shapes are not allowed: `createSurface`, `updateComponents`, and v0.9-style `updateDataModel`.
 
 Components use the BasicCatalog types: `Text`, `Card`, `Button`, `TextField`, `Image`, `Column`, `Row`, `Grid`, etc.
 

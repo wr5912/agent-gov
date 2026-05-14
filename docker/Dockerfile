@@ -57,7 +57,7 @@ RUN python -m pip install --no-cache-dir uv \
 
 COPY docker/a2ui-requirements.txt /app/docker/a2ui-requirements.txt
 COPY docker/vendor/A2UI /app/vendor/A2UI
-# a2ui-agent-sdk 来自 Google A2UI v0.9 的 agent_sdks/python 子目录。
+# a2ui-agent-sdk 来自 Google A2UI 的 agent_sdks/python 子目录；项目运行路径锁定 A2UI v0.8。
 # 源码已 vendor 到仓库，避免镜像构建依赖 GitHub；PyPI 依赖仍在 build 阶段下载。
 RUN set -eux; \
     uv pip install --system --no-cache \

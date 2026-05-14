@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 import json
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.runtime.ag_ui import PublishNotificationRequest, RunAgentInput, notification_event
 from app.runtime.agent_loader import discover_agents, discover_skills
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.config_mapping import build_config_mapping
+from app.runtime.notification_store import InMemoryNotificationStore, NotificationRecord
 from app.runtime.schemas import (
     AgentInfo,
     ChatRequest,
@@ -28,6 +31,7 @@ from app.runtime.settings import get_settings
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
 runtime = ClaudeRuntime(settings, session_store)
+notification_store = InMemoryNotificationStore()
 bearer_auth = HTTPBearer(auto_error=False)
 
 app = FastAPI(
@@ -40,6 +44,7 @@ app = FastAPI(
     openapi_tags=[
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
+        {"name": "ag-ui", "description": "AG-UI run and proactive notification event streams."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "sessions", "description": "List and delete API session mappings."},
@@ -154,6 +159,92 @@ async def chat_stream(req: ChatRequest) -> StreamingResponse:
             yield f"event: {event}\ndata: {data}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post(
+    "/api/ag-ui",
+    dependencies=[Depends(require_api_key)],
+    tags=["ag-ui"],
+    summary="Run an Agent task as an AG-UI event stream",
+    description="Accepts a RunAgentInput-compatible body and streams AG-UI BaseEvent objects as SSE data.",
+)
+async def ag_ui_run(req: RunAgentInput) -> StreamingResponse:
+    async def event_stream():
+        async for item in runtime.stream_ag_ui(req):
+            yield _sse_event(item)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post(
+    "/api/ag-ui/notifications",
+    dependencies=[Depends(require_api_key)],
+    tags=["ag-ui"],
+    summary="Publish an Agent-initiated AG-UI custom notification",
+    description="Development and worker-facing endpoint for adding lightweight proactive notifications to the SSE queue.",
+)
+async def publish_ag_ui_notification(req: PublishNotificationRequest) -> dict[str, object]:
+    record = notification_store.publish(
+        name=req.name,
+        value=req.value,
+        notification_id=req.notification_id,
+        workspace_id=req.workspace_id,
+        user_id=req.user_id,
+    )
+    return {"ok": True, "event": _notification_sse_payload(record)}
+
+
+@app.get(
+    "/api/ag-ui/notifications",
+    dependencies=[Depends(require_api_key)],
+    tags=["ag-ui"],
+    summary="Subscribe to Agent-initiated AG-UI custom notifications",
+    description="Streams lightweight proactive notification events. Use Last-Event-ID or cursor to recover missed items.",
+)
+async def ag_ui_notifications(
+    cursor: str | None = Query(default=None),
+    workspace_id: str | None = Query(default=None, alias="workspaceId"),
+    user_id: str | None = Query(default=None, alias="userId"),
+    last_event_id: str | None = Header(default=None, alias="Last-Event-ID"),
+) -> StreamingResponse:
+    start_cursor = cursor or last_event_id
+
+    async def event_stream():
+        last_seen = start_cursor
+        while True:
+            records = notification_store.list_after(
+                last_seen,
+                workspace_id=workspace_id,
+                user_id=user_id,
+            )
+            for record in records:
+                last_seen = record.notification_id
+                yield _sse_event(_notification_sse_payload(record), event_id=record.notification_id)
+            await asyncio.sleep(15)
+            yield ": heartbeat\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+def _notification_sse_payload(record: NotificationRecord) -> dict[str, object]:
+    return notification_event(
+        notification_id=record.notification_id,
+        name=record.name,
+        value=record.value,
+        created_at=record.created_at,
+    )
+
+
+def _sse_event(item: dict[str, object], event_id: str | None = None) -> str:
+    event_type = item.get("type")
+    data = json.dumps(item, ensure_ascii=False)
+    lines = []
+    if event_id:
+        lines.append(f"id: {event_id}")
+    if isinstance(event_type, str):
+        lines.append(f"event: {event_type}")
+    lines.append(f"data: {data}")
+    return "\n".join(lines) + "\n\n"
 
 
 @app.post(

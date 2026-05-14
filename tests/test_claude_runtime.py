@@ -546,3 +546,86 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert root.trace_io_updates[-1]["input"]["message"] == "stream"
     assert root.trace_io_updates[-1]["output"]["answer"] == "stream answer"
     assert generation.updates[-1]["usage_details"] == {"input_tokens": 7, "output_tokens": 11}
+
+
+def test_stream_ag_ui_maps_text_lifecycle(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text="hello from ag-ui")],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="hello from ag-ui",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+
+    assert [event["type"] for event in events] == [
+        "RUN_STARTED",
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "RUN_FINISHED",
+    ]
+    assert events[0]["threadId"] == "thread-test"
+    assert events[0]["runId"] == "run-test"
+    assert events[2]["messageId"] == "run-test-assistant-1"
+    assert events[2]["delta"] == "hello from ag-ui"
+    assert events[-1]["outcome"] == {"type": "success"}
+
+
+def test_notification_store_lists_after_cursor():
+    from app.runtime.notification_store import InMemoryNotificationStore
+
+    store = InMemoryNotificationStore()
+    first = store.publish(
+        name="ai_soc.briefing.available",
+        value={"briefingId": "briefing-1"},
+        notification_id="notification-1",
+        workspace_id="workspace-a",
+    )
+    second = store.publish(
+        name="ai_soc.briefing.available",
+        value={"briefingId": "briefing-2"},
+        notification_id="notification-2",
+        workspace_id="workspace-a",
+    )
+    store.publish(
+        name="ai_soc.briefing.available",
+        value={"briefingId": "briefing-3"},
+        notification_id="notification-3",
+        workspace_id="workspace-b",
+    )
+
+    assert store.list_after(workspace_id="workspace-a") == [first, second]
+    assert store.list_after("notification-1", workspace_id="workspace-a") == [second]

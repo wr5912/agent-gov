@@ -9,6 +9,16 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .agent_loader import load_programmatic_agents
+from .ag_ui import (
+    RunAgentInput,
+    run_error_event,
+    run_finished_event,
+    run_input_to_chat_request,
+    run_started_event,
+    text_message_content_event,
+    text_message_end_event,
+    text_message_start_event,
+)
 from .message_utils import extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
@@ -752,3 +762,55 @@ class ClaudeRuntime:
                     )
                     yield {"event": "done", "data": "[DONE]"}
         self._flush_langfuse()
+
+    async def stream_ag_ui(self, req: RunAgentInput) -> AsyncIterator[dict[str, Any]]:
+        chat_req = run_input_to_chat_request(req)
+        message_id = f"{req.run_id}-assistant-1"
+        text_started = False
+        run_failed = False
+        final_result: dict[str, Any] | None = None
+
+        yield run_started_event(req)
+
+        async for item in self.stream(chat_req):
+            event_name = item.get("event")
+            data = item.get("data")
+
+            if event_name == "message" and isinstance(data, dict):
+                runtime_event = data.get("event")
+                if isinstance(runtime_event, str) and runtime_event.startswith("ResultMessage"):
+                    continue
+                text = data.get("text")
+                if isinstance(text, str) and text:
+                    if not text_started:
+                        yield text_message_start_event(message_id)
+                        text_started = True
+                    yield text_message_content_event(message_id, text)
+                continue
+
+            if event_name == "result" and isinstance(data, dict):
+                errors = data.get("errors")
+                final_result = {
+                    "sessionId": data.get("session_id"),
+                    "sdkSessionId": data.get("sdk_session_id"),
+                    "agentActivity": data.get("agent_activity"),
+                    "usage": data.get("usage"),
+                    "totalCostUsd": data.get("total_cost_usd"),
+                    "stopReason": data.get("stop_reason"),
+                }
+                if isinstance(errors, list) and errors:
+                    run_failed = True
+                    yield run_error_event(req, "\n".join(str(error) for error in errors))
+                continue
+
+            if event_name == "error" and isinstance(data, dict):
+                errors = data.get("errors")
+                message = "\n".join(str(error) for error in errors) if isinstance(errors, list) else "Runtime error"
+                run_failed = True
+                yield run_error_event(req, message)
+
+        if text_started:
+            yield text_message_end_event(message_id)
+
+        if not run_failed:
+            yield run_finished_event(req, final_result)

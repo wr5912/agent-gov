@@ -54,6 +54,9 @@ Current frontend-safe component set:
 
 - `Card`
 - `Column`
+- `Row`
+- `List`
+- `Divider`
 - `Text`
 
 Do not use action buttons, forms, tables, images, tabs, or custom components
@@ -67,6 +70,9 @@ until the backend action round trip and AI-SOC component catalog are completed.
 - Prefer a `Card` as the root for SOC summaries.
 - Put the card contents in a `Column`.
 - Use `Text` components for title, risk, evidence, judgement, and next step.
+- Use `Row` for compact metric groups.
+- Use `List` for affected assets, evidence items, or next actions.
+- Use `Divider` between summary and recommendations when the card has multiple sections.
 - Keep text concise. The A2UI card supplements the Markdown answer; it should
   not duplicate a long essay.
 - Use Chinese text unless the user asks for another language.
@@ -119,7 +125,7 @@ runtime does not parse the skill file itself:
           "component": {
             "Text": {
               "text": {
-                "literalString": "高风险告警研判"
+                "literal": "高风险告警研判"
               },
               "usageHint": "h3"
             }
@@ -130,7 +136,7 @@ runtime does not parse the skill file itself:
           "component": {
             "Text": {
               "text": {
-                "literalString": "风险判断：疑似横向移动，需要优先确认账号来源与远程执行链路。"
+                "literal": "风险判断：疑似横向移动，需要优先确认账号来源与远程执行链路。"
               },
               "usageHint": "body"
             }
@@ -141,7 +147,7 @@ runtime does not parse the skill file itself:
           "component": {
             "Text": {
               "text": {
-                "literalString": "关键证据：异常服务账号、远程执行父子进程、目标主机时间线。"
+                "literal": "关键证据：异常服务账号、远程执行父子进程、目标主机时间线。"
               },
               "usageHint": "body"
             }
@@ -152,7 +158,7 @@ runtime does not parse the skill file itself:
           "component": {
             "Text": {
               "text": {
-                "literalString": "下一步：固化证据，确认影响范围，再进入隔离或凭据轮换审批。"
+                "literal": "下一步：固化证据，确认影响范围，再进入隔离或凭据轮换审批。"
               },
               "usageHint": "body"
             }

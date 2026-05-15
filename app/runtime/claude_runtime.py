@@ -11,6 +11,7 @@ from typing import Any, Optional
 from .agent_loader import load_programmatic_agents
 from .ag_ui import (
     RunAgentInput,
+    custom_event,
     run_error_event,
     run_finished_event,
     run_input_to_chat_request,
@@ -19,6 +20,7 @@ from .ag_ui import (
     text_message_end_event,
     text_message_start_event,
 )
+from .a2ui_bridge import A2UI_CUSTOM_EVENT_NAME, extract_a2ui_payloads
 from .message_utils import extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
@@ -782,10 +784,17 @@ class ClaudeRuntime:
                     continue
                 text = data.get("text")
                 if isinstance(text, str) and text:
-                    if not text_started:
-                        yield text_message_start_event(message_id)
-                        text_started = True
-                    yield text_message_content_event(message_id, text)
+                    extraction = extract_a2ui_payloads(text)
+                    if extraction.text:
+                        if not text_started:
+                            yield text_message_start_event(message_id)
+                            text_started = True
+                        yield text_message_content_event(message_id, extraction.text)
+                    for payload in extraction.payloads:
+                        yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
+                    for error in extraction.errors:
+                        run_failed = True
+                        yield run_error_event(req, error, code="a2ui-invalid")
                 continue
 
             if event_name == "result" and isinstance(data, dict):

@@ -604,6 +604,123 @@ def test_stream_ag_ui_maps_text_lifecycle(tmp_path, monkeypatch):
     assert events[-1]["outcome"] == {"type": "success"}
 
 
+def test_stream_ag_ui_extracts_a2ui_custom_event(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    a2ui_block = """Here is a generated card.
+<a2ui-json>
+[
+  {"beginRendering": {"surfaceId": "surface-alert", "root": "card-root"}},
+  {
+    "surfaceUpdate": {
+      "surfaceId": "surface-alert",
+      "components": [
+        {"id": "card-root", "component": {"Card": {"child": "card-text"}}},
+        {"id": "card-text", "component": {"Text": {"text": {"literalString": "High risk alert"}}}}
+      ]
+    }
+  }
+]
+</a2ui-json>
+The card is ready."""
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text=a2ui_block)],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "show card"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    custom_events = [event for event in events if event["type"] == "CUSTOM"]
+    text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
+
+    assert len(custom_events) == 1
+    assert custom_events[0]["name"] == "a2ui.message"
+    assert custom_events[0]["value"]["version"] == "v0_8"
+    assert len(custom_events[0]["value"]["messages"]) == 2
+    assert "a2ui-json" not in text_events[0]["delta"]
+    assert text_events[0]["delta"] == "Here is a generated card.\n\nThe card is ready."
+
+
+def test_stream_ag_ui_rejects_invalid_a2ui_payload(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text='<a2ui-json>{"surfaceUpdate": {"surfaceId": "x", "components": []}}</a2ui-json>')],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="invalid",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "show card"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+
+    assert not [event for event in events if event["type"] == "CUSTOM"]
+    error_events = [event for event in events if event["type"] == "RUN_ERROR"]
+    assert len(error_events) == 1
+    assert error_events[0]["code"] == "a2ui-invalid"
+
+
 def test_notification_store_lists_after_cursor():
     from app.runtime.notification_store import InMemoryNotificationStore
 

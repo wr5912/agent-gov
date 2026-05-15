@@ -20,8 +20,8 @@ from .ag_ui import (
     text_message_end_event,
     text_message_start_event,
 )
-from .a2ui_bridge import A2UI_CUSTOM_EVENT_NAME, extract_a2ui_payloads
-from .message_utils import extract_text, message_event_name, to_plain
+from .a2ui_bridge import A2UI_CUSTOM_EVENT_NAME, A2uiStreamExtractor
+from .message_utils import extract_stream_event_text, extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
@@ -570,6 +570,7 @@ class ClaudeRuntime:
         total_cost_usd: Optional[float] = None
         stop_reason: Optional[str] = None
         errors: list[str] = []
+        partial_text_seen = False
         sdk_session_id: Optional[str] = session.sdk_session_id
 
         with self._start_langfuse_observation(
@@ -590,7 +591,18 @@ class ClaudeRuntime:
                         plain = to_plain(msg)
                         plain["event"] = message_event_name(msg)
                         messages.append(plain)
-                        text = extract_text(msg)
+                        stream_delta = extract_stream_event_text(msg)
+                        if stream_delta:
+                            text = stream_delta
+                            partial_text_seen = True
+                        elif (
+                            self.settings.include_partial_messages
+                            and partial_text_seen
+                            and msg.__class__.__name__ == "AssistantMessage"
+                        ):
+                            text = ""
+                        else:
+                            text = extract_text(msg)
                         if text:
                             answer_parts.append(text)
 
@@ -673,6 +685,7 @@ class ClaudeRuntime:
         total_cost_usd: Optional[float] = None
         stop_reason: Optional[str] = None
         errors: list[str] = []
+        partial_text_seen = False
 
         with self._start_langfuse_observation(
             as_type="span",
@@ -690,7 +703,18 @@ class ClaudeRuntime:
                 try:
                     options = self._build_options(req, session)
                     async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
-                        text = extract_text(msg)
+                        stream_delta = extract_stream_event_text(msg)
+                        if stream_delta:
+                            text = stream_delta
+                            partial_text_seen = True
+                        elif (
+                            self.settings.include_partial_messages
+                            and partial_text_seen
+                            and msg.__class__.__name__ == "AssistantMessage"
+                        ):
+                            text = ""
+                        else:
+                            text = extract_text(msg)
                         plain = to_plain(msg)
                         event = message_event_name(msg)
                         plain["event"] = event
@@ -776,6 +800,7 @@ class ClaudeRuntime:
         text_started = False
         run_failed = False
         final_result: dict[str, Any] | None = None
+        a2ui_extractor = A2uiStreamExtractor()
 
         yield run_started_event(req)
 
@@ -791,7 +816,7 @@ class ClaudeRuntime:
                 if isinstance(text, str) and text:
                     if _is_internal_skill_payload(text):
                         continue
-                    extraction = extract_a2ui_payloads(text)
+                    extraction = a2ui_extractor.feed(text)
                     if extraction.text:
                         if not text_started:
                             yield text_message_start_event(message_id)
@@ -824,6 +849,18 @@ class ClaudeRuntime:
                 message = "\n".join(str(error) for error in errors) if isinstance(errors, list) else "Runtime error"
                 run_failed = True
                 yield run_error_event(req, message)
+
+        final_extraction = a2ui_extractor.finish()
+        if final_extraction.text:
+            if not text_started:
+                yield text_message_start_event(message_id)
+                text_started = True
+            yield text_message_content_event(message_id, final_extraction.text)
+        for payload in final_extraction.payloads:
+            yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
+        for error in final_extraction.errors:
+            run_failed = True
+            yield run_error_event(req, error, code="a2ui-invalid")
 
         if text_started:
             yield text_message_end_event(message_id)

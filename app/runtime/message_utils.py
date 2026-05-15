@@ -43,6 +43,26 @@ def extract_text(message: Any) -> str:
     return "\n".join(pieces).strip()
 
 
+def extract_stream_event_text(message: Any) -> str:
+    """Extract token-level text deltas from Claude Agent SDK StreamEvent."""
+    event = getattr(message, "event", None)
+    if not isinstance(event, dict):
+        return ""
+
+    if event.get("type") != "content_block_delta":
+        return ""
+
+    delta = event.get("delta")
+    if not isinstance(delta, dict):
+        return ""
+
+    if delta.get("type") != "text_delta":
+        return ""
+
+    text = delta.get("text")
+    return text if isinstance(text, str) else ""
+
+
 def message_event_name(message: Any) -> str:
     cls = message.__class__.__name__
     subtype = getattr(message, "subtype", None)

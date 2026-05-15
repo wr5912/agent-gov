@@ -74,7 +74,7 @@ class AppSettings(BaseSettings):
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
     enable_policy_hooks: bool = Field(default=True, alias="ENABLE_POLICY_HOOKS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
-    include_partial_messages: bool = Field(default=False, alias="INCLUDE_PARTIAL_MESSAGES")
+    include_partial_messages: bool = Field(default=True, alias="INCLUDE_PARTIAL_MESSAGES")
     max_turns: int = Field(default=8, alias="MAX_TURNS")
     max_budget_usd: Optional[float] = Field(default=None, alias="MAX_BUDGET_USD")
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")

@@ -604,6 +604,64 @@ def test_stream_ag_ui_maps_text_lifecycle(tmp_path, monkeypatch):
     assert events[-1]["outcome"] == {"type": "success"}
 
 
+def test_stream_ag_ui_maps_partial_stream_events_to_text_deltas(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, StreamEvent, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        assert options.include_partial_messages is True
+        yield StreamEvent(
+            uuid="event-1",
+            session_id="sdk-session",
+            event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hel"}},
+        )
+        yield StreamEvent(
+            uuid="event-2",
+            session_id="sdk-session",
+            event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": "lo"}},
+        )
+        yield AssistantMessage(
+            content=[TextBlock(text="hello")],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="hello",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    settings.include_partial_messages = True
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
+
+    assert [event["delta"] for event in text_events] == ["hel", "lo"]
+
+
 def test_stream_ag_ui_extracts_a2ui_custom_event(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
@@ -671,6 +729,68 @@ The card is ready."""
     assert len(custom_events[0]["value"]["messages"]) == 2
     assert "a2ui-json" not in text_events[0]["delta"]
     assert text_events[0]["delta"] == "Here is a generated card.\n\nThe card is ready."
+
+
+def test_stream_ag_ui_extracts_incremental_a2ui_blocks_from_partial_events(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage, StreamEvent
+
+    chunks = [
+        "Intro <a2ui-json>",
+        '[{"beginRendering":{"surfaceId":"surface-stream","root":"card-root"}}]',
+        "</a2ui-json>",
+        '<a2ui-json>[{"surfaceUpdate":{"surfaceId":"surface-stream","components":[',
+        '{"id":"card-root","component":{"Card":{"child":"card-text"}}},',
+        '{"id":"card-text","component":{"Text":{"text":{"literal":"Streaming card"}}}}',
+        "]}}]</a2ui-json>Done.",
+    ]
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        for index, chunk in enumerate(chunks):
+            yield StreamEvent(
+                uuid=f"event-{index}",
+                session_id="sdk-session",
+                event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": chunk}},
+            )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "show card"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    settings.include_partial_messages = True
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
+    custom_events = [event for event in events if event["type"] == "CUSTOM"]
+
+    assert [event["delta"] for event in text_events] == ["Intro ", "Done."]
+    assert len(custom_events) == 2
+    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "surface-stream"
+    assert custom_events[1]["value"]["messages"][0]["surfaceUpdate"]["surfaceId"] == "surface-stream"
 
 
 def test_stream_ag_ui_suppresses_internal_skill_payload(tmp_path, monkeypatch):

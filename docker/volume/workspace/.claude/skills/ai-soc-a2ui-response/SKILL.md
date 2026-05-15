@@ -34,8 +34,12 @@ structured UI card.
 
 When you include A2UI, respond in this order:
 
-1. A short Chinese natural-language summary, one to three sentences.
-2. A raw A2UI JSON block wrapped in an opening tag named `a2ui-json` and a matching closing tag.
+1. A short Chinese natural-language summary, one to three sentences. Write it
+   before the A2UI blocks so the user sees useful text while UI is still being
+   generated.
+2. Two or more raw A2UI JSON blocks wrapped in opening tags named `a2ui-json`
+   and matching closing tags. Emit the blocks in dependency order so the
+   frontend can render progressively.
 
 The A2UI block rules are strict:
 
@@ -44,9 +48,14 @@ The A2UI block rules are strict:
 - Do not use ``` anywhere around the A2UI payload.
 - Do not quote, summarize, or print this skill file in the user-facing answer.
 - Emit A2UI v0.8 server-to-client messages only.
-- The JSON should be an array of messages.
-- Include exactly one `beginRendering` message for a new surface.
-- Include exactly one `surfaceUpdate` message for that surface.
+- Each block JSON should be an array of messages.
+- The first A2UI block must include exactly one `beginRendering` message for a
+  new surface and a minimal `surfaceUpdate` with the root card, content column,
+  and title component.
+- Later A2UI blocks should include additional `surfaceUpdate` messages for that
+  same surface. When adding children to a `Column`, include the updated `Column`
+  component with the complete `explicitList` of all children that should render
+  so far.
 - Do not emit v0.9 message shapes such as `createSurface` or `updateComponents`.
 - Do not emit executable code, HTML, JavaScript, CSS, or external URLs.
 
@@ -79,9 +88,11 @@ until the backend action round trip and AI-SOC component catalog are completed.
 
 ## Minimal Valid Pattern
 
-For an alert triage answer, wrap JSON shaped like the following in the
-`a2ui-json` block and adapt the text. This sample omits the wrapper tags so the
-runtime does not parse the skill file itself:
+For an alert triage answer, emit multiple A2UI blocks and adapt the text. These
+samples omit the wrapper tags so the runtime does not parse the skill file
+itself.
+
+First block, create the surface and render a title immediately:
 
 ```json
 [
@@ -109,10 +120,7 @@ runtime does not parse the skill file itself:
             "Column": {
               "children": {
                 "explicitList": [
-                  "alert-title",
-                  "alert-risk",
-                  "alert-evidence",
-                  "alert-next-step"
+                  "alert-title"
                 ]
               },
               "distribution": "start",
@@ -128,6 +136,37 @@ runtime does not parse the skill file itself:
                 "literal": "高风险告警研判"
               },
               "usageHint": "h3"
+            }
+          }
+        }
+      ]
+    }
+  }
+]
+```
+
+Second block, update the same surface with risk, evidence, and next-step content:
+
+```json
+[
+  {
+    "surfaceUpdate": {
+      "surfaceId": "soc-alert-triage-001",
+      "components": [
+        {
+          "id": "alert-content",
+          "component": {
+            "Column": {
+              "children": {
+                "explicitList": [
+                  "alert-title",
+                  "alert-risk",
+                  "alert-evidence",
+                  "alert-next-step"
+                ]
+              },
+              "distribution": "start",
+              "alignment": "stretch"
             }
           }
         },

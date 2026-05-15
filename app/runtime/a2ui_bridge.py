@@ -12,6 +12,8 @@ A2UI_BLOCK_PATTERN = re.compile(
 )
 A2UI_PROTOCOL_VERSION = "v0_8"
 A2UI_CUSTOM_EVENT_NAME = "a2ui.message"
+_A2UI_START_TAG = "<a2ui-json>"
+_A2UI_END_TAG = "</a2ui-json>"
 
 
 @dataclass(frozen=True)
@@ -21,36 +23,86 @@ class A2uiExtractionResult:
     errors: list[str]
 
 
+class A2uiStreamExtractor:
+    """Incrementally strips A2UI XML blocks and emits completed payloads."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        self._inside_block = False
+
+    def feed(self, chunk: str) -> A2uiExtractionResult:
+        self._buffer += chunk
+        visible: list[str] = []
+        payloads: list[dict[str, Any]] = []
+        errors: list[str] = []
+
+        while self._buffer:
+            if self._inside_block:
+                end_index = self._buffer.lower().find(_A2UI_END_TAG)
+                if end_index < 0:
+                    break
+
+                raw_payload = self._buffer[:end_index]
+                payload, error = _parse_a2ui_payload(raw_payload)
+                if payload is not None:
+                    payloads.append(payload)
+                if error:
+                    errors.extend(error)
+                self._buffer = self._buffer[end_index + len(_A2UI_END_TAG) :]
+                self._inside_block = False
+                continue
+
+            start_index = self._buffer.lower().find(_A2UI_START_TAG)
+            if start_index >= 0:
+                visible.append(self._buffer[:start_index])
+                self._buffer = self._buffer[start_index + len(_A2UI_START_TAG) :]
+                self._inside_block = True
+                continue
+
+            keep = _partial_tag_suffix_length(self._buffer, _A2UI_START_TAG)
+            if keep:
+                visible.append(self._buffer[:-keep])
+                self._buffer = self._buffer[-keep:]
+            else:
+                visible.append(self._buffer)
+                self._buffer = ""
+            break
+
+        return A2uiExtractionResult(
+            text="".join(visible),
+            payloads=payloads,
+            errors=errors,
+        )
+
+    def finish(self) -> A2uiExtractionResult:
+        if not self._buffer:
+            return A2uiExtractionResult(text="", payloads=[], errors=[])
+
+        if self._inside_block:
+            self._buffer = ""
+            self._inside_block = False
+            return A2uiExtractionResult(
+                text="",
+                payloads=[],
+                errors=["Invalid A2UI JSON: missing closing a2ui-json tag"],
+            )
+
+        text = self._buffer
+        self._buffer = ""
+        return A2uiExtractionResult(text=text, payloads=[], errors=[])
+
+
 def extract_a2ui_payloads(text: str) -> A2uiExtractionResult:
     payloads: list[dict[str, Any]] = []
     errors: list[str] = []
 
     def replace_block(match: re.Match[str]) -> str:
         raw_payload = match.group("payload")
-        try:
-            payload = json.loads(raw_payload)
-        except json.JSONDecodeError as exc:
-            errors.append(f"Invalid A2UI JSON: {exc.msg}")
-            return ""
-
-        messages = _normalize_a2ui_messages(payload)
-        if messages is None:
-            errors.append("Invalid A2UI payload: expected a v0_8 message, message list, or {messages: [...]}.")
-            return ""
-
-        invalid = [_validate_a2ui_message(message) for message in messages]
-        invalid_reasons = [reason for reason in invalid if reason]
-        if invalid_reasons:
-            errors.extend(invalid_reasons)
-            return ""
-
-        payloads.append(
-            {
-                "protocol": "a2ui",
-                "version": A2UI_PROTOCOL_VERSION,
-                "messages": messages,
-            }
-        )
+        payload, error = _parse_a2ui_payload(raw_payload)
+        if payload is not None:
+            payloads.append(payload)
+        if error:
+            errors.extend(error)
         return ""
 
     visible_text = A2UI_BLOCK_PATTERN.sub(replace_block, text).strip()
@@ -59,6 +111,41 @@ def extract_a2ui_payloads(text: str) -> A2uiExtractionResult:
         payloads=payloads,
         errors=errors,
     )
+
+
+def _parse_a2ui_payload(raw_payload: str) -> tuple[dict[str, Any] | None, list[str]]:
+    try:
+        payload = json.loads(raw_payload)
+    except json.JSONDecodeError as exc:
+        return None, [f"Invalid A2UI JSON: {exc.msg}"]
+
+    messages = _normalize_a2ui_messages(payload)
+    if messages is None:
+        return None, ["Invalid A2UI payload: expected a v0_8 message, message list, or {messages: [...]}."] 
+
+    invalid = [_validate_a2ui_message(message) for message in messages]
+    invalid_reasons = [reason for reason in invalid if reason]
+    if invalid_reasons:
+        return None, invalid_reasons
+
+    return (
+        {
+            "protocol": "a2ui",
+            "version": A2UI_PROTOCOL_VERSION,
+            "messages": messages,
+        },
+        [],
+    )
+
+
+def _partial_tag_suffix_length(value: str, tag: str) -> int:
+    lowered = value.lower()
+    tag = tag.lower()
+    max_len = min(len(lowered), len(tag) - 1)
+    for length in range(max_len, 0, -1):
+        if lowered[-length:] == tag[:length]:
+            return length
+    return 0
 
 
 def _normalize_a2ui_messages(payload: Any) -> list[dict[str, Any]] | None:

@@ -28,6 +28,14 @@ from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
 
 
+def _is_internal_skill_payload(text: str) -> bool:
+    return (
+        text.startswith("Base directory for this skill:")
+        and "/.claude/skills/" in text.splitlines()[0]
+        and "\n\nARGUMENTS:" in text
+    )
+
+
 class ClaudeRuntime:
     """Thin runtime adapter around Claude Agent SDK.
 
@@ -784,6 +792,8 @@ class ClaudeRuntime:
                     continue
                 text = data.get("text")
                 if isinstance(text, str) and text:
+                    if _is_internal_skill_payload(text):
+                        continue
                     extraction = extract_a2ui_payloads(text)
                     if extraction.text:
                         if not text_started:

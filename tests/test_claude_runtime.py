@@ -741,6 +741,63 @@ ARGUMENTS: analyze alert"""
     assert not any("Base directory for this skill" in event["delta"] for event in text_events)
 
 
+def test_stream_ag_ui_suppresses_partial_internal_skill_payload(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    internal_skill_payload = """Base directory for this skill: /root/.claude/skills/ai-soc-a2ui-response
+
+# AI-SOC A2UI Runtime Response
+
+This partial skill payload has not streamed its ARGUMENTS section yet."""
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(
+            content=[TextBlock(text=internal_skill_payload)],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield AssistantMessage(
+            content=[TextBlock(text="Final answer.")],
+            model="<synthetic>",
+            session_id="sdk-session",
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="triage",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "analyze alert"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
+
+    assert [event["delta"] for event in text_events] == ["Final answer."]
+
+
 def test_stream_ag_ui_rejects_invalid_a2ui_payload(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 

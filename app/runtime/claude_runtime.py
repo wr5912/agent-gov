@@ -29,11 +29,8 @@ from .settings import AppSettings
 
 
 def _is_internal_skill_payload(text: str) -> bool:
-    return (
-        text.startswith("Base directory for this skill:")
-        and "/.claude/skills/" in text.splitlines()[0]
-        and "\n\nARGUMENTS:" in text
-    )
+    first_line = text.splitlines()[0] if text else ""
+    return first_line.startswith("Base directory for this skill:") and "/.claude/skills/" in first_line
 
 
 class ClaudeRuntime:

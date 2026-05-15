@@ -20,12 +20,15 @@ from .ag_ui import (
     text_message_end_event,
     text_message_start_event,
 )
-from .a2ui_bridge import A2UI_CUSTOM_EVENT_NAME, A2uiStreamExtractor
+from .a2ui_bridge import A2UI_CUSTOM_EVENT_NAME, extract_a2ui_tool_payloads
 from .message_utils import extract_stream_event_text, extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
+
+
+AGENT_ACTIVITY_EVENT_NAME = "ai_soc.agent.activity"
 
 
 def _is_internal_skill_payload(text: str) -> bool:
@@ -262,6 +265,133 @@ class ClaudeRuntime:
         if hook_event:
             entry["hook_event_name"] = hook_event
         return entry or None
+
+    def _agent_activity_events_from_raw(
+        self,
+        raw_message: Any,
+        tool_context: dict[str, dict[str, str]],
+    ) -> list[dict[str, Any]]:
+        activities: list[dict[str, Any]] = []
+        for record in self._walk_records(raw_message):
+            tool_call = self._tool_call_from_record(record)
+            if tool_call:
+                activity = self._activity_from_tool_call(tool_call)
+                activities.append(activity)
+                tool_use_id = self._string_value(tool_call.get("tool_use_id"))
+                if tool_use_id:
+                    tool_context[tool_use_id] = {
+                        "toolName": self._string_value(tool_call.get("name")) or "",
+                        "label": activity["label"],
+                    }
+
+            tool_result = self._tool_result_from_record(record)
+            if tool_result:
+                activities.append(self._activity_from_tool_result(tool_result, tool_context))
+        return activities
+
+    def _activity_from_tool_call(self, call: dict[str, Any]) -> dict[str, Any]:
+        tool_name = self._string_value(call.get("name")) or "unknown"
+        label, detail = self._tool_activity_copy(tool_name, "running")
+        tool_use_id = self._string_value(call.get("tool_use_id")) or self._activity_id("tool-call", tool_name)
+        kind = "ui_generation" if tool_name.startswith("mcp__ai-soc-ui__") else "tool_call"
+        return {
+            "activityId": tool_use_id,
+            "kind": kind,
+            "status": "running",
+            "label": label,
+            "detail": detail,
+            "toolName": tool_name,
+            "toolUseId": tool_use_id,
+        }
+
+    def _activity_from_tool_result(
+        self,
+        result: dict[str, Any],
+        tool_context: dict[str, dict[str, str]],
+    ) -> dict[str, Any]:
+        tool_use_id = self._string_value(result.get("tool_use_id"))
+        context = tool_context.get(tool_use_id or "", {})
+        tool_name = self._string_value(result.get("name")) or context.get("toolName") or "unknown"
+        status = "error" if self._is_tool_result_error(result) else "finished"
+        label, detail = self._tool_activity_copy(tool_name, status)
+        label = context.get("label") or label
+        kind = "ui_generation" if tool_name.startswith("mcp__ai-soc-ui__") else "tool_result"
+        return {
+            "activityId": tool_use_id or self._activity_id("tool-result", tool_name),
+            "kind": kind,
+            "status": status,
+            "label": label,
+            "detail": detail,
+            "toolName": tool_name,
+            "toolUseId": tool_use_id,
+        }
+
+    def _tool_activity_copy(self, tool_name: str, status: str) -> tuple[str, str]:
+        action = self._tool_activity_label(tool_name)
+        if status == "running":
+            return action, self._tool_activity_running_detail(tool_name, action)
+        if status == "error":
+            return action, f"{action}失败，已保留当前回复上下文。"
+        return action, f"{action}完成。"
+
+    def _tool_activity_label(self, tool_name: str) -> str:
+        if tool_name == "mcp__ai-soc-ui__emit_cards":
+            return "生成结构化视图"
+        if tool_name == "mcp__ai-soc-ui__emit_a2ui":
+            return "生成 A2UI 视图"
+        if tool_name.startswith("Skill(") and tool_name.endswith(")"):
+            skill_name = tool_name.removeprefix("Skill(").removesuffix(")")
+            if skill_name == "ai-soc-a2ui-response":
+                return "准备结构化响应策略"
+            return f"加载 {skill_name} 能力"
+        if tool_name == "Skill":
+            return "加载 Agent 能力"
+        if tool_name == "Read":
+            return "读取上下文文件"
+        if tool_name == "Grep":
+            return "检索上下文内容"
+        if tool_name == "Glob":
+            return "查找上下文文件"
+
+        lowered = tool_name.lower()
+        if "list_assets" in lowered or "_assets_" in lowered:
+            return "查询资产列表"
+        if "alert" in lowered:
+            return "查询告警数据"
+        if "event" in lowered:
+            return "查询安全事件"
+        if "ioc" in lowered or "indicator" in lowered:
+            return "查询威胁指标"
+        if "vulnerab" in lowered or "cve" in lowered:
+            return "查询漏洞数据"
+        if tool_name.startswith("mcp__sec-ops-data__"):
+            return "查询安全运营数据"
+        if tool_name.startswith("mcp__"):
+            return "调用外部工具"
+        return "执行工具调用"
+
+    def _tool_activity_running_detail(self, tool_name: str, action: str) -> str:
+        if tool_name.startswith("mcp__sec-ops-data__"):
+            return f"正在从安全运营数据源{action.replace('查询', '获取')}。"
+        if tool_name.startswith("mcp__ai-soc-ui__"):
+            return "正在将 Agent 结果转换为可渲染的结构化 UI。"
+        if tool_name.startswith("Skill") or tool_name == "Skill":
+            return "正在加载任务相关能力和响应约束。"
+        return f"正在{action}。"
+
+    def _is_tool_result_error(self, result: dict[str, Any]) -> bool:
+        hook_event = self._string_value(result.get("hook_event_name")) or ""
+        if hook_event == "PostToolUseFailure":
+            return True
+        content = result.get("content")
+        if isinstance(content, dict):
+            if content.get("is_error") is True or content.get("ok") is False:
+                return True
+        return False
+
+    def _activity_id(self, prefix: str, value: str) -> str:
+        clean = "".join(char if char.isalnum() else "-" for char in value).strip("-")
+        return f"{prefix}-{clean or 'unknown'}"
 
     def _skill_call_from_tool_call(self, call: dict[str, Any]) -> dict[str, Any] | None:
         tool_name = self._string_value(call.get("name")) or ""
@@ -800,7 +930,8 @@ class ClaudeRuntime:
         text_started = False
         run_failed = False
         final_result: dict[str, Any] | None = None
-        a2ui_extractor = A2uiStreamExtractor()
+        activity_seen: set[str] = set()
+        tool_activity_context: dict[str, dict[str, str]] = {}
 
         yield run_started_event(req)
 
@@ -812,21 +943,25 @@ class ClaudeRuntime:
                 runtime_event = data.get("event")
                 if isinstance(runtime_event, str) and runtime_event.startswith("ResultMessage"):
                     continue
+                for activity in self._agent_activity_events_from_raw(data.get("raw"), tool_activity_context):
+                    activity_key = json.dumps(activity, sort_keys=True, ensure_ascii=False, default=str)
+                    if activity_key in activity_seen:
+                        continue
+                    activity_seen.add(activity_key)
+                    yield custom_event(AGENT_ACTIVITY_EVENT_NAME, activity)
+                tool_extraction = extract_a2ui_tool_payloads(data.get("raw"))
+                for payload in tool_extraction.payloads:
+                    yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
+                for error in tool_extraction.errors:
+                    print(f"[WARN] skipped invalid A2UI tool payload: {error}", flush=True)
                 text = data.get("text")
                 if isinstance(text, str) and text:
                     if _is_internal_skill_payload(text):
                         continue
-                    extraction = a2ui_extractor.feed(text)
-                    if extraction.text:
-                        if not text_started:
-                            yield text_message_start_event(message_id)
-                            text_started = True
-                        yield text_message_content_event(message_id, extraction.text)
-                    for payload in extraction.payloads:
-                        yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
-                    for error in extraction.errors:
-                        run_failed = True
-                        yield run_error_event(req, error, code="a2ui-invalid")
+                    if not text_started:
+                        yield text_message_start_event(message_id)
+                        text_started = True
+                    yield text_message_content_event(message_id, text)
                 continue
 
             if event_name == "result" and isinstance(data, dict):
@@ -849,18 +984,6 @@ class ClaudeRuntime:
                 message = "\n".join(str(error) for error in errors) if isinstance(errors, list) else "Runtime error"
                 run_failed = True
                 yield run_error_event(req, message)
-
-        final_extraction = a2ui_extractor.finish()
-        if final_extraction.text:
-            if not text_started:
-                yield text_message_start_event(message_id)
-                text_started = True
-            yield text_message_content_event(message_id, final_extraction.text)
-        for payload in final_extraction.payloads:
-            yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
-        for error in final_extraction.errors:
-            run_failed = True
-            yield run_error_event(req, error, code="a2ui-invalid")
 
         if text_started:
             yield text_message_end_event(message_id)

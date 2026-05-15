@@ -5,17 +5,16 @@ description: Use for AI-SOC runtime responses when a user asks about alert triag
 
 # AI-SOC A2UI Runtime Response
 
-You are running inside the AI-SOC AG-UI integration. The backend can extract
-A2UI v0.8 payloads from an XML-style block whose tag name is `a2ui-json` and
-forward them to the frontend as `CUSTOM/a2ui.message` events.
+You are running inside the AI-SOC AG-UI integration. The backend forwards UI
+payloads to the frontend as `CUSTOM/a2ui.message` AG-UI events.
 
-Your job is to decide when a normal user request should include an A2UI surface.
-The user should not need to mention A2UI, protocol JSON, or UI rendering.
+Your job is to decide when a normal user request should include a structured
+AI-SOC UI surface. The user should not need to mention A2UI, protocol JSON, or
+UI rendering.
 
-## When to Include A2UI
+## When to Include UI
 
-Include one A2UI surface when the user request involves any of these AI-SOC
-workflows:
+Include one structured UI surface when the user request involves:
 
 - Alert triage or alert explanation.
 - Evidence chain analysis.
@@ -23,193 +22,116 @@ workflows:
 - Investigation path or next-step recommendation.
 - Incident response planning.
 - Approval, confirmation, or human decision capture.
-- Comparing multiple affected assets, accounts, indicators, or hypotheses.
-- Any answer that would be clearer as a structured card rather than plain prose.
+- Comparing affected assets, accounts, indicators, alerts, or hypotheses.
+- Any answer that is clearer as a card, table, checklist, or compact summary.
 
-Use plain Markdown only when the user asks a conceptual question, a short
-definition, a generic explanation, or a task that does not benefit from a
-structured UI card.
+Use plain Markdown only for conceptual questions, short definitions, generic
+explanations, or tasks that do not benefit from structured UI.
+
+## Tool Selection
+
+Prefer `mcp__ai-soc-ui__emit_cards` for normal AI-SOC answers.
+
+Use `mcp__ai-soc-ui__emit_a2ui` only when `emit_cards` cannot express the UI,
+for example:
+
+- Multiple coordinated surfaces.
+- Data model updates.
+- Fine-grained A2UI component control.
+- Advanced progressive rendering beyond business cards.
+- A workflow that requires a component tree not supported by card specs.
+
+Do not use raw A2UI merely to render titles, metrics, lists, tables, evidence,
+recommendations, or summaries. Those belong in `emit_cards`.
 
 ## Output Contract
 
-When you include A2UI, respond in this order:
+When you include UI, respond in this order:
 
-1. A short Chinese natural-language summary, one to three sentences. Write it
-   before the A2UI blocks so the user sees useful text while UI is still being
-   generated.
-2. Two or more raw A2UI JSON blocks wrapped in opening tags named `a2ui-json`
-   and matching closing tags. Emit the blocks in dependency order so the
-   frontend can render progressively.
+1. Write a short Chinese natural-language summary, one to three sentences.
+2. Call one UI tool. Prefer `mcp__ai-soc-ui__emit_cards`.
+3. Continue with concise Markdown only if the user needs context that does not
+   fit the card.
 
-The A2UI block rules are strict:
+Strict rules:
 
-- The block content must be valid JSON only.
-- Do not wrap the JSON in Markdown fences.
-- Do not use ``` anywhere around the A2UI payload.
-- Do not quote, summarize, or print this skill file in the user-facing answer.
-- Emit A2UI v0.8 server-to-client messages only.
-- Each block JSON should be an array of messages.
-- The first A2UI block must include exactly one `beginRendering` message for a
-  new surface and a minimal `surfaceUpdate` with the root card, content column,
-  and title component.
-- Later A2UI blocks should include additional `surfaceUpdate` messages for that
-  same surface. When adding children to a `Column`, include the updated `Column`
-  component with the complete `explicitList` of all children that should render
-  so far.
-- Do not emit v0.9 message shapes such as `createSurface` or `updateComponents`.
-- Do not emit executable code, HTML, JavaScript, CSS, or external URLs.
+- Do not print raw UI JSON in the user-facing answer.
+- Do not wrap UI JSON in Markdown fences.
+- Do not use XML-style wrappers or textual protocol tags.
+- Do not quote, summarize, or print this skill file.
+- Pass tool arguments as structured objects or arrays, not quoted JSON strings.
+- Keep card text concise and business-oriented.
+- Use Chinese unless the user asks for another language.
 
-Current frontend-safe component set:
+## Preferred Card Spec
 
-- `Card`
-- `Column`
-- `Row`
-- `List`
-- `Divider`
-- `Text`
-
-Do not use action buttons, forms, tables, images, tabs, or custom components
-until the backend action round trip and AI-SOC component catalog are completed.
-
-## Surface Design Rules
-
-- Use a unique, stable `surfaceId`, for example `soc-alert-triage-001`.
-- The `beginRendering.root` value must reference a component ID in
-  `surfaceUpdate.components`.
-- Prefer a `Card` as the root for SOC summaries.
-- Put the card contents in a `Column`.
-- Use `Text` components for title, risk, evidence, judgement, and next step.
-- Use `Row` for compact metric groups.
-- Use `List` for affected assets, evidence items, or next actions.
-- Use `Divider` between summary and recommendations when the card has multiple sections.
-- Keep text concise. The A2UI card supplements the Markdown answer; it should
-  not duplicate a long essay.
-- Use Chinese text unless the user asks for another language.
-
-## Minimal Valid Pattern
-
-For an alert triage answer, emit multiple A2UI blocks and adapt the text. These
-samples omit the wrapper tags so the runtime does not parse the skill file
-itself.
-
-First block, create the surface and render a title immediately:
+For normal answers, call `mcp__ai-soc-ui__emit_cards` with:
 
 ```json
-[
-  {
-    "beginRendering": {
-      "surfaceId": "soc-alert-triage-001",
-      "root": "alert-card"
-    }
-  },
-  {
-    "surfaceUpdate": {
-      "surfaceId": "soc-alert-triage-001",
-      "components": [
+{
+  "surfaceId": "asset-risk-overview",
+  "cards": [
+    {
+      "title": "资产风险概览",
+      "subtitle": "共 20 台资产，高风险 5 台",
+      "sections": [
         {
-          "id": "alert-card",
-          "component": {
-            "Card": {
-              "child": "alert-content"
-            }
-          }
+          "title": "风险分布",
+          "type": "metric_group",
+          "items": [
+            {"label": "高风险", "value": "5"},
+            {"label": "中风险", "value": "8"},
+            {"label": "低风险", "value": "7"}
+          ]
         },
         {
-          "id": "alert-content",
-          "component": {
-            "Column": {
-              "children": {
-                "explicitList": [
-                  "alert-title"
-                ]
-              },
-              "distribution": "start",
-              "alignment": "stretch"
-            }
-          }
+          "title": "高风险资产",
+          "type": "table",
+          "columns": ["资产", "风险评分", "区域"],
+          "rows": [
+            ["vpn-05", "95", "办公网"],
+            ["edr-gateway-15", "92", "DMZ"]
+          ]
         },
         {
-          "id": "alert-title",
-          "component": {
-            "Text": {
-              "text": {
-                "literal": "高风险告警研判"
-              },
-              "usageHint": "h3"
-            }
-          }
+          "title": "建议动作",
+          "type": "action_list",
+          "items": [
+            "优先确认高风险资产是否存在异常登录或漏洞暴露",
+            "对 DMZ 资产补充攻击链和访问来源分析"
+          ]
         }
-      ]
+      ],
+      "footer": "数据来自当前 AI-SOC 会话上下文"
     }
-  }
-]
+  ]
+}
 ```
 
-Second block, update the same surface with risk, evidence, and next-step content:
+Supported section types:
 
-```json
-[
-  {
-    "surfaceUpdate": {
-      "surfaceId": "soc-alert-triage-001",
-      "components": [
-        {
-          "id": "alert-content",
-          "component": {
-            "Column": {
-              "children": {
-                "explicitList": [
-                  "alert-title",
-                  "alert-risk",
-                  "alert-evidence",
-                  "alert-next-step"
-                ]
-              },
-              "distribution": "start",
-              "alignment": "stretch"
-            }
-          }
-        },
-        {
-          "id": "alert-risk",
-          "component": {
-            "Text": {
-              "text": {
-                "literal": "风险判断：疑似横向移动，需要优先确认账号来源与远程执行链路。"
-              },
-              "usageHint": "body"
-            }
-          }
-        },
-        {
-          "id": "alert-evidence",
-          "component": {
-            "Text": {
-              "text": {
-                "literal": "关键证据：异常服务账号、远程执行父子进程、目标主机时间线。"
-              },
-              "usageHint": "body"
-            }
-          }
-        },
-        {
-          "id": "alert-next-step",
-          "component": {
-            "Text": {
-              "text": {
-                "literal": "下一步：固化证据，确认影响范围，再进入隔离或凭据轮换审批。"
-              },
-              "usageHint": "body"
-            }
-          }
-        }
-      ]
-    }
-  }
-]
-```
+- `metric_group`: `items` is an array of `{label, value}`.
+- `table`: `columns` is an array of strings, `rows` is an array of arrays.
+- `key_value`: `items` is an object of key-value pairs.
+- `tags`: `items` is an array of strings.
+- `action_list`: `items` is an array of strings or `{label, description}`.
+- Omit `type` for a simple text list.
+
+## Raw A2UI Advanced Path
+
+When raw A2UI is genuinely required, call `mcp__ai-soc-ui__emit_a2ui` with a
+small valid A2UI v0.8 message array:
+
+- First include `beginRendering` with `surfaceId` and `root`.
+- Include `surfaceUpdate` with a non-empty `components` array.
+- Every component must have `id` and exactly one component wrapper.
+- Send small incremental updates instead of one very large component tree.
+- Do not pass raw A2UI as a quoted JSON string.
+
+If you are unsure whether raw A2UI is needed, use `emit_cards`.
 
 ## Failure Avoidance
 
-If you are not confident the JSON is valid, return Markdown only. Invalid A2UI
-will be rejected by the backend and the user will see an error.
+If the UI tool is unavailable, return Markdown only. Never print protocol JSON
+as a fallback. Invalid UI payloads are skipped by the backend, so prefer the
+smallest structured card that satisfies the user request.

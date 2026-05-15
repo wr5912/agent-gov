@@ -3,6 +3,13 @@
     "sec-ops-data": {
       "type": "http",
       "url": "http://198.19.65.206:58001/mcp"
+    },
+    "ai-soc-ui": {
+      "type": "stdio",
+      "command": "python3",
+      "args": [
+        "/workspace/mcp_servers/ai_soc_ui_mcp/server.py"
+      ]
     }
   }
 }

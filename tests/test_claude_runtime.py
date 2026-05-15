@@ -662,34 +662,46 @@ def test_stream_ag_ui_maps_partial_stream_events_to_text_deltas(tmp_path, monkey
     assert [event["delta"] for event in text_events] == ["hel", "lo"]
 
 
-def test_stream_ag_ui_extracts_a2ui_custom_event(tmp_path, monkeypatch):
+def test_stream_ag_ui_maps_emit_a2ui_tool_call_to_custom_event(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
-
-    a2ui_block = """Here is a generated card.
-<a2ui-json>
-[
-  {"beginRendering": {"surfaceId": "surface-alert", "root": "card-root"}},
-  {
-    "surfaceUpdate": {
-      "surfaceId": "surface-alert",
-      "components": [
-        {"id": "card-root", "component": {"Card": {"child": "card-text"}}},
-        {"id": "card-text", "component": {"Text": {"text": {"literalString": "High risk alert"}}}}
-      ]
-    }
-  }
-]
-</a2ui-json>
-The card is ready."""
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
         yield AssistantMessage(
-            content=[TextBlock(text=a2ui_block)],
+            content=[TextBlock(text="已生成结构化资产概览。")],
             model="<synthetic>",
             session_id="sdk-session",
         )
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui",
+                    "name": "mcp__ai-soc-ui__emit_a2ui",
+                    "input": {
+                        "messages": [
+                            {"beginRendering": {"surfaceId": "surface-assets", "root": "asset-card"}},
+                            {
+                                "surfaceUpdate": {
+                                    "surfaceId": "surface-assets",
+                                    "components": [
+                                        {"id": "asset-card", "component": {"Card": {"child": "asset-text"}}},
+                                        {
+                                            "id": "asset-text",
+                                            "component": {
+                                                "Text": {"text": {"literal": "当前资产总数 20"}}
+                                            },
+                                        },
+                                    ],
+                                }
+                            },
+                        ]
+                    },
+                }
+            ],
+        }
         yield ResultMessage(
             subtype="success",
             duration_ms=1,
@@ -708,7 +720,7 @@ The card is ready."""
         req = RunAgentInput(
             threadId="thread-test",
             runId="run-test",
-            messages=[{"role": "user", "content": "show card"}],
+            messages=[{"role": "user", "content": "查看资产"}],
         )
         return [item async for item in runtime.stream_ag_ui(req)]
 
@@ -720,39 +732,60 @@ The card is ready."""
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
     events = asyncio.run(collect(runtime))
-    custom_events = [event for event in events if event["type"] == "CUSTOM"]
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
     text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
 
+    assert [event["delta"] for event in text_events] == ["已生成结构化资产概览。"]
     assert len(custom_events) == 1
     assert custom_events[0]["name"] == "a2ui.message"
     assert custom_events[0]["value"]["version"] == "v0_8"
-    assert len(custom_events[0]["value"]["messages"]) == 2
-    assert "a2ui-json" not in text_events[0]["delta"]
-    assert text_events[0]["delta"] == "Here is a generated card.\n\nThe card is ready."
+    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "surface-assets"
 
 
-def test_stream_ag_ui_extracts_incremental_a2ui_blocks_from_partial_events(tmp_path, monkeypatch):
-    from claude_agent_sdk import ResultMessage, StreamEvent
-
-    chunks = [
-        "Intro <a2ui-json>",
-        '[{"beginRendering":{"surfaceId":"surface-stream","root":"card-root"}}]',
-        "</a2ui-json>",
-        '<a2ui-json>[{"surfaceUpdate":{"surfaceId":"surface-stream","components":[',
-        '{"id":"card-root","component":{"Card":{"child":"card-text"}}},',
-        '{"id":"card-text","component":{"Text":{"text":{"literal":"Streaming card"}}}}',
-        "]}}]</a2ui-json>Done.",
-    ]
+def test_stream_ag_ui_converts_emit_a2ui_card_specs_to_a2ui_messages(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
-        for index, chunk in enumerate(chunks):
-            yield StreamEvent(
-                uuid=f"event-{index}",
-                session_id="sdk-session",
-                event={"type": "content_block_delta", "delta": {"type": "text_delta", "text": chunk}},
-            )
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-card",
+                    "name": "mcp__ai-soc-ui__emit_a2ui",
+                    "input": {
+                        "surfaceId": "asset-cards",
+                        "messages": [
+                            {
+                                "type": "card",
+                                "title": "资产查询结果概览",
+                                "subtitle": "共 20 条资产 | 高危 7",
+                                "sections": [
+                                    {
+                                        "title": "风险分布",
+                                        "type": "metric_group",
+                                        "items": [
+                                            {"label": "高危", "value": "7"},
+                                            {"label": "低危", "value": "7"},
+                                        ],
+                                    },
+                                    {
+                                        "title": "高危资产",
+                                        "type": "table",
+                                        "columns": ["主机名", "风险评分"],
+                                        "rows": [["edr-gateway-20", "97"]],
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
         yield ResultMessage(
             subtype="success",
             duration_ms=1,
@@ -771,7 +804,7 @@ def test_stream_ag_ui_extracts_incremental_a2ui_blocks_from_partial_events(tmp_p
         req = RunAgentInput(
             threadId="thread-test",
             runId="run-test",
-            messages=[{"role": "user", "content": "show card"}],
+            messages=[{"role": "user", "content": "以卡片形式展示资产"}],
         )
         return [item async for item in runtime.stream_ag_ui(req)]
 
@@ -780,17 +813,240 @@ def test_stream_ag_ui_extracts_incremental_a2ui_blocks_from_partial_events(tmp_p
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     settings = _settings(tmp_path)
-    settings.include_partial_messages = True
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
     events = asyncio.run(collect(runtime))
-    text_events = [event for event in events if event["type"] == "TEXT_MESSAGE_CONTENT"]
-    custom_events = [event for event in events if event["type"] == "CUSTOM"]
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    error_events = [event for event in events if event["type"] == "RUN_ERROR"]
 
-    assert [event["delta"] for event in text_events] == ["Intro ", "Done."]
-    assert len(custom_events) == 2
-    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "surface-stream"
-    assert custom_events[1]["value"]["messages"][0]["surfaceUpdate"]["surfaceId"] == "surface-stream"
+    assert error_events == []
+    assert len(custom_events) == 1
+    messages = custom_events[0]["value"]["messages"]
+    assert messages[0]["beginRendering"]["surfaceId"] == "asset-cards"
+    assert messages[1]["surfaceUpdate"]["surfaceId"] == "asset-cards"
+    assert any(component["id"] == "asset-cards-card-1-title" for component in messages[1]["surfaceUpdate"]["components"])
+
+
+def test_stream_ag_ui_converts_emit_cards_tool_call_to_a2ui_messages(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-cards",
+                    "name": "mcp__ai-soc-ui__emit_cards",
+                    "input": {
+                        "surfaceId": "asset-risk-cards",
+                        "cards": [
+                            {
+                                "title": "资产风险概览",
+                                "subtitle": "共 20 台资产，高风险 5 台",
+                                "sections": [
+                                    {
+                                        "title": "风险分布",
+                                        "type": "metric_group",
+                                        "items": [
+                                            {"label": "高风险", "value": "5"},
+                                            {"label": "中风险", "value": "8"},
+                                        ],
+                                    },
+                                    {
+                                        "title": "建议动作",
+                                        "type": "action_list",
+                                        "items": ["优先排查 vpn-05", "确认 DMZ 暴露面"],
+                                    },
+                                ],
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "查看资产风险"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    error_events = [event for event in events if event["type"] == "RUN_ERROR"]
+
+    assert error_events == []
+    assert len(custom_events) == 1
+    messages = custom_events[0]["value"]["messages"]
+    assert messages[0]["beginRendering"]["surfaceId"] == "asset-risk-cards"
+    assert any(
+        component["id"] == "asset-risk-cards-card-1-section-2-item-1"
+        for component in messages[1]["surfaceUpdate"]["components"]
+    )
+
+
+def test_stream_ag_ui_emits_agent_activity_for_tool_calls(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-assets",
+                    "name": "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
+                    "input": {"limit": 20},
+                }
+            ],
+        }
+        yield {
+            "type": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu-assets",
+                    "content": [{"asset": "vpn-05"}],
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="assets",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "查看资产"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    activity_events = [
+        event
+        for event in events
+        if event["type"] == "CUSTOM" and event["name"] == "ai_soc.agent.activity"
+    ]
+
+    assert len(activity_events) == 2
+    assert activity_events[0]["value"]["status"] == "running"
+    assert activity_events[0]["value"]["label"] == "查询资产列表"
+    assert activity_events[1]["value"]["status"] == "finished"
+    assert activity_events[1]["value"]["label"] == "查询资产列表"
+
+
+def test_stream_ag_ui_accepts_emit_a2ui_messages_json_string(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-string",
+                    "name": "mcp__ai-soc-ui__emit_a2ui",
+                    "input": {
+                        "messages": (
+                            '[{"beginRendering":{"surfaceId":"surface-string","root":"card-root"}},'
+                            '{"surfaceUpdate":{"surfaceId":"surface-string","components":['
+                            '{"id":"card-root","component":{"Card":{"child":"card-text"}}},'
+                            '{"id":"card-text","component":{"Text":{"text":{"literal":"字符串入参"}}}}'
+                            ']}}]'
+                        )
+                    },
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "查询资产"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    error_events = [event for event in events if event["type"] == "RUN_ERROR"]
+
+    assert error_events == []
+    assert len(custom_events) == 1
+    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "surface-string"
 
 
 def test_stream_ag_ui_suppresses_internal_skill_payload(tmp_path, monkeypatch):
@@ -918,17 +1174,27 @@ This partial skill payload has not streamed its ARGUMENTS section yet."""
     assert [event["delta"] for event in text_events] == ["Final answer."]
 
 
-def test_stream_ag_ui_rejects_invalid_a2ui_payload(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+def test_stream_ag_ui_skips_invalid_emit_a2ui_tool_payload_without_failing_run(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
-        yield AssistantMessage(
-            content=[TextBlock(text='<a2ui-json>{"surfaceUpdate": {"surfaceId": "x", "components": []}}</a2ui-json>')],
-            model="<synthetic>",
-            session_id="sdk-session",
-        )
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-invalid",
+                    "name": "mcp__ai-soc-ui__emit_a2ui",
+                    "input": {
+                        "messages": [
+                            {"surfaceUpdate": {"surfaceId": "x", "components": []}},
+                        ]
+                    },
+                }
+            ],
+        }
         yield ResultMessage(
             subtype="success",
             duration_ms=1,
@@ -960,10 +1226,11 @@ def test_stream_ag_ui_rejects_invalid_a2ui_payload(tmp_path, monkeypatch):
 
     events = asyncio.run(collect(runtime))
 
-    assert not [event for event in events if event["type"] == "CUSTOM"]
-    error_events = [event for event in events if event["type"] == "RUN_ERROR"]
-    assert len(error_events) == 1
-    assert error_events[0]["code"] == "a2ui-invalid"
+    assert not [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert events[-1]["type"] == "RUN_FINISHED"
 
 
 def test_notification_store_lists_after_cursor():

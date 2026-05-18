@@ -9,16 +9,55 @@ mcp = FastMCP("ai-soc-ui")
 
 
 @mcp.tool()
+def render_a2ui(payload: Any) -> dict[str, Any]:
+    """Render an A2UI surface through the AI-SOC AG-UI bridge.
+
+    Preferred official-aligned entry point for structured UI.
+
+    Supported payload modes:
+    - {"mode": "card", "surfaceId": "...", "cards": [...]} for normal AI-SOC cards.
+    - {"mode": "a2ui", "messages": [...]} for advanced raw A2UI v0.8 messages.
+
+    Catalog mode will be enabled after AI-SOC custom component schemas are
+    available. Do not print the payload in the user-facing answer.
+    """
+    mode = "a2ui"
+    item_count = 1
+    if isinstance(payload, dict):
+        mode = str(payload.get("mode") or mode)
+        if isinstance(payload.get("cards"), list):
+            item_count = len(payload["cards"])
+        elif isinstance(payload.get("messages"), list):
+            item_count = len(payload["messages"])
+        elif isinstance(payload.get("payload"), dict):
+            nested = payload["payload"]
+            if isinstance(nested.get("cards"), list):
+                item_count = len(nested["cards"])
+            elif isinstance(nested.get("messages"), list):
+                item_count = len(nested["messages"])
+    return {
+        "ok": True,
+        "mode": mode,
+        "item_count": item_count,
+        "note": "render_a2ui payload was captured by the runtime and forwarded through AG-UI.",
+    }
+
+
+@mcp.tool()
 def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[str, Any]:
     """Emit AI-SOC UI cards to the frontend.
 
-    This is the preferred tool for normal AI-SOC answers. Pass `cards` as an
+    Compatibility helper for normal AI-SOC answers. Prefer `render_a2ui` with
+    mode "card" when available. Pass `cards` as an
     array of card specs, not as a quoted JSON string:
     [{"title": "...", "subtitle": "...", "sections": [...]}].
 
     Supported section types: metric_group, table, key_value, tags, action_list,
-    or plain text lists. The runtime converts these cards into A2UI v0.8
-    messages and forwards them through AG-UI.
+    or plain text lists. Card specs may also include an `actions` array for
+    frontend interactions, for example:
+    [{"label": "查看资产", "name": "ai_soc.asset.select", "context": {"assetId": "vpn-05"}}].
+    The runtime converts these cards into A2UI v0.8 messages and forwards them
+    through AG-UI.
     """
     card_count = len(cards) if isinstance(cards, list) else 1
     return {
@@ -33,8 +72,8 @@ def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[st
 def emit_a2ui(messages: Any) -> dict[str, Any]:
     """Emit raw A2UI v0.8 messages to the AI-SOC frontend.
 
-    Use this advanced tool only when the simplified `emit_cards` tool cannot
-    express the required UI. Pass messages as a JSON array, not as a quoted JSON
+    Compatibility helper for advanced raw A2UI. Prefer `render_a2ui` with mode
+    "a2ui" when available. Pass messages as a JSON array, not as a quoted JSON
     string. Valid A2UI v0.8 server-to-client messages include:
     [{"beginRendering": {...}}, {"surfaceUpdate": {...}}].
     """

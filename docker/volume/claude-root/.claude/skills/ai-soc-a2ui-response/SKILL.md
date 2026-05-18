@@ -30,9 +30,13 @@ explanations, or tasks that do not benefit from structured UI.
 
 ## Tool Selection
 
-Prefer `mcp__ai-soc-ui__emit_cards` for normal AI-SOC answers.
+Prefer `mcp__ai-soc-ui__render_a2ui` for normal AI-SOC answers when it is
+available.
 
-Use `mcp__ai-soc-ui__emit_a2ui` only when `emit_cards` cannot express the UI,
+Use `render_a2ui` with `mode: "card"` for normal cards, tables, metrics,
+recommendations, and user action buttons.
+
+Use `render_a2ui` with `mode: "a2ui"` only when card mode cannot express the UI,
 for example:
 
 - Multiple coordinated surfaces.
@@ -42,14 +46,19 @@ for example:
 - A workflow that requires a component tree not supported by card specs.
 
 Do not use raw A2UI merely to render titles, metrics, lists, tables, evidence,
-recommendations, or summaries. Those belong in `emit_cards`.
+recommendations, or summaries. Those belong in `render_a2ui` card mode.
+
+Compatibility fallback:
+
+- If `render_a2ui` is unavailable, use `mcp__ai-soc-ui__emit_cards`.
+- If neither UI tool is available, return Markdown only.
 
 ## Output Contract
 
 When you include UI, respond in this order:
 
 1. Write a short Chinese natural-language summary, one to three sentences.
-2. Call one UI tool. Prefer `mcp__ai-soc-ui__emit_cards`.
+2. Call one UI tool. Prefer `mcp__ai-soc-ui__render_a2ui`.
 3. Continue with concise Markdown only if the user needs context that does not
    fit the card.
 
@@ -65,46 +74,61 @@ Strict rules:
 
 ## Preferred Card Spec
 
-For normal answers, call `mcp__ai-soc-ui__emit_cards` with:
+For normal answers, call `mcp__ai-soc-ui__render_a2ui` with:
 
 ```json
 {
-  "surfaceId": "asset-risk-overview",
-  "cards": [
-    {
-      "title": "资产风险概览",
-      "subtitle": "共 20 台资产，高风险 5 台",
-      "sections": [
-        {
-          "title": "风险分布",
-          "type": "metric_group",
-          "items": [
-            {"label": "高风险", "value": "5"},
-            {"label": "中风险", "value": "8"},
-            {"label": "低风险", "value": "7"}
-          ]
-        },
-        {
-          "title": "高风险资产",
-          "type": "table",
-          "columns": ["资产", "风险评分", "区域"],
-          "rows": [
-            ["vpn-05", "95", "办公网"],
-            ["edr-gateway-15", "92", "DMZ"]
-          ]
-        },
-        {
-          "title": "建议动作",
-          "type": "action_list",
-          "items": [
-            "优先确认高风险资产是否存在异常登录或漏洞暴露",
-            "对 DMZ 资产补充攻击链和访问来源分析"
-          ]
-        }
-      ],
-      "footer": "数据来自当前 AI-SOC 会话上下文"
-    }
-  ]
+  "payload": {
+    "mode": "card",
+    "surfaceId": "asset-risk-overview",
+    "cards": [
+      {
+        "title": "资产风险概览",
+        "subtitle": "共 20 台资产，高风险 5 台",
+        "sections": [
+          {
+            "title": "风险分布",
+            "type": "metric_group",
+            "items": [
+              {"label": "高风险", "value": "5"},
+              {"label": "中风险", "value": "8"},
+              {"label": "低风险", "value": "7"}
+            ]
+          },
+          {
+            "title": "高风险资产",
+            "type": "table",
+            "columns": ["资产", "风险评分", "区域"],
+            "rows": [
+              ["vpn-05", "95", "办公网"],
+              ["edr-gateway-15", "92", "DMZ"]
+            ]
+          },
+          {
+            "title": "建议动作",
+            "type": "action_list",
+            "items": [
+              "优先确认高风险资产是否存在异常登录或漏洞暴露",
+              "对 DMZ 资产补充攻击链和访问来源分析"
+            ]
+          }
+        ],
+        "actions": [
+          {
+            "label": "查看 vpn-05",
+            "name": "ai_soc.asset.select",
+            "primary": true,
+            "context": {
+              "assetId": "vpn-05",
+              "assetName": "vpn-05",
+              "riskScore": 95
+            }
+          }
+        ],
+        "footer": "数据来自当前 AI-SOC 会话上下文"
+      }
+    ]
+  }
 }
 ```
 
@@ -117,10 +141,21 @@ Supported section types:
 - `action_list`: `items` is an array of strings or `{label, description}`.
 - Omit `type` for a simple text list.
 
+Supported card actions:
+
+- Use `actions` only for explicit user follow-up choices, not for decorative
+  labels.
+- First supported action: `ai_soc.asset.select`.
+- `ai_soc.asset.select` context must include `assetId`; optionally include
+  `assetName` and `riskScore`.
+- Use this action when the card lists one or more assets and the next useful
+  step is letting the user select a specific asset for related alerts,
+  evidence, or recommendations.
+
 ## Raw A2UI Advanced Path
 
-When raw A2UI is genuinely required, call `mcp__ai-soc-ui__emit_a2ui` with a
-small valid A2UI v0.8 message array:
+When raw A2UI is genuinely required, call `mcp__ai-soc-ui__render_a2ui` with
+`mode: "a2ui"` and a small valid A2UI v0.8 message array:
 
 - First include `beginRendering` with `surfaceId` and `root`.
 - Include `surfaceUpdate` with a non-empty `components` array.

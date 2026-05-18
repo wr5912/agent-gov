@@ -10,12 +10,25 @@ A2UI_PROTOCOL_VERSION = "v0_8"
 A2UI_CUSTOM_EVENT_NAME = "a2ui.message"
 A2UI_RAW_TOOL_NAME = "mcp__ai-soc-ui__emit_a2ui"
 A2UI_CARD_TOOL_NAME = "mcp__ai-soc-ui__emit_cards"
+A2UI_RENDER_TOOL_NAME = "mcp__ai-soc-ui__render_a2ui"
+A2UI_ASSET_SELECT_ACTION = "ai_soc.asset.select"
 
 
 @dataclass(frozen=True)
 class A2uiExtractionResult:
-    payloads: list[dict[str, Any]]
+    tool_payloads: list["A2uiToolPayload"]
     errors: list[str]
+
+    @property
+    def payloads(self) -> list[dict[str, Any]]:
+        return [item.payload for item in self.tool_payloads]
+
+
+@dataclass(frozen=True)
+class A2uiToolPayload:
+    tool_name: str
+    payload: dict[str, Any]
+    mode: str | None = None
 
 
 def normalize_a2ui_payload(payload: Any) -> tuple[dict[str, Any] | None, list[str]]:
@@ -47,6 +60,213 @@ def normalize_a2ui_card_payload(payload: Any) -> tuple[dict[str, Any] | None, li
     return _protocol_payload(messages)
 
 
+def normalize_render_a2ui_payload(payload: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    """Normalize the official-aligned render_a2ui tool payload."""
+    payload, parse_error = _parse_json_string_payload(payload)
+    if parse_error:
+        return None, [parse_error]
+
+    payload = _unwrap_render_payload(payload)
+    payload, parse_error = _parse_json_string_payload(payload)
+    if parse_error:
+        return None, [parse_error]
+
+    if not isinstance(payload, dict):
+        return None, ["Invalid render_a2ui payload: expected an object with mode and payload fields."]
+
+    mode = str(payload.get("mode") or "a2ui").strip().lower()
+    if mode in {"a2ui", "raw"}:
+        return normalize_a2ui_payload(payload.get("messages", payload.get("payload", payload)))
+    if mode in {"card", "cards"}:
+        return normalize_a2ui_card_payload(payload.get("payload", payload))
+    if mode == "catalog":
+        return (
+            None,
+            [
+                "Invalid render_a2ui payload: catalog mode is not enabled yet. "
+                "Use mode='card' or mode='a2ui'."
+            ],
+        )
+    return None, [f"Invalid render_a2ui payload: unsupported mode '{mode}'."]
+
+
+def a2ui_payload_surface_ids(payload: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return ids
+
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        surface_id = (
+            read_surface_id(message.get("beginRendering"))
+            or read_surface_id(message.get("surfaceUpdate"))
+            or read_surface_id(message.get("dataModelUpdate"))
+            or read_surface_id(message.get("deleteSurface"))
+        )
+        if surface_id and surface_id not in ids:
+            ids.append(surface_id)
+    return ids
+
+
+def retarget_a2ui_payload(payload: dict[str, Any], target_surface_id: str) -> dict[str, Any]:
+    source_ids = [surface_id for surface_id in a2ui_payload_surface_ids(payload) if surface_id != target_surface_id]
+    if not source_ids:
+        return payload
+
+    # Current generated payloads are single-surface. If a future payload contains
+    # multiple surfaces, only the first one is retargeted by this compatibility path.
+    source_surface_id = source_ids[0]
+    return _replace_surface_references(payload, source_surface_id, target_surface_id)
+
+
+def read_surface_id(value: Any) -> str | None:
+    return str(value["surfaceId"]) if isinstance(value, dict) and _non_empty_string(value.get("surfaceId")) else None
+
+
+def asset_risk_surface_id(run_id: str) -> str:
+    return _component_id("ai-soc-asset-risk", run_id or "run")
+
+
+def asset_risk_skeleton_payload(surface_id: str) -> dict[str, Any]:
+    title_id = _component_id(surface_id, "title")
+    status_id = _component_id(surface_id, "status")
+    content_id = _component_id(surface_id, "content")
+    card_id = _component_id(surface_id, "card")
+    root_id = _component_id(surface_id, "root")
+    return _required_protocol_payload(
+        [
+            {"beginRendering": {"surfaceId": surface_id, "root": root_id}},
+            {
+                "surfaceUpdate": {
+                    "surfaceId": surface_id,
+                    "components": [
+                        _column_component(root_id, [card_id]),
+                        {
+                            "id": card_id,
+                            "component": {"Card": {"child": content_id}},
+                        },
+                        _column_component(content_id, [title_id, status_id]),
+                        _text_component(title_id, "资产风险概览", "h3"),
+                        _text_component(status_id, "正在准备资产风险视图", "caption"),
+                    ],
+                }
+            },
+        ]
+    )
+
+
+def asset_risk_status_payload(surface_id: str, status: str) -> dict[str, Any]:
+    return _required_protocol_payload(
+        [
+            {
+                "surfaceUpdate": {
+                    "surfaceId": surface_id,
+                    "components": [
+                        _text_component(_component_id(surface_id, "status"), status, "caption"),
+                    ],
+                }
+            }
+        ]
+    )
+
+
+def asset_risk_result_payload(
+    surface_id: str,
+    assets: list[dict[str, Any]],
+    *,
+    completed: bool = False,
+) -> dict[str, Any]:
+    content_id = _component_id(surface_id, "content")
+    title_id = _component_id(surface_id, "title")
+    status_id = _component_id(surface_id, "status")
+    metrics_title_id = _component_id(surface_id, "metrics-title")
+    high_title_id = _component_id(surface_id, "high-risk-title")
+    recommendation_title_id = _component_id(surface_id, "recommendation-title")
+
+    normalized_assets = [_normalize_asset_for_card(asset) for asset in assets]
+    normalized_assets = [asset for asset in normalized_assets if asset.get("assetId")]
+    high_risk = [asset for asset in normalized_assets if _asset_score(asset) >= 80]
+    medium_risk = [asset for asset in normalized_assets if 50 <= _asset_score(asset) < 80]
+    low_risk = [asset for asset in normalized_assets if _asset_score(asset) < 50]
+    top_assets = sorted(normalized_assets, key=_asset_score, reverse=True)[:5]
+
+    child_ids = [
+        title_id,
+        status_id,
+        metrics_title_id,
+        _component_id(surface_id, "metric-total"),
+        _component_id(surface_id, "metric-high"),
+        _component_id(surface_id, "metric-medium"),
+        _component_id(surface_id, "metric-low"),
+        high_title_id,
+    ]
+    components = [
+        _text_component(title_id, "资产风险概览", "h3"),
+        _text_component(
+            status_id,
+            "资产风险视图已生成" if completed else "已获取资产数据，正在生成风险视图",
+            "caption",
+        ),
+        _text_component(metrics_title_id, "风险分布", "body"),
+        _text_component(_component_id(surface_id, "metric-total"), f"资产总数: {len(normalized_assets)}", "body"),
+        _text_component(_component_id(surface_id, "metric-high"), f"高风险(>=80): {len(high_risk)}", "body"),
+        _text_component(_component_id(surface_id, "metric-medium"), f"中风险(50-79): {len(medium_risk)}", "body"),
+        _text_component(_component_id(surface_id, "metric-low"), f"低风险(<50): {len(low_risk)}", "body"),
+        _text_component(high_title_id, "高风险资产 TOP 5", "body"),
+    ]
+
+    for index, asset in enumerate(top_assets, start=1):
+        item_id = _component_id(surface_id, f"high-risk-asset-{index}")
+        child_ids.append(item_id)
+        components.append(_text_component(item_id, _asset_summary_text(asset), "caption"))
+
+    child_ids.append(recommendation_title_id)
+    components.append(_text_component(recommendation_title_id, "建议动作", "body"))
+    recommendations = _asset_recommendations(top_assets, high_risk)
+    for index, recommendation in enumerate(recommendations, start=1):
+        item_id = _component_id(surface_id, f"recommendation-{index}")
+        child_ids.append(item_id)
+        components.append(_text_component(item_id, recommendation, "body"))
+
+    action_specs = [
+        {
+            "label": f"查看 {asset.get('assetName') or asset.get('assetId')}",
+            "name": A2UI_ASSET_SELECT_ACTION,
+            "primary": index == 1,
+            "context": {
+                "assetId": asset.get("assetId"),
+                "assetName": asset.get("assetName") or asset.get("assetId"),
+                "riskScore": _asset_score(asset),
+            },
+        }
+        for index, asset in enumerate(top_assets[:3], start=1)
+    ]
+    action_components = _card_action_components(surface_id, 1, action_specs)
+    child_ids.extend(action_components["root_ids"])
+    components.extend(action_components["components"])
+    components.append(_column_component(content_id, child_ids))
+
+    return _required_protocol_payload(
+        [
+            {
+                "surfaceUpdate": {
+                    "surfaceId": surface_id,
+                    "components": components,
+                }
+            }
+        ]
+    )
+
+
+def _required_protocol_payload(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    payload, errors = _protocol_payload(messages)
+    if payload is None:
+        raise ValueError("; ".join(errors) or "invalid A2UI payload")
+    return payload
+
+
 def _protocol_payload(messages: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, list[str]]:
     invalid = [_validate_a2ui_message(message) for message in messages]
     invalid_reasons = [reason for reason in invalid if reason]
@@ -64,7 +284,7 @@ def _protocol_payload(messages: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
 
 
 def extract_a2ui_tool_payloads(raw_message: Any) -> A2uiExtractionResult:
-    payloads: list[dict[str, Any]] = []
+    tool_payloads: list[A2uiToolPayload] = []
     errors: list[str] = []
 
     for record in _walk_records(raw_message):
@@ -75,13 +295,18 @@ def extract_a2ui_tool_payloads(raw_message: Any) -> A2uiExtractionResult:
         tool_input = record.get("input")
         if tool_name == A2UI_CARD_TOOL_NAME:
             payload, payload_errors = normalize_a2ui_card_payload(tool_input)
+            payload_mode = "card"
+        elif tool_name == A2UI_RENDER_TOOL_NAME:
+            payload, payload_errors = normalize_render_a2ui_payload(tool_input)
+            payload_mode = _render_a2ui_mode(tool_input)
         else:
             payload, payload_errors = normalize_a2ui_payload(tool_input)
+            payload_mode = "a2ui"
         if payload is not None:
-            payloads.append(payload)
+            tool_payloads.append(A2uiToolPayload(tool_name=tool_name, payload=payload, mode=payload_mode))
         errors.extend(payload_errors)
 
-    return A2uiExtractionResult(payloads=payloads, errors=errors)
+    return A2uiExtractionResult(tool_payloads=tool_payloads, errors=errors)
 
 
 def _walk_records(value: Any) -> list[dict[str, Any]]:
@@ -98,7 +323,7 @@ def _walk_records(value: Any) -> list[dict[str, Any]]:
 
 def _a2ui_tool_name(record: dict[str, Any]) -> str | None:
     tool_name = record.get("name") or record.get("tool_name") or record.get("toolName")
-    if tool_name not in {A2UI_RAW_TOOL_NAME, A2UI_CARD_TOOL_NAME}:
+    if tool_name not in {A2UI_RAW_TOOL_NAME, A2UI_CARD_TOOL_NAME, A2UI_RENDER_TOOL_NAME}:
         return None
 
     record_type = str(record.get("type") or "").lower()
@@ -127,6 +352,25 @@ def _normalize_a2ui_messages(payload: Any) -> list[dict[str, Any]] | None:
         if isinstance(parsed_messages, list) and all(_is_a2ui_message(item) for item in parsed_messages):
             return parsed_messages
 
+    return None
+
+
+def _unwrap_render_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+    if set(payload.keys()) == {"payload"}:
+        return payload["payload"]
+    if "payload" in payload and not any(key in payload for key in ("mode", "messages", "cards", "component")):
+        return payload["payload"]
+    return payload
+
+
+def _render_a2ui_mode(payload: Any) -> str | None:
+    payload, _ = _parse_json_string_payload(payload)
+    payload = _unwrap_render_payload(payload)
+    payload, _ = _parse_json_string_payload(payload)
+    if isinstance(payload, dict):
+        return str(payload.get("mode") or "a2ui").strip().lower()
     return None
 
 
@@ -192,6 +436,11 @@ def _card_specs_to_a2ui_messages(specs: list[dict[str, Any]], surface_id: str) -
             section_ids = _section_components(surface_id, index, section_index, section)
             child_ids.extend(section_ids["root_ids"])
             components.extend(section_ids["components"])
+
+        action_ids = _card_action_components(surface_id, index, _list_of_records(spec.get("actions")))
+        if action_ids["root_ids"]:
+            child_ids.extend(action_ids["root_ids"])
+            components.extend(action_ids["components"])
 
         footer = str(spec.get("footer") or "").strip()
         if footer:
@@ -276,6 +525,80 @@ def _section_components(surface_id: str, card_index: int, section_index: int, se
     return {"root_ids": root_ids, "components": components}
 
 
+def _card_action_components(surface_id: str, card_index: int, actions: list[dict[str, Any]]) -> dict[str, Any]:
+    if not actions:
+        return {"root_ids": [], "components": []}
+
+    prefix = f"card-{card_index}-actions"
+    row_id = _component_id(surface_id, prefix)
+    button_ids: list[str] = []
+    components: list[dict[str, Any]] = []
+
+    for action_index, action in enumerate(actions, start=1):
+        name = str(action.get("name") or "").strip()
+        label = str(action.get("label") or action.get("title") or "").strip()
+        if not name or not label:
+            continue
+
+        button_id = _component_id(surface_id, f"{prefix}-button-{action_index}")
+        label_id = _component_id(surface_id, f"{prefix}-button-{action_index}-label")
+        button_ids.append(button_id)
+        components.append(_text_component(label_id, label, "body"))
+        components.append(
+            _button_component(
+                button_id,
+                label_id,
+                name=name,
+                context=_a2ui_action_context(action.get("context")),
+                primary=bool(action.get("primary")),
+            )
+        )
+
+    if not button_ids:
+        return {"root_ids": [], "components": []}
+
+    components.append(_row_component(row_id, button_ids))
+    return {"root_ids": [row_id], "components": components}
+
+
+def _button_component(
+    component_id: str,
+    child_id: str,
+    *,
+    name: str,
+    context: list[dict[str, Any]],
+    primary: bool,
+) -> dict[str, Any]:
+    return {
+        "id": component_id,
+        "component": {
+            "Button": {
+                "child": child_id,
+                "primary": primary,
+                "action": {
+                    "name": name,
+                    "context": context,
+                },
+            }
+        },
+    }
+
+
+def _row_component(component_id: str, child_ids: list[str]) -> dict[str, Any]:
+    return {
+        "id": component_id,
+        "component": {
+            "Row": {
+                "children": {
+                    "explicitList": child_ids,
+                },
+                "distribution": "start",
+                "alignment": "center",
+            }
+        },
+    }
+
+
 def _column_component(component_id: str, child_ids: list[str]) -> dict[str, Any]:
     return {
         "id": component_id,
@@ -303,6 +626,132 @@ def _text_component(component_id: str, text: str, usage_hint: str) -> dict[str, 
             }
         },
     }
+
+
+def _normalize_asset_for_card(value: dict[str, Any]) -> dict[str, Any]:
+    host = value.get("host") if isinstance(value.get("host"), dict) else {}
+    asset_id = (
+        _string_or_empty(value.get("assetId"))
+        or _string_or_empty(value.get("asset_id"))
+        or _string_or_empty(value.get("id"))
+        or _string_or_empty(value.get("hostname"))
+        or _string_or_empty(value.get("name"))
+        or _string_or_empty(value.get("asset"))
+        or _string_or_empty(host.get("hostname"))
+    )
+    asset_name = (
+        _string_or_empty(value.get("assetName"))
+        or _string_or_empty(value.get("asset_name"))
+        or _string_or_empty(value.get("hostname"))
+        or _string_or_empty(value.get("name"))
+        or _string_or_empty(value.get("asset"))
+        or _string_or_empty(host.get("hostname"))
+        or asset_id
+    )
+    return {
+        "assetId": asset_id,
+        "assetName": asset_name,
+        "riskScore": _number_or_zero(
+            value.get("riskScore")
+            or value.get("risk_score")
+            or value.get("risk")
+            or value.get("score")
+            or value.get("risk_level")
+        ),
+        "ip": _string_or_empty(value.get("ip")) or _string_or_empty(host.get("ip")),
+        "zone": (
+            _string_or_empty(value.get("zone"))
+            or _string_or_empty(value.get("area"))
+            or _string_or_empty(value.get("network_zone"))
+            or _string_or_empty(value.get("businessZone"))
+        ),
+        "type": _string_or_empty(value.get("type")) or _string_or_empty(value.get("asset_type")),
+    }
+
+
+def _asset_score(asset: dict[str, Any]) -> float:
+    score = asset.get("riskScore")
+    if isinstance(score, (int, float)) and not isinstance(score, bool):
+        return float(score)
+    return 0.0
+
+
+def _asset_summary_text(asset: dict[str, Any]) -> str:
+    parts = [
+        str(asset.get("assetName") or asset.get("assetId")),
+        str(asset.get("ip") or "").strip(),
+        str(int(_asset_score(asset))),
+        str(asset.get("type") or "").strip(),
+        str(asset.get("zone") or "").strip(),
+    ]
+    return " | ".join(part for part in parts if part)
+
+
+def _asset_recommendations(top_assets: list[dict[str, Any]], high_risk: list[dict[str, Any]]) -> list[str]:
+    if not top_assets:
+        return ["未识别到可排序资产，建议补充资产清单或风险评分字段。"]
+    first = str(top_assets[0].get("assetName") or top_assets[0].get("assetId"))
+    return [
+        f"优先确认 {first} 是否存在异常访问、漏洞暴露或横向移动迹象。",
+        f"对 {len(high_risk)} 台高风险资产补充告警、进程和网络证据链分析。",
+    ]
+
+
+def _a2ui_action_context(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, dict):
+        return []
+
+    result: list[dict[str, Any]] = []
+    for key, raw_value in value.items():
+        if not _non_empty_string(key):
+            continue
+        literal = _literal_value(raw_value)
+        if literal is None:
+            continue
+        result.append({"key": str(key), "value": literal})
+    return result
+
+
+def _literal_value(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, bool):
+        return {"literalBoolean": value}
+    if isinstance(value, (int, float)):
+        return {"literalNumber": value}
+    if isinstance(value, str):
+        return {"literalString": value}
+    return None
+
+
+def _replace_surface_references(value: Any, source_surface_id: str, target_surface_id: str) -> Any:
+    if isinstance(value, str):
+        return f"{target_surface_id}{value[len(source_surface_id):]}" if value.startswith(source_surface_id) else value
+    if isinstance(value, list):
+        return [_replace_surface_references(item, source_surface_id, target_surface_id) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: target_surface_id
+            if key == "surfaceId" and item == source_surface_id
+            else _replace_surface_references(item, source_surface_id, target_surface_id)
+            for key, item in value.items()
+        }
+    return value
+
+
+def _string_or_empty(value: Any) -> str:
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _number_or_zero(value: Any) -> float:
+    if isinstance(value, bool):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            return 0.0
+    return 0.0
 
 
 def _component_id(surface_id: str, suffix: str) -> str:

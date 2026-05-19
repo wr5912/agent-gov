@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from pydantic import BaseModel, Field
 
 from app.runtime.ag_ui import (
     PublishNotificationRequest,
@@ -34,12 +36,14 @@ from app.runtime.schemas import (
 )
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
+from app.runtime.task_store import InMemoryTaskResolutionStore, TaskResolutionRecord
 
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
 runtime = ClaudeRuntime(settings, session_store)
 notification_store = InMemoryNotificationStore()
 agent_trace_store = InMemoryAgentTraceStore()
+task_resolution_store = InMemoryTaskResolutionStore()
 bearer_auth = HTTPBearer(auto_error=False)
 
 app = FastAPI(
@@ -52,8 +56,9 @@ app = FastAPI(
     openapi_tags=[
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
-        {"name": "ag-ui", "description": "AG-UI run and proactive notification event streams."},
+        {"name": "ag-ui", "description": "AG-UI run and proactive business task event streams."},
         {"name": "agent-trace", "description": "Independent Agent runtime trace event streams."},
+        {"name": "tasks", "description": "User task resolution and status synchronization endpoints."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "sessions", "description": "List and delete API session mappings."},
@@ -61,6 +66,20 @@ app = FastAPI(
     ],
     swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
 )
+
+
+class TaskResolutionRequest(BaseModel):
+    status: str = Field(pattern="^(handled|dismissed)$")
+    kind: str | None = None
+    resolution: str | None = None
+    target_workspace: str | None = Field(default=None, alias="targetWorkspace")
+    target_id: str | None = Field(default=None, alias="targetId")
+    evidence_ids: list[str] = Field(default_factory=list, alias="evidenceIds")
+    handled_by: str | None = Field(default=None, alias="handledBy")
+    handled_at: str | None = Field(default=None, alias="handledAt")
+    comment: str | None = None
+
+    model_config = {"populate_by_name": True, "extra": "allow"}
 
 app.add_middleware(
     CORSMiddleware,
@@ -222,8 +241,8 @@ async def ag_ui_run(req: RunAgentInput) -> StreamingResponse:
     "/api/ag-ui/notifications",
     dependencies=[Depends(require_api_key)],
     tags=["ag-ui"],
-    summary="Publish an Agent-initiated AG-UI custom notification",
-    description="Development and worker-facing endpoint for adding lightweight proactive notifications to the SSE queue.",
+    summary="Publish an Agent-initiated AG-UI custom business task event",
+    description="Development and worker-facing endpoint for adding proactive business task events to the SSE queue.",
 )
 async def publish_ag_ui_notification(req: PublishNotificationRequest) -> dict[str, object]:
     record = notification_store.publish(
@@ -240,8 +259,8 @@ async def publish_ag_ui_notification(req: PublishNotificationRequest) -> dict[st
     "/api/ag-ui/notifications",
     dependencies=[Depends(require_api_key)],
     tags=["ag-ui"],
-    summary="Subscribe to Agent-initiated AG-UI custom notifications",
-    description="Streams lightweight proactive notification events. Use Last-Event-ID or cursor to recover missed items.",
+    summary="Subscribe to Agent-initiated AG-UI custom business task events",
+    description="Streams proactive business task events. Use Last-Event-ID or cursor to recover missed items.",
 )
 async def ag_ui_notifications(
     cursor: str | None = Query(default=None),
@@ -266,6 +285,50 @@ async def ag_ui_notifications(
             yield ": heartbeat\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+
+@app.post(
+    "/api/tasks/{task_id}/resolution",
+    dependencies=[Depends(require_api_key)],
+    tags=["tasks"],
+    summary="Record a user resolution for an Agent-created task",
+    description="Stores a task resolution and publishes an ai_soc.task.updated business task event for subscribed clients.",
+)
+async def resolve_task(task_id: str, req: TaskResolutionRequest) -> dict[str, object]:
+    record = task_resolution_store.resolve(
+        task_id=task_id,
+        status=req.status,
+        resolution=req.resolution,
+        target_workspace=req.target_workspace,
+        target_id=req.target_id,
+        evidence_ids=req.evidence_ids,
+        handled_by=req.handled_by,
+        handled_at=req.handled_at,
+        comment=req.comment,
+        payload=req.model_dump(by_alias=True, exclude_none=True),
+    )
+    event_value = {
+        "task": {
+            "id": record.task_id,
+            "kind": req.kind,
+            "status": record.status,
+            "target_workspace": record.target_workspace,
+            "target_id": record.target_id,
+            "handled_at": record.handled_at,
+        },
+        "resolution": record.resolution,
+        "comment": record.comment,
+    }
+    notification = notification_store.publish(
+        name="ai_soc.task.updated",
+        value=event_value,
+        notification_id=f"task-update-{task_id}-{_timestamp_suffix()}",
+    )
+    return {
+        "ok": True,
+        "task": _task_resolution_payload(record),
+        "event": _notification_sse_payload(notification),
+    }
 
 
 @app.get(
@@ -347,6 +410,24 @@ def _notification_sse_payload(record: NotificationRecord) -> dict[str, object]:
         value=record.value,
         created_at=record.created_at,
     )
+
+
+def _task_resolution_payload(record: TaskResolutionRecord) -> dict[str, object]:
+    return {
+        "taskId": record.task_id,
+        "status": record.status,
+        "resolution": record.resolution,
+        "targetWorkspace": record.target_workspace,
+        "targetId": record.target_id,
+        "evidenceIds": record.evidence_ids,
+        "handledBy": record.handled_by,
+        "handledAt": record.handled_at,
+        "comment": record.comment,
+    }
+
+
+def _timestamp_suffix() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S%f")
 
 
 async def _publish_trace_from_runtime_stream_item(req: RunAgentInput, item: dict[str, Any]) -> None:

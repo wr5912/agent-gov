@@ -4,7 +4,7 @@ import json
 import os
 import warnings
 from contextlib import nullcontext
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, Optional
 
@@ -992,7 +992,11 @@ class ClaudeRuntime:
                     yield {"event": "done", "data": "[DONE]"}
         self._flush_langfuse()
 
-    async def stream_ag_ui(self, req: RunAgentInput) -> AsyncIterator[dict[str, Any]]:
+    async def stream_ag_ui(
+        self,
+        req: RunAgentInput,
+        trace_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         chat_req = run_input_to_chat_request(req)
         message_id = f"{req.run_id}-assistant-1"
         text_started = False
@@ -1009,6 +1013,8 @@ class ClaudeRuntime:
         yield run_started_event(req)
 
         async for item in self.stream(chat_req):
+            if trace_sink is not None:
+                await trace_sink(item)
             event_name = item.get("event")
             data = item.get("data")
 

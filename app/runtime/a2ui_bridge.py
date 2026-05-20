@@ -16,12 +16,6 @@ A2UI_ASSET_SELECT_ACTION = "ai_soc.asset.select"
 A2UI_ALERT_SELECT_ACTION = "ai_soc.alert.select"
 A2UI_EVIDENCE_SELECT_ACTION = "ai_soc.evidence.select"
 A2UI_JUDGEMENT_REQUEST_ACTION = "ai_soc.judgement.request"
-AI_SOC_A2UI_CATALOG = "ai-soc"
-AI_SOC_A2UI_CATALOG_COMPONENTS = {
-    "RiskMetricGroup",
-    "RiskAssetTable",
-    "AlertTriageCard",
-}
 
 
 @dataclass(frozen=True)
@@ -49,10 +43,10 @@ def normalize_a2ui_payload(payload: Any) -> tuple[dict[str, Any] | None, list[st
 
     messages = _normalize_a2ui_messages(payload)
     if messages is None:
-        messages = _normalize_card_specs(payload)
-
-    if messages is None:
-        return None, ["Invalid A2UI payload: expected a v0_8 message, message list, or {messages: [...]}."]
+        return None, [
+            "Invalid raw A2UI payload: expected a v0_8 message, message list, or {messages: [...]}. "
+            "Use render_a2ui mode 'card' or emit_cards for card specs."
+        ]
 
     return _protocol_payload(messages)
 
@@ -90,258 +84,64 @@ def normalize_render_a2ui_payload(payload: Any) -> tuple[dict[str, Any] | None, 
     if mode in {"card", "cards"}:
         return normalize_a2ui_card_payload(payload.get("payload", payload))
     if mode == "catalog":
-        return normalize_a2ui_catalog_payload(payload)
+        return None, [
+            "render_a2ui catalog mode is disabled: backend must not synthesize business cards. "
+            "Use mode 'card' and provide Agent-generated cards, sections, rows, and actions."
+        ]
     return None, [f"Invalid render_a2ui payload: unsupported mode '{mode}'."]
 
 
 def normalize_a2ui_catalog_payload(payload: Any) -> tuple[dict[str, Any] | None, list[str]]:
-    """Normalize AI-SOC catalog component payloads into A2UI v0.8 messages."""
-    payload, parse_error = _parse_json_string_payload(payload)
-    if parse_error:
-        return None, [parse_error]
-    if not isinstance(payload, dict):
-        return None, ["Invalid A2UI catalog payload: expected an object."]
-
-    catalog = str(payload.get("catalog") or AI_SOC_A2UI_CATALOG).strip()
-    if catalog != AI_SOC_A2UI_CATALOG:
-        return None, [f"Invalid A2UI catalog payload: unsupported catalog '{catalog}'."]
-
-    surface_id = _catalog_surface_id(payload)
-    components = _catalog_component_specs(payload)
-    if components is None:
-        return None, ["Invalid A2UI catalog payload: expected component or components."]
-
-    cards: list[dict[str, Any]] = []
-    errors: list[str] = []
-    for index, component in enumerate(components, start=1):
-        card, component_errors = _catalog_component_to_card(component, index)
-        if card is not None:
-            cards.append(card)
-        errors.extend(component_errors)
-
-    if errors:
-        return None, errors
-    if not cards:
-        return None, ["Invalid A2UI catalog payload: no renderable catalog components."]
-
-    return _protocol_payload(_card_specs_to_a2ui_messages(cards, surface_id))
+    """Reject backend catalog templates; Agents must provide generated cards."""
+    return None, [
+        "render_a2ui catalog mode is disabled: backend must not synthesize business cards. "
+        "Use mode 'card' with Agent-generated card specs."
+    ]
 
 
-def a2ui_payload_surface_ids(payload: dict[str, Any]) -> list[str]:
-    ids: list[str] = []
+def a2ui_payload_stream_chunks(payload: dict[str, Any]) -> list[dict[str, Any]]:
     messages = payload.get("messages")
-    if not isinstance(messages, list):
-        return ids
+    if not isinstance(messages, list) or len(messages) < 2:
+        return [payload]
 
+    chunks: list[dict[str, Any]] = []
+    pending_begin: dict[str, Any] | None = None
     for message in messages:
         if not isinstance(message, dict):
             continue
-        surface_id = (
-            read_surface_id(message.get("beginRendering"))
-            or read_surface_id(message.get("surfaceUpdate"))
-            or read_surface_id(message.get("dataModelUpdate"))
-            or read_surface_id(message.get("deleteSurface"))
-        )
-        if surface_id and surface_id not in ids:
-            ids.append(surface_id)
-    return ids
+        if "beginRendering" in message:
+            pending_begin = message
+            continue
+        surface_update = message.get("surfaceUpdate")
+        if isinstance(surface_update, dict):
+            update_chunks = _surface_update_stream_chunks(surface_update)
+            if not update_chunks:
+                if pending_begin is not None:
+                    chunks.append(_required_protocol_payload([pending_begin]))
+                    pending_begin = None
+                chunks.append(_required_protocol_payload([message]))
+                continue
+            for index, update_chunk in enumerate(update_chunks):
+                chunk_messages = []
+                if index == 0 and pending_begin is not None:
+                    chunk_messages.append(pending_begin)
+                    pending_begin = None
+                chunk_messages.append({"surfaceUpdate": update_chunk})
+                chunks.append(_required_protocol_payload(chunk_messages))
+            continue
+        if pending_begin is not None:
+            chunks.append(_required_protocol_payload([pending_begin]))
+            pending_begin = None
+        chunks.append(_required_protocol_payload([message]))
 
+    if pending_begin is not None:
+        chunks.append(_required_protocol_payload([pending_begin]))
 
-def retarget_a2ui_payload(payload: dict[str, Any], target_surface_id: str) -> dict[str, Any]:
-    source_ids = [surface_id for surface_id in a2ui_payload_surface_ids(payload) if surface_id != target_surface_id]
-    if not source_ids:
-        return payload
-
-    # Current generated payloads are single-surface. If a future payload contains
-    # multiple surfaces, only the first one is retargeted by this compatibility path.
-    source_surface_id = source_ids[0]
-    return _replace_surface_references(payload, source_surface_id, target_surface_id)
+    return chunks or [payload]
 
 
 def read_surface_id(value: Any) -> str | None:
     return str(value["surfaceId"]) if isinstance(value, dict) and _non_empty_string(value.get("surfaceId")) else None
-
-
-def asset_risk_surface_id(run_id: str) -> str:
-    return _component_id("ai-soc-asset-risk", run_id or "run")
-
-
-def generic_progressive_surface_id(run_id: str) -> str:
-    return _component_id("ai-soc-progressive", run_id or "run")
-
-
-def generic_progressive_skeleton_payload(surface_id: str, title: str, status: str) -> dict[str, Any]:
-    title_id = _component_id(surface_id, "title")
-    status_id = _component_id(surface_id, "status")
-    content_id = _component_id(surface_id, "content")
-    card_id = _component_id(surface_id, "card")
-    root_id = _component_id(surface_id, "root")
-    return _required_protocol_payload(
-        [
-            {"beginRendering": {"surfaceId": surface_id, "root": root_id}},
-            {
-                "surfaceUpdate": {
-                    "surfaceId": surface_id,
-                    "components": [
-                        _column_component(root_id, [card_id]),
-                        {
-                            "id": card_id,
-                            "component": {"Card": {"child": content_id}},
-                        },
-                        _column_component(content_id, [title_id, status_id]),
-                        _text_component(title_id, title, "h3"),
-                        _text_component(status_id, status, "caption"),
-                    ],
-                }
-            },
-        ]
-    )
-
-
-def generic_progressive_status_payload(surface_id: str, status: str) -> dict[str, Any]:
-    return _required_protocol_payload(
-        [
-            {
-                "surfaceUpdate": {
-                    "surfaceId": surface_id,
-                    "components": [
-                        _text_component(_component_id(surface_id, "status"), status, "caption"),
-                    ],
-                }
-            }
-        ]
-    )
-
-
-def asset_risk_skeleton_payload(surface_id: str) -> dict[str, Any]:
-    title_id = _component_id(surface_id, "title")
-    status_id = _component_id(surface_id, "status")
-    content_id = _component_id(surface_id, "content")
-    card_id = _component_id(surface_id, "card")
-    root_id = _component_id(surface_id, "root")
-    return _required_protocol_payload(
-        [
-            {"beginRendering": {"surfaceId": surface_id, "root": root_id}},
-            {
-                "surfaceUpdate": {
-                    "surfaceId": surface_id,
-                    "components": [
-                        _column_component(root_id, [card_id]),
-                        {
-                            "id": card_id,
-                            "component": {"Card": {"child": content_id}},
-                        },
-                        _column_component(content_id, [title_id, status_id]),
-                        _text_component(title_id, "资产风险概览", "h3"),
-                        _text_component(status_id, "正在准备资产风险视图", "caption"),
-                    ],
-                }
-            },
-        ]
-    )
-
-
-def asset_risk_status_payload(surface_id: str, status: str) -> dict[str, Any]:
-    return _required_protocol_payload(
-        [
-            {
-                "surfaceUpdate": {
-                    "surfaceId": surface_id,
-                    "components": [
-                        _text_component(_component_id(surface_id, "status"), status, "caption"),
-                    ],
-                }
-            }
-        ]
-    )
-
-
-def asset_risk_result_payload(
-    surface_id: str,
-    assets: list[dict[str, Any]],
-    *,
-    completed: bool = False,
-) -> dict[str, Any]:
-    content_id = _component_id(surface_id, "content")
-    title_id = _component_id(surface_id, "title")
-    status_id = _component_id(surface_id, "status")
-    metrics_title_id = _component_id(surface_id, "metrics-title")
-    high_title_id = _component_id(surface_id, "high-risk-title")
-    recommendation_title_id = _component_id(surface_id, "recommendation-title")
-
-    normalized_assets = [_normalize_asset_for_card(asset) for asset in assets]
-    normalized_assets = [asset for asset in normalized_assets if asset.get("assetId")]
-    high_risk = [asset for asset in normalized_assets if _asset_score(asset) >= 80]
-    medium_risk = [asset for asset in normalized_assets if 50 <= _asset_score(asset) < 80]
-    low_risk = [asset for asset in normalized_assets if _asset_score(asset) < 50]
-    top_assets = sorted(normalized_assets, key=_asset_score, reverse=True)[:5]
-
-    child_ids = [
-        title_id,
-        status_id,
-        metrics_title_id,
-        _component_id(surface_id, "metric-total"),
-        _component_id(surface_id, "metric-high"),
-        _component_id(surface_id, "metric-medium"),
-        _component_id(surface_id, "metric-low"),
-        high_title_id,
-    ]
-    components = [
-        _text_component(title_id, "资产风险概览", "h3"),
-        _text_component(
-            status_id,
-            "资产风险视图已生成" if completed else "已获取资产数据，正在生成风险视图",
-            "caption",
-        ),
-        _text_component(metrics_title_id, "风险分布", "body"),
-        _text_component(_component_id(surface_id, "metric-total"), f"资产总数: {len(normalized_assets)}", "body"),
-        _text_component(_component_id(surface_id, "metric-high"), f"高风险(>=80): {len(high_risk)}", "body"),
-        _text_component(_component_id(surface_id, "metric-medium"), f"中风险(50-79): {len(medium_risk)}", "body"),
-        _text_component(_component_id(surface_id, "metric-low"), f"低风险(<50): {len(low_risk)}", "body"),
-        _text_component(high_title_id, "高风险资产 TOP 5", "body"),
-    ]
-
-    for index, asset in enumerate(top_assets, start=1):
-        item_id = _component_id(surface_id, f"high-risk-asset-{index}")
-        child_ids.append(item_id)
-        components.append(_text_component(item_id, _asset_summary_text(asset), "caption"))
-
-    child_ids.append(recommendation_title_id)
-    components.append(_text_component(recommendation_title_id, "建议动作", "body"))
-    recommendations = _asset_recommendations(top_assets, high_risk)
-    for index, recommendation in enumerate(recommendations, start=1):
-        item_id = _component_id(surface_id, f"recommendation-{index}")
-        child_ids.append(item_id)
-        components.append(_text_component(item_id, recommendation, "body"))
-
-    action_specs = [
-        {
-            "label": f"查看 {asset.get('assetName') or asset.get('assetId')}",
-            "name": A2UI_ASSET_SELECT_ACTION,
-            "primary": index == 1,
-            "context": {
-                "assetId": asset.get("assetId"),
-                "assetName": asset.get("assetName") or asset.get("assetId"),
-                "riskScore": _asset_score(asset),
-            },
-        }
-        for index, asset in enumerate(top_assets[:3], start=1)
-    ]
-    action_components = _card_action_components(surface_id, 1, action_specs)
-    child_ids.extend(action_components["root_ids"])
-    components.extend(action_components["components"])
-    components.append(_column_component(content_id, child_ids))
-
-    return _required_protocol_payload(
-        [
-            {
-                "surfaceUpdate": {
-                    "surfaceId": surface_id,
-                    "components": components,
-                }
-            }
-        ]
-    )
 
 
 def _required_protocol_payload(messages: list[dict[str, Any]]) -> dict[str, Any]:
@@ -365,6 +165,32 @@ def _protocol_payload(messages: list[dict[str, Any]]) -> tuple[dict[str, Any] | 
         },
         [],
     )
+
+
+def _surface_update_stream_chunks(surface_update: dict[str, Any]) -> list[dict[str, Any]]:
+    surface_id = read_surface_id(surface_update)
+    components = surface_update.get("components")
+    if not surface_id or not isinstance(components, list) or len(components) < 4:
+        return []
+
+    raw_components = [component for component in components if isinstance(component, dict)]
+    structural = [component for component in raw_components if _is_structural_component(component)]
+    leaves = [component for component in raw_components if not _is_structural_component(component)]
+    if not structural or not leaves:
+        return []
+
+    chunks = [{"surfaceId": surface_id, "components": structural}]
+    for component in leaves:
+        chunks.append({"surfaceId": surface_id, "components": [component]})
+    return chunks
+
+
+def _is_structural_component(component: dict[str, Any]) -> bool:
+    wrapped = component.get("component")
+    if not isinstance(wrapped, dict) or len(wrapped) != 1:
+        return False
+    component_type = next(iter(wrapped.keys()))
+    return component_type in {"Card", "Column", "Row", "List", "Divider"}
 
 
 def extract_a2ui_tool_payloads(raw_message: Any) -> A2uiExtractionResult:
@@ -483,245 +309,6 @@ def _normalize_card_specs(payload: Any) -> list[dict[str, Any]] | None:
         return None
 
     return _card_specs_to_a2ui_messages(specs, surface_id)
-
-
-def _catalog_surface_id(payload: dict[str, Any]) -> str:
-    return (
-        _string_or_empty(payload.get("surfaceId"))
-        or _string_or_empty(payload.get("surface_id"))
-        or "ai-soc-catalog-surface"
-    )
-
-
-def _catalog_component_specs(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
-    component = payload.get("component")
-    components = payload.get("components")
-    if isinstance(component, dict):
-        return [component]
-    if isinstance(components, list) and all(isinstance(item, dict) for item in components):
-        return components
-    return None
-
-
-def _catalog_component_to_card(component: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
-    component_type = str(component.get("type") or "").strip()
-    props = component.get("props")
-    if component_type not in AI_SOC_A2UI_CATALOG_COMPONENTS:
-        return None, [f"Invalid A2UI catalog component: unsupported type '{component_type}'."]
-    if not isinstance(props, dict):
-        return None, [f"Invalid A2UI catalog component '{component_type}': props must be an object."]
-
-    if component_type == "RiskMetricGroup":
-        return _risk_metric_group_card(props, index)
-    if component_type == "RiskAssetTable":
-        return _risk_asset_table_card(props, index)
-    if component_type == "AlertTriageCard":
-        return _alert_triage_card(props, index)
-    return None, [f"Invalid A2UI catalog component: unsupported type '{component_type}'."]
-
-
-def _risk_metric_group_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
-    metrics = _list_of_records(props.get("metrics"))
-    if not metrics:
-        return None, ["Invalid RiskMetricGroup: metrics must be a non-empty array."]
-
-    items: list[dict[str, str]] = []
-    for item in metrics[:8]:
-        label = _string_or_empty(item.get("label"))
-        raw_value = item.get("value")
-        value = _string_or_empty(raw_value) or (str(raw_value) if raw_value is not None else "")
-        if label and value:
-            items.append({"label": label, "value": value})
-    if not items:
-        return None, ["Invalid RiskMetricGroup: each metric needs label and value."]
-
-    return (
-        {
-            "type": "card",
-            "title": _string_or_empty(props.get("title")) or "风险指标",
-            "subtitle": _string_or_empty(props.get("subtitle")),
-            "sections": [
-                {
-                    "type": "metric_group",
-                    "items": items,
-                }
-            ],
-            "footer": _catalog_footer(index, "RiskMetricGroup"),
-        },
-        [],
-    )
-
-
-def _risk_asset_table_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
-    assets = [_normalize_asset_for_card(asset) for asset in _list_of_records(props.get("assets"))[:10]]
-    assets = [asset for asset in assets if asset.get("assetId")]
-    if not assets:
-        return None, ["Invalid RiskAssetTable: assets must include at least one asset with assetId or hostname."]
-
-    rows = [
-        [
-            asset.get("assetName") or asset.get("assetId"),
-            asset.get("ip") or "-",
-            str(int(_asset_score(asset))),
-            asset.get("type") or "-",
-            asset.get("zone") or "-",
-        ]
-        for asset in assets
-    ]
-    actions = [
-        {
-            "label": f"查看 {asset.get('assetName') or asset.get('assetId')}",
-            "name": A2UI_ASSET_SELECT_ACTION,
-            "primary": action_index == 1,
-            "context": {
-                "assetId": asset.get("assetId"),
-                "assetName": asset.get("assetName") or asset.get("assetId"),
-                "riskScore": _asset_score(asset),
-            },
-        }
-        for action_index, asset in enumerate(assets[:3], start=1)
-    ]
-
-    return (
-        {
-            "type": "card",
-            "title": _string_or_empty(props.get("title")) or "风险资产列表",
-            "subtitle": _string_or_empty(props.get("subtitle")),
-            "sections": [
-                {
-                    "title": "资产",
-                    "type": "table",
-                    "columns": ["资产", "IP", "评分", "类型", "区域"],
-                    "rows": rows,
-                }
-            ],
-            "actions": actions,
-            "footer": _catalog_footer(index, "RiskAssetTable"),
-        },
-        [],
-    )
-
-
-def _alert_triage_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
-    title = _string_or_empty(props.get("title")) or _string_or_empty(props.get("alertTitle")) or "告警研判摘要"
-    entity = _string_or_empty(props.get("entity")) or _string_or_empty(props.get("host")) or _string_or_empty(props.get("target"))
-    finding_id = _finding_id_from_props(props)
-    key_values = {
-        "严重度": _string_or_empty(props.get("severity")) or _string_or_empty(props.get("riskLevel")),
-        "置信度": _string_or_empty(props.get("confidence")) or _string_or_empty(props.get("confidenceLabel")),
-        "状态": _string_or_empty(props.get("status")),
-        "对象": entity,
-    }
-    key_values = {key: value for key, value in key_values.items() if value}
-
-    sections: list[dict[str, Any]] = []
-    if key_values:
-        sections.append({"title": "研判状态", "type": "key_value", "items": key_values})
-
-    summary = _string_or_empty(props.get("summary")) or _string_or_empty(props.get("description"))
-    if summary:
-        sections.append({"title": "摘要", "items": [summary]})
-
-    evidence_records = _list_of_records(props.get("evidence"))
-    evidence = _string_items(props.get("evidence"))
-    if evidence:
-        sections.append({"title": "关键证据", "items": evidence[:6]})
-
-    recommendations = _string_items(props.get("recommendations")) or _string_items(props.get("suggestions"))
-    if recommendations:
-        sections.append({"title": "建议动作", "items": recommendations[:6]})
-
-    if not sections:
-        return None, ["Invalid AlertTriageCard: provide at least status, summary, evidence, or recommendations."]
-
-    return (
-        {
-            "type": "card",
-            "title": title,
-            "subtitle": _string_or_empty(props.get("subtitle")),
-            "sections": sections,
-            "actions": _alert_triage_actions(props, finding_id, evidence_records),
-            "footer": _catalog_footer(index, "AlertTriageCard"),
-        },
-        [],
-    )
-
-
-def _alert_triage_actions(
-    props: dict[str, Any],
-    finding_id: str,
-    evidence_records: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    actions = _list_of_records(props.get("actions"))
-    if actions:
-        return actions
-
-    title = _string_or_empty(props.get("title")) or _string_or_empty(props.get("alertTitle"))
-    alert_id = _string_or_empty(props.get("alertId")) or _string_or_empty(props.get("alert_id")) or finding_id
-    severity = _string_or_empty(props.get("severity")) or _string_or_empty(props.get("riskLevel"))
-    result: list[dict[str, Any]] = []
-
-    if finding_id or alert_id:
-        result.append(
-            {
-                "label": "查看告警",
-                "name": A2UI_ALERT_SELECT_ACTION,
-                "primary": True,
-                "context": {
-                    "findingId": finding_id,
-                    "alertId": alert_id,
-                    "title": title,
-                    "severity": severity,
-                },
-            }
-        )
-
-    for evidence_index, evidence in enumerate(evidence_records[:3], start=1):
-        evidence_id = (
-            _string_or_empty(evidence.get("evidenceId"))
-            or _string_or_empty(evidence.get("evidence_id"))
-            or _string_or_empty(evidence.get("id"))
-        )
-        if not evidence_id:
-            continue
-        result.append(
-            {
-                "label": _string_or_empty(evidence.get("label"))
-                or _string_or_empty(evidence.get("title"))
-                or f"查看证据 {evidence_index}",
-                "name": A2UI_EVIDENCE_SELECT_ACTION,
-                "context": {
-                    "evidenceId": evidence_id,
-                    "findingId": finding_id,
-                    "alertId": alert_id,
-                    "title": _string_or_empty(evidence.get("title")) or _string_or_empty(evidence.get("label")),
-                    "source": _string_or_empty(evidence.get("source")),
-                },
-            }
-        )
-
-    if finding_id or alert_id:
-        result.append(
-            {
-                "label": "请求人工研判",
-                "name": A2UI_JUDGEMENT_REQUEST_ACTION,
-                "context": {
-                    "findingId": finding_id,
-                    "alertId": alert_id,
-                    "recommendedJudgement": (
-                        _string_or_empty(props.get("recommendedJudgement"))
-                        or _string_or_empty(props.get("verdict"))
-                    ),
-                    "summary": _string_or_empty(props.get("summary")) or _string_or_empty(props.get("description")),
-                },
-            }
-        )
-
-    return result
-
-
-def _catalog_footer(index: int, component_type: str) -> str:
-    return f"AI-SOC catalog: {component_type} #{index}"
 
 
 def _is_card_spec(value: Any) -> bool:
@@ -951,83 +538,6 @@ def _text_component(component_id: str, text: str, usage_hint: str) -> dict[str, 
     }
 
 
-def _normalize_asset_for_card(value: dict[str, Any]) -> dict[str, Any]:
-    host = value.get("host") if isinstance(value.get("host"), dict) else {}
-    asset_id = (
-        _string_or_empty(value.get("assetId"))
-        or _string_or_empty(value.get("asset_id"))
-        or _string_or_empty(value.get("id"))
-        or _string_or_empty(value.get("hostname"))
-        or _string_or_empty(value.get("name"))
-        or _string_or_empty(value.get("asset"))
-        or _string_or_empty(host.get("hostname"))
-    )
-    asset_name = (
-        _string_or_empty(value.get("assetName"))
-        or _string_or_empty(value.get("asset_name"))
-        or _string_or_empty(value.get("hostname"))
-        or _string_or_empty(value.get("name"))
-        or _string_or_empty(value.get("asset"))
-        or _string_or_empty(host.get("hostname"))
-        or asset_id
-    )
-    return {
-        "assetId": asset_id,
-        "assetName": asset_name,
-        "riskScore": _number_or_zero(
-            value.get("riskScore")
-            or value.get("risk_score")
-            or value.get("risk")
-            or value.get("score")
-            or value.get("risk_level")
-        ),
-        "ip": _string_or_empty(value.get("ip")) or _string_or_empty(host.get("ip")),
-        "zone": (
-            _string_or_empty(value.get("zone"))
-            or _string_or_empty(value.get("area"))
-            or _string_or_empty(value.get("network_zone"))
-            or _string_or_empty(value.get("businessZone"))
-        ),
-        "type": _string_or_empty(value.get("type")) or _string_or_empty(value.get("asset_type")),
-    }
-
-
-def _asset_score(asset: dict[str, Any]) -> float:
-    score = asset.get("riskScore")
-    if isinstance(score, (int, float)) and not isinstance(score, bool):
-        return float(score)
-    return 0.0
-
-
-def _asset_summary_text(asset: dict[str, Any]) -> str:
-    parts = [
-        str(asset.get("assetName") or asset.get("assetId")),
-        str(asset.get("ip") or "").strip(),
-        str(int(_asset_score(asset))),
-        str(asset.get("type") or "").strip(),
-        str(asset.get("zone") or "").strip(),
-    ]
-    return " | ".join(part for part in parts if part)
-
-
-def _asset_recommendations(top_assets: list[dict[str, Any]], high_risk: list[dict[str, Any]]) -> list[str]:
-    if not top_assets:
-        return ["未识别到可排序资产，建议补充资产清单或风险评分字段。"]
-    first = str(top_assets[0].get("assetName") or top_assets[0].get("assetId"))
-    return [
-        f"优先确认 {first} 是否存在异常访问、漏洞暴露或横向移动迹象。",
-        f"对 {len(high_risk)} 台高风险资产补充告警、进程和网络证据链分析。",
-    ]
-
-
-def _finding_id_from_props(props: dict[str, Any]) -> str:
-    return (
-        _string_or_empty(props.get("findingId"))
-        or _string_or_empty(props.get("finding_id"))
-        or _string_or_empty(props.get("alertFindingId"))
-    )
-
-
 def _a2ui_action_context(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, dict):
         return []
@@ -1051,21 +561,6 @@ def _literal_value(value: Any) -> dict[str, Any] | None:
     if isinstance(value, str):
         return {"literalString": value}
     return None
-
-
-def _replace_surface_references(value: Any, source_surface_id: str, target_surface_id: str) -> Any:
-    if isinstance(value, str):
-        return f"{target_surface_id}{value[len(source_surface_id):]}" if value.startswith(source_surface_id) else value
-    if isinstance(value, list):
-        return [_replace_surface_references(item, source_surface_id, target_surface_id) for item in value]
-    if isinstance(value, dict):
-        return {
-            key: target_surface_id
-            if key == "surfaceId" and item == source_surface_id
-            else _replace_surface_references(item, source_surface_id, target_surface_id)
-            for key, item in value.items()
-        }
-    return value
 
 
 def _string_or_empty(value: Any) -> str:

@@ -15,11 +15,12 @@ def render_a2ui(payload: Any) -> dict[str, Any]:
     Preferred official-aligned entry point for structured UI.
 
     Supported payload modes:
-    - {"mode": "card", "surfaceId": "...", "cards": [...]} for normal AI-SOC cards.
+    - {"mode": "card", "surfaceId": "...", "cards": [...]} for Agent-generated AI-SOC cards.
     - {"mode": "a2ui", "messages": [...]} for advanced raw A2UI v0.8 messages.
-    - {"mode": "catalog", "catalog": "ai-soc", "component": {"type": "...", "props": {...}}}
-      for trusted AI-SOC catalog components. Supported component types:
-      RiskMetricGroup, RiskAssetTable, AlertTriageCard.
+
+    Catalog mode is disabled: the backend must not synthesize business cards.
+    Generate the card title, sections, tables, metrics, evidence, and actions
+    yourself and pass them through mode "card".
 
     Do not print the payload in the user-facing answer.
     """
@@ -58,7 +59,7 @@ def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[st
     """Emit AI-SOC UI cards to the frontend.
 
     Compatibility helper for normal AI-SOC answers. Prefer `render_a2ui` with
-    mode "card" when available. Pass `cards` as an
+    mode "card" for new work. Pass `cards` as an
     array of card specs, not as a quoted JSON string:
     [{"title": "...", "subtitle": "...", "sections": [...]}].
 
@@ -87,9 +88,11 @@ def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[st
 def emit_a2ui(messages: Any) -> dict[str, Any]:
     """Emit raw A2UI v0.8 messages to the AI-SOC frontend.
 
-    Compatibility helper for advanced raw A2UI. Prefer `render_a2ui` with mode
-    "a2ui" when available. Pass messages as a JSON array, not as a quoted JSON
-    string. Valid A2UI v0.8 server-to-client messages include:
+    Advanced compatibility helper only. Prefer `render_a2ui` for normal UI.
+    This tool accepts only raw A2UI v0.8 server-to-client messages. Do not pass
+    AI-SOC card specs here; use `render_a2ui` mode "card" or `emit_cards`.
+    Pass messages as a JSON array, not as a quoted JSON string. Valid A2UI
+    v0.8 messages include:
     [{"beginRendering": {...}}, {"surfaceUpdate": {...}}].
     """
     message_count = len(messages) if isinstance(messages, list) else 1

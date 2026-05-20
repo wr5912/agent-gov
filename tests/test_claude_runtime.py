@@ -67,6 +67,22 @@ async def _collect_prompt(prompt):
     return items
 
 
+def _a2ui_messages(events):
+    return [
+        message
+        for event in events
+        for message in event["value"].get("messages", [])
+    ]
+
+
+def _a2ui_components(events):
+    return [
+        component
+        for message in _a2ui_messages(events)
+        for component in message.get("surfaceUpdate", {}).get("components", [])
+    ]
+
+
 def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
     seen = {}
 
@@ -902,15 +918,15 @@ def test_stream_ag_ui_maps_render_a2ui_card_mode_to_a2ui_messages(tmp_path, monk
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
 
-    assert len(custom_events) == 1
-    messages = custom_events[0]["value"]["messages"]
+    assert len(custom_events) > 1
+    messages = _a2ui_messages(custom_events)
     assert messages[0]["beginRendering"]["surfaceId"] == "render-card-surface"
-    components = messages[1]["surfaceUpdate"]["components"]
+    components = _a2ui_components(custom_events)
     assert any(component["id"] == "render-card-surface-card-1-title" for component in components)
     assert any("Button" in component["component"] for component in components)
 
 
-def test_stream_ag_ui_maps_render_a2ui_catalog_mode_to_a2ui_messages(tmp_path, monkeypatch):
+def test_stream_ag_ui_rejects_render_a2ui_catalog_mode(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
@@ -1009,24 +1025,21 @@ def test_stream_ag_ui_maps_render_a2ui_catalog_mode_to_a2ui_messages(tmp_path, m
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
 
-    assert len(custom_events) == 1
-    messages = custom_events[0]["value"]["messages"]
-    assert messages[0]["beginRendering"]["surfaceId"] == "render-catalog-surface"
-    components = messages[1]["surfaceUpdate"]["components"]
-    assert any(component["id"] == "render-catalog-surface-card-1-title" for component in components)
-    assert any(component["id"] == "render-catalog-surface-card-2-actions" for component in components)
-    assert any(component["id"] == "render-catalog-surface-card-3-section-2-item-1" for component in components)
-    action_names = [
-        component["component"]["Button"]["action"]["name"]
-        for component in components
-        if "Button" in component["component"]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
     ]
-    assert "ai_soc.alert.select" in action_names
-    assert "ai_soc.evidence.select" in action_names
-    assert "ai_soc.judgement.request" in action_names
+
+    assert custom_events == []
+    assert [event["value"]["code"] for event in diagnostic_events] == [
+        "a2ui-payload-invalid",
+        "a2ui-retry-started",
+        "a2ui-payload-invalid",
+        "a2ui-retry-failed",
+    ]
+    assert "catalog mode is disabled" in diagnostic_events[0]["value"]["message"]
 
 
-def test_stream_ag_ui_converts_emit_a2ui_card_specs_to_a2ui_messages(tmp_path, monkeypatch):
+def test_stream_ag_ui_rejects_emit_a2ui_card_specs_as_raw_a2ui(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
@@ -1114,13 +1127,19 @@ def test_stream_ag_ui_converts_emit_a2ui_card_specs_to_a2ui_messages(tmp_path, m
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
     error_events = [event for event in events if event["type"] == "RUN_ERROR"]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
 
     assert error_events == []
-    assert len(custom_events) == 1
-    messages = custom_events[0]["value"]["messages"]
-    assert messages[0]["beginRendering"]["surfaceId"] == "asset-cards"
-    assert messages[1]["surfaceUpdate"]["surfaceId"] == "asset-cards"
-    assert any(component["id"] == "asset-cards-card-1-title" for component in messages[1]["surfaceUpdate"]["components"])
+    assert custom_events == []
+    assert [event["value"]["code"] for event in diagnostic_events] == [
+        "a2ui-payload-invalid",
+        "a2ui-retry-started",
+        "a2ui-payload-invalid",
+        "a2ui-retry-failed",
+    ]
+    assert "Use render_a2ui mode 'card' or emit_cards" in diagnostic_events[0]["value"]["message"]
 
 
 def test_stream_ag_ui_converts_emit_cards_tool_call_to_a2ui_messages(tmp_path, monkeypatch):
@@ -1208,19 +1227,25 @@ def test_stream_ag_ui_converts_emit_cards_tool_call_to_a2ui_messages(tmp_path, m
     custom_events = [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
     error_events = [event for event in events if event["type"] == "RUN_ERROR"]
 
     assert error_events == []
-    assert len(custom_events) == 1
-    messages = custom_events[0]["value"]["messages"]
+    assert diagnostic_events[0]["value"]["code"] == "a2ui-legacy-tool-used"
+    assert diagnostic_events[0]["value"]["toolName"] == "mcp__ai-soc-ui__emit_cards"
+    assert len(custom_events) > 1
+    messages = _a2ui_messages(custom_events)
     assert messages[0]["beginRendering"]["surfaceId"] == "asset-risk-cards"
+    components = _a2ui_components(custom_events)
     assert any(
         component["id"] == "asset-risk-cards-card-1-section-2-item-1"
-        for component in messages[1]["surfaceUpdate"]["components"]
+        for component in components
     )
     button_components = [
         component["component"]["Button"]
-        for component in messages[1]["surfaceUpdate"]["components"]
+        for component in components
         if "Button" in component["component"]
     ]
     assert button_components[0]["primary"] is True
@@ -1298,7 +1323,7 @@ def test_stream_ag_ui_emits_agent_activity_for_tool_calls(tmp_path, monkeypatch)
     assert activity_events[1]["value"]["label"] == "查询资产列表"
 
 
-def test_stream_ag_ui_emits_progressive_a2ui_for_asset_results(tmp_path, monkeypatch):
+def test_stream_ag_ui_does_not_generate_asset_cards_from_tool_results(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
@@ -1375,33 +1400,15 @@ def test_stream_ag_ui_emits_progressive_a2ui_for_asset_results(tmp_path, monkeyp
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
 
-    assert len(custom_events) >= 4
-    surface_ids = {
-        message.get("beginRendering", {}).get("surfaceId")
-        or message.get("surfaceUpdate", {}).get("surfaceId")
-        for event in custom_events
-        for message in event["value"]["messages"]
-    }
-    assert surface_ids == {"ai-soc-asset-risk-run-progressive"}
-    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["root"] == "ai-soc-asset-risk-run-progressive-root"
-
-    final_components = custom_events[-1]["value"]["messages"][0]["surfaceUpdate"]["components"]
-    button_components = [
-        component["component"]["Button"]
-        for component in final_components
-        if "Button" in component["component"]
+    activity_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "ai_soc.agent.activity"
     ]
-    text_values = [
-        component["component"]["Text"]["text"]["literal"]
-        for component in final_components
-        if "Text" in component["component"]
-    ]
-    assert "资产风险视图已生成" in text_values
-    assert button_components[0]["action"]["name"] == "ai_soc.asset.select"
-    assert {"key": "assetId", "value": {"literalString": "vpn-05"}} in button_components[0]["action"]["context"]
+
+    assert custom_events == []
+    assert [event["value"]["status"] for event in activity_events] == ["running", "finished"]
 
 
-def test_stream_ag_ui_parses_text_tool_result_and_retargets_final_cards(tmp_path, monkeypatch):
+def test_stream_ag_ui_keeps_agent_generated_card_surface_without_retargeting(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     assets = [
@@ -1513,17 +1520,14 @@ def test_stream_ag_ui_parses_text_tool_result_and_retargets_final_cards(tmp_path
         for message in event["value"]["messages"]
     }
 
-    assert surface_ids == {"ai-soc-asset-risk-run-retarget"}
-    assert all("ai-soc-generated-cards" not in json.dumps(event, ensure_ascii=False) for event in custom_events)
-    assert all("asset-risk-overview" not in json.dumps(event, ensure_ascii=False) for event in custom_events)
+    assert surface_ids == {"asset-risk-overview"}
 
     rendered_text = "\n".join(json.dumps(event, ensure_ascii=False) for event in custom_events)
     assert "edr-gateway-05" in rendered_text
-    assert "已获取资产数据，正在生成风险视图" in rendered_text
     assert "最终风险资产卡片" in rendered_text
 
 
-def test_stream_ag_ui_emits_generic_progressive_surface_for_non_asset_tools(tmp_path, monkeypatch):
+def test_stream_ag_ui_does_not_generate_generic_progressive_surface(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
@@ -1610,10 +1614,8 @@ def test_stream_ag_ui_emits_generic_progressive_surface_for_non_asset_tools(tmp_
         for message in event["value"]["messages"]
     }
 
-    assert surface_ids == {"ai-soc-progressive-run-generic"}
-    assert all("alert-summary" not in json.dumps(event, ensure_ascii=False) for event in custom_events)
+    assert surface_ids == {"alert-summary"}
     rendered_text = "\n".join(json.dumps(event, ensure_ascii=False) for event in custom_events)
-    assert "Agent 工作进度" in rendered_text
     assert "告警概览" in rendered_text
 
 
@@ -1977,8 +1979,8 @@ def test_stream_ag_ui_retries_invalid_a2ui_payload_once(tmp_path, monkeypatch):
     custom_events = [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
     ]
-    assert len(custom_events) == 1
-    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "retry-surface"
+    assert len(custom_events) > 1
+    assert _a2ui_messages(custom_events)[0]["beginRendering"]["surfaceId"] == "retry-surface"
 
     diagnostic_events = [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"

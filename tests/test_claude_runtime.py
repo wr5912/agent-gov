@@ -910,6 +910,110 @@ def test_stream_ag_ui_maps_render_a2ui_card_mode_to_a2ui_messages(tmp_path, monk
     assert any("Button" in component["component"] for component in components)
 
 
+def test_stream_ag_ui_maps_render_a2ui_catalog_mode_to_a2ui_messages(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-render-catalog",
+                    "name": "mcp__ai-soc-ui__render_a2ui",
+                    "input": {
+                        "payload": {
+                            "mode": "catalog",
+                            "catalog": "ai-soc",
+                            "surfaceId": "render-catalog-surface",
+                            "components": [
+                                {
+                                    "type": "RiskMetricGroup",
+                                    "props": {
+                                        "title": "风险指标",
+                                        "metrics": [
+                                            {"label": "高危资产", "value": "3"},
+                                            {"label": "待处理告警", "value": "7"},
+                                        ],
+                                    },
+                                },
+                                {
+                                    "type": "RiskAssetTable",
+                                    "props": {
+                                        "title": "风险资产",
+                                        "assets": [
+                                            {
+                                                "assetId": "vpn-05",
+                                                "hostname": "vpn-05",
+                                                "ip": "10.1.2.5",
+                                                "riskScore": 95,
+                                                "asset_type": "gateway",
+                                            }
+                                        ],
+                                    },
+                                },
+                                {
+                                    "type": "AlertTriageCard",
+                                    "props": {
+                                        "title": "异常登录研判",
+                                        "severity": "High",
+                                        "confidence": "82%",
+                                        "summary": "检测到异常登录后出现横向移动迹象。",
+                                        "evidence": ["异地登录", "短时间内访问多台主机"],
+                                        "recommendations": ["确认账号归属", "临时收敛高危权限"],
+                                    },
+                                },
+                            ],
+                        }
+                    },
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="rendered",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-render-catalog",
+            messages=[{"role": "user", "content": "展示 SOC catalog 组件"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+
+    assert len(custom_events) == 1
+    messages = custom_events[0]["value"]["messages"]
+    assert messages[0]["beginRendering"]["surfaceId"] == "render-catalog-surface"
+    components = messages[1]["surfaceUpdate"]["components"]
+    assert any(component["id"] == "render-catalog-surface-card-1-title" for component in components)
+    assert any(component["id"] == "render-catalog-surface-card-2-actions" for component in components)
+    assert any(component["id"] == "render-catalog-surface-card-3-section-2-item-1" for component in components)
+
+
 def test_stream_ag_ui_converts_emit_a2ui_card_specs_to_a2ui_messages(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
@@ -1651,6 +1755,132 @@ def test_stream_ag_ui_skips_invalid_emit_a2ui_tool_payload_without_failing_run(t
 
     assert not [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
+    assert [event["value"]["code"] for event in diagnostic_events] == [
+        "a2ui-payload-invalid",
+        "a2ui-retry-started",
+        "a2ui-payload-invalid",
+        "a2ui-retry-failed",
+    ]
+    assert diagnostic_events[0]["value"]["retryEligible"] is True
+    assert diagnostic_events[2]["value"]["retryEligible"] is False
+    assert diagnostic_events[2]["value"]["retryAttempt"] == 1
+    assert not [event for event in events if event["type"] == "RUN_ERROR"]
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
+def test_stream_ag_ui_retries_invalid_a2ui_payload_once(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    calls = {"count": 0, "retry_prompt": ""}
+
+    async def fake_query(*, prompt, options, transport=None):
+        calls["count"] += 1
+        prompt_items = await _collect_prompt(prompt)
+        if calls["count"] == 2:
+            calls["retry_prompt"] = prompt_items[0]["message"]["content"]
+
+        if calls["count"] == 1:
+            yield {
+                "type": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu-a2ui-invalid",
+                        "name": "mcp__ai-soc-ui__emit_a2ui",
+                        "input": {
+                            "messages": [
+                                {"surfaceUpdate": {"surfaceId": "x", "components": []}},
+                            ]
+                        },
+                    }
+                ],
+            }
+        else:
+            yield {
+                "type": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu-a2ui-retry",
+                        "name": "mcp__ai-soc-ui__render_a2ui",
+                        "input": {
+                            "mode": "card",
+                            "payload": {
+                                "surfaceId": "retry-surface",
+                                "cards": [
+                                    {
+                                        "type": "card",
+                                        "title": "修正后的 UI",
+                                        "sections": [{"items": ["已生成有效 A2UI payload"]}],
+                                    }
+                                ],
+                            },
+                        },
+                    }
+                ],
+            }
+            yield {
+                "type": "assistant",
+                "content": [{"type": "text", "text": "这段补偿文字不应进入 AG-UI 文本消息。"}],
+            }
+
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id=f"sdk-session-{calls['count']}",
+            result="retry",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "show card"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+
+    assert calls["count"] == 2
+    assert "只修正用户界面 payload" in calls["retry_prompt"]
+    assert "show card" in calls["retry_prompt"]
+    assert not [
+        event
+        for event in events
+        if event["type"] == "TEXT_MESSAGE_CONTENT" and "补偿文字" in event["delta"]
+    ]
+
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    assert len(custom_events) == 1
+    assert custom_events[0]["value"]["messages"][0]["beginRendering"]["surfaceId"] == "retry-surface"
+
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
+    assert [event["value"]["code"] for event in diagnostic_events] == [
+        "a2ui-payload-invalid",
+        "a2ui-retry-started",
+        "a2ui-retry-succeeded",
     ]
     assert not [event for event in events if event["type"] == "RUN_ERROR"]
     assert events[-1]["type"] == "RUN_FINISHED"

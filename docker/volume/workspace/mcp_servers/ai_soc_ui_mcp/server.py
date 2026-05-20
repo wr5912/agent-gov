@@ -17,9 +17,11 @@ def render_a2ui(payload: Any) -> dict[str, Any]:
     Supported payload modes:
     - {"mode": "card", "surfaceId": "...", "cards": [...]} for normal AI-SOC cards.
     - {"mode": "a2ui", "messages": [...]} for advanced raw A2UI v0.8 messages.
+    - {"mode": "catalog", "catalog": "ai-soc", "component": {"type": "...", "props": {...}}}
+      for trusted AI-SOC catalog components. Supported component types:
+      RiskMetricGroup, RiskAssetTable, AlertTriageCard.
 
-    Catalog mode will be enabled after AI-SOC custom component schemas are
-    available. Do not print the payload in the user-facing answer.
+    Do not print the payload in the user-facing answer.
     """
     mode = "a2ui"
     item_count = 1
@@ -29,12 +31,20 @@ def render_a2ui(payload: Any) -> dict[str, Any]:
             item_count = len(payload["cards"])
         elif isinstance(payload.get("messages"), list):
             item_count = len(payload["messages"])
+        elif isinstance(payload.get("components"), list):
+            item_count = len(payload["components"])
+        elif isinstance(payload.get("component"), dict):
+            item_count = 1
         elif isinstance(payload.get("payload"), dict):
             nested = payload["payload"]
             if isinstance(nested.get("cards"), list):
                 item_count = len(nested["cards"])
             elif isinstance(nested.get("messages"), list):
                 item_count = len(nested["messages"])
+            elif isinstance(nested.get("components"), list):
+                item_count = len(nested["components"])
+            elif isinstance(nested.get("component"), dict):
+                item_count = 1
     return {
         "ok": True,
         "mode": mode,

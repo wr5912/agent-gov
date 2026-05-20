@@ -8,10 +8,17 @@ from typing import Any
 
 A2UI_PROTOCOL_VERSION = "v0_8"
 A2UI_CUSTOM_EVENT_NAME = "a2ui.message"
+A2UI_DIAGNOSTIC_EVENT_NAME = "a2ui.diagnostic"
 A2UI_RAW_TOOL_NAME = "mcp__ai-soc-ui__emit_a2ui"
 A2UI_CARD_TOOL_NAME = "mcp__ai-soc-ui__emit_cards"
 A2UI_RENDER_TOOL_NAME = "mcp__ai-soc-ui__render_a2ui"
 A2UI_ASSET_SELECT_ACTION = "ai_soc.asset.select"
+AI_SOC_A2UI_CATALOG = "ai-soc"
+AI_SOC_A2UI_CATALOG_COMPONENTS = {
+    "RiskMetricGroup",
+    "RiskAssetTable",
+    "AlertTriageCard",
+}
 
 
 @dataclass(frozen=True)
@@ -80,14 +87,41 @@ def normalize_render_a2ui_payload(payload: Any) -> tuple[dict[str, Any] | None, 
     if mode in {"card", "cards"}:
         return normalize_a2ui_card_payload(payload.get("payload", payload))
     if mode == "catalog":
-        return (
-            None,
-            [
-                "Invalid render_a2ui payload: catalog mode is not enabled yet. "
-                "Use mode='card' or mode='a2ui'."
-            ],
-        )
+        return normalize_a2ui_catalog_payload(payload)
     return None, [f"Invalid render_a2ui payload: unsupported mode '{mode}'."]
+
+
+def normalize_a2ui_catalog_payload(payload: Any) -> tuple[dict[str, Any] | None, list[str]]:
+    """Normalize AI-SOC catalog component payloads into A2UI v0.8 messages."""
+    payload, parse_error = _parse_json_string_payload(payload)
+    if parse_error:
+        return None, [parse_error]
+    if not isinstance(payload, dict):
+        return None, ["Invalid A2UI catalog payload: expected an object."]
+
+    catalog = str(payload.get("catalog") or AI_SOC_A2UI_CATALOG).strip()
+    if catalog != AI_SOC_A2UI_CATALOG:
+        return None, [f"Invalid A2UI catalog payload: unsupported catalog '{catalog}'."]
+
+    surface_id = _catalog_surface_id(payload)
+    components = _catalog_component_specs(payload)
+    if components is None:
+        return None, ["Invalid A2UI catalog payload: expected component or components."]
+
+    cards: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for index, component in enumerate(components, start=1):
+        card, component_errors = _catalog_component_to_card(component, index)
+        if card is not None:
+            cards.append(card)
+        errors.extend(component_errors)
+
+    if errors:
+        return None, errors
+    if not cards:
+        return None, ["Invalid A2UI catalog payload: no renderable catalog components."]
+
+    return _protocol_payload(_card_specs_to_a2ui_messages(cards, surface_id))
 
 
 def a2ui_payload_surface_ids(payload: dict[str, Any]) -> list[str]:
@@ -399,6 +433,169 @@ def _normalize_card_specs(payload: Any) -> list[dict[str, Any]] | None:
         return None
 
     return _card_specs_to_a2ui_messages(specs, surface_id)
+
+
+def _catalog_surface_id(payload: dict[str, Any]) -> str:
+    return (
+        _string_or_empty(payload.get("surfaceId"))
+        or _string_or_empty(payload.get("surface_id"))
+        or "ai-soc-catalog-surface"
+    )
+
+
+def _catalog_component_specs(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    component = payload.get("component")
+    components = payload.get("components")
+    if isinstance(component, dict):
+        return [component]
+    if isinstance(components, list) and all(isinstance(item, dict) for item in components):
+        return components
+    return None
+
+
+def _catalog_component_to_card(component: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
+    component_type = str(component.get("type") or "").strip()
+    props = component.get("props")
+    if component_type not in AI_SOC_A2UI_CATALOG_COMPONENTS:
+        return None, [f"Invalid A2UI catalog component: unsupported type '{component_type}'."]
+    if not isinstance(props, dict):
+        return None, [f"Invalid A2UI catalog component '{component_type}': props must be an object."]
+
+    if component_type == "RiskMetricGroup":
+        return _risk_metric_group_card(props, index)
+    if component_type == "RiskAssetTable":
+        return _risk_asset_table_card(props, index)
+    if component_type == "AlertTriageCard":
+        return _alert_triage_card(props, index)
+    return None, [f"Invalid A2UI catalog component: unsupported type '{component_type}'."]
+
+
+def _risk_metric_group_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
+    metrics = _list_of_records(props.get("metrics"))
+    if not metrics:
+        return None, ["Invalid RiskMetricGroup: metrics must be a non-empty array."]
+
+    items: list[dict[str, str]] = []
+    for item in metrics[:8]:
+        label = _string_or_empty(item.get("label"))
+        raw_value = item.get("value")
+        value = _string_or_empty(raw_value) or (str(raw_value) if raw_value is not None else "")
+        if label and value:
+            items.append({"label": label, "value": value})
+    if not items:
+        return None, ["Invalid RiskMetricGroup: each metric needs label and value."]
+
+    return (
+        {
+            "type": "card",
+            "title": _string_or_empty(props.get("title")) or "风险指标",
+            "subtitle": _string_or_empty(props.get("subtitle")),
+            "sections": [
+                {
+                    "type": "metric_group",
+                    "items": items,
+                }
+            ],
+            "footer": _catalog_footer(index, "RiskMetricGroup"),
+        },
+        [],
+    )
+
+
+def _risk_asset_table_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
+    assets = [_normalize_asset_for_card(asset) for asset in _list_of_records(props.get("assets"))[:10]]
+    assets = [asset for asset in assets if asset.get("assetId")]
+    if not assets:
+        return None, ["Invalid RiskAssetTable: assets must include at least one asset with assetId or hostname."]
+
+    rows = [
+        [
+            asset.get("assetName") or asset.get("assetId"),
+            asset.get("ip") or "-",
+            str(int(_asset_score(asset))),
+            asset.get("type") or "-",
+            asset.get("zone") or "-",
+        ]
+        for asset in assets
+    ]
+    actions = [
+        {
+            "label": f"查看 {asset.get('assetName') or asset.get('assetId')}",
+            "name": A2UI_ASSET_SELECT_ACTION,
+            "primary": action_index == 1,
+            "context": {
+                "assetId": asset.get("assetId"),
+                "assetName": asset.get("assetName") or asset.get("assetId"),
+                "riskScore": _asset_score(asset),
+            },
+        }
+        for action_index, asset in enumerate(assets[:3], start=1)
+    ]
+
+    return (
+        {
+            "type": "card",
+            "title": _string_or_empty(props.get("title")) or "风险资产列表",
+            "subtitle": _string_or_empty(props.get("subtitle")),
+            "sections": [
+                {
+                    "title": "资产",
+                    "type": "table",
+                    "columns": ["资产", "IP", "评分", "类型", "区域"],
+                    "rows": rows,
+                }
+            ],
+            "actions": actions,
+            "footer": _catalog_footer(index, "RiskAssetTable"),
+        },
+        [],
+    )
+
+
+def _alert_triage_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
+    title = _string_or_empty(props.get("title")) or _string_or_empty(props.get("alertTitle")) or "告警研判摘要"
+    entity = _string_or_empty(props.get("entity")) or _string_or_empty(props.get("host")) or _string_or_empty(props.get("target"))
+    key_values = {
+        "严重度": _string_or_empty(props.get("severity")) or _string_or_empty(props.get("riskLevel")),
+        "置信度": _string_or_empty(props.get("confidence")) or _string_or_empty(props.get("confidenceLabel")),
+        "状态": _string_or_empty(props.get("status")),
+        "对象": entity,
+    }
+    key_values = {key: value for key, value in key_values.items() if value}
+
+    sections: list[dict[str, Any]] = []
+    if key_values:
+        sections.append({"title": "研判状态", "type": "key_value", "items": key_values})
+
+    summary = _string_or_empty(props.get("summary")) or _string_or_empty(props.get("description"))
+    if summary:
+        sections.append({"title": "摘要", "items": [summary]})
+
+    evidence = _string_items(props.get("evidence"))
+    if evidence:
+        sections.append({"title": "关键证据", "items": evidence[:6]})
+
+    recommendations = _string_items(props.get("recommendations")) or _string_items(props.get("suggestions"))
+    if recommendations:
+        sections.append({"title": "建议动作", "items": recommendations[:6]})
+
+    if not sections:
+        return None, ["Invalid AlertTriageCard: provide at least status, summary, evidence, or recommendations."]
+
+    return (
+        {
+            "type": "card",
+            "title": title,
+            "subtitle": _string_or_empty(props.get("subtitle")),
+            "sections": sections,
+            "footer": _catalog_footer(index, "AlertTriageCard"),
+        },
+        [],
+    )
+
+
+def _catalog_footer(index: int, component_type: str) -> str:
+    return f"AI-SOC catalog: {component_type} #{index}"
 
 
 def _is_card_spec(value: Any) -> bool:

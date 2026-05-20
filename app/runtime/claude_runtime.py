@@ -23,6 +23,8 @@ from .ag_ui import (
 from .a2ui_bridge import (
     A2UI_CARD_TOOL_NAME,
     A2UI_CUSTOM_EVENT_NAME,
+    A2UI_DIAGNOSTIC_EVENT_NAME,
+    A2UI_RAW_TOOL_NAME,
     A2UI_RENDER_TOOL_NAME,
     a2ui_payload_surface_ids,
     asset_risk_result_payload,
@@ -222,6 +224,35 @@ class ClaudeRuntime:
             "tool_results": tool_results,
             "skill_calls": skill_calls,
         }
+
+    def _a2ui_retry_request(self, req: RunAgentInput, chat_req: ChatRequest, errors: list[str]) -> ChatRequest:
+        return ChatRequest(
+            message=self._a2ui_retry_prompt(chat_req.message, errors),
+            session_id=req.thread_id,
+            agent=chat_req.agent,
+            skills=chat_req.skills,
+            skills_mode=chat_req.skills_mode,
+            allowed_tools=[A2UI_RENDER_TOOL_NAME, A2UI_RAW_TOOL_NAME, A2UI_CARD_TOOL_NAME],
+            disallowed_tools=chat_req.disallowed_tools,
+            max_turns=2,
+            model=chat_req.model,
+            permission_mode=chat_req.permission_mode,
+            system_append=chat_req.system_append,
+            metadata={**chat_req.metadata, "a2ui_retry": True, "parent_run_id": req.run_id},
+        )
+
+    def _a2ui_retry_prompt(self, original_message: str, errors: list[str]) -> str:
+        error_lines = "\n".join(f"{index}. {error}" for index, error in enumerate(errors[:5], start=1))
+        return (
+            "上一轮你生成的 A2UI UI payload 未通过运行时校验。\n"
+            "请只修正用户界面 payload：不要解释，不要输出普通文本，不要暴露隐藏推理。\n"
+            "必须调用 `mcp__ai-soc-ui__render_a2ui` 一次，生成一个有效 UI payload。\n"
+            "优先使用 `mode: \"catalog\"`, `catalog: \"ai-soc\"`，可用组件为 "
+            "`RiskMetricGroup`, `RiskAssetTable`, `AlertTriageCard`；"
+            "如果无法使用 catalog，则使用 `mode: \"card\"` 生成简洁卡片。\n\n"
+            f"原始用户请求：\n{original_message}\n\n"
+            f"校验失败原因：\n{error_lines}"
+        )
 
     def _walk_records(self, value: Any) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
@@ -1009,6 +1040,7 @@ class ClaudeRuntime:
         progressive_asset_completed = False
         progressive_asset_records: list[dict[str, Any]] = []
         progressive_asset_final_ui_emitted = False
+        a2ui_retry_errors: list[str] = []
 
         yield run_started_event(req)
 
@@ -1103,7 +1135,7 @@ class ClaudeRuntime:
                                 tool_payload.tool_name == A2UI_CARD_TOOL_NAME
                                 or (
                                     tool_payload.tool_name == A2UI_RENDER_TOOL_NAME
-                                    and tool_payload.mode in {"card", "cards"}
+                                    and tool_payload.mode in {"card", "cards", "catalog"}
                                 )
                             )
                             and surface_ids
@@ -1115,6 +1147,19 @@ class ClaudeRuntime:
                     yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
                 for error in tool_extraction.errors:
                     print(f"[WARN] skipped invalid A2UI tool payload: {error}", flush=True)
+                    a2ui_retry_errors.append(error)
+                    yield custom_event(
+                        A2UI_DIAGNOSTIC_EVENT_NAME,
+                        {
+                            "code": "a2ui-payload-invalid",
+                            "level": "warning",
+                            "message": error,
+                            "source": "claude-runtime",
+                            "runId": req.run_id,
+                            "retryEligible": True,
+                            "retryAttempt": 0,
+                        },
+                    )
                 text = data.get("text")
                 if isinstance(text, str) and text:
                     if _is_internal_skill_payload(text):
@@ -1169,6 +1214,104 @@ class ClaudeRuntime:
                 message = "\n".join(str(error) for error in errors) if isinstance(errors, list) else "Runtime error"
                 run_failed = True
                 yield run_error_event(req, message)
+
+        if a2ui_retry_errors and not run_failed:
+            retry_req = self._a2ui_retry_request(req, chat_req, a2ui_retry_errors)
+            retry_succeeded = False
+            retry_reported_errors: list[str] = []
+            yield custom_event(
+                A2UI_DIAGNOSTIC_EVENT_NAME,
+                {
+                    "code": "a2ui-retry-started",
+                    "level": "info",
+                    "message": "A2UI payload validation failed; requesting one corrected UI payload.",
+                    "source": "claude-runtime",
+                    "runId": req.run_id,
+                    "retryEligible": False,
+                    "retryAttempt": 1,
+                },
+            )
+            async for retry_item in self.stream(retry_req):
+                if trace_sink is not None:
+                    await trace_sink(retry_item)
+
+                retry_event_name = retry_item.get("event")
+                retry_data = retry_item.get("data")
+                if retry_event_name == "message" and isinstance(retry_data, dict):
+                    retry_raw_message = retry_data.get("raw")
+                    retry_extraction = extract_a2ui_tool_payloads(retry_raw_message)
+                    for tool_payload in retry_extraction.tool_payloads:
+                        payload = tool_payload.payload
+                        if progressive_asset_started and progressive_asset_surface_id:
+                            surface_ids = a2ui_payload_surface_ids(payload)
+                            if (
+                                (
+                                    tool_payload.tool_name == A2UI_CARD_TOOL_NAME
+                                    or (
+                                        tool_payload.tool_name == A2UI_RENDER_TOOL_NAME
+                                        and tool_payload.mode in {"card", "cards", "catalog"}
+                                    )
+                                )
+                                and surface_ids
+                                and surface_ids != [progressive_asset_surface_id]
+                            ):
+                                payload = retarget_a2ui_payload(payload, progressive_asset_surface_id)
+                                progressive_asset_final_ui_emitted = True
+                                progressive_asset_completed = True
+                        retry_succeeded = True
+                        yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
+                    for error in retry_extraction.errors:
+                        retry_reported_errors.append(error)
+                        yield custom_event(
+                            A2UI_DIAGNOSTIC_EVENT_NAME,
+                            {
+                                "code": "a2ui-payload-invalid",
+                                "level": "warning",
+                                "message": error,
+                                "source": "claude-runtime",
+                                "runId": req.run_id,
+                                "retryEligible": False,
+                                "retryAttempt": 1,
+                            },
+                        )
+                    continue
+
+                if retry_event_name in {"result", "error"} and isinstance(retry_data, dict):
+                    errors = retry_data.get("errors")
+                    if isinstance(errors, list):
+                        retry_reported_errors.extend(str(error) for error in errors)
+
+            if retry_succeeded:
+                yield custom_event(
+                    A2UI_DIAGNOSTIC_EVENT_NAME,
+                    {
+                        "code": "a2ui-retry-succeeded",
+                        "level": "info",
+                        "message": "A2UI payload was corrected on retry.",
+                        "source": "claude-runtime",
+                        "runId": req.run_id,
+                        "retryEligible": False,
+                        "retryAttempt": 1,
+                    },
+                )
+            else:
+                message = (
+                    "; ".join(dict.fromkeys(retry_reported_errors))
+                    if retry_reported_errors
+                    else "A2UI retry completed without a valid UI payload."
+                )
+                yield custom_event(
+                    A2UI_DIAGNOSTIC_EVENT_NAME,
+                    {
+                        "code": "a2ui-retry-failed",
+                        "level": "warning",
+                        "message": message,
+                        "source": "claude-runtime",
+                        "runId": req.run_id,
+                        "retryEligible": False,
+                        "retryAttempt": 1,
+                    },
+                )
 
         if text_started:
             yield text_message_end_event(message_id)

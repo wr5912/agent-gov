@@ -1,20 +1,15 @@
-# 基础镜像镜像源依赖部署环境；如内部仓库提供国内 Python 镜像，可在 docker/.env 覆盖 PYTHON_IMAGE。
-ARG PYTHON_IMAGE=python:3.11-slim
-FROM ${PYTHON_IMAGE}
+# 基础镜像拉取由 Docker daemon registry mirror 或内网仓库处理；本项目没有统一可用的国内基础镜像仓库可直接写死。
+FROM python:3.11-slim
 
-ARG APT_MIRROR=https://mirrors.aliyun.com/debian
-ARG APT_SECURITY_MIRROR=https://mirrors.aliyun.com/debian-security
-ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
-ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-
+# 构建阶段依赖源固定使用国内镜像，避免 docker/.env 或宿主环境覆盖。
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_INDEX_URL=${PIP_INDEX_URL} \
-    PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST} \
+    PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    PIP_TRUSTED_HOST=mirrors.aliyun.com \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    UV_INDEX_URL=${PIP_INDEX_URL} \
-    NPM_CONFIG_REGISTRY=${NPM_REGISTRY} \
+    UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/ \
+    UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ \
+    NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
     WORKSPACE_DIR=/workspace \
@@ -27,17 +22,17 @@ WORKDIR /app
 RUN set -eux; \
     if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
         sed -i \
-            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
-            -e "s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
-            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
-            -e "s|https://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g" \
+            -e "s|https://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g" \
+            -e "s|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g" \
+            -e "s|https://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g" \
             /etc/apt/sources.list.d/debian.sources; \
     elif [ -f /etc/apt/sources.list ]; then \
         sed -i \
-            -e "s|http://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
-            -e "s|https://deb.debian.org/debian-security|${APT_SECURITY_MIRROR}|g" \
-            -e "s|http://deb.debian.org/debian|${APT_MIRROR}|g" \
-            -e "s|https://deb.debian.org/debian|${APT_MIRROR}|g" \
+            -e "s|http://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g" \
+            -e "s|https://deb.debian.org/debian-security|https://mirrors.aliyun.com/debian-security|g" \
+            -e "s|http://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g" \
+            -e "s|https://deb.debian.org/debian|https://mirrors.aliyun.com/debian|g" \
             /etc/apt/sources.list; \
     fi; \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -52,8 +47,13 @@ RUN set -eux; \
 
 COPY requirements.txt /app/requirements.txt
 # python:slim 不内置 uv；这里仅用阿里 PyPI bootstrap uv，项目依赖安装仍统一走 uv。
-RUN python -m pip install --no-cache-dir uv \
-    && uv pip install --system --no-cache -r /app/requirements.txt
+RUN python -m pip install --no-cache-dir \
+        --index-url https://mirrors.aliyun.com/pypi/simple/ \
+        --trusted-host mirrors.aliyun.com \
+        uv \
+    && uv pip install --system --no-cache \
+        --index-url https://mirrors.aliyun.com/pypi/simple/ \
+        -r /app/requirements.txt
 
 COPY docker/a2ui-requirements.txt /app/docker/a2ui-requirements.txt
 COPY docker/vendor/A2UI /app/vendor/A2UI
@@ -61,6 +61,7 @@ COPY docker/vendor/A2UI /app/vendor/A2UI
 # 源码已 vendor 到仓库，避免镜像构建依赖 GitHub；PyPI 依赖仍在 build 阶段下载。
 RUN set -eux; \
     uv pip install --system --no-cache \
+        --index-url https://mirrors.aliyun.com/pypi/simple/ \
         -r /app/docker/a2ui-requirements.txt \
         /app/vendor/A2UI/agent_sdks/python; \
     LITELLM_LOCAL_MODEL_COST_MAP=True python -c "import importlib; [importlib.import_module(name) for name in ('a2a', 'google.adk', 'google.genai', 'litellm', 'jsonschema', 'dotenv', 'click', 'a2ui')]"

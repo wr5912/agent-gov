@@ -1,11 +1,13 @@
-ARG NODE_IMAGE=node:22-alpine
-FROM ${NODE_IMAGE}
+# 基础镜像拉取由 Docker daemon registry mirror 或内网仓库处理；本项目没有统一可用的国内基础镜像仓库可直接写死。
+FROM node:22-alpine
 
 WORKDIR /ui
 
 COPY frontend/package.json frontend/package-lock.json* ./
-ARG NPM_REGISTRY=https://registry.npmmirror.com
-RUN npm config set registry "${NPM_REGISTRY}" && npm ci
+# 构建阶段 npm 源固定使用 npmmirror，避免 docker/.env 或宿主环境覆盖。
+ENV NPM_CONFIG_REGISTRY=https://registry.npmmirror.com
+RUN npm config set registry "https://registry.npmmirror.com" \
+    && npm ci --registry=https://registry.npmmirror.com
 
 COPY frontend/ ./
 

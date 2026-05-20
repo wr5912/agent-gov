@@ -55,13 +55,6 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-      args:
-        PYTHON_IMAGE: ${PYTHON_IMAGE:-python:3.11-slim}
-        APT_MIRROR: ${APT_MIRROR:-https://mirrors.aliyun.com/debian}
-        APT_SECURITY_MIRROR: ${APT_SECURITY_MIRROR:-https://mirrors.aliyun.com/debian-security}
-        PIP_INDEX_URL: ${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}
-        PIP_TRUSTED_HOST: ${PIP_TRUSTED_HOST:-mirrors.aliyun.com}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     image: claude-agent-runtime-api:0.1.0
     container_name: claude-agent-runtime-api
     ports:
@@ -82,6 +75,11 @@ services:
       CLAUDE_ROOT: ${CLAUDE_ROOT:-/root}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/root}/.claude}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
+      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      PIP_TRUSTED_HOST: mirrors.aliyun.com
+      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
       - ${HOST_WORKSPACE_MOUNT:-./volume/workspace}:${WORKSPACE_DIR:-/workspace}
       - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
@@ -92,9 +90,6 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-      args:
-        NODE_IMAGE: ${NODE_IMAGE:-node:22-alpine}
-        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     image: claude-agent-runtime-ui:0.1.0
     container_name: claude-agent-runtime-ui
     ports:
@@ -107,6 +102,7 @@ services:
       VITE_RUNTIME_API_KEY: ${FRONTEND_RUNTIME_API_KEY:-${API_KEY:-}}
       VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}}
       VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
+      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     depends_on:
       - claude-agent-api
     restart: unless-stopped

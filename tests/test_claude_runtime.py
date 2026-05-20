@@ -1511,6 +1511,100 @@ def test_stream_ag_ui_parses_text_tool_result_and_retargets_final_cards(tmp_path
     assert "最终风险资产卡片" in rendered_text
 
 
+def test_stream_ag_ui_emits_generic_progressive_surface_for_non_asset_tools(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-alerts",
+                    "name": "mcp__sec-ops-data__local_api__list_alerts_api_v1_alerts_get",
+                    "input": {"limit": 10},
+                }
+            ],
+        }
+        yield {
+            "type": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "toolu-alerts",
+                    "content": {"items": [{"alertId": "AL-001", "severity": "high"}]},
+                }
+            ],
+        }
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-cards",
+                    "name": "mcp__ai-soc-ui__emit_cards",
+                    "input": {
+                        "surfaceId": "alert-summary",
+                        "cards": [
+                            {
+                                "title": "告警概览",
+                                "subtitle": "已合并到 progressive surface",
+                                "sections": [{"title": "高危告警", "items": ["AL-001"]}],
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="alerts",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-generic",
+            messages=[{"role": "user", "content": "查看当前告警"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+    custom_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    surface_ids = {
+        message.get("beginRendering", {}).get("surfaceId")
+        or message.get("surfaceUpdate", {}).get("surfaceId")
+        for event in custom_events
+        for message in event["value"]["messages"]
+    }
+
+    assert surface_ids == {"ai-soc-progressive-run-generic"}
+    assert all("alert-summary" not in json.dumps(event, ensure_ascii=False) for event in custom_events)
+    rendered_text = "\n".join(json.dumps(event, ensure_ascii=False) for event in custom_events)
+    assert "Agent 工作进度" in rendered_text
+    assert "告警概览" in rendered_text
+
+
 def test_stream_ag_ui_accepts_emit_a2ui_messages_json_string(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 

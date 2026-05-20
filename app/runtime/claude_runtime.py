@@ -26,14 +26,9 @@ from .a2ui_bridge import (
     A2UI_DIAGNOSTIC_EVENT_NAME,
     A2UI_RAW_TOOL_NAME,
     A2UI_RENDER_TOOL_NAME,
-    a2ui_payload_surface_ids,
-    asset_risk_result_payload,
-    asset_risk_skeleton_payload,
-    asset_risk_status_payload,
-    asset_risk_surface_id,
     extract_a2ui_tool_payloads,
-    retarget_a2ui_payload,
 )
+from .a2ui_progressive import A2UIProgressiveOrchestrator
 from .message_utils import extract_stream_event_text, extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
@@ -432,61 +427,6 @@ class ClaudeRuntime:
             if content.get("is_error") is True or content.get("ok") is False:
                 return True
         return False
-
-    def _is_asset_tool_name(self, tool_name: str) -> bool:
-        lowered = tool_name.lower()
-        return "list_assets" in lowered or "_assets_" in lowered
-
-    def _asset_tool_results_from_raw(
-        self,
-        raw_message: Any,
-        tool_context: dict[str, dict[str, str]],
-    ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        for record in self._walk_records(raw_message):
-            tool_result = self._tool_result_from_record(record)
-            if not tool_result:
-                continue
-            tool_use_id = self._string_value(tool_result.get("tool_use_id"))
-            context = tool_context.get(tool_use_id or "", {})
-            tool_name = self._string_value(tool_result.get("name")) or context.get("toolName") or ""
-            if self._is_asset_tool_name(tool_name) and "content" in tool_result:
-                results.append(tool_result)
-        return results
-
-    def _asset_records_from_value(self, value: Any) -> list[dict[str, Any]]:
-        if isinstance(value, str):
-            try:
-                return self._asset_records_from_value(json.loads(value))
-            except json.JSONDecodeError:
-                return [{"asset": value}] if value.strip() else []
-
-        if isinstance(value, list):
-            records: list[dict[str, Any]] = []
-            for item in value:
-                records.extend(self._asset_records_from_value(item))
-            return records
-
-        if not isinstance(value, dict):
-            return []
-
-        if self._string_value(value.get("type")) == "text" and isinstance(value.get("text"), str):
-            return self._asset_records_from_value(value["text"])
-
-        for key in ("items", "assets", "data", "results"):
-            nested = value.get(key)
-            if isinstance(nested, list):
-                return self._asset_records_from_value(nested)
-
-        asset = value.get("asset")
-        if isinstance(asset, str):
-            return [{"asset": asset, **{key: item for key, item in value.items() if key != "asset"}}]
-        if isinstance(asset, dict):
-            return [asset]
-
-        if any(key in value for key in ("assetId", "asset_id", "hostname", "name", "id", "host")):
-            return [value]
-        return []
 
     def _activity_id(self, prefix: str, value: str) -> str:
         clean = "".join(char if char.isalnum() else "-" for char in value).strip("-")
@@ -1035,11 +975,13 @@ class ClaudeRuntime:
         final_result: dict[str, Any] | None = None
         activity_seen: set[str] = set()
         tool_activity_context: dict[str, dict[str, str]] = {}
-        progressive_asset_surface_id: str | None = None
-        progressive_asset_started = False
-        progressive_asset_completed = False
-        progressive_asset_records: list[dict[str, Any]] = []
-        progressive_asset_final_ui_emitted = False
+        progressive = A2UIProgressiveOrchestrator(
+            run_id=req.run_id,
+            walk_records=self._walk_records,
+            tool_result_from_record=self._tool_result_from_record,
+            string_value=self._string_value,
+            is_tool_result_error=self._is_tool_result_error,
+        )
         a2ui_retry_errors: list[str] = []
 
         yield run_started_event(req)
@@ -1061,89 +1003,15 @@ class ClaudeRuntime:
                         continue
                     activity_seen.add(activity_key)
                     yield custom_event(AGENT_ACTIVITY_EVENT_NAME, activity)
+                    for payload in progressive.handle_activity(activity):
+                        yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
 
-                    tool_name = self._string_value(activity.get("toolName")) or ""
-                    if self._is_asset_tool_name(tool_name):
-                        if progressive_asset_surface_id is None:
-                            progressive_asset_surface_id = asset_risk_surface_id(req.run_id)
-                        if activity.get("status") == "running" and not progressive_asset_started:
-                            progressive_asset_started = True
-                            yield custom_event(
-                                A2UI_CUSTOM_EVENT_NAME,
-                                asset_risk_skeleton_payload(progressive_asset_surface_id),
-                            )
-                            yield custom_event(
-                                A2UI_CUSTOM_EVENT_NAME,
-                                asset_risk_status_payload(progressive_asset_surface_id, "正在查询资产数据"),
-                            )
-                        elif activity.get("status") == "error" and progressive_asset_started:
-                            yield custom_event(
-                                A2UI_CUSTOM_EVENT_NAME,
-                                asset_risk_status_payload(
-                                    progressive_asset_surface_id,
-                                    "资产数据查询失败，已保留当前文本回复。",
-                                ),
-                            )
-
-                for result in self._asset_tool_results_from_raw(raw_message, tool_activity_context):
-                    if progressive_asset_surface_id is None:
-                        progressive_asset_surface_id = asset_risk_surface_id(req.run_id)
-                    if not progressive_asset_started:
-                        progressive_asset_started = True
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_skeleton_payload(progressive_asset_surface_id),
-                        )
-
-                    if self._is_tool_result_error(result):
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_status_payload(
-                                progressive_asset_surface_id,
-                                "资产数据查询失败，已保留当前文本回复。",
-                            ),
-                        )
-                        continue
-
-                    assets = self._asset_records_from_value(result.get("content"))
-                    if assets:
-                        progressive_asset_records = assets
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_result_payload(
-                                progressive_asset_surface_id,
-                                progressive_asset_records,
-                                completed=False,
-                            ),
-                        )
-                    else:
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_status_payload(
-                                progressive_asset_surface_id,
-                                "已完成资产查询，但未返回可结构化展示的资产记录。",
-                            ),
-                        )
+                for payload in progressive.handle_tool_results(raw_message, tool_activity_context):
+                    yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
 
                 tool_extraction = extract_a2ui_tool_payloads(raw_message)
                 for tool_payload in tool_extraction.tool_payloads:
-                    payload = tool_payload.payload
-                    if progressive_asset_started and progressive_asset_surface_id:
-                        surface_ids = a2ui_payload_surface_ids(payload)
-                        if (
-                            (
-                                tool_payload.tool_name == A2UI_CARD_TOOL_NAME
-                                or (
-                                    tool_payload.tool_name == A2UI_RENDER_TOOL_NAME
-                                    and tool_payload.mode in {"card", "cards", "catalog"}
-                                )
-                            )
-                            and surface_ids
-                            and surface_ids != [progressive_asset_surface_id]
-                        ):
-                            payload = retarget_a2ui_payload(payload, progressive_asset_surface_id)
-                            progressive_asset_final_ui_emitted = True
-                            progressive_asset_completed = True
+                    payload = progressive.retarget_tool_payload(tool_payload)
                     yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
                 for error in tool_extraction.errors:
                     print(f"[WARN] skipped invalid A2UI tool payload: {error}", flush=True)
@@ -1183,30 +1051,8 @@ class ClaudeRuntime:
                 if isinstance(errors, list) and errors:
                     run_failed = True
                     yield run_error_event(req, "\n".join(str(error) for error in errors))
-                if (
-                    progressive_asset_started
-                    and not progressive_asset_completed
-                    and not progressive_asset_final_ui_emitted
-                    and progressive_asset_surface_id
-                ):
-                    progressive_asset_completed = True
-                    if progressive_asset_records:
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_result_payload(
-                                progressive_asset_surface_id,
-                                progressive_asset_records,
-                                completed=True,
-                            ),
-                        )
-                    else:
-                        yield custom_event(
-                            A2UI_CUSTOM_EVENT_NAME,
-                            asset_risk_status_payload(
-                                progressive_asset_surface_id,
-                                "资产风险视图已完成，未获得可展示的资产明细。",
-                            ),
-                        )
+                for payload in progressive.final_payloads():
+                    yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
                 continue
 
             if event_name == "error" and isinstance(data, dict):
@@ -1241,23 +1087,7 @@ class ClaudeRuntime:
                     retry_raw_message = retry_data.get("raw")
                     retry_extraction = extract_a2ui_tool_payloads(retry_raw_message)
                     for tool_payload in retry_extraction.tool_payloads:
-                        payload = tool_payload.payload
-                        if progressive_asset_started and progressive_asset_surface_id:
-                            surface_ids = a2ui_payload_surface_ids(payload)
-                            if (
-                                (
-                                    tool_payload.tool_name == A2UI_CARD_TOOL_NAME
-                                    or (
-                                        tool_payload.tool_name == A2UI_RENDER_TOOL_NAME
-                                        and tool_payload.mode in {"card", "cards", "catalog"}
-                                    )
-                                )
-                                and surface_ids
-                                and surface_ids != [progressive_asset_surface_id]
-                            ):
-                                payload = retarget_a2ui_payload(payload, progressive_asset_surface_id)
-                                progressive_asset_final_ui_emitted = True
-                                progressive_asset_completed = True
+                        payload = progressive.retarget_tool_payload(tool_payload)
                         retry_succeeded = True
                         yield custom_event(A2UI_CUSTOM_EVENT_NAME, payload)
                     for error in retry_extraction.errors:

@@ -163,6 +163,53 @@ def asset_risk_surface_id(run_id: str) -> str:
     return _component_id("ai-soc-asset-risk", run_id or "run")
 
 
+def generic_progressive_surface_id(run_id: str) -> str:
+    return _component_id("ai-soc-progressive", run_id or "run")
+
+
+def generic_progressive_skeleton_payload(surface_id: str, title: str, status: str) -> dict[str, Any]:
+    title_id = _component_id(surface_id, "title")
+    status_id = _component_id(surface_id, "status")
+    content_id = _component_id(surface_id, "content")
+    card_id = _component_id(surface_id, "card")
+    root_id = _component_id(surface_id, "root")
+    return _required_protocol_payload(
+        [
+            {"beginRendering": {"surfaceId": surface_id, "root": root_id}},
+            {
+                "surfaceUpdate": {
+                    "surfaceId": surface_id,
+                    "components": [
+                        _column_component(root_id, [card_id]),
+                        {
+                            "id": card_id,
+                            "component": {"Card": {"child": content_id}},
+                        },
+                        _column_component(content_id, [title_id, status_id]),
+                        _text_component(title_id, title, "h3"),
+                        _text_component(status_id, status, "caption"),
+                    ],
+                }
+            },
+        ]
+    )
+
+
+def generic_progressive_status_payload(surface_id: str, status: str) -> dict[str, Any]:
+    return _required_protocol_payload(
+        [
+            {
+                "surfaceUpdate": {
+                    "surfaceId": surface_id,
+                    "components": [
+                        _text_component(_component_id(surface_id, "status"), status, "caption"),
+                    ],
+                }
+            }
+        ]
+    )
+
+
 def asset_risk_skeleton_payload(surface_id: str) -> dict[str, Any]:
     title_id = _component_id(surface_id, "title")
     status_id = _component_id(surface_id, "status")

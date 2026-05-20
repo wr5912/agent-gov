@@ -66,6 +66,11 @@ def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[st
     or plain text lists. Card specs may also include an `actions` array for
     frontend interactions, for example:
     [{"label": "查看资产", "name": "ai_soc.asset.select", "context": {"assetId": "vpn-05"}}].
+    Supported non-destructive action names are:
+    - ai_soc.asset.select
+    - ai_soc.alert.select
+    - ai_soc.evidence.select
+    - ai_soc.judgement.request
     The runtime converts these cards into A2UI v0.8 messages and forwards them
     through AG-UI.
     """

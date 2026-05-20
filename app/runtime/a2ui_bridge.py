@@ -13,6 +13,9 @@ A2UI_RAW_TOOL_NAME = "mcp__ai-soc-ui__emit_a2ui"
 A2UI_CARD_TOOL_NAME = "mcp__ai-soc-ui__emit_cards"
 A2UI_RENDER_TOOL_NAME = "mcp__ai-soc-ui__render_a2ui"
 A2UI_ASSET_SELECT_ACTION = "ai_soc.asset.select"
+A2UI_ALERT_SELECT_ACTION = "ai_soc.alert.select"
+A2UI_EVIDENCE_SELECT_ACTION = "ai_soc.evidence.select"
+A2UI_JUDGEMENT_REQUEST_ACTION = "ai_soc.judgement.request"
 AI_SOC_A2UI_CATALOG = "ai-soc"
 AI_SOC_A2UI_CATALOG_COMPONENTS = {
     "RiskMetricGroup",
@@ -602,6 +605,7 @@ def _risk_asset_table_card(props: dict[str, Any], index: int) -> tuple[dict[str,
 def _alert_triage_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any] | None, list[str]]:
     title = _string_or_empty(props.get("title")) or _string_or_empty(props.get("alertTitle")) or "告警研判摘要"
     entity = _string_or_empty(props.get("entity")) or _string_or_empty(props.get("host")) or _string_or_empty(props.get("target"))
+    finding_id = _finding_id_from_props(props)
     key_values = {
         "严重度": _string_or_empty(props.get("severity")) or _string_or_empty(props.get("riskLevel")),
         "置信度": _string_or_empty(props.get("confidence")) or _string_or_empty(props.get("confidenceLabel")),
@@ -618,6 +622,7 @@ def _alert_triage_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any
     if summary:
         sections.append({"title": "摘要", "items": [summary]})
 
+    evidence_records = _list_of_records(props.get("evidence"))
     evidence = _string_items(props.get("evidence"))
     if evidence:
         sections.append({"title": "关键证据", "items": evidence[:6]})
@@ -635,10 +640,84 @@ def _alert_triage_card(props: dict[str, Any], index: int) -> tuple[dict[str, Any
             "title": title,
             "subtitle": _string_or_empty(props.get("subtitle")),
             "sections": sections,
+            "actions": _alert_triage_actions(props, finding_id, evidence_records),
             "footer": _catalog_footer(index, "AlertTriageCard"),
         },
         [],
     )
+
+
+def _alert_triage_actions(
+    props: dict[str, Any],
+    finding_id: str,
+    evidence_records: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    actions = _list_of_records(props.get("actions"))
+    if actions:
+        return actions
+
+    title = _string_or_empty(props.get("title")) or _string_or_empty(props.get("alertTitle"))
+    alert_id = _string_or_empty(props.get("alertId")) or _string_or_empty(props.get("alert_id")) or finding_id
+    severity = _string_or_empty(props.get("severity")) or _string_or_empty(props.get("riskLevel"))
+    result: list[dict[str, Any]] = []
+
+    if finding_id or alert_id:
+        result.append(
+            {
+                "label": "查看告警",
+                "name": A2UI_ALERT_SELECT_ACTION,
+                "primary": True,
+                "context": {
+                    "findingId": finding_id,
+                    "alertId": alert_id,
+                    "title": title,
+                    "severity": severity,
+                },
+            }
+        )
+
+    for evidence_index, evidence in enumerate(evidence_records[:3], start=1):
+        evidence_id = (
+            _string_or_empty(evidence.get("evidenceId"))
+            or _string_or_empty(evidence.get("evidence_id"))
+            or _string_or_empty(evidence.get("id"))
+        )
+        if not evidence_id:
+            continue
+        result.append(
+            {
+                "label": _string_or_empty(evidence.get("label"))
+                or _string_or_empty(evidence.get("title"))
+                or f"查看证据 {evidence_index}",
+                "name": A2UI_EVIDENCE_SELECT_ACTION,
+                "context": {
+                    "evidenceId": evidence_id,
+                    "findingId": finding_id,
+                    "alertId": alert_id,
+                    "title": _string_or_empty(evidence.get("title")) or _string_or_empty(evidence.get("label")),
+                    "source": _string_or_empty(evidence.get("source")),
+                },
+            }
+        )
+
+    if finding_id or alert_id:
+        result.append(
+            {
+                "label": "请求人工研判",
+                "name": A2UI_JUDGEMENT_REQUEST_ACTION,
+                "context": {
+                    "findingId": finding_id,
+                    "alertId": alert_id,
+                    "recommendedJudgement": (
+                        _string_or_empty(props.get("recommendedJudgement"))
+                        or _string_or_empty(props.get("verdict"))
+                    ),
+                    "summary": _string_or_empty(props.get("summary")) or _string_or_empty(props.get("description")),
+                },
+            }
+        )
+
+    return result
 
 
 def _catalog_footer(index: int, component_type: str) -> str:
@@ -939,6 +1018,14 @@ def _asset_recommendations(top_assets: list[dict[str, Any]], high_risk: list[dic
         f"优先确认 {first} 是否存在异常访问、漏洞暴露或横向移动迹象。",
         f"对 {len(high_risk)} 台高风险资产补充告警、进程和网络证据链分析。",
     ]
+
+
+def _finding_id_from_props(props: dict[str, Any]) -> str:
+    return (
+        _string_or_empty(props.get("findingId"))
+        or _string_or_empty(props.get("finding_id"))
+        or _string_or_empty(props.get("alertFindingId"))
+    )
 
 
 def _a2ui_action_context(value: Any) -> list[dict[str, Any]]:

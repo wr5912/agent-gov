@@ -958,10 +958,14 @@ def test_stream_ag_ui_maps_render_a2ui_catalog_mode_to_a2ui_messages(tmp_path, m
                                     "type": "AlertTriageCard",
                                     "props": {
                                         "title": "异常登录研判",
+                                        "findingId": "finding-001",
                                         "severity": "High",
                                         "confidence": "82%",
                                         "summary": "检测到异常登录后出现横向移动迹象。",
-                                        "evidence": ["异地登录", "短时间内访问多台主机"],
+                                        "evidence": [
+                                            {"id": "ev-login-001", "title": "异地登录", "source": "EDR"},
+                                            {"id": "ev-lateral-001", "title": "短时间内访问多台主机"},
+                                        ],
                                         "recommendations": ["确认账号归属", "临时收敛高危权限"],
                                     },
                                 },
@@ -1012,6 +1016,14 @@ def test_stream_ag_ui_maps_render_a2ui_catalog_mode_to_a2ui_messages(tmp_path, m
     assert any(component["id"] == "render-catalog-surface-card-1-title" for component in components)
     assert any(component["id"] == "render-catalog-surface-card-2-actions" for component in components)
     assert any(component["id"] == "render-catalog-surface-card-3-section-2-item-1" for component in components)
+    action_names = [
+        component["component"]["Button"]["action"]["name"]
+        for component in components
+        if "Button" in component["component"]
+    ]
+    assert "ai_soc.alert.select" in action_names
+    assert "ai_soc.evidence.select" in action_names
+    assert "ai_soc.judgement.request" in action_names
 
 
 def test_stream_ag_ui_converts_emit_a2ui_card_specs_to_a2ui_messages(tmp_path, monkeypatch):

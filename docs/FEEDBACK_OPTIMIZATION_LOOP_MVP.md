@@ -129,6 +129,83 @@
   - `proposal?: object`
 - Langfuse 不作为唯一存储；只通过 `run_id/session_id/alert_id/case_id` 做关联。
 
+## SOC UI Event Integration
+
+外部网络安全运营系统只在有反馈价值的业务动作发生时调用 `POST /api/feedback/events`，不要把普通点击、页面浏览、表格排序、筛选切换等低价值 UI 行为推送到 Runtime。
+
+必须推送的动作：
+
+- 分析师修改告警结论：`case.verdict_changed`
+- 分析师修改风险等级：`case.severity_changed`
+- 分析师采纳建议：`recommendation.accepted`
+- 分析师拒绝建议：`recommendation.rejected`
+- 分析师改写建议：`recommendation.modified`
+- 分析师补充证据、IOC、资产或主机信息：`evidence.added`
+- 分析师在 Agent 回复后手动使用不同条件查询工具：`tool.manual_query_after_agent`
+
+事件字段约定：
+
+- `event_id` 必须由 SOC 系统生成并保持全局幂等，重复发送同一 `event_id` 不应产生重复归因。
+- 能拿到 `run_id` 时必须带上；拿不到时至少带 `session_id + alert_id/case_id`，否则只能进入待关联队列。
+- `before` / `after` 只保留结论、风险等级、建议文本、证据摘要、工具名、查询条件等归因所需字段。
+- 不允许写入 API key、MCP header、数据库凭据、原始大段日志或敏感工具输入。
+- 自动捕捉的 SOC 操作统一使用 `auto_captured=true`、`requires_review=true`；`confidence` 默认 `medium`，只有明确可归因时才用 `high`。
+
+示例：分析师把 Agent 结论从 `malicious` 改成 `false_positive`：
+
+```json
+{
+  "event_id": "soc-case-evt-20260520-0001",
+  "source_system": "sec-ops-ui",
+  "event_type": "case.verdict_changed",
+  "timestamp": "2026-05-20T10:30:00Z",
+  "run_id": "runtime-run-id",
+  "session_id": "runtime-session-id",
+  "alert_id": "alert-001",
+  "case_id": "case-001",
+  "actor_id": "analyst-001",
+  "before": {
+    "verdict": "malicious"
+  },
+  "after": {
+    "verdict": "false_positive"
+  },
+  "auto_captured": true,
+  "confidence": "high",
+  "requires_review": true,
+  "comment": "分析师复核后认为告警为误报"
+}
+```
+
+示例：分析师拒绝 Agent 处置建议：
+
+```json
+{
+  "event_id": "soc-case-evt-20260520-0002",
+  "source_system": "sec-ops-ui",
+  "event_type": "recommendation.rejected",
+  "timestamp": "2026-05-20T10:35:00Z",
+  "session_id": "runtime-session-id",
+  "alert_id": "alert-001",
+  "case_id": "case-001",
+  "actor_id": "analyst-001",
+  "before": {
+    "recommendation": "隔离主机"
+  },
+  "after": {
+    "reason": "证据不足，暂不执行隔离"
+  },
+  "entities": {
+    "asset_ids": ["asset-001"],
+    "hostnames": ["host-001"]
+  },
+  "auto_captured": true,
+  "confidence": "medium",
+  "requires_review": true,
+  "comment": "建议不可直接执行，需要补充证据"
+}
+```
+
 ## Test Plan
 
 - 后端单测：

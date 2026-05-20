@@ -17,6 +17,8 @@ docker/volume/data/transcripts/*
 docker/volume/data/uploads/*
 docker/volume/data/outputs/*
 docker/volume/data/agent-memory/*
+docker/volume/data/feedback/
+docker/volume/data/optimization-proposals/
 !docker/volume/data/sessions/.gitkeep
 !docker/volume/data/transcripts/.gitkeep
 !docker/volume/data/uploads/.gitkeep

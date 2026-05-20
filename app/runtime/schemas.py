@@ -6,6 +6,8 @@ from pydantic import BaseModel, Field
 class ChatRequest(BaseModel):
     message: str = Field(..., description="User message or task prompt.")
     session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
+    alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
+    case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
     agent: Optional[str] = Field(default=None, description="Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.")
     skills: Optional[list[str]] = Field(default=None, description="Skill names to enable. Omit to use DEFAULT_SKILLS.")
     skills_mode: Optional[Literal["all", "default", "none"]] = Field(
@@ -34,6 +36,7 @@ class ChatRequest(BaseModel):
 
 
 class ChatResponse(BaseModel):
+    run_id: str
     session_id: str
     sdk_session_id: Optional[str] = None
     answer: str
@@ -89,6 +92,74 @@ class ConfigMappingResponse(BaseModel):
     claude_config_dir: Optional[str] = None
     setting_sources_effective: Optional[list[str]] = None
     mappings: list[ConfigMappingItem]
+
+
+class FeedbackCreateRequest(BaseModel):
+    run_id: str
+    session_id: str
+    alert_id: Optional[str] = None
+    case_id: Optional[str] = None
+    feedback_source: Literal["explicit", "analyst_action", "case_outcome", "tool_quality"] = "explicit"
+    analyst_action: Optional[
+        Literal["accepted", "partially_accepted", "rejected", "modified_conclusion", "requested_more_evidence"]
+    ] = None
+    final_verdict: Optional[str] = None
+    final_severity: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    affected_tools: list[str] = Field(default_factory=list)
+    auto_captured: bool = False
+    confidence: Optional[Literal["low", "medium", "high"]] = None
+    requires_review: bool = False
+    comment: Optional[str] = None
+
+
+class FeedbackEventIngestRequest(BaseModel):
+    event_id: str
+    source_system: str
+    event_type: Literal[
+        "case.verdict_changed",
+        "case.severity_changed",
+        "recommendation.accepted",
+        "recommendation.rejected",
+        "recommendation.modified",
+        "evidence.added",
+        "tool.manual_query_after_agent",
+    ]
+    timestamp: str
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    alert_id: Optional[str] = None
+    case_id: Optional[str] = None
+    actor_id: Optional[str] = None
+    before: Optional[dict[str, Any]] = None
+    after: Optional[dict[str, Any]] = None
+    entities: dict[str, list[str]] = Field(default_factory=dict)
+    auto_captured: bool = True
+    confidence: Optional[Literal["low", "medium", "high"]] = "medium"
+    requires_review: bool = True
+    comment: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackResponse(BaseModel):
+    feedback: dict[str, Any]
+    attribution: dict[str, Any]
+    proposal: Optional[dict[str, Any]] = None
+
+
+class FeedbackEventIngestResponse(BaseModel):
+    event: dict[str, Any]
+    correlation_status: Literal["matched", "pending_correlation", "duplicate", "stored_only"]
+    matched_run_id: Optional[str] = None
+    attribution: Optional[dict[str, Any]] = None
+    proposal: Optional[dict[str, Any]] = None
+
+
+class FeedbackQueryResponse(BaseModel):
+    feedback: list[dict[str, Any]] = Field(default_factory=list)
+    events: list[dict[str, Any]] = Field(default_factory=list)
+    attributions: list[dict[str, Any]] = Field(default_factory=list)
+    pending_correlations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class OpenAIChatMessage(BaseModel):

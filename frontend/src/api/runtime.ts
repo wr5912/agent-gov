@@ -2,6 +2,12 @@ import type {
   AgentInfo,
   ChatRequest,
   ConfigMappingResponse,
+  FeedbackCreateRequest,
+  FeedbackEventIngestRequest,
+  FeedbackEventIngestResponse,
+  FeedbackQueryResponse,
+  FeedbackResponse,
+  OptimizationProposal,
   RuntimeClientConfig,
   RuntimeHealth,
   SessionInfo,
@@ -95,6 +101,30 @@ export function getSkills(config: RuntimeClientConfig) {
 
 export function getConfigMapping(config: RuntimeClientConfig) {
   return requestJson<ConfigMappingResponse>(config, "/api/config");
+}
+
+export function createFeedback(config: RuntimeClientConfig, payload: FeedbackCreateRequest) {
+  return requestJson<FeedbackResponse>(config, "/api/feedback", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function ingestFeedbackEvent(config: RuntimeClientConfig, payload: FeedbackEventIngestRequest) {
+  return requestJson<FeedbackEventIngestResponse>(config, "/api/feedback/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getFeedback(config: RuntimeClientConfig) {
+  return requestJson<FeedbackQueryResponse>(config, "/api/feedback");
+}
+
+export function getOptimizationProposals(config: RuntimeClientConfig) {
+  return requestJson<OptimizationProposal[]>(config, "/api/optimization-proposals");
 }
 
 export interface StreamChatHandlers {

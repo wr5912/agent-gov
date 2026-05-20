@@ -69,6 +69,8 @@ export interface ConfigMappingResponse {
 export interface ChatRequest {
   message: string;
   session_id?: string;
+  alert_id?: string;
+  case_id?: string;
   agent?: string;
   skills?: string[];
   skills_mode?: "all" | "default" | "none";
@@ -99,6 +101,11 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   createdAt: string;
+  runId?: string;
+  sessionId?: string;
+  alertId?: string;
+  caseId?: string;
+  agentActivity?: AgentActivity;
   /** 当前 assistant 回复捕获到的完整 SSE 时间线。 */
   events?: StreamLogEvent[];
 }
@@ -120,4 +127,84 @@ export interface StreamEnvelope {
 export interface RuntimeClientConfig {
   apiBase: string;
   apiKey: string;
+}
+
+export interface FeedbackCreateRequest {
+  run_id: string;
+  session_id: string;
+  alert_id?: string;
+  case_id?: string;
+  feedback_source: "explicit" | "analyst_action" | "case_outcome" | "tool_quality";
+  analyst_action?: "accepted" | "partially_accepted" | "rejected" | "modified_conclusion" | "requested_more_evidence";
+  final_verdict?: string;
+  final_severity?: string;
+  labels: string[];
+  affected_tools?: string[];
+  auto_captured?: boolean;
+  confidence?: "low" | "medium" | "high";
+  requires_review?: boolean;
+  comment?: string;
+}
+
+export interface FeedbackResponse {
+  feedback: Record<string, unknown>;
+  attribution: Record<string, unknown>;
+  proposal?: Record<string, unknown> | null;
+}
+
+export interface FeedbackEventIngestRequest {
+  event_id: string;
+  source_system: string;
+  event_type:
+    | "case.verdict_changed"
+    | "case.severity_changed"
+    | "recommendation.accepted"
+    | "recommendation.rejected"
+    | "recommendation.modified"
+    | "evidence.added"
+    | "tool.manual_query_after_agent";
+  timestamp: string;
+  run_id?: string;
+  session_id?: string;
+  alert_id?: string;
+  case_id?: string;
+  actor_id?: string;
+  before?: Record<string, unknown>;
+  after?: Record<string, unknown>;
+  entities?: Record<string, string[]>;
+  auto_captured?: boolean;
+  confidence?: "low" | "medium" | "high";
+  requires_review?: boolean;
+  comment?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FeedbackEventIngestResponse {
+  event: Record<string, unknown>;
+  correlation_status: "matched" | "pending_correlation" | "duplicate" | "stored_only";
+  matched_run_id?: string | null;
+  attribution?: Record<string, unknown> | null;
+  proposal?: Record<string, unknown> | null;
+}
+
+export interface FeedbackQueryResponse {
+  feedback: Record<string, unknown>[];
+  events: Record<string, unknown>[];
+  attributions: Record<string, unknown>[];
+  pending_correlations: Record<string, unknown>[];
+}
+
+export interface OptimizationProposal {
+  proposal_id?: string;
+  status?: string;
+  title?: string;
+  recommendation?: string;
+  attribution_type?: string;
+  run_id?: string;
+  session_id?: string;
+  alert_id?: string | null;
+  case_id?: string | null;
+  target_path?: string;
+  created_at?: string;
+  [key: string]: unknown;
 }

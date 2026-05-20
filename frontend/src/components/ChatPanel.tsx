@@ -1,41 +1,53 @@
 import { Loader2, Send, Square } from "lucide-react";
-import type { ChatMessage } from "../types/runtime";
+import type { ChatMessage, RuntimeClientConfig } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
+  clientConfig: RuntimeClientConfig;
   input: string;
   streaming: boolean;
   activeSessionId?: string;
+  alertId: string;
+  caseId: string;
   allowedTools: string;
   disallowedTools: string;
   maxTurns: number;
   skillsMode: "all" | "default" | "none";
   onInputChange: (value: string) => void;
+  onAlertIdChange: (value: string) => void;
+  onCaseIdChange: (value: string) => void;
   onAllowedToolsChange: (value: string) => void;
   onDisallowedToolsChange: (value: string) => void;
   onMaxTurnsChange: (value: number) => void;
   onSkillsModeChange: (value: "all" | "default" | "none") => void;
   onSend: () => void;
   onStop: () => void;
+  onFeedbackSubmitted: () => void;
 }
 
 export function ChatPanel({
   messages,
+  clientConfig,
   input,
   streaming,
   activeSessionId,
+  alertId,
+  caseId,
   allowedTools,
   disallowedTools,
   maxTurns,
   skillsMode,
   onInputChange,
+  onAlertIdChange,
+  onCaseIdChange,
   onAllowedToolsChange,
   onDisallowedToolsChange,
   onMaxTurnsChange,
   onSkillsModeChange,
   onSend,
   onStop,
+  onFeedbackSubmitted,
 }: ChatPanelProps) {
   return (
     <main className="chat-panel">
@@ -60,6 +72,14 @@ export function ChatPanel({
           <span>Max Turns</span>
           <input type="number" min={1} max={50} value={maxTurns} onChange={(e) => onMaxTurnsChange(Number(e.target.value || 1))} />
         </label>
+        <label>
+          <span>Alert ID</span>
+          <input value={alertId} onChange={(e) => onAlertIdChange(e.target.value)} placeholder="alert-001" />
+        </label>
+        <label>
+          <span>Case ID</span>
+          <input value={caseId} onChange={(e) => onCaseIdChange(e.target.value)} placeholder="case-001" />
+        </label>
         <label className="wide-control">
           <span>Allowed Tools</span>
           <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="Read,Grep,Glob,mcp__sec-ops-data__*" />
@@ -83,7 +103,14 @@ export function ChatPanel({
             </div>
           </div>
         ) : (
-          messages.map((message) => <MessageBubble message={message} key={message.id} />)
+          messages.map((message) => (
+            <MessageBubble
+              message={message}
+              clientConfig={clientConfig}
+              onFeedbackSubmitted={onFeedbackSubmitted}
+              key={message.id}
+            />
+          ))
         )}
       </section>
 

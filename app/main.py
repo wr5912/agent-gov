@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Security, status
+from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -10,11 +11,17 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.runtime.agent_loader import discover_agents, discover_skills
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.config_mapping import build_config_mapping
+from app.runtime.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentInfo,
     ChatRequest,
     ChatResponse,
     ConfigMappingResponse,
+    FeedbackCreateRequest,
+    FeedbackEventIngestRequest,
+    FeedbackEventIngestResponse,
+    FeedbackQueryResponse,
+    FeedbackResponse,
     OpenAIChatCompletionChoice,
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
@@ -27,7 +34,8 @@ from app.runtime.settings import get_settings
 
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
-runtime = ClaudeRuntime(settings, session_store)
+feedback_store = FeedbackStore(settings.feedback_dir, settings.optimization_proposals_dir)
+runtime = ClaudeRuntime(settings, session_store, feedback_store)
 bearer_auth = HTTPBearer(auto_error=False)
 
 app = FastAPI(
@@ -42,6 +50,7 @@ app = FastAPI(
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
+        {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
     ],
@@ -137,6 +146,78 @@ async def chat(req: ChatRequest) -> ChatResponse:
 )
 async def config_mapping() -> ConfigMappingResponse:
     return build_config_mapping(settings)
+
+
+@app.post(
+    "/api/feedback",
+    response_model=FeedbackResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Create feedback for one Agent run",
+)
+async def create_feedback(req: FeedbackCreateRequest) -> FeedbackResponse:
+    return FeedbackResponse(**feedback_store.create_feedback(req))
+
+
+@app.post(
+    "/api/feedback/events",
+    response_model=FeedbackEventIngestResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Ingest one SOC workflow feedback event",
+)
+async def ingest_feedback_event(req: FeedbackEventIngestRequest) -> FeedbackEventIngestResponse:
+    return FeedbackEventIngestResponse(**feedback_store.ingest_event(req))
+
+
+@app.get(
+    "/api/feedback",
+    response_model=FeedbackQueryResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Query feedback records and attributions",
+)
+async def list_feedback(
+    run_id: str | None = None,
+    session_id: str | None = None,
+    alert_id: str | None = None,
+    case_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> FeedbackQueryResponse:
+    return FeedbackQueryResponse(
+        **feedback_store.query(
+            run_id=run_id,
+            session_id=session_id,
+            alert_id=alert_id,
+            case_id=case_id,
+            limit=limit,
+        )
+    )
+
+
+@app.get(
+    "/api/optimization-proposals",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List pending feedback-driven optimization proposals",
+)
+async def list_optimization_proposals(
+    run_id: str | None = None,
+    session_id: str | None = None,
+    alert_id: str | None = None,
+    case_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_proposals(
+        run_id=run_id,
+        session_id=session_id,
+        alert_id=alert_id,
+        case_id=case_id,
+        status=status,
+        limit=limit,
+    )
 
 
 @app.post(

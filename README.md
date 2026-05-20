@@ -160,6 +160,28 @@ http://localhost:55173
 
 每条 Claude Agent 回复的“回复细节”会保留完整流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。
 
+## 反馈优化闭环
+
+Runtime 支持告警研判场景的反馈归因闭环。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在数据卷中写入本次回答的轻量运行记录。前端聊天区可以填写 `Alert ID` / `Case ID`，assistant 回复完成后可提交“反馈/归因”，右侧 Inspector 的 Feedback 视图会展示反馈、归因和待审优化建议。
+
+后端接口：
+
+- `POST /api/feedback`：提交某次 Agent 回复的显式反馈。
+- `POST /api/feedback/events`：接收 SOC UI / 告警平台推送的关键操作事件。
+- `GET /api/feedback`：按 `run_id/session_id/alert_id/case_id` 查询反馈、事件、归因和待关联记录。
+- `GET /api/optimization-proposals`：查看待人工审核的优化建议。
+
+数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `docker/volume/data/`：
+
+- `/data/feedback/runs.jsonl`
+- `/data/feedback/events.jsonl`
+- `/data/feedback/feedback.jsonl`
+- `/data/feedback/attributions.jsonl`
+- `/data/feedback/pending_correlations.jsonl`
+- `/data/optimization-proposals/proposals.jsonl`
+
+MVP 只生成待审 proposal，不会自动修改 `CLAUDE.md`、skills、agents、MCP 或权限配置。
+
 ## Langfuse 监控
 
 本项目优先通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。

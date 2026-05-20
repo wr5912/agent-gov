@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgents, getConfigMapping, getHealth, getSessions, getSkills, streamChat } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgents, getConfigMapping, getFeedback, getHealth, getOptimizationProposals, getSessions, getSkills, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import type { AgentInfo, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentInfo, ChatMessage, ConfigMappingResponse, FeedbackQueryResponse, OptimizationProposal, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import "./styles.css";
 
 function newId(prefix: string) {
@@ -38,6 +38,13 @@ function messageTextFromEnvelope(envelope: StreamEnvelope): string | undefined {
   return typeof text === "string" ? text : undefined;
 }
 
+function agentActivityFromResult(value: unknown): AgentActivity | undefined {
+  if (!isRecord(value) || !isRecord(value.agent_activity)) return undefined;
+  const activity = value.agent_activity;
+  if (!Array.isArray(activity.tool_calls) || !Array.isArray(activity.tool_results)) return undefined;
+  return activity as unknown as AgentActivity;
+}
+
 export default function App() {
   const runtimeDefaults = useMemo(() => defaultRuntimeConfig(), []);
   const [clientConfig, setClientConfig] = useLocalStorage<RuntimeClientConfig>("runtime-client-config", runtimeDefaults);
@@ -49,11 +56,15 @@ export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [configMapping, setConfigMapping] = useState<ConfigMappingResponse | null>(null);
+  const [feedbackData, setFeedbackData] = useState<FeedbackQueryResponse | null>(null);
+  const [proposals, setProposals] = useState<OptimizationProposal[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [allowedTools, setAllowedTools] = useState("Read,Grep,Glob,mcp__sec-ops-data__*");
   const [disallowedTools, setDisallowedTools] = useState("Bash,WebFetch,WebSearch");
   const [skillsMode, setSkillsMode] = useState<"all" | "default" | "none">("default");
+  const [alertId, setAlertId] = useState("");
+  const [caseId, setCaseId] = useState("");
   const [maxTurns, setMaxTurns] = useState(8);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -106,12 +117,27 @@ export default function App() {
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
+      const [feedbackRes, proposalsRes] = await Promise.all([
+        getFeedback(effectiveClientConfig),
+        getOptimizationProposals(effectiveClientConfig),
+      ]);
+      setFeedbackData(feedbackRes);
+      setProposals(proposalsRes);
     } catch (error) {
       setLastError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoading(false);
     }
   }, [activeSessionId, effectiveClientConfig, setActiveSessionId]);
+
+  const refreshFeedback = useCallback(async () => {
+    const [feedbackRes, proposalsRes] = await Promise.all([
+      getFeedback(effectiveClientConfig),
+      getOptimizationProposals(effectiveClientConfig),
+    ]);
+    setFeedbackData(feedbackRes);
+    setProposals(proposalsRes);
+  }, [effectiveClientConfig]);
 
   useEffect(() => {
     refresh();
@@ -174,6 +200,9 @@ export default function App() {
       role: "assistant",
       content: "",
       createdAt: new Date().toISOString(),
+      sessionId,
+      alertId: alertId.trim() || undefined,
+      caseId: caseId.trim() || undefined,
       events: [],
     };
 
@@ -202,6 +231,8 @@ export default function App() {
         effectiveClientConfig,
         {
           session_id: sessionId,
+          alert_id: alertId.trim() || undefined,
+          case_id: caseId.trim() || undefined,
           message,
           agent: selectedAgent || undefined,
           skills: selectedSkills.length ? selectedSkills : undefined,
@@ -242,6 +273,29 @@ export default function App() {
               return next;
             });
           },
+          onResult: (result) => {
+            if (!isRecord(result)) return;
+            const runId = typeof result.run_id === "string" ? result.run_id : undefined;
+            const resultSessionId = typeof result.session_id === "string" ? result.session_id : sessionId;
+            const resultAlertId = typeof result.alert_id === "string" ? result.alert_id : alertId.trim() || undefined;
+            const resultCaseId = typeof result.case_id === "string" ? result.case_id : caseId.trim() || undefined;
+            const agentActivity = agentActivityFromResult(result);
+            updateSessionMessages(sessionId, (prev) => {
+              const next = [...prev];
+              const last = next[next.length - 1];
+              if (last?.role === "assistant") {
+                next[next.length - 1] = {
+                  ...last,
+                  runId,
+                  sessionId: resultSessionId,
+                  alertId: resultAlertId,
+                  caseId: resultCaseId,
+                  agentActivity,
+                };
+              }
+              return next;
+            });
+          },
           onError: (messageText) => {
             setLastError(messageText);
             updateSessionMessages(sessionId, (prev) => {
@@ -257,6 +311,7 @@ export default function App() {
             setStreaming(false);
             abortRef.current = null;
             refresh();
+            refreshFeedback().catch(() => undefined);
           },
         },
         controller.signal,
@@ -319,20 +374,26 @@ export default function App() {
         />
         <ChatPanel
           messages={activeMessages}
+          clientConfig={effectiveClientConfig}
           input={input}
           streaming={streaming}
           activeSessionId={activeSessionId}
+          alertId={alertId}
+          caseId={caseId}
           allowedTools={allowedTools}
           disallowedTools={disallowedTools}
           maxTurns={maxTurns}
           skillsMode={skillsMode}
           onInputChange={setInput}
+          onAlertIdChange={setAlertId}
+          onCaseIdChange={setCaseId}
           onAllowedToolsChange={setAllowedTools}
           onDisallowedToolsChange={setDisallowedTools}
           onMaxTurnsChange={setMaxTurns}
           onSkillsModeChange={setSkillsMode}
           onSend={sendMessage}
           onStop={stopStream}
+          onFeedbackSubmitted={() => refreshFeedback().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
         />
         <Inspector
           health={health}
@@ -340,6 +401,9 @@ export default function App() {
           skills={skills}
           configMapping={configMapping}
           streamEvents={streamEvents}
+          feedbackData={feedbackData}
+          proposals={proposals}
+          onRefreshFeedback={() => refreshFeedback().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
           lastError={lastError}
         />
       </div>

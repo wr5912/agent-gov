@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import uuid
 import warnings
 from contextlib import nullcontext
 from collections.abc import AsyncIterator
@@ -9,11 +10,24 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .agent_loader import load_programmatic_agents
+from .feedback_store import FeedbackStore, utc_now
 from .message_utils import extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
+
+
+def ensure_langfuse_otel_compat() -> None:
+    """Backfill the OpenTelemetry env constant expected by Langfuse 4.x."""
+    try:
+        import opentelemetry.sdk.environment_variables as otel_env
+    except Exception:
+        return
+    if not hasattr(otel_env, "OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED"):
+        # google-adk 2.0.0 pins OpenTelemetry <=1.41.1, while Langfuse 4.6.1
+        # imports this newer constant. The constant value is only the env name.
+        otel_env.OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED = "OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED"
 
 
 class ClaudeRuntime:
@@ -26,9 +40,15 @@ class ClaudeRuntime:
     - Persist a lightweight mapping from API session ids to Claude SDK session ids.
     """
 
-    def __init__(self, settings: AppSettings, session_store: LocalSessionStore) -> None:
+    def __init__(
+        self,
+        settings: AppSettings,
+        session_store: LocalSessionStore,
+        feedback_store: FeedbackStore | None = None,
+    ) -> None:
         self.settings = settings
         self.session_store = session_store
+        self.feedback_store = feedback_store
         self._langfuse_client: Any | None = None
         self._langfuse_unavailable = False
 
@@ -99,7 +119,13 @@ class ClaudeRuntime:
             unique.append(text)
         return "\n".join(unique).strip()
 
-    def _request_telemetry_input(self, req: ChatRequest, prompt: str, session: LocalSession) -> dict[str, Any]:
+    def _request_telemetry_input(
+        self,
+        req: ChatRequest,
+        prompt: str,
+        session: LocalSession,
+        run_id: str,
+    ) -> dict[str, Any]:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
         disallowed_tools = (
             req.disallowed_tools
@@ -107,10 +133,13 @@ class ClaudeRuntime:
             else self.settings.default_disallowed_tools
         )
         return {
+            "run_id": run_id,
             "message": req.message,
             "prompt": prompt,
             "api_session_id": session.session_id,
             "sdk_session_id": session.sdk_session_id,
+            "alert_id": req.alert_id,
+            "case_id": req.case_id,
             "agent": req.agent or self.settings.default_agent,
             "skills": req.skills if req.skills is not None else self.settings.default_skills,
             "skills_mode": req.skills_mode or self.settings.default_skills_mode,
@@ -126,8 +155,11 @@ class ClaudeRuntime:
     def _runtime_output_payload(
         self,
         *,
+        run_id: str,
         session: LocalSession,
         sdk_session_id: Optional[str],
+        alert_id: Optional[str],
+        case_id: Optional[str],
         answer: str,
         messages: list[dict[str, Any]],
         agent_activity: dict[str, Any],
@@ -137,8 +169,11 @@ class ClaudeRuntime:
         errors: list[str],
     ) -> dict[str, Any]:
         return {
+            "run_id": run_id,
             "api_session_id": session.session_id,
             "sdk_session_id": sdk_session_id,
+            "alert_id": alert_id,
+            "case_id": case_id,
             "answer": answer,
             "messages": messages,
             "agent_activity": agent_activity,
@@ -147,6 +182,44 @@ class ClaudeRuntime:
             "stop_reason": stop_reason,
             "errors": errors,
         }
+
+    def _record_feedback_run(
+        self,
+        *,
+        run_id: str,
+        session: LocalSession,
+        sdk_session_id: Optional[str],
+        req: ChatRequest,
+        answer: str,
+        agent_activity: dict[str, Any],
+        usage: Any,
+        total_cost_usd: Optional[float],
+        stop_reason: Optional[str],
+        errors: list[str],
+        created_at: str,
+        completed_at: str,
+    ) -> None:
+        if self.feedback_store is None:
+            return
+        answer_summary = answer.strip().replace("\n", " ")[:500]
+        self.feedback_store.record_run(
+            {
+                "run_id": run_id,
+                "session_id": session.session_id,
+                "sdk_session_id": sdk_session_id,
+                "alert_id": req.alert_id,
+                "case_id": req.case_id,
+                "message": req.message,
+                "answer_summary": answer_summary,
+                "agent_activity": agent_activity,
+                "usage": to_plain(usage),
+                "total_cost_usd": total_cost_usd,
+                "stop_reason": stop_reason,
+                "errors": errors,
+                "created_at": created_at,
+                "completed_at": completed_at,
+            }
+        )
 
     def _agent_activity_payload(self, req: ChatRequest, messages: list[dict[str, Any]]) -> dict[str, Any]:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
@@ -357,6 +430,7 @@ class ClaudeRuntime:
         if self._langfuse_client is not None:
             return self._langfuse_client
         try:
+            ensure_langfuse_otel_compat()
             from langfuse import Langfuse
 
             self._langfuse_client = Langfuse(
@@ -545,8 +619,10 @@ class ClaudeRuntime:
         from claude_agent_sdk import ResultMessage, query
 
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
+        run_id = str(uuid.uuid4())
+        created_at = utc_now()
         prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session)
+        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id)
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
         usage: Optional[dict[str, Any]] = None
@@ -559,12 +635,12 @@ class ClaudeRuntime:
             as_type="span",
             name="runtime.chat",
             input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "mode": "non_stream"},
+            metadata={"api_session_id": session.session_id, "run_id": run_id, "mode": "non_stream"},
         ) as root_span:
             with self._start_langfuse_observation(
                 as_type="generation",
                 name="runtime.claude_sdk_query",
-                input={"prompt": prompt, "model": req.model or self.settings.agent_model},
+                input={"run_id": run_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
@@ -593,8 +669,11 @@ class ClaudeRuntime:
                 answer = self._dedupe_answer_parts(answer_parts)
                 agent_activity = self._agent_activity_payload(req, messages)
                 output = self._runtime_output_payload(
+                    run_id=run_id,
                     session=session,
                     sdk_session_id=sdk_session_id,
+                    alert_id=req.alert_id,
+                    case_id=req.case_id,
                     answer=answer,
                     messages=messages,
                     agent_activity=agent_activity,
@@ -631,7 +710,23 @@ class ClaudeRuntime:
         if not session.title:
             session.title = req.message[:80]
         self.session_store.save(session)
+        completed_at = utc_now()
+        self._record_feedback_run(
+            run_id=run_id,
+            session=session,
+            sdk_session_id=sdk_session_id,
+            req=req,
+            answer=answer,
+            agent_activity=agent_activity,
+            usage=usage,
+            total_cost_usd=total_cost_usd,
+            stop_reason=stop_reason,
+            errors=errors,
+            created_at=created_at,
+            completed_at=completed_at,
+        )
         return {
+            "run_id": run_id,
             "session_id": session.session_id,
             "sdk_session_id": session.sdk_session_id,
             "answer": answer,
@@ -647,8 +742,10 @@ class ClaudeRuntime:
         from claude_agent_sdk import ResultMessage, query
 
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
+        run_id = str(uuid.uuid4())
+        created_at = utc_now()
         prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session)
+        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id)
         sdk_session_id: Optional[str] = session.sdk_session_id
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
@@ -661,13 +758,22 @@ class ClaudeRuntime:
             as_type="span",
             name="runtime.chat",
             input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "mode": "stream"},
+            metadata={"api_session_id": session.session_id, "run_id": run_id, "mode": "stream"},
         ) as root_span:
-            yield {"event": "session", "data": {"session_id": session.session_id, "sdk_session_id": session.sdk_session_id}}
+            yield {
+                "event": "session",
+                "data": {
+                    "run_id": run_id,
+                    "session_id": session.session_id,
+                    "sdk_session_id": session.sdk_session_id,
+                    "alert_id": req.alert_id,
+                    "case_id": req.case_id,
+                },
+            }
             with self._start_langfuse_observation(
                 as_type="generation",
                 name="runtime.claude_sdk_query",
-                input={"prompt": prompt, "model": req.model or self.settings.agent_model},
+                input={"run_id": run_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
@@ -698,6 +804,9 @@ class ClaudeRuntime:
                                 "data": {
                                     "session_id": session.session_id,
                                     "sdk_session_id": sdk_session_id,
+                                    "run_id": run_id,
+                                    "alert_id": req.alert_id,
+                                    "case_id": req.case_id,
                                     "agent_activity": agent_activity,
                                     "usage": usage,
                                     "total_cost_usd": total_cost_usd,
@@ -720,8 +829,11 @@ class ClaudeRuntime:
                     answer = self._dedupe_answer_parts(answer_parts)
                     agent_activity = self._agent_activity_payload(req, messages)
                     output = self._runtime_output_payload(
+                        run_id=run_id,
                         session=session,
                         sdk_session_id=sdk_session_id,
+                        alert_id=req.alert_id,
+                        case_id=req.case_id,
                         answer=answer,
                         messages=messages,
                         agent_activity=agent_activity,
@@ -729,6 +841,21 @@ class ClaudeRuntime:
                         total_cost_usd=total_cost_usd,
                         stop_reason=stop_reason,
                         errors=errors,
+                    )
+                    completed_at = utc_now()
+                    self._record_feedback_run(
+                        run_id=run_id,
+                        session=session,
+                        sdk_session_id=sdk_session_id,
+                        req=req,
+                        answer=answer,
+                        agent_activity=agent_activity,
+                        usage=usage,
+                        total_cost_usd=total_cost_usd,
+                        stop_reason=stop_reason,
+                        errors=errors,
+                        created_at=created_at,
+                        completed_at=completed_at,
                     )
                     self._update_langfuse_observation(
                         generation,

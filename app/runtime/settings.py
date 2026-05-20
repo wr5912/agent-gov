@@ -220,6 +220,14 @@ class AppSettings(BaseSettings):
     def upload_dir(self) -> Path:
         return self.data_dir / "uploads"
 
+    @property
+    def feedback_dir(self) -> Path:
+        return self.data_dir / "feedback"
+
+    @property
+    def optimization_proposals_dir(self) -> Path:
+        return self.data_dir / "optimization-proposals"
+
 
 @lru_cache
 def get_settings() -> AppSettings:
@@ -232,4 +240,6 @@ def get_settings() -> AppSettings:
     settings.session_dir.mkdir(parents=True, exist_ok=True)
     settings.output_dir.mkdir(parents=True, exist_ok=True)
     settings.upload_dir.mkdir(parents=True, exist_ok=True)
+    settings.feedback_dir.mkdir(parents=True, exist_ok=True)
+    settings.optimization_proposals_dir.mkdir(parents=True, exist_ok=True)
     return settings

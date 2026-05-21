@@ -30,6 +30,12 @@ from .a2ui_bridge import (
     a2ui_payload_stream_chunks,
     extract_a2ui_tool_payloads,
 )
+from .a2ui_v09_bridge import (
+    A2UI_V09_CUSTOM_EVENT_NAME,
+    A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+    A2UI_V09_MESSAGE_TOOL_NAME,
+    extract_a2ui_v09_tool_messages,
+)
 from .message_utils import extract_stream_event_text, extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
@@ -410,6 +416,8 @@ class ClaudeRuntime:
         return action, f"{action}完成。"
 
     def _tool_activity_label(self, tool_name: str) -> str:
+        if tool_name == A2UI_V09_MESSAGE_TOOL_NAME:
+            return "生成 A2UI v0.9 视图"
         if tool_name == "mcp__ai-soc-ui__emit_cards":
             return "生成结构化视图"
         if tool_name == "mcp__ai-soc-ui__emit_a2ui":
@@ -1034,6 +1042,25 @@ class ClaudeRuntime:
                         continue
                     activity_seen.add(activity_key)
                     yield custom_event(AGENT_ACTIVITY_EVENT_NAME, activity)
+
+                v09_extraction = extract_a2ui_v09_tool_messages(raw_message)
+                for message in v09_extraction.messages:
+                    yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, message)
+                for error in v09_extraction.errors:
+                    print(f"[WARN] skipped invalid A2UI v0.9 tool message: {error}", flush=True)
+                    yield custom_event(
+                        A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                        {
+                            "code": "a2ui-v09-message-invalid",
+                            "level": "warning",
+                            "message": error,
+                            "source": "claude-runtime",
+                            "runId": req.run_id,
+                            "toolName": A2UI_V09_MESSAGE_TOOL_NAME,
+                            "retryEligible": False,
+                            "retryAttempt": 0,
+                        },
+                    )
 
                 tool_extraction = extract_a2ui_tool_payloads(raw_message)
                 for tool_payload in tool_extraction.tool_payloads:

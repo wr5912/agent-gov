@@ -9,6 +9,34 @@ mcp = FastMCP("ai-soc-ui")
 
 
 @mcp.tool()
+def emit_a2ui_message(message: Any) -> dict[str, Any]:
+    """Emit one raw A2UI v0.9 server-to-client message.
+
+    Clean-room v0.9 entry point. Pass exactly one complete A2UI v0.9 message,
+    not an array and not a quoted JSON string. Valid message types are:
+    createSurface, updateComponents, updateDataModel, and deleteSurface.
+
+    Do not print the payload in the user-facing answer.
+    """
+    message_type = "unknown"
+    surface_id = None
+    if isinstance(message, dict):
+        for key in ("createSurface", "updateComponents", "updateDataModel", "deleteSurface"):
+            payload = message.get(key)
+            if isinstance(payload, dict):
+                message_type = key
+                surface_id = payload.get("surfaceId")
+                break
+    return {
+        "ok": True,
+        "version": "v0.9",
+        "message_type": message_type,
+        "surface_id": surface_id,
+        "note": "A2UI v0.9 message was captured by the runtime and forwarded through AG-UI.",
+    }
+
+
+@mcp.tool()
 def render_a2ui(payload: Any) -> dict[str, Any]:
     """Render an A2UI surface through the AI-SOC AG-UI bridge.
 

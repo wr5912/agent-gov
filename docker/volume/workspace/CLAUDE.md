@@ -57,6 +57,7 @@
 - 优先使用 `Card`、`Column`、`Row`、`Text`、`List`、`Divider`、`Button`。不要使用 `Table`、`MetricCard`、`RiskBadge`、`Chart`、`Progress`、`Badge`，也不要使用 `type`、`sections`、`metric_group`、`table`、`rows`、`columns` 等旧 DSL 字段。
 - `Card` 必须使用 `child` 指向一个子组件 ID；需要多个元素时先创建 `Column`，再让 `Card.child` 指向该 `Column`。不要在 `Card` 上使用 `children`。
 - `List` 必须使用 `children` 指向列表项组件 ID。不要在 `List` 上使用 `items`。
+- `Button` 必须使用 `child` 和 `action`；`Modal` 必须使用 `trigger` 和 `content`；`Text` 必须使用 `text`。所有容器型字段都应引用组件 ID，不要内联子组件对象。
 
 推荐顺序：
 

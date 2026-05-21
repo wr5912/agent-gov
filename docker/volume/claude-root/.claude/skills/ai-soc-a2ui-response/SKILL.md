@@ -259,14 +259,52 @@ Button
 
 Verified basic v0.9 component shapes:
 
-- `Card` with `child`. `Card` accepts exactly one child ID. If you need
-  multiple elements inside a card, create a `Column` and set `Card.child` to
-  that Column ID. Do not use `children` on `Card`.
-- `Column` with `children` and optional `align`.
-- `Row` with `children`.
-- `List` with `children`. Do not use `items` on `List`.
-- `Divider` with no business data.
-- `Text` with literal `text` or data binding such as `{"path": "/summary"}`.
+- `Text`: `text` is required; `variant`, `weight`, and `accessibility` are
+  optional. Use `variant` values such as `h1`, `h2`, `h3`, `h4`, `h5`,
+  `caption`, or omit it for body text.
+- `Image`: `url` is required; `description`, `fit`, `variant`, `weight`, and
+  `accessibility` are optional.
+- `Icon`: `name` is required; `weight` and `accessibility` are optional.
+- `Video`: `url` is required; `weight` and `accessibility` are optional.
+- `AudioPlayer`: `url` is required; `description`, `weight`, and
+  `accessibility` are optional.
+- `Row`: `children` is required and must reference child component IDs.
+  `justify`, `align`, `weight`, and `accessibility` are optional.
+- `Column`: `children` is required and must reference child component IDs.
+  `justify`, `align`, `weight`, and `accessibility` are optional.
+- `List`: `children` is required and must reference item component IDs.
+  `direction`, `align`, `listStyle`, `weight`, and `accessibility` are
+  optional. Do not use `items` on `List`.
+- `Card`: `child` is required and must be exactly one child component ID. If
+  you need multiple elements inside a card, create a `Column` and set
+  `Card.child` to that Column ID. Do not use `children` on `Card`.
+- `Tabs`: `tabs` is required. Each tab has a `title` and `child` component ID.
+- `Divider`: `axis`, `weight`, and `accessibility` are optional. Do not put
+  business data on `Divider`.
+- `Modal`: `trigger` and `content` component IDs are required.
+- `Button`: `child` and `action` are required; `variant`, `checks`, `weight`,
+  and `accessibility` are optional. Use a `Text` child for labeled buttons.
+- `TextField`: `label` is required; `value`, `variant`,
+  `validationRegexp`, `checks`, `weight`, and `accessibility` are optional.
+- `CheckBox`: `label` and `value` are required; `checks`, `weight`, and
+  `accessibility` are optional.
+- `ChoicePicker`: `options` and `value` are required; `label`, `variant`,
+  `displayStyle`, `filterable`, `checks`, `weight`, and `accessibility` are
+  optional.
+- `Slider`: `max` and `value` are required; `label`, `min`, `step`, `checks`,
+  `weight`, and `accessibility` are optional.
+- `DateTimeInput`: `value` is required; `enableDate`, `enableTime`, `min`,
+  `max`, `label`, `checks`, `weight`, and `accessibility` are optional.
+
+Field rules that prevent blank renders:
+
+- Container children must be IDs, not inline objects, after normalization.
+- Use `Card.child`, never `Card.children`.
+- Use `Button.child`, never `Button.children`.
+- Use `Modal.trigger` and `Modal.content`, never inline modal body objects.
+- Use `List.children`, never `List.items`.
+- Use `Text.text`, never `content`, `label`, or `value` for static text.
+- Use `Row.children` and `Column.children`, never `items`.
 
 Use stable IDs such as `root`, `content`, `title`, `status`, `summary`,
 `evidence`, and `recommendation`. When updating components, resend only the

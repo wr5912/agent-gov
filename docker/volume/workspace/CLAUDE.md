@@ -51,13 +51,18 @@
 - 尽早发送 `createSurface`，然后优先用一次最终 `updateComponents` 输出完整结果。
 - 每个用户请求最多调用 3 次 `mcp__ai-soc-ui__emit_a2ui_message`；常见资产风险概览优先只调用 2 次：`createSurface` + 最终 `updateComponents`。
 - 最终 UI 更新成功后立即结束，最多补一句中文总结；不要继续多轮微调 UI 或输出长篇 Markdown。
+- 每条 A2UI message 都必须自包含 `surfaceId`；后续 `updateComponents`、`updateDataModel`、`deleteSurface` 不会继承 `createSurface.surfaceId`。
+- 同一次回答中所有 A2UI message 必须使用同一个 `surfaceId`。
 - `createSurface.catalogId` 使用 `https://a2ui.org/specification/v0_9/basic_catalog.json`。
+- `updateComponents.components` 必须是非空数组，数组元素是带 `id` 和 `component` 的组件对象；不要生成 `{ "root": {...} }` 这种按 ID 索引的对象 map。
+- 首次完整 `updateComponents` 必须包含 `id: "root"` 的组件，前端从 `root` 开始渲染；没有 `root` 会停留在 loading 状态。
 - 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 已从支持契约中移除；不要使用它们。如果 `emit_a2ui_message` 不可用，只输出 Markdown。
 - v0.9 `updateComponents` 只能使用当前 basic catalog 已注册组件：`Text`、`Image`、`Icon`、`Video`、`AudioPlayer`、`Row`、`Column`、`List`、`Card`、`Tabs`、`Divider`、`Modal`、`Button`、`TextField`、`CheckBox`、`ChoicePicker`、`Slider`、`DateTimeInput`。
 - 优先使用 `Card`、`Column`、`Row`、`Text`、`List`、`Divider`、`Button`。不要使用 `Table`、`MetricCard`、`RiskBadge`、`Chart`、`Progress`、`Badge`，也不要使用 `type`、`sections`、`metric_group`、`table`、`rows`、`columns` 等旧 DSL 字段。
 - `Card` 必须使用 `child` 指向一个子组件 ID；需要多个元素时先创建 `Column`，再让 `Card.child` 指向该 `Column`。不要在 `Card` 上使用 `children`。
 - `List` 必须使用 `children` 指向列表项组件 ID。不要在 `List` 上使用 `items`。
 - `Button` 必须使用 `child` 和 `action`；`Modal` 必须使用 `trigger` 和 `content`；`Text` 必须使用 `text`。所有容器型字段都应引用组件 ID，不要内联子组件对象。
+- 如果 `emit_a2ui_message` 被拒绝，按错误信息修正同一条 A2UI message 后重新调用工具；不要因为字段错误直接退回长篇 Markdown。
 
 推荐顺序：
 

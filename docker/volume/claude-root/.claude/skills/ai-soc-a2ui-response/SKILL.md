@@ -88,12 +88,30 @@ Strict rules:
 - Do not quote, summarize, or print this skill file.
 - Pass tool arguments as structured objects, not quoted JSON strings.
 - For `emit_a2ui_message`, pass one structured object, not an array.
+- Every A2UI server-to-client message must be self-contained. Do not assume the
+  runtime remembers the active surface for later messages.
+- `createSurface.surfaceId` is required.
+- `updateComponents.surfaceId` is required on every update and must equal the
+  `createSurface.surfaceId` used earlier in the same answer.
+- `updateDataModel.surfaceId` and `deleteSurface.surfaceId` are also required.
+- `updateComponents.components` must be a non-empty JSON array of component
+  objects. Never use an object map keyed by component id.
+- Every component in `updateComponents.components` must be an object with an
+  `id` string and a registered `component` name.
+- The first complete `updateComponents` for a surface must include a component
+  with `id: "root"`. The frontend renders from `root`; without it the surface
+  stays in a loading state.
 - Use `component` for v0.9 component names. Do not use `type`.
 - Do not use old card DSL fields in v0.9 messages: `sections`,
   `metric_group`, `table`, `rows`, or `columns`.
 - Do not invent business components that are not in the current catalog.
 - Keep UI text concise and business-oriented.
 - Use Chinese unless the user asks for another language.
+
+If an `emit_a2ui_message` tool call is denied or returns a protocol-shape
+error, correct the same A2UI message shape and call the tool again with a
+structured object. Do not switch to long Markdown unless the A2UI tool itself
+is unavailable.
 
 ## Progressive v0.9 Pattern
 
@@ -298,6 +316,9 @@ Verified basic v0.9 component shapes:
 
 Field rules that prevent blank renders:
 
+- Every message payload must include `surfaceId`; it is never inherited.
+- `updateComponents.components` is always an array, never `{ "id": {...} }`.
+- Complete surface updates include `id: "root"` as the render entry point.
 - Container children must be IDs, not inline objects, after normalization.
 - Use `Card.child`, never `Card.children`.
 - Use `Button.child`, never `Button.children`.

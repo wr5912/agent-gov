@@ -64,3 +64,56 @@ def test_pre_tool_use_hook_allows_valid_v09_message():
     )
 
     assert result == {}
+
+
+def test_pre_tool_use_hook_blocks_update_components_without_surface_id():
+    result = asyncio.run(
+        pre_tool_use_hook(
+            {
+                "tool_name": "mcp__ai-soc-ui__emit_a2ui_message",
+                "tool_input": {
+                    "message": {
+                        "version": "v0.9",
+                        "updateComponents": {
+                            "components": [
+                                {"id": "root", "component": "Card", "child": "content"},
+                            ],
+                        },
+                    }
+                },
+            },
+            None,
+            {},
+        )
+    )
+
+    output = result["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "surfaceId is required" in output["permissionDecisionReason"]
+
+
+def test_pre_tool_use_hook_blocks_update_components_object_map():
+    result = asyncio.run(
+        pre_tool_use_hook(
+            {
+                "tool_name": "mcp__ai-soc-ui__emit_a2ui_message",
+                "tool_input": {
+                    "message": {
+                        "version": "v0.9",
+                        "updateComponents": {
+                            "surfaceId": "asset-risk-overview",
+                            "components": {
+                                "root": {"component": "Card", "child": "content"},
+                            },
+                        },
+                    }
+                },
+            },
+            None,
+            {},
+        )
+    )
+
+    output = result["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "components must be a non-empty array" in output["permissionDecisionReason"]

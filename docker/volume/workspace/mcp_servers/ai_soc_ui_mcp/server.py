@@ -1,15 +1,80 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
+from pydantic import BaseModel, Field, model_validator
 
 mcp = FastMCP("ai-soc-ui")
 
 
+class CreateSurfaceMessage(BaseModel):
+    surfaceId: str = Field(..., min_length=1, description="Required surface id for the UI surface.")
+    catalogId: str = Field(
+        ...,
+        min_length=1,
+        description="Use https://a2ui.org/specification/v0_9/basic_catalog.json.",
+    )
+    sendDataModel: bool | None = Field(default=None, description="Whether the client should send a data model.")
+
+
+class UpdateComponentsMessage(BaseModel):
+    surfaceId: str = Field(
+        ...,
+        min_length=1,
+        description="Required on every updateComponents message; use the same value as createSurface.surfaceId.",
+    )
+    components: list[dict[str, Any]] = Field(
+        ...,
+        min_length=1,
+        description=(
+            "Non-empty array of A2UI basic catalog component objects. Do not use an object keyed by id. "
+            "For a complete surface update, include a root component with id 'root'."
+        ),
+    )
+
+
+class UpdateDataModelMessage(BaseModel):
+    surfaceId: str = Field(
+        ...,
+        min_length=1,
+        description="Required on every updateDataModel message; use the same value as createSurface.surfaceId.",
+    )
+    path: str | None = Field(default=None, description="Optional data model path.")
+    value: Any = Field(default=None, description="Data model value.")
+    data: Any = Field(default=None, description="Legacy-compatible data value; prefer value for new messages.")
+
+
+class DeleteSurfaceMessage(BaseModel):
+    surfaceId: str = Field(..., min_length=1, description="Required surface id to delete.")
+
+
+class A2uiV09Message(BaseModel):
+    version: Literal["v0.9"] = Field(..., description="Must be exactly v0.9.")
+    createSurface: CreateSurfaceMessage | None = None
+    updateComponents: UpdateComponentsMessage | None = None
+    updateDataModel: UpdateDataModelMessage | None = None
+    deleteSurface: DeleteSurfaceMessage | None = None
+
+    @model_validator(mode="after")
+    def require_exactly_one_message(self) -> "A2uiV09Message":
+        present = [
+            self.createSurface,
+            self.updateComponents,
+            self.updateDataModel,
+            self.deleteSurface,
+        ]
+        if sum(item is not None for item in present) != 1:
+            raise ValueError(
+                "A2UI v0.9 message must contain exactly one of createSurface, "
+                "updateComponents, updateDataModel, or deleteSurface."
+            )
+        return self
+
+
 @mcp.tool()
-def emit_a2ui_message(message: dict[str, Any]) -> dict[str, Any]:
+def emit_a2ui_message(message: A2uiV09Message) -> dict[str, Any]:
     """Emit one raw A2UI v0.9 server-to-client message.
 
     Clean-room v0.9 entry point. Pass exactly one complete A2UI v0.9 message,
@@ -31,6 +96,12 @@ def emit_a2ui_message(message: dict[str, Any]) -> dict[str, Any]:
     not an A2UI v0.9 message.
 
     updateComponents must use registered A2UI v0.9 basic catalog components.
+    updateComponents.surfaceId is required on every update. It is not inherited
+    from createSurface. updateComponents.components must be a non-empty array
+    of component objects, not an object keyed by component id.
+    Complete surface updates must include a component with id "root" so the
+    frontend has a render entry point.
+
     Allowed component names are:
     Text, Image, Icon, Video, AudioPlayer, Row, Column, List, Card, Tabs,
     Divider, Modal, Button, TextField, CheckBox, ChoicePicker, Slider,
@@ -51,6 +122,8 @@ def emit_a2ui_message(message: dict[str, Any]) -> dict[str, Any]:
 
     Do not print the payload in the user-facing answer.
     """
+    if isinstance(message, BaseModel):
+        message = message.model_dump(exclude_none=True)
     message_type = "unknown"
     surface_id = None
     if isinstance(message, dict):

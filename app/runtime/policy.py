@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from app.runtime.a2ui_v09_bridge import validate_a2ui_v09_message
+
 from claude_agent_sdk import HookMatcher, PermissionResultAllow, PermissionResultDeny
 
 
@@ -103,17 +105,7 @@ def _invalid_a2ui_v09_message_reason(tool_input: Any) -> str | None:
             "emit_a2ui_message only accepts A2UI v0.9 messages. Do not send v0.8 envelopes "
             "with protocol/messages; send createSurface, updateComponents, updateDataModel, or deleteSurface."
         )
-    if message.get("version") != "v0.9":
-        return "emit_a2ui_message requires message.version to be exactly 'v0.9'."
-    present_keys = [
-        key for key in ("createSurface", "updateComponents", "updateDataModel", "deleteSurface") if key in message
-    ]
-    if len(present_keys) != 1:
-        return (
-            "emit_a2ui_message requires exactly one v0.9 message key: createSurface, "
-            "updateComponents, updateDataModel, or deleteSurface."
-        )
-    return None
+    return validate_a2ui_v09_message(message)
 
 
 def build_default_hooks() -> dict[str, list[HookMatcher]]:

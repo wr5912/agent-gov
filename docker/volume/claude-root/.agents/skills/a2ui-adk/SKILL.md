@@ -15,7 +15,12 @@ Core principles:
 - **Security first**: Declarative data format, not executable code. Clients maintain a catalog of trusted, pre-approved UI components.
 - **LLM-friendly**: Flat list of components with ID references, easy for LLMs to generate incrementally.
 - **Framework-agnostic**: Same JSON payload renders on any supported client framework.
-- **AI-SOC project policy**: use A2UI v0.8 only for the first production path. Do not advertise v0.9, emit v0.9 message shapes, or generate `createSurface` / `updateComponents` payloads unless the project policy is explicitly changed.
+- **AI-SOC project policy**: new runtime generated UI uses the clean-room A2UI v0.9 path. Prefer `mcp__ai-soc-ui__emit_a2ui_message`, one complete `createSurface` / `updateComponents` / `updateDataModel` / `deleteSurface` message per tool call. Legacy v0.8/card helpers remain migration fallback only.
+
+AI-SOC runtime note: this generic ADK skill contains upstream v0.8 SDK examples
+for reference. When answering inside the AI-SOC runtime, follow the
+`ai-soc-a2ui-response` skill contract and do not start new work on the legacy
+v0.8/card path.
 
 ## Architecture Overview
 

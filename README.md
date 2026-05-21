@@ -87,7 +87,7 @@ AGENT_MODEL=claude-sonnet-4-5
 
 Docker 构建默认使用国内镜像源：Debian apt 使用阿里源，uv/pip 使用阿里 PyPI 源，npm 使用 npmmirror。需要切换源时修改 `docker/.env` 中的 `PYTHON_IMAGE`、`APT_MIRROR`、`APT_SECURITY_MIRROR`、`PIP_INDEX_URL`、`PIP_TRUSTED_HOST`、`NPM_REGISTRY`。`PYTHON_IMAGE` 默认使用官方 Python 镜像；如果你的环境提供国内基础镜像，可在 `docker/.env` 中覆盖。
 
-镜像构建阶段会安装 `a2ui-adk` 相关 Python 依赖，并从 `docker/vendor/A2UI/agent_sdks/python` 安装已 vendor 的 Google A2UI Python SDK。SDK 内含 v0.8 与 v0.9 支持；本项目首个生产接入路径锁定 A2UI v0.8。PyPI 依赖在 build 阶段完成下载，容器运行时不会再为 `a2ui-adk` 访问互联网。
+镜像构建阶段会安装 `a2ui-adk` 相关 Python 依赖，并从 `docker/vendor/A2UI/agent_sdks/python` 安装已 vendor 的 Google A2UI Python SDK。SDK 内含 v0.8 与 v0.9 支持；当前新生成式 UI 路径锁定 A2UI v0.9 单消息增量传输，既有 v0.8/card 工具仅作为迁移期兼容路径保留。PyPI 依赖在 build 阶段完成下载，容器运行时不会再为 `a2ui-adk` 访问互联网。
 
 `LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。
 

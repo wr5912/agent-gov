@@ -32,11 +32,35 @@
 
 优先级：
 1. `mcp__sec-ops-data__*`：查询网络安全运营模拟数据，包括告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
-2. 本地文件读取：读取 `templates/`、`docs/`、`.claude/rules/` 中的指导材料。
+2. `mcp__ai-soc-ui__emit_a2ui_message`：当安全运营回答适合结构化 UI 时，发送 A2UI v0.9 单条增量消息。
+3. 本地文件读取：读取 `templates/`、`docs/`、`.claude/rules/` 中的指导材料。
 
 当工具结果不足时，必须说明缺口，不要猜测。
 
-## 4. 高风险动作审批规则
+## 4. 结构化 UI 输出规则
+
+当告警研判、资产风险、证据链、处置建议、审批决策等任务适合卡片、表格、指标或流程状态展示时，优先使用
+`mcp__ai-soc-ui__emit_a2ui_message` 输出 A2UI v0.9 UI。
+
+必须遵守：
+
+- 每次工具调用只发送一条完整 A2UI v0.9 server-to-client message。
+- 不要把多条消息放进数组。
+- 不要把 JSON 作为字符串传入。
+- 不要在用户可见回答中打印、引用或包裹 UI JSON。
+- 尽早发送 `createSurface`，然后在分析过程中用多次 `updateComponents` / `updateDataModel` 渐进更新。
+- `createSurface.catalogId` 使用 `https://a2ui.org/specification/v0_9/basic_catalog.json`。
+- 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 是 legacy v0.8/card fallback；新 UI 不要优先使用它们。
+
+推荐顺序：
+
+1. 判断 UI 有价值后，先用 `createSurface` 创建 surface。
+2. 立即用 `updateComponents` 输出最小标题、状态或空壳。
+3. 调用数据工具收集证据。
+4. 每完成一个分析里程碑，用 `updateDataModel` 或 `updateComponents` 更新 surface。
+5. 最终用一次更新补齐结论、证据、建议和待确认项。
+
+## 5. 高风险动作审批规则
 
 以下动作必须先询问并获得明确授权：
 - 隔离主机、禁用账号、封禁 IP / 域名 / URL / hash。
@@ -60,7 +84,7 @@
 请确认是否执行：是/否
 ```
 
-## 5. 输出规范
+## 6. 输出规范
 
 - 默认使用中文。
 - 面向一线分析员时，输出简明、结构化、可执行。
@@ -69,14 +93,14 @@
 - 明确标注：事实、推断、建议、待确认。
 - 报告类输出优先使用 `templates/reports/` 中模板。
 
-## 6. 数据治理
+## 7. 数据治理
 
 - 不保存原始 OCSF / 原始日志；只保留必要的分析摘要、报告、处置计划。
 - 生成文件默认放入 `/data/outputs` 或项目内明确指定目录。
 - 用户上传文件默认视为敏感数据，不要复制到外部路径。
 - 读取 `.env`、`secrets/`、凭据文件、Claude 全局状态文件时必须拒绝或请求用户提供脱敏内容。
 
-## 7. 子智能体路由
+## 8. 子智能体路由
 
 - 告警研判：优先使用 `soc-analyst`。
 - 威胁狩猎：优先使用 `threat-hunter`。
@@ -85,7 +109,7 @@
 - 报告生成：优先使用 `report-writer`。
 - 知识库维护：优先使用 `knowledge-curator`。
 
-## 8. 关键约束
+## 9. 关键约束
 
 - 防御优先，最小权限，最小影响面。
 - 任何结论必须能追溯到证据或明确标注为推断。

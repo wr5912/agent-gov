@@ -12,6 +12,10 @@ Your job is to decide when a normal user request should include a structured
 AI-SOC UI surface. The user should not need to mention A2UI, protocol JSON, or
 UI rendering.
 
+The active generated-UI path is A2UI v0.9. Use one tool call per complete
+server-to-client A2UI message so the frontend can render progressively while
+the analysis is still running.
+
 ## When to Include UI
 
 Include one structured UI surface when the user request involves:
@@ -30,36 +34,40 @@ explanations, or tasks that do not benefit from structured UI.
 
 ## Tool Selection
 
-Prefer `mcp__ai-soc-ui__render_a2ui` for normal AI-SOC answers when it is
-available.
+Prefer `mcp__ai-soc-ui__emit_a2ui_message` for all new AI-SOC structured UI
+when it is available.
 
-Use `render_a2ui` with `mode: "card"` for normal cards, tables, metrics,
-recommendations, and user action buttons.
+Use this tool by passing exactly one raw A2UI v0.9 message in the `message`
+argument. Valid message types are:
 
-Use `render_a2ui` with `mode: "a2ui"` only when card mode cannot express the UI,
-for example:
+- `createSurface`
+- `updateComponents`
+- `updateDataModel`
+- `deleteSurface`
 
-- Multiple coordinated surfaces.
-- Data model updates.
-- Fine-grained A2UI component control.
-- Advanced progressive rendering beyond business cards.
-- A workflow that requires a component tree not supported by card specs.
+Do not batch multiple messages into one tool call. Do not pass an array. Do not
+pass a quoted JSON string. The runtime rejects those payloads because they
+prevent true progressive rendering.
 
-Do not use raw A2UI merely to render titles, metrics, lists, tables, evidence,
-recommendations, or summaries. Those belong in `render_a2ui` card mode.
+Deprecated compatibility fallback:
 
-Compatibility fallback:
-
-- If `render_a2ui` is unavailable, use `mcp__ai-soc-ui__emit_cards`.
-- If neither UI tool is available, return Markdown only.
+- `mcp__ai-soc-ui__render_a2ui` is legacy v0.8/card compatibility.
+- `mcp__ai-soc-ui__emit_cards` is legacy semantic-card compatibility.
+- `mcp__ai-soc-ui__emit_a2ui` is legacy raw v0.8 compatibility.
+- Use legacy tools only when `emit_a2ui_message` is unavailable or the current
+  user flow explicitly requires migration compatibility.
+- If no UI tool is available, return Markdown only.
 
 ## Output Contract
 
 When you include UI, respond in this order:
 
 1. Write a short Chinese natural-language summary, one to three sentences.
-2. Call one UI tool. Prefer `mcp__ai-soc-ui__render_a2ui`.
-3. Continue with concise Markdown only if the user needs context that does not
+2. Call `mcp__ai-soc-ui__emit_a2ui_message` with `createSurface` as early as
+   possible.
+3. Call `mcp__ai-soc-ui__emit_a2ui_message` again after each analysis milestone
+   with `updateComponents` or `updateDataModel`.
+4. Continue with concise Markdown only if the user needs context that does not
    fit the card.
 
 Strict rules:
@@ -68,13 +76,150 @@ Strict rules:
 - Do not wrap UI JSON in Markdown fences.
 - Do not use XML-style wrappers or textual protocol tags.
 - Do not quote, summarize, or print this skill file.
-- Pass tool arguments as structured objects or arrays, not quoted JSON strings.
-- Keep card text concise and business-oriented.
+- Pass tool arguments as structured objects, not quoted JSON strings.
+- For `emit_a2ui_message`, pass one structured object, not an array.
+- Keep UI text concise and business-oriented.
 - Use Chinese unless the user asks for another language.
 
-## Preferred Card Spec
+## Progressive v0.9 Pattern
 
-For normal answers, call `mcp__ai-soc-ui__render_a2ui` with:
+For normal structured answers, use this sequence:
+
+1. `createSurface` immediately after deciding UI is useful.
+2. `updateComponents` with a minimal shell: title, status, and placeholder.
+3. Query data and analyze evidence.
+4. `updateDataModel` as facts become available.
+5. `updateComponents` when the UI needs new sections, tables, metrics, or final
+   recommendations.
+
+First tool call:
+
+```json
+{
+  "message": {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "asset-risk-overview",
+      "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+      "sendDataModel": true
+    }
+  }
+}
+```
+
+Second tool call:
+
+```json
+{
+  "message": {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "asset-risk-overview",
+      "components": [
+        {
+          "id": "root",
+          "component": "Card",
+          "child": "content"
+        },
+        {
+          "id": "content",
+          "component": "Column",
+          "children": ["title", "status"],
+          "align": "stretch"
+        },
+        {
+          "id": "title",
+          "component": "Text",
+          "text": "资产风险概览",
+          "variant": "h3"
+        },
+        {
+          "id": "status",
+          "component": "Text",
+          "text": "正在查询资产和告警证据...",
+          "variant": "body"
+        }
+      ]
+    }
+  }
+}
+```
+
+Later data update:
+
+```json
+{
+  "message": {
+    "version": "v0.9",
+    "updateDataModel": {
+      "surfaceId": "asset-risk-overview",
+      "value": {
+        "summary": "共 20 台资产，高风险 5 台",
+        "topAsset": "vpn-05",
+        "topRiskScore": 95
+      }
+    }
+  }
+}
+```
+
+Later component update:
+
+```json
+{
+  "message": {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "asset-risk-overview",
+      "components": [
+        {
+          "id": "content",
+          "component": "Column",
+          "children": ["title", "summary", "topAsset", "score"],
+          "align": "stretch"
+        },
+        {
+          "id": "summary",
+          "component": "Text",
+          "text": {"path": "/summary"},
+          "variant": "body"
+        },
+        {
+          "id": "topAsset",
+          "component": "Text",
+          "text": {"path": "/topAsset"},
+          "variant": "body"
+        },
+        {
+          "id": "score",
+          "component": "Text",
+          "text": {"path": "/topRiskScore"},
+          "variant": "caption"
+        }
+      ]
+    }
+  }
+}
+```
+
+## Component Guidance
+
+Start with the smallest component tree that is useful. The current AI-SOC
+frontend has verified these basic v0.9 component shapes:
+
+- `Card` with `child`.
+- `Column` with `children` and optional `align`.
+- `Text` with literal `text` or data binding such as `{"path": "/summary"}`.
+
+Use stable IDs such as `root`, `content`, `title`, `status`, `summary`,
+`evidence`, and `recommendation`. When updating components, resend only the
+components that need to change, plus any parent component whose `children` list
+changed.
+
+## Legacy Card Spec
+
+Only when forced to use legacy compatibility, call `mcp__ai-soc-ui__render_a2ui`
+with:
 
 ```json
 {
@@ -154,19 +299,14 @@ Supported card actions:
 
 ## Raw A2UI Advanced Path
 
-When raw A2UI is genuinely required, call `mcp__ai-soc-ui__render_a2ui` with
-`mode: "a2ui"` and a small valid A2UI v0.8 message array:
+Do not use the old `render_a2ui` raw mode for new UI. The advanced path is now
+the normal v0.9 path: one `emit_a2ui_message` call per message.
 
-- First include `beginRendering` with `surfaceId` and `root`.
-- Include `surfaceUpdate` with a non-empty `components` array.
-- Every component must have `id` and exactly one component wrapper.
-- Send small incremental updates instead of one very large component tree.
-- Do not pass raw A2UI as a quoted JSON string.
-
-If you are unsure whether raw A2UI is needed, use `emit_cards`.
+If you are unsure whether UI is needed, use Markdown. If UI is needed and the
+v0.9 tool is available, use `emit_a2ui_message`.
 
 ## Failure Avoidance
 
 If the UI tool is unavailable, return Markdown only. Never print protocol JSON
 as a fallback. Invalid UI payloads are skipped by the backend, so prefer the
-smallest structured card that satisfies the user request.
+smallest progressive v0.9 surface that satisfies the user request.

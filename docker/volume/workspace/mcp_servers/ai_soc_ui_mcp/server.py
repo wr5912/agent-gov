@@ -38,9 +38,11 @@ def emit_a2ui_message(message: Any) -> dict[str, Any]:
 
 @mcp.tool()
 def render_a2ui(payload: Any) -> dict[str, Any]:
-    """Render an A2UI surface through the AI-SOC AG-UI bridge.
+    """Legacy v0.8/card fallback for rendering an A2UI surface.
 
-    Preferred official-aligned entry point for structured UI.
+    Deprecated for new generated UI. Prefer `emit_a2ui_message` and send one
+    raw A2UI v0.9 message per tool call. This helper remains only for
+    compatibility with existing card-mode and raw v0.8 flows.
 
     Supported payload modes:
     - {"mode": "card", "surfaceId": "...", "cards": [...]} for Agent-generated AI-SOC cards.
@@ -84,11 +86,12 @@ def render_a2ui(payload: Any) -> dict[str, Any]:
 
 @mcp.tool()
 def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[str, Any]:
-    """Emit AI-SOC UI cards to the frontend.
+    """Legacy helper that converts AI-SOC cards into A2UI v0.8 messages.
 
-    Compatibility helper for normal AI-SOC answers. Prefer `render_a2ui` with
-    mode "card" for new work. Pass `cards` as an
-    array of card specs, not as a quoted JSON string:
+    Deprecated for new generated UI. Prefer `emit_a2ui_message` and send one
+    raw A2UI v0.9 message per tool call. Use this only as a migration fallback
+    when v0.9 UI is unavailable. Pass `cards` as an array of card specs, not as
+    a quoted JSON string:
     [{"title": "...", "subtitle": "...", "sections": [...]}].
 
     Supported section types: metric_group, table, key_value, tags, action_list,
@@ -114,13 +117,13 @@ def emit_cards(cards: Any, surfaceId: str = "ai-soc-generated-cards") -> dict[st
 
 @mcp.tool()
 def emit_a2ui(messages: Any) -> dict[str, Any]:
-    """Emit raw A2UI v0.8 messages to the AI-SOC frontend.
+    """Legacy helper that emits raw A2UI v0.8 messages to the AI-SOC frontend.
 
-    Advanced compatibility helper only. Prefer `render_a2ui` for normal UI.
-    This tool accepts only raw A2UI v0.8 server-to-client messages. Do not pass
-    AI-SOC card specs here; use `render_a2ui` mode "card" or `emit_cards`.
-    Pass messages as a JSON array, not as a quoted JSON string. Valid A2UI
-    v0.8 messages include:
+    Deprecated for new generated UI. Prefer `emit_a2ui_message` and send one
+    raw A2UI v0.9 message per tool call. This compatibility tool accepts only
+    raw A2UI v0.8 server-to-client messages. Do not pass AI-SOC card specs
+    here; use `render_a2ui` mode "card" or `emit_cards`. Pass messages as a
+    JSON array, not as a quoted JSON string. Valid A2UI v0.8 messages include:
     [{"beginRendering": {...}}, {"surfaceUpdate": {...}}].
     """
     message_count = len(messages) if isinstance(messages, list) else 1

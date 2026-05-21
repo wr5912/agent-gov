@@ -9,12 +9,26 @@ mcp = FastMCP("ai-soc-ui")
 
 
 @mcp.tool()
-def emit_a2ui_message(message: Any) -> dict[str, Any]:
+def emit_a2ui_message(message: dict[str, Any]) -> dict[str, Any]:
     """Emit one raw A2UI v0.9 server-to-client message.
 
     Clean-room v0.9 entry point. Pass exactly one complete A2UI v0.9 message,
     not an array and not a quoted JSON string. Valid message types are:
     createSurface, updateComponents, updateDataModel, and deleteSurface.
+
+    Required shape:
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "asset-risk-overview",
+        "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+        "sendDataModel": true
+      }
+    }
+
+    The message object must have "version": "v0.9" and exactly one of the
+    supported message keys. Do not use {"type": "createSurface", ...}; that is
+    not an A2UI v0.9 message.
 
     Do not print the payload in the user-facing answer.
     """

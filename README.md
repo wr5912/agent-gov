@@ -419,7 +419,7 @@ allowed-tools:
 默认 `docker/.env.example` 中设置：
 
 ```bash
-DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,mcp__sec-ops-data__*
+DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,mcp__sec-ops-data__*,mcp__ai-soc-ui__emit_a2ui_message,mcp__ai-soc-ui__emit_cards,mcp__ai-soc-ui__emit_a2ui
 DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
 PERMISSION_MODE=dontAsk
 ENABLE_POLICY_HOOKS=true

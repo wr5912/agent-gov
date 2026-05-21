@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any
 
 
@@ -23,7 +23,7 @@ def extract_a2ui_v09_tool_messages(raw_message: Any) -> A2uiV09ExtractionResult:
     for record in _walk_records(raw_message):
         if _a2ui_v09_tool_name(record) is None:
             continue
-        message, message_errors = normalize_a2ui_v09_tool_input(record.get("input"))
+        message, message_errors = normalize_a2ui_v09_tool_input(_tool_input(record))
         if message is not None:
             messages.append(message)
         errors.extend(message_errors)
@@ -136,6 +136,12 @@ def _walk_records(value: Any) -> list[dict[str, Any]]:
     elif isinstance(value, list):
         for item in value:
             records.extend(_walk_records(item))
+    elif is_dataclass(value):
+        records.extend(_walk_records(asdict(value)))
+    elif hasattr(value, "__dict__"):
+        records.extend(
+            _walk_records({key: item for key, item in vars(value).items() if not key.startswith("_")})
+        )
     return records
 
 
@@ -145,9 +151,26 @@ def _a2ui_v09_tool_name(record: dict[str, Any]) -> str | None:
         return None
 
     record_type = str(record.get("type") or "").lower()
-    has_tool_use_shape = "input" in record and any(key in record for key in ("id", "tool_use_id"))
-    if "tool_use" in record_type or has_tool_use_shape:
+    hook_event = str(
+        record.get("hook_event_name")
+        or record.get("hookEventName")
+        or record.get("hook_event")
+        or record.get("hookEvent")
+        or ""
+    )
+    has_input = any(key in record for key in ("input", "tool_input", "toolInput"))
+    has_tool_use_shape = has_input and any(
+        key in record for key in ("id", "tool_use_id", "toolUseID", "toolUseId")
+    )
+    if "tool_use" in record_type or has_tool_use_shape or (hook_event == "PreToolUse" and has_input):
         return str(tool_name)
+    return None
+
+
+def _tool_input(record: dict[str, Any]) -> Any:
+    for key in ("input", "tool_input", "toolInput"):
+        if key in record:
+            return record.get(key)
     return None
 
 

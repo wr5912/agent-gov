@@ -276,6 +276,18 @@ class ClaudeRuntime:
             "retryAttempt": retry_attempt,
         }
 
+    def _a2ui_v09_tool_diagnostic(self, error: str, run_id: str) -> dict[str, Any]:
+        return {
+            "code": "a2ui-v09-message-invalid",
+            "level": "warning",
+            "message": error,
+            "source": "claude-runtime",
+            "runId": run_id,
+            "toolName": A2UI_V09_MESSAGE_TOOL_NAME,
+            "retryEligible": False,
+            "retryAttempt": 0,
+        }
+
     async def _a2ui_custom_event_stream(
         self,
         payload: dict[str, Any],
@@ -1022,6 +1034,8 @@ class ClaudeRuntime:
         activity_seen: set[str] = set()
         tool_activity_context: dict[str, dict[str, str]] = {}
         a2ui_retry_errors: list[str] = []
+        a2ui_v09_seen: set[str] = set()
+        a2ui_v09_error_seen: set[str] = set()
 
         yield run_started_event(req)
 
@@ -1045,22 +1059,17 @@ class ClaudeRuntime:
 
                 v09_extraction = extract_a2ui_v09_tool_messages(raw_message)
                 for message in v09_extraction.messages:
+                    message_key = json.dumps(message, sort_keys=True, ensure_ascii=False, default=str)
+                    if message_key in a2ui_v09_seen:
+                        continue
+                    a2ui_v09_seen.add(message_key)
                     yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, message)
                 for error in v09_extraction.errors:
+                    if error in a2ui_v09_error_seen:
+                        continue
+                    a2ui_v09_error_seen.add(error)
                     print(f"[WARN] skipped invalid A2UI v0.9 tool message: {error}", flush=True)
-                    yield custom_event(
-                        A2UI_V09_DIAGNOSTIC_EVENT_NAME,
-                        {
-                            "code": "a2ui-v09-message-invalid",
-                            "level": "warning",
-                            "message": error,
-                            "source": "claude-runtime",
-                            "runId": req.run_id,
-                            "toolName": A2UI_V09_MESSAGE_TOOL_NAME,
-                            "retryEligible": False,
-                            "retryAttempt": 0,
-                        },
-                    )
+                    yield custom_event(A2UI_V09_DIAGNOSTIC_EVENT_NAME, self._a2ui_v09_tool_diagnostic(error, req.run_id))
 
                 tool_extraction = extract_a2ui_tool_payloads(raw_message)
                 for tool_payload in tool_extraction.tool_payloads:
@@ -1104,10 +1113,30 @@ class ClaudeRuntime:
 
             if event_name == "result" and isinstance(data, dict):
                 errors = data.get("errors")
+                agent_activity = data.get("agent_activity")
+                if isinstance(agent_activity, dict):
+                    tool_calls = agent_activity.get("tool_calls")
+                    if isinstance(tool_calls, list):
+                        v09_extraction = extract_a2ui_v09_tool_messages(tool_calls)
+                        for message in v09_extraction.messages:
+                            message_key = json.dumps(message, sort_keys=True, ensure_ascii=False, default=str)
+                            if message_key in a2ui_v09_seen:
+                                continue
+                            a2ui_v09_seen.add(message_key)
+                            yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, message)
+                        for error in v09_extraction.errors:
+                            if error in a2ui_v09_error_seen:
+                                continue
+                            a2ui_v09_error_seen.add(error)
+                            print(f"[WARN] skipped invalid A2UI v0.9 tool message: {error}", flush=True)
+                            yield custom_event(
+                                A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                                self._a2ui_v09_tool_diagnostic(error, req.run_id),
+                            )
                 final_result = {
                     "sessionId": data.get("session_id"),
                     "sdkSessionId": data.get("sdk_session_id"),
-                    "agentActivity": data.get("agent_activity"),
+                    "agentActivity": agent_activity,
                     "usage": data.get("usage"),
                     "totalCostUsd": data.get("total_cost_usd"),
                     "stopReason": data.get("stop_reason"),

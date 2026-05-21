@@ -324,6 +324,48 @@ def test_normalize_a2ui_v09_tool_input_rejects_unregistered_components():
     assert "unregistered component 'Chart'" in errors[0]
 
 
+def test_normalize_a2ui_v09_tool_input_repairs_official_basic_catalog_child_fields():
+    payload, errors = normalize_a2ui_v09_tool_input(
+        {
+            "message": {
+                "version": "v0.9",
+                "updateComponents": {
+                    "surfaceId": "risk-surface",
+                    "components": [
+                        {
+                            "id": "summary-card",
+                            "component": "Card",
+                            "children": ["summary-title", "summary-list"],
+                        },
+                        {"id": "summary-title", "component": "Text", "text": "高风险资产概览"},
+                        {
+                            "id": "summary-list",
+                            "component": "List",
+                            "items": ["asset-1", "asset-2"],
+                        },
+                        {"id": "asset-1", "component": "Text", "text": "vpn-07 | 风险 99"},
+                        {"id": "asset-2", "component": "Text", "text": "db-core-21 | 风险 94"},
+                    ],
+                },
+            }
+        }
+    )
+
+    assert errors == []
+    assert payload is not None
+    components = payload["updateComponents"]["components"]
+    assert {
+        "id": "summary-card-body",
+        "component": "Column",
+        "children": ["summary-title", "summary-list"],
+        "align": "stretch",
+    } in components
+    assert {"id": "summary-card", "component": "Card", "child": "summary-card-body"} in components
+    assert {"id": "summary-list", "component": "List", "children": ["asset-1", "asset-2"]} in components
+    assert all("children" not in component for component in components if component.get("component") == "Card")
+    assert all("items" not in component for component in components if component.get("component") == "List")
+
+
 def test_extract_a2ui_v09_tool_messages_reports_repair_warnings():
     raw_message = {
         "type": "assistant",

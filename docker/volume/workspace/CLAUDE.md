@@ -55,6 +55,8 @@
 - 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 已从支持契约中移除；不要使用它们。如果 `emit_a2ui_message` 不可用，只输出 Markdown。
 - v0.9 `updateComponents` 只能使用当前 basic catalog 已注册组件：`Text`、`Image`、`Icon`、`Video`、`AudioPlayer`、`Row`、`Column`、`List`、`Card`、`Tabs`、`Divider`、`Modal`、`Button`、`TextField`、`CheckBox`、`ChoicePicker`、`Slider`、`DateTimeInput`。
 - 优先使用 `Card`、`Column`、`Row`、`Text`、`List`、`Divider`、`Button`。不要使用 `Table`、`MetricCard`、`RiskBadge`、`Chart`、`Progress`、`Badge`，也不要使用 `type`、`sections`、`metric_group`、`table`、`rows`、`columns` 等旧 DSL 字段。
+- `Card` 必须使用 `child` 指向一个子组件 ID；需要多个元素时先创建 `Column`，再让 `Card.child` 指向该 `Column`。不要在 `Card` 上使用 `children`。
+- `List` 必须使用 `children` 指向列表项组件 ID。不要在 `List` 上使用 `items`。
 
 推荐顺序：
 

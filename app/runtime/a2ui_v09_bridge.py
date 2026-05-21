@@ -321,6 +321,25 @@ def _normalize_component_tree(
                 child_ids.append(child)
         normalized[key] = child_ids
 
+    if normalized.get("component") == "List" and "items" in normalized and "children" not in normalized:
+        normalized["children"] = normalized.pop("items")
+        warnings.append("Repaired List.items to official A2UI v0.9 List.children.")
+
+    if (
+        normalized.get("component") == "Card"
+        and not _non_empty_string(normalized.get("child"))
+        and isinstance(normalized.get("children"), list)
+    ):
+        card_children = [child for child in normalized.pop("children") if _non_empty_string(child)]
+        if len(card_children) == 1:
+            normalized["child"] = card_children[0]
+        elif card_children:
+            body_id = f"{component_id}-body"
+            output.append({"id": body_id, "component": "Column", "children": card_children, "align": "stretch"})
+            normalized["child"] = body_id
+        if normalized.get("child"):
+            warnings.append("Repaired Card.children to official A2UI v0.9 Card.child.")
+
     if normalized.get("component") == "Card" and not _non_empty_string(normalized.get("child")):
         card_children: list[str] = []
         title = _string_or_none(normalized.pop("title", None))

@@ -259,10 +259,12 @@ Button
 
 Verified basic v0.9 component shapes:
 
-- `Card` with `child`.
+- `Card` with `child`. `Card` accepts exactly one child ID. If you need
+  multiple elements inside a card, create a `Column` and set `Card.child` to
+  that Column ID. Do not use `children` on `Card`.
 - `Column` with `children` and optional `align`.
 - `Row` with `children`.
-- `List` with `children` or `items`.
+- `List` with `children`. Do not use `items` on `List`.
 - `Divider` with no business data.
 - `Text` with literal `text` or data binding such as `{"path": "/summary"}`.
 
@@ -290,10 +292,32 @@ To represent table-like asset data before an AI-SOC custom catalog exists, use
       "surfaceId": "asset-risk-overview",
       "components": [
         {
-          "id": "content",
+          "id": "root",
           "component": "Column",
-          "children": ["title", "asset-1", "asset-2"],
+          "children": ["asset-card"],
           "align": "stretch"
+        },
+        {
+          "id": "asset-card",
+          "component": "Card",
+          "child": "asset-card-body"
+        },
+        {
+          "id": "asset-card-body",
+          "component": "Column",
+          "children": ["title", "asset-list"],
+          "align": "stretch"
+        },
+        {
+          "id": "title",
+          "component": "Text",
+          "text": "高风险资产概览",
+          "variant": "h3"
+        },
+        {
+          "id": "asset-list",
+          "component": "List",
+          "children": ["asset-1", "asset-2"]
         },
         {
           "id": "asset-1",

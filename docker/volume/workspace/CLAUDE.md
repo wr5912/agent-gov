@@ -52,7 +52,7 @@
 - 每个用户请求最多调用 3 次 `mcp__ai-soc-ui__emit_a2ui_message`；常见资产风险概览优先只调用 2 次：`createSurface` + 最终 `updateComponents`。
 - 最终 UI 更新成功后立即结束，最多补一句中文总结；不要继续多轮微调 UI 或输出长篇 Markdown。
 - `createSurface.catalogId` 使用 `https://a2ui.org/specification/v0_9/basic_catalog.json`。
-- 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 是 legacy v0.8/card fallback；新 UI 不要优先使用它们。
+- 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 已从支持契约中移除；不要使用它们。如果 `emit_a2ui_message` 不可用，只输出 Markdown。
 - v0.9 `updateComponents` 只能使用当前 basic catalog 已注册组件：`Text`、`Image`、`Icon`、`Video`、`AudioPlayer`、`Row`、`Column`、`List`、`Card`、`Tabs`、`Divider`、`Modal`、`Button`、`TextField`、`CheckBox`、`ChoicePicker`、`Slider`、`DateTimeInput`。
 - 优先使用 `Card`、`Column`、`Row`、`Text`、`List`、`Divider`、`Button`。不要使用 `Table`、`MetricCard`、`RiskBadge`、`Chart`、`Progress`、`Badge`，也不要使用 `type`、`sections`、`metric_group`、`table`、`rows`、`columns` 等旧 DSL 字段。
 

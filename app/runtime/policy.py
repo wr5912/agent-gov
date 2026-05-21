@@ -21,6 +21,13 @@ DANGEROUS_COMMAND_PATTERNS = [
     r"\bwget\b.*\|\s*(bash|sh)",
 ]
 
+A2UI_V09_MESSAGE_TOOL_NAME = "mcp__ai-soc-ui__emit_a2ui_message"
+LEGACY_A2UI_TOOL_NAMES = {
+    "mcp__ai-soc-ui__render_a2ui",
+    "mcp__ai-soc-ui__emit_cards",
+    "mcp__ai-soc-ui__emit_a2ui",
+}
+
 
 def _is_dangerous_bash(command: str) -> str | None:
     for pattern in DANGEROUS_COMMAND_PATTERNS:
@@ -50,6 +57,27 @@ async def pre_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None,
     """PreToolUse hook used for deterministic runtime enforcement."""
     tool_name = input_data.get("tool_name")
     tool_input = input_data.get("tool_input") or {}
+    if tool_name in LEGACY_A2UI_TOOL_NAMES:
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": (
+                    "Legacy A2UI tools are disabled for active AI-SOC UI generation. "
+                    "Use mcp__ai-soc-ui__emit_a2ui_message with one structured A2UI v0.9 message."
+                ),
+            }
+        }
+    if tool_name == A2UI_V09_MESSAGE_TOOL_NAME:
+        rejection = _invalid_a2ui_v09_message_reason(tool_input)
+        if rejection:
+            return {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": rejection,
+                }
+            }
     if tool_name == "Bash":
         command = str(tool_input.get("command") or "")
         matched = _is_dangerous_bash(command)
@@ -64,7 +92,35 @@ async def pre_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None,
     return {}
 
 
+def _invalid_a2ui_v09_message_reason(tool_input: Any) -> str | None:
+    if not isinstance(tool_input, dict):
+        return "emit_a2ui_message requires structured tool input with a message object, not a string or array."
+    message = tool_input.get("message", tool_input)
+    if not isinstance(message, dict):
+        return "emit_a2ui_message requires message to be one structured A2UI v0.9 object."
+    if message.get("protocol") == "a2ui" or message.get("version") == "v0_8" or "messages" in message:
+        return (
+            "emit_a2ui_message only accepts A2UI v0.9 messages. Do not send v0.8 envelopes "
+            "with protocol/messages; send createSurface, updateComponents, updateDataModel, or deleteSurface."
+        )
+    if message.get("version") != "v0.9":
+        return "emit_a2ui_message requires message.version to be exactly 'v0.9'."
+    present_keys = [
+        key for key in ("createSurface", "updateComponents", "updateDataModel", "deleteSurface") if key in message
+    ]
+    if len(present_keys) != 1:
+        return (
+            "emit_a2ui_message requires exactly one v0.9 message key: createSurface, "
+            "updateComponents, updateDataModel, or deleteSurface."
+        )
+    return None
+
+
 def build_default_hooks() -> dict[str, list[HookMatcher]]:
     return {
-        "PreToolUse": [HookMatcher(matcher="Bash", hooks=[pre_tool_use_hook])],
+        "PreToolUse": [
+            HookMatcher(matcher="Bash", hooks=[pre_tool_use_hook]),
+            HookMatcher(matcher=A2UI_V09_MESSAGE_TOOL_NAME, hooks=[pre_tool_use_hook]),
+            *[HookMatcher(matcher=tool_name, hooks=[pre_tool_use_hook]) for tool_name in LEGACY_A2UI_TOOL_NAMES],
+        ],
     }

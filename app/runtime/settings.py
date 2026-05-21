@@ -65,8 +65,7 @@ class AppSettings(BaseSettings):
     default_allowed_tools_raw: str = Field(
         default=(
             "Read,Grep,Glob,mcp__sec-ops-data__*,"
-            "mcp__ai-soc-ui__emit_a2ui_message,"
-            "mcp__ai-soc-ui__emit_cards,mcp__ai-soc-ui__emit_a2ui"
+            "mcp__ai-soc-ui__emit_a2ui_message"
         ),
         alias="DEFAULT_ALLOWED_TOOLS",
     )
@@ -82,7 +81,7 @@ class AppSettings(BaseSettings):
     enable_policy_hooks: bool = Field(default=True, alias="ENABLE_POLICY_HOOKS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
     include_partial_messages: bool = Field(default=True, alias="INCLUDE_PARTIAL_MESSAGES")
-    max_turns: int = Field(default=8, alias="MAX_TURNS")
+    max_turns: int = Field(default=16, alias="MAX_TURNS")
     max_budget_usd: Optional[float] = Field(default=None, alias="MAX_BUDGET_USD")
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")
 

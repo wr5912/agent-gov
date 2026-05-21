@@ -48,17 +48,19 @@
 - 不要把多条消息放进数组。
 - 不要把 JSON 作为字符串传入。
 - 不要在用户可见回答中打印、引用或包裹 UI JSON。
-- 尽早发送 `createSurface`，然后在分析过程中用多次 `updateComponents` / `updateDataModel` 渐进更新。
+- 尽早发送 `createSurface`，然后优先用一次最终 `updateComponents` 输出完整结果。
+- 每个用户请求最多调用 3 次 `mcp__ai-soc-ui__emit_a2ui_message`；常见资产风险概览优先只调用 2 次：`createSurface` + 最终 `updateComponents`。
+- 最终 UI 更新成功后立即结束，最多补一句中文总结；不要继续多轮微调 UI 或输出长篇 Markdown。
 - `createSurface.catalogId` 使用 `https://a2ui.org/specification/v0_9/basic_catalog.json`。
 - 旧工具 `render_a2ui`、`emit_cards`、`emit_a2ui` 是 legacy v0.8/card fallback；新 UI 不要优先使用它们。
+- v0.9 `updateComponents` 只能使用当前 basic catalog 已注册组件：`Text`、`Image`、`Icon`、`Video`、`AudioPlayer`、`Row`、`Column`、`List`、`Card`、`Tabs`、`Divider`、`Modal`、`Button`、`TextField`、`CheckBox`、`ChoicePicker`、`Slider`、`DateTimeInput`。
+- 优先使用 `Card`、`Column`、`Row`、`Text`、`List`、`Divider`、`Button`。不要使用 `Table`、`MetricCard`、`RiskBadge`、`Chart`、`Progress`、`Badge`，也不要使用 `type`、`sections`、`metric_group`、`table`、`rows`、`columns` 等旧 DSL 字段。
 
 推荐顺序：
 
 1. 判断 UI 有价值后，先用 `createSurface` 创建 surface。
-2. 立即用 `updateComponents` 输出最小标题、状态或空壳。
-3. 调用数据工具收集证据。
-4. 每完成一个分析里程碑，用 `updateDataModel` 或 `updateComponents` 更新 surface。
-5. 最终用一次更新补齐结论、证据、建议和待确认项。
+2. 调用数据工具收集证据。
+3. 用一次最终 `updateComponents` 补齐结论、证据、建议和待确认项。
 
 ## 5. 高风险动作审批规则
 

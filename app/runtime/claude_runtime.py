@@ -31,6 +31,7 @@ from .a2ui_bridge import (
     extract_a2ui_tool_payloads,
 )
 from .a2ui_v09_bridge import (
+    A2UI_V09_BASIC_CATALOG_ID,
     A2UI_V09_CUSTOM_EVENT_NAME,
     A2UI_V09_DIAGNOSTIC_EVENT_NAME,
     A2UI_V09_MESSAGE_TOOL_NAME,
@@ -286,6 +287,41 @@ class ClaudeRuntime:
             "toolName": A2UI_V09_MESSAGE_TOOL_NAME,
             "retryEligible": False,
             "retryAttempt": 0,
+        }
+
+    def _a2ui_v09_tool_repair_diagnostic(self, warning: str, run_id: str) -> dict[str, Any]:
+        return {
+            "code": "a2ui-v09-message-repaired",
+            "level": "info",
+            "message": warning,
+            "source": "claude-runtime",
+            "runId": run_id,
+            "toolName": A2UI_V09_MESSAGE_TOOL_NAME,
+            "retryEligible": False,
+            "retryAttempt": 0,
+        }
+
+    def _a2ui_v09_surface_id(self, message: dict[str, Any]) -> str | None:
+        for key in ("createSurface", "updateComponents", "updateDataModel", "deleteSurface"):
+            payload = message.get(key)
+            if isinstance(payload, dict):
+                surface_id = payload.get("surfaceId")
+                return surface_id if isinstance(surface_id, str) and surface_id else None
+        return None
+
+    def _a2ui_v09_bootstrap_surface_message(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        if "createSurface" in message or "deleteSurface" in message:
+            return None
+        surface_id = self._a2ui_v09_surface_id(message)
+        if not surface_id:
+            return None
+        return {
+            "version": "v0.9",
+            "createSurface": {
+                "surfaceId": surface_id,
+                "catalogId": A2UI_V09_BASIC_CATALOG_ID,
+                "sendDataModel": True,
+            },
         }
 
     async def _a2ui_custom_event_stream(
@@ -1036,6 +1072,9 @@ class ClaudeRuntime:
         a2ui_retry_errors: list[str] = []
         a2ui_v09_seen: set[str] = set()
         a2ui_v09_error_seen: set[str] = set()
+        a2ui_v09_warning_seen: set[str] = set()
+        a2ui_v09_surfaces_seen: set[str] = set()
+        a2ui_legacy_disabled_seen: set[str] = set()
 
         yield run_started_event(req)
 
@@ -1062,17 +1101,63 @@ class ClaudeRuntime:
                     message_key = json.dumps(message, sort_keys=True, ensure_ascii=False, default=str)
                     if message_key in a2ui_v09_seen:
                         continue
+                    surface_id = self._a2ui_v09_surface_id(message)
+                    bootstrap = self._a2ui_v09_bootstrap_surface_message(message)
+                    if bootstrap is not None and surface_id and surface_id not in a2ui_v09_surfaces_seen:
+                        bootstrap_key = json.dumps(bootstrap, sort_keys=True, ensure_ascii=False, default=str)
+                        if bootstrap_key not in a2ui_v09_seen:
+                            a2ui_v09_seen.add(bootstrap_key)
+                            yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, bootstrap)
+                        a2ui_v09_surfaces_seen.add(surface_id)
+                        warning = "Inserted missing A2UI v0.9 createSurface before update message."
+                        if warning not in a2ui_v09_warning_seen:
+                            a2ui_v09_warning_seen.add(warning)
+                            yield custom_event(
+                                A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                                self._a2ui_v09_tool_repair_diagnostic(warning, req.run_id),
+                            )
                     a2ui_v09_seen.add(message_key)
                     yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, message)
+                    if surface_id and "deleteSurface" not in message:
+                        a2ui_v09_surfaces_seen.add(surface_id)
                 for error in v09_extraction.errors:
                     if error in a2ui_v09_error_seen:
                         continue
                     a2ui_v09_error_seen.add(error)
                     print(f"[WARN] skipped invalid A2UI v0.9 tool message: {error}", flush=True)
                     yield custom_event(A2UI_V09_DIAGNOSTIC_EVENT_NAME, self._a2ui_v09_tool_diagnostic(error, req.run_id))
+                for warning in v09_extraction.warnings:
+                    if warning in a2ui_v09_warning_seen:
+                        continue
+                    a2ui_v09_warning_seen.add(warning)
+                    yield custom_event(
+                        A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                        self._a2ui_v09_tool_repair_diagnostic(warning, req.run_id),
+                    )
 
                 tool_extraction = extract_a2ui_tool_payloads(raw_message)
                 for tool_payload in tool_extraction.tool_payloads:
+                    if a2ui_v09_seen:
+                        disabled_key = tool_payload.tool_name
+                        if disabled_key not in a2ui_legacy_disabled_seen:
+                            a2ui_legacy_disabled_seen.add(disabled_key)
+                            yield custom_event(
+                                A2UI_DIAGNOSTIC_EVENT_NAME,
+                                {
+                                    "code": "a2ui-legacy-tool-disabled",
+                                    "level": "warning",
+                                    "message": (
+                                        "Skipped legacy A2UI payload because an A2UI v0.9 surface "
+                                        "is already active for this run."
+                                    ),
+                                    "source": "claude-runtime",
+                                    "runId": req.run_id,
+                                    "toolName": tool_payload.tool_name,
+                                    "retryEligible": False,
+                                    "retryAttempt": 0,
+                                },
+                            )
+                        continue
                     payload = tool_payload.payload
                     diagnostic = self._a2ui_legacy_tool_diagnostic(
                         tool_payload.tool_name,
@@ -1122,8 +1207,25 @@ class ClaudeRuntime:
                             message_key = json.dumps(message, sort_keys=True, ensure_ascii=False, default=str)
                             if message_key in a2ui_v09_seen:
                                 continue
+                            surface_id = self._a2ui_v09_surface_id(message)
+                            bootstrap = self._a2ui_v09_bootstrap_surface_message(message)
+                            if bootstrap is not None and surface_id and surface_id not in a2ui_v09_surfaces_seen:
+                                bootstrap_key = json.dumps(bootstrap, sort_keys=True, ensure_ascii=False, default=str)
+                                if bootstrap_key not in a2ui_v09_seen:
+                                    a2ui_v09_seen.add(bootstrap_key)
+                                    yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, bootstrap)
+                                a2ui_v09_surfaces_seen.add(surface_id)
+                                warning = "Inserted missing A2UI v0.9 createSurface before update message."
+                                if warning not in a2ui_v09_warning_seen:
+                                    a2ui_v09_warning_seen.add(warning)
+                                    yield custom_event(
+                                        A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                                        self._a2ui_v09_tool_repair_diagnostic(warning, req.run_id),
+                                    )
                             a2ui_v09_seen.add(message_key)
                             yield custom_event(A2UI_V09_CUSTOM_EVENT_NAME, message)
+                            if surface_id and "deleteSurface" not in message:
+                                a2ui_v09_surfaces_seen.add(surface_id)
                         for error in v09_extraction.errors:
                             if error in a2ui_v09_error_seen:
                                 continue
@@ -1132,6 +1234,14 @@ class ClaudeRuntime:
                             yield custom_event(
                                 A2UI_V09_DIAGNOSTIC_EVENT_NAME,
                                 self._a2ui_v09_tool_diagnostic(error, req.run_id),
+                            )
+                        for warning in v09_extraction.warnings:
+                            if warning in a2ui_v09_warning_seen:
+                                continue
+                            a2ui_v09_warning_seen.add(warning)
+                            yield custom_event(
+                                A2UI_V09_DIAGNOSTIC_EVENT_NAME,
+                                self._a2ui_v09_tool_repair_diagnostic(warning, req.run_id),
                             )
                 final_result = {
                     "sessionId": data.get("session_id"),

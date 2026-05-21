@@ -831,6 +831,172 @@ def test_stream_ag_ui_maps_emit_a2ui_message_tool_call_to_raw_v09_custom_event(t
     assert events[-1]["type"] == "RUN_FINISHED"
 
 
+def test_stream_ag_ui_bootstraps_missing_v09_surface_before_update(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    update_message = {
+        "version": "v0.9",
+        "updateComponents": {
+            "surfaceId": "surface-v09-assets",
+            "components": [
+                {"id": "root", "component": "Column", "children": ["summary"]},
+                {"id": "summary", "component": "Text", "text": "高风险资产 4 台"},
+            ],
+        },
+    }
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-v09-update",
+                    "name": "mcp__ai-soc-ui__emit_a2ui_message",
+                    "input": {"message": update_message},
+                }
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "查看资产"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+
+    a2ui_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    assert [event["value"] for event in a2ui_events] == [
+        {
+            "version": "v0.9",
+            "createSurface": {
+                "surfaceId": "surface-v09-assets",
+                "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+                "sendDataModel": True,
+            },
+        },
+        update_message,
+    ]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
+    assert [event["value"]["code"] for event in diagnostic_events] == ["a2ui-v09-message-repaired"]
+    assert diagnostic_events[0]["value"]["level"] == "info"
+    assert "Inserted missing A2UI v0.9 createSurface" in diagnostic_events[0]["value"]["message"]
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
+def test_stream_ag_ui_skips_legacy_a2ui_after_v09_surface_started(tmp_path, monkeypatch):
+    from claude_agent_sdk import ResultMessage
+
+    v09_message = {
+        "version": "v0.9",
+        "createSurface": {
+            "surfaceId": "surface-v09-assets",
+            "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json",
+        },
+    }
+    legacy_payload = {
+        "messages": [
+            {
+                "beginRendering": {
+                    "surfaceId": "legacy-surface",
+                    "root": "legacy-root",
+                }
+            }
+        ]
+    }
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield {
+            "type": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-v09",
+                    "name": "mcp__ai-soc-ui__emit_a2ui_message",
+                    "input": {"message": v09_message},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "toolu-a2ui-legacy",
+                    "name": "mcp__ai-soc-ui__emit_a2ui",
+                    "input": legacy_payload,
+                },
+            ],
+        }
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-session",
+            result="card",
+            usage={"input_tokens": 1, "output_tokens": 2},
+            stop_reason="end_turn",
+        )
+
+    async def collect(runtime):
+        from app.runtime.ag_ui import RunAgentInput
+
+        req = RunAgentInput(
+            threadId="thread-test",
+            runId="run-test",
+            messages=[{"role": "user", "content": "查看资产"}],
+        )
+        return [item async for item in runtime.stream_ag_ui(req)]
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    events = asyncio.run(collect(runtime))
+
+    a2ui_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    assert [event["value"] for event in a2ui_events] == [v09_message]
+    diagnostic_events = [
+        event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
+    ]
+    assert [event["value"]["code"] for event in diagnostic_events] == ["a2ui-legacy-tool-disabled"]
+    assert diagnostic_events[0]["value"]["toolName"] == "mcp__ai-soc-ui__emit_a2ui"
+    assert events[-1]["type"] == "RUN_FINISHED"
+
+
 def test_stream_ag_ui_rejects_emit_a2ui_message_arrays_without_retry(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
@@ -898,7 +1064,7 @@ def test_stream_ag_ui_rejects_emit_a2ui_message_arrays_without_retry(tmp_path, m
     assert events[-1]["type"] == "RUN_FINISHED"
 
 
-def test_stream_ag_ui_rejects_emit_a2ui_message_quoted_json_without_retry(tmp_path, monkeypatch):
+def test_stream_ag_ui_recovers_emit_a2ui_message_quoted_json_without_retry(tmp_path, monkeypatch):
     from claude_agent_sdk import ResultMessage
 
     async def fake_query(*, prompt, options, transport=None):
@@ -948,15 +1114,18 @@ def test_stream_ag_ui_rejects_emit_a2ui_message_quoted_json_without_retry(tmp_pa
 
     events = asyncio.run(collect(runtime))
 
-    assert not [
+    a2ui_events = [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.message"
+    ]
+    assert [event["value"] for event in a2ui_events] == [
+        {"version": "v0.9", "deleteSurface": {"surfaceId": "surface-v09-assets"}}
     ]
     diagnostic_events = [
         event for event in events if event["type"] == "CUSTOM" and event["name"] == "a2ui.diagnostic"
     ]
-    assert [event["value"]["code"] for event in diagnostic_events] == ["a2ui-v09-message-invalid"]
-    assert "quoted JSON strings" in diagnostic_events[0]["value"]["message"]
-    assert diagnostic_events[0]["value"]["retryEligible"] is False
+    assert [event["value"]["code"] for event in diagnostic_events] == ["a2ui-v09-message-repaired"]
+    assert diagnostic_events[0]["value"]["level"] == "info"
+    assert "quoted JSON string" in diagnostic_events[0]["value"]["message"]
     assert events[-1]["type"] == "RUN_FINISHED"
 
 

@@ -43,17 +43,19 @@ class FakeLangfuseClient:
 
 
 def _settings(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "workspace"
+    workspace = tmp_path / "docker" / "volume" / "main-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    claude_root = tmp_path / "docker" / "volume" / "claude-root"
+    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
     claude_home = claude_root / ".claude"
     workspace.mkdir(parents=True, exist_ok=True)
     claude_home.mkdir(parents=True, exist_ok=True)
     return AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
+        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
         CLAUDE_ROOT=claude_root,
+        MAIN_CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
         ENABLE_POLICY_HOOKS=True,
     )
@@ -96,7 +98,7 @@ def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
     ]
 
 
-def test_default_options_use_native_claude_code_config(tmp_path, monkeypatch):
+def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -122,11 +124,45 @@ def test_default_options_use_native_claude_code_config(tmp_path, monkeypatch):
     assert options.settings is None
     assert options.mcp_servers == {}
     assert options.agents is None
-    assert "CLAUDE_CONFIG_DIR" not in options.env
+    assert options.cwd == settings.main_workspace_dir
+    assert options.env["HOME"] == str(settings.main_claude_root)
+    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
+    assert options.env["AGENT_PROFILE"] == "main"
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
-def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
+def test_feedback_job_options_use_configured_max_turns(tmp_path):
+    settings = _settings(tmp_path)
+    settings.max_turns = 12
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime._build_job_options(runtime.profiles["feedback-attribution"])
+
+    assert options.max_turns == 12
+
+
+def test_feedback_proposal_job_options_use_profile_minimum_max_turns(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime._build_job_options(runtime.profiles["feedback-proposal"])
+
+    assert options.max_turns == 16
+    assert options.allowed_tools == []
+    assert set(options.disallowed_tools) >= {"Read", "Grep", "Glob"}
+
+
+def test_feedback_proposal_job_options_allow_global_max_turn_override(tmp_path):
+    settings = _settings(tmp_path)
+    settings.max_turns = 20
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime._build_job_options(runtime.profiles["feedback-proposal"])
+
+    assert options.max_turns == 20
+
+
+def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -165,9 +201,9 @@ def test_explicit_config_overrides_are_passed_to_sdk(tmp_path, monkeypatch):
     options = seen["options"]
 
     assert result["errors"] == []
-    assert options.settings == str(settings_path)
-    assert options.mcp_servers == str(mcp_path)
-    assert options.env["CLAUDE_CONFIG_DIR"] == str(config_dir)
+    assert options.settings is None
+    assert options.mcp_servers == {}
+    assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
 
 
 def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
@@ -293,10 +329,12 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
 def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
     from app.runtime.settings import get_settings
 
-    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path / "docker" / "volume" / "workspace"))
+    monkeypatch.setenv("WORKSPACE_DIR", str(tmp_path / "docker" / "volume" / "main-workspace"))
+    monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(tmp_path / "docker" / "volume" / "main-workspace"))
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "docker" / "volume" / "data"))
-    monkeypatch.setenv("CLAUDE_ROOT", str(tmp_path / "docker" / "volume" / "claude-root"))
-    monkeypatch.setenv("CLAUDE_HOME", str(tmp_path / "docker" / "volume" / "claude-root" / ".claude"))
+    monkeypatch.setenv("CLAUDE_ROOT", str(tmp_path / "docker" / "volume" / "claude-roots" / "main"))
+    monkeypatch.setenv("MAIN_CLAUDE_ROOT", str(tmp_path / "docker" / "volume" / "claude-roots" / "main"))
+    monkeypatch.setenv("CLAUDE_HOME", str(tmp_path / "docker" / "volume" / "claude-roots" / "main" / ".claude"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
     get_settings.cache_clear()
 

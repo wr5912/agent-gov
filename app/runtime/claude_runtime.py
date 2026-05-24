@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import uuid
@@ -9,7 +10,11 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any, Optional
 
+from .agent_profiles import AgentRuntimeProfile, build_profiles
+from .agent_profile_versions import profile_version_snapshot
 from .agent_loader import load_programmatic_agents
+from .agent_version_store import AgentVersionStore
+from .feedback_jobs import attribution_prompt, extract_json_object, proposal_prompt
 from .feedback_store import FeedbackStore, utc_now
 from .message_utils import extract_text, message_event_name, to_plain
 from .policy import build_default_hooks, guard_tool_use
@@ -45,10 +50,13 @@ class ClaudeRuntime:
         settings: AppSettings,
         session_store: LocalSessionStore,
         feedback_store: FeedbackStore | None = None,
+        agent_version_store: AgentVersionStore | None = None,
     ) -> None:
         self.settings = settings
         self.session_store = session_store
         self.feedback_store = feedback_store
+        self.agent_version_store = agent_version_store
+        self.profiles = build_profiles(settings)
         self._langfuse_client: Any | None = None
         self._langfuse_unavailable = False
 
@@ -125,6 +133,7 @@ class ClaudeRuntime:
         prompt: str,
         session: LocalSession,
         run_id: str,
+        agent_version_id: Optional[str],
     ) -> dict[str, Any]:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
         disallowed_tools = (
@@ -134,6 +143,7 @@ class ClaudeRuntime:
         )
         return {
             "run_id": run_id,
+            "agent_version_id": agent_version_id,
             "message": req.message,
             "prompt": prompt,
             "api_session_id": session.session_id,
@@ -156,6 +166,7 @@ class ClaudeRuntime:
         self,
         *,
         run_id: str,
+        agent_version_id: Optional[str],
         session: LocalSession,
         sdk_session_id: Optional[str],
         alert_id: Optional[str],
@@ -170,6 +181,7 @@ class ClaudeRuntime:
     ) -> dict[str, Any]:
         return {
             "run_id": run_id,
+            "agent_version_id": agent_version_id,
             "api_session_id": session.session_id,
             "sdk_session_id": sdk_session_id,
             "alert_id": alert_id,
@@ -187,10 +199,12 @@ class ClaudeRuntime:
         self,
         *,
         run_id: str,
+        agent_version_id: Optional[str],
         session: LocalSession,
         sdk_session_id: Optional[str],
         req: ChatRequest,
         answer: str,
+        messages: list[dict[str, Any]],
         agent_activity: dict[str, Any],
         usage: Any,
         total_cost_usd: Optional[float],
@@ -198,6 +212,8 @@ class ClaudeRuntime:
         errors: list[str],
         created_at: str,
         completed_at: str,
+        langfuse_trace_id: Optional[str] = None,
+        langfuse_trace_url: Optional[str] = None,
     ) -> None:
         if self.feedback_store is None:
             return
@@ -205,13 +221,17 @@ class ClaudeRuntime:
         self.feedback_store.record_run(
             {
                 "run_id": run_id,
+                "agent_version_id": agent_version_id,
                 "session_id": session.session_id,
                 "sdk_session_id": sdk_session_id,
                 "alert_id": req.alert_id,
                 "case_id": req.case_id,
                 "message": req.message,
                 "answer_summary": answer_summary,
+                "messages": messages,
                 "agent_activity": agent_activity,
+                "langfuse_trace_id": langfuse_trace_id,
+                "langfuse_trace_url": langfuse_trace_url,
                 "usage": to_plain(usage),
                 "total_cost_usd": total_cost_usd,
                 "stop_reason": stop_reason,
@@ -220,6 +240,15 @@ class ClaudeRuntime:
                 "completed_at": completed_at,
             }
         )
+
+    def _current_agent_version_id(self) -> Optional[str]:
+        if self.agent_version_store is None:
+            return None
+        return self.agent_version_store.current_version_id()
+
+    def _raise_if_version_maintenance(self) -> None:
+        if self.agent_version_store is not None and self.agent_version_store.is_maintenance_active():
+            raise RuntimeError("Agent version maintenance is in progress; retry after restore completes.")
 
     def _agent_activity_payload(self, req: ChatRequest, messages: list[dict[str, Any]]) -> dict[str, Any]:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
@@ -446,6 +475,39 @@ class ClaudeRuntime:
             print(f"[WARN] failed to initialize Langfuse runtime enrichment: {exc}", flush=True)
             return None
 
+    def _current_langfuse_trace_ref(self) -> tuple[Optional[str], Optional[str]]:
+        client = self._langfuse_client
+        if client is None:
+            return None, None
+        try:
+            trace_id = client.get_current_trace_id()
+            trace_url = client.get_trace_url(trace_id=trace_id) if trace_id else None
+            return trace_id, trace_url
+        except Exception as exc:
+            print(f"[WARN] failed to read current Langfuse trace: {exc}", flush=True)
+            return None, None
+
+    def fetch_langfuse_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
+        if not trace_id or not self.settings.langfuse_enabled:
+            return None
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            return None
+        try:
+            ensure_langfuse_otel_compat()
+            from langfuse.api.client import LangfuseAPI
+
+            client = LangfuseAPI(
+                base_url=self.settings.langfuse_base_url,
+                username=self.settings.langfuse_public_key,
+                password=self.settings.langfuse_secret_key,
+                x_langfuse_public_key=self.settings.langfuse_public_key,
+                timeout=10,
+            )
+            trace = client.trace.get(trace_id, fields="core,io,scores,observations,metrics")
+            return to_plain(trace)
+        except Exception as exc:
+            return {"fetch_status": "failed", "error": f"{exc.__class__.__name__}: {exc}"}
+
     def _start_langfuse_observation(self, **kwargs: Any) -> Any:
         client = self._get_langfuse_client()
         if client is None:
@@ -488,27 +550,32 @@ class ClaudeRuntime:
         except Exception as exc:
             print(f"[WARN] failed to flush Langfuse runtime enrichment: {exc}", flush=True)
 
-    def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
-        from claude_agent_sdk import ClaudeAgentOptions
-
+    def _profile_env(self, profile: AgentRuntimeProfile) -> dict[str, str]:
         env = dict(os.environ)
         env.update(self._build_langfuse_env())
         env.update(self.settings.claude_env)
+        env["HOME"] = str(profile.claude_root)
+        env["CLAUDE_CONFIG_DIR"] = str(profile.claude_config_dir)
+        env["AGENT_PROFILE"] = profile.name
+        env["CLAUDE_AGENT_SDK_CLIENT_APP"] = f"secops-runtime/{profile.name}"
+        profile.claude_root.mkdir(parents=True, exist_ok=True)
+        profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        return env
+
+    def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
+        from claude_agent_sdk import ClaudeAgentOptions
+
+        profile = self.profiles["main"]
+        env = self._profile_env(profile)
         if self.settings.provider_api_key:
             env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
         if self.settings.provider_api_url:
             env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
-        env["CLAUDE_AGENT_SDK_CLIENT_APP"] = "claude-agent-runtime-api/0.1.0"
-        if self.settings.resolved_claude_config_dir:
-            env["CLAUDE_CONFIG_DIR"] = str(self.settings.resolved_claude_config_dir)
-            Path(env["CLAUDE_CONFIG_DIR"]).mkdir(parents=True, exist_ok=True)
-        else:
-            env.pop("CLAUDE_CONFIG_DIR", None)
 
         agents = None
         if self.settings.enable_programmatic_agents:
             try:
-                agents = load_programmatic_agents(self.settings.workspace_dir, self.settings.claude_home)
+                agents = load_programmatic_agents(profile.workspace_dir, profile.claude_config_dir)
             except Exception as exc:  # Do not prevent service use because of malformed agent file.
                 print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
 
@@ -528,7 +595,7 @@ class ClaudeRuntime:
 
         kwargs: dict[str, Any] = {
             "tools": self.settings.claude_tools,
-            "cwd": self.settings.workspace_dir,
+            "cwd": profile.workspace_dir,
             "model": req.model or self.settings.agent_model,
             "fallback_model": self.settings.fallback_model,
             "allowed_tools": allowed_tools,
@@ -538,8 +605,8 @@ class ClaudeRuntime:
             "max_budget_usd": self.settings.max_budget_usd,
             "system_prompt": system_prompt,
             "env": env,
-            "settings": str(self.settings.claude_settings_file) if self.settings.claude_settings_file else None,
-            "mcp_servers": self.settings.claude_mcp_servers,
+            "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
+            "mcp_servers": str(profile.mcp_config_path) if profile.mcp_config_path.exists() else None,
             "strict_mcp_config": self.settings.strict_mcp_config,
             "skills": self._skills_option(req),
             "include_hook_events": self.settings.include_hook_events,
@@ -581,6 +648,144 @@ class ClaudeRuntime:
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return ClaudeAgentOptions(**kwargs)
 
+    def _build_job_options(self, profile: AgentRuntimeProfile) -> Any:
+        from claude_agent_sdk import ClaudeAgentOptions
+
+        env = self._profile_env(profile)
+        if self.settings.provider_api_key:
+            env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
+        if self.settings.provider_api_url:
+            env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
+
+        kwargs: dict[str, Any] = {
+            "cwd": profile.workspace_dir,
+            "model": self.settings.agent_model,
+            "fallback_model": self.settings.fallback_model,
+            "allowed_tools": list(profile.allowed_tools),
+            "disallowed_tools": list(profile.disallowed_tools),
+            "permission_mode": profile.permission_mode,
+            "max_turns": max(self.settings.max_turns, profile.max_turns or 0),
+            "max_budget_usd": self.settings.max_budget_usd,
+            "env": env,
+            "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
+            "mcp_servers": str(profile.mcp_config_path) if profile.mcp_config_path.exists() else None,
+            "strict_mcp_config": True,
+            "include_hook_events": self.settings.include_hook_events,
+            "include_partial_messages": False,
+            "hooks": build_default_hooks() if self.settings.enable_policy_hooks else None,
+            "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
+            "cli_path": self.settings.claude_cli_path,
+            "add_dirs": self.settings.claude_add_dirs,
+            "betas": self.settings.claude_betas,
+            "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
+            "max_buffer_size": self.settings.max_buffer_size,
+            "user": self.settings.claude_user,
+            "setting_sources": ["user", "project"],
+            "extra_args": self.settings.claude_extra_args,
+            "max_thinking_tokens": self.settings.max_thinking_tokens,
+            "effort": self.settings.effort,
+            "enable_file_checkpointing": False,
+            "session_store_flush": self.settings.session_store_flush,
+            "load_timeout_ms": self.settings.load_timeout_ms,
+        }
+        kwargs = {k: v for k, v in kwargs.items() if v is not None}
+        return ClaudeAgentOptions(**kwargs)
+
+    def _provider_configured(self) -> bool:
+        return bool(self.settings.provider_api_key)
+
+    async def _run_profile_json(self, *, profile_name: str, prompt: str, expected_schema_version: str) -> dict[str, Any]:
+        from claude_agent_sdk import ResultMessage, query
+
+        profile = self.profiles[profile_name]
+        answer_parts: list[str] = []
+        errors: list[str] = []
+        options = self._build_job_options(profile)
+        async def collect() -> dict[str, Any]:
+            async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
+                text = extract_text(msg)
+                if text:
+                    answer_parts.append(text)
+                    output_bytes = len("".join(answer_parts).encode("utf-8"))
+                    if output_bytes > profile.max_output_bytes:
+                        raise RuntimeError(f"Agent output exceeded {profile.max_output_bytes} bytes")
+                if isinstance(msg, ResultMessage):
+                    errors.extend(self._result_errors(msg))
+            answer = self._dedupe_answer_parts(answer_parts)
+            if errors and not answer:
+                raise RuntimeError("; ".join(errors))
+            return extract_json_object(answer, expected_schema_version=expected_schema_version)
+
+        return await asyncio.wait_for(collect(), timeout=profile.max_runtime_seconds)
+
+    async def run_attribution_job(self, feedback_case_id: str) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        profile = self.profiles["feedback-attribution"]
+        job = self.feedback_store.create_attribution_job(
+            feedback_case_id,
+            profile_version=profile_version_snapshot(profile, version_id="feedback-attribution-v0.1.0"),
+        )
+        if not job:
+            return None
+        if job.get("_reused_existing"):
+            return job
+        if job.get("status") != "queued":
+            return job
+        self.feedback_store.start_job(job["job_id"])
+        if not self._provider_configured():
+            self.feedback_store.complete_attribution_job(job["job_id"], self.feedback_store.offline_attribution_output(job))
+            return self.feedback_store.get_job(job["job_id"])
+        try:
+            raw = await self._run_profile_json(
+                profile_name="feedback-attribution",
+                prompt=attribution_prompt(job["input_path"]),
+                expected_schema_version="attribution-output/v1",
+            )
+            self.feedback_store.complete_attribution_job(job["job_id"], raw)
+        except asyncio.TimeoutError as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_TIMEOUT", message=f"{exc.__class__.__name__}: {exc}")
+        except Exception as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_RUNTIME_ERROR", message=f"{exc.__class__.__name__}: {exc}")
+        return self.feedback_store.get_job(job["job_id"])
+
+    async def run_proposal_job(self, feedback_case_id: str) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        profile = self.profiles["feedback-proposal"]
+        job = self.feedback_store.create_proposal_job(
+            feedback_case_id,
+            profile_version=profile_version_snapshot(profile, version_id="feedback-proposal-v0.1.0"),
+        )
+        if not job:
+            return None
+        if job.get("_reused_existing"):
+            return job
+        if job.get("status") != "queued":
+            return job
+        self.feedback_store.start_job(job["job_id"])
+        if not self._provider_configured():
+            self.feedback_store.complete_proposal_job(job["job_id"], self.feedback_store.offline_proposal_output(job))
+            return self.feedback_store.get_job(job["job_id"])
+        try:
+            attribution_job_id = job.get("attribution_job_id")
+            attribution_output = self.feedback_store.get_job_output(str(attribution_job_id), "attribution") if attribution_job_id else None
+            raw = await self._run_profile_json(
+                profile_name="feedback-proposal",
+                prompt=proposal_prompt(
+                    job["input_path"],
+                    input_payload=job.get("input_json"),
+                    attribution_output=attribution_output,
+                ),
+                expected_schema_version="proposal-output/v1",
+            )
+            self.feedback_store.complete_proposal_job(job["job_id"], raw)
+        except asyncio.TimeoutError as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_TIMEOUT", message=f"{exc.__class__.__name__}: {exc}")
+        except Exception as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_RUNTIME_ERROR", message=f"{exc.__class__.__name__}: {exc}")
+        return self.feedback_store.get_job(job["job_id"])
+
     def _build_langfuse_env(self) -> dict[str, str]:
         if not self.settings.langfuse_enabled:
             return {}
@@ -618,11 +823,13 @@ class ClaudeRuntime:
     async def run(self, req: ChatRequest) -> dict[str, Any]:
         from claude_agent_sdk import ResultMessage, query
 
+        self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
+        agent_version_id = self._current_agent_version_id()
         created_at = utc_now()
         prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id)
+        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
         usage: Optional[dict[str, Any]] = None
@@ -630,17 +837,20 @@ class ClaudeRuntime:
         stop_reason: Optional[str] = None
         errors: list[str] = []
         sdk_session_id: Optional[str] = session.sdk_session_id
+        langfuse_trace_id: Optional[str] = None
+        langfuse_trace_url: Optional[str] = None
 
         with self._start_langfuse_observation(
             as_type="span",
             name="runtime.chat",
             input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "run_id": run_id, "mode": "non_stream"},
+            metadata={"api_session_id": session.session_id, "run_id": run_id, "agent_version_id": agent_version_id, "mode": "non_stream"},
         ) as root_span:
+            langfuse_trace_id, langfuse_trace_url = self._current_langfuse_trace_ref()
             with self._start_langfuse_observation(
                 as_type="generation",
                 name="runtime.claude_sdk_query",
-                input={"run_id": run_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
+                input={"run_id": run_id, "agent_version_id": agent_version_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
@@ -670,6 +880,7 @@ class ClaudeRuntime:
                 agent_activity = self._agent_activity_payload(req, messages)
                 output = self._runtime_output_payload(
                     run_id=run_id,
+                    agent_version_id=agent_version_id,
                     session=session,
                     sdk_session_id=sdk_session_id,
                     alert_id=req.alert_id,
@@ -713,10 +924,12 @@ class ClaudeRuntime:
         completed_at = utc_now()
         self._record_feedback_run(
             run_id=run_id,
+            agent_version_id=agent_version_id,
             session=session,
             sdk_session_id=sdk_session_id,
             req=req,
             answer=answer,
+            messages=messages,
             agent_activity=agent_activity,
             usage=usage,
             total_cost_usd=total_cost_usd,
@@ -724,9 +937,12 @@ class ClaudeRuntime:
             errors=errors,
             created_at=created_at,
             completed_at=completed_at,
+            langfuse_trace_id=langfuse_trace_id,
+            langfuse_trace_url=langfuse_trace_url,
         )
         return {
             "run_id": run_id,
+            "agent_version_id": agent_version_id,
             "session_id": session.session_id,
             "sdk_session_id": session.sdk_session_id,
             "answer": answer,
@@ -741,11 +957,13 @@ class ClaudeRuntime:
     async def stream(self, req: ChatRequest) -> AsyncIterator[dict[str, Any]]:
         from claude_agent_sdk import ResultMessage, query
 
+        self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
+        agent_version_id = self._current_agent_version_id()
         created_at = utc_now()
         prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id)
+        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
         sdk_session_id: Optional[str] = session.sdk_session_id
         messages: list[dict[str, Any]] = []
         answer_parts: list[str] = []
@@ -753,17 +971,21 @@ class ClaudeRuntime:
         total_cost_usd: Optional[float] = None
         stop_reason: Optional[str] = None
         errors: list[str] = []
+        langfuse_trace_id: Optional[str] = None
+        langfuse_trace_url: Optional[str] = None
 
         with self._start_langfuse_observation(
             as_type="span",
             name="runtime.chat",
             input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "run_id": run_id, "mode": "stream"},
+            metadata={"api_session_id": session.session_id, "run_id": run_id, "agent_version_id": agent_version_id, "mode": "stream"},
         ) as root_span:
+            langfuse_trace_id, langfuse_trace_url = self._current_langfuse_trace_ref()
             yield {
                 "event": "session",
                 "data": {
                     "run_id": run_id,
+                    "agent_version_id": agent_version_id,
                     "session_id": session.session_id,
                     "sdk_session_id": session.sdk_session_id,
                     "alert_id": req.alert_id,
@@ -773,7 +995,7 @@ class ClaudeRuntime:
             with self._start_langfuse_observation(
                 as_type="generation",
                 name="runtime.claude_sdk_query",
-                input={"run_id": run_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
+                input={"run_id": run_id, "agent_version_id": agent_version_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
@@ -805,6 +1027,7 @@ class ClaudeRuntime:
                                     "session_id": session.session_id,
                                     "sdk_session_id": sdk_session_id,
                                     "run_id": run_id,
+                                    "agent_version_id": agent_version_id,
                                     "alert_id": req.alert_id,
                                     "case_id": req.case_id,
                                     "agent_activity": agent_activity,
@@ -830,6 +1053,7 @@ class ClaudeRuntime:
                     agent_activity = self._agent_activity_payload(req, messages)
                     output = self._runtime_output_payload(
                         run_id=run_id,
+                        agent_version_id=agent_version_id,
                         session=session,
                         sdk_session_id=sdk_session_id,
                         alert_id=req.alert_id,
@@ -845,10 +1069,12 @@ class ClaudeRuntime:
                     completed_at = utc_now()
                     self._record_feedback_run(
                         run_id=run_id,
+                        agent_version_id=agent_version_id,
                         session=session,
                         sdk_session_id=sdk_session_id,
                         req=req,
                         answer=answer,
+                        messages=messages,
                         agent_activity=agent_activity,
                         usage=usage,
                         total_cost_usd=total_cost_usd,
@@ -856,6 +1082,8 @@ class ClaudeRuntime:
                         errors=errors,
                         created_at=created_at,
                         completed_at=completed_at,
+                        langfuse_trace_id=langfuse_trace_id,
+                        langfuse_trace_url=langfuse_trace_url,
                     )
                     self._update_langfuse_observation(
                         generation,

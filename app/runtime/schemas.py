@@ -39,6 +39,7 @@ class ChatResponse(BaseModel):
     run_id: str
     session_id: str
     sdk_session_id: Optional[str] = None
+    agent_version_id: Optional[str] = None
     answer: str
     messages: list[dict[str, Any]] = Field(default_factory=list)
     agent_activity: dict[str, Any] = Field(default_factory=dict)
@@ -94,26 +95,41 @@ class ConfigMappingResponse(BaseModel):
     mappings: list[ConfigMappingItem]
 
 
-class FeedbackCreateRequest(BaseModel):
-    run_id: str
-    session_id: str
+class FeedbackSignalCreateRequest(BaseModel):
+    signal_id: Optional[str] = None
+    source_type: Literal["explicit_feedback", "implicit_feedback", "analyst_annotation"] = "explicit_feedback"
+    timestamp: Optional[str] = None
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
-    feedback_source: Literal["explicit", "analyst_action", "case_outcome", "tool_quality"] = "explicit"
-    analyst_action: Optional[
-        Literal["accepted", "partially_accepted", "rejected", "modified_conclusion", "requested_more_evidence"]
-    ] = None
-    final_verdict: Optional[str] = None
-    final_severity: Optional[str] = None
     labels: list[str] = Field(default_factory=list)
-    affected_tools: list[str] = Field(default_factory=list)
-    auto_captured: bool = False
-    confidence: Optional[Literal["low", "medium", "high"]] = None
-    requires_review: bool = False
     comment: Optional[str] = None
+    confidence: Optional[Literal["low", "medium", "high"]] = None
+    auto_captured: bool = False
+    requires_review: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class FeedbackEventIngestRequest(BaseModel):
+class FeedbackSignalResponse(BaseModel):
+    signal_id: str
+    created_at: str
+    source_type: str
+    timestamp: Optional[str] = None
+    run_id: Optional[str] = None
+    matched_run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    alert_id: Optional[str] = None
+    case_id: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    comment: Optional[str] = None
+    confidence: Optional[str] = None
+    auto_captured: bool = False
+    requires_review: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class SocEventIngestRequest(BaseModel):
     event_id: str
     source_system: str
     event_type: Literal[
@@ -141,25 +157,146 @@ class FeedbackEventIngestRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class FeedbackResponse(BaseModel):
-    feedback: dict[str, Any]
-    attribution: dict[str, Any]
-    proposal: Optional[dict[str, Any]] = None
-
-
-class FeedbackEventIngestResponse(BaseModel):
+class SocEventIngestResponse(BaseModel):
     event: dict[str, Any]
     correlation_status: Literal["matched", "pending_correlation", "duplicate", "stored_only"]
     matched_run_id: Optional[str] = None
-    attribution: Optional[dict[str, Any]] = None
+    pending_correlation: Optional[dict[str, Any]] = None
+
+
+class PendingCorrelationResolveRequest(BaseModel):
+    run_id: Optional[str] = None
+    session_id: Optional[str] = None
+    alert_id: Optional[str] = None
+    case_id: Optional[str] = None
+    comment: Optional[str] = None
+
+
+class AgentRunResponse(BaseModel):
+    run_id: str
+    session_id: Optional[str] = None
+    sdk_session_id: Optional[str] = None
+    agent_version_id: Optional[str] = None
+    alert_id: Optional[str] = None
+    case_id: Optional[str] = None
+    message: Optional[str] = None
+    answer_summary: Optional[str] = None
+    agent_activity: dict[str, Any] = Field(default_factory=dict)
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+
+class FeedbackCaseCreateRequest(BaseModel):
+    source_ids: list[str] = Field(default_factory=list)
+    title: Optional[str] = None
+    priority: Literal["high", "medium", "low"] = "medium"
+
+
+class FeedbackCaseResponse(BaseModel):
+    feedback_case_id: str
+    created_at: str
+    updated_at: str
+    status: str
+    title: str
+    priority: str
+    source_ids: list[str] = Field(default_factory=list)
+    signal_ids: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    pending_correlation_ids: list[str] = Field(default_factory=list)
+    run_ids: list[str] = Field(default_factory=list)
+    session_ids: list[str] = Field(default_factory=list)
+    alert_ids: list[str] = Field(default_factory=list)
+    case_ids: list[str] = Field(default_factory=list)
+    evidence_package_ids: list[str] = Field(default_factory=list)
+    attribution_job_ids: list[str] = Field(default_factory=list)
+    proposal_job_ids: list[str] = Field(default_factory=list)
+
+
+class OptimizationProposalReviewRequest(BaseModel):
+    action: Optional[Literal["approve", "reject", "request_more_analysis"]] = None
+    comment: Optional[str] = None
+
+
+class OptimizationProposalReviewResponse(BaseModel):
+    proposal: dict[str, Any]
+    review: dict[str, Any]
+
+
+class OptimizationTaskCreateRequest(BaseModel):
+    proposal_id: Optional[str] = None
+    execution_mode: Literal["manual_or_patch"] = "manual_or_patch"
+    comment: Optional[str] = None
+
+
+class OptimizationTaskResponse(BaseModel):
+    optimization_task_id: str
+    created_at: str
+    status: str
+    proposal_id: Optional[str] = None
+    proposal_ids: list[str] = Field(default_factory=list)
+    feedback_case_id: Optional[str] = None
+    execution_mode: str
+    source: str
+    comment: Optional[str] = None
+    target_paths: list[str] = Field(default_factory=list)
     proposal: Optional[dict[str, Any]] = None
 
 
-class FeedbackQueryResponse(BaseModel):
-    feedback: list[dict[str, Any]] = Field(default_factory=list)
-    events: list[dict[str, Any]] = Field(default_factory=list)
-    attributions: list[dict[str, Any]] = Field(default_factory=list)
-    pending_correlations: list[dict[str, Any]] = Field(default_factory=list)
+class EvidencePackageResponse(BaseModel):
+    schema_version: str
+    evidence_package_id: str
+    feedback_case_id: str
+    created_at: str
+    created_by: str
+    main_agent_version_id: Optional[str] = None
+    source_refs: dict[str, Any] = Field(default_factory=dict)
+    included_files: list[dict[str, Any]] = Field(default_factory=list)
+    redaction: dict[str, Any] = Field(default_factory=dict)
+    completeness: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvidencePackageFileResponse(BaseModel):
+    evidence_package_id: str
+    file_name: str
+    sha256: Optional[str] = None
+    content: Any
+
+
+class FeedbackAnalysisJobResponse(BaseModel):
+    job_id: str
+    job_type: str
+    feedback_case_id: str
+    evidence_package_id: str
+    status: str
+    profile_name: str
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    input_path: str
+    raw_output_path: str
+    validated_output_path: str
+    error_path: str
+    langfuse_trace_id: Optional[str] = None
+    raw_output_json: Optional[dict[str, Any]] = None
+    validated_output_json: Optional[dict[str, Any]] = None
+    error_json: Optional[dict[str, Any]] = None
+
+
+class AgentVersionSnapshotRequest(BaseModel):
+    reason: Optional[str] = None
+    source_proposal_ids: list[str] = Field(default_factory=list)
+    note: Optional[str] = None
+
+
+class AgentVersionRestoreRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class AgentVersionRestoreResponse(BaseModel):
+    restored_from_version: dict[str, Any]
+    pre_restore_version: dict[str, Any]
+    current_version: dict[str, Any]
+    requires_runtime_restart: bool = True
 
 
 class OpenAIChatMessage(BaseModel):

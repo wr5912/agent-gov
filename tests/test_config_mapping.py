@@ -3,8 +3,8 @@ from app.runtime.settings import AppSettings
 
 
 def test_config_mapping_uses_native_claude_code_paths(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "workspace"
-    claude_root = tmp_path / "docker" / "volume" / "claude-root"
+    workspace = tmp_path / "docker" / "volume" / "main-workspace"
+    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
     claude_home = claude_root / ".claude"
     data = tmp_path / "docker" / "volume" / "data"
     workspace.mkdir(parents=True)
@@ -15,11 +15,13 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     settings = AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
+        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
         CLAUDE_ROOT=claude_root,
+        MAIN_CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
-        HOST_WORKSPACE_MOUNT="./docker/volume/workspace",
-        HOST_CLAUDE_ROOT_MOUNT="./docker/volume/claude-root",
+        HOST_WORKSPACE_MOUNT="./docker/volume/main-workspace",
+        HOST_CLAUDE_ROOT_MOUNT="./docker/volume/claude-roots/main",
     )
 
     response = build_config_mapping(settings)
@@ -30,6 +32,6 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     assert response.claude_config_dir is None
     assert response.claude_global_config_file == str(claude_root / ".claude.json")
     assert response.setting_sources_effective == ["user", "project", "local"]
-    assert by_kind[("global", "state")].host_mount == "docker/volume/claude-root/.claude.json"
-    assert by_kind[("project", "instructions")].host_mount == "docker/volume/workspace/CLAUDE.md"
+    assert by_kind[("global", "state")].host_mount == "docker/volume/claude-roots/main/.claude.json"
+    assert by_kind[("project", "instructions")].host_mount == "docker/volume/main-workspace/CLAUDE.md"
     assert by_kind[("global", "state")].exists is True

@@ -12,10 +12,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
-    WORKSPACE_DIR=/workspace \
+    WORKSPACE_DIR=/main-workspace \
+    MAIN_WORKSPACE_DIR=/main-workspace \
+    ATTRIBUTION_WORKSPACE_DIR=/attribution-workspace \
+    PROPOSAL_WORKSPACE_DIR=/proposal-workspace \
     DATA_DIR=/data \
-    CLAUDE_ROOT=/root \
-    CLAUDE_HOME=/root/.claude
+    CLAUDE_ROOT=/claude-roots/main \
+    MAIN_CLAUDE_ROOT=/claude-roots/main \
+    ATTRIBUTION_CLAUDE_ROOT=/claude-roots/attribution \
+    PROPOSAL_CLAUDE_ROOT=/claude-roots/proposal \
+    CLAUDE_HOME=/claude-roots/main/.claude
 
 WORKDIR /app
 
@@ -72,7 +78,8 @@ COPY app /app/app
 COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
 RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
-    && mkdir -p /workspace /data /root/.claude
+    && mkdir -p /main-workspace /attribution-workspace /proposal-workspace \
+        /claude-roots/main/.claude /claude-roots/attribution/.claude /claude-roots/proposal/.claude /data
 
 ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

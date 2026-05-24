@@ -67,13 +67,19 @@ services:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8080}
       HOST_PORT: ${HOST_PORT:-58080}
-      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-./volume/workspace}
+      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}
       HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-./volume/data}
-      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}
-      WORKSPACE_DIR: ${WORKSPACE_DIR:-/workspace}
+      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}
+      WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
+      MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
+      ATTRIBUTION_WORKSPACE_DIR: ${ATTRIBUTION_WORKSPACE_DIR:-/attribution-workspace}
+      PROPOSAL_WORKSPACE_DIR: ${PROPOSAL_WORKSPACE_DIR:-/proposal-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
-      CLAUDE_ROOT: ${CLAUDE_ROOT:-/root}
-      CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/root}/.claude}
+      CLAUDE_ROOT: ${CLAUDE_ROOT:-/claude-roots/main}
+      MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
+      ATTRIBUTION_CLAUDE_ROOT: ${ATTRIBUTION_CLAUDE_ROOT:-/claude-roots/attribution}
+      PROPOSAL_CLAUDE_ROOT: ${PROPOSAL_CLAUDE_ROOT:-/claude-roots/proposal}
+      CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
       PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
       PIP_TRUSTED_HOST: mirrors.aliyun.com
@@ -81,9 +87,13 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - ${HOST_WORKSPACE_MOUNT:-./volume/workspace}:${WORKSPACE_DIR:-/workspace}
+      - ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
+      - ${HOST_ATTRIBUTION_WORKSPACE_MOUNT:-./volume/attribution-workspace}:${ATTRIBUTION_WORKSPACE_DIR:-/attribution-workspace}
+      - ${HOST_PROPOSAL_WORKSPACE_MOUNT:-./volume/proposal-workspace}:${PROPOSAL_WORKSPACE_DIR:-/proposal-workspace}
       - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-root}:${CLAUDE_ROOT:-/root}
+      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
+      - ${HOST_ATTRIBUTION_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/attribution}:${ATTRIBUTION_CLAUDE_ROOT:-/claude-roots/attribution}
+      - ${HOST_PROPOSAL_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/proposal}:${PROPOSAL_CLAUDE_ROOT:-/claude-roots/proposal}
     restart: unless-stopped
 
   claude-agent-ui:

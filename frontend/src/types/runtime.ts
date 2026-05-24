@@ -17,6 +17,7 @@ export interface RuntimeHealth {
   provider_api_url_configured?: boolean;
   provider_api_key_configured?: boolean;
   programmatic_agents?: boolean;
+  agent_version_id?: string | null;
   docs?: Record<string, string | null>;
 }
 
@@ -83,6 +84,20 @@ export interface ChatRequest {
   metadata?: Record<string, unknown>;
 }
 
+export interface ChatResponse {
+  run_id: string;
+  session_id: string;
+  sdk_session_id?: string | null;
+  agent_version_id?: string | null;
+  answer: string;
+  messages: Record<string, unknown>[];
+  agent_activity: AgentActivity;
+  usage?: Record<string, unknown> | null;
+  total_cost_usd?: number | null;
+  stop_reason?: string | null;
+  errors: string[];
+}
+
 export interface AgentActivity {
   requested_skills: string[];
   skills_mode?: string;
@@ -103,6 +118,8 @@ export interface ChatMessage {
   createdAt: string;
   runId?: string;
   sessionId?: string;
+  sdkSessionId?: string;
+  agentVersionId?: string;
   alertId?: string;
   caseId?: string;
   agentActivity?: AgentActivity;
@@ -129,82 +146,67 @@ export interface RuntimeClientConfig {
   apiKey: string;
 }
 
-export interface FeedbackCreateRequest {
-  run_id: string;
-  session_id: string;
-  alert_id?: string;
-  case_id?: string;
-  feedback_source: "explicit" | "analyst_action" | "case_outcome" | "tool_quality";
-  analyst_action?: "accepted" | "partially_accepted" | "rejected" | "modified_conclusion" | "requested_more_evidence";
-  final_verdict?: string;
-  final_severity?: string;
-  labels: string[];
-  affected_tools?: string[];
-  auto_captured?: boolean;
-  confidence?: "low" | "medium" | "high";
-  requires_review?: boolean;
-  comment?: string;
+export interface AgentVersionSummary {
+  agent_version_id: string;
+  parent_version_id?: string | null;
+  created_at: string;
+  reason: string;
+  rollback_of_version_id?: string | null;
+  source_proposal_ids?: string[];
+  note?: string | null;
+  agent_yaml_version?: string | null;
+  snapshot_policy_version?: string;
+  bundle_sha256?: string;
+  bundle_path?: string;
+  manifest_path?: string;
+  file_count?: number;
+  entry_count?: number;
+  total_bytes?: number;
 }
 
-export interface FeedbackResponse {
-  feedback: Record<string, unknown>;
-  attribution: Record<string, unknown>;
-  proposal?: Record<string, unknown> | null;
+export interface AgentVersionManifest {
+  agent_version_id: string;
+  parent_version_id?: string | null;
+  created_at: string;
+  reason: string;
+  rollback_of_version_id?: string | null;
+  source_proposal_ids?: string[];
+  note?: string | null;
+  agent_yaml_version?: string | null;
+  snapshot_policy_version?: string;
+  included_roots?: Record<string, unknown>[];
+  excluded_paths?: Record<string, unknown>[];
+  skipped_paths?: Record<string, unknown>[];
+  bundle_sha256?: string;
+  file_count?: number;
+  entry_count?: number;
+  total_bytes?: number;
+  files: Array<Record<string, unknown>>;
+  related_data?: Record<string, unknown>;
 }
 
-export interface FeedbackEventIngestRequest {
-  event_id: string;
-  source_system: string;
-  event_type:
-    | "case.verdict_changed"
-    | "case.severity_changed"
-    | "recommendation.accepted"
-    | "recommendation.rejected"
-    | "recommendation.modified"
-    | "evidence.added"
-    | "tool.manual_query_after_agent";
-  timestamp: string;
-  run_id?: string;
-  session_id?: string;
-  alert_id?: string;
-  case_id?: string;
-  actor_id?: string;
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
-  entities?: Record<string, string[]>;
-  auto_captured?: boolean;
-  confidence?: "low" | "medium" | "high";
-  requires_review?: boolean;
-  comment?: string;
-  metadata?: Record<string, unknown>;
+export interface AgentVersionSnapshotRequest {
+  reason?: string;
+  source_proposal_ids?: string[];
+  note?: string;
 }
 
-export interface FeedbackEventIngestResponse {
-  event: Record<string, unknown>;
-  correlation_status: "matched" | "pending_correlation" | "duplicate" | "stored_only";
-  matched_run_id?: string | null;
-  attribution?: Record<string, unknown> | null;
-  proposal?: Record<string, unknown> | null;
+export interface AgentVersionRestoreRequest {
+  note?: string;
 }
 
-export interface FeedbackQueryResponse {
-  feedback: Record<string, unknown>[];
-  events: Record<string, unknown>[];
-  attributions: Record<string, unknown>[];
-  pending_correlations: Record<string, unknown>[];
+export interface AgentVersionRestoreResponse {
+  restored_from_version: AgentVersionSummary;
+  pre_restore_version: AgentVersionSummary;
+  current_version: AgentVersionSummary;
+  requires_runtime_restart: boolean;
 }
 
-export interface OptimizationProposal {
-  proposal_id?: string;
-  status?: string;
-  title?: string;
-  recommendation?: string;
-  attribution_type?: string;
-  run_id?: string;
-  session_id?: string;
-  alert_id?: string | null;
-  case_id?: string | null;
-  target_path?: string;
-  created_at?: string;
-  [key: string]: unknown;
+export interface AgentVersionDiff {
+  from_version_id: string;
+  to_version_id: string;
+  added: Array<Record<string, unknown>>;
+  modified: Array<Record<string, unknown>>;
+  deleted: Array<Record<string, unknown>>;
+  unchanged_count: number;
 }

@@ -1,69 +1,14 @@
-import { ListTree, MessageSquareWarning, Search, X } from "lucide-react";
+import { ListTree, MessageSquare, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
-import { createFeedback } from "../api/runtime";
-import type { AgentActivity, ChatMessage, FeedbackResponse, RuntimeClientConfig, StreamLogEvent } from "../types/runtime";
+import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
+import type { AgentActivity, ChatMessage, StreamLogEvent } from "../types/runtime";
 
 interface Props {
   message: ChatMessage;
-  clientConfig: RuntimeClientConfig;
-  onFeedbackSubmitted: () => void;
+  onCreateFeedback?: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
 }
 
-export function MessageBubble({ message, clientConfig, onFeedbackSubmitted }: Props) {
-  const [detailOpen, setDetailOpen] = useState(false);
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const isUser = message.role === "user";
-  const isSystem = message.role === "system";
-  const detailEvents = message.role === "assistant" ? message.events || [] : [];
-  const runContext = message.role === "assistant" ? extractRunContext(message, detailEvents) : undefined;
-  return (
-    <article className={`message-row ${isUser ? "message-row-user" : ""}`}>
-      <div className={`message-bubble ${isUser ? "message-user" : isSystem ? "message-system" : "message-assistant"}`}>
-        <div className="message-meta">
-          <span>{isUser ? "You" : isSystem ? "System" : "Claude Agent"}</span>
-          <time>{formatTime(message.createdAt)}</time>
-        </div>
-        <FormattedText text={message.content || (message.role === "assistant" ? "正在等待响应..." : "")} />
-        {detailEvents.length > 0 || runContext?.runId ? (
-          <div className="message-detail-actions">
-            {detailEvents.length > 0 ? (
-              <button className="message-detail-button" type="button" onClick={() => setDetailOpen(true)}>
-                <ListTree size={14} />
-                展示全部细节
-                <span>{detailEvents.length}</span>
-              </button>
-            ) : null}
-            {runContext?.runId ? (
-              <button className="message-detail-button" type="button" onClick={() => setFeedbackOpen(true)}>
-                <MessageSquareWarning size={14} />
-                反馈/归因
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-      </div>
-      {detailOpen ? <ResponseDetailModal message={message} events={detailEvents} onClose={() => setDetailOpen(false)} /> : null}
-      {feedbackOpen && runContext ? (
-        <FeedbackModal
-          context={runContext}
-          clientConfig={clientConfig}
-          onSubmitted={onFeedbackSubmitted}
-          onClose={() => setFeedbackOpen(false)}
-        />
-      ) : null}
-    </article>
-  );
-}
-
-interface RunContext {
-  runId: string;
-  sessionId: string;
-  alertId?: string;
-  caseId?: string;
-  activity: AgentActivity;
-}
-
-const FEEDBACK_LABELS = [
+const feedbackLabelOptions = [
   { value: "evidence_insufficient", label: "证据不足" },
   { value: "tool_false_positive", label: "工具误报" },
   { value: "tool_data_incomplete", label: "工具数据不全" },
@@ -76,56 +21,100 @@ const FEEDBACK_LABELS = [
   { value: "runtime_error", label: "Runtime 错误" },
 ];
 
+export function MessageBubble({ message, onCreateFeedback }: Props) {
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [feedbackResult, setFeedbackResult] = useState<FeedbackSignalRecord | null>(null);
+  const isUser = message.role === "user";
+  const isSystem = message.role === "system";
+  const detailEvents = message.role === "assistant" ? message.events || [] : [];
+  const canSubmitFeedback = Boolean(message.role === "assistant" && message.runId && message.sessionId && onCreateFeedback);
+  return (
+    <article className={`message-row ${isUser ? "message-row-user" : ""}`}>
+      <div className={`message-bubble ${isUser ? "message-user" : isSystem ? "message-system" : "message-assistant"}`}>
+        <div className="message-meta">
+          <span>{isUser ? "You" : isSystem ? "System" : "Claude Agent"}</span>
+          <time>{formatTime(message.createdAt)}</time>
+        </div>
+        <FormattedText text={message.content || (message.role === "assistant" ? "正在等待响应..." : "")} />
+        {detailEvents.length > 0 || canSubmitFeedback ? (
+          <div className="message-detail-actions">
+            {detailEvents.length > 0 ? (
+              <button className="message-detail-button" type="button" onClick={() => setDetailOpen(true)}>
+                <ListTree size={14} />
+                展示全部细节
+                <span>{detailEvents.length}</span>
+              </button>
+            ) : null}
+            {canSubmitFeedback ? (
+              <button className="message-detail-button" type="button" onClick={() => setFeedbackOpen(true)}>
+                <MessageSquare size={14} />
+                提交反馈
+                {feedbackResult ? <span>已提交</span> : null}
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+      {detailOpen ? <ResponseDetailModal message={message} events={detailEvents} onClose={() => setDetailOpen(false)} /> : null}
+      {feedbackOpen && onCreateFeedback ? (
+        <FeedbackModal
+          message={message}
+          result={feedbackResult}
+          onClose={() => setFeedbackOpen(false)}
+          onCreateFeedback={async (payload) => {
+            const result = await onCreateFeedback(payload);
+            setFeedbackResult(result);
+            return result;
+          }}
+        />
+      ) : null}
+    </article>
+  );
+}
+
 function FeedbackModal({
-  context,
-  clientConfig,
-  onSubmitted,
+  message,
+  result,
   onClose,
+  onCreateFeedback,
 }: {
-  context: RunContext;
-  clientConfig: RuntimeClientConfig;
-  onSubmitted: () => void;
+  message: ChatMessage;
+  result: FeedbackSignalRecord | null;
   onClose: () => void;
+  onCreateFeedback: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
 }) {
-  const [analystAction, setAnalystAction] = useState<"accepted" | "partially_accepted" | "rejected" | "modified_conclusion" | "requested_more_evidence">("partially_accepted");
-  const [finalVerdict, setFinalVerdict] = useState("");
-  const [finalSeverity, setFinalSeverity] = useState("");
-  const [labels, setLabels] = useState<string[]>([]);
+  const [analystAction, setAnalystAction] = useState("rejected");
+  const [labels, setLabels] = useState<string[]>(["evidence_insufficient"]);
   const [affectedTools, setAffectedTools] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | undefined>();
-  const [result, setResult] = useState<FeedbackResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const tools = message.agentActivity?.tool_names || [];
 
-  const toolNames = useMemo(() => {
-    const names = context.activity.tool_calls.map((call) => stringValue(call.name)).filter(Boolean) as string[];
-    return uniqueStrings(names);
-  }, [context.activity.tool_calls]);
-
-  async function submitFeedback() {
+  async function submit() {
+    if (!message.runId || !message.sessionId) return;
     setSubmitting(true);
-    setError(undefined);
+    setError(null);
     try {
-      const response = await createFeedback(clientConfig, {
-        run_id: context.runId,
-        session_id: context.sessionId,
-        alert_id: context.alertId,
-        case_id: context.caseId,
-        feedback_source: "explicit",
-        analyst_action: analystAction,
-        final_verdict: finalVerdict.trim() || undefined,
-        final_severity: finalSeverity.trim() || undefined,
+      await onCreateFeedback({
+        run_id: message.runId,
+        session_id: message.sessionId,
+        alert_id: message.alertId,
+        case_id: message.caseId,
+        source_type: "explicit_feedback",
         labels,
-        affected_tools: affectedTools,
+        confidence: "medium",
         auto_captured: false,
-        confidence: "high",
         requires_review: false,
         comment: comment.trim() || undefined,
+        metadata: {
+          analyst_action: analystAction,
+          affected_tools: affectedTools,
+        },
       });
-      setResult(response);
-      onSubmitted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(err instanceof Error ? err.message : "反馈提交失败");
     } finally {
       setSubmitting(false);
     }
@@ -133,129 +122,83 @@ function FeedbackModal({
 
   return (
     <div className="modal-backdrop" role="presentation" onClick={onClose}>
-      <section className="modal-card feedback-modal-card" role="dialog" aria-modal="true" aria-label="提交反馈" onClick={(event) => event.stopPropagation()}>
+      <section className="modal-card feedback-submit-card" role="dialog" aria-modal="true" aria-label="提交反馈" onClick={(event) => event.stopPropagation()}>
         <header className="modal-head">
           <div>
-            <h3>反馈/归因</h3>
-            <p>run_id: {context.runId}</p>
+            <h3>提交反馈</h3>
+            <p>run_id: {message.runId || "-"} · session_id: {message.sessionId || "-"}</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
             <X size={18} />
           </button>
         </header>
 
-        <div className="feedback-context">
-          <span>session: {context.sessionId}</span>
-          <span>alert: {context.alertId || "-"}</span>
-          <span>case: {context.caseId || "-"}</span>
-        </div>
-
-        <label className="form-field">
-          <span>采纳状态</span>
-          <select value={analystAction} onChange={(event) => setAnalystAction(event.target.value as typeof analystAction)}>
-            <option value="accepted">采纳</option>
-            <option value="partially_accepted">部分采纳</option>
-            <option value="rejected">不采纳</option>
-            <option value="modified_conclusion">修改结论</option>
-            <option value="requested_more_evidence">要求补充证据</option>
-          </select>
-        </label>
-
-        <div className="feedback-inline-fields">
+        <div className="feedback-submit-form">
           <label className="form-field">
-            <span>最终结论</span>
-            <input value={finalVerdict} onChange={(event) => setFinalVerdict(event.target.value)} placeholder="例如：误报 / 真实攻击 / 待观察" />
+            <span>分析师动作</span>
+            <select value={analystAction} onChange={(event) => setAnalystAction(event.target.value)}>
+              <option value="accepted">采纳</option>
+              <option value="partially_accepted">部分采纳</option>
+              <option value="rejected">不采纳</option>
+              <option value="modified_conclusion">修改结论</option>
+              <option value="requested_more_evidence">要求补证据</option>
+            </select>
           </label>
+
+          <div className="feedback-submit-group">
+            <span className="section-title">问题标签</span>
+            <div className="feedback-chip-grid">
+              {feedbackLabelOptions.map((option) => (
+                <label className="feedback-check-chip" key={option.value}>
+                  <input
+                    type="checkbox"
+                    checked={labels.includes(option.value)}
+                    onChange={() => setLabels((prev) => prev.includes(option.value) ? prev.filter((item) => item !== option.value) : [...prev, option.value])}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="feedback-submit-group">
+            <span className="section-title">关联工具</span>
+            <div className="feedback-chip-grid">
+              {tools.length ? tools.map((tool) => (
+                <label className="feedback-check-chip" key={tool}>
+                  <input
+                    type="checkbox"
+                    checked={affectedTools.includes(tool)}
+                    onChange={() => setAffectedTools((prev) => prev.includes(tool) ? prev.filter((item) => item !== tool) : [...prev, tool])}
+                  />
+                  {tool}
+                </label>
+              )) : <span className="empty-state">本次回复未捕获工具调用。</span>}
+            </div>
+          </div>
+
           <label className="form-field">
-            <span>最终风险等级</span>
-            <input value={finalSeverity} onChange={(event) => setFinalSeverity(event.target.value)} placeholder="critical / high / medium / low" />
+            <span>备注</span>
+            <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="补充说明反馈依据..." />
           </label>
-        </div>
 
-        <div className="feedback-group">
-          <span className="section-title">问题标签</span>
-          <div className="feedback-chip-grid">
-            {FEEDBACK_LABELS.map((item) => (
-              <label className={`feedback-chip ${labels.includes(item.value) ? "checked" : ""}`} key={item.value}>
-                <input
-                  type="checkbox"
-                  checked={labels.includes(item.value)}
-                  onChange={() => setLabels((prev) => prev.includes(item.value) ? prev.filter((value) => value !== item.value) : [...prev, item.value])}
-                />
-                <span>{item.label}</span>
-              </label>
-            ))}
+          {result ? (
+            <div className="success-box">
+              已采集 feedback signal：{result.signal_id}
+            </div>
+          ) : null}
+          {error ? <div className="error-box">{error}</div> : null}
+
+          <div className="modal-actions">
+            <button className="secondary-button" type="button" onClick={onClose}>关闭</button>
+            <button className="primary-button" type="button" disabled={submitting || !labels.length} onClick={submit}>
+              {submitting ? "提交中..." : "提交反馈"}
+            </button>
           </div>
-        </div>
-
-        <div className="feedback-group">
-          <span className="section-title">受影响工具</span>
-          <div className="feedback-chip-grid">
-            {toolNames.length ? toolNames.map((tool) => (
-              <label className={`feedback-chip ${affectedTools.includes(tool) ? "checked" : ""}`} key={tool}>
-                <input
-                  type="checkbox"
-                  checked={affectedTools.includes(tool)}
-                  onChange={() => setAffectedTools((prev) => prev.includes(tool) ? prev.filter((value) => value !== tool) : [...prev, tool])}
-                />
-                <span>{tool}</span>
-              </label>
-            )) : <div className="empty-state">本次回复未捕获工具调用。</div>}
-          </div>
-        </div>
-
-        <label className="form-field">
-          <span>备注</span>
-          <textarea value={comment} onChange={(event) => setComment(event.target.value)} placeholder="补充说明反馈原因或期望优化方向" />
-        </label>
-
-        {error ? <div className="error-box feedback-error">{error}</div> : null}
-        {result ? <FeedbackResult result={result} /> : null}
-
-        <div className="modal-actions">
-          <button className="secondary-button" type="button" onClick={onClose}>关闭</button>
-          <button className="primary-button" type="button" onClick={submitFeedback} disabled={submitting}>
-            {submitting ? "提交中..." : "提交反馈"}
-          </button>
         </div>
       </section>
     </div>
   );
-}
-
-function FeedbackResult({ result }: { result: FeedbackResponse }) {
-  const attributionType = stringValue(result.attribution.attribution_type) || "-";
-  const proposalTitle = result.proposal ? stringValue(result.proposal.title) || "已生成待审建议" : "未生成待审建议";
-  return (
-    <div className="feedback-result">
-      <strong>归因：{attributionType}</strong>
-      <span>{proposalTitle}</span>
-    </div>
-  );
-}
-
-function extractRunContext(message: ChatMessage, events: StreamLogEvent[]): RunContext | undefined {
-  let runId = message.runId;
-  let sessionId = message.sessionId;
-  let alertId = message.alertId;
-  let caseId = message.caseId;
-
-  for (const event of events) {
-    if (!isRecord(event.data)) continue;
-    runId = runId || stringValue(event.data.run_id);
-    sessionId = sessionId || stringValue(event.data.session_id);
-    alertId = alertId || stringValue(event.data.alert_id);
-    caseId = caseId || stringValue(event.data.case_id);
-  }
-
-  if (!runId || !sessionId) return undefined;
-  return {
-    runId,
-    sessionId,
-    alertId,
-    caseId,
-    activity: message.agentActivity || extractAgentActivity(events),
-  };
 }
 
 function ResponseDetailModal({ message, events, onClose }: { message: ChatMessage; events: StreamLogEvent[]; onClose: () => void }) {

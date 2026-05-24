@@ -6,7 +6,7 @@
 
 - 不重写 Claude Agent loop。
 - 通过 Docker 容器封装 Claude Agent SDK / Claude Code Runtime。
-- 容器内 Claude Code 配置路径与原生 Claude Code 保持一致：`/root/.claude/*`、`/root/.claude.json`、`/workspace/*`。
+- 通过三套 Runtime Profile 隔离主 Agent、反馈归因 Agent 和优化建议 Agent：`/main-workspace`、`/attribution-workspace`、`/proposal-workspace` 与独立 `claude-roots/*`。
 - 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。
 
 ## 目录结构
@@ -30,7 +30,7 @@
 │   ├── .env.example
 │   ├── .env                           # 本地环境变量，不提交
 │   └── volume/
-│       ├── workspace/
+│       ├── main-workspace/
 │       │   ├── CLAUDE.md                # 主 Agent 指令
 │       │   ├── CLAUDE.local.md          # 本地私有指令，默认 gitignored
 │       │   ├── agent.yaml               # 平台自定义元配置
@@ -46,15 +46,27 @@
 │       │   │   └── output-styles/
 │       │   ├── hooks/                   # 可选外部 hook 脚本
 │       │   └── mcp_servers/             # 示例 MCP server
-│       ├── claude-root/
-│       │   ├── .claude/                 # 用户级 Claude Code 配置
-│       │   └── .claude.json             # Claude Code 全局状态，不提交
+│       ├── attribution-workspace/
+│       ├── proposal-workspace/
+│       ├── claude-roots/
+│       │   ├── main/
+│       │   ├── attribution/
+│       │   └── proposal/
 │       ├── data/
 │       │   ├── sessions/                # API session -> Claude SDK session 映射
 │       │   ├── transcripts/             # 预留 transcript 持久化目录
 │       │   ├── uploads/                 # 预留用户上传文件目录
 │       │   ├── outputs/                 # 预留 Agent 输出文件目录
-│       │   └── agent-memory/            # 预留 API 侧 Agent 记忆/缓存目录
+│       │   ├── agent-memory/            # 预留 API 侧 Agent 记忆/缓存目录
+│       │   ├── feedback-signals/
+│       │   ├── soc-events/
+│       │   ├── pending-correlations/
+│       │   ├── feedback-cases/
+│       │   ├── evidence-packages/
+│       │   ├── feedback-analysis/jobs/
+│       │   ├── optimization-proposals/
+│       │   ├── optimization-tasks/
+│       │   └── agent-versions/main/
 │       └── langfuse/                    # 可选 Langfuse profile 运行数据，不提交
 │           ├── postgres/
 │           ├── clickhouse/
@@ -91,7 +103,7 @@ Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt
 
 `LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `docker/volume/data/`、`docker/volume/claude-root/`、`docker/volume/workspace/` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `docker/volume/data/`、三个 workspace 和 `docker/volume/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 
@@ -162,25 +174,34 @@ http://localhost:55173
 
 ## 反馈优化闭环
 
-Runtime 支持告警研判场景的反馈归因闭环。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在数据卷中写入本次回答的轻量运行记录。前端聊天区可以填写 `Alert ID` / `Case ID`，assistant 回复完成后可提交“反馈/归因”，右侧 Inspector 的 Feedback 视图会展示反馈、归因和待审优化建议。
+Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在数据卷中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、优化建议和审批在 Feedback 工作台中按 `feedback case -> evidence package -> attribution job -> proposal job` 链路处理。
 
 后端接口：
 
-- `POST /api/feedback`：提交某次 Agent 回复的显式反馈。
-- `POST /api/feedback/events`：接收 SOC UI / 告警平台推送的关键操作事件。
-- `GET /api/feedback`：按 `run_id/session_id/alert_id/case_id` 查询反馈、事件、归因和待关联记录。
+- `POST /api/feedback-signals`：采集聊天显式反馈、隐式反馈或人工标注，不直接生成 proposal。
+- `POST /api/soc-events`：采集 SOC UI / 告警平台推送的关键操作事件，不直接生成 proposal。
+- `POST /api/feedback-cases`：从反馈信号和 SOC 事件创建反馈处置单。
+- `POST /api/feedback-cases/{feedback_case_id}/evidence-packages`：固化证据包。
+- `POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`：启动归因分析 Agent。
+- `POST /api/feedback-cases/{feedback_case_id}/proposal-jobs`：启动优化建议 Agent。
 - `GET /api/optimization-proposals`：查看待人工审核的优化建议。
+- `GET /api/optimization-proposals/{proposal_id}`：查看单条优化建议。
+- `POST /api/optimization-proposals/{proposal_id}/approve|reject|request-more-analysis`：审批、拒绝或要求补充分析。
+- `POST /api/optimization-proposals/{proposal_id}/tasks`：为已批准建议创建优化任务。
+- `GET /api/agent-versions/main`：查看主 Agent 受管配置版本。
 
 数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `docker/volume/data/`：
 
-- `/data/feedback/runs.jsonl`
-- `/data/feedback/events.jsonl`
-- `/data/feedback/feedback.jsonl`
-- `/data/feedback/attributions.jsonl`
-- `/data/feedback/pending_correlations.jsonl`
-- `/data/optimization-proposals/proposals.jsonl`
+- `/data/feedback-signals/`
+- `/data/soc-events/`
+- `/data/pending-correlations/`
+- `/data/feedback-cases/`
+- `/data/evidence-packages/`
+- `/data/feedback-analysis/jobs/`
+- `/data/optimization-proposals/`
+- `/data/agent-versions/main/`
 
-MVP 只生成待审 proposal，不会自动修改 `CLAUDE.md`、skills、agents、MCP 或权限配置。
+正式设计文档见 [FEEDBACK_OPTIMIZATION_MULTI_AGENT_ARCHITECTURE.md](docs/FEEDBACK_OPTIMIZATION_MULTI_AGENT_ARCHITECTURE.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。
 
 ## Langfuse 监控
 
@@ -357,36 +378,37 @@ curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/sessions"
 
 ```yaml
 volumes:
-  - ./volume/workspace:/workspace
+  - ./volume/main-workspace:/main-workspace
+  - ./volume/attribution-workspace:/attribution-workspace
+  - ./volume/proposal-workspace:/proposal-workspace
   - ./volume/data:/data
-  - ./volume/claude-root:/root
+  - ./volume/claude-roots/main:/claude-roots/main
+  - ./volume/claude-roots/attribution:/claude-roots/attribution
+  - ./volume/claude-roots/proposal:/claude-roots/proposal
 ```
 
 你可以只改宿主机目录，不需要改镜像：
 
-- `docker/volume/claude-root/.claude/settings.json`
-- `docker/volume/claude-root/.claude/CLAUDE.md`
-- `docker/volume/claude-root/.claude/agents/*.md`
-- `docker/volume/claude-root/.claude/skills/*/SKILL.md`
-- `docker/volume/claude-root/.claude.json`
-- `docker/volume/workspace/CLAUDE.md`
-- `docker/volume/workspace/CLAUDE.local.md`
-- `docker/volume/workspace/.claude/settings.json`
-- `docker/volume/workspace/.claude/settings.local.json`
-- `docker/volume/workspace/.claude/agents/*.md`
-- `docker/volume/workspace/.claude/skills/*/SKILL.md`
-- `docker/volume/workspace/.claude/commands/*.md`
-- `docker/volume/workspace/.claude/rules/*`
-- `docker/volume/workspace/.claude/output-styles/*.md`
-- `docker/volume/workspace/.mcp.json`
-- `docker/volume/workspace/.worktreeinclude`
-- `docker/volume/workspace/agent.yaml`
+- `docker/volume/main-workspace/CLAUDE.md`
+- `docker/volume/main-workspace/CLAUDE.local.md`
+- `docker/volume/main-workspace/.claude/settings.json`
+- `docker/volume/main-workspace/.claude/settings.local.json`
+- `docker/volume/main-workspace/.claude/agents/*.md`
+- `docker/volume/main-workspace/.claude/skills/*/SKILL.md`
+- `docker/volume/main-workspace/.claude/commands/*.md`
+- `docker/volume/main-workspace/.claude/rules/*`
+- `docker/volume/main-workspace/.claude/output-styles/*.md`
+- `docker/volume/main-workspace/.mcp.json`
+- `docker/volume/main-workspace/.worktreeinclude`
+- `docker/volume/main-workspace/agent.yaml`
+- `docker/volume/attribution-workspace/CLAUDE.md`
+- `docker/volume/proposal-workspace/CLAUDE.md`
 
 `docker/volume/data/` 中的运行态文件默认不提交到 git；仓库只保留 `.gitkeep` 以固定目录结构。
 
 ## subagent 文件格式
 
-示例：`docker/volume/workspace/.claude/agents/security-triage.md`
+示例：`docker/volume/main-workspace/.claude/agents/security-triage.md`
 
 ```markdown
 ---
@@ -411,7 +433,7 @@ memory: project
 
 ## skill 文件格式
 
-示例：`docker/volume/workspace/.claude/skills/threat-triage/SKILL.md`
+示例：`docker/volume/main-workspace/.claude/skills/threat-triage/SKILL.md`
 
 ```markdown
 ---
@@ -499,9 +521,15 @@ docker/volume/data/sessions/*.json
 ```bash
 make setup
 source .venv/bin/activate
-export WORKSPACE_DIR=$PWD/docker/volume/workspace
+export WORKSPACE_DIR=$PWD/docker/volume/main-workspace
+export MAIN_WORKSPACE_DIR=$PWD/docker/volume/main-workspace
+export ATTRIBUTION_WORKSPACE_DIR=$PWD/docker/volume/attribution-workspace
+export PROPOSAL_WORKSPACE_DIR=$PWD/docker/volume/proposal-workspace
 export DATA_DIR=$PWD/docker/volume/data
-export CLAUDE_ROOT=$PWD/docker/volume/claude-root
+export CLAUDE_ROOT=$PWD/docker/volume/claude-roots/main
+export MAIN_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/main
+export ATTRIBUTION_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/attribution
+export PROPOSAL_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/proposal
 export CLAUDE_HOME=$CLAUDE_ROOT/.claude
 .venv/bin/python -m uvicorn app.main:app --reload --host "${API_HOST:-127.0.0.1}" --port "${API_PORT:-8080}"
 ```

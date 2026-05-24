@@ -1,0 +1,17 @@
+agent:
+  id: feedback-proposal
+  name: 反馈优化建议 Agent
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: feedback-proposal
+
+paths:
+  workspace: /proposal-workspace
+  claude_home: /claude-roots/proposal/.claude
+  data_root: /data
+
+outputs:
+  schema: proposal-output/v1
+  job_root: /data/feedback-analysis/jobs
+  proposal_root: /data/optimization-proposals

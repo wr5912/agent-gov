@@ -1,13 +1,13 @@
-import json
+from __future__ import annotations
+
 import uuid
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from sqlalchemy import select
 
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+from .runtime_db import SessionRecordModel, make_session_factory, runtime_db_path_from_data_dir, utc_now
 
 
 @dataclass
@@ -22,19 +22,15 @@ class LocalSession:
 
 
 class LocalSessionStore:
-    """Tiny JSON-file session store for the API layer.
-
-    Claude Code still owns its internal transcript/session storage. This store only maps
-    client-visible session ids to Claude SDK session ids and keeps light metadata.
-    """
+    """SQLite-backed session store for API-visible session mappings."""
 
     def __init__(self, root: Path) -> None:
+        # Kept as ``root`` for API compatibility with the previous file store. The
+        # actual persistent state is DATA_DIR/runtime.sqlite3.
         self.root = root
-        self.root.mkdir(parents=True, exist_ok=True)
-
-    def _path(self, session_id: str) -> Path:
-        safe = session_id.replace("/", "_")
-        return self.root / f"{safe}.json"
+        self.data_dir = root.parent
+        self.db_path = runtime_db_path_from_data_dir(self.data_dir)
+        self.Session = make_session_factory(self.db_path)
 
     def create(self, metadata: Optional[dict[str, Any]] = None) -> LocalSession:
         session = LocalSession(session_id=str(uuid.uuid4()), metadata=metadata or {})
@@ -52,30 +48,53 @@ class LocalSessionStore:
         return self.create(metadata=metadata)
 
     def get(self, session_id: str) -> Optional[LocalSession]:
-        path = self._path(session_id)
-        if not path.exists():
-            return None
-        return LocalSession(**json.loads(path.read_text(encoding="utf-8")))
+        with self.Session() as db:
+            record = db.get(SessionRecordModel, session_id)
+            return self._to_session(record) if record else None
 
     def save(self, session: LocalSession) -> None:
         session.updated_at = utc_now()
-        self._path(session.session_id).write_text(
-            json.dumps(asdict(session), ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        with self.Session.begin() as db:
+            existing = db.get(SessionRecordModel, session.session_id)
+            if existing:
+                existing.sdk_session_id = session.sdk_session_id
+                existing.updated_at = session.updated_at
+                existing.title = session.title
+                existing.turns = session.turns
+                existing.metadata_json = session.metadata
+            else:
+                db.add(
+                    SessionRecordModel(
+                        session_id=session.session_id,
+                        sdk_session_id=session.sdk_session_id,
+                        created_at=session.created_at,
+                        updated_at=session.updated_at,
+                        title=session.title,
+                        turns=session.turns,
+                        metadata_json=session.metadata,
+                    )
+                )
 
     def list(self) -> list[LocalSession]:
-        sessions: list[LocalSession] = []
-        for path in sorted(self.root.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                sessions.append(LocalSession(**json.loads(path.read_text(encoding="utf-8"))))
-            except Exception:
-                continue
-        return sessions
+        with self.Session() as db:
+            records = db.scalars(select(SessionRecordModel).order_by(SessionRecordModel.updated_at.desc())).all()
+            return [self._to_session(record) for record in records]
 
     def delete(self, session_id: str) -> bool:
-        path = self._path(session_id)
-        if not path.exists():
-            return False
-        path.unlink()
-        return True
+        with self.Session.begin() as db:
+            record = db.get(SessionRecordModel, session_id)
+            if not record:
+                return False
+            db.delete(record)
+            return True
+
+    def _to_session(self, record: SessionRecordModel) -> LocalSession:
+        return LocalSession(
+            session_id=record.session_id,
+            sdk_session_id=record.sdk_session_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            title=record.title,
+            turns=record.turns,
+            metadata=record.metadata_json or {},
+        )

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgents, getConfigMapping, getFeedback, getHealth, getOptimizationProposals, getSessions, getSkills, streamChat } from "./api/runtime";
+import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentVersions, getConfigMapping, getCurrentAgentVersion, getHealth, getSessions, getSkills, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
+import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import type { AgentActivity, AgentInfo, ChatMessage, ConfigMappingResponse, FeedbackQueryResponse, OptimizationProposal, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { FeedbackSignalCreateRequest, FeedbackSignalRecord, RuntimeIntegrationContext } from "./types/feedback";
+import type { AgentActivity, AgentInfo, AgentVersionSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import "./styles.css";
 
 function newId(prefix: string) {
@@ -56,8 +58,8 @@ export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [configMapping, setConfigMapping] = useState<ConfigMappingResponse | null>(null);
-  const [feedbackData, setFeedbackData] = useState<FeedbackQueryResponse | null>(null);
-  const [proposals, setProposals] = useState<OptimizationProposal[]>([]);
+  const [currentAgentVersion, setCurrentAgentVersion] = useState<AgentVersionSummary | null>(null);
+  const [agentVersions, setAgentVersions] = useState<AgentVersionSummary[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [allowedTools, setAllowedTools] = useState("Read,Grep,Glob,mcp__sec-ops-data__*");
@@ -71,7 +73,10 @@ export default function App() {
   const [streamEvents, setStreamEvents] = useState<StreamLogEvent[]>([]);
   const [lastError, setLastError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
+  const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback">("chat");
+  const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
 
@@ -83,6 +88,31 @@ export default function App() {
   const langfuseUrl = useMemo(() => defaultLangfuseUrl(), []);
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
+  const feedbackRuntimeContext = useMemo<RuntimeIntegrationContext | undefined>(() => {
+    for (let index = activeMessages.length - 1; index >= 0; index -= 1) {
+      const message = activeMessages[index];
+      if (message.role !== "assistant") continue;
+      if (message.runId || message.sessionId || message.sdkSessionId || message.agentVersionId || message.alertId || message.caseId) {
+        return {
+          runId: message.runId,
+          sessionId: message.sessionId || activeSessionId,
+          sdkSessionId: message.sdkSessionId,
+          agentVersionId: message.agentVersionId,
+          alertId: message.alertId,
+          caseId: message.caseId,
+          sourceSystem: "agent-playground",
+        };
+      }
+    }
+    if (!activeSessionId && !alertId.trim() && !caseId.trim() && !currentAgentVersion?.agent_version_id) return undefined;
+    return {
+      sessionId: activeSessionId,
+      alertId: alertId.trim() || undefined,
+      caseId: caseId.trim() || undefined,
+      agentVersionId: currentAgentVersion?.agent_version_id,
+      sourceSystem: "agent-playground",
+    };
+  }, [activeMessages, activeSessionId, alertId, caseId, currentAgentVersion]);
 
   const mergedSessions = useMemo(() => {
     const localOnly = Object.keys(messagesBySession)
@@ -117,12 +147,12 @@ export default function App() {
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
-      const [feedbackRes, proposalsRes] = await Promise.all([
-        getFeedback(effectiveClientConfig),
-        getOptimizationProposals(effectiveClientConfig),
+      const [currentVersionRes, versionsRes] = await Promise.all([
+        getCurrentAgentVersion(effectiveClientConfig),
+        getAgentVersions(effectiveClientConfig),
       ]);
-      setFeedbackData(feedbackRes);
-      setProposals(proposalsRes);
+      setCurrentAgentVersion(currentVersionRes);
+      setAgentVersions(versionsRes);
     } catch (error) {
       setLastError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -130,13 +160,23 @@ export default function App() {
     }
   }, [activeSessionId, effectiveClientConfig, setActiveSessionId]);
 
-  const refreshFeedback = useCallback(async () => {
-    const [feedbackRes, proposalsRes] = await Promise.all([
-      getFeedback(effectiveClientConfig),
-      getOptimizationProposals(effectiveClientConfig),
-    ]);
-    setFeedbackData(feedbackRes);
-    setProposals(proposalsRes);
+  const refreshAll = useCallback(async () => {
+    await refresh();
+    setFeedbackRefreshToken((prev) => prev + 1);
+  }, [refresh]);
+
+  const refreshVersions = useCallback(async () => {
+    setVersionLoading(true);
+    try {
+      const [currentVersionRes, versionsRes] = await Promise.all([
+        getCurrentAgentVersion(effectiveClientConfig),
+        getAgentVersions(effectiveClientConfig),
+      ]);
+      setCurrentAgentVersion(currentVersionRes);
+      setAgentVersions(versionsRes);
+    } finally {
+      setVersionLoading(false);
+    }
   }, [effectiveClientConfig]);
 
   useEffect(() => {
@@ -276,6 +316,8 @@ export default function App() {
           onResult: (result) => {
             if (!isRecord(result)) return;
             const runId = typeof result.run_id === "string" ? result.run_id : undefined;
+            const resultSdkSessionId = typeof result.sdk_session_id === "string" ? result.sdk_session_id : undefined;
+            const resultAgentVersionId = typeof result.agent_version_id === "string" ? result.agent_version_id : undefined;
             const resultSessionId = typeof result.session_id === "string" ? result.session_id : sessionId;
             const resultAlertId = typeof result.alert_id === "string" ? result.alert_id : alertId.trim() || undefined;
             const resultCaseId = typeof result.case_id === "string" ? result.case_id : caseId.trim() || undefined;
@@ -287,6 +329,8 @@ export default function App() {
                 next[next.length - 1] = {
                   ...last,
                   runId,
+                  sdkSessionId: resultSdkSessionId,
+                  agentVersionId: resultAgentVersionId,
                   sessionId: resultSessionId,
                   alertId: resultAlertId,
                   caseId: resultCaseId,
@@ -311,7 +355,6 @@ export default function App() {
             setStreaming(false);
             abortRef.current = null;
             refresh();
-            refreshFeedback().catch(() => undefined);
           },
         },
         controller.signal,
@@ -347,66 +390,94 @@ export default function App() {
     setStreaming(false);
   }
 
+  async function submitFeedback(payload: FeedbackSignalCreateRequest): Promise<FeedbackSignalRecord> {
+    const result = await createFeedbackSignal(effectiveClientConfig, payload);
+    setFeedbackRefreshToken((prev) => prev + 1);
+    return result;
+  }
+
+  function showFeedbackWindow() {
+    setActiveWindow("feedback");
+  }
+
+  function showPlaygroundWindow() {
+    setActiveWindow("chat");
+  }
+
   return (
     <div className="app-shell">
       <Topbar
         health={health}
         apiDocsUrl={apiDocsUrl}
         langfuseUrl={langfuseUrl}
+        activeWindow={activeWindow}
         loading={loading}
-        onRefresh={refresh}
+        onRefresh={refreshAll}
+        onOpenFeedback={showFeedbackWindow}
+        onOpenPlayground={showPlaygroundWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      <div className="layout">
-        <Sidebar
-          sessions={mergedSessions}
-          activeSessionId={activeSessionId}
-          agents={agents}
-          skills={skills}
-          selectedAgent={selectedAgent}
-          selectedSkills={selectedSkills}
-          onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
-          onNewSession={createSession}
-          onDeleteSession={removeSession}
-          onRefresh={refresh}
-          onSelectAgent={setSelectedAgent}
-          onToggleSkill={toggleSkill}
-        />
-        <ChatPanel
-          messages={activeMessages}
+      {activeWindow === "feedback" ? (
+        <ExternalFeedbackWorkspace
           clientConfig={effectiveClientConfig}
-          input={input}
-          streaming={streaming}
-          activeSessionId={activeSessionId}
-          alertId={alertId}
-          caseId={caseId}
-          allowedTools={allowedTools}
-          disallowedTools={disallowedTools}
-          maxTurns={maxTurns}
-          skillsMode={skillsMode}
-          onInputChange={setInput}
-          onAlertIdChange={setAlertId}
-          onCaseIdChange={setCaseId}
-          onAllowedToolsChange={setAllowedTools}
-          onDisallowedToolsChange={setDisallowedTools}
-          onMaxTurnsChange={setMaxTurns}
-          onSkillsModeChange={setSkillsMode}
-          onSend={sendMessage}
-          onStop={stopStream}
-          onFeedbackSubmitted={() => refreshFeedback().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
+          runtimeContext={feedbackRuntimeContext}
+          monitoringConfig={{ langfuseUrl }}
+          currentAgentVersion={currentAgentVersion}
+          agentVersions={agentVersions}
+          versionLoading={versionLoading}
+          versionError={lastError}
+          onRefreshVersions={() => refreshVersions().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
+          refreshToken={feedbackRefreshToken}
+          onFeedbackChanged={() => setFeedbackRefreshToken((prev) => prev + 1)}
         />
-        <Inspector
-          health={health}
-          agents={agents}
-          skills={skills}
-          configMapping={configMapping}
-          streamEvents={streamEvents}
-          feedbackData={feedbackData}
-          proposals={proposals}
-          onRefreshFeedback={() => refreshFeedback().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
-          lastError={lastError}
-        />
-      </div>
+      ) : (
+        <div className="layout">
+          <Sidebar
+            sessions={mergedSessions}
+            activeSessionId={activeSessionId}
+            agents={agents}
+            skills={skills}
+            selectedAgent={selectedAgent}
+            selectedSkills={selectedSkills}
+            onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
+            onNewSession={createSession}
+            onDeleteSession={removeSession}
+            onRefresh={refresh}
+            onSelectAgent={setSelectedAgent}
+            onToggleSkill={toggleSkill}
+          />
+          <ChatPanel
+            messages={activeMessages}
+            input={input}
+            streaming={streaming}
+            activeSessionId={activeSessionId}
+            alertId={alertId}
+            caseId={caseId}
+            allowedTools={allowedTools}
+            disallowedTools={disallowedTools}
+            maxTurns={maxTurns}
+            skillsMode={skillsMode}
+            onInputChange={setInput}
+            onAlertIdChange={setAlertId}
+            onCaseIdChange={setCaseId}
+            onAllowedToolsChange={setAllowedTools}
+            onDisallowedToolsChange={setDisallowedTools}
+            onMaxTurnsChange={setMaxTurns}
+            onSkillsModeChange={setSkillsMode}
+            onSend={sendMessage}
+            onStop={stopStream}
+            onCreateFeedback={submitFeedback}
+          />
+          <Inspector
+            health={health}
+            agents={agents}
+            skills={skills}
+            configMapping={configMapping}
+            streamEvents={streamEvents}
+            lastError={lastError}
+          />
+        </div>
+      )}
       <SettingsModal
         open={settingsOpen}
         config={effectiveClientConfig}

@@ -7,12 +7,12 @@ COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 
 setup: langfuse-dirs
 	cp -n docker/.env.example docker/.env || true
-	mkdir -p docker/volume/workspace docker/volume/claude-root/.claude/skills docker/volume/claude-root/.claude/agents
-	mkdir -p docker/volume/claude-root/.claude/commands docker/volume/claude-root/.claude/output-styles
+	mkdir -p docker/volume/main-workspace docker/volume/attribution-workspace docker/volume/proposal-workspace
+	mkdir -p docker/volume/claude-roots/main/.claude docker/volume/claude-roots/attribution/.claude docker/volume/claude-roots/proposal/.claude
 	mkdir -p docker/volume/data/sessions docker/volume/data/transcripts docker/volume/data/uploads docker/volume/data/outputs docker/volume/data/agent-memory
-	@if [ ! -f docker/volume/claude-root/.claude/settings.json ]; then printf '{}\n' > docker/volume/claude-root/.claude/settings.json; fi
-	@if [ ! -f docker/volume/claude-root/.claude/CLAUDE.md ]; then printf '# User Claude Instructions\n' > docker/volume/claude-root/.claude/CLAUDE.md; fi
-	@if [ ! -f docker/volume/claude-root/.claude.json ]; then printf '{}\n' > docker/volume/claude-root/.claude.json; fi
+	mkdir -p docker/volume/data/feedback-signals docker/volume/data/soc-events docker/volume/data/pending-correlations docker/volume/data/feedback-cases
+	mkdir -p docker/volume/data/evidence-packages docker/volume/data/feedback-analysis/jobs docker/volume/data/optimization-proposals docker/volume/data/optimization-tasks docker/volume/data/agent-versions/main
+	@if [ ! -f docker/volume/claude-roots/main/.claude/settings.json ]; then printf '{}\n' > docker/volume/claude-roots/main/.claude/settings.json; fi
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install --python $(PYTHON) -r requirements.txt pytest

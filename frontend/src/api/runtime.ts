@@ -1,13 +1,37 @@
 import type {
+  AttributionOutput,
+  EvidencePackageFileRecord,
+  EvidencePackageRecord,
+  FeedbackCaseCreateRequest,
+  FeedbackCaseRecord,
+  FeedbackFilters,
+  FeedbackAnalysisJobRecord,
+  FeedbackRunRecord,
+  FeedbackSignalCreateRequest,
+  FeedbackSignalRecord,
+  FeedbackWorkbenchData,
+  OptimizationProposalRecord,
+  OptimizationProposalReviewRequest,
+  OptimizationProposalReviewResponse,
+  OptimizationTaskCreateRequest,
+  OptimizationTaskRecord,
+  PendingCorrelationRecord,
+  PendingCorrelationResolveRequest,
+  ProposalOutput,
+  SocEventCreateRequest,
+  SocEventCreateResponse,
+  SocEventRecord,
+} from "../types/feedback";
+import type {
   AgentInfo,
+  AgentVersionDiff,
+  AgentVersionManifest,
+  AgentVersionRestoreRequest,
+  AgentVersionRestoreResponse,
+  AgentVersionSnapshotRequest,
+  AgentVersionSummary,
   ChatRequest,
   ConfigMappingResponse,
-  FeedbackCreateRequest,
-  FeedbackEventIngestRequest,
-  FeedbackEventIngestResponse,
-  FeedbackQueryResponse,
-  FeedbackResponse,
-  OptimizationProposal,
   RuntimeClientConfig,
   RuntimeHealth,
   SessionInfo,
@@ -99,32 +123,272 @@ export function getSkills(config: RuntimeClientConfig) {
   return requestJson<SkillInfo[]>(config, "/api/skills");
 }
 
+export const runtimeApi = {
+  health: getHealth,
+  sessions: getSessions,
+  agents: getAgents,
+  skills: getSkills,
+};
+
 export function getConfigMapping(config: RuntimeClientConfig) {
   return requestJson<ConfigMappingResponse>(config, "/api/config");
 }
 
-export function createFeedback(config: RuntimeClientConfig, payload: FeedbackCreateRequest) {
-  return requestJson<FeedbackResponse>(config, "/api/feedback", {
+function feedbackQueryString(filters?: FeedbackFilters): string {
+  const params = new URLSearchParams();
+  if (!filters) return "";
+  for (const [key, value] of Object.entries(filters)) {
+    if (value === undefined || value === null || value === "") continue;
+    params.set(key, String(value));
+  }
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<FeedbackRunRecord[]>(config, `/api/agent-runs${feedbackQueryString(filters)}`);
+}
+
+export function getFeedbackSignals(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<FeedbackSignalRecord[]>(config, `/api/feedback-signals${feedbackQueryString(filters)}`);
+}
+
+export function createFeedbackSignal(config: RuntimeClientConfig, payload: FeedbackSignalCreateRequest) {
+  return requestJson<FeedbackSignalRecord>(config, "/api/feedback-signals", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
-export function ingestFeedbackEvent(config: RuntimeClientConfig, payload: FeedbackEventIngestRequest) {
-  return requestJson<FeedbackEventIngestResponse>(config, "/api/feedback/events", {
+export function getSocEvents(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<SocEventRecord[]>(config, `/api/soc-events${feedbackQueryString(filters)}`);
+}
+
+export function createSocEvent(config: RuntimeClientConfig, payload: SocEventCreateRequest) {
+  return requestJson<SocEventCreateResponse>(config, "/api/soc-events", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
-export function getFeedback(config: RuntimeClientConfig) {
-  return requestJson<FeedbackQueryResponse>(config, "/api/feedback");
+export function getPendingCorrelations(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<PendingCorrelationRecord[]>(
+    config,
+    `/api/pending-correlations${feedbackQueryString(filters)}`,
+  );
 }
 
-export function getOptimizationProposals(config: RuntimeClientConfig) {
-  return requestJson<OptimizationProposal[]>(config, "/api/optimization-proposals");
+export function resolvePendingCorrelation(
+  config: RuntimeClientConfig,
+  pendingId: string,
+  payload: PendingCorrelationResolveRequest,
+) {
+  return requestJson<PendingCorrelationRecord>(
+    config,
+    `/api/pending-correlations/${encodeURIComponent(pendingId)}/resolve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function getFeedbackCases(config: RuntimeClientConfig, filters?: Pick<FeedbackFilters, "status" | "limit"> & { q?: string }) {
+  return requestJson<FeedbackCaseRecord[]>(config, `/api/feedback-cases${feedbackQueryString(filters)}`);
+}
+
+export function getFeedbackCase(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<FeedbackCaseRecord>(config, `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}`);
+}
+
+export function createFeedbackCase(config: RuntimeClientConfig, payload: FeedbackCaseCreateRequest) {
+  return requestJson<FeedbackCaseRecord>(config, "/api/feedback-cases", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createEvidencePackage(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<EvidencePackageRecord>(
+    config,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/evidence-packages`,
+    { method: "POST" },
+  );
+}
+
+export function getEvidencePackage(config: RuntimeClientConfig, evidencePackageId: string) {
+  return requestJson<EvidencePackageRecord>(
+    config,
+    `/api/evidence-packages/${encodeURIComponent(evidencePackageId)}`,
+  );
+}
+
+export function getEvidencePackageFile(config: RuntimeClientConfig, evidencePackageId: string, fileName: string) {
+  return requestJson<EvidencePackageFileRecord>(
+    config,
+    `/api/evidence-packages/${encodeURIComponent(evidencePackageId)}/files/${encodeURIComponent(fileName)}`,
+  );
+}
+
+export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs`,
+    { method: "POST" },
+  );
+}
+
+export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs`,
+    { method: "POST" },
+  );
+}
+
+export function getFeedbackAnalysisJob(config: RuntimeClientConfig, jobId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}`,
+  );
+}
+
+export function getAttributionOutput(
+  config: RuntimeClientConfig,
+  jobId: string,
+) {
+  return requestJson<AttributionOutput>(
+    config,
+    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/attribution`,
+  );
+}
+
+export function getProposalOutput(config: RuntimeClientConfig, jobId: string) {
+  return requestJson<ProposalOutput>(
+    config,
+    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal`,
+  );
+}
+
+export function getOptimizationProposals(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<OptimizationProposalRecord[]>(
+    config,
+    `/api/optimization-proposals${feedbackQueryString(filters)}`,
+  );
+}
+
+export function getOptimizationProposal(config: RuntimeClientConfig, proposalId: string) {
+  return requestJson<OptimizationProposalRecord>(
+    config,
+    `/api/optimization-proposals/${encodeURIComponent(proposalId)}`,
+  );
+}
+
+export function reviewOptimizationProposal(
+  config: RuntimeClientConfig,
+  proposalId: string,
+  payload: OptimizationProposalReviewRequest,
+) {
+  const action = payload.action || "approve";
+  const routeByAction: Record<string, string> = {
+    approve: "approve",
+    reject: "reject",
+    request_more_analysis: "request-more-analysis",
+  };
+  const route = routeByAction[action] || "request-more-analysis";
+  return requestJson<OptimizationProposalReviewResponse>(
+    config,
+    `/api/optimization-proposals/${encodeURIComponent(proposalId)}/${route}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment: payload.comment }),
+    },
+  );
+}
+
+export function getOptimizationTasks(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<OptimizationTaskRecord[]>(
+    config,
+    `/api/optimization-tasks${feedbackQueryString(filters)}`,
+  );
+}
+
+export function createOptimizationTask(config: RuntimeClientConfig, payload: OptimizationTaskCreateRequest) {
+  if (!payload.proposal_id) {
+    throw new Error("proposal_id is required");
+  }
+  return requestJson<OptimizationTaskRecord>(config, `/api/optimization-proposals/${encodeURIComponent(payload.proposal_id)}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getCurrentAgentVersion(config: RuntimeClientConfig) {
+  return requestJson<AgentVersionSummary>(config, "/api/agent-versions/main/current");
+}
+
+export function getAgentVersions(config: RuntimeClientConfig) {
+  return requestJson<AgentVersionSummary[]>(config, "/api/agent-versions/main");
+}
+
+export function getAgentVersion(config: RuntimeClientConfig, versionId: string) {
+  return requestJson<AgentVersionManifest>(config, `/api/agent-versions/main/${encodeURIComponent(versionId)}`);
+}
+
+export function createAgentVersionSnapshot(config: RuntimeClientConfig, payload: AgentVersionSnapshotRequest) {
+  return requestJson<AgentVersionSummary>(config, "/api/agent-versions/main/snapshots", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function restoreAgentVersion(config: RuntimeClientConfig, versionId: string, payload: AgentVersionRestoreRequest) {
+  return requestJson<AgentVersionRestoreResponse>(
+    config,
+    `/api/agent-versions/main/${encodeURIComponent(versionId)}/rollback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function diffAgentVersions(config: RuntimeClientConfig, fromVersionId: string, toVersionId: string) {
+  const params = new URLSearchParams({ from_version_id: fromVersionId, to_version_id: toVersionId });
+  return requestJson<AgentVersionDiff>(config, `/api/agent-versions/main/diff?${params.toString()}`);
+}
+
+export async function getFeedbackWorkbenchData(
+  config: RuntimeClientConfig,
+  filters: FeedbackFilters = { limit: 500 },
+): Promise<FeedbackWorkbenchData> {
+  const limit = filters.limit ?? 500;
+  const [runs, signals, events, pendingCorrelations, cases, proposals, tasks] = await Promise.all([
+    getAgentRuns(config, { limit }),
+    getFeedbackSignals(config, { limit }),
+    getSocEvents(config, { limit }),
+    getPendingCorrelations(config, { limit }),
+    getFeedbackCases(config, { limit }),
+    getOptimizationProposals(config, { limit }),
+    getOptimizationTasks(config, { limit }).catch(() => []),
+  ]);
+  return {
+    runs,
+    signals,
+    events,
+    pending_correlations: pendingCorrelations,
+    cases,
+    proposals,
+    tasks,
+  };
 }
 
 export interface StreamChatHandlers {

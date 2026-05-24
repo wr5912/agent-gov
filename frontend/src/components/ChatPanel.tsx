@@ -1,10 +1,10 @@
 import { Loader2, Send, Square } from "lucide-react";
-import type { ChatMessage, RuntimeClientConfig } from "../types/runtime";
+import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
+import type { ChatMessage } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
 interface ChatPanelProps {
   messages: ChatMessage[];
-  clientConfig: RuntimeClientConfig;
   input: string;
   streaming: boolean;
   activeSessionId?: string;
@@ -23,12 +23,11 @@ interface ChatPanelProps {
   onSkillsModeChange: (value: "all" | "default" | "none") => void;
   onSend: () => void;
   onStop: () => void;
-  onFeedbackSubmitted: () => void;
+  onCreateFeedback?: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
 }
 
 export function ChatPanel({
   messages,
-  clientConfig,
   input,
   streaming,
   activeSessionId,
@@ -47,7 +46,7 @@ export function ChatPanel({
   onSkillsModeChange,
   onSend,
   onStop,
-  onFeedbackSubmitted,
+  onCreateFeedback,
 }: ChatPanelProps) {
   return (
     <main className="chat-panel">
@@ -106,9 +105,8 @@ export function ChatPanel({
           messages.map((message) => (
             <MessageBubble
               message={message}
-              clientConfig={clientConfig}
-              onFeedbackSubmitted={onFeedbackSubmitted}
               key={message.id}
+              onCreateFeedback={onCreateFeedback}
             />
           ))
         )}

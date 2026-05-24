@@ -1,5 +1,6 @@
 import base64
 import json
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal, Optional
@@ -39,14 +40,20 @@ class AppSettings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     host_port: int = Field(default=58080, alias="HOST_PORT")
-    host_workspace_mount: str = Field(default="./docker/volume/workspace", alias="HOST_WORKSPACE_MOUNT")
+    host_workspace_mount: str = Field(default="./docker/volume/main-workspace", alias="HOST_WORKSPACE_MOUNT")
     host_data_mount: str = Field(default="./docker/volume/data", alias="HOST_DATA_MOUNT")
-    host_claude_root_mount: str = Field(default="./docker/volume/claude-root", alias="HOST_CLAUDE_ROOT_MOUNT")
+    host_claude_root_mount: str = Field(default="./docker/volume/claude-roots/main", alias="HOST_CLAUDE_ROOT_MOUNT")
 
-    workspace_dir: Path = Field(default=Path("/workspace"), alias="WORKSPACE_DIR")
+    workspace_dir: Path = Field(default=Path("/main-workspace"), alias="WORKSPACE_DIR")
+    main_workspace_dir: Path = Field(default=Path("/main-workspace"), alias="MAIN_WORKSPACE_DIR")
+    attribution_workspace_dir: Path = Field(default=Path("/attribution-workspace"), alias="ATTRIBUTION_WORKSPACE_DIR")
+    proposal_workspace_dir: Path = Field(default=Path("/proposal-workspace"), alias="PROPOSAL_WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
-    claude_root: Path = Field(default=Path("/root"), alias="CLAUDE_ROOT")
-    claude_home: Path = Field(default=Path("/root/.claude"), alias="CLAUDE_HOME")
+    claude_root: Path = Field(default=Path("/claude-roots/main"), alias="CLAUDE_ROOT")
+    main_claude_root: Path = Field(default=Path("/claude-roots/main"), alias="MAIN_CLAUDE_ROOT")
+    attribution_claude_root: Path = Field(default=Path("/claude-roots/attribution"), alias="ATTRIBUTION_CLAUDE_ROOT")
+    proposal_claude_root: Path = Field(default=Path("/claude-roots/proposal"), alias="PROPOSAL_CLAUDE_ROOT")
+    claude_home: Path = Field(default=Path("/claude-roots/main/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
@@ -73,6 +80,7 @@ class AppSettings(BaseSettings):
     enable_programmatic_agents: bool = Field(default=False, alias="ENABLE_PROGRAMMATIC_AGENTS")
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
     enable_policy_hooks: bool = Field(default=True, alias="ENABLE_POLICY_HOOKS")
+    enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
     include_partial_messages: bool = Field(default=False, alias="INCLUDE_PARTIAL_MESSAGES")
     max_turns: int = Field(default=8, alias="MAX_TURNS")
@@ -104,6 +112,22 @@ class AppSettings(BaseSettings):
     langfuse_deployment_environment: str = Field(default="local", alias="LANGFUSE_DEPLOYMENT_ENVIRONMENT")
     langfuse_resource_attributes_raw: Optional[str] = Field(default=None, alias="LANGFUSE_RESOURCE_ATTRIBUTES")
     langfuse_export_interval_ms: int = Field(default=1000, alias="LANGFUSE_EXPORT_INTERVAL_MS")
+
+    def model_post_init(self, __context: Any) -> None:
+        if self.main_workspace_dir == Path("/main-workspace") and self.workspace_dir != Path("/main-workspace"):
+            self.main_workspace_dir = self.workspace_dir
+        if self.main_claude_root == Path("/claude-roots/main") and self.claude_root != Path("/claude-roots/main"):
+            self.main_claude_root = self.claude_root
+        if self.attribution_workspace_dir == Path("/attribution-workspace") and self.main_workspace_dir != Path("/main-workspace"):
+            self.attribution_workspace_dir = self.main_workspace_dir.parent / "attribution-workspace"
+        if self.proposal_workspace_dir == Path("/proposal-workspace") and self.main_workspace_dir != Path("/main-workspace"):
+            self.proposal_workspace_dir = self.main_workspace_dir.parent / "proposal-workspace"
+        if self.attribution_claude_root == Path("/claude-roots/attribution") and self.main_claude_root != Path("/claude-roots/main"):
+            self.attribution_claude_root = self.main_claude_root.parent / "attribution"
+        if self.proposal_claude_root == Path("/claude-roots/proposal") and self.main_claude_root != Path("/claude-roots/main"):
+            self.proposal_claude_root = self.main_claude_root.parent / "proposal"
+        if self.claude_home == Path("/claude-roots/main/.claude") and self.main_claude_root != Path("/claude-roots/main"):
+            self.claude_home = self.main_claude_root / ".claude"
 
     @property
     def provider_api_key(self) -> Optional[str]:
@@ -221,25 +245,74 @@ class AppSettings(BaseSettings):
         return self.data_dir / "uploads"
 
     @property
-    def feedback_dir(self) -> Path:
-        return self.data_dir / "feedback"
+    def agent_runs_dir(self) -> Path:
+        return self.data_dir / "agent-runs"
+
+    @property
+    def feedback_signals_dir(self) -> Path:
+        return self.data_dir / "feedback-signals"
+
+    @property
+    def soc_events_dir(self) -> Path:
+        return self.data_dir / "soc-events"
+
+    @property
+    def pending_correlations_dir(self) -> Path:
+        return self.data_dir / "pending-correlations"
+
+    @property
+    def feedback_cases_dir(self) -> Path:
+        return self.data_dir / "feedback-cases"
+
+    @property
+    def evidence_packages_dir(self) -> Path:
+        return self.data_dir / "evidence-packages"
+
+    @property
+    def feedback_analysis_jobs_dir(self) -> Path:
+        return self.data_dir / "feedback-analysis" / "jobs"
 
     @property
     def optimization_proposals_dir(self) -> Path:
         return self.data_dir / "optimization-proposals"
 
+    @property
+    def optimization_tasks_dir(self) -> Path:
+        return self.data_dir / "optimization-tasks"
+
+    @property
+    def agent_versions_dir(self) -> Path:
+        return self.data_dir / "agent-versions" / "main"
+
+    @property
+    def runtime_db_path(self) -> Path:
+        return self.data_dir / "runtime.sqlite3"
+
 
 @lru_cache
 def get_settings() -> AppSettings:
     settings = AppSettings()
+    if "MAIN_WORKSPACE_DIR" not in os.environ and "WORKSPACE_DIR" in os.environ:
+        settings.main_workspace_dir = settings.workspace_dir
+    if "MAIN_CLAUDE_ROOT" not in os.environ and "CLAUDE_ROOT" in os.environ:
+        settings.main_claude_root = settings.claude_root
+    if "ATTRIBUTION_WORKSPACE_DIR" not in os.environ:
+        settings.attribution_workspace_dir = settings.main_workspace_dir.parent / "attribution-workspace"
+    if "PROPOSAL_WORKSPACE_DIR" not in os.environ:
+        settings.proposal_workspace_dir = settings.main_workspace_dir.parent / "proposal-workspace"
+    if "ATTRIBUTION_CLAUDE_ROOT" not in os.environ:
+        settings.attribution_claude_root = settings.main_claude_root.parent / "attribution"
+    if "PROPOSAL_CLAUDE_ROOT" not in os.environ:
+        settings.proposal_claude_root = settings.main_claude_root.parent / "proposal"
     settings.data_dir.mkdir(parents=True, exist_ok=True)
+    settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.attribution_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.proposal_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.main_claude_root.mkdir(parents=True, exist_ok=True)
+    settings.attribution_claude_root.mkdir(parents=True, exist_ok=True)
+    settings.proposal_claude_root.mkdir(parents=True, exist_ok=True)
     settings.claude_home.mkdir(parents=True, exist_ok=True)
     if settings.resolved_claude_config_dir:
         settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)
-    settings.transcript_dir.mkdir(parents=True, exist_ok=True)
-    settings.session_dir.mkdir(parents=True, exist_ok=True)
-    settings.output_dir.mkdir(parents=True, exist_ok=True)
-    settings.upload_dir.mkdir(parents=True, exist_ok=True)
-    settings.feedback_dir.mkdir(parents=True, exist_ok=True)
-    settings.optimization_proposals_dir.mkdir(parents=True, exist_ok=True)
+    settings.agent_versions_dir.mkdir(parents=True, exist_ok=True)
     return settings

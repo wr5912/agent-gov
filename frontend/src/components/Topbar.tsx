@@ -1,16 +1,30 @@
-import { Activity, BookOpen, RefreshCw, Settings } from "lucide-react";
+import { Activity, BookOpen, MessageSquare, RefreshCw, Settings } from "lucide-react";
 import type { RuntimeHealth } from "../types/runtime";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
   apiDocsUrl: string;
   langfuseUrl: string;
+  activeWindow: "chat" | "feedback";
   loading: boolean;
   onRefresh: () => void;
+  onOpenFeedback: () => void;
+  onOpenPlayground: () => void;
   onOpenSettings: () => void;
 }
 
-export function Topbar({ health, apiDocsUrl, langfuseUrl, loading, onRefresh, onOpenSettings }: TopbarProps) {
+export function Topbar({
+  health,
+  apiDocsUrl,
+  langfuseUrl,
+  activeWindow,
+  loading,
+  onRefresh,
+  onOpenFeedback,
+  onOpenPlayground,
+  onOpenSettings,
+}: TopbarProps) {
+  const isFeedbackWindow = activeWindow === "feedback";
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -20,6 +34,16 @@ export function Topbar({ health, apiDocsUrl, langfuseUrl, loading, onRefresh, on
         <span className="muted">{health?.model || "model not loaded"}</span>
       </div>
       <div className="topbar-actions">
+        <button
+          className={`ghost-button topbar-view-button ${isFeedbackWindow ? "active" : ""}`}
+          type="button"
+          onClick={isFeedbackWindow ? onOpenPlayground : onOpenFeedback}
+          title={isFeedbackWindow ? "返回 Playground" : "打开反馈优化工作台"}
+          aria-label={isFeedbackWindow ? "返回 Playground" : "打开反馈优化工作台"}
+          aria-pressed={isFeedbackWindow}
+        >
+          <MessageSquare size={15} /> {isFeedbackWindow ? "Playground" : "反馈优化"}
+        </button>
         <button className="ghost-button" onClick={onRefresh} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /> 刷新</button>
         <a className="ghost-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><BookOpen size={15} /> API Docs</a>
         <a className="ghost-button" href={langfuseUrl} target="_blank" rel="noreferrer" title="打开 Langfuse 监测界面"><Activity size={15} /> Langfuse</a>

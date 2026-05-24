@@ -1,6 +1,6 @@
 # Claude Agent Runtime API
 
-一个极简的 **Docker 化 Claude Agent Runtime API** 项目。
+一个 **Docker 化 Claude Agent Runtime API** 项目。
 
 目标：
 
@@ -345,7 +345,7 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
   -d '{"message":"你好，先介绍你的能力", "skills_mode":"all"}'
 ```
 
-## OpenAI Compatible 简易接口
+## OpenAI Compatible 接口
 
 项目额外提供了一个最小的非流式 OpenAI Compatible shim：
 

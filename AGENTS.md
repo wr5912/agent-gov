@@ -111,7 +111,7 @@
 ## 安全与产品不变量
 
 - 离线模式是产品不变量；必需工作流不得依赖远程服务。
-- 日志、trace、diagnostics、导出包和 UI 不得暴露 API key、MCP header、数据库凭据和敏感工具输入。
+- 不得将API key提交到git仓库。
 - 不要硬编码配置值。环境变量放 `docker/.env`，应用配置放 `config/*.yaml` 或 `config/*.json`。
 
 ## Git 提交

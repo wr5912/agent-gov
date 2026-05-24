@@ -57,7 +57,7 @@ agent_version_store = AgentVersionStore(
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
     agent_version_provider=agent_version_store.current_version_id,
-    runtime_version="0.1.0",
+    runtime_version="0.2.0",
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
 runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
@@ -73,7 +73,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Claude Agent Runtime API",
-    version="0.1.0",
+    version="0.2.0",
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     docs_url="/docs",
     redoc_url="/redoc",

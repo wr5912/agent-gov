@@ -1,7 +1,7 @@
 agent:
   id: ai-secops-operator
   name: AI智能化网络安全运营智能体
-  version: 0.2.1
+  version: 0.1.0
   language: zh-CN
   runtime: claude-code
   profile: defensive-secops

@@ -67,7 +67,7 @@ class FeedbackStore:
         *,
         data_dir: Path,
         agent_version_provider: Optional[Callable[[], Optional[str]]] = None,
-        runtime_version: str = "0.2.1",
+        runtime_version: str = "0.2.2",
         enable_debug_evidence: bool = True,
     ) -> None:
         self.data_dir = data_dir

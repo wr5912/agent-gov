@@ -2300,7 +2300,7 @@ function ExternalGuidanceCard({
         <label className="fw-select-field">
           <span>通知目标</span>
           <select value={currentAlias} onChange={(event) => setSelectedAlias(event.target.value)} disabled={!webhooks.length || running}>
-            {!webhooks.length ? <option value="">未配置 Webhook</option> : null}
+            {!webhooks.length ? <option value="">未配置Webhook，请在 /data/external-governance-webhooks.yaml 文件中增加</option> : null}
             {webhooks.map((webhook) => (
               <option key={webhook.alias} value={webhook.alias}>{webhook.name || webhook.alias}</option>
             ))}

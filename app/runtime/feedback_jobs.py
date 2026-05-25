@@ -5,11 +5,19 @@ from pathlib import Path
 from typing import Any
 
 
+NATURAL_LANGUAGE_CHINESE_RULE = (
+    "自然语言输出要求：除 schema 字段名、枚举值、ID、路径、代码标识符、MCP/tool 名称外，"
+    "所有面向人的说明文本必须使用简体中文；如果输入证据中已有英文自然语言，必须用中文转述，不要原样复制英文说明。\n"
+)
+
+
 def attribution_prompt(input_path: str) -> str:
     return (
         "你是反馈闭环中的归因分析 Agent。只读取 attribution input 指定的证据路径，"
         "输出且只输出一个 JSON 对象，必须符合 attribution-output/v1。\n\n"
         f"输入文件：{input_path}\n\n"
+        f"{NATURAL_LANGUAGE_CHINESE_RULE}"
+        "其中 evidence_refs[].reason、responsibility_boundary.reason、rationale 必须使用简体中文。\n\n"
         "必须包含字段：schema_version、feedback_case_id、attribution_job_id、status、problem_type、"
         "optimization_object_type、actionability、confidence、human_review_required、evidence_refs、"
         "responsibility_boundary、rationale、recommended_next_step。\n\n"
@@ -44,9 +52,13 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
         "执行方式：如果提示词提供了 proposal_input_json 和 attribution_output_json，则直接使用这些内容，"
         "不要调用工具。否则先读取输入文件，再读取其中的 attribution_output_path；如需确认当前版本，最多再读取 "
         "main_agent_manifest_path。不要继续探索 workspace，不要读取未在输入文件列出的路径。\n\n"
+        f"{NATURAL_LANGUAGE_CHINESE_RULE}"
+        "其中 proposals[].title/recommendation/expected_effect/validation/risk、"
+        "external_guidance[].recommendation/reason、no_action_reason 必须使用简体中文。\n\n"
         "必须包含字段：schema_version、feedback_case_id、proposal_job_id、status、proposals、"
         "external_guidance、no_action_reason。\n"
         "status: completed | needs_human_review\n"
+        "external_guidance[].owner 必填，用于标识外部责任方或系统；不要用 target 替代 owner。\n"
         "proposal.actionability 和 external_guidance.actionability 必须使用：direct_workspace_change | "
         "workspace_config_change | eval_only | external_guidance | runtime_fix | needs_human_analysis | not_actionable\n\n"
         "target_path 必须是相对 main-workspace 的路径，且必须命中 allowed_target_paths；"

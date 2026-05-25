@@ -228,6 +228,28 @@ class OptimizationTaskCreateRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class OptimizationTaskMarkAppliedRequest(BaseModel):
+    note: Optional[str] = None
+
+
+class FeedbackEvalDatasetSyncRequest(BaseModel):
+    feedback_case_id: Optional[str] = None
+    limit: int = Field(default=100, ge=1, le=500)
+
+
+class FeedbackEvalCaseUpdateRequest(BaseModel):
+    prompt: Optional[str] = None
+    expected_behavior: Optional[str] = None
+    checks_json: Optional[dict[str, Any]] = None
+    labels: Optional[list[str]] = None
+    status: Optional[Literal["active", "draft", "archived"]] = None
+
+
+class FeedbackEvalRunCreateRequest(BaseModel):
+    eval_case_ids: list[str] = Field(default_factory=list)
+    optimization_task_id: Optional[str] = None
+
+
 class OptimizationTaskResponse(BaseModel):
     optimization_task_id: str
     created_at: str
@@ -240,6 +262,54 @@ class OptimizationTaskResponse(BaseModel):
     comment: Optional[str] = None
     target_paths: list[str] = Field(default_factory=list)
     proposal: Optional[dict[str, Any]] = None
+    applied_at: Optional[str] = None
+    applied_agent_version_id: Optional[str] = None
+    applied_agent_version: Optional[dict[str, Any]] = None
+    regression_run_ids: list[str] = Field(default_factory=list)
+    latest_regression_run_id: Optional[str] = None
+    latest_regression_run: Optional[dict[str, Any]] = None
+    regression_completed_at: Optional[str] = None
+
+
+class ExternalGovernanceWebhookResponse(BaseModel):
+    alias: str
+    name: str
+    url: str
+    has_token: bool = False
+
+
+class ExternalGovernanceNotificationResponse(BaseModel):
+    notification_id: str
+    external_item_id: str
+    created_at: str
+    completed_at: Optional[str] = None
+    status: str
+    webhook_alias: str
+    http_status: Optional[int] = None
+    response_body: Optional[str] = None
+    error: Optional[str] = None
+    request_json: dict[str, Any] = Field(default_factory=dict)
+
+
+class ExternalGovernanceItemResponse(BaseModel):
+    external_item_id: str
+    created_at: str
+    updated_at: str
+    status: str
+    feedback_case_id: str
+    proposal_job_id: str
+    source_index: int = 0
+    owner: str
+    actionability: str
+    recommendation: str
+    reason: Optional[str] = None
+    latest_notification_id: Optional[str] = None
+    latest_webhook_alias: Optional[str] = None
+    latest_notification: Optional[ExternalGovernanceNotificationResponse] = None
+
+
+class ExternalGovernanceNotifyRequest(BaseModel):
+    webhook_alias: str
 
 
 class EvidencePackageResponse(BaseModel):

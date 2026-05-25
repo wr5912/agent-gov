@@ -1,15 +1,22 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Archive,
+  BarChart3,
   CheckCircle2,
   ChevronRight,
   Copy,
+  Database,
   FileArchive,
   FileText,
   FolderKanban,
   GitBranch,
   Loader2,
   MessageSquare,
+  Pencil,
+  PlayCircle,
+  RefreshCw,
+  RotateCcw,
   Search,
   ShieldCheck,
   X,
@@ -20,6 +27,7 @@ import {
   createAttributionJob,
   createEvidencePackage,
   createFeedbackCase,
+  createEvalRun,
   createOptimizationTask,
   createProposalJob,
   getAttributionOutput,
@@ -28,13 +36,25 @@ import {
   getFeedbackAnalysisJob,
   getFeedbackWorkbenchData,
   getProposalOutput,
+  markOptimizationTaskApplied,
+  notifyExternalGovernanceItem,
+  regenerateProposalJob,
+  revalidateProposalOutput,
   reviewOptimizationProposal,
+  runOptimizationTaskRegression,
   runtimeApi,
+  syncFeedbackEvalDataset,
+  updateEvalCase,
 } from "../api/runtime";
 import type {
   AttributionOutput,
   EvidencePackageFileRecord,
   EvidencePackageRecord,
+  EvalCaseRecord,
+  EvalCaseUpdateRequest,
+  EvalRunRecord,
+  ExternalGovernanceItemRecord,
+  ExternalGovernanceWebhookRecord,
   ExternalFeedbackWorkspaceProps,
   FeedbackAnalysisJobRecord,
   FeedbackCaseRecord,
@@ -49,11 +69,19 @@ import type {
   SocEventRecord,
 } from "../types/feedback";
 
-type MenuKey = "signals" | "cases" | "proposals" | "tasks" | "versions";
+type MenuKey = "signals" | "cases" | "evals" | "versions";
 type SourceKind = "signal" | "event" | "pending";
-type CaseDetailView = "summary" | "evidence" | "attribution" | "proposal" | "runs" | "tasks";
+type CaseDetailView = "summary" | "evidence" | "attribution" | "proposal" | "runs" | "tasks" | "evals";
 type ProposalDetailTab = "proposals" | "raw" | "records";
 type AttributionDetailTab = "result" | "raw" | "records";
+
+interface EvalCaseEditDraft {
+  prompt: string;
+  expectedBehavior: string;
+  labelsText: string;
+  status: "active" | "draft" | "archived";
+  checksText: string;
+}
 
 interface DetailTabItem<T extends string> {
   key: T;
@@ -92,13 +120,16 @@ const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
   cases: [],
   proposals: [],
   tasks: [],
+  external_governance_items: [],
+  external_webhooks: [],
+  eval_cases: [],
+  eval_runs: [],
 };
 
 const menuText: Record<MenuKey, string> = {
   signals: "反馈信息",
   cases: "反馈处置",
-  proposals: "优化建议",
-  tasks: "优化任务",
+  evals: "回归评估",
   versions: "版本管理",
 };
 
@@ -123,6 +154,7 @@ const proposalStatusText: Record<string, string> = {
   approved: "已批准",
   rejected: "已拒绝",
   needs_more_analysis: "需补充分析",
+  superseded: "已废弃",
 };
 
 export function ExternalFeedbackWorkspace({
@@ -192,6 +224,14 @@ export function ExternalFeedbackWorkspace({
     if (!selectedCase) return [];
     return data.tasks.filter((task) => task.feedback_case_id === selectedCase.feedback_case_id);
   }, [data.tasks, selectedCase]);
+  const selectedCaseExternalItems = useMemo(() => {
+    if (!selectedCase) return [];
+    return data.external_governance_items.filter((item) => item.feedback_case_id === selectedCase.feedback_case_id);
+  }, [data.external_governance_items, selectedCase]);
+  const selectedCaseEvalCases = useMemo(() => {
+    if (!selectedCase) return [];
+    return data.eval_cases.filter((item) => item.source_feedback_case_id === selectedCase.feedback_case_id);
+  }, [data.eval_cases, selectedCase]);
   const tasksByProposalId = useMemo(() => buildTaskByProposalId(data.tasks), [data.tasks]);
 
   useEffect(() => {
@@ -347,6 +387,38 @@ export function ExternalFeedbackWorkspace({
     }
   }
 
+  async function revalidateProposalJob(jobId: string) {
+    setActionId(`proposal-revalidate:${jobId}`);
+    try {
+      const job = await revalidateProposalOutput(clientConfig, jobId);
+      setToast(`已重新校验建议 job ${shortId(job.job_id)}：${job.status}`);
+      setCaseDetailView("proposal");
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "重新校验建议失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function regenerateProposal(feedbackCaseId: string) {
+    const confirmed = window.confirm("重新生成会废弃当前反馈单中未审批、未通知的旧建议，并保留历史记录。确认继续？");
+    if (!confirmed) return;
+    setActionId(`proposal-regenerate:${feedbackCaseId}`);
+    try {
+      const job = await regenerateProposalJob(clientConfig, feedbackCaseId);
+      setToast(`已重新生成建议 job ${shortId(job.job_id)}：${job.status}`);
+      setCaseDetailView("proposal");
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "重新生成建议失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
   function openTask(task: OptimizationTaskRecord) {
     if (task.feedback_case_id) {
       setSelectedCaseId(task.feedback_case_id);
@@ -354,7 +426,7 @@ export function ExternalFeedbackWorkspace({
       setActiveMenu("cases");
       return;
     }
-    setActiveMenu("tasks");
+    setActiveMenu("cases");
   }
 
   async function createTask(proposal: OptimizationProposalRecord) {
@@ -382,6 +454,93 @@ export function ExternalFeedbackWorkspace({
     }
   }
 
+  async function markTaskApplied(task: OptimizationTaskRecord) {
+    setActionId(`apply:${task.optimization_task_id}`);
+    try {
+      const updated = await markOptimizationTaskApplied(clientConfig, task.optimization_task_id, `由反馈处置界面确认任务 ${task.optimization_task_id} 已应用。`);
+      setToast(`已创建版本快照 ${shortId(updated.applied_agent_version_id)}`);
+      await refreshWorkbench();
+      await onRefreshVersions?.();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "标记已应用失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function runTaskRegression(task: OptimizationTaskRecord) {
+    setActionId(`regression:${task.optimization_task_id}`);
+    try {
+      const run = await runOptimizationTaskRegression(clientConfig, task.optimization_task_id);
+      setToast(`回归验证完成：${run.result_status || run.status}`);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "回归验证失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function notifyExternalItem(item: ExternalGovernanceItemRecord, webhookAlias: string) {
+    setActionId(`external-notify:${item.external_item_id}`);
+    try {
+      const updated = await notifyExternalGovernanceItem(clientConfig, item.external_item_id, webhookAlias);
+      const statusText = updated.status === "notified" ? "已通知外部系统" : "通知失败";
+      setToast(`${statusText}：${webhookAlias}`);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "通知外部系统失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function syncEvalDataset(feedbackCaseId?: string) {
+    setActionId(feedbackCaseId ? `sync-eval:${feedbackCaseId}` : "sync-eval");
+    try {
+      const result = await syncFeedbackEvalDataset(clientConfig, feedbackCaseId);
+      setToast(`已同步评估集：新增 ${result.created}，复用 ${result.reused}`);
+      await refreshWorkbench();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "同步评估集失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function runDatasetEval() {
+    setActionId("dataset-eval");
+    try {
+      const run = await createEvalRun(clientConfig);
+      setToast(`批量评估完成：${run.result_status || run.status}`);
+      await refreshWorkbench();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "批量评估失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function updateEvalCaseRecord(evalCaseId: string, payload: EvalCaseUpdateRequest): Promise<boolean> {
+    setActionId(`eval-case:${evalCaseId}`);
+    try {
+      const updated = await updateEvalCase(clientConfig, evalCaseId, payload);
+      setToast(`已更新评估用例 ${shortId(updated.eval_case_id)}`);
+      setCaseDetailView("evals");
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "更新评估用例失败");
+      return false;
+    } finally {
+      setActionId(null);
+    }
+  }
+
   return (
     <div className="fw-shell">
       <aside className="fw-sidebar">
@@ -394,24 +553,26 @@ export function ExternalFeedbackWorkspace({
       </aside>
 
       <div className="fw-content">
-        <header className="fw-topbar fw-unified-topbar">
-          <div className="fw-context-strip" aria-label="运行上下文">
-            <span title={runtimeContext?.runId ?? "-"}>run_id：{runtimeContext?.runId ?? "-"}</span>
-            <span title={runtimeContext?.sessionId ?? "-"}>session_id：{runtimeContext?.sessionId ?? "-"}</span>
-            <span title={runtimeContext?.agentVersionId ?? "-"}>agent_version_id：{runtimeContext?.agentVersionId ?? "-"}</span>
-            <span title={runtimeContext?.caseId ?? "-"}>case_id：{runtimeContext?.caseId ?? "-"}</span>
-          </div>
-          <div className="fw-header-actions">
-            <label className="fw-local-search fw-signal-search">
-              <Search size={16} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 ID、标签、Case" />
-            </label>
-            <button className="fw-small-secondary" onClick={checkRuntime} type="button">
-              {runtimeStatus === "loading" ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
-              Runtime
-            </button>
-          </div>
-        </header>
+        {activeMenu !== "versions" ? (
+          <header className="fw-topbar fw-unified-topbar">
+            <div className="fw-context-strip" aria-label="运行上下文">
+              <span title={runtimeContext?.runId ?? "-"}>run_id：{runtimeContext?.runId ?? "-"}</span>
+              <span title={runtimeContext?.sessionId ?? "-"}>session_id：{runtimeContext?.sessionId ?? "-"}</span>
+              <span title={runtimeContext?.agentVersionId ?? "-"}>agent_version_id：{runtimeContext?.agentVersionId ?? "-"}</span>
+              <span title={runtimeContext?.caseId ?? "-"}>case_id：{runtimeContext?.caseId ?? "-"}</span>
+            </div>
+            <div className="fw-header-actions">
+              <label className="fw-local-search fw-signal-search">
+                <Search size={16} />
+                <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 ID、标签、Case" />
+              </label>
+              <button className="fw-small-secondary" onClick={checkRuntime} type="button">
+                {runtimeStatus === "loading" ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
+                Runtime
+              </button>
+            </div>
+          </header>
+        ) : null}
 
         {activeMenu === "signals" ? (
           <SignalsPanel
@@ -432,6 +593,7 @@ export function ExternalFeedbackWorkspace({
             selectedCaseRuns={selectedCaseRuns}
             selectedCaseProposals={selectedCaseProposals}
             selectedCaseTasks={selectedCaseTasks}
+            selectedCaseExternalItems={selectedCaseExternalItems}
             details={caseDetails}
             detailView={caseDetailView}
             detailsLoading={detailsLoading}
@@ -447,24 +609,30 @@ export function ExternalFeedbackWorkspace({
             onRunProposal={() => runCaseAction("proposal")}
             onReviewProposal={reviewProposal}
             onCreateTask={createTask}
+            onNotifyExternalItem={notifyExternalItem}
             onOpenTask={openTask}
+            onMarkTaskApplied={markTaskApplied}
+            onRunTaskRegression={runTaskRegression}
+            onRegenerateProposal={regenerateProposal}
+            onRevalidateProposalJob={revalidateProposalJob}
+            onUpdateEvalCase={updateEvalCaseRecord}
+            selectedCaseEvalCases={selectedCaseEvalCases}
+            evalRuns={data.eval_runs}
             tasksByProposalId={tasksByProposalId}
+            externalWebhooks={data.external_webhooks}
           />
         ) : null}
 
-        {activeMenu === "proposals" ? (
-          <ProposalsPanel
-            proposals={data.proposals}
+        {activeMenu === "evals" ? (
+          <EvalPanel
+            evalCases={data.eval_cases}
+            evalRuns={data.eval_runs}
             actionId={actionId}
-            onReviewProposal={reviewProposal}
-            onCreateTask={createTask}
-            onOpenTask={openTask}
-            tasksByProposalId={tasksByProposalId}
+            selectedCase={selectedCase}
+            selectedCaseEvalCases={selectedCaseEvalCases}
+            onSyncDataset={syncEvalDataset}
+            onRunDatasetEval={runDatasetEval}
           />
-        ) : null}
-
-        {activeMenu === "tasks" ? (
-          <TasksPanel tasks={data.tasks} />
         ) : null}
 
         {activeMenu === "versions" ? (
@@ -482,7 +650,7 @@ export function ExternalFeedbackWorkspace({
         {activeMenu !== "versions" ? (
           <footer className="fw-info-bar">
             <GitBranch size={18} />
-            <span>{"当前链路：feedback signal / SOC event -> feedback case -> evidence package -> attribution job -> proposal job -> approval -> optimization task。"}</span>
+            <span>{"当前链路：feedback signal / SOC event -> feedback case -> evidence package -> attribution job -> proposal job -> approval -> optimization task -> regression eval。"}</span>
             {monitoringConfig?.langfuseUrl ? <a href={monitoringConfig.langfuseUrl} target="_blank" rel="noreferrer">Langfuse</a> : null}
           </footer>
         ) : null}
@@ -631,6 +799,9 @@ function CasesPanel({
   selectedCaseRuns,
   selectedCaseProposals,
   selectedCaseTasks,
+  selectedCaseExternalItems,
+  selectedCaseEvalCases,
+  evalRuns,
   details,
   detailView,
   detailsLoading,
@@ -643,14 +814,24 @@ function CasesPanel({
   onRunProposal,
   onReviewProposal,
   onCreateTask,
+  onNotifyExternalItem,
   onOpenTask,
+  onMarkTaskApplied,
+  onRunTaskRegression,
+  onRegenerateProposal,
+  onRevalidateProposalJob,
+  onUpdateEvalCase,
   tasksByProposalId,
+  externalWebhooks,
 }: {
   cases: FeedbackCaseRecord[];
   selectedCase: FeedbackCaseRecord | null;
   selectedCaseRuns: FeedbackRunRecord[];
   selectedCaseProposals: OptimizationProposalRecord[];
   selectedCaseTasks: OptimizationTaskRecord[];
+  selectedCaseExternalItems: ExternalGovernanceItemRecord[];
+  selectedCaseEvalCases: EvalCaseRecord[];
+  evalRuns: EvalRunRecord[];
   details: CaseDetails;
   detailView: CaseDetailView;
   detailsLoading: boolean;
@@ -663,14 +844,24 @@ function CasesPanel({
   onRunProposal: () => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
+  onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
+  onRunTaskRegression: (task: OptimizationTaskRecord) => void;
+  onRegenerateProposal: (feedbackCaseId: string) => void;
+  onRevalidateProposalJob: (jobId: string) => void;
+  onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
   tasksByProposalId: Map<string, OptimizationTaskRecord>;
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
 }) {
   const evidenceCount = selectedCase?.evidence_package_ids.length || 0;
   const attributionCount = selectedCase?.attribution_job_ids.length || 0;
   const proposalJobCount = selectedCase?.proposal_job_ids.length || 0;
-  const attributionLocked = attributionCount > 0 && !isRetryableJobStatus(details.attributionJob?.status);
-  const proposalLocked = proposalJobCount > 0 && !isRetryableJobStatus(details.proposalJob?.status);
+  const proposalItemCount = selectedCaseProposals.length + selectedCaseExternalItems.length;
+  const attributionStatus = details.attributionJob?.status;
+  const proposalStatus = details.proposalJob?.status;
+  const attributionLocked = attributionCount > 0 && !isRetryableJobStatus(attributionStatus);
+  const proposalLocked = proposalJobCount > 0 && !isRetryableJobStatus(proposalStatus);
   const actionRunning = Boolean(actionId);
 
   return (
@@ -718,9 +909,10 @@ function CasesPanel({
                 <Metric label="状态" value={caseStatusText[selectedCase.status] || selectedCase.status} />
                 <DetailMetric label="证据包" count={evidenceCount} active={detailView === "evidence"} onClick={() => onSelectDetailView("evidence")} />
                 <DetailMetric label="归因分析" count={attributionCount} active={detailView === "attribution"} onClick={() => onSelectDetailView("attribution")} />
-                <DetailMetric label="优化建议" count={proposalJobCount} active={detailView === "proposal"} onClick={() => onSelectDetailView("proposal")} />
+                <DetailMetric label="优化建议" count={proposalItemCount || proposalJobCount} active={detailView === "proposal"} onClick={() => onSelectDetailView("proposal")} />
                 <DetailMetric label="关联运行" count={selectedCase.run_ids.length} active={detailView === "runs"} onClick={() => onSelectDetailView("runs")} />
                 <DetailMetric label="优化任务" count={selectedCaseTasks.length} active={detailView === "tasks"} onClick={() => onSelectDetailView("tasks")} />
+                <DetailMetric label="评估用例" count={selectedCaseEvalCases.length} active={detailView === "evals"} onClick={() => onSelectDetailView("evals")} />
               </div>
               <div className="fw-current-case-actions">
                 <button className="fw-small-secondary" type="button" onClick={onCreateEvidence} disabled={actionRunning || evidenceCount > 0}>
@@ -729,11 +921,11 @@ function CasesPanel({
                 </button>
                 <button className="fw-small-secondary" type="button" onClick={onRunAttribution} disabled={actionRunning || attributionLocked}>
                   {actionId?.startsWith("attribution:") ? <Loader2 size={16} className="fw-spin" /> : <ShieldCheck size={16} />}
-                  {details.attributionJob?.status === "failed" ? "重试归因" : attributionCount > 0 ? "归因已启动" : "启动归因"}
+                  {analysisActionLabel("attribution", attributionStatus, attributionCount)}
                 </button>
                 <button className="fw-small-primary" type="button" onClick={onRunProposal} disabled={actionRunning || proposalLocked || !details.attribution}>
                   {actionId?.startsWith("proposal:") ? <Loader2 size={16} className="fw-spin" /> : <MessageSquare size={16} />}
-                  {details.proposalJob?.status === "failed" ? "重试建议" : proposalJobCount > 0 ? "建议已生成" : "生成建议"}
+                  {analysisActionLabel("proposal", proposalStatus, proposalJobCount)}
                 </button>
               </div>
             </section>
@@ -746,12 +938,22 @@ function CasesPanel({
               detailsLoading={detailsLoading}
               onSelectDetailView={onSelectDetailView}
               onCreateTask={onCreateTask}
+              onNotifyExternalItem={onNotifyExternalItem}
               onOpenTask={onOpenTask}
+              onMarkTaskApplied={onMarkTaskApplied}
+              onRunTaskRegression={onRunTaskRegression}
               onReviewProposal={onReviewProposal}
+              onRegenerateProposal={onRegenerateProposal}
+              onRevalidateProposalJob={onRevalidateProposalJob}
+              onUpdateEvalCase={onUpdateEvalCase}
+              evalCases={selectedCaseEvalCases}
+              evalRuns={evalRuns}
               runs={selectedCaseRuns}
               tasks={selectedCaseTasks}
               tasksByProposalId={tasksByProposalId}
               proposals={selectedCaseProposals}
+              externalGovernanceItems={selectedCaseExternalItems}
+              externalWebhooks={externalWebhooks}
             />
           </>
         ) : (
@@ -774,11 +976,21 @@ function CaseDetailPanel({
   detailsLoading,
   runs,
   proposals,
+  externalGovernanceItems,
+  externalWebhooks,
   tasks,
+  evalCases,
+  evalRuns,
   onSelectDetailView,
   onReviewProposal,
   onCreateTask,
+  onNotifyExternalItem,
   onOpenTask,
+  onMarkTaskApplied,
+  onRunTaskRegression,
+  onRegenerateProposal,
+  onRevalidateProposalJob,
+  onUpdateEvalCase,
   tasksByProposalId,
 }: {
   actionId: string | null;
@@ -788,12 +1000,22 @@ function CaseDetailPanel({
   detailsLoading: boolean;
   runs: FeedbackRunRecord[];
   proposals: OptimizationProposalRecord[];
+  externalGovernanceItems: ExternalGovernanceItemRecord[];
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
   tasks: OptimizationTaskRecord[];
+  evalCases: EvalCaseRecord[];
+  evalRuns: EvalRunRecord[];
   tasksByProposalId: Map<string, OptimizationTaskRecord>;
   onSelectDetailView: (view: CaseDetailView) => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
+  onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
+  onRunTaskRegression: (task: OptimizationTaskRecord) => void;
+  onRegenerateProposal: (feedbackCaseId: string) => void;
+  onRevalidateProposalJob: (jobId: string) => void;
+  onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
 }) {
   const [copiedProposalJobId, setCopiedProposalJobId] = useState(false);
   const titleByView: Record<CaseDetailView, string> = {
@@ -803,8 +1025,13 @@ function CaseDetailPanel({
     proposal: "优化建议详情",
     runs: "关联运行详情",
     tasks: "优化任务详情",
+    evals: "评估用例详情",
   };
-  const proposalJobId = latestItem(details.proposalJobs)?.job_id || details.proposal?.proposal_job_id || null;
+  const proposalJob = latestItem(details.proposalJobs);
+  const proposalJobId = proposalJob?.job_id || details.proposal?.proposal_job_id || null;
+  const canRevalidateProposal = Boolean(proposalJob?.raw_output_json && proposalJob?.error_json);
+  const canRegenerateProposal = Boolean(proposalJob?.feedback_case_id);
+  const proposalBusy = actionId?.startsWith("proposal-revalidate:") || actionId?.startsWith("proposal-regenerate:");
 
   useEffect(() => {
     if (!copiedProposalJobId) return;
@@ -827,6 +1054,22 @@ function CaseDetailPanel({
         <strong>{titleByView[detailView]}</strong>
         {detailView === "proposal" ? (
           <div className="fw-panel-header-actions">
+            <button
+              className="fw-small-secondary"
+              type="button"
+              onClick={() => proposalJobId && onRevalidateProposalJob(proposalJobId)}
+              disabled={!canRevalidateProposal || !proposalJobId || proposalBusy}
+            >
+              <RefreshCw size={15} className={actionId?.startsWith("proposal-revalidate:") ? "fw-spin" : ""} /> 重新校验
+            </button>
+            <button
+              className="fw-small-secondary"
+              type="button"
+              onClick={() => proposalJob?.feedback_case_id && onRegenerateProposal(proposalJob.feedback_case_id)}
+              disabled={!canRegenerateProposal || proposalBusy}
+            >
+              <RotateCcw size={15} className={actionId?.startsWith("proposal-regenerate:") ? "fw-spin" : ""} /> 重新生成
+            </button>
             <button className="fw-small-secondary" type="button" onClick={copyProposalJobId} disabled={!proposalJobId}>
               <Copy size={15} /> {copiedProposalJobId ? "已复制" : "复制ID"}
             </button>
@@ -849,7 +1092,10 @@ function CaseDetailPanel({
           jobs={details.proposalJobs || []}
           output={details.proposal}
           proposals={proposals}
+          externalGovernanceItems={externalGovernanceItems}
+          externalWebhooks={externalWebhooks}
           onCreateTask={onCreateTask}
+          onNotifyExternalItem={onNotifyExternalItem}
           onOpenTask={onOpenTask}
           onReviewProposal={onReviewProposal}
           onSelectDetailView={onSelectDetailView}
@@ -857,7 +1103,15 @@ function CaseDetailPanel({
         />
       ) : null}
       {detailView === "runs" ? <RunsDetails runs={runs} /> : null}
-      {detailView === "tasks" ? <TasksDetails tasks={tasks} /> : null}
+      {detailView === "tasks" ? (
+        <TasksDetails
+          tasks={tasks}
+          actionId={actionId}
+          onMarkApplied={onMarkTaskApplied}
+          onRunRegression={onRunTaskRegression}
+        />
+      ) : null}
+      {detailView === "evals" ? <EvalCaseDetails actionId={actionId} evalCases={evalCases} evalRuns={evalRuns} onUpdateEvalCase={onUpdateEvalCase} /> : null}
     </section>
   );
 }
@@ -1175,9 +1429,12 @@ function ProposalDetails({
   jobs,
   output,
   proposals,
+  externalGovernanceItems,
+  externalWebhooks,
   actionId,
   onReviewProposal,
   onCreateTask,
+  onNotifyExternalItem,
   onOpenTask,
   onSelectDetailView,
   tasksByProposalId,
@@ -1185,9 +1442,12 @@ function ProposalDetails({
   jobs: FeedbackAnalysisJobRecord[];
   output?: ProposalOutput | null;
   proposals: OptimizationProposalRecord[];
+  externalGovernanceItems: ExternalGovernanceItemRecord[];
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
   actionId: string | null;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
   onSelectDetailView: (view: CaseDetailView) => void;
   tasksByProposalId: Map<string, OptimizationTaskRecord>;
@@ -1196,6 +1456,11 @@ function ProposalDetails({
   const latestJob = latestItem(jobs);
   const externalGuidance = output?.external_guidance || [];
   const proposalCount = proposals.length + externalGuidance.length;
+  const rawProposals = rawRecordArray(latestJob?.raw_output_json, "proposals");
+  const rawExternalGuidance = rawRecordArray(latestJob?.raw_output_json, "external_guidance");
+  const rawSuggestionCount = rawProposals.length + rawExternalGuidance.length;
+  const noActionReason = output?.no_action_reason || rawString(latestJob?.raw_output_json, "no_action_reason");
+  const hasUnvalidatedSuggestions = !proposalCount && Boolean(latestJob?.error_json) && rawSuggestionCount > 0;
   const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
   const rawOutputTitle = output ? "建议输出" : latestJob?.raw_output_json ? "建议 Agent 原始输出" : "建议校验错误";
 
@@ -1221,7 +1486,7 @@ function ProposalDetails({
         label="优化建议详情视图"
         onChange={setActiveTab}
         tabs={[
-          { key: "proposals", label: `建议(${proposalCount})` },
+          { key: "proposals", label: `建议(${proposalCount || rawSuggestionCount})` },
           { key: "raw", label: "原始输出" },
           { key: "records", label: "执行记录" },
         ]}
@@ -1242,17 +1507,33 @@ function ProposalDetails({
               />
             ))}
             {externalGuidance.map((item, index) => (
-              <article className="fw-proposal-card fw-proposal-detail-card" key={`${item.owner}:${index}`}>
-                <div className="fw-proposal-detail-title">
-                  <Pill tone="gray">{item.actionability}</Pill>
-                  <h4>{item.owner}</h4>
-                  <small>external_guidance</small>
-                </div>
-                <p>{item.recommendation}</p>
-                {item.reason ? <p className="fw-warning-text">{item.reason}</p> : null}
-              </article>
+              <ExternalGuidanceCard
+                actionId={actionId}
+                guidance={item}
+                item={findExternalGovernanceItem(externalGovernanceItems, item, output?.proposal_job_id, index)}
+                key={`${item.owner}:${index}`}
+                webhooks={externalWebhooks}
+                onNotifyExternalItem={onNotifyExternalItem}
+              />
             ))}
-            {!proposalCount ? <div className="fw-empty-inline">暂无优化建议</div> : null}
+            {hasUnvalidatedSuggestions ? (
+              <>
+                <div className="fw-job-error fw-proposal-validation-error">
+                  <strong>建议校验失败</strong>
+                  <span>
+                    Agent 原始输出包含 {rawSuggestionCount} 条未入库建议，但未通过 schema 校验；以下内容仅供排查，不能审批或创建优化任务。
+                  </span>
+                </div>
+                {rawProposals.map((item, index) => (
+                  <RawProposalCard item={item} key={`raw-proposal:${index}`} />
+                ))}
+                {rawExternalGuidance.map((item, index) => (
+                  <RawExternalGuidanceCard item={item} key={`raw-external:${index}`} />
+                ))}
+              </>
+            ) : null}
+            {!proposalCount && noActionReason ? <div className="fw-empty-inline">无可执行建议：{noActionReason}</div> : null}
+            {!proposalCount && !hasUnvalidatedSuggestions && !noActionReason ? <div className="fw-empty-inline">暂无优化建议</div> : null}
           </div>
         ) : null}
 
@@ -1329,6 +1610,39 @@ function ProposalDetailCard({
   );
 }
 
+function RawProposalCard({ item }: { item: Record<string, unknown> }) {
+  const title = rawString(item, "title") || rawString(item, "recommendation") || "未入库优化建议";
+  const recommendation = rawString(item, "recommendation") || "-";
+  const rationale = rawString(item, "rationale") || rawString(item, "reason");
+  return (
+    <article className="fw-proposal-card fw-proposal-detail-card fw-unvalidated-proposal-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone="orange">未入库</Pill>
+        <h4>{title}</h4>
+        <small>{rawString(item, "proposal_id") || rawString(item, "id") || "raw-proposal"} · {rawString(item, "actionability") || "-"} · {rawString(item, "target_path") || "-"}</small>
+      </div>
+      <p>{recommendation}</p>
+      {rationale ? <p className="fw-warning-text">{rationale}</p> : null}
+    </article>
+  );
+}
+
+function RawExternalGuidanceCard({ item }: { item: Record<string, unknown> }) {
+  const owner = rawString(item, "owner") || rawString(item, "target") || "外部系统";
+  const reason = rawString(item, "reason") || rawString(item, "rationale");
+  return (
+    <article className="fw-proposal-card fw-proposal-detail-card fw-external-guidance-card fw-unvalidated-proposal-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone="orange">未入库外部建议</Pill>
+        <h4>{owner}</h4>
+        <small>{rawString(item, "actionability") || "external_guidance"}</small>
+      </div>
+      <p>{rawString(item, "recommendation") || "-"}</p>
+      {reason ? <p className="fw-warning-text">{reason}</p> : null}
+    </article>
+  );
+}
+
 function RunsDetails({ runs }: { runs: FeedbackRunRecord[] }) {
   return (
     <DetailRecordList hasItems={runs.length > 0} emptyText="暂无关联运行">
@@ -1346,20 +1660,224 @@ function RunsDetails({ runs }: { runs: FeedbackRunRecord[] }) {
   );
 }
 
-function TasksDetails({ tasks }: { tasks: OptimizationTaskRecord[] }) {
+function TasksDetails({
+  tasks,
+  actionId,
+  onMarkApplied,
+  onRunRegression,
+}: {
+  tasks: OptimizationTaskRecord[];
+  actionId?: string | null;
+  onMarkApplied?: (task: OptimizationTaskRecord) => void;
+  onRunRegression?: (task: OptimizationTaskRecord) => void;
+}) {
   return (
     <DetailRecordList hasItems={tasks.length > 0} emptyText="暂无优化任务">
       {tasks.map((task) => (
-        <TaskDetailCard key={task.optimization_task_id} task={task} />
+        <TaskDetailCard
+          key={task.optimization_task_id}
+          task={task}
+          actionId={actionId || null}
+          onMarkApplied={onMarkApplied}
+          onRunRegression={onRunRegression}
+        />
       ))}
     </DetailRecordList>
   );
 }
 
-function TaskDetailCard({ task }: { task: OptimizationTaskRecord }) {
+function EvalCaseDetails({
+  actionId,
+  evalCases,
+  evalRuns,
+  onUpdateEvalCase,
+}: {
+  actionId: string | null;
+  evalCases: EvalCaseRecord[];
+  evalRuns: EvalRunRecord[];
+  onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
+}) {
+  return (
+    <DetailRecordList hasItems={evalCases.length > 0} emptyText="暂无评估用例">
+      {evalCases.map((evalCase) => (
+        <EvalCaseDetailCard
+          actionId={actionId}
+          key={evalCase.eval_case_id}
+          evalCase={evalCase}
+          latestRunItem={latestEvalRunItemForCase(evalRuns, evalCase.eval_case_id)}
+          onUpdateEvalCase={onUpdateEvalCase}
+        />
+      ))}
+    </DetailRecordList>
+  );
+}
+
+function EvalCaseDetailCard({
+  actionId,
+  evalCase,
+  latestRunItem,
+  onUpdateEvalCase,
+}: {
+  actionId: string | null;
+  evalCase: EvalCaseRecord;
+  latestRunItem?: NonNullable<EvalRunRecord["items"]>[number];
+  onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<EvalCaseEditDraft>(() => evalCaseEditDraft(evalCase));
+  const [formError, setFormError] = useState<string | null>(null);
+  const busy = actionId === `eval-case:${evalCase.eval_case_id}`;
+  const archived = evalCase.status === "archived";
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(evalCaseEditDraft(evalCase));
+      setFormError(null);
+    }
+  }, [editing, evalCase]);
+
+  async function submitEdit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const prompt = draft.prompt.trim();
+    if (!prompt) {
+      setFormError("Prompt 不能为空。");
+      return;
+    }
+    let checksJson: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(draft.checksText || "{}");
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        setFormError("校验规则必须是 JSON object。");
+        return;
+      }
+      checksJson = parsed as Record<string, unknown>;
+    } catch (error) {
+      setFormError(error instanceof Error ? `校验规则 JSON 无效：${error.message}` : "校验规则 JSON 无效。");
+      return;
+    }
+    setFormError(null);
+    const ok = await onUpdateEvalCase(evalCase.eval_case_id, {
+      prompt,
+      expected_behavior: draft.expectedBehavior.trim(),
+      checks_json: checksJson,
+      labels: parseEvalCaseLabels(draft.labelsText),
+      status: draft.status,
+    });
+    if (ok) setEditing(false);
+  }
+
+  async function toggleArchived() {
+    const nextStatus = archived ? "active" : "archived";
+    await onUpdateEvalCase(evalCase.eval_case_id, { status: nextStatus });
+  }
+
+  return (
+    <article className="fw-eval-card fw-eval-detail-card">
+      <div className="fw-detail-record-head">
+        <div>
+          <h4>{shortId(evalCase.eval_case_id)} · feedback-eval-case</h4>
+          <small>反馈单 {shortId(evalCase.source_feedback_case_id)} · 来源运行 {shortId(evalCase.source_run_id)}</small>
+        </div>
+        <div className="fw-eval-card-actions">
+          <Pill tone={evalCase.status === "active" ? "green" : "gray"}>{evalCase.status}</Pill>
+          <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => setEditing((current) => !current)}>
+            <Pencil size={15} /> {editing ? "取消编辑" : "编辑"}
+          </button>
+          <button className="fw-small-secondary" type="button" disabled={busy} onClick={toggleArchived}>
+            {busy ? <Loader2 size={15} className="fw-spin" /> : archived ? <CheckCircle2 size={15} /> : <Archive size={15} />}
+            {archived ? "启用" : "归档"}
+          </button>
+        </div>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["创建时间", formatDate(evalCase.created_at)],
+          ["更新时间", formatDate(evalCase.updated_at)],
+          ["标签", evalCase.labels?.join(", ") || "-"],
+          ["最近结果", latestRunItem?.status || "-"],
+          ["最近得分", latestRunItem?.score ?? "-"],
+          ["最近运行", shortId(latestRunItem?.eval_run_id)],
+        ]}
+      />
+      {editing ? (
+        <form className="fw-eval-edit-form" onSubmit={submitEdit}>
+          <label className="fw-eval-edit-field">
+            <span>Prompt</span>
+            <textarea value={draft.prompt} onChange={(event) => setDraft((current) => ({ ...current, prompt: event.target.value }))} />
+          </label>
+          <label className="fw-eval-edit-field">
+            <span>期望行为</span>
+            <textarea value={draft.expectedBehavior} onChange={(event) => setDraft((current) => ({ ...current, expectedBehavior: event.target.value }))} />
+          </label>
+          <div className="fw-eval-edit-grid">
+            <label className="fw-eval-edit-field">
+              <span>状态</span>
+              <select value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as EvalCaseEditDraft["status"] }))}>
+                <option value="active">active</option>
+                <option value="draft">draft</option>
+                <option value="archived">archived</option>
+              </select>
+            </label>
+            <label className="fw-eval-edit-field">
+              <span>标签</span>
+              <input value={draft.labelsText} onChange={(event) => setDraft((current) => ({ ...current, labelsText: event.target.value }))} placeholder="逗号或换行分隔" />
+            </label>
+          </div>
+          <label className="fw-eval-edit-field">
+            <span>校验规则 JSON</span>
+            <textarea className="fw-eval-json-editor" value={draft.checksText} onChange={(event) => setDraft((current) => ({ ...current, checksText: event.target.value }))} />
+          </label>
+          {formError ? <p className="fw-warning-text">{formError}</p> : null}
+          <div className="fw-detail-action-row">
+            <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => setEditing(false)}>
+              <X size={15} /> 取消
+            </button>
+            <button className="fw-small-primary" type="submit" disabled={busy}>
+              {busy ? <Loader2 size={15} className="fw-spin" /> : <CheckCircle2 size={15} />} 保存
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <section className="fw-task-source">
+            <h4>Prompt</h4>
+            <p>{evalCase.prompt || "-"}</p>
+          </section>
+          <section className="fw-task-source">
+            <h4>期望行为</h4>
+            <p>{evalCase.expected_behavior || "-"}</p>
+          </section>
+          <DetailJsonPreview title="校验规则" value={evalCase.checks_json || {}} />
+        </>
+      )}
+      {latestRunItem ? (
+        <section className="fw-task-source">
+          <h4>最近评估结果</h4>
+          <p>{evalItemSummary(latestRunItem)}</p>
+          {latestRunItem.check_results?.length ? <DetailJsonPreview title="检查结果" value={latestRunItem.check_results} /> : null}
+        </section>
+      ) : null}
+    </article>
+  );
+}
+
+function TaskDetailCard({
+  task,
+  actionId,
+  onMarkApplied,
+  onRunRegression,
+}: {
+  task: OptimizationTaskRecord;
+  actionId?: string | null;
+  onMarkApplied?: (task: OptimizationTaskRecord) => void;
+  onRunRegression?: (task: OptimizationTaskRecord) => void;
+}) {
   const proposal = task.proposal;
   const proposalId = taskProposalId(task);
   const targetPaths = task.target_paths || [];
+  const latestRegression = task.latest_regression_run || null;
+  const canMarkApplied = !task.applied_agent_version_id && ["pending_execution", "failed", "needs_human_review"].includes(task.status);
+  const canRunRegression = Boolean(task.applied_agent_version_id) && task.status !== "regression_running";
   return (
     <article className="fw-task-detail-card">
       <div className="fw-detail-record-head">
@@ -1375,6 +1893,8 @@ function TaskDetailCard({ task }: { task: OptimizationTaskRecord }) {
           ["来源", task.source],
           ["创建时间", formatDate(task.created_at)],
           ["目标文件数", targetPaths.length],
+          ["应用版本", shortId(task.applied_agent_version_id)],
+          ["最近回归", latestRegression?.result_status || "-"],
         ]}
       />
       <div className="fw-task-targets">
@@ -1397,37 +1917,88 @@ function TaskDetailCard({ task }: { task: OptimizationTaskRecord }) {
           />
         </section>
       ) : null}
+      {latestRegression ? (
+        <section className="fw-task-source">
+          <h4>最近回归验证</h4>
+          <DetailMetricGrid
+            items={[
+              ["eval_run", shortId(latestRegression.eval_run_id)],
+              ["结果", latestRegression.result_status || latestRegression.status],
+              ["通过", latestRegression.summary?.passed ?? 0],
+              ["失败", latestRegression.summary?.failed ?? 0],
+              ["需复核", latestRegression.summary?.needs_human_review ?? 0],
+              ["完成时间", formatDate(latestRegression.completed_at)],
+            ]}
+          />
+        </section>
+      ) : null}
       <p className="fw-note-box fw-task-status-note">{taskStatusDescription(task.status)}</p>
+      {onMarkApplied || onRunRegression ? (
+        <div className="fw-detail-action-row">
+          {onMarkApplied ? (
+            <button
+              className="fw-small-secondary"
+              type="button"
+              disabled={!canMarkApplied || actionId === `apply:${task.optimization_task_id}`}
+              onClick={() => onMarkApplied(task)}
+            >
+              {actionId === `apply:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <GitBranch size={16} />}
+              标记已应用并创建版本
+            </button>
+          ) : null}
+          {onRunRegression ? (
+            <button
+              className="fw-small-primary"
+              type="button"
+              disabled={!canRunRegression || actionId === `regression:${task.optimization_task_id}`}
+              onClick={() => onRunRegression(task)}
+            >
+              {actionId === `regression:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <PlayCircle size={16} />}
+              运行回归验证
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </article>
   );
 }
 
 function ProposalsPanel({
   proposals,
+  externalGovernanceItems,
+  externalWebhooks,
   actionId,
   onReviewProposal,
   onCreateTask,
+  onNotifyExternalItem,
   onOpenTask,
   tasksByProposalId,
 }: {
   proposals: OptimizationProposalRecord[];
+  externalGovernanceItems: ExternalGovernanceItemRecord[];
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
   actionId: string | null;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
   tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
+  const totalCount = proposals.length + externalGovernanceItems.length;
   return (
     <section className="fw-panel fw-proposal-panel">
       <div className="fw-panel-header">
         <strong>优化建议审批</strong>
-        <span className="fw-muted">{proposals.length} 条</span>
+        <span className="fw-muted">{totalCount} 条</span>
       </div>
       <ProposalList
         proposals={proposals}
+        externalGovernanceItems={externalGovernanceItems}
+        externalWebhooks={externalWebhooks}
         actionId={actionId}
         onReviewProposal={onReviewProposal}
         onCreateTask={onCreateTask}
+        onNotifyExternalItem={onNotifyExternalItem}
         onOpenTask={onOpenTask}
         tasksByProposalId={tasksByProposalId}
       />
@@ -1438,21 +2009,28 @@ function ProposalsPanel({
 function ProposalList({
   proposals,
   proposalOutput,
+  externalGovernanceItems = [],
+  externalWebhooks = [],
   actionId,
   onReviewProposal,
   onCreateTask,
+  onNotifyExternalItem,
   onOpenTask,
   tasksByProposalId,
 }: {
   proposals: OptimizationProposalRecord[];
   proposalOutput?: ProposalOutput | null;
+  externalGovernanceItems?: ExternalGovernanceItemRecord[];
+  externalWebhooks?: ExternalGovernanceWebhookRecord[];
   actionId: string | null;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onNotifyExternalItem?: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
   tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
   const externalGuidance = proposalOutput?.external_guidance || [];
+  const externalItemsAsGuidance = externalGovernanceItems.map(externalGuidanceFromItem);
   return (
     <div className="fw-proposal-list">
       {proposals.map((proposal) => {
@@ -1522,12 +2100,32 @@ function ProposalList({
           {item.reason ? <small>{item.reason}</small> : null}
         </article>
       ))}
-      {!proposals.length && !externalGuidance.length ? <div className="fw-empty-inline">暂无优化建议</div> : null}
+      {externalItemsAsGuidance.map(({ item, guidance }) => (
+        <ExternalGuidanceCard
+          actionId={actionId}
+          guidance={guidance}
+          item={item}
+          key={item.external_item_id}
+          webhooks={externalWebhooks}
+          onNotifyExternalItem={onNotifyExternalItem || (() => undefined)}
+        />
+      ))}
+      {!proposals.length && !externalGuidance.length && !externalItemsAsGuidance.length ? <div className="fw-empty-inline">暂无优化建议</div> : null}
     </div>
   );
 }
 
-function TasksPanel({ tasks }: { tasks: OptimizationTaskRecord[] }) {
+function TasksPanel({
+  tasks,
+  actionId,
+  onMarkApplied,
+  onRunRegression,
+}: {
+  tasks: OptimizationTaskRecord[];
+  actionId: string | null;
+  onMarkApplied: (task: OptimizationTaskRecord) => void;
+  onRunRegression: (task: OptimizationTaskRecord) => void;
+}) {
   return (
     <section className="fw-panel fw-task-panel">
       <div className="fw-panel-header">
@@ -1536,12 +2134,213 @@ function TasksPanel({ tasks }: { tasks: OptimizationTaskRecord[] }) {
       </div>
       <div className="fw-proposal-list fw-task-list">
         {tasks.map((task) => (
-          <TaskDetailCard key={task.optimization_task_id} task={task} />
+          <TaskDetailCard
+            key={task.optimization_task_id}
+            task={task}
+            actionId={actionId}
+            onMarkApplied={onMarkApplied}
+            onRunRegression={onRunRegression}
+          />
         ))}
         {!tasks.length ? <div className="fw-empty-inline">暂无优化任务</div> : null}
       </div>
     </section>
   );
+}
+
+function EvalPanel({
+  evalCases,
+  evalRuns,
+  actionId,
+  selectedCase,
+  selectedCaseEvalCases,
+  onSyncDataset,
+  onRunDatasetEval,
+}: {
+  evalCases: EvalCaseRecord[];
+  evalRuns: EvalRunRecord[];
+  actionId: string | null;
+  selectedCase: FeedbackCaseRecord | null;
+  selectedCaseEvalCases: EvalCaseRecord[];
+  onSyncDataset: (feedbackCaseId?: string) => void;
+  onRunDatasetEval: () => void;
+}) {
+  const latestRun = evalRuns[0] || null;
+  const activeCases = evalCases.filter((item) => item.status === "active");
+  const summary = latestRun?.summary || {};
+  const total = Number(summary.total || 0);
+  const passed = Number(summary.passed || 0);
+  const passRate = total > 0 ? `${Math.round((passed / total) * 100)}%` : "-";
+  return (
+    <section className="fw-panel fw-eval-panel">
+      <div className="fw-panel-header">
+        <div>
+          <strong>回归评估</strong>
+          <span className="fw-muted"> {activeCases.length} 个 active case</span>
+        </div>
+        <div className="fw-panel-header-actions">
+          <button
+            className="fw-small-secondary"
+            type="button"
+            disabled={!selectedCase || actionId === `sync-eval:${selectedCase?.feedback_case_id}`}
+            onClick={() => selectedCase && onSyncDataset(selectedCase.feedback_case_id)}
+          >
+            {actionId === `sync-eval:${selectedCase?.feedback_case_id}` ? <Loader2 size={16} className="fw-spin" /> : <Database size={16} />}
+            同步当前处置单
+          </button>
+          <button className="fw-small-secondary" type="button" disabled={actionId === "sync-eval"} onClick={() => onSyncDataset()}>
+            {actionId === "sync-eval" ? <Loader2 size={16} className="fw-spin" /> : <Database size={16} />}
+            同步反馈数据集
+          </button>
+          <button className="fw-small-primary" type="button" disabled={!activeCases.length || actionId === "dataset-eval"} onClick={onRunDatasetEval}>
+            {actionId === "dataset-eval" ? <Loader2 size={16} className="fw-spin" /> : <PlayCircle size={16} />}
+            运行批量评估
+          </button>
+        </div>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["active_cases", activeCases.length],
+          ["selected_case_cases", selectedCaseEvalCases.length],
+          ["eval_runs", evalRuns.length],
+          ["latest_result", latestRun?.result_status || "-"],
+          ["latest_version", shortId(latestRun?.agent_version_id)],
+          ["pass_rate", passRate],
+        ]}
+      />
+      <div className="fw-eval-grid">
+        <section className="fw-eval-column">
+          <div className="fw-eval-column-title">
+            <Database size={16} />
+            <strong>反馈评估集</strong>
+          </div>
+          <div className="fw-eval-list">
+            {evalCases.map((item) => (
+              <article className="fw-eval-card" key={item.eval_case_id}>
+                <div className="fw-detail-record-head">
+                  <h4>{shortId(item.eval_case_id)} · {shortId(item.source_feedback_case_id)}</h4>
+                  <Pill tone={item.status === "active" ? "green" : "gray"}>{item.status}</Pill>
+                </div>
+                <p>{item.prompt}</p>
+                <small>{item.labels?.join(", ") || "-"} · {item.expected_behavior || "-"}</small>
+              </article>
+            ))}
+            {!evalCases.length ? <div className="fw-empty-inline">暂无评估用例</div> : null}
+          </div>
+        </section>
+        <section className="fw-eval-column">
+          <div className="fw-eval-column-title">
+            <BarChart3 size={16} />
+            <strong>评估运行</strong>
+          </div>
+          <div className="fw-eval-list">
+            {evalRuns.map((run) => (
+              <article className="fw-eval-card" key={run.eval_run_id}>
+                <div className="fw-detail-record-head">
+                  <h4>{shortId(run.eval_run_id)} · {shortId(run.agent_version_id)}</h4>
+                  <Pill tone={evalStatusTone(run.result_status || run.status)}>{run.result_status || run.status}</Pill>
+                </div>
+                <DetailMetricGrid
+                  items={[
+                    ["total", run.summary?.total ?? 0],
+                    ["passed", run.summary?.passed ?? 0],
+                    ["failed", run.summary?.failed ?? 0],
+                    ["review", run.summary?.needs_human_review ?? 0],
+                  ]}
+                />
+                <small>创建：{formatDate(run.created_at)} · 完成：{formatDate(run.completed_at)}</small>
+                {run.items?.slice(0, 3).map((item) => (
+                  <p className="fw-eval-item-line" key={item.eval_run_item_id}>
+                    {shortId(item.eval_case_id)}：{item.status} · {evalItemSummary(item)}
+                  </p>
+                ))}
+              </article>
+            ))}
+            {!evalRuns.length ? <div className="fw-empty-inline">暂无评估运行</div> : null}
+          </div>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function ExternalGuidanceCard({
+  guidance,
+  item,
+  webhooks,
+  actionId,
+  onNotifyExternalItem,
+}: {
+  guidance: {
+    owner: string;
+    actionability: string;
+    recommendation: string;
+    reason?: string | null;
+  };
+  item?: ExternalGovernanceItemRecord;
+  webhooks: ExternalGovernanceWebhookRecord[];
+  actionId: string | null;
+  onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
+}) {
+  const [selectedAlias, setSelectedAlias] = useState(webhooks[0]?.alias || "");
+  const currentAlias = selectedAlias || webhooks[0]?.alias || "";
+  const running = item ? actionId === `external-notify:${item.external_item_id}` : false;
+  const canNotify = Boolean(item && currentAlias && webhooks.length && !running);
+  const notification = item?.latest_notification;
+  return (
+    <article className="fw-proposal-card fw-proposal-detail-card fw-external-guidance-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone={externalGovernanceTone(item?.status)}>{item?.status || "external_guidance"}</Pill>
+        <h4>{guidance.owner}</h4>
+        <small>{guidance.actionability}</small>
+      </div>
+      <p>{guidance.recommendation}</p>
+      {guidance.reason ? <p className="fw-warning-text">{guidance.reason}</p> : null}
+      <div className="fw-external-notify-row">
+        <label className="fw-select-field">
+          <span>通知目标</span>
+          <select value={currentAlias} onChange={(event) => setSelectedAlias(event.target.value)} disabled={!webhooks.length || running}>
+            {!webhooks.length ? <option value="">未配置 Webhook</option> : null}
+            {webhooks.map((webhook) => (
+              <option key={webhook.alias} value={webhook.alias}>{webhook.name || webhook.alias}</option>
+            ))}
+          </select>
+        </label>
+        <button
+          className="fw-small-secondary"
+          type="button"
+          disabled={!canNotify}
+          onClick={() => item && onNotifyExternalItem(item, currentAlias)}
+        >
+          {running ? <Loader2 size={16} className="fw-spin" /> : <ChevronRight size={16} />}
+          {item?.status === "notification_failed" ? "重试通知" : "通知外部系统"}
+        </button>
+      </div>
+      <div className="fw-external-notify-meta">
+        <span>治理项：{shortId(item?.external_item_id)}</span>
+        <span>最近目标：{item?.latest_webhook_alias || "-"}</span>
+        <span>通知状态：{notification?.status || "-"}</span>
+        {notification?.http_status ? <span>HTTP {notification.http_status}</span> : null}
+      </div>
+      {notification?.error ? <p className="fw-warning-text">{notification.error}</p> : null}
+      {!item ? <p className="fw-warning-text">当前建议还没有外部治理项，需重新生成建议或查看原始输出。</p> : null}
+    </article>
+  );
+}
+
+function externalGuidanceFromItem(item: ExternalGovernanceItemRecord): {
+  item: ExternalGovernanceItemRecord;
+  guidance: { owner: string; actionability: string; recommendation: string; reason?: string | null };
+} {
+  return {
+    item,
+    guidance: {
+      owner: item.owner,
+      actionability: item.actionability,
+      recommendation: item.recommendation,
+      reason: item.reason,
+    },
+  };
 }
 
 function Metric({ label, value }: { label: string; value?: string | number | null }) {
@@ -1645,8 +2444,35 @@ function latestItem<T>(values?: T[]): T | null {
   return values[values.length - 1];
 }
 
+function rawRecordArray(value: unknown, key: string): Array<Record<string, unknown>> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const items = (value as Record<string, unknown>)[key];
+  return Array.isArray(items) ? items.filter(isRecord) : [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function rawString(value: unknown, key: string): string {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return "";
+  const item = (value as Record<string, unknown>)[key];
+  return typeof item === "string" ? item : "";
+}
+
 function isRetryableJobStatus(status?: string | null): boolean {
-  return status === "failed" || status === "needs_human_review";
+  return status === "failed";
+}
+
+function analysisActionLabel(kind: "attribution" | "proposal", status: string | null | undefined, count: number): string {
+  const noun = kind === "attribution" ? "归因" : "建议";
+  if (status === "failed") return `重试${noun}`;
+  if (status === "needs_human_review") return `${noun}需复核`;
+  if (status === "queued" || status === "running" || status === "schema_validating") {
+    return kind === "attribution" ? "归因执行中" : "建议生成中";
+  }
+  if (count > 0) return kind === "attribution" ? "归因已启动" : "建议已生成";
+  return kind === "attribution" ? "启动归因" : "生成建议";
 }
 
 function evidenceFileName(item: Record<string, unknown>): string | null {
@@ -1692,11 +2518,55 @@ function summaryText(value: Record<string, unknown>): string {
   return JSON.stringify(value).slice(0, 120);
 }
 
+function evalItemSummary(item: NonNullable<EvalRunRecord["items"]>[number]): string {
+  if (item.answer_summary) return item.answer_summary;
+  const message = item.error_json?.message;
+  return typeof message === "string" ? message : "-";
+}
+
+function latestEvalRunItemForCase(evalRuns: EvalRunRecord[], evalCaseId: string): NonNullable<EvalRunRecord["items"]>[number] | undefined {
+  for (const run of evalRuns) {
+    const item = run.items?.find((candidate) => candidate.eval_case_id === evalCaseId);
+    if (item) return item;
+  }
+  return undefined;
+}
+
+function evalCaseEditDraft(evalCase: EvalCaseRecord): EvalCaseEditDraft {
+  const status = evalCase.status === "draft" || evalCase.status === "archived" ? evalCase.status : "active";
+  return {
+    prompt: evalCase.prompt || "",
+    expectedBehavior: evalCase.expected_behavior || "",
+    labelsText: (evalCase.labels || []).join(", "),
+    status,
+    checksText: JSON.stringify(evalCase.checks_json || {}, null, 2),
+  };
+}
+
+function parseEvalCaseLabels(value: string): string[] {
+  const seen = new Set<string>();
+  const labels: string[] = [];
+  for (const label of value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean)) {
+    if (seen.has(label)) continue;
+    seen.add(label);
+    labels.push(label);
+  }
+  return labels;
+}
+
 function jobStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
   if (status === "completed") return "green";
   if (status === "failed") return "red";
   if (status === "needs_human_review") return "orange";
   if (status === "queued" || status === "running") return "blue";
+  return "gray";
+}
+
+function evalStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "passed" || status === "completed") return "green";
+  if (status === "failed") return "red";
+  if (status === "needs_human_review") return "orange";
+  if (status === "running") return "blue";
   return "gray";
 }
 
@@ -1706,6 +2576,27 @@ function proposalStatusTone(status?: string | null): "blue" | "green" | "orange"
   if (status === "needs_more_analysis") return "purple";
   if (status === "pending_review") return "orange";
   return "gray";
+}
+
+function externalGovernanceTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "notified") return "green";
+  if (status === "notification_failed") return "red";
+  if (status === "pending_notification") return "orange";
+  return "gray";
+}
+
+function findExternalGovernanceItem(
+  items: ExternalGovernanceItemRecord[],
+  guidance: { external_item_id?: string; source_index?: number },
+  proposalJobId?: string | null,
+  index?: number,
+): ExternalGovernanceItemRecord | undefined {
+  if (guidance.external_item_id) {
+    const matched = items.find((item) => item.external_item_id === guidance.external_item_id);
+    if (matched) return matched;
+  }
+  const sourceIndex = typeof guidance.source_index === "number" ? guidance.source_index : index;
+  return items.find((item) => item.proposal_job_id === proposalJobId && item.source_index === sourceIndex);
 }
 
 function buildTaskByProposalId(tasks: OptimizationTaskRecord[]): Map<string, OptimizationTaskRecord> {
@@ -1725,8 +2616,11 @@ function taskProposalId(task: OptimizationTaskRecord): string | null {
 
 function taskStatusDescription(status?: string | null): string {
   if (status === "pending_execution") return "当前任务已创建，等待人工或后续 patch 执行；系统尚未自动修改文件。";
-  if (status === "executing") return "当前任务正在执行中。";
+  if (status === "applied_pending_regression") return "当前任务已确认应用并创建主 Agent 版本快照，等待手动回归验证。";
+  if (status === "regression_running") return "当前任务正在运行回归验证。";
   if (status === "completed") return "当前任务已完成。";
+  if (status === "failed") return "当前任务回归验证失败，需要继续修复或人工复核。";
+  if (status === "needs_human_review") return "当前任务需要人工复核回归结果。";
   if (status === "closed") return "当前任务已关闭。";
   return "当前任务仅记录优化交接信息，具体执行状态以任务状态为准。";
 }

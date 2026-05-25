@@ -1,6 +1,6 @@
 import json
 
-from app.runtime.feedback_jobs import extract_json_object, proposal_prompt
+from app.runtime.feedback_jobs import attribution_prompt, extract_json_object, proposal_prompt
 
 
 def test_extract_json_object_prefers_expected_schema_version():
@@ -36,3 +36,17 @@ def test_proposal_prompt_embeds_context_when_available():
     assert "proposal_input_json" in prompt
     assert "attribution_output_json" in prompt
     assert "不要调用工具" in prompt
+
+
+def test_attribution_and_proposal_prompts_require_chinese_user_facing_text():
+    attribution = attribution_prompt("/tmp/attribution.json")
+    proposal = proposal_prompt("/tmp/proposal.json")
+
+    assert "所有面向人的说明文本必须使用简体中文" in attribution
+    assert "evidence_refs[].reason" in attribution
+    assert "responsibility_boundary.reason" in attribution
+    assert "rationale 必须使用简体中文" in attribution
+    assert "所有面向人的说明文本必须使用简体中文" in proposal
+    assert "proposals[].title/recommendation/expected_effect/validation/risk" in proposal
+    assert "external_guidance[].recommendation/reason" in proposal
+    assert "no_action_reason 必须使用简体中文" in proposal

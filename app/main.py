@@ -25,9 +25,15 @@ from app.runtime.schemas import (
     AgentRunResponse,
     EvidencePackageFileResponse,
     EvidencePackageResponse,
+    ExternalGovernanceItemResponse,
+    ExternalGovernanceNotifyRequest,
+    ExternalGovernanceWebhookResponse,
     FeedbackAnalysisJobResponse,
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
+    FeedbackEvalDatasetSyncRequest,
+    FeedbackEvalCaseUpdateRequest,
+    FeedbackEvalRunCreateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalResponse,
     OpenAIChatCompletionChoice,
@@ -37,6 +43,7 @@ from app.runtime.schemas import (
     OptimizationProposalReviewRequest,
     OptimizationProposalReviewResponse,
     OptimizationTaskCreateRequest,
+    OptimizationTaskMarkAppliedRequest,
     OptimizationTaskResponse,
     PendingCorrelationResolveRequest,
     SessionInfo,
@@ -457,6 +464,20 @@ async def create_proposal_job(feedback_case_id: str) -> dict[str, Any]:
     return job
 
 
+@app.post(
+    "/api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate",
+    response_model=FeedbackAnalysisJobResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Force regenerate one optimization proposal job and supersede unused existing proposals",
+)
+async def regenerate_proposal_job(feedback_case_id: str) -> dict[str, Any]:
+    job = await runtime.run_proposal_job(feedback_case_id, force=True)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback case not found or missing attribution")
+    return job
+
+
 @app.get(
     "/api/feedback-analysis/jobs/{job_id}",
     response_model=FeedbackAnalysisJobResponse,
@@ -497,6 +518,20 @@ async def get_proposal_output(job_id: str) -> dict[str, Any]:
     if not output:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposal output not found")
     return output
+
+
+@app.post(
+    "/api/feedback-analysis/jobs/{job_id}/proposal/revalidate",
+    response_model=FeedbackAnalysisJobResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Revalidate one proposal job raw output without rerunning the Agent",
+)
+async def revalidate_proposal_output(job_id: str) -> dict[str, Any]:
+    job = feedback_store.revalidate_proposal_job(job_id)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Proposal job raw output not found")
+    return job
 
 
 @app.get(
@@ -691,6 +726,144 @@ async def get_optimization_task(task_id: str) -> dict[str, Any]:
     return task
 
 
+@app.get(
+    "/api/external-governance-webhooks",
+    response_model=list[ExternalGovernanceWebhookResponse],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List configured external governance webhook aliases",
+)
+async def list_external_governance_webhooks() -> list[dict[str, Any]]:
+    try:
+        return feedback_store.list_external_webhooks()
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+@app.get(
+    "/api/external-governance-items",
+    response_model=list[ExternalGovernanceItemResponse],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List external governance items derived from external guidance",
+)
+async def list_external_governance_items(
+    feedback_case_id: str | None = None,
+    proposal_job_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_external_governance_items(
+        feedback_case_id=feedback_case_id,
+        proposal_job_id=proposal_job_id,
+        status=status,
+        limit=limit,
+    )
+
+
+@app.post(
+    "/api/external-governance-items/{external_item_id}/notify",
+    response_model=ExternalGovernanceItemResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Notify one configured external system about an external governance item",
+)
+async def notify_external_governance_item(
+    external_item_id: str,
+    req: ExternalGovernanceNotifyRequest,
+) -> dict[str, Any]:
+    try:
+        result = feedback_store.notify_external_governance_item(external_item_id, webhook_alias=req.webhook_alias)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="External governance item not found")
+    return result
+
+
+@app.post(
+    "/api/optimization-tasks/{task_id}/mark-applied",
+    response_model=OptimizationTaskResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Mark one optimization task as manually applied and snapshot the main Agent version",
+)
+async def mark_optimization_task_applied(
+    task_id: str,
+    req: OptimizationTaskMarkAppliedRequest,
+) -> dict[str, Any]:
+    task = feedback_store.find_task(task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization task not found")
+    if task.get("applied_agent_version_id"):
+        return task
+    if task.get("status") not in {"pending_execution", "failed", "needs_human_review"}:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task cannot be marked applied from current status")
+    version = agent_version_store.create_snapshot(
+        reason="proposal_applied",
+        source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
+        note=req.note or f"优化任务 {task_id} 已人工应用，创建主 Agent 版本快照。",
+    )
+    updated = feedback_store.mark_task_applied(task_id, agent_version=version, note=req.note)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization task not found")
+    return updated
+
+
+@app.post(
+    "/api/optimization-tasks/{task_id}/regression-runs",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Run manual regression validation for one optimization task",
+)
+async def create_optimization_task_regression_run(
+    task_id: str,
+    req: FeedbackEvalRunCreateRequest,
+) -> dict[str, Any]:
+    task = feedback_store.find_task(task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization task not found")
+    if not task.get("applied_agent_version_id"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task must be marked applied before regression validation")
+    if task.get("feedback_case_id"):
+        feedback_store.sync_feedback_eval_cases(feedback_case_id=str(task["feedback_case_id"]))
+    eval_case_ids = list(req.eval_case_ids or [])
+    if not eval_case_ids and task.get("feedback_case_id"):
+        eval_case_ids = [
+            item["eval_case_id"]
+            for item in feedback_store.list_eval_cases(
+                status="active",
+                source_feedback_case_id=str(task["feedback_case_id"]),
+                limit=100,
+            )
+        ]
+    if not eval_case_ids:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No active eval cases found for this task")
+    result = await runtime.run_feedback_eval(
+        eval_case_ids=eval_case_ids,
+        optimization_task_id=task_id,
+        source="manual_task_regression",
+    )
+    if not result:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Regression run could not be started")
+    return result
+
+
+@app.get(
+    "/api/optimization-tasks/{task_id}/regression-runs",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List regression validation runs for one optimization task",
+)
+async def list_optimization_task_regression_runs(
+    task_id: str,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_eval_runs(optimization_task_id=task_id, limit=limit)
+
+
 @app.post(
     "/api/optimization-proposals/{proposal_id}/tasks",
     response_model=OptimizationTaskResponse,
@@ -709,6 +882,104 @@ async def create_optimization_task(proposal_id: str, req: OptimizationTaskCreate
     if not task:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Proposal is missing, not approved, or not actionable")
     return task
+
+
+@app.post(
+    "/api/eval-datasets/feedback/sync",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Sync processed feedback cases into reusable eval cases",
+)
+async def sync_feedback_eval_dataset(req: FeedbackEvalDatasetSyncRequest) -> dict[str, Any]:
+    return feedback_store.sync_feedback_eval_cases(feedback_case_id=req.feedback_case_id, limit=req.limit)
+
+
+@app.get(
+    "/api/eval-cases",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List feedback-derived eval cases",
+)
+async def list_eval_cases(
+    status_filter: str | None = Query(default=None, alias="status"),
+    source_feedback_case_id: str | None = None,
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_eval_cases(status=status_filter, source_feedback_case_id=source_feedback_case_id, limit=limit)
+
+
+@app.patch(
+    "/api/eval-cases/{eval_case_id}",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Update one feedback-derived eval case",
+)
+async def update_eval_case(eval_case_id: str, req: FeedbackEvalCaseUpdateRequest) -> dict[str, Any]:
+    try:
+        updated = feedback_store.update_eval_case(eval_case_id, req.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eval case not found")
+    return updated
+
+
+@app.post(
+    "/api/eval-runs",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Run a manual feedback dataset evaluation against the current main Agent",
+)
+async def create_eval_run(req: FeedbackEvalRunCreateRequest) -> dict[str, Any]:
+    if not req.eval_case_ids:
+        feedback_store.sync_feedback_eval_cases(limit=500)
+    result = await runtime.run_feedback_eval(
+        eval_case_ids=req.eval_case_ids or None,
+        optimization_task_id=req.optimization_task_id,
+        source="manual_feedback_dataset",
+    )
+    if not result:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No active eval cases found")
+    return result
+
+
+@app.get(
+    "/api/eval-runs",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List feedback dataset eval runs",
+)
+async def list_eval_runs(
+    optimization_task_id: str | None = None,
+    agent_version_id: str | None = None,
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_eval_runs(
+        optimization_task_id=optimization_task_id,
+        agent_version_id=agent_version_id,
+        status=status_filter,
+        limit=limit,
+    )
+
+
+@app.get(
+    "/api/eval-runs/{eval_run_id}",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Get one feedback dataset eval run",
+)
+async def get_eval_run(eval_run_id: str) -> dict[str, Any]:
+    eval_run = feedback_store.get_eval_run(eval_run_id)
+    if not eval_run:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Eval run not found")
+    return eval_run
 
 
 @app.post(

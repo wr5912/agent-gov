@@ -6,7 +6,10 @@ import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
+from urllib import error as urlerror
+from urllib import request as urlrequest
 
+import yaml
 from sqlalchemy import or_, select
 
 from .feedback_schemas import validate_attribution_output, validate_proposal_output
@@ -14,6 +17,11 @@ from .runtime_db import (
     AgentRunModel,
     EvidenceFileModel,
     EvidencePackageModel,
+    EvalCaseModel,
+    EvalRunItemModel,
+    EvalRunModel,
+    ExternalGovernanceItemModel,
+    ExternalNotificationModel,
     FeedbackCaseModel,
     FeedbackJobModel,
     FeedbackSignalModel,
@@ -83,6 +91,7 @@ class FeedbackStore:
         self.jobs_dir = data_dir / "feedback-analysis" / "jobs"
         self.proposal_dir = data_dir / "optimization-proposals"
         self.task_dir = data_dir / "optimization-tasks"
+        self.external_webhooks_path = data_dir / "external-governance-webhooks.yaml"
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[dict[str, Any]]]) -> None:
         # Trace details are intentionally not persisted in SQLite; keep the setter
@@ -694,11 +703,12 @@ class FeedbackStore:
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
         profile_version: Optional[dict[str, Any]] = None,
+        force: bool = False,
     ) -> Optional[dict[str, Any]]:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
-        existing = self._latest_reusable_job(feedback_case_id, "proposal")
+        existing = None if force else self._latest_reusable_job(feedback_case_id, "proposal")
         if existing:
             return {**existing, "_reused_existing": True}
         evidence_package_id = evidence_package_id or self._latest(feedback_case.get("evidence_package_ids"))
@@ -710,6 +720,12 @@ class FeedbackStore:
             return None
 
         job_id = f"fbp-{uuid.uuid4()}"
+        if force:
+            self._supersede_case_proposals(
+                feedback_case_id,
+                reason="proposal_regenerated",
+                superseded_by_job_id=job_id,
+            )
         attribution_output_path = self._materialize_extra_json(job_id, "proposal", "attribution_validated_output.json", attribution_output)
         input_payload = {
             "schema_version": "proposal-input/v1",
@@ -741,6 +757,45 @@ class FeedbackStore:
         self._append_case_update(feedback_case, proposal_job_id=job_id, status="proposal_queued")
         return self.get_job(job_id)
 
+    def revalidate_proposal_job(self, job_id: str) -> Optional[dict[str, Any]]:
+        job = self.get_job(job_id)
+        if not job or job.get("job_type") != "proposal":
+            return None
+        raw_output = job.get("raw_output_json")
+        if not isinstance(raw_output, dict):
+            return None
+        self._append_job_update(job_id, status="schema_validating")
+        validated, error = validate_proposal_output(raw_output)
+        if not validated:
+            self._write_job_error(job, "SCHEMA_VALIDATION_FAILED", error or "invalid proposal output")
+            feedback_case = self.find_case(str(job["feedback_case_id"]))
+            if feedback_case:
+                self._append_case_update(feedback_case, status="needs_human_review")
+            completed = self._append_job_update(job_id, status="needs_human_review", completed_at=utc_now())
+            self._cleanup_job_tmp(job_id)
+            return completed
+
+        normalized = self._normalize_proposal_output(validated, job)
+        normalized["external_guidance"] = self._upsert_external_governance_items(normalized, job)
+        with self.Session.begin() as db:
+            row = db.get(FeedbackJobModel, job_id)
+            if not row:
+                return None
+            row.status = "completed"
+            row.completed_at = utc_now()
+            row.validated_output_json = normalized
+            row.error_json = None
+            for proposal in normalized.get("proposals", []):
+                db.merge(self._proposal_model_from_dict(proposal))
+        feedback_case = self.find_case(str(job["feedback_case_id"]))
+        if feedback_case:
+            self._append_case_update(
+                feedback_case,
+                status="pending_review" if normalized.get("proposals") else "needs_human_review",
+            )
+        self._cleanup_job_tmp(job_id)
+        return self.get_job(job_id)
+
     def start_job(self, job_id: str) -> Optional[dict[str, Any]]:
         return self._append_job_update(job_id, status="running", started_at=utc_now())
 
@@ -755,7 +810,7 @@ class FeedbackStore:
             self._write_job_error(job, "SCHEMA_VALIDATION_FAILED", error or "invalid attribution output")
             feedback_case = self.find_case(str(job["feedback_case_id"]))
             if feedback_case:
-                self._append_case_update(feedback_case, status="pending_attribution")
+                self._append_case_update(feedback_case, status="needs_human_review")
             completed = self._append_job_update(job_id, status="needs_human_review", completed_at=utc_now())
             self._cleanup_job_tmp(job_id)
             return completed
@@ -778,12 +833,13 @@ class FeedbackStore:
             self._write_job_error(job, "SCHEMA_VALIDATION_FAILED", error or "invalid proposal output")
             feedback_case = self.find_case(str(job["feedback_case_id"]))
             if feedback_case:
-                self._append_case_update(feedback_case, status="pending_proposal")
+                self._append_case_update(feedback_case, status="needs_human_review")
             completed = self._append_job_update(job_id, status="needs_human_review", completed_at=utc_now())
             self._cleanup_job_tmp(job_id)
             return completed
 
         normalized = self._normalize_proposal_output(validated, job)
+        normalized["external_guidance"] = self._upsert_external_governance_items(normalized, job)
         self._set_job_json(job_id, validated_output_json=normalized)
         with self.Session.begin() as db:
             for proposal in normalized.get("proposals", []):
@@ -837,6 +893,8 @@ class FeedbackStore:
         filters = {"feedback_case_id": feedback_case_id, "status": status}
         with self.Session() as db:
             proposals = [self._proposal_to_dict(row) for row in db.scalars(select(OptimizationProposalModel).order_by(OptimizationProposalModel.created_at.desc())).all()]
+        if status is None:
+            proposals = [item for item in proposals if item.get("status") != "superseded"]
         return self._filter_records(proposals, filters, limit)
 
     def find_proposal(self, proposal_id: str) -> Optional[dict[str, Any]]:
@@ -941,6 +999,433 @@ class FeedbackStore:
             row = db.get(OptimizationTaskModel, task_id)
             return row.payload_json if row else None
 
+    def list_external_webhooks(self) -> list[dict[str, Any]]:
+        if not self.external_webhooks_path.exists():
+            return []
+        try:
+            loaded = yaml.safe_load(self.external_webhooks_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid external governance webhook config: {exc}") from exc
+        if not isinstance(loaded, dict):
+            raise ValueError("External governance webhook config must be a mapping")
+        webhooks = loaded.get("webhooks") or []
+        if not isinstance(webhooks, list):
+            raise ValueError("External governance webhook config field webhooks must be a list")
+        normalized: list[dict[str, Any]] = []
+        for item in webhooks:
+            if not isinstance(item, dict):
+                continue
+            alias = self._string(item.get("alias"))
+            url = self._string(item.get("url"))
+            if not alias or not url:
+                continue
+            normalized.append(
+                {
+                    "alias": alias,
+                    "name": self._string(item.get("name")) or alias,
+                    "url": url,
+                    "has_token": bool(self._string(item.get("token"))),
+                }
+            )
+        return normalized
+
+    def list_external_governance_items(
+        self,
+        *,
+        feedback_case_id: Optional[str] = None,
+        proposal_job_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(select(ExternalGovernanceItemModel).order_by(ExternalGovernanceItemModel.created_at.desc())).all()
+            items = [self._external_governance_item_to_dict(row) for row in rows]
+        if status is None:
+            items = [item for item in items if item.get("status") != "superseded"]
+        return self._filter_records(items, {"feedback_case_id": feedback_case_id, "proposal_job_id": proposal_job_id, "status": status}, limit)
+
+    def find_external_governance_item(self, external_item_id: str) -> Optional[dict[str, Any]]:
+        if not external_item_id:
+            return None
+        with self.Session() as db:
+            row = db.get(ExternalGovernanceItemModel, external_item_id)
+            return self._external_governance_item_to_dict(row) if row else None
+
+    def notify_external_governance_item(
+        self,
+        external_item_id: str,
+        *,
+        webhook_alias: str,
+        sender: Optional[Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]] = None,
+    ) -> Optional[dict[str, Any]]:
+        item = self.find_external_governance_item(external_item_id)
+        if not item:
+            return None
+        webhook = self._external_webhook_by_alias(webhook_alias)
+        payload = self._external_notification_payload(item, webhook)
+        notification_id = f"egn-{uuid.uuid4()}"
+        created_at = utc_now()
+        notification = {
+            "notification_id": notification_id,
+            "external_item_id": external_item_id,
+            "created_at": created_at,
+            "completed_at": None,
+            "status": "sending",
+            "webhook_alias": webhook["alias"],
+            "request_json": payload,
+            "http_status": None,
+            "response_body": None,
+            "error": None,
+        }
+        try:
+            response = (sender or self._send_external_webhook)(webhook, payload)
+            http_status = int(response.get("http_status") or 0)
+            response_body = self._truncate(self._string(response.get("response_body")) or "")
+            notification.update(
+                {
+                    "completed_at": utc_now(),
+                    "status": "sent" if 200 <= http_status < 300 else "failed",
+                    "http_status": http_status,
+                    "response_body": response_body,
+                }
+            )
+        except Exception as exc:
+            notification.update({"completed_at": utc_now(), "status": "failed", "error": str(exc)})
+
+        item_status = "notified" if notification["status"] == "sent" else "notification_failed"
+        with self.Session.begin() as db:
+            db.add(
+                ExternalNotificationModel(
+                    notification_id=notification_id,
+                    external_item_id=external_item_id,
+                    created_at=notification["created_at"],
+                    completed_at=notification["completed_at"],
+                    status=notification["status"],
+                    webhook_alias=webhook["alias"],
+                    http_status=notification["http_status"],
+                    payload_json=notification,
+                )
+            )
+            row = db.get(ExternalGovernanceItemModel, external_item_id)
+            if row:
+                row.status = item_status
+                row.updated_at = utc_now()
+                row.latest_notification_id = notification_id
+                row.payload_json = {
+                    **(row.payload_json or {}),
+                    "status": item_status,
+                    "updated_at": row.updated_at,
+                    "latest_notification_id": notification_id,
+                    "latest_webhook_alias": webhook["alias"],
+                    "latest_notification": notification,
+                }
+        return self.find_external_governance_item(external_item_id)
+
+    def mark_task_applied(
+        self,
+        task_id: str,
+        *,
+        agent_version: dict[str, Any],
+        note: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        task = self.find_task(task_id)
+        if not task:
+            return None
+        if task.get("applied_agent_version_id"):
+            return task
+        return self._update_task_payload(
+            task_id,
+            status="applied_pending_regression",
+            fields={
+                "applied_at": utc_now(),
+                "applied_agent_version_id": self._string(agent_version.get("agent_version_id")),
+                "applied_agent_version": agent_version,
+                "application_note": note,
+            },
+        )
+
+    def update_task_status(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        fields: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        return self._update_task_payload(task_id, status=status, fields=fields or {})
+
+    def sync_feedback_eval_cases(
+        self,
+        *,
+        feedback_case_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        feedback_cases = [self.find_case(feedback_case_id)] if feedback_case_id else self.list_cases(limit=limit)
+        created = 0
+        reused = 0
+        skipped = 0
+        eval_cases: list[dict[str, Any]] = []
+        for feedback_case in feedback_cases:
+            if not feedback_case:
+                skipped += 1
+                continue
+            existing = self.find_eval_case(source_feedback_case_id=feedback_case["feedback_case_id"])
+            if existing:
+                reused += 1
+                eval_cases.append(existing)
+                continue
+            payload = self._build_eval_case_from_feedback(feedback_case)
+            if not payload:
+                skipped += 1
+                continue
+            with self.Session.begin() as db:
+                db.add(
+                    EvalCaseModel(
+                        eval_case_id=payload["eval_case_id"],
+                        created_at=payload["created_at"],
+                        updated_at=payload["updated_at"],
+                        status=payload["status"],
+                        source_feedback_case_id=self._string(payload.get("source_feedback_case_id")),
+                        source_run_id=self._string(payload.get("source_run_id")),
+                        labels_json=list(payload.get("labels") or []),
+                        payload_json=payload,
+                    )
+                )
+            created += 1
+            eval_cases.append(payload)
+        return {"created": created, "reused": reused, "skipped": skipped, "eval_cases": eval_cases}
+
+    def list_eval_cases(
+        self,
+        *,
+        status: Optional[str] = None,
+        source_feedback_case_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        filters = {"status": status, "source_feedback_case_id": source_feedback_case_id}
+        with self.Session() as db:
+            cases = [self._eval_case_to_dict(row) for row in db.scalars(select(EvalCaseModel).order_by(EvalCaseModel.updated_at.desc())).all()]
+        return self._filter_records(cases, filters, limit)
+
+    def find_eval_case(
+        self,
+        eval_case_id: Optional[str] = None,
+        *,
+        source_feedback_case_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row: EvalCaseModel | None = None
+            if eval_case_id:
+                row = db.get(EvalCaseModel, eval_case_id)
+            elif source_feedback_case_id:
+                row = db.scalars(
+                    select(EvalCaseModel)
+                    .where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id)
+                    .order_by(EvalCaseModel.updated_at.desc())
+                ).first()
+            return self._eval_case_to_dict(row) if row else None
+
+    def update_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        updated_at = utc_now()
+        with self.Session.begin() as db:
+            row = db.get(EvalCaseModel, eval_case_id)
+            if not row:
+                return None
+            payload = dict(row.payload_json or {})
+
+            if "prompt" in fields:
+                prompt = self._string(fields.get("prompt")).strip()
+                if not prompt:
+                    raise ValueError("Eval case prompt cannot be empty")
+                payload["prompt"] = prompt
+            if "expected_behavior" in fields:
+                payload["expected_behavior"] = self._string(fields.get("expected_behavior")).strip()
+            if "checks_json" in fields:
+                checks = fields.get("checks_json")
+                if checks is not None and not isinstance(checks, dict):
+                    raise ValueError("Eval case checks_json must be an object")
+                payload["checks_json"] = dict(checks or {})
+            if "labels" in fields:
+                labels = fields.get("labels")
+                if labels is not None and not isinstance(labels, list):
+                    raise ValueError("Eval case labels must be a list")
+                normalized_labels = self._unique_strings([str(item).strip() for item in labels or [] if str(item).strip()])
+                payload["labels"] = normalized_labels
+                row.labels_json = normalized_labels
+            if "status" in fields:
+                new_status = self._string(fields.get("status")).strip()
+                if new_status not in {"active", "draft", "archived"}:
+                    raise ValueError("Eval case status must be active, draft, or archived")
+                payload["status"] = new_status
+                row.status = new_status
+
+            payload["updated_at"] = updated_at
+            row.updated_at = updated_at
+            row.payload_json = payload
+        return self.find_eval_case(eval_case_id)
+
+    def create_eval_run(
+        self,
+        *,
+        eval_case_ids: list[str],
+        agent_version_id: Optional[str],
+        optimization_task_id: Optional[str] = None,
+        source: str = "manual_feedback_dataset",
+    ) -> dict[str, Any]:
+        created_at = utc_now()
+        payload = {
+            "eval_run_id": f"evr-{uuid.uuid4()}",
+            "created_at": created_at,
+            "completed_at": None,
+            "status": "running",
+            "result_status": "running",
+            "agent_version_id": agent_version_id,
+            "optimization_task_id": optimization_task_id,
+            "source": source,
+            "eval_case_ids": eval_case_ids,
+            "item_ids": [],
+            "summary": {"total": len(eval_case_ids), "passed": 0, "failed": 0, "needs_human_review": 0},
+        }
+        with self.Session.begin() as db:
+            db.add(
+                EvalRunModel(
+                    eval_run_id=payload["eval_run_id"],
+                    created_at=created_at,
+                    completed_at=None,
+                    status="running",
+                    agent_version_id=self._string(agent_version_id),
+                    optimization_task_id=self._string(optimization_task_id),
+                    source=source,
+                    payload_json=payload,
+                )
+            )
+        return payload
+
+    def append_eval_run_item(
+        self,
+        eval_run_id: str,
+        *,
+        eval_case: dict[str, Any],
+        agent_result: Optional[dict[str, Any]],
+        status: str,
+        score: float,
+        check_results: list[dict[str, Any]],
+        error_json: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        if not self.get_eval_run(eval_run_id):
+            return None
+        item_id = f"evi-{uuid.uuid4()}"
+        answer = self._string((agent_result or {}).get("answer"))
+        payload = {
+            "eval_run_item_id": item_id,
+            "eval_run_id": eval_run_id,
+            "eval_case_id": eval_case["eval_case_id"],
+            "source_feedback_case_id": eval_case.get("source_feedback_case_id"),
+            "agent_run_id": (agent_result or {}).get("run_id"),
+            "agent_version_id": (agent_result or {}).get("agent_version_id"),
+            "status": status,
+            "score": score,
+            "check_results": check_results,
+            "answer_summary": answer.strip().replace("\n", " ")[:500],
+            "error_json": error_json,
+            "created_at": utc_now(),
+        }
+        with self.Session.begin() as db:
+            db.add(
+                EvalRunItemModel(
+                    eval_run_item_id=item_id,
+                    eval_run_id=eval_run_id,
+                    eval_case_id=eval_case["eval_case_id"],
+                    agent_run_id=self._string(payload.get("agent_run_id")),
+                    status=status,
+                    score=score,
+                    payload_json=payload,
+                )
+            )
+            run = db.get(EvalRunModel, eval_run_id)
+            if run:
+                current = dict(run.payload_json or {})
+                current["item_ids"] = [*list(current.get("item_ids") or []), item_id]
+                run.payload_json = current
+        return payload
+
+    def finish_eval_run(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+        completed_at = utc_now()
+        with self.Session.begin() as db:
+            run = db.get(EvalRunModel, eval_run_id)
+            if not run:
+                return None
+            items = list(db.scalars(select(EvalRunItemModel).where(EvalRunItemModel.eval_run_id == eval_run_id)).all())
+            summary = {
+                "total": len(items),
+                "passed": sum(1 for item in items if item.status == "passed"),
+                "failed": sum(1 for item in items if item.status == "failed"),
+                "needs_human_review": sum(1 for item in items if item.status == "needs_human_review"),
+            }
+            if summary["failed"]:
+                result_status = "failed"
+            elif summary["needs_human_review"]:
+                result_status = "needs_human_review"
+            elif summary["passed"] == summary["total"] and summary["total"]:
+                result_status = "passed"
+            else:
+                result_status = "needs_human_review"
+            payload = dict(run.payload_json or {})
+            payload.update(
+                {
+                    "completed_at": completed_at,
+                    "status": "completed",
+                    "result_status": result_status,
+                    "summary": summary,
+                }
+            )
+            run.completed_at = completed_at
+            run.status = "completed"
+            run.payload_json = payload
+        finished = self.get_eval_run(eval_run_id)
+        task_id = self._string((finished or {}).get("optimization_task_id"))
+        if task_id and finished:
+            next_status = "completed" if finished.get("result_status") == "passed" else str(finished.get("result_status") or "needs_human_review")
+            self._attach_task_regression_run(task_id, finished, status=next_status)
+            return self.get_eval_run(eval_run_id)
+        return finished
+
+    def fail_eval_run(self, eval_run_id: str, *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+        error_json = {"error_code": error_code, "message": message, "created_at": utc_now(), "eval_run_id": eval_run_id}
+        with self.Session.begin() as db:
+            run = db.get(EvalRunModel, eval_run_id)
+            if not run:
+                return None
+            payload = dict(run.payload_json or {})
+            payload.update({"status": "failed", "result_status": "failed", "completed_at": utc_now(), "error_json": error_json})
+            run.status = "failed"
+            run.completed_at = payload["completed_at"]
+            run.payload_json = payload
+        failed = self.get_eval_run(eval_run_id)
+        task_id = self._string((failed or {}).get("optimization_task_id"))
+        if task_id and failed:
+            self._attach_task_regression_run(task_id, failed, status="failed")
+        return failed
+
+    def list_eval_runs(
+        self,
+        *,
+        optimization_task_id: Optional[str] = None,
+        agent_version_id: Optional[str] = None,
+        status: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        filters = {"optimization_task_id": optimization_task_id, "agent_version_id": agent_version_id, "status": status}
+        with self.Session() as db:
+            runs = [self._eval_run_to_dict(row) for row in db.scalars(select(EvalRunModel).order_by(EvalRunModel.created_at.desc())).all()]
+        return self._filter_records(runs, filters, limit)
+
+    def get_eval_run(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+        if not eval_run_id:
+            return None
+        with self.Session() as db:
+            row = db.get(EvalRunModel, eval_run_id)
+            return self._eval_run_to_dict(row) if row else None
+
     def find_run(self, *, run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         if not run_id:
             return None
@@ -1036,6 +1521,149 @@ class FeedbackStore:
         if not normalized["proposals"] and not normalized["external_guidance"]:
             normalized["no_action_reason"] = normalized.get("no_action_reason") or "NO_ACTIONABLE_PROPOSAL"
         return normalized
+
+    def _upsert_external_governance_items(self, normalized: dict[str, Any], job: dict[str, Any]) -> list[dict[str, Any]]:
+        guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
+        if not guidance_items:
+            return []
+        with self.Session.begin() as db:
+            existing_rows = db.scalars(
+                select(ExternalGovernanceItemModel).where(ExternalGovernanceItemModel.proposal_job_id == job["job_id"])
+            ).all()
+            existing_by_index = {
+                int((row.payload_json or {}).get("source_index")): row
+                for row in existing_rows
+                if isinstance((row.payload_json or {}).get("source_index"), int)
+            }
+            result: list[dict[str, Any]] = []
+            for index, guidance in enumerate(guidance_items):
+                now = utc_now()
+                existing = existing_by_index.get(index)
+                external_item_id = existing.external_item_id if existing else f"egi-{uuid.uuid4()}"
+                payload = {
+                    "schema_version": "external-governance-item/v1",
+                    "external_item_id": external_item_id,
+                    "created_at": existing.created_at if existing else now,
+                    "updated_at": now,
+                    "status": existing.status if existing else "pending_notification",
+                    "feedback_case_id": job["feedback_case_id"],
+                    "proposal_job_id": job["job_id"],
+                    "source_index": index,
+                    "owner": self._string(guidance.get("owner")) or "needs_human_analysis",
+                    "actionability": self._string(guidance.get("actionability")) or "external_guidance",
+                    "recommendation": self._string(guidance.get("recommendation")) or "",
+                    "reason": self._string(guidance.get("reason")),
+                    "latest_notification_id": existing.latest_notification_id if existing else None,
+                }
+                if existing:
+                    existing.updated_at = now
+                    existing.owner = payload["owner"]
+                    existing.actionability = payload["actionability"]
+                    existing.payload_json = {**(existing.payload_json or {}), **payload}
+                else:
+                    db.add(
+                        ExternalGovernanceItemModel(
+                            external_item_id=external_item_id,
+                            created_at=payload["created_at"],
+                            updated_at=payload["updated_at"],
+                            status=payload["status"],
+                            feedback_case_id=payload["feedback_case_id"],
+                            proposal_job_id=payload["proposal_job_id"],
+                            owner=payload["owner"],
+                            actionability=payload["actionability"],
+                            latest_notification_id=payload["latest_notification_id"],
+                            payload_json=payload,
+                        )
+                    )
+                result.append({**guidance, **payload})
+            return result
+
+    def _external_webhook_by_alias(self, alias: str) -> dict[str, Any]:
+        requested = self._string(alias)
+        if not requested:
+            raise ValueError("webhook_alias is required")
+        if not self.external_webhooks_path.exists():
+            raise ValueError(f"External governance webhook config not found: {self.external_webhooks_path}")
+        try:
+            loaded = yaml.safe_load(self.external_webhooks_path.read_text(encoding="utf-8")) or {}
+        except yaml.YAMLError as exc:
+            raise ValueError(f"Invalid external governance webhook config: {exc}") from exc
+        for item in loaded.get("webhooks") or []:
+            if not isinstance(item, dict):
+                continue
+            if self._string(item.get("alias")) == requested and self._string(item.get("url")):
+                return {
+                    "alias": requested,
+                    "name": self._string(item.get("name")) or requested,
+                    "url": self._string(item.get("url")),
+                    "token": self._string(item.get("token")),
+                    "timeout_seconds": int(item.get("timeout_seconds") or 5),
+                }
+        raise ValueError(f"Unknown external governance webhook alias: {requested}")
+
+    def _external_notification_payload(self, item: dict[str, Any], webhook: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": "external-governance-notification/v1",
+            "webhook_alias": webhook["alias"],
+            "external_item_id": item["external_item_id"],
+            "feedback_case_id": item.get("feedback_case_id"),
+            "proposal_job_id": item.get("proposal_job_id"),
+            "owner": item.get("owner"),
+            "actionability": item.get("actionability"),
+            "recommendation": item.get("recommendation"),
+            "reason": item.get("reason"),
+            "created_at": item.get("created_at"),
+        }
+
+    def _send_external_webhook(self, webhook: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+        headers = {"Content-Type": "application/json", "Accept": "application/json"}
+        if webhook.get("token"):
+            headers["Authorization"] = f"Bearer {webhook['token']}"
+        request = urlrequest.Request(
+            str(webhook["url"]),
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+        try:
+            with urlrequest.urlopen(request, timeout=int(webhook.get("timeout_seconds") or 5)) as response:
+                body = response.read(4096).decode("utf-8", errors="replace")
+                return {"http_status": response.status, "response_body": body}
+        except urlerror.HTTPError as exc:
+            body = exc.read(4096).decode("utf-8", errors="replace")
+            return {"http_status": exc.code, "response_body": body}
+
+    def _external_governance_item_to_dict(self, row: ExternalGovernanceItemModel) -> dict[str, Any]:
+        item = dict(row.payload_json or {})
+        item.update(
+            {
+                "external_item_id": row.external_item_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "status": row.status,
+                "feedback_case_id": row.feedback_case_id,
+                "proposal_job_id": row.proposal_job_id,
+                "owner": row.owner,
+                "actionability": row.actionability,
+                "latest_notification_id": row.latest_notification_id,
+            }
+        )
+        with self.Session() as db:
+            if row.latest_notification_id:
+                notification = db.get(ExternalNotificationModel, row.latest_notification_id)
+            else:
+                notification = db.scalar(
+                    select(ExternalNotificationModel)
+                    .where(ExternalNotificationModel.external_item_id == row.external_item_id)
+                    .order_by(ExternalNotificationModel.created_at.desc())
+                    .limit(1)
+                )
+        if notification:
+            item["latest_notification"] = dict(notification.payload_json or {})
+        return item
+
+    def _truncate(self, value: str, limit: int = 2000) -> str:
+        return value if len(value) <= limit else f"{value[:limit]}..."
 
     def _case_model_from_dict(self, feedback_case: dict[str, Any]) -> FeedbackCaseModel:
         return FeedbackCaseModel(
@@ -1271,7 +1899,7 @@ class FeedbackStore:
                 .order_by(FeedbackJobModel.created_at.desc())
                 .limit(1)
             )
-            if not row or row.status in {"failed", "needs_human_review"}:
+            if not row or row.status == "failed":
                 return None
             return self._job_to_dict(row)
 
@@ -1300,6 +1928,239 @@ class FeedbackStore:
         if review:
             proposal["latest_review"] = review.payload_json
         return proposal
+
+    def _supersede_case_proposals(
+        self,
+        feedback_case_id: str,
+        *,
+        reason: str,
+        superseded_by_job_id: str,
+    ) -> dict[str, int]:
+        superseded_at = utc_now()
+        proposal_count = 0
+        external_count = 0
+        with self.Session.begin() as db:
+            proposals = db.scalars(
+                select(OptimizationProposalModel).where(
+                    OptimizationProposalModel.feedback_case_id == feedback_case_id,
+                    OptimizationProposalModel.status.in_(("pending_review", "needs_more_analysis")),
+                )
+            ).all()
+            for row in proposals:
+                payload = dict(row.payload_json or {})
+                row.status = "superseded"
+                row.payload_json = {
+                    **payload,
+                    "status": "superseded",
+                    "superseded_at": superseded_at,
+                    "superseded_reason": reason,
+                    "superseded_by_job_id": superseded_by_job_id,
+                }
+                proposal_count += 1
+
+            external_items = db.scalars(
+                select(ExternalGovernanceItemModel).where(
+                    ExternalGovernanceItemModel.feedback_case_id == feedback_case_id,
+                    ExternalGovernanceItemModel.status.in_(("pending_notification", "notification_failed")),
+                )
+            ).all()
+            for row in external_items:
+                payload = dict(row.payload_json or {})
+                row.status = "superseded"
+                row.updated_at = superseded_at
+                row.payload_json = {
+                    **payload,
+                    "status": "superseded",
+                    "updated_at": superseded_at,
+                    "superseded_at": superseded_at,
+                    "superseded_reason": reason,
+                    "superseded_by_job_id": superseded_by_job_id,
+                }
+                external_count += 1
+        return {"proposals": proposal_count, "external_guidance_items": external_count}
+
+    def _update_task_payload(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        fields: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        with self.Session.begin() as db:
+            row = db.get(OptimizationTaskModel, task_id)
+            if not row:
+                return None
+            payload = dict(row.payload_json or {})
+            payload.update(fields)
+            payload["status"] = status
+            row.status = status
+            row.payload_json = payload
+        return self.find_task(task_id)
+
+    def _attach_task_regression_run(self, task_id: str, eval_run: dict[str, Any], *, status: str) -> Optional[dict[str, Any]]:
+        task = self.find_task(task_id)
+        if not task:
+            return None
+        run_id = self._string(eval_run.get("eval_run_id"))
+        run_ids = [str(item) for item in task.get("regression_run_ids") or [] if item]
+        if run_id and run_id not in run_ids:
+            run_ids.append(run_id)
+        return self._update_task_payload(
+            task_id,
+            status=status,
+            fields={
+                "regression_run_ids": run_ids,
+                "latest_regression_run_id": run_id,
+                "latest_regression_run": eval_run,
+                "regression_completed_at": eval_run.get("completed_at"),
+            },
+        )
+
+    def _build_eval_case_from_feedback(self, feedback_case: dict[str, Any]) -> Optional[dict[str, Any]]:
+        attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
+        proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
+        if not attribution_job_id or not proposal_job_id:
+            return None
+
+        attribution_output = self.get_job_output(attribution_job_id, "attribution") or {}
+        proposal_output = self.get_job_output(proposal_job_id, "proposal") or {}
+        if not attribution_output or not proposal_output:
+            return None
+
+        source_run_id = self._latest(feedback_case.get("run_ids"))
+        source_run = self.find_run(run_id=source_run_id) if source_run_id else None
+        prompt = self._string((source_run or {}).get("message")) or self._string(feedback_case.get("title"))
+        if not prompt:
+            return None
+
+        signals = [signal for signal in (self.find_signal(signal_id) for signal_id in feedback_case.get("signal_ids", [])) if signal]
+        labels = self._unique_strings(
+            [
+                *[str(label) for signal in signals for label in (signal.get("labels") or [])],
+                self._string(attribution_output.get("problem_type")) or "",
+                self._string(attribution_output.get("optimization_object_type")) or "",
+            ]
+        )
+        proposals = [item for item in proposal_output.get("proposals") or [] if isinstance(item, dict)]
+        primary_proposal = proposals[0] if proposals else {}
+        expected_behavior = self._eval_expected_behavior(feedback_case, attribution_output, primary_proposal)
+        checks_json = self._eval_checks(labels, attribution_output, primary_proposal)
+        created_at = utc_now()
+        return {
+            "schema_version": "feedback-eval-case/v1",
+            "eval_case_id": f"evc-{uuid.uuid4()}",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "status": "active",
+            "source": "feedback_dataset",
+            "source_feedback_case_id": feedback_case["feedback_case_id"],
+            "source_run_id": source_run_id,
+            "source_signal_ids": feedback_case.get("signal_ids") or [],
+            "source_evidence_package_id": self._latest(feedback_case.get("evidence_package_ids")),
+            "source_attribution_job_id": attribution_job_id,
+            "source_proposal_job_id": proposal_job_id,
+            "prompt": prompt,
+            "labels": labels,
+            "expected_behavior": expected_behavior,
+            "checks_json": checks_json,
+            "source_summary": {
+                "feedback_title": feedback_case.get("title"),
+                "feedback_status": feedback_case.get("status"),
+                "feedback_comments": [signal.get("comment") for signal in signals if signal.get("comment")],
+                "original_answer_summary": (source_run or {}).get("answer_summary"),
+            },
+            "attribution_summary": {
+                "problem_type": attribution_output.get("problem_type"),
+                "optimization_object_type": attribution_output.get("optimization_object_type"),
+                "actionability": attribution_output.get("actionability"),
+                "confidence": attribution_output.get("confidence"),
+                "rationale": attribution_output.get("rationale"),
+            },
+            "proposal_summary": {
+                "proposal_id": primary_proposal.get("proposal_id"),
+                "title": primary_proposal.get("title"),
+                "target_type": primary_proposal.get("target_type"),
+                "target_path": primary_proposal.get("target_path"),
+                "validation": primary_proposal.get("validation"),
+                "expected_effect": primary_proposal.get("expected_effect"),
+            },
+        }
+
+    def _eval_expected_behavior(
+        self,
+        feedback_case: dict[str, Any],
+        attribution_output: dict[str, Any],
+        proposal: dict[str, Any],
+    ) -> str:
+        validation = self._string(proposal.get("validation"))
+        recommendation = self._string(proposal.get("recommendation"))
+        problem_type = self._string(attribution_output.get("problem_type")) or "反馈问题"
+        title = self._string(feedback_case.get("title")) or "原反馈场景"
+        parts = [
+            f"复测“{title}”对应的原始输入，回答应纠正 {problem_type}。",
+            validation or recommendation or "输出应完整、可核查，并符合当前主 Agent 配置。",
+        ]
+        return " ".join(part for part in parts if part)
+
+    def _eval_checks(
+        self,
+        labels: list[str],
+        attribution_output: dict[str, Any],
+        proposal: dict[str, Any],
+    ) -> dict[str, Any]:
+        label_set = set(labels)
+        problem_type = self._string(attribution_output.get("problem_type"))
+        target_type = self._string(proposal.get("target_type")) or self._string(attribution_output.get("optimization_object_type"))
+        requires_tool_use = bool(
+            label_set
+            & {
+                "tool_data_incomplete",
+                "tool_data_quality",
+                "tool_misuse",
+                "tool_unavailable",
+                "evidence_gap",
+            }
+        ) or problem_type in {"tool_data_quality", "tool_misuse", "tool_unavailable", "evidence_gap"}
+        preferred_tools = ["Read", "Grep", "Glob"] if target_type in {"main_agent_claude_md", "skill", "subagent", "mcp_config"} else []
+        return {
+            "requires_non_empty_answer": True,
+            "requires_no_runtime_errors": True,
+            "requires_tool_use": requires_tool_use,
+            "preferred_tools": preferred_tools,
+            "notes": "首版使用确定性运行信号评估；语义质量保留人工复核入口。",
+        }
+
+    def _eval_case_to_dict(self, row: EvalCaseModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload["eval_case_id"] = row.eval_case_id
+        payload["created_at"] = row.created_at
+        payload["updated_at"] = row.updated_at
+        payload["status"] = row.status
+        payload["source_feedback_case_id"] = row.source_feedback_case_id
+        payload["source_run_id"] = row.source_run_id
+        payload["labels"] = list(row.labels_json or payload.get("labels") or [])
+        return payload
+
+    def _eval_run_to_dict(self, row: EvalRunModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload["eval_run_id"] = row.eval_run_id
+        payload["created_at"] = row.created_at
+        payload["completed_at"] = row.completed_at
+        payload["status"] = row.status
+        payload["agent_version_id"] = row.agent_version_id
+        payload["optimization_task_id"] = row.optimization_task_id
+        payload["source"] = row.source
+        with self.Session() as db:
+            items = [
+                item.payload_json
+                for item in db.scalars(
+                    select(EvalRunItemModel)
+                    .where(EvalRunItemModel.eval_run_id == row.eval_run_id)
+                    .order_by(EvalRunItemModel.eval_run_item_id.asc())
+                ).all()
+            ]
+        payload["items"] = items
+        return payload
 
     def _current_agent_version_id(self) -> Optional[str]:
         if not self.agent_version_provider:

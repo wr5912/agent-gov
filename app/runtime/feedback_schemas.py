@@ -223,6 +223,18 @@ def normalize_proposal_output(payload: dict[str, Any]) -> dict[str, Any]:
             proposal["risk"] = "可能增加回答前的工具调用成本或响应耗时。"
         proposals.append(proposal)
     normalized["proposals"] = proposals
+    external_guidance: list[Any] = []
+    for item in normalized.get("external_guidance") or []:
+        if not isinstance(item, dict):
+            external_guidance.append(item)
+            continue
+        guidance = dict(item)
+        if not guidance.get("owner") and guidance.get("target"):
+            guidance["owner"] = str(guidance["target"])
+        if not guidance.get("reason") and guidance.get("rationale"):
+            guidance["reason"] = str(guidance["rationale"])
+        external_guidance.append(guidance)
+    normalized["external_guidance"] = external_guidance
     return normalized
 
 

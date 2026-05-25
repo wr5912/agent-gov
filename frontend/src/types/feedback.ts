@@ -305,6 +305,50 @@ export interface ExternalGuidanceRecord {
   actionability: string;
   recommendation: string;
   reason?: string | null;
+  external_item_id?: string;
+  source_index?: number;
+  status?: string;
+  latest_notification_id?: string | null;
+  latest_webhook_alias?: string | null;
+  latest_notification?: ExternalGovernanceNotificationRecord | null;
+}
+
+export interface ExternalGovernanceWebhookRecord {
+  alias: string;
+  name: string;
+  url: string;
+  has_token?: boolean;
+}
+
+export interface ExternalGovernanceNotificationRecord {
+  notification_id: string;
+  external_item_id: string;
+  created_at: string;
+  completed_at?: string | null;
+  status: "sending" | "sent" | "failed" | string;
+  webhook_alias: string;
+  http_status?: number | null;
+  response_body?: string | null;
+  error?: string | null;
+  request_json?: Record<string, unknown>;
+}
+
+export interface ExternalGovernanceItemRecord {
+  external_item_id: string;
+  created_at: string;
+  updated_at: string;
+  status: "pending_notification" | "notified" | "notification_failed" | string;
+  feedback_case_id: string;
+  proposal_job_id: string;
+  source_index: number;
+  owner: string;
+  actionability: string;
+  recommendation: string;
+  reason?: string | null;
+  latest_notification_id?: string | null;
+  latest_webhook_alias?: string | null;
+  latest_notification?: ExternalGovernanceNotificationRecord | null;
+  [key: string]: unknown;
 }
 
 export interface OptimizationProposalRecord {
@@ -357,7 +401,15 @@ export interface OptimizationTaskCreateRequest {
 export interface OptimizationTaskRecord {
   optimization_task_id: string;
   created_at: string;
-  status: "pending_execution" | "executing" | "completed" | "closed" | string;
+  status:
+    | "pending_execution"
+    | "applied_pending_regression"
+    | "regression_running"
+    | "completed"
+    | "failed"
+    | "needs_human_review"
+    | "closed"
+    | string;
   proposal_id?: string | null;
   proposal_ids: string[];
   feedback_case_id?: string | null;
@@ -366,6 +418,77 @@ export interface OptimizationTaskRecord {
   comment?: string | null;
   target_paths?: string[];
   proposal?: OptimizationProposalRecord;
+  applied_at?: string | null;
+  applied_agent_version_id?: string | null;
+  applied_agent_version?: Record<string, unknown> | null;
+  regression_run_ids?: string[];
+  latest_regression_run_id?: string | null;
+  latest_regression_run?: EvalRunRecord | null;
+  regression_completed_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface EvalCaseRecord {
+  eval_case_id: string;
+  created_at: string;
+  updated_at: string;
+  status: "active" | "draft" | "archived" | string;
+  source_feedback_case_id?: string | null;
+  source_run_id?: string | null;
+  prompt: string;
+  labels?: string[];
+  expected_behavior?: string;
+  checks_json?: Record<string, unknown>;
+  source_summary?: Record<string, unknown>;
+  attribution_summary?: Record<string, unknown>;
+  proposal_summary?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface EvalCaseUpdateRequest {
+  prompt?: string;
+  expected_behavior?: string;
+  checks_json?: Record<string, unknown>;
+  labels?: string[];
+  status?: "active" | "draft" | "archived";
+}
+
+export interface EvalRunItemRecord {
+  eval_run_item_id: string;
+  eval_run_id: string;
+  eval_case_id: string;
+  source_feedback_case_id?: string | null;
+  agent_run_id?: string | null;
+  agent_version_id?: string | null;
+  status: "passed" | "failed" | "needs_human_review" | string;
+  score?: number | null;
+  check_results?: Array<Record<string, unknown>>;
+  answer_summary?: string | null;
+  error_json?: Record<string, unknown> | null;
+  created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface EvalRunRecord {
+  eval_run_id: string;
+  created_at: string;
+  completed_at?: string | null;
+  status: "running" | "completed" | "failed" | string;
+  result_status?: "running" | "passed" | "failed" | "needs_human_review" | string;
+  agent_version_id?: string | null;
+  optimization_task_id?: string | null;
+  source: string;
+  eval_case_ids?: string[];
+  item_ids?: string[];
+  summary?: {
+    total?: number;
+    passed?: number;
+    failed?: number;
+    needs_human_review?: number;
+    [key: string]: unknown;
+  };
+  items?: EvalRunItemRecord[];
+  error_json?: Record<string, unknown> | null;
   [key: string]: unknown;
 }
 
@@ -377,4 +500,8 @@ export interface FeedbackWorkbenchData {
   cases: FeedbackCaseRecord[];
   proposals: OptimizationProposalRecord[];
   tasks: OptimizationTaskRecord[];
+  external_governance_items: ExternalGovernanceItemRecord[];
+  external_webhooks: ExternalGovernanceWebhookRecord[];
+  eval_cases: EvalCaseRecord[];
+  eval_runs: EvalRunRecord[];
 }

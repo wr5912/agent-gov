@@ -205,6 +205,75 @@ class OptimizationTaskModel(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class ExternalGovernanceItemModel(Base):
+    __tablename__ = "external_governance_items"
+
+    external_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    feedback_case_id: Mapped[str] = mapped_column(String(128), index=True)
+    proposal_job_id: Mapped[str] = mapped_column(String(128), index=True)
+    owner: Mapped[str] = mapped_column(String(256), index=True)
+    actionability: Mapped[str] = mapped_column(String(128), index=True)
+    latest_notification_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ExternalNotificationModel(Base):
+    __tablename__ = "external_notifications"
+
+    notification_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    external_item_id: Mapped[str] = mapped_column(String(128), ForeignKey("external_governance_items.external_item_id"), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    webhook_alias: Mapped[str] = mapped_column(String(128), index=True)
+    http_status: Mapped[Optional[int]] = mapped_column(nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class EvalCaseModel(Base):
+    __tablename__ = "eval_cases"
+
+    eval_case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    source_feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    source_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    labels_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_eval_cases_source_feedback_case_unique", EvalCaseModel.source_feedback_case_id, unique=True)
+
+
+class EvalRunModel(Base):
+    __tablename__ = "eval_runs"
+
+    eval_run_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
+    optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    source: Mapped[str] = mapped_column(String(128), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class EvalRunItemModel(Base):
+    __tablename__ = "eval_run_items"
+
+    eval_run_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
+    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id"), index=True)
+    agent_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
     return data_dir / "runtime.sqlite3"
 

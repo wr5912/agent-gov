@@ -864,6 +864,19 @@ Evidence package 是归因分析的事实源。
 
 MVP 阶段可以先实现到 proposal 审批，不强制实现自动改文件。
 
+### 12.1 反馈评估集用例治理
+
+反馈处置单沉淀出的 `eval_case` 面向开发人员调试和持续回归，允许在 UI 中直接编辑：
+
+```text
+1. 可编辑 prompt、expected_behavior、checks_json、labels 和 status。
+2. 当前实现采用直接覆盖策略，不创建 revision，也不复制新的 eval_case_id。
+3. status=active 的用例参与自动和批量回归；draft、archived 不参与自动选择。
+4. eval_run、eval_run_item、模型回答、检查结果和历史运行摘要保持只读，不允许编辑。
+```
+
+直接覆盖会影响后续回归输入，但不会回算或修改历史回归结果。
+
 ---
 
 ## 13. Job 状态机
@@ -1438,6 +1451,15 @@ soc_process
 runtime_code
 data_quality
 needs_human_analysis
+```
+
+外部治理通知采用人工分发：
+
+```text
+1. 多个外部系统通过 /data/external-governance-webhooks.yaml 配置 webhook alias。
+2. UI 在 external_guidance 卡片中由开发人员手动选择 alias 后发送。
+3. 通知记录必须落库，包含目标 alias、HTTP 状态、响应摘要和失败原因。
+4. 第一版不做 owner 到 webhook 的自动智能分发。
 ```
 
 ---

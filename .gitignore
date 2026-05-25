@@ -21,6 +21,7 @@ docker/volume/data/uploads/*
 docker/volume/data/outputs/*
 docker/volume/data/agent-memory/*
 docker/volume/data/runtime.sqlite3*
+docker/volume/data/external-governance-webhooks.yaml
 docker/volume/data/.runtime-tmp/
 docker/volume/data/feedback/
 docker/volume/data/feedback-signals/*

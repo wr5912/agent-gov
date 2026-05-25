@@ -2,6 +2,11 @@ import type {
   AttributionOutput,
   EvidencePackageFileRecord,
   EvidencePackageRecord,
+  EvalCaseRecord,
+  EvalCaseUpdateRequest,
+  EvalRunRecord,
+  ExternalGovernanceItemRecord,
+  ExternalGovernanceWebhookRecord,
   FeedbackCaseCreateRequest,
   FeedbackCaseRecord,
   FeedbackFilters,
@@ -250,6 +255,14 @@ export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: s
   );
 }
 
+export function regenerateProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs/regenerate`,
+    { method: "POST" },
+  );
+}
+
 export function getFeedbackAnalysisJob(config: RuntimeClientConfig, jobId: string) {
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
@@ -271,6 +284,14 @@ export function getProposalOutput(config: RuntimeClientConfig, jobId: string) {
   return requestJson<ProposalOutput>(
     config,
     `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal`,
+  );
+}
+
+export function revalidateProposalOutput(config: RuntimeClientConfig, jobId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal/revalidate`,
+    { method: "POST" },
   );
 }
 
@@ -318,6 +339,29 @@ export function getOptimizationTasks(config: RuntimeClientConfig, filters?: Feed
   );
 }
 
+export function getExternalGovernanceWebhooks(config: RuntimeClientConfig) {
+  return requestJson<ExternalGovernanceWebhookRecord[]>(config, "/api/external-governance-webhooks");
+}
+
+export function getExternalGovernanceItems(config: RuntimeClientConfig, filters?: FeedbackFilters & { proposal_job_id?: string }) {
+  return requestJson<ExternalGovernanceItemRecord[]>(
+    config,
+    `/api/external-governance-items${feedbackQueryString(filters)}`,
+  );
+}
+
+export function notifyExternalGovernanceItem(config: RuntimeClientConfig, externalItemId: string, webhookAlias: string) {
+  return requestJson<ExternalGovernanceItemRecord>(
+    config,
+    `/api/external-governance-items/${encodeURIComponent(externalItemId)}/notify`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhook_alias: webhookAlias }),
+    },
+  );
+}
+
 export function createOptimizationTask(config: RuntimeClientConfig, payload: OptimizationTaskCreateRequest) {
   if (!payload.proposal_id) {
     throw new Error("proposal_id is required");
@@ -326,6 +370,66 @@ export function createOptimizationTask(config: RuntimeClientConfig, payload: Opt
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+  });
+}
+
+export function markOptimizationTaskApplied(config: RuntimeClientConfig, taskId: string, note?: string) {
+  return requestJson<OptimizationTaskRecord>(
+    config,
+    `/api/optimization-tasks/${encodeURIComponent(taskId)}/mark-applied`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note }),
+    },
+  );
+}
+
+export function runOptimizationTaskRegression(config: RuntimeClientConfig, taskId: string, evalCaseIds: string[] = []) {
+  return requestJson<EvalRunRecord>(
+    config,
+    `/api/optimization-tasks/${encodeURIComponent(taskId)}/regression-runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eval_case_ids: evalCaseIds, optimization_task_id: taskId }),
+    },
+  );
+}
+
+export function syncFeedbackEvalDataset(config: RuntimeClientConfig, feedbackCaseId?: string) {
+  return requestJson<{ created: number; reused: number; skipped: number; eval_cases: EvalCaseRecord[] }>(
+    config,
+    "/api/eval-datasets/feedback/sync",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ feedback_case_id: feedbackCaseId, limit: 500 }),
+    },
+  );
+}
+
+export function getEvalCases(config: RuntimeClientConfig, filters?: FeedbackFilters & { source_feedback_case_id?: string }) {
+  return requestJson<EvalCaseRecord[]>(config, `/api/eval-cases${feedbackQueryString(filters)}`);
+}
+
+export function updateEvalCase(config: RuntimeClientConfig, evalCaseId: string, payload: EvalCaseUpdateRequest) {
+  return requestJson<EvalCaseRecord>(config, `/api/eval-cases/${encodeURIComponent(evalCaseId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getEvalRuns(config: RuntimeClientConfig, filters?: FeedbackFilters & { optimization_task_id?: string; agent_version_id?: string }) {
+  return requestJson<EvalRunRecord[]>(config, `/api/eval-runs${feedbackQueryString(filters)}`);
+}
+
+export function createEvalRun(config: RuntimeClientConfig, evalCaseIds: string[] = []) {
+  return requestJson<EvalRunRecord>(config, "/api/eval-runs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ eval_case_ids: evalCaseIds }),
   });
 }
 
@@ -371,7 +475,7 @@ export async function getFeedbackWorkbenchData(
   filters: FeedbackFilters = { limit: 500 },
 ): Promise<FeedbackWorkbenchData> {
   const limit = filters.limit ?? 500;
-  const [runs, signals, events, pendingCorrelations, cases, proposals, tasks] = await Promise.all([
+  const [runs, signals, events, pendingCorrelations, cases, proposals, tasks, externalItems, externalWebhooks, evalCases, evalRuns] = await Promise.all([
     getAgentRuns(config, { limit }),
     getFeedbackSignals(config, { limit }),
     getSocEvents(config, { limit }),
@@ -379,6 +483,10 @@ export async function getFeedbackWorkbenchData(
     getFeedbackCases(config, { limit }),
     getOptimizationProposals(config, { limit }),
     getOptimizationTasks(config, { limit }).catch(() => []),
+    getExternalGovernanceItems(config, { limit }).catch(() => []),
+    getExternalGovernanceWebhooks(config).catch(() => []),
+    getEvalCases(config, { limit }).catch(() => []),
+    getEvalRuns(config, { limit }).catch(() => []),
   ]);
   return {
     runs,
@@ -388,6 +496,10 @@ export async function getFeedbackWorkbenchData(
     cases,
     proposals,
     tasks,
+    external_governance_items: externalItems,
+    external_webhooks: externalWebhooks,
+    eval_cases: evalCases,
+    eval_runs: evalRuns,
   };
 }
 

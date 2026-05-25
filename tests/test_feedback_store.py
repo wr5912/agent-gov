@@ -392,6 +392,10 @@ def test_proposal_target_allowlist_and_task_requires_approval(tmp_path):
     task = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="执行")
     assert task["optimization_task_id"].startswith("opt-")
     assert task["target_paths"] == [".claude/skills/alert-triage/SKILL.md"]
+    task_again = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="重复点击")
+    assert task_again["optimization_task_id"] == task["optimization_task_id"]
+    tasks = [item for item in store.list_tasks() if item["proposal_id"] == proposals[0]["proposal_id"]]
+    assert len(tasks) == 1
 
 
 def test_proposal_output_normalizes_minimal_agent_proposal(tmp_path):

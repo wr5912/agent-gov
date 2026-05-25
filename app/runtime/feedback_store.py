@@ -889,6 +889,9 @@ class FeedbackStore:
         target_path = self._string(proposal.get("target_path"))
         if not target_path or not self._target_allowed(target_path):
             return None
+        existing_task = self._find_latest_task_for_proposal(proposal_id)
+        if existing_task:
+            return existing_task
         task = self._scrub_record(
             {
                 "optimization_task_id": f"opt-{uuid.uuid4()}",
@@ -916,6 +919,15 @@ class FeedbackStore:
                 )
             )
         return task
+
+    def _find_latest_task_for_proposal(self, proposal_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.scalars(
+                select(OptimizationTaskModel)
+                .where(OptimizationTaskModel.proposal_id == proposal_id)
+                .order_by(OptimizationTaskModel.created_at.desc())
+            ).first()
+            return row.payload_json if row else None
 
     def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         with self.Session() as db:

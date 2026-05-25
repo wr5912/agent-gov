@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   ChevronRight,
+  Copy,
   FileArchive,
   FileText,
   FolderKanban,
@@ -11,6 +12,7 @@ import {
   MessageSquare,
   Search,
   ShieldCheck,
+  X,
   XCircle,
 } from "lucide-react";
 import { AgentVersionsWorkspace } from "./AgentVersionsWorkspace";
@@ -50,6 +52,13 @@ import type {
 type MenuKey = "signals" | "cases" | "proposals" | "tasks" | "versions";
 type SourceKind = "signal" | "event" | "pending";
 type CaseDetailView = "summary" | "evidence" | "attribution" | "proposal" | "runs" | "tasks";
+type ProposalDetailTab = "proposals" | "raw" | "records";
+type AttributionDetailTab = "result" | "raw" | "records";
+
+interface DetailTabItem<T extends string> {
+  key: T;
+  label: string;
+}
 
 interface SourceRow {
   id: string;
@@ -183,6 +192,7 @@ export function ExternalFeedbackWorkspace({
     if (!selectedCase) return [];
     return data.tasks.filter((task) => task.feedback_case_id === selectedCase.feedback_case_id);
   }, [data.tasks, selectedCase]);
+  const tasksByProposalId = useMemo(() => buildTaskByProposalId(data.tasks), [data.tasks]);
 
   useEffect(() => {
     if (!visibleSources.length) {
@@ -337,7 +347,23 @@ export function ExternalFeedbackWorkspace({
     }
   }
 
+  function openTask(task: OptimizationTaskRecord) {
+    if (task.feedback_case_id) {
+      setSelectedCaseId(task.feedback_case_id);
+      setCaseDetailView("tasks");
+      setActiveMenu("cases");
+      return;
+    }
+    setActiveMenu("tasks");
+  }
+
   async function createTask(proposal: OptimizationProposalRecord) {
+    const existingTask = tasksByProposalId.get(proposal.proposal_id);
+    if (existingTask) {
+      openTask(existingTask);
+      setToast(`已打开优化任务 ${shortId(existingTask.optimization_task_id)}`);
+      return;
+    }
     setActionId(`task:${proposal.proposal_id}`);
     try {
       const task = await createOptimizationTask(clientConfig, {
@@ -346,7 +372,7 @@ export function ExternalFeedbackWorkspace({
         comment: `由 proposal ${proposal.proposal_id} 创建。`,
       });
       setToast(`已创建优化任务 ${shortId(task.optimization_task_id)}`);
-      setActiveMenu("tasks");
+      openTask(task);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -421,6 +447,8 @@ export function ExternalFeedbackWorkspace({
             onRunProposal={() => runCaseAction("proposal")}
             onReviewProposal={reviewProposal}
             onCreateTask={createTask}
+            onOpenTask={openTask}
+            tasksByProposalId={tasksByProposalId}
           />
         ) : null}
 
@@ -430,6 +458,8 @@ export function ExternalFeedbackWorkspace({
             actionId={actionId}
             onReviewProposal={reviewProposal}
             onCreateTask={createTask}
+            onOpenTask={openTask}
+            tasksByProposalId={tasksByProposalId}
           />
         ) : null}
 
@@ -613,6 +643,8 @@ function CasesPanel({
   onRunProposal,
   onReviewProposal,
   onCreateTask,
+  onOpenTask,
+  tasksByProposalId,
 }: {
   cases: FeedbackCaseRecord[];
   selectedCase: FeedbackCaseRecord | null;
@@ -631,6 +663,8 @@ function CasesPanel({
   onRunProposal: () => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
+  tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
   const evidenceCount = selectedCase?.evidence_package_ids.length || 0;
   const attributionCount = selectedCase?.attribution_job_ids.length || 0;
@@ -710,10 +744,13 @@ function CasesPanel({
               detailView={detailView}
               details={details}
               detailsLoading={detailsLoading}
+              onSelectDetailView={onSelectDetailView}
               onCreateTask={onCreateTask}
+              onOpenTask={onOpenTask}
               onReviewProposal={onReviewProposal}
               runs={selectedCaseRuns}
               tasks={selectedCaseTasks}
+              tasksByProposalId={tasksByProposalId}
               proposals={selectedCaseProposals}
             />
           </>
@@ -738,8 +775,11 @@ function CaseDetailPanel({
   runs,
   proposals,
   tasks,
+  onSelectDetailView,
   onReviewProposal,
   onCreateTask,
+  onOpenTask,
+  tasksByProposalId,
 }: {
   actionId: string | null;
   clientConfig: ExternalFeedbackWorkspaceProps["clientConfig"];
@@ -749,9 +789,13 @@ function CaseDetailPanel({
   runs: FeedbackRunRecord[];
   proposals: OptimizationProposalRecord[];
   tasks: OptimizationTaskRecord[];
+  tasksByProposalId: Map<string, OptimizationTaskRecord>;
+  onSelectDetailView: (view: CaseDetailView) => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
 }) {
+  const [copiedProposalJobId, setCopiedProposalJobId] = useState(false);
   const titleByView: Record<CaseDetailView, string> = {
     summary: "处置摘要",
     evidence: "证据包详情",
@@ -760,26 +804,57 @@ function CaseDetailPanel({
     runs: "关联运行详情",
     tasks: "优化任务详情",
   };
+  const proposalJobId = latestItem(details.proposalJobs)?.job_id || details.proposal?.proposal_job_id || null;
+
+  useEffect(() => {
+    if (!copiedProposalJobId) return;
+    const timer = window.setTimeout(() => setCopiedProposalJobId(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [copiedProposalJobId]);
+
+  async function copyProposalJobId() {
+    if (!proposalJobId) return;
+    try {
+      await navigator.clipboard?.writeText(proposalJobId);
+    } finally {
+      setCopiedProposalJobId(true);
+    }
+  }
+
   return (
     <section className="fw-panel fw-case-detail-panel">
       <div className="fw-panel-header">
         <strong>{titleByView[detailView]}</strong>
-        {detailsLoading ? <Loader2 size={16} className="fw-spin" /> : <FileText size={18} />}
+        {detailView === "proposal" ? (
+          <div className="fw-panel-header-actions">
+            <button className="fw-small-secondary" type="button" onClick={copyProposalJobId} disabled={!proposalJobId}>
+              <Copy size={15} /> {copiedProposalJobId ? "已复制" : "复制ID"}
+            </button>
+            <button className="fw-small-secondary" type="button" onClick={() => onSelectDetailView("summary")}>
+              <X size={15} /> 关闭
+            </button>
+          </div>
+        ) : detailsLoading ? (
+          <Loader2 size={16} className="fw-spin" />
+        ) : (
+          <FileText size={18} />
+        )}
       </div>
       {detailView === "summary" ? <CaseSummaryDetails details={details} /> : null}
       {detailView === "evidence" ? <EvidencePackageDetails clientConfig={clientConfig} packages={details.evidencePackages || []} /> : null}
-      {detailView === "attribution" ? <JobsDetails jobs={details.attributionJobs || []} output={details.attribution} outputKind="attribution" /> : null}
+      {detailView === "attribution" ? <AttributionDetails jobs={details.attributionJobs || []} output={details.attribution} /> : null}
       {detailView === "proposal" ? (
-        <div className="fw-detail-stack">
-          <JobsDetails jobs={details.proposalJobs || []} output={details.proposal} outputKind="proposal" />
-          <ProposalList
-            proposals={proposals}
-            proposalOutput={details.proposal}
-            actionId={actionId}
-            onReviewProposal={onReviewProposal}
-            onCreateTask={onCreateTask}
-          />
-        </div>
+        <ProposalDetails
+          actionId={actionId}
+          jobs={details.proposalJobs || []}
+          output={details.proposal}
+          proposals={proposals}
+          onCreateTask={onCreateTask}
+          onOpenTask={onOpenTask}
+          onReviewProposal={onReviewProposal}
+          onSelectDetailView={onSelectDetailView}
+          tasksByProposalId={tasksByProposalId}
+        />
       ) : null}
       {detailView === "runs" ? <RunsDetails runs={runs} /> : null}
       {detailView === "tasks" ? <TasksDetails tasks={tasks} /> : null}
@@ -790,14 +865,16 @@ function CaseDetailPanel({
 function CaseSummaryDetails({ details }: { details: CaseDetails }) {
   return (
     <div className="fw-detail-stack">
-      <div className="fw-current-case-grid">
-        <Metric label="evidence_package_id" value={shortId(details.evidence?.evidence_package_id)} />
-        <Metric label="main_agent_version_id" value={shortId(details.evidence?.main_agent_version_id)} />
-        <Metric label="attribution_status" value={details.attributionJob?.status || "-"} />
-        <Metric label="proposal_status" value={details.proposalJob?.status || "-"} />
-        <Metric label="problem_type" value={details.attribution?.problem_type || "-"} />
-        <Metric label="actionability" value={details.attribution?.actionability || "-"} />
-      </div>
+      <DetailMetricGrid
+        items={[
+          ["evidence_package_id", shortId(details.evidence?.evidence_package_id)],
+          ["main_agent_version_id", shortId(details.evidence?.main_agent_version_id)],
+          ["attribution_status", details.attributionJob?.status || "-"],
+          ["proposal_status", details.proposalJob?.status || "-"],
+          ["problem_type", details.attribution?.problem_type || "-"],
+          ["actionability", details.attribution?.actionability || "-"],
+        ]}
+      />
       {details.attribution ? <p className="fw-note-box">{details.attribution.rationale}</p> : <div className="fw-empty-inline">暂无已校验归因输出</div>}
     </div>
   );
@@ -855,31 +932,37 @@ function EvidencePackageDetails({
     return <div className="fw-empty-inline">暂无证据包</div>;
   }
 
+  const hasMultiplePackages = packages.length > 1;
+
   return (
-    <div className="fw-detail-layout">
-      <div className="fw-detail-list">
-        {packages.map((item) => (
-          <button
-            className={`fw-detail-list-item ${selectedPackage?.evidence_package_id === item.evidence_package_id ? "is-active" : ""}`}
-            key={item.evidence_package_id}
-            onClick={() => {
-              setSelectedId(item.evidence_package_id);
-              setSelectedFile(firstEvidenceFileName(item.included_files) || null);
-            }}
-            type="button"
-          >
-            <strong>{shortId(item.evidence_package_id)}</strong>
-            <small>{formatDate(item.created_at)}</small>
-          </button>
-        ))}
-      </div>
-      <div className="fw-detail-main">
-        <div className="fw-current-case-grid">
-          <Metric label="evidence_package_id" value={shortId(selectedPackage?.evidence_package_id)} />
-          <Metric label="main_agent_version_id" value={shortId(selectedPackage?.main_agent_version_id)} />
-          <Metric label="created_at" value={formatDate(selectedPackage?.created_at)} />
-          <Metric label="included_files" value={String(includedFiles.length)} />
+    <div className={`fw-detail-layout ${hasMultiplePackages ? "" : "fw-detail-layout-single"}`}>
+      {hasMultiplePackages ? (
+        <div className="fw-detail-list">
+          {packages.map((item) => (
+            <button
+              className={`fw-detail-list-item ${selectedPackage?.evidence_package_id === item.evidence_package_id ? "is-active" : ""}`}
+              key={item.evidence_package_id}
+              onClick={() => {
+                setSelectedId(item.evidence_package_id);
+                setSelectedFile(firstEvidenceFileName(item.included_files) || null);
+              }}
+              type="button"
+            >
+              <strong>{shortId(item.evidence_package_id)}</strong>
+              <small>{formatDate(item.created_at)}</small>
+            </button>
+          ))}
         </div>
+      ) : null}
+      <div className="fw-detail-main">
+        <DetailMetricGrid
+          items={[
+            ["evidence_package_id", shortId(selectedPackage?.evidence_package_id)],
+            ["main_agent_version_id", shortId(selectedPackage?.main_agent_version_id)],
+            ["created_at", formatDate(selectedPackage?.created_at)],
+            ["included_files", String(includedFiles.length)],
+          ]}
+        />
         <CompletenessStrip completeness={selectedPackage?.completeness || {}} />
         <div className="fw-evidence-file-layout">
           <div className="fw-evidence-file-list">
@@ -942,91 +1025,380 @@ function TraceLinks({ content }: { content?: unknown }) {
   );
 }
 
-function JobsDetails({
+function DetailMetricGrid({ items }: { items: Array<[string, string | number | null | undefined]> }) {
+  return (
+    <div className="fw-detail-metric-grid">
+      {items.map(([label, value]) => (
+        <Metric label={label} value={value} key={label} />
+      ))}
+    </div>
+  );
+}
+
+function DetailTabs<T extends string>({
+  tabs,
+  active,
+  onChange,
+  label,
+}: {
+  tabs: Array<DetailTabItem<T>>;
+  active: T;
+  onChange: (key: T) => void;
+  label: string;
+}) {
+  return (
+    <div className="fw-detail-tabs" role="tablist" aria-label={label}>
+      {tabs.map((tab) => (
+        <button className={active === tab.key ? "is-active" : ""} type="button" onClick={() => onChange(tab.key)} key={tab.key}>
+          {tab.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DetailRecordList({ children, emptyText, hasItems }: { children: ReactNode; emptyText: string; hasItems: boolean }) {
+  return (
+    <div className="fw-detail-record-list">
+      {hasItems ? children : <div className="fw-empty-inline">{emptyText}</div>}
+    </div>
+  );
+}
+
+function AnalysisJobRecordList({ jobs }: { jobs: FeedbackAnalysisJobRecord[] }) {
+  return (
+    <DetailRecordList hasItems={jobs.length > 0} emptyText="暂无执行记录">
+      {jobs.map((job) => (
+        <article key={job.job_id}>
+          <div className="fw-detail-record-head">
+            <h4>{shortId(job.job_id)} · {job.profile_name}</h4>
+            <Pill tone={jobStatusTone(job.status)}>{job.status}</Pill>
+          </div>
+          <p>证据包：{shortId(job.evidence_package_id)}</p>
+          <small>创建：{formatDate(job.created_at)} · 开始：{formatDate(job.started_at)} · 完成：{formatDate(job.completed_at)}</small>
+          {job.langfuse_trace_id ? <small>Langfuse trace：{shortId(job.langfuse_trace_id)}</small> : null}
+          {job.error_json ? (
+            <div className="fw-job-error">
+              <strong>{job.error_json.error_code || (job.status === "failed" ? "JOB_FAILED" : "JOB_NEEDS_REVIEW")}</strong>
+              <span>{job.error_json.message || "分析 job 执行失败"}</span>
+            </div>
+          ) : null}
+        </article>
+      ))}
+    </DetailRecordList>
+  );
+}
+
+function DetailJsonPreview({ title, value }: { title: string; value: unknown }) {
+  return (
+    <div className="fw-json-preview fw-json-preview-standalone fw-detail-json-output">
+      <div className="fw-json-preview-header">
+        <strong>{title}</strong>
+      </div>
+      <pre>{jsonPreview(value)}</pre>
+    </div>
+  );
+}
+
+function AttributionDetails({ jobs, output }: { jobs: FeedbackAnalysisJobRecord[]; output?: AttributionOutput | null }) {
+  const [activeTab, setActiveTab] = useState<AttributionDetailTab>("result");
+  const latestJob = latestItem(jobs);
+  const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
+  const rawOutputTitle = output ? "归因输出" : latestJob?.raw_output_json ? "归因 Agent 原始输出" : "归因校验错误";
+
+  return (
+    <div className="fw-detail-tabbed">
+      <DetailTabs
+        active={activeTab}
+        label="归因分析详情视图"
+        onChange={setActiveTab}
+        tabs={[
+          { key: "result", label: "分析结果" },
+          { key: "raw", label: "原始输出" },
+          { key: "records", label: "执行记录" },
+        ]}
+      />
+      <div className="fw-detail-tab-body">
+        {activeTab === "result" ? (
+          output ? (
+            <AttributionResult output={output} />
+          ) : (
+            <div className="fw-empty-inline">暂无已校验归因输出</div>
+          )
+        ) : null}
+        {activeTab === "raw" ? (rawOutput ? <DetailJsonPreview title={rawOutputTitle} value={rawOutput} /> : <div className="fw-empty-inline">暂无原始输出</div>) : null}
+        {activeTab === "records" ? <AnalysisJobRecordList jobs={jobs} /> : null}
+      </div>
+    </div>
+  );
+}
+
+function AttributionResult({ output }: { output: AttributionOutput }) {
+  return (
+    <div className="fw-detail-result">
+      <section className="fw-detail-result-summary">
+        <DetailMetricGrid
+          items={[
+            ["status", output.status],
+            ["problem_type", output.problem_type],
+            ["optimization_object_type", output.optimization_object_type],
+            ["actionability", output.actionability],
+            ["confidence", output.confidence],
+            ["recommended_next_step", output.recommended_next_step],
+          ]}
+        />
+        <p className="fw-note-box fw-detail-rationale">{output.rationale || "暂无归因说明"}</p>
+      </section>
+      <div className="fw-detail-info-grid">
+        <article>
+          <h4>责任边界</h4>
+          <p>{output.responsibility_boundary?.owner || "-"}：{output.responsibility_boundary?.reason || "-"}</p>
+        </article>
+        <article>
+          <h4>引用证据</h4>
+          {output.evidence_refs?.length ? (
+            <ul>
+              {output.evidence_refs.map((ref, index) => (
+                <li key={`${ref.type}:${ref.id}:${index}`}>{ref.type} / {shortId(ref.id)}：{ref.reason}</li>
+              ))}
+            </ul>
+          ) : (
+            <p>暂无引用证据</p>
+          )}
+        </article>
+      </div>
+    </div>
+  );
+}
+
+function ProposalDetails({
   jobs,
   output,
-  outputKind,
+  proposals,
+  actionId,
+  onReviewProposal,
+  onCreateTask,
+  onOpenTask,
+  onSelectDetailView,
+  tasksByProposalId,
 }: {
   jobs: FeedbackAnalysisJobRecord[];
-  output?: AttributionOutput | ProposalOutput | null;
-  outputKind: "attribution" | "proposal";
+  output?: ProposalOutput | null;
+  proposals: OptimizationProposalRecord[];
+  actionId: string | null;
+  onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
+  onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
+  onSelectDetailView: (view: CaseDetailView) => void;
+  tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
+  const [activeTab, setActiveTab] = useState<ProposalDetailTab>("proposals");
   const latestJob = latestItem(jobs);
-  const fallbackError = !output ? latestJob?.error_json : null;
-  const fallbackRawOutput = !output ? latestJob?.raw_output_json : null;
+  const externalGuidance = output?.external_guidance || [];
+  const proposalCount = proposals.length + externalGuidance.length;
+  const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
+  const rawOutputTitle = output ? "建议输出" : latestJob?.raw_output_json ? "建议 Agent 原始输出" : "建议校验错误";
+
   return (
-    <div className="fw-detail-stack">
-      <div className="fw-drawer-list">
-        {jobs.map((job) => (
-          <article key={job.job_id}>
-            <h4>{shortId(job.job_id)} · {job.profile_name}</h4>
-            <p>状态：{job.status} · 证据包：{shortId(job.evidence_package_id)}</p>
-            <small>创建：{formatDate(job.created_at)} · 完成：{formatDate(job.completed_at)}</small>
-            {job.error_json ? (
-              <div className="fw-job-error">
-                <strong>{job.error_json.error_code || (job.status === "failed" ? "JOB_FAILED" : "JOB_NEEDS_REVIEW")}</strong>
-                <span>{job.error_json.message || "分析 job 执行失败"}</span>
-              </div>
-            ) : null}
-          </article>
-        ))}
-        {!jobs.length ? <div className="fw-empty-inline">暂无分析 job</div> : null}
+    <div className="fw-proposal-detail">
+      <div className="fw-proposal-detail-meta">
+        <div className="fw-proposal-detail-meta-main">
+          <h4>{shortId(latestJob?.job_id || output?.proposal_job_id)} · {latestJob?.profile_name || "feedback-proposal"}</h4>
+          <Pill tone={jobStatusTone(latestJob?.status || output?.status)}>{latestJob?.status || output?.status || "-"}</Pill>
+        </div>
+        <div className="fw-proposal-detail-meta-line">
+          <span>证据包 {shortId(latestJob?.evidence_package_id)}</span>
+          <button className="fw-link-button" type="button" onClick={() => onSelectDetailView("evidence")} disabled={!latestJob?.evidence_package_id}>
+            查看证据包
+          </button>
+          <span>创建 {formatDate(latestJob?.created_at)}</span>
+          <span>完成 {formatDate(latestJob?.completed_at)}</span>
+        </div>
       </div>
-      {output ? (
-        <div className="fw-json-preview fw-json-preview-standalone">
-          <div className="fw-json-preview-header">
-            <strong>{outputKind === "attribution" ? "归因输出" : "建议输出"}</strong>
+
+      <DetailTabs
+        active={activeTab}
+        label="优化建议详情视图"
+        onChange={setActiveTab}
+        tabs={[
+          { key: "proposals", label: `建议(${proposalCount})` },
+          { key: "raw", label: "原始输出" },
+          { key: "records", label: "执行记录" },
+        ]}
+      />
+
+      <div className="fw-detail-tab-body">
+        {activeTab === "proposals" ? (
+          <div className="fw-proposal-detail-list">
+            {proposals.map((proposal) => (
+              <ProposalDetailCard
+                actionId={actionId}
+                key={proposal.proposal_id}
+                proposal={proposal}
+                task={tasksByProposalId.get(proposal.proposal_id)}
+                onCreateTask={onCreateTask}
+                onOpenTask={onOpenTask}
+                onReviewProposal={onReviewProposal}
+              />
+            ))}
+            {externalGuidance.map((item, index) => (
+              <article className="fw-proposal-card fw-proposal-detail-card" key={`${item.owner}:${index}`}>
+                <div className="fw-proposal-detail-title">
+                  <Pill tone="gray">{item.actionability}</Pill>
+                  <h4>{item.owner}</h4>
+                  <small>external_guidance</small>
+                </div>
+                <p>{item.recommendation}</p>
+                {item.reason ? <p className="fw-warning-text">{item.reason}</p> : null}
+              </article>
+            ))}
+            {!proposalCount ? <div className="fw-empty-inline">暂无优化建议</div> : null}
           </div>
-          <pre>{jsonPreview(output)}</pre>
-        </div>
-      ) : null}
-      {fallbackError ? (
-        <div className="fw-json-preview fw-json-preview-standalone">
-          <div className="fw-json-preview-header">
-            <strong>{outputKind === "attribution" ? "归因校验错误" : "建议校验错误"}</strong>
-          </div>
-          <pre>{jsonPreview(fallbackError)}</pre>
-        </div>
-      ) : null}
-      {fallbackRawOutput ? (
-        <div className="fw-json-preview fw-json-preview-standalone">
-          <div className="fw-json-preview-header">
-            <strong>{outputKind === "attribution" ? "归因 Agent 原始输出" : "建议 Agent 原始输出"}</strong>
-          </div>
-          <pre>{jsonPreview(fallbackRawOutput)}</pre>
-        </div>
-      ) : null}
+        ) : null}
+
+        {activeTab === "raw" ? (
+          rawOutput ? (
+            <DetailJsonPreview title={rawOutputTitle} value={rawOutput} />
+          ) : (
+            <div className="fw-empty-inline">暂无原始输出</div>
+          )
+        ) : null}
+
+        {activeTab === "records" ? <AnalysisJobRecordList jobs={jobs} /> : null}
+      </div>
     </div>
+  );
+}
+
+function ProposalDetailCard({
+  proposal,
+  task,
+  actionId,
+  onReviewProposal,
+  onCreateTask,
+  onOpenTask,
+}: {
+  proposal: OptimizationProposalRecord;
+  task?: OptimizationTaskRecord;
+  actionId: string | null;
+  onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
+  onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
+}) {
+  const approved = proposal.status === "approved";
+  const pending = proposal.status === "pending_review";
+  return (
+    <article className="fw-proposal-card fw-proposal-detail-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone={proposalStatusTone(proposal.status)}>{proposalStatusText[proposal.status] || proposal.status}</Pill>
+        <h4>{proposal.title}</h4>
+        <small>{shortId(proposal.proposal_id)} · {proposal.target_type} · {proposal.target_path || "-"}</small>
+      </div>
+      <p>{proposal.recommendation}</p>
+      <div className="fw-proposal-detail-evidence">
+        <span>引用证据：</span>
+        <strong>{proposalEvidenceText(proposal)}</strong>
+      </div>
+      <div className="fw-detail-action-row">
+        {pending ? (
+          <>
+            <button className="fw-small-primary" type="button" disabled={actionId === `approve:${proposal.proposal_id}`} onClick={() => onReviewProposal(proposal.proposal_id, "approve")}>
+              <CheckCircle2 size={16} /> 批准
+            </button>
+            <button className="fw-danger-button" type="button" disabled={actionId === `reject:${proposal.proposal_id}`} onClick={() => onReviewProposal(proposal.proposal_id, "reject")}>
+              <XCircle size={16} /> 拒绝
+            </button>
+            <button className="fw-small-secondary" type="button" disabled={actionId === `request_more_analysis:${proposal.proposal_id}`} onClick={() => onReviewProposal(proposal.proposal_id, "request_more_analysis")}>
+              <AlertTriangle size={16} /> 要求补充分析
+            </button>
+          </>
+        ) : null}
+        {approved ? (
+          <button
+            className={task ? "fw-small-secondary" : "fw-small-primary"}
+            type="button"
+            disabled={!task && actionId === `task:${proposal.proposal_id}`}
+            onClick={() => (task ? onOpenTask(task) : onCreateTask(proposal))}
+          >
+            {!task && actionId === `task:${proposal.proposal_id}` ? <Loader2 size={16} className="fw-spin" /> : <ChevronRight size={16} />}
+            {task ? "查看优化任务" : "创建优化任务"}
+          </button>
+        ) : null}
+      </div>
+    </article>
   );
 }
 
 function RunsDetails({ runs }: { runs: FeedbackRunRecord[] }) {
   return (
-    <div className="fw-drawer-list">
+    <DetailRecordList hasItems={runs.length > 0} emptyText="暂无关联运行">
       {runs.map((run) => (
         <article key={run.run_id}>
-          <h4>{shortId(run.run_id)} · {shortId(run.agent_version_id)}</h4>
+          <div className="fw-detail-record-head">
+            <h4>{shortId(run.run_id)} · {shortId(run.agent_version_id)}</h4>
+            <Pill tone="blue">run</Pill>
+          </div>
           <p>{run.answer_summary || run.message || "-"}</p>
           <small>session：{shortId(run.session_id)} · tools：{run.agent_activity?.tool_names?.join(", ") || "-"}</small>
         </article>
       ))}
-      {!runs.length ? <div className="fw-empty-inline">暂无关联运行</div> : null}
-    </div>
+    </DetailRecordList>
   );
 }
 
 function TasksDetails({ tasks }: { tasks: OptimizationTaskRecord[] }) {
   return (
-    <div className="fw-drawer-list">
+    <DetailRecordList hasItems={tasks.length > 0} emptyText="暂无优化任务">
       {tasks.map((task) => (
-        <article key={task.optimization_task_id}>
-          <h4>{shortId(task.optimization_task_id)} · {task.status}</h4>
-          <p>{task.comment || "-"}</p>
-          <small>target_paths：{task.target_paths?.join(", ") || "-"}</small>
-        </article>
+        <TaskDetailCard key={task.optimization_task_id} task={task} />
       ))}
-      {!tasks.length ? <div className="fw-empty-inline">暂无优化任务</div> : null}
-    </div>
+    </DetailRecordList>
+  );
+}
+
+function TaskDetailCard({ task }: { task: OptimizationTaskRecord }) {
+  const proposal = task.proposal;
+  const proposalId = taskProposalId(task);
+  const targetPaths = task.target_paths || [];
+  return (
+    <article className="fw-task-detail-card">
+      <div className="fw-detail-record-head">
+        <div>
+          <h4>{shortId(task.optimization_task_id)} · optimization-task</h4>
+          <small>反馈单 {shortId(task.feedback_case_id)} · 建议 {shortId(proposalId)}</small>
+        </div>
+        <Pill tone={jobStatusTone(task.status)}>{task.status}</Pill>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["执行模式", task.execution_mode],
+          ["来源", task.source],
+          ["创建时间", formatDate(task.created_at)],
+          ["目标文件数", targetPaths.length],
+        ]}
+      />
+      <div className="fw-task-targets">
+        <strong>目标文件</strong>
+        <div>
+          {targetPaths.length ? targetPaths.map((path) => <span key={path}>{path}</span>) : <span>-</span>}
+        </div>
+      </div>
+      {proposal ? (
+        <section className="fw-task-source">
+          <h4>{proposal.title || "来源优化建议"}</h4>
+          <p>{proposal.recommendation || "-"}</p>
+          <DetailMetricGrid
+            items={[
+              ["预期效果", proposal.expected_effect || "-"],
+              ["验证方式", proposal.validation || "-"],
+              ["风险", proposal.risk || "-"],
+              ["审批状态", proposalStatusText[proposal.status] || proposal.status],
+            ]}
+          />
+        </section>
+      ) : null}
+      <p className="fw-note-box fw-task-status-note">{taskStatusDescription(task.status)}</p>
+    </article>
   );
 }
 
@@ -1035,14 +1407,18 @@ function ProposalsPanel({
   actionId,
   onReviewProposal,
   onCreateTask,
+  onOpenTask,
+  tasksByProposalId,
 }: {
   proposals: OptimizationProposalRecord[];
   actionId: string | null;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
+  tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
   return (
-    <section className="fw-panel">
+    <section className="fw-panel fw-proposal-panel">
       <div className="fw-panel-header">
         <strong>优化建议审批</strong>
         <span className="fw-muted">{proposals.length} 条</span>
@@ -1052,6 +1428,8 @@ function ProposalsPanel({
         actionId={actionId}
         onReviewProposal={onReviewProposal}
         onCreateTask={onCreateTask}
+        onOpenTask={onOpenTask}
+        tasksByProposalId={tasksByProposalId}
       />
     </section>
   );
@@ -1063,12 +1441,16 @@ function ProposalList({
   actionId,
   onReviewProposal,
   onCreateTask,
+  onOpenTask,
+  tasksByProposalId,
 }: {
   proposals: OptimizationProposalRecord[];
   proposalOutput?: ProposalOutput | null;
   actionId: string | null;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onOpenTask: (task: OptimizationTaskRecord) => void;
+  tasksByProposalId: Map<string, OptimizationTaskRecord>;
 }) {
   const externalGuidance = proposalOutput?.external_guidance || [];
   return (
@@ -1076,6 +1458,7 @@ function ProposalList({
       {proposals.map((proposal) => {
         const approved = proposal.status === "approved";
         const pending = proposal.status === "pending_review";
+        const task = tasksByProposalId.get(proposal.proposal_id);
         return (
           <article className="fw-proposal-card" key={proposal.proposal_id}>
             <div className="fw-panel-header">
@@ -1088,16 +1471,18 @@ function ProposalList({
               </Pill>
             </div>
             <p>{proposal.recommendation}</p>
-            <div className="fw-current-case-grid">
-              <Metric label="预期效果" value={proposal.expected_effect || "-"} />
-              <Metric label="验证方式" value={proposal.validation || "-"} />
-              <Metric label="风险" value={proposal.risk || "-"} />
-              <Metric label="base_version" value={shortId(proposal.base_agent_version_id)} />
-            </div>
+            <DetailMetricGrid
+              items={[
+                ["预期效果", proposal.expected_effect || "-"],
+                ["验证方式", proposal.validation || "-"],
+                ["风险", proposal.risk || "-"],
+                ["base_version", shortId(proposal.base_agent_version_id)],
+              ]}
+            />
             {proposal.actionability === "external_guidance" ? (
               <p className="fw-warning-text">该建议不能自动修改主 Agent workspace。</p>
             ) : null}
-            <div className="fw-current-case-actions">
+            <div className="fw-detail-action-row">
               {pending ? (
                 <>
                   <button className="fw-small-primary" type="button" disabled={actionId === `approve:${proposal.proposal_id}`} onClick={() => onReviewProposal(proposal.proposal_id, "approve")}>
@@ -1112,9 +1497,14 @@ function ProposalList({
                 </>
               ) : null}
               {approved ? (
-                <button className="fw-small-primary" type="button" disabled={actionId === `task:${proposal.proposal_id}`} onClick={() => onCreateTask(proposal)}>
-                  {actionId === `task:${proposal.proposal_id}` ? <Loader2 size={16} className="fw-spin" /> : <ChevronRight size={16} />}
-                  创建优化任务
+                <button
+                  className={task ? "fw-small-secondary" : "fw-small-primary"}
+                  type="button"
+                  disabled={!task && actionId === `task:${proposal.proposal_id}`}
+                  onClick={() => (task ? onOpenTask(task) : onCreateTask(proposal))}
+                >
+                  {!task && actionId === `task:${proposal.proposal_id}` ? <Loader2 size={16} className="fw-spin" /> : <ChevronRight size={16} />}
+                  {task ? "查看优化任务" : "创建优化任务"}
                 </button>
               ) : null}
             </div>
@@ -1139,24 +1529,14 @@ function ProposalList({
 
 function TasksPanel({ tasks }: { tasks: OptimizationTaskRecord[] }) {
   return (
-    <section className="fw-panel">
+    <section className="fw-panel fw-task-panel">
       <div className="fw-panel-header">
         <strong>优化任务</strong>
         <span className="fw-muted">{tasks.length} 个</span>
       </div>
-      <div className="fw-proposal-list">
+      <div className="fw-proposal-list fw-task-list">
         {tasks.map((task) => (
-          <article className="fw-proposal-card" key={task.optimization_task_id}>
-            <div className="fw-panel-header">
-              <div>
-                <h4>{shortId(task.optimization_task_id)}</h4>
-                <small>{shortId(task.feedback_case_id)} · {task.execution_mode}</small>
-              </div>
-              <Pill tone="blue">{task.status}</Pill>
-            </div>
-            <p>{task.comment || "-"}</p>
-            <small>target_paths：{task.target_paths?.join(", ") || "-"}</small>
-          </article>
+          <TaskDetailCard key={task.optimization_task_id} task={task} />
         ))}
         {!tasks.length ? <div className="fw-empty-inline">暂无优化任务</div> : null}
       </div>
@@ -1310,6 +1690,64 @@ function summaryText(value: Record<string, unknown>): string {
   const reason = typeof value.reason === "string" ? value.reason : "";
   if (reason) return reason;
   return JSON.stringify(value).slice(0, 120);
+}
+
+function jobStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "completed") return "green";
+  if (status === "failed") return "red";
+  if (status === "needs_human_review") return "orange";
+  if (status === "queued" || status === "running") return "blue";
+  return "gray";
+}
+
+function proposalStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "approved") return "green";
+  if (status === "rejected") return "red";
+  if (status === "needs_more_analysis") return "purple";
+  if (status === "pending_review") return "orange";
+  return "gray";
+}
+
+function buildTaskByProposalId(tasks: OptimizationTaskRecord[]): Map<string, OptimizationTaskRecord> {
+  const tasksByProposalId = new Map<string, OptimizationTaskRecord>();
+  for (const task of tasks) {
+    const proposalId = taskProposalId(task);
+    if (proposalId && !tasksByProposalId.has(proposalId)) {
+      tasksByProposalId.set(proposalId, task);
+    }
+  }
+  return tasksByProposalId;
+}
+
+function taskProposalId(task: OptimizationTaskRecord): string | null {
+  return task.proposal_id || task.proposal_ids?.[0] || task.proposal?.proposal_id || null;
+}
+
+function taskStatusDescription(status?: string | null): string {
+  if (status === "pending_execution") return "当前任务已创建，等待人工或后续 patch 执行；系统尚未自动修改文件。";
+  if (status === "executing") return "当前任务正在执行中。";
+  if (status === "completed") return "当前任务已完成。";
+  if (status === "closed") return "当前任务已关闭。";
+  return "当前任务仅记录优化交接信息，具体执行状态以任务状态为准。";
+}
+
+function proposalEvidenceText(proposal: OptimizationProposalRecord): string {
+  const evidenceRefs = proposal.evidence_refs;
+  if (Array.isArray(evidenceRefs)) {
+    const labels = evidenceRefs.map(proposalEvidenceRefText).filter(Boolean);
+    if (labels.length) return labels.slice(0, 4).join("、");
+  }
+  return "agent run、evidence package、feedback signal";
+}
+
+function proposalEvidenceRefText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  const type = typeof record.type === "string" ? record.type : "";
+  const id = typeof record.id === "string" ? shortId(record.id) : "";
+  const reason = typeof record.reason === "string" ? record.reason : "";
+  return [type, id, reason].filter(Boolean).join(" / ");
 }
 
 function shortId(value?: string | null): string {

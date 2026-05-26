@@ -69,7 +69,7 @@ class AppSettings(BaseSettings):
 
     claude_tools_raw: Optional[str] = Field(default=None, alias="CLAUDE_TOOLS")
     default_skills_raw: Optional[str] = Field(default=None, alias="DEFAULT_SKILLS")
-    default_allowed_tools_raw: str = Field(default="Read,Grep,Glob", alias="DEFAULT_ALLOWED_TOOLS")
+    default_allowed_tools_raw: str = Field(default="Read,Grep,Glob,Skill", alias="DEFAULT_ALLOWED_TOOLS")
     default_disallowed_tools_raw: str = Field(default="Bash,WebFetch,WebSearch", alias="DEFAULT_DISALLOWED_TOOLS")
     default_skills_mode: Literal["all", "default", "none"] = Field(default="default", alias="DEFAULT_SKILLS_MODE")
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")

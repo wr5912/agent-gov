@@ -124,6 +124,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert options.settings is None
     assert options.mcp_servers == {}
     assert options.agents is None
+    assert "Skill" in options.allowed_tools
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")

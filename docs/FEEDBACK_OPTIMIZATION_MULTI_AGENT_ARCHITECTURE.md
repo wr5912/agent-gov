@@ -1,9 +1,11 @@
 # 反馈优化闭环多 Agent 架构
 
 > 用途：指导 Claude Agent Runtime / 网络安全运营 AI 助手的反馈优化闭环编码实现。
-> 状态：终版实施稿
-> 版本：v1.0
-> 日期：2026-05-22
+> 状态：当前实现校准稿
+> 版本：v1.1
+> 日期：2026-05-26
+
+本版本按当前代码实现校准。文档中的“当前实现”描述的是本仓库已落地能力；标注为“预留”或“待实现”的内容不得作为已完成验收项。
 
 ---
 
@@ -22,6 +24,7 @@
 6. 旧版前端“提交反馈后直接展示归因和 proposal 摘要”的交互废弃。
 7. 旧数据不做自动迁移；如需保留，只能作为人工参考，不参与新版闭环计算。
 8. 基于旧版 MVP 实现产生的后端接口、规则归因代码、前端入口、测试和数据目录必须在新版落地时一并清理。
+9. 当前权威运行态数据存储为 /data/runtime.sqlite3；/data/feedback-signals/ 等目录仅为兼容路径或历史说明，不再作为权威存储契约。
 ```
 
 新版唯一闭环如下：
@@ -36,7 +39,10 @@ chat run
   -> optimization proposal
   -> proposal approval
   -> optimization task
+  -> manual/external patch application
+  -> mark-applied snapshot
   -> main-workspace version
+  -> manual regression evaluation
 ```
 
 ---
@@ -54,7 +60,7 @@ chat run
 5. 哪些目录进入版本管理，哪些目录只作为运行态。
 6. 反馈、Trace、工具调用、SOC 操作如何固化为 evidence package。
 7. 归因分析和优化建议如何形成结构化结果。
-8. 哪些建议可以自动进入主 Agent workspace 修改，哪些只能成为外部治理建议。
+8. 哪些建议可以进入优化任务，哪些必须成为外部治理建议或人工分析项。
 9. 前后端需要实现哪些 API、数据结构和验证逻辑。
 
 ---
@@ -69,7 +75,7 @@ chat run
     主 Agent Claude Code 子进程
     归因分析 Agent Claude Code 子进程
     优化建议 Agent Claude Code 子进程
-    执行优化 Agent，可选，后续扩展
+    执行优化 Agent，未实现，作为后续扩展
 ```
 
 不是：
@@ -81,7 +87,7 @@ chat run
 而是：
 
 ```text
-三个 Agent = 三套 Runtime Profile
+当前已实现三个 Agent = 三套 Runtime Profile；execution-optimizer 仅保留命名和扩展位
 ```
 
 核心规则如下：
@@ -110,7 +116,7 @@ chat run
 | `main` | 主 AI 助手 profile | 不建议变 |
 | `feedback-attribution` | 归因分析 Agent profile | 不建议变 |
 | `feedback-proposal` | 优化建议 Agent profile | 不建议变 |
-| `execution-optimizer` | 执行优化 Agent profile，预留 | 可后续实现 |
+| `execution-optimizer` | 执行优化 Agent profile，当前未实现 | backlog |
 | `main-workspace` | 主 Agent workspace | 固定使用 |
 | `attribution-workspace` | 归因 Agent workspace | 固定使用 |
 | `proposal-workspace` | 建议 Agent workspace | 固定使用 |
@@ -225,29 +231,27 @@ Agent 目录        # 应明确是 workspace、claude-root、job 目录还是版
 
 ---
 
-### 4.4 执行优化 Agent：`execution-optimizer`，预留
+### 4.4 执行优化 Agent：`execution-optimizer`，backlog
 
-执行优化 Agent 不是 MVP 必须项，但架构上必须预留。
+当前实现没有 `execution-optimizer` profile、workspace、API 或自动 patch 执行入口。它只作为后续扩展命名保留，不能在 UI 或 API 文案中描述为已实现能力。
 
-职责：
+当前已实现的优化执行方式是：
 
-1. 读取已审批的 optimization proposal。
-2. 在受控范围内修改主 Agent workspace。
-3. 生成 diff。
-4. 运行回归验证。
-5. 生成新主 Agent 版本。
-6. 提供回滚点。
+1. 已审批 proposal 创建 `optimization task`。
+2. 开发人员或外部系统按 proposal 手动/外部 patch 修改目标文件。
+3. 在 UI 或 API 中调用 `mark-applied`，系统创建主 Agent 版本快照。
+4. 开发人员手动触发回归评估。
 
-执行优化 Agent 的启动条件：
+未来如实现 `execution-optimizer`，必须满足：
 
 ```text
 1. proposal 状态为 approved。
 2. target_path 在允许修改范围内。
 3. 当前主 Agent 版本与 proposal 生成时版本一致，或冲突已人工确认。
-4. 已生成执行前快照。
+4. 执行前已创建快照。
+5. Agent 只在受控范围内修改主 Agent workspace。
+6. 生成 diff、运行回归验证、生成新主 Agent 版本并提供回滚点。
 ```
-
-MVP 阶段可以先由人工或后端确定性逻辑代替执行优化 Agent。
 
 ---
 
@@ -311,31 +315,22 @@ docker/volume/
       .claude/                     # 建议 Agent CLAUDE_CONFIG_DIR
 
   data/
-    feedback-signals/
-    soc-events/
-    pending-correlations/
-    feedback-cases/
-    evidence-packages/
-    feedback-analysis/
-      jobs/
-        <job_id>/
-          manifest.json
-          attribution/
-            input.json
-            raw_output.json
-            validated_output.json
-            error.json
-          proposal/
-            input.json
-            raw_output.json
-            validated_output.json
-            error.json
-    optimization-proposals/
-    optimization-tasks/
+    runtime.sqlite3                # 权威运行态数据库
+    .runtime-tmp/
+      jobs/<job_id>/...            # Agent job 临时 workspace，完成后可清理
+    external-governance-webhooks.yaml
     agent-versions/
       main/
-      attribution/
-      proposal/
+        current.json
+        versions.jsonl
+        manifests/<version_id>.json
+        bundles/<version_id>.tar.gz
+    feedback-signals/              # 兼容路径，不是权威存储
+    soc-events/                    # 兼容路径，不是权威存储
+    feedback-cases/                # 兼容路径，不是权威存储
+    evidence-packages/             # 兼容路径，不是权威存储
+    optimization-proposals/        # 兼容路径，不是权威存储
+    optimization-tasks/            # 兼容路径，不是权威存储
 ```
 
 重要规则：
@@ -345,8 +340,9 @@ docker/volume/
 2. attribution-workspace 是归因 Agent 的源码化行为包。
 3. proposal-workspace 是建议 Agent 的源码化行为包。
 4. claude-roots/* 是运行态目录，不作为主 Agent 优化对象。
-5. data 是业务数据、任务数据、证据包和版本快照存储。
-6. job 目录不是 Agent workspace。
+5. data 是业务数据、任务数据、证据包、版本快照和外部治理配置的挂载根目录。
+6. runtime.sqlite3 是 feedback signal、SOC event、case、evidence package、job、proposal、task、eval 和 session 的权威存储。
+7. .runtime-tmp/jobs 是 Agent job 临时 workspace，不是 Agent workspace，也不是长期事实源。
 ```
 
 ---
@@ -467,7 +463,7 @@ PROFILES: dict[str, AgentRuntimeProfile] = {
         project_settings_path=Path("/attribution-workspace/.claude/settings.json"),
         langfuse_observation_name="runtime.feedback_attribution_agent",
         readable_paths=(DATA_DIR,),
-        writable_paths=(Path("/data/feedback-analysis/jobs"),),
+        writable_paths=(Path("/data/.runtime-tmp/jobs"),),
         denied_paths=(Path("/main-workspace"), Path("/claude-roots/main")),
         allowed_mcp_servers=("feedback-evidence", "readonly-trace"),
     ),
@@ -482,7 +478,7 @@ PROFILES: dict[str, AgentRuntimeProfile] = {
         project_settings_path=Path("/proposal-workspace/.claude/settings.json"),
         langfuse_observation_name="runtime.feedback_proposal_agent",
         readable_paths=(DATA_DIR,),
-        writable_paths=(Path("/data/feedback-analysis/jobs"), Path("/data/optimization-proposals")),
+        writable_paths=(Path("/data/.runtime-tmp/jobs"),),
         denied_paths=(Path("/main-workspace"), Path("/claude-roots/main")),
         allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
     ),
@@ -492,9 +488,9 @@ PROFILES: dict[str, AgentRuntimeProfile] = {
 注意：
 
 ```text
-1. profile 中的 denied_paths 是后端安全校验依据，不只是 Claude Code settings。
-2. 归因和建议 Agent 不直接读写 live main-workspace。
-3. 如需读取主 Agent 文件，应读取版本快照或只读副本。
+1. 当前实现中 profile 固定了 cwd、HOME、CLAUDE_CONFIG_DIR、settings、mcp_config、allowed_tools 和 disallowed_tools。
+2. readable_paths、writable_paths、denied_paths 和 allowed_mcp_servers 是安全设计字段；当前尚未实现通用路径拦截器，只在 target_path allowlist、工具权限和独立 workspace/root 上落地。
+3. 归因和建议 Agent 不直接读写 live main-workspace；如需主 Agent 信息，应读取 evidence package、SQLite 中的 job 输入、版本 manifest 或提示词嵌入上下文。
 ```
 
 ---
@@ -641,15 +637,24 @@ POST /api/feedback-cases/{id}/proposal-jobs
 
 不能只依赖 Claude Code settings。
 
-后端必须额外做：
+当前实现已落地：
 
 ```text
-1. profile 级路径 allowlist / denylist 校验。
-2. job 输入输出路径必须在 /data/feedback-analysis/jobs/<job_id>/ 下。
-3. target_path 必须在 main-workspace 可优化路径 allowlist 内。
-4. 归因/建议 Agent 不允许直接写 main-workspace。
-5. 外部治理建议不得创建 workspace 修改任务。
-6. 所有写操作必须记录 actor、profile、job_id、version_id。
+1. 后端接口固定映射 profile，不允许前端任意传入 profile。
+2. 归因/建议 profile 使用独立 cwd、HOME、CLAUDE_CONFIG_DIR 和 project settings。
+3. 归因/建议 profile 默认禁用写入类工具；proposal profile 不授予 Read/Grep/Glob/Bash/Edit/Write。
+4. job input、raw output、validated output、error 以 SQLite 为权威存储；必要时仅临时物化到 /data/.runtime-tmp/jobs/<job_id>/。
+5. proposal target_path 必须命中 main-workspace 可优化路径 allowlist，否则降级为 external guidance/needs_human_analysis。
+6. external_guidance 不得创建 workspace 修改任务。
+7. task mark-applied 会记录 applied_agent_version_id 并创建主 Agent 版本快照。
+```
+
+待补强：
+
+```text
+1. profile 级 readable_paths/writable_paths/denied_paths 通用路径拦截器。
+2. 所有写操作统一记录 actor、profile、job_id、version_id。
+3. execution-optimizer 的受控 patch 执行和 diff 审计。
 ```
 
 ---
@@ -664,7 +669,7 @@ POST /api/feedback-cases/{id}/proposal-jobs
 /main-workspace 的可控行为包
 ```
 
-推荐纳入版本管理：
+当前实现采用 `main-workspace-managed-config-v2` 策略：对 `main-workspace` 做全量受管快照，并排除缓存、构建产物和运行态目录。以下目录通常会被纳入版本 bundle：
 
 ```text
 CLAUDE.md
@@ -710,13 +715,18 @@ credentials
 
 ### 10.2 归因 Agent 和建议 Agent 版本
 
-归因 Agent 和建议 Agent 也必须有版本，但它们不属于主 Agent 的优化版本。
+归因 Agent 和建议 Agent 也记录可复现版本信息，但它们不属于主 Agent 的优化版本。
 
-应分别记录：
+当前实现不为归因/建议 workspace 创建独立 bundle，而是在每个 job 中记录 profile version snapshot：
 
 ```text
-attribution-agent-version
-proposal-agent-version
+profile_name
+profile_role
+agent_version
+claude_md_hash
+skills_hash
+mcp_config_hash
+settings_hash
 ```
 
 每个 attribution job 必须记录：
@@ -765,14 +775,18 @@ main_agent_version_id
 
 Evidence package 是归因分析的事实源。
 
-它是针对某个 feedback case 固化出来的一组证据文件，包含反馈、run、session、tool call、trace 摘要、SOC 操作事件、主 Agent 版本信息等。
+它是针对某个 feedback case 固化出来的一组证据对象，包含反馈、run、session、tool call、trace 摘要、SOC 操作事件、主 Agent 版本信息等。
 
 归因 Agent 不应直接四处查询散落数据，而应优先读取 evidence package。
 
-### 11.2 存储路径
+### 11.2 存储方式
 
 ```text
-/data/evidence-packages/<evidence_package_id>/
+/data/runtime.sqlite3
+  evidence_packages.manifest_json
+  evidence_files.content_json
+
+/data/.runtime-tmp/jobs/<job_id>/<job_type>/evidence/
   manifest.json
   feedback.json
   runs.json
@@ -782,7 +796,12 @@ Evidence package 是归因分析的事实源。
   trace_summary.json
   main_agent_version.json
   redaction_report.json
+  messages.json              # debug evidence 开启时
+  agent_activity.json        # debug evidence 开启时
+  langfuse_trace_refs.json   # debug evidence 开启时
 ```
+
+SQLite 是权威存储；临时 evidence 文件只为 Agent job 读取而物化，job 完成后可清理。
 
 ### 11.3 Manifest Schema
 
@@ -815,8 +834,8 @@ Evidence package 是归因分析的事实源。
     }
   ],
   "redaction": {
-    "enabled": true,
-    "policy": "security-redaction-v1",
+    "enabled": false,
+    "policy": "debug-evidence-raw-v1",
     "redacted_fields": ["token", "secret", "credential", "raw_payload"]
   },
   "completeness": {
@@ -833,10 +852,12 @@ Evidence package 是归因分析的事实源。
 
 ```text
 1. evidence package 创建后不可原地修改。
-2. 如需补证据，创建新的 evidence_package_id。
-3. evidence package 中不得包含明文 token、secret、credential。
-4. trace 原文可选，trace 摘要必选。
-5. 主 Agent 版本信息必选。
+2. 当前实现对同一 feedback case 默认复用当前 evidence_package_id，防止重复点击产生脏数据。
+3. 如未来需要补证据，应新增显式 regenerate/force 机制并生成新的 evidence_package_id。
+4. 开发调试模式默认 `ENABLE_FEEDBACK_DEBUG_EVIDENCE=true`，允许保留 messages、agent_activity 和 Langfuse trace refs，便于开发人员排查。
+5. 生产或受控环境应关闭 debug evidence，启用脱敏策略后不得包含明文 token、secret、credential。
+6. trace 原文可选，trace 摘要和 trace refs 取决于运行时采集可用性。
+7. 主 Agent 版本信息应尽量记录；无法获取时允许为空，但 completeness 必须反映缺失。
 ```
 
 ---
@@ -857,12 +878,12 @@ Evidence package 是归因分析的事实源。
   -> optimization proposal
   -> 人工审批
   -> optimization task
-  -> 修改 main-workspace
-  -> 新主 Agent 版本
-  -> 回归验证
+  -> 开发人员或外部系统应用 patch
+  -> 标记已应用并创建新主 Agent 版本
+  -> 手动触发回归验证
 ```
 
-MVP 阶段可以先实现到 proposal 审批，不强制实现自动改文件。
+当前阶段不实现自动改文件；`execution-optimizer` 自动 patch 执行属于 backlog。
 
 ### 12.1 反馈评估集用例治理
 
@@ -881,12 +902,10 @@ MVP 阶段可以先实现到 proposal 审批，不强制实现自动改文件。
 
 ## 13. Job 状态机
 
-所有 job 必须使用统一状态机。
+所有 attribution/proposal job 使用统一状态字段。当前实现直接从 `queued` 开始创建 job；`created` 和 `evidence_packaging` 是早期设计状态，不作为当前必经状态。
 
 ```text
-created
-  -> evidence_packaging
-  -> queued
+queued
   -> running
   -> schema_validating
   -> completed
@@ -896,8 +915,8 @@ created
 
 ```text
 failed
-cancelled
-timeout
+cancelled          # 预留
+timeout            # 预留；当前超时以 failed + AGENT_TIMEOUT 表达
 needs_human_review
 ```
 
@@ -916,10 +935,10 @@ needs_human_review
   "completed_at": null,
   "timeout_seconds": 300,
   "retry_count": 0,
-  "input_path": "/data/feedback-analysis/jobs/fba-.../attribution/input.json",
-  "raw_output_path": "/data/feedback-analysis/jobs/fba-.../attribution/raw_output.json",
-  "validated_output_path": "/data/feedback-analysis/jobs/fba-.../attribution/validated_output.json",
-  "error_path": "/data/feedback-analysis/jobs/fba-.../attribution/error.json",
+  "input_path": "/data/.runtime-tmp/jobs/fba-.../attribution/input.json",
+  "raw_output_path": "sqlite://feedback_jobs/fba-.../raw_output_json",
+  "validated_output_path": "sqlite://feedback_jobs/fba-.../validated_output_json",
+  "error_path": "sqlite://feedback_jobs/fba-.../error_json",
   "langfuse_trace_id": null
 }
 ```
@@ -957,11 +976,11 @@ TARGET_PATH_NOT_ALLOWED
   "feedback_case_id": "fbc-20260521-000001",
   "evidence_package_id": "evp-20260521-000001",
   "main_agent_version_id": "main-v1.2.0",
-  "evidence_manifest_path": "/data/evidence-packages/evp-.../manifest.json",
+  "evidence_manifest_path": "/data/.runtime-tmp/jobs/fba-.../attribution/evidence/manifest.json",
   "allowed_evidence_paths": [
-    "/data/evidence-packages/evp-.../feedback.json",
-    "/data/evidence-packages/evp-.../tool_calls.json",
-    "/data/evidence-packages/evp-.../trace_summary.json"
+    "/data/.runtime-tmp/jobs/fba-.../attribution/evidence/feedback.json",
+    "/data/.runtime-tmp/jobs/fba-.../attribution/evidence/tool_calls.json",
+    "/data/.runtime-tmp/jobs/fba-.../attribution/evidence/trace_summary.json"
   ],
   "task": "analyze_feedback_attribution"
 }
@@ -1056,9 +1075,9 @@ not_actionable
   "feedback_case_id": "fbc-20260521-000001",
   "evidence_package_id": "evp-20260521-000001",
   "attribution_job_id": "fba-20260521-000001",
-  "attribution_output_path": "/data/feedback-analysis/jobs/fba-.../attribution/validated_output.json",
+  "attribution_output_path": "/data/.runtime-tmp/jobs/fbp-.../proposal/attribution_validated_output.json",
   "main_agent_version_id": "main-v1.2.0",
-  "main_agent_manifest_path": "/data/agent-versions/main/main-v1.2.0/manifest.json",
+  "main_agent_manifest_path": "/data/agent-versions/main/current.json",
   "allowed_target_paths": [
     "CLAUDE.md",
     ".mcp.json",
@@ -1116,18 +1135,22 @@ not_actionable
 所有 Agent 输出分为两层：
 
 ```text
-raw_output.json          # Agent 原始输出
-validated_output.json    # 通过 schema 校验后的结构化输出
+raw_output_json          # Agent 原始输出，SQLite 字段
+validated_output_json    # 通过 schema 校验后的结构化输出，SQLite 字段
+error_json               # 校验或运行错误，SQLite 字段
 ```
 
 规则：
 
 ```text
-1. 后续流程只能读取 validated_output.json。
-2. raw_output.json 只用于排错和审计。
-3. schema 校验失败时，最多允许一次结构化修复。
-4. 修复仍失败，job 状态改为 needs_human_review。
-5. schema_version 必填。
+1. 后续流程只能读取 validated_output_json。
+2. raw_output_json 只用于排错、审计和手动 revalidate。
+3. 当前实现先尝试抽取完整 schema JSON；未命中时可启用 DSPyOutputFormatter 将 Agent 文本或片段 JSON 转换为目标 Pydantic 输出模型。
+4. DSPyOutputFormatter 只能做格式转换，不能补充证据中没有的业务事实；证据不足时应输出 needs_human_review / insufficient_information。
+5. DSPyOutputFormatter 输出后仍必须经过 Runtime 的 Pydantic schema 最终校验。
+6. 校验失败时 job 状态改为 needs_human_review，并写入 error_json。
+7. 当前 proposal job 提供手动 revalidate 接口；attribution job 提供显式 regenerate 接口。
+8. schema_version 必填。
 ```
 
 建议使用 Pydantic 定义 schema。
@@ -1223,7 +1246,7 @@ POST /api/soc-events
 2. 重复 event_id 返回已存在记录，不重复写入、不重复关联。
 3. SOC event 默认 auto_captured=true、requires_review=true。
 4. SOC event 只能进入 evidence package，不能直接生成 proposal。
-5. before/after 只保留归因所需字段，不保存密钥、凭据、MCP header 或大段原始日志。
+5. before/after 在生产模式应只保留归因所需字段，不保存密钥、凭据、MCP header 或大段原始日志；开发调试模式允许保留更完整证据，依赖环境开关控制。
 ```
 
 ### 17.4 SOC 事件白名单
@@ -1267,29 +1290,28 @@ tool.manual_query_after_agent
 
 ### 17.6 新版数据路径
 
-新版数据以以下路径为准：
+当前实现的数据层以以下路径为准：
 
 ```text
-/data/feedback-signals/
-/data/soc-events/
-/data/pending-correlations/
-/data/feedback-cases/
-/data/evidence-packages/
-/data/feedback-analysis/jobs/
-/data/optimization-proposals/
-/data/optimization-tasks/
-/data/agent-versions/main/
+/data/runtime.sqlite3
+/data/.runtime-tmp/jobs/
+/data/agent-versions/main/current.json
+/data/agent-versions/main/versions.jsonl
+/data/agent-versions/main/manifests/
+/data/agent-versions/main/bundles/
+/data/external-governance-webhooks.yaml
 ```
 
-旧版 `/data/feedback/*.jsonl` 和旧版规则生成的 proposal 不参与新版闭环。
+`/data/feedback-signals/`、`/data/soc-events/`、`/data/pending-correlations/`、`/data/feedback-cases/`、`/data/evidence-packages/`、`/data/optimization-proposals/`、`/data/optimization-tasks/` 等目录仅为兼容路径或历史说明，不是权威事实源。旧版 `/data/feedback/*.jsonl` 和旧版规则生成的 proposal 不参与新版闭环。
 
 ---
 
 ## 18. API 设计
 
-### 18.1 Feedback Signal
+### 18.1 Feedback Signal / Agent Run
 
 ```text
+GET  /api/agent-runs
 POST /api/feedback-signals
 GET  /api/feedback-signals
 GET  /api/feedback-signals/{signal_id}
@@ -1316,12 +1338,14 @@ GET  /api/feedback-cases
 ```text
 POST /api/feedback-cases/{feedback_case_id}/evidence-packages
 GET  /api/evidence-packages/{evidence_package_id}
+GET  /api/evidence-packages/{evidence_package_id}/files/{file_name}
 ```
 
 ### 18.5 Attribution Job
 
 ```text
 POST /api/feedback-cases/{feedback_case_id}/attribution-jobs
+POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate
 GET  /api/feedback-analysis/jobs/{job_id}
 GET  /api/feedback-analysis/jobs/{job_id}/attribution
 ```
@@ -1330,7 +1354,9 @@ GET  /api/feedback-analysis/jobs/{job_id}/attribution
 
 ```text
 POST /api/feedback-cases/{feedback_case_id}/proposal-jobs
+POST /api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate
 GET  /api/feedback-analysis/jobs/{job_id}/proposal
+POST /api/feedback-analysis/jobs/{job_id}/proposal/revalidate
 ```
 
 ### 18.7 Optimization Proposal
@@ -1346,17 +1372,42 @@ POST /api/optimization-proposals/{proposal_id}/request-more-analysis
 ### 18.8 Optimization Task
 
 ```text
+GET  /api/optimization-tasks
 POST /api/optimization-proposals/{proposal_id}/tasks
 GET  /api/optimization-tasks/{task_id}
+POST /api/optimization-tasks/{task_id}/mark-applied
+POST /api/optimization-tasks/{task_id}/regression-runs
+GET  /api/optimization-tasks/{task_id}/regression-runs
 ```
 
-### 18.9 Agent Versions
+### 18.9 External Governance
 
 ```text
+GET  /api/external-governance-webhooks
+GET  /api/external-governance-items
+POST /api/external-governance-items/{external_item_id}/notify
+```
+
+### 18.10 Feedback Eval
+
+```text
+POST /api/eval-datasets/feedback/sync
+GET  /api/eval-cases
+PATCH /api/eval-cases/{eval_case_id}
+POST /api/eval-runs
+GET  /api/eval-runs
+GET  /api/eval-runs/{eval_run_id}
+```
+
+### 18.11 Agent Versions
+
+```text
+GET  /api/agent-versions/main/current
 GET  /api/agent-versions/main
 GET  /api/agent-versions/main/{version_id}
 POST /api/agent-versions/main/snapshots
 POST /api/agent-versions/main/{version_id}/rollback
+GET  /api/agent-versions/main/diff
 ```
 
 ---
@@ -1499,11 +1550,9 @@ docker/volume/proposal-workspace/
 docker/volume/claude-roots/main/
 docker/volume/claude-roots/attribution/
 docker/volume/claude-roots/proposal/
-docker/volume/data/feedback-signals/
-docker/volume/data/soc-events/
-docker/volume/data/pending-correlations/
-docker/volume/data/evidence-packages/
-docker/volume/data/feedback-analysis/jobs/
+docker/volume/data/runtime.sqlite3
+docker/volume/data/.runtime-tmp/jobs/
+docker/volume/data/agent-versions/main/
 ```
 
 成功标准：
@@ -1512,7 +1561,7 @@ docker/volume/data/feedback-analysis/jobs/
 1. 三个 workspace 都有 CLAUDE.md、agent.yaml、.mcp.json、.claude/settings.json。
 2. docker-compose 挂载路径全部使用 main-workspace。
 3. 不再出现 volume/workspace 作为主目录。
-4. 反馈信号、SOC 事件和待关联事件使用新版数据目录。
+4. 反馈信号、SOC 事件、待关联事件、case、job、proposal、task、eval 和 session 使用 SQLite 权威存储。
 ```
 
 ### Phase 3：反馈信号和 SOC 事件采集
@@ -1565,7 +1614,7 @@ docker/volume/data/feedback-analysis/jobs/
 ```text
 1. EvidencePackageStore。
 2. evidence manifest。
-3. 脱敏策略。
+3. 开发调试证据策略和生产脱敏策略。
 4. hash 校验。
 5. evidence package 创建 API。
 ```
@@ -1575,7 +1624,7 @@ docker/volume/data/feedback-analysis/jobs/
 ```text
 1. 每个 feedback case 可以生成 evidence package。
 2. evidence package 可重复读取。
-3. evidence package 不包含明文 token、secret、credential。
+3. debug evidence 开启时可保留完整证据用于开发调试；关闭后应脱敏 token、secret、credential。
 ```
 
 ### Phase 6：Attribution Job
@@ -1608,7 +1657,7 @@ docker/volume/data/feedback-analysis/jobs/
 2. proposal input 生成。
 3. 调用 feedback-proposal profile。
 4. proposal schema 校验。
-5. 写入 optimization-proposals。
+5. 写入 SQLite 中的 optimization_proposals 数据。
 ```
 
 成功标准：
@@ -1625,8 +1674,8 @@ docker/volume/data/feedback-analysis/jobs/
 
 ```text
 1. 主 Agent 版本只针对 main-workspace 可控行为包。
-2. 归因 Agent 和建议 Agent 独立记录自身版本。
-3. 每个 job 记录 main_agent_version、attribution_agent_version、proposal_agent_version、runtime_version。
+2. 归因 Agent 和建议 Agent 在 job 中记录 profile version snapshot。
+3. 每个 job 记录 main_agent_version_id、profile_version、attribution/proposal_agent_version、runtime_version。
 ```
 
 成功标准：
@@ -1674,7 +1723,7 @@ docker/volume/data/feedback-analysis/jobs/
 8. 隐式信号 requires_review 默认值测试。
 9. 采集 API 不生成 attribution/proposal 测试。
 10. target_path allowlist 测试。
-11. denied_paths 拒绝测试。
+11. target_path 非法路径拒绝测试。
 12. evidence package manifest 校验测试。
 13. attribution output schema 校验测试。
 14. proposal output schema 校验测试。
@@ -1703,7 +1752,7 @@ docker/volume/data/feedback-analysis/jobs/
 1. 归因 Agent 尝试写 main-workspace，应失败。
 2. 建议 Agent 尝试写 main-workspace，应失败。
 3. proposal target_path 指向 .env，应失败。
-4. evidence package 包含 secret，应脱敏或拒绝创建。
+4. debug evidence 关闭时，evidence package 包含 secret 应脱敏或拒绝创建。
 5. external_guidance 不得创建 workspace 修改任务。
 ```
 
@@ -1752,7 +1801,7 @@ docker/volume/data/feedback-analysis/jobs/
 [ ] POST /api/feedback-signals 只采集信号，不生成 proposal。
 [ ] POST /api/soc-events 对 event_id 幂等。
 [ ] pending correlation 已实现。
-[ ] evidence package 已实现 manifest、hash、脱敏。
+[ ] evidence package 已实现 manifest、hash、debug evidence 开关和生产脱敏策略。
 [ ] attribution output 已实现 schema 校验。
 [ ] proposal output 已实现 schema 校验。
 [ ] proposal target_path 已实现 allowlist。
@@ -1760,6 +1809,7 @@ docker/volume/data/feedback-analysis/jobs/
 [ ] 主 Agent 版本只包含 main-workspace 可控行为包。
 [ ] 归因 Agent 和建议 Agent 的自身版本已记录。
 [ ] UI 能展示反馈信号、SOC 事件、待关联、证据、归因、建议、审批、版本关系。
+[ ] 文档明确 execution-optimizer 未实现，当前为 manual_or_patch + mark-applied + regression 流程。
 ```
 
 ---
@@ -1774,15 +1824,15 @@ docker/volume/data/feedback-analysis/jobs/
 3. 归因 Agent 使用 attribution-workspace。
 4. 建议 Agent 使用 proposal-workspace。
 5. 三个 Agent 使用独立 claude-root、HOME、CLAUDE_CONFIG_DIR。
-6. /data 作为共享业务数据区，但必须按 case/job/package 分区。
+6. /data 作为共享业务数据区；当前以 runtime.sqlite3 为权威存储，临时 job 文件按 job_id 分区。
 7. 主 Agent 是反馈优化的主要版本管理对象。
 8. 归因 Agent 和建议 Agent 有自身版本，但不纳入主 Agent 优化版本。
 9. feedback signal 和 SOC event 是新版唯一采集入口。
 10. 采集入口不直接归因、不直接生成 proposal。
 11. evidence package 是归因事实源。
 12. Langfuse 是观测和跳转工具，不是唯一事实源。
-13. 归因 Agent 和建议 Agent 只读主 Agent 快照和 evidence package，不直接修改 main-workspace。
-14. 自动修改 main-workspace 必须经过 proposal 审批、版本快照和回归验证。
+13. 归因 Agent 和建议 Agent 读取 evidence package、job input 和版本 manifest，不直接修改 main-workspace。
+14. 当前不自动修改 main-workspace；优化任务由人工或外部系统应用 patch 后，通过 mark-applied 创建版本快照，并手动触发回归验证。
 15. 外部 MCP、SOC 流程、Runtime bug 等问题必须通过 external_guidance、runtime_fix 或 needs_human_analysis 表达。
 ```
 
@@ -1799,8 +1849,8 @@ main-workspace
 claude-roots/*
   = 各 Agent 的隔离运行态，不进入主 Agent 版本。
 
-/data/feedback-signals + soc-events + evidence-packages + feedback-analysis/jobs
-  = 反馈闭环的采集、事实、任务和审计记录。
+/data/runtime.sqlite3 + /data/.runtime-tmp/jobs + /data/agent-versions/main
+  = 反馈闭环的权威数据、临时任务工作区和版本记录。
 ```
 
 通过这种边界，系统可以做到：

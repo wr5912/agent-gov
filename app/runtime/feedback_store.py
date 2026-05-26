@@ -638,11 +638,12 @@ class FeedbackStore:
         *,
         evidence_package_id: Optional[str] = None,
         profile_version: Optional[dict[str, Any]] = None,
+        force: bool = False,
     ) -> Optional[dict[str, Any]]:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
-        existing = self._latest_reusable_job(feedback_case_id, "attribution")
+        existing = None if force else self._latest_reusable_job(feedback_case_id, "attribution")
         if existing:
             return {**existing, "_reused_existing": True}
         evidence_package_id = evidence_package_id or self._latest(feedback_case.get("evidence_package_ids"))

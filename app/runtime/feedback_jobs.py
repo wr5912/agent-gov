@@ -5,6 +5,38 @@ from pathlib import Path
 from typing import Any
 
 
+ATTRIBUTION_SCHEMA_FIELDS = {
+    "schema_version",
+    "feedback_case_id",
+    "attribution_job_id",
+    "status",
+    "problem_type",
+    "optimization_object_type",
+    "actionability",
+    "confidence",
+    "human_review_required",
+    "evidence_refs",
+    "responsibility_boundary",
+    "rationale",
+    "recommended_next_step",
+}
+
+PROPOSAL_SCHEMA_FIELDS = {
+    "schema_version",
+    "feedback_case_id",
+    "proposal_job_id",
+    "status",
+    "proposals",
+    "external_guidance",
+    "no_action_reason",
+}
+
+EXPECTED_SCHEMA_FIELDS = {
+    "attribution-output/v1": ATTRIBUTION_SCHEMA_FIELDS,
+    "proposal-output/v1": PROPOSAL_SCHEMA_FIELDS,
+}
+
+
 NATURAL_LANGUAGE_CHINESE_RULE = (
     "自然语言输出要求：除 schema 字段名、枚举值、ID、路径、代码标识符、MCP/tool 名称外，"
     "所有面向人的说明文本必须使用简体中文；如果输入证据中已有英文自然语言，必须用中文转述，不要原样复制英文说明。\n"
@@ -14,11 +46,12 @@ NATURAL_LANGUAGE_CHINESE_RULE = (
 def attribution_prompt(input_path: str) -> str:
     return (
         "你是反馈闭环中的归因分析 Agent。只读取 attribution input 指定的证据路径，"
-        "输出且只输出一个 JSON 对象，必须符合 attribution-output/v1。\n\n"
+        "输出归因分析内容。系统会在后端把你的输出格式化为 attribution-output/v1；"
+        "你可以输出自然语言分析或 JSON，但必须包含足够信息供系统格式化。\n\n"
         f"输入文件：{input_path}\n\n"
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "其中 evidence_refs[].reason、responsibility_boundary.reason、rationale 必须使用简体中文。\n\n"
-        "必须包含字段：schema_version、feedback_case_id、attribution_job_id、status、problem_type、"
+        "归因内容应覆盖字段：schema_version、feedback_case_id、attribution_job_id、status、problem_type、"
         "optimization_object_type、actionability、confidence、human_review_required、evidence_refs、"
         "responsibility_boundary、rationale、recommended_next_step。\n\n"
         "字段取值必须严格使用以下枚举：\n"
@@ -33,7 +66,8 @@ def attribution_prompt(input_path: str) -> str:
         "confidence: low | medium | high\n"
         "recommended_next_step: generate_proposal | needs_human_review | stop\n\n"
         "evidence_refs 必须是对象数组，每项形如 {\"type\":\"evidence_file\",\"id\":\"tool_calls.json\",\"reason\":\"...\"}；"
-        "responsibility_boundary 必须是对象，形如 {\"owner\":\"main_agent_workspace\",\"reason\":\"...\"}。"
+        "responsibility_boundary 必须能表达 owner 和 reason。证据不足时明确说明需要人工复核，"
+        "不要为了凑结论而补充证据中没有的信息。"
     )
 
 
@@ -47,7 +81,8 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
         )
     return (
         "你是反馈闭环中的优化建议 Agent。只读取 proposal input、已校验归因输出和允许的版本清单，"
-        "输出且只输出一个 JSON 对象，必须符合 proposal-output/v1。\n\n"
+        "输出优化建议内容。系统会在后端把你的输出格式化为 proposal-output/v1；"
+        "你可以输出自然语言建议或 JSON，但必须包含足够信息供系统格式化。\n\n"
         f"输入文件：{input_path}\n\n"
         "执行方式：如果提示词提供了 proposal_input_json 和 attribution_output_json，则直接使用这些内容，"
         "不要调用工具。否则先读取输入文件，再读取其中的 attribution_output_path；如需确认当前版本，最多再读取 "
@@ -55,7 +90,7 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "其中 proposals[].title/recommendation/expected_effect/validation/risk、"
         "external_guidance[].recommendation/reason、no_action_reason 必须使用简体中文。\n\n"
-        "必须包含字段：schema_version、feedback_case_id、proposal_job_id、status、proposals、"
+        "建议内容应覆盖字段：schema_version、feedback_case_id、proposal_job_id、status、proposals、"
         "external_guidance、no_action_reason。\n"
         "status: completed | needs_human_review\n"
         "external_guidance[].owner 必填，用于标识外部责任方或系统；不要用 target 替代 owner。\n"
@@ -72,17 +107,24 @@ def extract_json_object(text: str, *, expected_schema_version: str | None = None
     stripped = text.strip()
     if not stripped:
         raise ValueError("empty agent output")
-    candidates = _json_object_candidates(stripped)
+    candidates = extract_json_candidates(stripped)
     if expected_schema_version:
         for candidate in reversed(candidates):
             if candidate.get("schema_version") == expected_schema_version:
                 return candidate
+        scored = sorted(
+            candidates,
+            key=lambda item: _schema_candidate_score(item, expected_schema_version),
+            reverse=True,
+        )
+        if scored and _schema_candidate_score(scored[0], expected_schema_version) > 0:
+            return scored[0]
     if candidates:
         return candidates[0]
     raise ValueError("agent output did not contain a JSON object")
 
 
-def _json_object_candidates(text: str) -> list[dict[str, Any]]:
+def extract_json_candidates(text: str) -> list[dict[str, Any]]:
     decoder = json.JSONDecoder()
     candidates: list[dict[str, Any]] = []
     for index, char in enumerate(text):
@@ -95,6 +137,16 @@ def _json_object_candidates(text: str) -> list[dict[str, Any]]:
         if isinstance(loaded, dict):
             candidates.append(loaded)
     return candidates
+
+
+def _schema_candidate_score(candidate: dict[str, Any], expected_schema_version: str) -> int:
+    fields = EXPECTED_SCHEMA_FIELDS.get(expected_schema_version)
+    if not fields:
+        return 0
+    score = len(set(candidate) & fields)
+    if candidate.get("schema_version") == expected_schema_version:
+        score += len(fields)
+    return score
 
 
 def read_json(path: str | Path) -> dict[str, Any]:

@@ -1,5 +1,3 @@
-name: claude-agent-runtime
-
 x-langfuse-env: &langfuse-env
   NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}
   DATABASE_URL: postgresql://${LANGFUSE_POSTGRES_USER:-postgres}:${LANGFUSE_POSTGRES_PASSWORD:-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-postgres}

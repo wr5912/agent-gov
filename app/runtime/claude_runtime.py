@@ -14,9 +14,10 @@ from .agent_profiles import AgentRuntimeProfile, build_profiles
 from .agent_profile_versions import profile_version_snapshot
 from .agent_loader import load_programmatic_agents
 from .agent_version_store import AgentVersionStore
-from .feedback_jobs import attribution_prompt, extract_json_object, proposal_prompt
+from .feedback_jobs import EXPECTED_SCHEMA_FIELDS, attribution_prompt, extract_json_candidates, proposal_prompt
 from .feedback_store import FeedbackStore, utc_now
 from .message_utils import extract_text, message_event_name, to_plain
+from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
@@ -57,6 +58,7 @@ class ClaudeRuntime:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         self.profiles = build_profiles(settings)
+        self.output_formatter = DSPyOutputFormatter(settings)
         self._langfuse_client: Any | None = None
         self._langfuse_unavailable = False
 
@@ -695,7 +697,15 @@ class ClaudeRuntime:
     def _provider_configured(self) -> bool:
         return bool(self.settings.provider_api_key)
 
-    async def _run_profile_json(self, *, profile_name: str, prompt: str, expected_schema_version: str) -> dict[str, Any]:
+    async def _run_profile_json(
+        self,
+        *,
+        profile_name: str,
+        prompt: str,
+        expected_schema_version: str,
+        job_type: str,
+        job_input: dict[str, Any],
+    ) -> dict[str, Any]:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
@@ -715,17 +725,75 @@ class ClaudeRuntime:
             answer = self._dedupe_answer_parts(answer_parts)
             if errors and not answer:
                 raise RuntimeError("; ".join(errors))
-            return extract_json_object(answer, expected_schema_version=expected_schema_version)
+            direct = self._direct_schema_candidate(answer, expected_schema_version)
+            if direct:
+                return direct
+            formatted = await self._format_agent_text(
+                job_type=job_type,
+                raw_text=answer,
+                job_input=job_input,
+                expected_schema_version=expected_schema_version,
+            )
+            if formatted:
+                return formatted
+            return self._raw_agent_text_payload(answer, expected_schema_version)
 
         return await asyncio.wait_for(collect(), timeout=profile.max_runtime_seconds)
 
-    async def run_attribution_job(self, feedback_case_id: str) -> dict[str, Any] | None:
+    def _direct_schema_candidate(self, raw_text: str, expected_schema_version: str) -> dict[str, Any] | None:
+        candidates = extract_json_candidates(raw_text)
+        for candidate in reversed(candidates):
+            if candidate.get("schema_version") == expected_schema_version:
+                return candidate
+        expected_fields = EXPECTED_SCHEMA_FIELDS.get(expected_schema_version)
+        if not expected_fields:
+            return None
+        scored = sorted(candidates, key=lambda item: len(set(item) & expected_fields), reverse=True)
+        if scored and len(set(scored[0]) & expected_fields) >= max(3, len(expected_fields) // 2):
+            return scored[0]
+        return None
+
+    async def _format_agent_text(
+        self,
+        *,
+        job_type: str,
+        raw_text: str,
+        job_input: dict[str, Any],
+        expected_schema_version: str,
+    ) -> dict[str, Any] | None:
+        if job_type not in {"attribution", "proposal"}:
+            return None
+        try:
+            result = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self.output_formatter.format,
+                    job_type=job_type,
+                    raw_text=raw_text,
+                    job_input=job_input,
+                    expected_schema_version=expected_schema_version,
+                ),
+                timeout=self.settings.dspy_output_formatter_timeout_seconds,
+            )
+        except Exception as exc:
+            print(f"[WARN] failed to format Agent output: {exc}", flush=True)
+            return None
+        return result.payload if result else None
+
+    def _raw_agent_text_payload(self, raw_text: str, expected_schema_version: str) -> dict[str, Any]:
+        return {
+            "_raw_agent_text": raw_text,
+            "_candidate_json_objects": extract_json_candidates(raw_text),
+            "_expected_schema_version": expected_schema_version,
+        }
+
+    async def run_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
         if self.feedback_store is None:
             return None
         profile = self.profiles["feedback-attribution"]
         job = self.feedback_store.create_attribution_job(
             feedback_case_id,
             profile_version=profile_version_snapshot(profile, version_id="feedback-attribution-v0.1.0"),
+            force=force,
         )
         if not job:
             return None
@@ -742,6 +810,8 @@ class ClaudeRuntime:
                 profile_name="feedback-attribution",
                 prompt=attribution_prompt(job["input_path"]),
                 expected_schema_version="attribution-output/v1",
+                job_type="attribution",
+                job_input=job.get("input_json") if isinstance(job.get("input_json"), dict) else {},
             )
             self.feedback_store.complete_attribution_job(job["job_id"], raw)
         except asyncio.TimeoutError as exc:
@@ -780,6 +850,8 @@ class ClaudeRuntime:
                     attribution_output=attribution_output,
                 ),
                 expected_schema_version="proposal-output/v1",
+                job_type="proposal",
+                job_input=job.get("input_json") if isinstance(job.get("input_json"), dict) else {},
             )
             self.feedback_store.complete_proposal_job(job["job_id"], raw)
         except asyncio.TimeoutError as exc:

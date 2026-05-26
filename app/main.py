@@ -451,6 +451,20 @@ async def create_attribution_job(feedback_case_id: str) -> dict[str, Any]:
 
 
 @app.post(
+    "/api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate",
+    response_model=FeedbackAnalysisJobResponse,
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Force regenerate one attribution job for a feedback case",
+)
+async def regenerate_attribution_job(feedback_case_id: str) -> dict[str, Any]:
+    job = await runtime.run_attribution_job(feedback_case_id, force=True)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback case not found or missing evidence")
+    return job
+
+
+@app.post(
     "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
     response_model=FeedbackAnalysisJobResponse,
     dependencies=[Depends(require_api_key)],

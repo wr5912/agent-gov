@@ -17,6 +17,7 @@ def test_import_app(monkeypatch):
     paths = {route.path for route in app.main.app.routes}
     assert "/api/optimization-proposals/{proposal_id}" in paths
     assert "/api/agent-versions/main/current" in paths
+    assert "/api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate" in paths
     assert "/api/feedback" not in paths
     assert "/api/feedback/events" not in paths
     assert "/api/feedback/attributions/{attribution_id}/review" not in paths

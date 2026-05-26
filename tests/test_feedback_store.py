@@ -459,6 +459,9 @@ def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     assert reviewed_attribution["error_json"]["validation_errors"]
     assert attribution_case["status"] == "needs_human_review"
     assert reused_attribution["job_id"] == attribution_job["job_id"]
+    regenerated_attribution = store.create_attribution_job(feedback_case["feedback_case_id"], force=True)
+    assert regenerated_attribution["job_id"] != attribution_job["job_id"]
+    assert regenerated_attribution["status"] == "queued"
 
     proposal_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     proposal_case = store.create_case(source_ids=[proposal_signal["signal_id"]])
@@ -1063,6 +1066,86 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert output["actionability"] == "needs_human_analysis"
     assert output["evidence_refs"][0]["type"] == "evidence_file"
     assert output["responsibility_boundary"]["owner"] == "agent"
+    assert store.find_case(feedback_case["feedback_case_id"])["status"] == "pending_proposal"
+
+
+def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    import claude_agent_sdk
+
+    from app.runtime.output_formatter import OutputFormatterResult
+
+    settings = _settings(tmp_path)
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    _record_run(store)
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(
+            run_id="run-1",
+            labels=["verdict_mismatch"],
+            comment="告警结论错误，应该是误报",
+        )
+    )
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="告警结论错误，应该是误报")
+    store.create_evidence_package(feedback_case["feedback_case_id"])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
+    seen: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        text = json.dumps(
+            {
+                "type": "evidence_file",
+                "id": "feedback.json",
+                "reason": "分析师明确反馈告警结论错误，应该是误报。",
+            },
+            ensure_ascii=False,
+        )
+        yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-attribution-session")
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-attribution-session",
+            result=text,
+        )
+
+    class FakeFormatter:
+        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+            seen["job_type"] = job_type
+            seen["raw_text"] = raw_text
+            seen["job_input"] = job_input
+            payload = {
+                "schema_version": "attribution-output/v1",
+                "feedback_case_id": job_input["feedback_case_id"],
+                "attribution_job_id": job_input["job_id"],
+                "status": "needs_human_review",
+                "problem_type": "insufficient_information",
+                "optimization_object_type": "not_actionable",
+                "actionability": "needs_human_analysis",
+                "confidence": "medium",
+                "human_review_required": True,
+                "evidence_refs": [{"type": "evidence_file", "id": "feedback.json", "reason": "反馈指出原告警结论错误。"}],
+                "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "原始输出只有证据片段，需要人工确认真实责任边界。"},
+                "rationale": "归因 Agent 只输出了证据片段，格式化器保守转为需人工复核。",
+                "recommended_next_step": "needs_human_review",
+                "_formatter": {"name": "fake-dspy"},
+            }
+            return OutputFormatterResult(payload=payload, source="fake")
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+    runtime.output_formatter = FakeFormatter()
+
+    attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
+    output = store.get_job_output(attribution_job["job_id"], "attribution")
+
+    assert seen["job_type"] == "attribution"
+    assert "feedback.json" in str(seen["raw_text"])
+    assert attribution_job["status"] == "completed"
+    assert attribution_job["raw_output_json"]["_formatter"]["name"] == "fake-dspy"
+    assert output["schema_version"] == "attribution-output/v1"
+    assert output["recommended_next_step"] == "needs_human_review"
     assert store.find_case(feedback_case["feedback_case_id"])["status"] == "pending_proposal"
 
 

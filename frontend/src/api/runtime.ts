@@ -247,6 +247,14 @@ export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId
   );
 }
 
+export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
+  return requestJson<FeedbackAnalysisJobRecord>(
+    config,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs/regenerate`,
+    { method: "POST" },
+  );
+}
+
 export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
   return requestJson<FeedbackAnalysisJobRecord>(
     config,

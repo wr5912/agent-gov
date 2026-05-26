@@ -9,3 +9,4 @@ langfuse==4.6.1
 mcp>=1.26.0
 SQLAlchemy>=2.0,<3.0
 alembic>=1.13,<2.0
+dspy>=3.0,<4.0

@@ -38,6 +38,7 @@ import {
   getProposalOutput,
   markOptimizationTaskApplied,
   notifyExternalGovernanceItem,
+  regenerateAttributionJob,
   regenerateProposalJob,
   revalidateProposalOutput,
   reviewOptimizationProposal,
@@ -176,6 +177,7 @@ export function ExternalFeedbackWorkspace({
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [caseDetailView, setCaseDetailView] = useState<CaseDetailView>("summary");
+  const [attributionDetailTab, setAttributionDetailTab] = useState<AttributionDetailTab>("result");
   const [caseDetails, setCaseDetails] = useState<CaseDetails>({});
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
@@ -337,6 +339,7 @@ export function ExternalFeedbackWorkspace({
       return;
     }
     if (action === "attribution" && selectedCase.attribution_job_ids.length && !isRetryableJobStatus(caseDetails.attributionJob?.status)) {
+      setAttributionDetailTab("result");
       setCaseDetailView("attribution");
       setToast("已有归因分析记录，可在详情中查看");
       return;
@@ -414,6 +417,22 @@ export function ExternalFeedbackWorkspace({
       onFeedbackChanged?.();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "重新生成建议失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function regenerateAttribution(feedbackCaseId: string) {
+    setActionId(`attribution-regenerate:${feedbackCaseId}`);
+    try {
+      const job = await regenerateAttributionJob(clientConfig, feedbackCaseId);
+      setToast(`已重新启动归因 job ${shortId(job.job_id)}：${job.status}`);
+      setAttributionDetailTab("result");
+      setCaseDetailView("attribution");
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "重新归因失败");
     } finally {
       setActionId(null);
     }
@@ -596,14 +615,21 @@ export function ExternalFeedbackWorkspace({
             selectedCaseExternalItems={selectedCaseExternalItems}
             details={caseDetails}
             detailView={caseDetailView}
+            attributionDetailTab={attributionDetailTab}
             detailsLoading={detailsLoading}
             actionId={actionId}
             clientConfig={clientConfig}
             onSelectCase={(feedbackCase) => {
               setSelectedCaseId(feedbackCase.feedback_case_id);
               setCaseDetailView("summary");
+              setAttributionDetailTab("result");
             }}
             onSelectDetailView={setCaseDetailView}
+            onOpenAttributionTab={(tab) => {
+              setCaseDetailView("attribution");
+              setAttributionDetailTab(tab);
+            }}
+            onAttributionDetailTabChange={setAttributionDetailTab}
             onCreateEvidence={() => runCaseAction("evidence")}
             onRunAttribution={() => runCaseAction("attribution")}
             onRunProposal={() => runCaseAction("proposal")}
@@ -613,6 +639,7 @@ export function ExternalFeedbackWorkspace({
             onOpenTask={openTask}
             onMarkTaskApplied={markTaskApplied}
             onRunTaskRegression={runTaskRegression}
+            onRegenerateAttribution={regenerateAttribution}
             onRegenerateProposal={regenerateProposal}
             onRevalidateProposalJob={revalidateProposalJob}
             onUpdateEvalCase={updateEvalCaseRecord}
@@ -804,11 +831,14 @@ function CasesPanel({
   evalRuns,
   details,
   detailView,
+  attributionDetailTab,
   detailsLoading,
   actionId,
   clientConfig,
   onSelectCase,
   onSelectDetailView,
+  onOpenAttributionTab,
+  onAttributionDetailTabChange,
   onCreateEvidence,
   onRunAttribution,
   onRunProposal,
@@ -818,6 +848,7 @@ function CasesPanel({
   onOpenTask,
   onMarkTaskApplied,
   onRunTaskRegression,
+  onRegenerateAttribution,
   onRegenerateProposal,
   onRevalidateProposalJob,
   onUpdateEvalCase,
@@ -834,11 +865,14 @@ function CasesPanel({
   evalRuns: EvalRunRecord[];
   details: CaseDetails;
   detailView: CaseDetailView;
+  attributionDetailTab: AttributionDetailTab;
   detailsLoading: boolean;
   actionId: string | null;
   clientConfig: ExternalFeedbackWorkspaceProps["clientConfig"];
   onSelectCase: (feedbackCase: FeedbackCaseRecord) => void;
   onSelectDetailView: (view: CaseDetailView) => void;
+  onOpenAttributionTab: (tab: AttributionDetailTab) => void;
+  onAttributionDetailTabChange: (tab: AttributionDetailTab) => void;
   onCreateEvidence: () => void;
   onRunAttribution: () => void;
   onRunProposal: () => void;
@@ -848,6 +882,7 @@ function CasesPanel({
   onOpenTask: (task: OptimizationTaskRecord) => void;
   onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
   onRunTaskRegression: (task: OptimizationTaskRecord) => void;
+  onRegenerateAttribution: (feedbackCaseId: string) => void;
   onRegenerateProposal: (feedbackCaseId: string) => void;
   onRevalidateProposalJob: (jobId: string) => void;
   onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
@@ -860,8 +895,9 @@ function CasesPanel({
   const proposalItemCount = selectedCaseProposals.length + selectedCaseExternalItems.length;
   const attributionStatus = details.attributionJob?.status;
   const proposalStatus = details.proposalJob?.status;
-  const attributionLocked = attributionCount > 0 && !isRetryableJobStatus(attributionStatus);
-  const proposalLocked = proposalJobCount > 0 && !isRetryableJobStatus(proposalStatus);
+  const attributionNeedsReview = attributionStatus === "needs_human_review" && Boolean(details.attributionJob);
+  const attributionLocked = attributionCount > 0 && !isRetryableJobStatus(attributionStatus) && !attributionNeedsReview;
+  const proposalLocked = proposalJobCount > 0 && !isRetryableJobStatus(proposalStatus) && proposalStatus !== "needs_human_review";
   const actionRunning = Boolean(actionId);
 
   return (
@@ -928,10 +964,20 @@ function CasesPanel({
                   {analysisActionLabel("proposal", proposalStatus, proposalJobCount)}
                 </button>
               </div>
+              {attributionNeedsReview && details.attributionJob ? (
+                <AttributionReviewNotice
+                  busy={actionId?.startsWith("attribution-regenerate:") || false}
+                  job={details.attributionJob}
+                  onOpenDetails={() => onOpenAttributionTab("result")}
+                  onOpenRaw={() => onOpenAttributionTab("raw")}
+                  onRegenerate={() => selectedCase && onRegenerateAttribution(selectedCase.feedback_case_id)}
+                />
+              ) : null}
             </section>
 
             <CaseDetailPanel
               actionId={actionId}
+              attributionDetailTab={attributionDetailTab}
               clientConfig={clientConfig}
               detailView={detailView}
               details={details}
@@ -943,6 +989,8 @@ function CasesPanel({
               onMarkTaskApplied={onMarkTaskApplied}
               onRunTaskRegression={onRunTaskRegression}
               onReviewProposal={onReviewProposal}
+              onRegenerateAttribution={onRegenerateAttribution}
+              onAttributionDetailTabChange={onAttributionDetailTabChange}
               onRegenerateProposal={onRegenerateProposal}
               onRevalidateProposalJob={onRevalidateProposalJob}
               onUpdateEvalCase={onUpdateEvalCase}
@@ -970,6 +1018,7 @@ function CasesPanel({
 
 function CaseDetailPanel({
   actionId,
+  attributionDetailTab,
   clientConfig,
   detailView,
   details,
@@ -988,12 +1037,15 @@ function CaseDetailPanel({
   onOpenTask,
   onMarkTaskApplied,
   onRunTaskRegression,
+  onRegenerateAttribution,
+  onAttributionDetailTabChange,
   onRegenerateProposal,
   onRevalidateProposalJob,
   onUpdateEvalCase,
   tasksByProposalId,
 }: {
   actionId: string | null;
+  attributionDetailTab: AttributionDetailTab;
   clientConfig: ExternalFeedbackWorkspaceProps["clientConfig"];
   detailView: CaseDetailView;
   details: CaseDetails;
@@ -1013,6 +1065,8 @@ function CaseDetailPanel({
   onOpenTask: (task: OptimizationTaskRecord) => void;
   onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
   onRunTaskRegression: (task: OptimizationTaskRecord) => void;
+  onRegenerateAttribution: (feedbackCaseId: string) => void;
+  onAttributionDetailTabChange: (tab: AttributionDetailTab) => void;
   onRegenerateProposal: (feedbackCaseId: string) => void;
   onRevalidateProposalJob: (jobId: string) => void;
   onUpdateEvalCase: (evalCaseId: string, payload: EvalCaseUpdateRequest) => Promise<boolean>;
@@ -1027,10 +1081,13 @@ function CaseDetailPanel({
     tasks: "优化任务详情",
     evals: "评估用例详情",
   };
+  const attributionJob = latestItem(details.attributionJobs);
   const proposalJob = latestItem(details.proposalJobs);
   const proposalJobId = proposalJob?.job_id || details.proposal?.proposal_job_id || null;
+  const canRegenerateAttribution = Boolean(attributionJob?.feedback_case_id);
   const canRevalidateProposal = Boolean(proposalJob?.raw_output_json && proposalJob?.error_json);
   const canRegenerateProposal = Boolean(proposalJob?.feedback_case_id);
+  const attributionBusy = actionId?.startsWith("attribution-regenerate:");
   const proposalBusy = actionId?.startsWith("proposal-revalidate:") || actionId?.startsWith("proposal-regenerate:");
 
   useEffect(() => {
@@ -1052,7 +1109,21 @@ function CaseDetailPanel({
     <section className="fw-panel fw-case-detail-panel">
       <div className="fw-panel-header">
         <strong>{titleByView[detailView]}</strong>
-        {detailView === "proposal" ? (
+        {detailView === "attribution" ? (
+          <div className="fw-panel-header-actions">
+            <button
+              className="fw-small-secondary"
+              type="button"
+              onClick={() => attributionJob?.feedback_case_id && onRegenerateAttribution(attributionJob.feedback_case_id)}
+              disabled={!canRegenerateAttribution || attributionBusy}
+            >
+              <RotateCcw size={15} className={attributionBusy ? "fw-spin" : ""} /> 重新归因
+            </button>
+            <button className="fw-small-secondary" type="button" onClick={() => onSelectDetailView("summary")}>
+              <X size={15} /> 关闭
+            </button>
+          </div>
+        ) : detailView === "proposal" ? (
           <div className="fw-panel-header-actions">
             <button
               className="fw-small-secondary"
@@ -1085,7 +1156,16 @@ function CaseDetailPanel({
       </div>
       {detailView === "summary" ? <CaseSummaryDetails details={details} /> : null}
       {detailView === "evidence" ? <EvidencePackageDetails clientConfig={clientConfig} packages={details.evidencePackages || []} /> : null}
-      {detailView === "attribution" ? <AttributionDetails jobs={details.attributionJobs || []} output={details.attribution} /> : null}
+      {detailView === "attribution" ? (
+        <AttributionDetails
+          actionId={actionId}
+          activeTab={attributionDetailTab}
+          jobs={details.attributionJobs || []}
+          output={details.attribution}
+          onRegenerateAttribution={onRegenerateAttribution}
+          onTabChange={onAttributionDetailTabChange}
+        />
+      ) : null}
       {detailView === "proposal" ? (
         <ProposalDetails
           actionId={actionId}
@@ -1129,7 +1209,11 @@ function CaseSummaryDetails({ details }: { details: CaseDetails }) {
           ["actionability", details.attribution?.actionability || "-"],
         ]}
       />
-      {details.attribution ? <p className="fw-note-box">{details.attribution.rationale}</p> : <div className="fw-empty-inline">暂无已校验归因输出</div>}
+      {details.attribution ? (
+        <FormattedTextSection title="根因摘要" value={details.attribution.rationale || "暂无归因说明"} compact />
+      ) : (
+        <div className="fw-empty-inline">暂无已校验归因输出</div>
+      )}
     </div>
   );
 }
@@ -1334,7 +1418,7 @@ function AnalysisJobRecordList({ jobs }: { jobs: FeedbackAnalysisJobRecord[] }) 
           {job.error_json ? (
             <div className="fw-job-error">
               <strong>{job.error_json.error_code || (job.status === "failed" ? "JOB_FAILED" : "JOB_NEEDS_REVIEW")}</strong>
-              <span>{job.error_json.message || "分析 job 执行失败"}</span>
+              <FormattedText value={job.error_json.message || "分析 job 执行失败"} />
             </div>
           ) : null}
         </article>
@@ -1354,8 +1438,214 @@ function DetailJsonPreview({ title, value }: { title: string; value: unknown }) 
   );
 }
 
-function AttributionDetails({ jobs, output }: { jobs: FeedbackAnalysisJobRecord[]; output?: AttributionOutput | null }) {
-  const [activeTab, setActiveTab] = useState<AttributionDetailTab>("result");
+type FormattedTextBlock =
+  | { type: "heading"; level: number; text: string }
+  | { type: "paragraph"; lines: string[] }
+  | { type: "ol" | "ul"; items: string[] }
+  | { type: "table"; headers: string[]; rows: string[][] };
+
+function FormattedText({
+  value,
+  className = "",
+}: {
+  value?: string | number | null;
+  className?: string;
+}) {
+  const text = String(value ?? "").trim();
+  const blocks = parseFormattedText(text || "-");
+  return (
+    <div className={`fw-formatted-text ${className}`.trim()}>
+      {blocks.map((block, index) => {
+        if (block.type === "heading") {
+          const HeadingTag = block.level <= 2 ? "h4" : "h5";
+          return <HeadingTag key={`heading:${index}`}>{block.text}</HeadingTag>;
+        }
+        if (block.type === "paragraph") {
+          return <p key={`paragraph:${index}`}>{block.lines.join("\n")}</p>;
+        }
+        if (block.type === "table") {
+          return (
+            <div className="fw-formatted-table-wrap" key={`table:${index}`}>
+              <table>
+                <thead>
+                  <tr>
+                    {block.headers.map((cell, cellIndex) => (
+                      <th key={`table:${index}:head:${cellIndex}`}>{cell || "-"}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={`table:${index}:row:${rowIndex}`}>
+                      {block.headers.map((_, cellIndex) => (
+                        <td key={`table:${index}:row:${rowIndex}:cell:${cellIndex}`}>{row[cellIndex] || "-"}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          );
+        }
+        const ListTag = block.type === "ol" ? "ol" : "ul";
+        return (
+          <ListTag key={`${block.type}:${index}`}>
+            {block.items.map((item, itemIndex) => (
+              <li key={`${block.type}:${index}:${itemIndex}`}>{item}</li>
+            ))}
+          </ListTag>
+        );
+      })}
+    </div>
+  );
+}
+
+function FormattedTextSection({
+  title,
+  value,
+  compact = false,
+}: {
+  title: string;
+  value?: string | number | null;
+  compact?: boolean;
+}) {
+  return (
+    <section className={`fw-text-section ${compact ? "fw-text-section-compact" : ""}`.trim()}>
+      <h4>{title}</h4>
+      <FormattedText value={value} />
+    </section>
+  );
+}
+
+function FormattedTextFields({
+  fields,
+}: {
+  fields: Array<[string, string | number | null | undefined]>;
+}) {
+  return (
+    <div className="fw-text-field-grid">
+      {fields.map(([title, value]) => (
+        <FormattedTextSection title={title} value={value ?? "-"} compact key={title} />
+      ))}
+    </div>
+  );
+}
+
+function AttributionReviewNotice({
+  busy,
+  job,
+  onOpenDetails,
+  onOpenRaw,
+  onRegenerate,
+}: {
+  busy: boolean;
+  job: FeedbackAnalysisJobRecord;
+  onOpenDetails: () => void;
+  onOpenRaw: () => void;
+  onRegenerate: () => void;
+}) {
+  const validationCount = validationErrorCount(job);
+  return (
+    <div className="fw-review-notice">
+      <div className="fw-review-notice-main">
+        <AlertTriangle size={18} />
+        <div>
+          <strong>归因分析需要人工复核</strong>
+          <span>{jobErrorCode(job)} · {jobErrorMessage(job, "归因 Agent 输出未通过校验。")}</span>
+          {validationCount > 0 ? <small>Schema 校验错误 {validationCount} 项{validationFieldSummary(job)}</small> : null}
+        </div>
+      </div>
+      <div className="fw-review-notice-actions">
+        <button className="fw-small-secondary" type="button" onClick={onOpenDetails}>
+          <FileText size={15} /> 查看归因详情
+        </button>
+        <button className="fw-small-secondary" type="button" onClick={onOpenRaw}>
+          <Database size={15} /> 查看原始输出
+        </button>
+        <button className="fw-small-primary" type="button" onClick={onRegenerate} disabled={busy}>
+          {busy ? <Loader2 size={15} className="fw-spin" /> : <RotateCcw size={15} />} 重新归因
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AttributionReviewCard({
+  actionId,
+  job,
+  onOpenRaw,
+  onOpenRecords,
+  onRegenerateAttribution,
+}: {
+  actionId: string | null;
+  job: FeedbackAnalysisJobRecord;
+  onOpenRaw: () => void;
+  onOpenRecords: () => void;
+  onRegenerateAttribution: (feedbackCaseId: string) => void;
+}) {
+  const validationErrors = validationErrorItems(job);
+  const busy = actionId?.startsWith("attribution-regenerate:") || false;
+  return (
+    <article className="fw-review-card">
+      <div className="fw-review-card-head">
+        <div>
+          <h4>未生成可用归因结果</h4>
+          <p>归因 Agent 已返回内容，但没有通过 schema 校验，需要查看原始输出后重新归因或调整输出格式化策略。</p>
+        </div>
+        <Pill tone="orange">{job.status}</Pill>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["job_id", shortId(job.job_id)],
+          ["profile", job.profile_name],
+          ["evidence_package_id", shortId(job.evidence_package_id)],
+          ["completed_at", formatDate(job.completed_at)],
+        ]}
+      />
+      <div className="fw-job-error">
+        <strong>{jobErrorCode(job)}</strong>
+        <FormattedText value={jobErrorMessage(job, "归因 Agent 输出未通过校验。")} />
+      </div>
+      {validationErrors.length ? (
+        <div className="fw-review-validation-list">
+          <strong>Schema 校验错误 {validationErrors.length} 项</strong>
+          <ul>
+            {validationErrors.slice(0, 6).map((item, index) => (
+              <li key={`${validationErrorPath(item)}:${index}`}>{validationErrorPath(item)}：{validationErrorMessage(item)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="fw-detail-action-row">
+        <button className="fw-small-secondary" type="button" onClick={onOpenRaw}>
+          <Database size={16} /> 查看原始输出
+        </button>
+        <button className="fw-small-secondary" type="button" onClick={onOpenRecords}>
+          <Archive size={16} /> 查看执行记录
+        </button>
+        <button className="fw-small-primary" type="button" onClick={() => onRegenerateAttribution(job.feedback_case_id)} disabled={busy}>
+          {busy ? <Loader2 size={16} className="fw-spin" /> : <RotateCcw size={16} />} 重新归因
+        </button>
+      </div>
+    </article>
+  );
+}
+
+function AttributionDetails({
+  actionId,
+  activeTab,
+  jobs,
+  output,
+  onRegenerateAttribution,
+  onTabChange,
+}: {
+  actionId: string | null;
+  activeTab: AttributionDetailTab;
+  jobs: FeedbackAnalysisJobRecord[];
+  output?: AttributionOutput | null;
+  onRegenerateAttribution: (feedbackCaseId: string) => void;
+  onTabChange: (tab: AttributionDetailTab) => void;
+}) {
   const latestJob = latestItem(jobs);
   const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
   const rawOutputTitle = output ? "归因输出" : latestJob?.raw_output_json ? "归因 Agent 原始输出" : "归因校验错误";
@@ -1365,7 +1655,7 @@ function AttributionDetails({ jobs, output }: { jobs: FeedbackAnalysisJobRecord[
       <DetailTabs
         active={activeTab}
         label="归因分析详情视图"
-        onChange={setActiveTab}
+        onChange={onTabChange}
         tabs={[
           { key: "result", label: "分析结果" },
           { key: "raw", label: "原始输出" },
@@ -1376,6 +1666,14 @@ function AttributionDetails({ jobs, output }: { jobs: FeedbackAnalysisJobRecord[
         {activeTab === "result" ? (
           output ? (
             <AttributionResult output={output} />
+          ) : latestJob?.status === "needs_human_review" ? (
+            <AttributionReviewCard
+              actionId={actionId}
+              job={latestJob}
+              onOpenRaw={() => onTabChange("raw")}
+              onOpenRecords={() => onTabChange("records")}
+              onRegenerateAttribution={onRegenerateAttribution}
+            />
           ) : (
             <div className="fw-empty-inline">暂无已校验归因输出</div>
           )
@@ -1389,7 +1687,7 @@ function AttributionDetails({ jobs, output }: { jobs: FeedbackAnalysisJobRecord[
 
 function AttributionResult({ output }: { output: AttributionOutput }) {
   return (
-    <div className="fw-detail-result">
+    <div className="fw-detail-result fw-attribution-result">
       <section className="fw-detail-result-summary">
         <DetailMetricGrid
           items={[
@@ -1401,26 +1699,34 @@ function AttributionResult({ output }: { output: AttributionOutput }) {
             ["recommended_next_step", output.recommended_next_step],
           ]}
         />
-        <p className="fw-note-box fw-detail-rationale">{output.rationale || "暂无归因说明"}</p>
       </section>
-      <div className="fw-detail-info-grid">
-        <article>
-          <h4>责任边界</h4>
-          <p>{output.responsibility_boundary?.owner || "-"}：{output.responsibility_boundary?.reason || "-"}</p>
-        </article>
-        <article>
-          <h4>引用证据</h4>
-          {output.evidence_refs?.length ? (
-            <ul>
-              {output.evidence_refs.map((ref, index) => (
-                <li key={`${ref.type}:${ref.id}:${index}`}>{ref.type} / {shortId(ref.id)}：{ref.reason}</li>
-              ))}
-            </ul>
-          ) : (
-            <p>暂无引用证据</p>
-          )}
-        </article>
-      </div>
+      <FormattedTextSection title="根因说明" value={output.rationale || "暂无归因说明"} />
+      <section className="fw-text-section fw-attribution-boundary">
+        <h4>责任边界</h4>
+        <div className="fw-attribution-owner">
+          <small>owner</small>
+          <strong>{output.responsibility_boundary?.owner || "-"}</strong>
+        </div>
+        <FormattedText value={output.responsibility_boundary?.reason || "-"} />
+      </section>
+      <section className="fw-text-section fw-attribution-evidence">
+        <h4>引用证据</h4>
+        {output.evidence_refs?.length ? (
+          <div className="fw-attribution-evidence-list">
+            {output.evidence_refs.map((ref, index) => (
+              <article key={`${ref.type}:${ref.id}:${index}`}>
+                <div>
+                  <Pill tone="gray">{ref.type || "evidence"}</Pill>
+                  <strong>{ref.id || "-"}</strong>
+                </div>
+                <FormattedText value={ref.reason || "-"} />
+              </article>
+            ))}
+          </div>
+        ) : (
+          <FormattedText value="暂无引用证据" />
+        )}
+      </section>
     </div>
   );
 }
@@ -1532,7 +1838,12 @@ function ProposalDetails({
                 ))}
               </>
             ) : null}
-            {!proposalCount && noActionReason ? <div className="fw-empty-inline">无可执行建议：{noActionReason}</div> : null}
+            {!proposalCount && noActionReason ? (
+              <div className="fw-empty-inline fw-empty-inline-formatted">
+                <strong>无可执行建议</strong>
+                <FormattedText value={noActionReason} />
+              </div>
+            ) : null}
             {!proposalCount && !hasUnvalidatedSuggestions && !noActionReason ? <div className="fw-empty-inline">暂无优化建议</div> : null}
           </div>
         ) : null}
@@ -1575,7 +1886,7 @@ function ProposalDetailCard({
         <h4>{proposal.title}</h4>
         <small>{shortId(proposal.proposal_id)} · {proposal.target_type} · {proposal.target_path || "-"}</small>
       </div>
-      <p>{proposal.recommendation}</p>
+      <FormattedText className="fw-proposal-long-text" value={proposal.recommendation} />
       <div className="fw-proposal-detail-evidence">
         <span>引用证据：</span>
         <strong>{proposalEvidenceText(proposal)}</strong>
@@ -1621,8 +1932,8 @@ function RawProposalCard({ item }: { item: Record<string, unknown> }) {
         <h4>{title}</h4>
         <small>{rawString(item, "proposal_id") || rawString(item, "id") || "raw-proposal"} · {rawString(item, "actionability") || "-"} · {rawString(item, "target_path") || "-"}</small>
       </div>
-      <p>{recommendation}</p>
-      {rationale ? <p className="fw-warning-text">{rationale}</p> : null}
+      <FormattedText className="fw-proposal-long-text" value={recommendation} />
+      {rationale ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={rationale} /> : null}
     </article>
   );
 }
@@ -1637,8 +1948,8 @@ function RawExternalGuidanceCard({ item }: { item: Record<string, unknown> }) {
         <h4>{owner}</h4>
         <small>{rawString(item, "actionability") || "external_guidance"}</small>
       </div>
-      <p>{rawString(item, "recommendation") || "-"}</p>
-      {reason ? <p className="fw-warning-text">{reason}</p> : null}
+      <FormattedText className="fw-proposal-long-text" value={rawString(item, "recommendation") || "-"} />
+      {reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={reason} /> : null}
     </article>
   );
 }
@@ -1647,16 +1958,51 @@ function RunsDetails({ runs }: { runs: FeedbackRunRecord[] }) {
   return (
     <DetailRecordList hasItems={runs.length > 0} emptyText="暂无关联运行">
       {runs.map((run) => (
-        <article key={run.run_id}>
+        <article className="fw-run-card" key={run.run_id}>
           <div className="fw-detail-record-head">
             <h4>{shortId(run.run_id)} · {shortId(run.agent_version_id)}</h4>
             <Pill tone="blue">run</Pill>
           </div>
-          <p>{run.answer_summary || run.message || "-"}</p>
-          <small>session：{shortId(run.session_id)} · tools：{run.agent_activity?.tool_names?.join(", ") || "-"}</small>
+          <DetailMetricGrid
+            items={[
+              ["session", shortId(run.session_id)],
+              ["agent_version", shortId(run.agent_version_id)],
+              ["created", formatDate(run.created_at)],
+              ["completed", formatDate(run.completed_at)],
+              ["stop_reason", run.stop_reason || "-"],
+              ["cost", run.total_cost_usd != null ? `$${run.total_cost_usd.toFixed(6)}` : "-"],
+            ]}
+          />
+          <section className="fw-run-section">
+            <h4>回答摘要</h4>
+            <FormattedText className="fw-record-long-text" value={run.answer_summary || run.message || "-"} />
+          </section>
+          <section className="fw-run-section">
+            <h4>工具调用</h4>
+            <RunToolList tools={run.agent_activity?.tool_names || []} />
+          </section>
+          {run.errors?.length ? (
+            <section className="fw-run-section">
+              <h4>错误</h4>
+              <FormattedText className="fw-warning-text" value={run.errors.join("\n")} />
+            </section>
+          ) : null}
         </article>
       ))}
     </DetailRecordList>
+  );
+}
+
+function RunToolList({ tools }: { tools: string[] }) {
+  if (!tools.length) return <div className="fw-empty-inline fw-run-empty-inline">暂无工具调用记录</div>;
+  return (
+    <div className="fw-run-tool-list">
+      {tools.map((tool, index) => (
+        <span className="fw-run-tool-pill" title={tool} key={`${tool}:${index}`}>
+          {tool}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -1841,11 +2187,11 @@ function EvalCaseDetailCard({
         <>
           <section className="fw-task-source">
             <h4>Prompt</h4>
-            <p>{evalCase.prompt || "-"}</p>
+            <FormattedText value={evalCase.prompt || "-"} />
           </section>
           <section className="fw-task-source">
             <h4>期望行为</h4>
-            <p>{evalCase.expected_behavior || "-"}</p>
+            <FormattedText value={evalCase.expected_behavior || "-"} />
           </section>
           <DetailJsonPreview title="校验规则" value={evalCase.checks_json || {}} />
         </>
@@ -1853,7 +2199,7 @@ function EvalCaseDetailCard({
       {latestRunItem ? (
         <section className="fw-task-source">
           <h4>最近评估结果</h4>
-          <p>{evalItemSummary(latestRunItem)}</p>
+          <FormattedText value={evalItemSummary(latestRunItem)} />
           {latestRunItem.check_results?.length ? <DetailJsonPreview title="检查结果" value={latestRunItem.check_results} /> : null}
         </section>
       ) : null}
@@ -1906,13 +2252,13 @@ function TaskDetailCard({
       {proposal ? (
         <section className="fw-task-source">
           <h4>{proposal.title || "来源优化建议"}</h4>
-          <p>{proposal.recommendation || "-"}</p>
-          <DetailMetricGrid
-            items={[
+          <FormattedText value={proposal.recommendation || "-"} />
+          <DetailMetricGrid items={[["审批状态", proposalStatusText[proposal.status] || proposal.status]]} />
+          <FormattedTextFields
+            fields={[
               ["预期效果", proposal.expected_effect || "-"],
               ["验证方式", proposal.validation || "-"],
               ["风险", proposal.risk || "-"],
-              ["审批状态", proposalStatusText[proposal.status] || proposal.status],
             ]}
           />
         </section>
@@ -2048,13 +2394,13 @@ function ProposalList({
                 {proposalStatusText[proposal.status] || proposal.status}
               </Pill>
             </div>
-            <p>{proposal.recommendation}</p>
-            <DetailMetricGrid
-              items={[
+            <FormattedText className="fw-proposal-long-text" value={proposal.recommendation} />
+            <DetailMetricGrid items={[["base_version", shortId(proposal.base_agent_version_id)]]} />
+            <FormattedTextFields
+              fields={[
                 ["预期效果", proposal.expected_effect || "-"],
                 ["验证方式", proposal.validation || "-"],
                 ["风险", proposal.risk || "-"],
-                ["base_version", shortId(proposal.base_agent_version_id)],
               ]}
             />
             {proposal.actionability === "external_guidance" ? (
@@ -2095,9 +2441,9 @@ function ProposalList({
             <h4>{item.owner}</h4>
             <Pill tone="gray">{item.actionability}</Pill>
           </div>
-          <p>{item.recommendation}</p>
+          <FormattedText className="fw-proposal-long-text" value={item.recommendation} />
           <p className="fw-warning-text">该建议不能自动修改主 Agent workspace。</p>
-          {item.reason ? <small>{item.reason}</small> : null}
+          {item.reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={item.reason} /> : null}
         </article>
       ))}
       {externalItemsAsGuidance.map(({ item, guidance }) => (
@@ -2221,8 +2567,9 @@ function EvalPanel({
                   <h4>{shortId(item.eval_case_id)} · {shortId(item.source_feedback_case_id)}</h4>
                   <Pill tone={item.status === "active" ? "green" : "gray"}>{item.status}</Pill>
                 </div>
-                <p>{item.prompt}</p>
-                <small>{item.labels?.join(", ") || "-"} · {item.expected_behavior || "-"}</small>
+                <FormattedText className="fw-eval-card-text" value={item.prompt} />
+                <small>{item.labels?.join(", ") || "-"}</small>
+                <FormattedText className="fw-eval-card-text" value={item.expected_behavior || "-"} />
               </article>
             ))}
             {!evalCases.length ? <div className="fw-empty-inline">暂无评估用例</div> : null}
@@ -2250,9 +2597,10 @@ function EvalPanel({
                 />
                 <small>创建：{formatDate(run.created_at)} · 完成：{formatDate(run.completed_at)}</small>
                 {run.items?.slice(0, 3).map((item) => (
-                  <p className="fw-eval-item-line" key={item.eval_run_item_id}>
-                    {shortId(item.eval_case_id)}：{item.status} · {evalItemSummary(item)}
-                  </p>
+                  <div className="fw-eval-item-line" key={item.eval_run_item_id}>
+                    <strong>{shortId(item.eval_case_id)}：{item.status}</strong>
+                    <FormattedText value={evalItemSummary(item)} />
+                  </div>
                 ))}
               </article>
             ))}
@@ -2294,8 +2642,8 @@ function ExternalGuidanceCard({
         <h4>{guidance.owner}</h4>
         <small>{guidance.actionability}</small>
       </div>
-      <p>{guidance.recommendation}</p>
-      {guidance.reason ? <p className="fw-warning-text">{guidance.reason}</p> : null}
+      <FormattedText className="fw-proposal-long-text" value={guidance.recommendation} />
+      {guidance.reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={guidance.reason} /> : null}
       <div className="fw-external-notify-row">
         <label className="fw-select-field">
           <span>通知目标</span>
@@ -2322,7 +2670,7 @@ function ExternalGuidanceCard({
         <span>通知状态：{notification?.status || "-"}</span>
         {notification?.http_status ? <span>HTTP {notification.http_status}</span> : null}
       </div>
-      {notification?.error ? <p className="fw-warning-text">{notification.error}</p> : null}
+      {notification?.error ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={notification.error} /> : null}
       {!item ? <p className="fw-warning-text">当前建议还没有外部治理项，需重新生成建议或查看原始输出。</p> : null}
     </article>
   );
@@ -2458,6 +2806,191 @@ function rawString(value: unknown, key: string): string {
   if (!value || typeof value !== "object" || Array.isArray(value)) return "";
   const item = (value as Record<string, unknown>)[key];
   return typeof item === "string" ? item : "";
+}
+
+function parseFormattedText(text: string): FormattedTextBlock[] {
+  const blocks: FormattedTextBlock[] = [];
+  const paragraph: string[] = [];
+  let listBlock: Extract<FormattedTextBlock, { type: "ol" | "ul" }> | null = null;
+  let tableLines: string[] = [];
+
+  function flushParagraph() {
+    if (!paragraph.length) return;
+    blocks.push({ type: "paragraph", lines: [...paragraph] });
+    paragraph.length = 0;
+  }
+
+  function flushList() {
+    if (!listBlock) return;
+    blocks.push(listBlock);
+    listBlock = null;
+  }
+
+  function flushTable() {
+    if (!tableLines.length) return;
+    const parsed = parseMarkdownTable(tableLines);
+    if (parsed) {
+      blocks.push(parsed);
+    } else {
+      blocks.push({ type: "paragraph", lines: [...tableLines] });
+    }
+    tableLines = [];
+  }
+
+  for (const rawLine of normalizeFormattedText(text).split("\n")) {
+    const line = rawLine.trimEnd();
+    const trimmed = line.trim();
+    if (!trimmed) {
+      flushParagraph();
+      flushTable();
+      continue;
+    }
+
+    if (trimmed === "---") {
+      flushParagraph();
+      flushList();
+      flushTable();
+      continue;
+    }
+
+    if (isMarkdownTableLine(trimmed)) {
+      flushParagraph();
+      flushList();
+      tableLines.push(trimmed);
+      continue;
+    }
+
+    flushTable();
+
+    const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      blocks.push({ type: "heading", level: heading[1].length, text: cleanFormattedText(heading[2]) });
+      continue;
+    }
+
+    const ordered = trimmed.match(/^(\d+)[.)]\s+(.+)$/);
+    if (ordered) {
+      flushParagraph();
+      if (!listBlock || listBlock.type !== "ol") {
+        flushList();
+        listBlock = { type: "ol", items: [] };
+      }
+      listBlock.items.push(cleanFormattedText(ordered[2]));
+      continue;
+    }
+
+    const unordered = trimmed.match(/^[-*]\s+(.+)$/);
+    if (unordered) {
+      flushParagraph();
+      if (!listBlock || listBlock.type !== "ul") {
+        flushList();
+        listBlock = { type: "ul", items: [] };
+      }
+      listBlock.items.push(cleanFormattedText(unordered[1]));
+      continue;
+    }
+
+    flushList();
+    paragraph.push(cleanFormattedText(line));
+  }
+
+  flushParagraph();
+  flushList();
+  flushTable();
+  return blocks.length ? blocks : [{ type: "paragraph", lines: ["-"] }];
+}
+
+function normalizeFormattedText(text: string): string {
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\s+---\s+/g, "\n\n---\n\n")
+    .replace(/\s+(#{1,4}\s+)/g, "\n\n$1")
+    .replace(/(#{1,4}\s+[^\n|]+?)\s{2,}(\|)/g, "$1\n$2")
+    .replace(/([^\n|])\s{2,}(\|)/g, "$1\n$2")
+    .replace(/\|\s+(?=\|)/g, "|\n")
+    .replace(/\|\s+(?=(?:---|#{1,4}\s))/g, "|\n\n");
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  return line.startsWith("|") && line.endsWith("|") && line.split("|").length >= 4;
+}
+
+function isMarkdownTableDivider(line: string): boolean {
+  const cells = line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cell.trim());
+  return Boolean(cells.length) && cells.every((cell) => /^:?-{3,}:?$/.test(cell));
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  return line
+    .replace(/^\|/, "")
+    .replace(/\|$/, "")
+    .split("|")
+    .map((cell) => cleanFormattedText(cell.trim()));
+}
+
+function parseMarkdownTable(lines: string[]): Extract<FormattedTextBlock, { type: "table" }> | null {
+  const rows = lines.filter(isMarkdownTableLine);
+  if (rows.length < 2) return null;
+  const header = splitMarkdownTableRow(rows[0]);
+  const dividerOffset = isMarkdownTableDivider(rows[1]) ? 1 : -1;
+  const bodyRows = rows
+    .slice(dividerOffset === 1 ? 2 : 1)
+    .map(splitMarkdownTableRow)
+    .filter((row) => row.some(Boolean));
+  if (!header.length || !bodyRows.length) return null;
+  return { type: "table", headers: header, rows: bodyRows };
+}
+
+function cleanFormattedText(text: string): string {
+  return text
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .trim();
+}
+
+function jobErrorCode(job?: FeedbackAnalysisJobRecord | null): string {
+  return job?.error_json?.error_code || (job?.status === "failed" ? "JOB_FAILED" : "JOB_NEEDS_REVIEW");
+}
+
+function jobErrorMessage(job: FeedbackAnalysisJobRecord | null | undefined, fallback: string): string {
+  return job?.error_json?.message || fallback;
+}
+
+function validationErrorItems(job?: FeedbackAnalysisJobRecord | null): Array<Record<string, unknown>> {
+  const errors = job?.error_json?.validation_errors;
+  if (!Array.isArray(errors)) return [];
+  return errors.filter((item): item is Record<string, unknown> => isRecord(item));
+}
+
+function validationErrorCount(job?: FeedbackAnalysisJobRecord | null): number {
+  return validationErrorItems(job).length;
+}
+
+function validationFieldSummary(job?: FeedbackAnalysisJobRecord | null): string {
+  const fields = validationErrorItems(job)
+    .map(validationErrorPath)
+    .filter((item) => item && item !== "-")
+    .slice(0, 3);
+  if (!fields.length) return "";
+  const suffix = validationErrorCount(job) > fields.length ? " 等" : "";
+  return `：${fields.join("、")}${suffix}`;
+}
+
+function validationErrorPath(error: Record<string, unknown>): string {
+  const loc = error.loc;
+  if (Array.isArray(loc)) return loc.map((item) => String(item)).join(".");
+  if (typeof loc === "string") return loc;
+  return "-";
+}
+
+function validationErrorMessage(error: Record<string, unknown>): string {
+  return typeof error.msg === "string" ? error.msg : "校验失败";
 }
 
 function isRetryableJobStatus(status?: string | null): boolean {

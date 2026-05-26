@@ -271,6 +271,7 @@ export interface FeedbackAnalysisJobRecord {
   runtime_version?: string;
   profile_version?: Record<string, unknown>;
   attribution_job_id?: string;
+  input_json?: Record<string, unknown> | null;
   raw_output_json?: Record<string, unknown> | null;
   validated_output_json?: Record<string, unknown> | null;
   error_json?: {
@@ -281,6 +282,10 @@ export interface FeedbackAnalysisJobRecord {
     [key: string]: unknown;
   } | null;
   [key: string]: unknown;
+}
+
+export interface FeedbackProposalRegenerateRequest {
+  regeneration_instruction?: string | null;
 }
 
 export interface AttributionOutput {

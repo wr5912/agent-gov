@@ -34,6 +34,7 @@ from app.runtime.schemas import (
     FeedbackEvalDatasetSyncRequest,
     FeedbackEvalCaseUpdateRequest,
     FeedbackEvalRunCreateRequest,
+    FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalResponse,
     OpenAIChatCompletionChoice,
@@ -485,8 +486,12 @@ async def create_proposal_job(feedback_case_id: str) -> dict[str, Any]:
     tags=["feedback"],
     summary="Force regenerate one optimization proposal job and supersede unused existing proposals",
 )
-async def regenerate_proposal_job(feedback_case_id: str) -> dict[str, Any]:
-    job = await runtime.run_proposal_job(feedback_case_id, force=True)
+async def regenerate_proposal_job(feedback_case_id: str, req: FeedbackProposalRegenerateRequest | None = None) -> dict[str, Any]:
+    job = await runtime.run_proposal_job(
+        feedback_case_id,
+        force=True,
+        regeneration_instruction=req.regeneration_instruction if req else None,
+    )
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback case not found or missing attribution")
     return job

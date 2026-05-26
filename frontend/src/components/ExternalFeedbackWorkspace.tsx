@@ -84,6 +84,11 @@ interface EvalCaseEditDraft {
   checksText: string;
 }
 
+interface ProposalRegenerateDraft {
+  feedbackCaseId: string;
+  instruction: string;
+}
+
 interface DetailTabItem<T extends string> {
   key: T;
   label: string;
@@ -183,6 +188,8 @@ export function ExternalFeedbackWorkspace({
   const [runtimeStatus, setRuntimeStatus] = useState<"idle" | "loading" | "ok" | "error">("idle");
   const [actionId, setActionId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [proposalRegenerateDraft, setProposalRegenerateDraft] = useState<ProposalRegenerateDraft | null>(null);
+  const proposalRegenerateBusy = Boolean(actionId?.startsWith("proposal-regenerate:"));
 
   const refreshWorkbench = useCallback(async () => {
     try {
@@ -406,13 +413,22 @@ export function ExternalFeedbackWorkspace({
   }
 
   async function regenerateProposal(feedbackCaseId: string) {
-    const confirmed = window.confirm("重新生成会废弃当前反馈单中未审批、未通知的旧建议，并保留历史记录。确认继续？");
-    if (!confirmed) return;
+    setProposalRegenerateDraft({ feedbackCaseId, instruction: "" });
+  }
+
+  async function submitProposalRegenerate(event: FormEvent) {
+    event.preventDefault();
+    if (!proposalRegenerateDraft) return;
+    const { feedbackCaseId } = proposalRegenerateDraft;
+    const instruction = proposalRegenerateDraft.instruction.trim();
     setActionId(`proposal-regenerate:${feedbackCaseId}`);
     try {
-      const job = await regenerateProposalJob(clientConfig, feedbackCaseId);
+      const job = await regenerateProposalJob(clientConfig, feedbackCaseId, {
+        regeneration_instruction: instruction,
+      });
       setToast(`已重新生成建议 job ${shortId(job.job_id)}：${job.status}`);
       setCaseDetailView("proposal");
+      setProposalRegenerateDraft(null);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -682,6 +698,52 @@ export function ExternalFeedbackWorkspace({
           </footer>
         ) : null}
       </div>
+
+      {proposalRegenerateDraft ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => !proposalRegenerateBusy && setProposalRegenerateDraft(null)}>
+          <form
+            className="modal-card fw-proposal-regenerate-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="重新生成优化建议"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitProposalRegenerate}
+          >
+            <header className="modal-head">
+              <div>
+                <h3>重新生成优化建议</h3>
+                <p>重新生成会废弃当前反馈单中未审批、未通知的旧建议，并保留历史记录。</p>
+              </div>
+              <button className="mini-icon-button" type="button" onClick={() => setProposalRegenerateDraft(null)} aria-label="关闭" disabled={proposalRegenerateBusy}>
+                <X size={16} />
+              </button>
+            </header>
+            <label className="form-field">
+              <span>补充指令</span>
+              <textarea
+                maxLength={2000}
+                placeholder="补充本次生成指令，可留空"
+                value={proposalRegenerateDraft.instruction}
+                onChange={(event) =>
+                  setProposalRegenerateDraft((current) => (current ? { ...current, instruction: event.target.value } : current))
+                }
+              />
+            </label>
+            <div className="fw-modal-inline-meta">
+              <span>{proposalRegenerateDraft.instruction.length}/2000</span>
+            </div>
+            <div className="modal-actions">
+              <button className="fw-small-secondary" type="button" onClick={() => setProposalRegenerateDraft(null)} disabled={proposalRegenerateBusy}>
+                取消
+              </button>
+              <button className="fw-small-primary" type="submit" disabled={proposalRegenerateBusy}>
+                {proposalRegenerateBusy ? <Loader2 size={16} className="fw-spin" /> : <RotateCcw size={16} />}
+                重新生成
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
 
       {toast ? <div className="fw-toast" onAnimationEnd={() => setToast(null)}>{toast}</div> : null}
     </div>
@@ -1769,6 +1831,7 @@ function ProposalDetails({
   const hasUnvalidatedSuggestions = !proposalCount && Boolean(latestJob?.error_json) && rawSuggestionCount > 0;
   const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
   const rawOutputTitle = output ? "建议输出" : latestJob?.raw_output_json ? "建议 Agent 原始输出" : "建议校验错误";
+  const regenerationInstruction = rawString(latestJob?.input_json, "regeneration_instruction");
 
   return (
     <div className="fw-proposal-detail">
@@ -1785,6 +1848,12 @@ function ProposalDetails({
           <span>创建 {formatDate(latestJob?.created_at)}</span>
           <span>完成 {formatDate(latestJob?.completed_at)}</span>
         </div>
+        {regenerationInstruction ? (
+          <div className="fw-proposal-regeneration-instruction">
+            <span>补充指令</span>
+            <FormattedText value={regenerationInstruction} />
+          </div>
+        ) : null}
       </div>
 
       <DetailTabs

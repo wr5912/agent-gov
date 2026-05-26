@@ -1068,6 +1068,8 @@ not_actionable
 
 ### 15.1 输入
 
+`regeneration_instruction` 为可选字段，仅在人工重新生成建议时由用户填写；普通 proposal job 可不包含该字段。
+
 ```json
 {
   "schema_version": "proposal-input/v1",
@@ -1078,6 +1080,7 @@ not_actionable
   "attribution_output_path": "/data/.runtime-tmp/jobs/fbp-.../proposal/attribution_validated_output.json",
   "main_agent_version_id": "main-v1.2.0",
   "main_agent_manifest_path": "/data/agent-versions/main/current.json",
+  "regeneration_instruction": "请优先考虑修改 triage-alert skill，而不是 CLAUDE.md。",
   "allowed_target_paths": [
     "CLAUDE.md",
     ".mcp.json",
@@ -1357,6 +1360,14 @@ POST /api/feedback-cases/{feedback_case_id}/proposal-jobs
 POST /api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate
 GET  /api/feedback-analysis/jobs/{job_id}/proposal
 POST /api/feedback-analysis/jobs/{job_id}/proposal/revalidate
+```
+
+`proposal-jobs/regenerate` 可携带单次补充指令；该指令只影响本次新建 proposal job，不保存为反馈单长期偏好：
+
+```json
+{
+  "regeneration_instruction": "请优先考虑修改 triage-alert skill，而不是 CLAUDE.md。"
+}
 ```
 
 ### 18.7 Optimization Proposal

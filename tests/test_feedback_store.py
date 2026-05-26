@@ -2,9 +2,17 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+from pydantic import ValidationError
+
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.feedback_store import FeedbackStore
-from app.runtime.schemas import FeedbackAnalysisJobResponse, FeedbackSignalCreateRequest, SocEventIngestRequest
+from app.runtime.schemas import (
+    FeedbackAnalysisJobResponse,
+    FeedbackProposalRegenerateRequest,
+    FeedbackSignalCreateRequest,
+    SocEventIngestRequest,
+)
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
@@ -142,6 +150,14 @@ def test_feedback_signal_only_writes_signal_pool(tmp_path):
     assert store.get_job("missing-job") is None
 
 
+def test_proposal_regenerate_request_trims_optional_instruction():
+    assert FeedbackProposalRegenerateRequest().regeneration_instruction is None
+    assert FeedbackProposalRegenerateRequest(regeneration_instruction="   ").regeneration_instruction is None
+    assert FeedbackProposalRegenerateRequest(regeneration_instruction="  优先修改 skill  ").regeneration_instruction == "优先修改 skill"
+    with pytest.raises(ValidationError):
+        FeedbackProposalRegenerateRequest(regeneration_instruction="x" * 2001)
+
+
 def test_implicit_signal_defaults_to_review(tmp_path):
     store, _ = _store(tmp_path)
 
@@ -254,6 +270,33 @@ def test_case_evidence_and_job_outputs(tmp_path):
     assert store.create_proposal_job(feedback_case["feedback_case_id"])["job_id"] == proposal_job["job_id"]
     assert proposal_output["external_guidance"]
     assert store.list_proposals() == []
+
+
+def test_regenerated_proposal_job_records_single_use_instruction(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    store.create_evidence_package(feedback_case["feedback_case_id"])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+
+    empty_instruction_job = store.create_proposal_job(
+        feedback_case["feedback_case_id"],
+        force=True,
+        regeneration_instruction="   ",
+    )
+    assert "regeneration_instruction" not in empty_instruction_job["input_json"]
+
+    job = store.create_proposal_job(
+        feedback_case["feedback_case_id"],
+        force=True,
+        regeneration_instruction="  请优先考虑修改 triage-alert skill。  ",
+    )
+    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+
+    assert job["input_json"]["regeneration_instruction"] == "请优先考虑修改 triage-alert skill。"
+    assert input_payload["regeneration_instruction"] == "请优先考虑修改 triage-alert skill。"
 
 
 def test_external_guidance_creates_governance_item_and_notifies_selected_webhook(tmp_path):

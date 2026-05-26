@@ -11,6 +11,7 @@ import type {
   FeedbackCaseRecord,
   FeedbackFilters,
   FeedbackAnalysisJobRecord,
+  FeedbackProposalRegenerateRequest,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
@@ -263,11 +264,19 @@ export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: s
   );
 }
 
-export function regenerateProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
+export function regenerateProposalJob(
+  config: RuntimeClientConfig,
+  feedbackCaseId: string,
+  payload: FeedbackProposalRegenerateRequest = {},
+) {
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs/regenerate`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
   );
 }
 

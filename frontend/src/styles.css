@@ -557,6 +557,12 @@ button:disabled {
   padding: 10px;
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+.fw-modal-inline-meta {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--muted);
+  font-size: 12px;
+}
 .mini-icon-button {
   width: 28px;
   height: 28px;
@@ -2250,6 +2256,24 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.fw-proposal-regeneration-instruction {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.fw-proposal-regeneration-instruction > span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.fw-proposal-regeneration-instruction .fw-formatted-text {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .fw-proposal-detail .fw-link-button {

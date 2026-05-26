@@ -820,7 +820,13 @@ class ClaudeRuntime:
             self.feedback_store.fail_job(job["job_id"], error_code="AGENT_RUNTIME_ERROR", message=f"{exc.__class__.__name__}: {exc}")
         return self.feedback_store.get_job(job["job_id"])
 
-    async def run_proposal_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
+    async def run_proposal_job(
+        self,
+        feedback_case_id: str,
+        *,
+        force: bool = False,
+        regeneration_instruction: Optional[str] = None,
+    ) -> dict[str, Any] | None:
         if self.feedback_store is None:
             return None
         profile = self.profiles["feedback-proposal"]
@@ -828,6 +834,7 @@ class ClaudeRuntime:
             feedback_case_id,
             profile_version=profile_version_snapshot(profile, version_id="feedback-proposal-v0.1.0"),
             force=force,
+            regeneration_instruction=regeneration_instruction,
         )
         if not job:
             return None

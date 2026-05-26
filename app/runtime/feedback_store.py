@@ -705,11 +705,14 @@ class FeedbackStore:
         attribution_job_id: Optional[str] = None,
         profile_version: Optional[dict[str, Any]] = None,
         force: bool = False,
+        regeneration_instruction: Optional[str] = None,
     ) -> Optional[dict[str, Any]]:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
-        existing = None if force else self._latest_reusable_job(feedback_case_id, "proposal")
+        regeneration_instruction = regeneration_instruction.strip() if isinstance(regeneration_instruction, str) else None
+        regeneration_instruction = regeneration_instruction or None
+        existing = None if force or regeneration_instruction else self._latest_reusable_job(feedback_case_id, "proposal")
         if existing:
             return {**existing, "_reused_existing": True}
         evidence_package_id = evidence_package_id or self._latest(feedback_case.get("evidence_package_ids"))
@@ -740,6 +743,8 @@ class FeedbackStore:
             "allowed_target_paths": list(DIRECT_TARGET_PREFIXES),
             "task": "generate_optimization_proposals",
         }
+        if regeneration_instruction:
+            input_payload["regeneration_instruction"] = regeneration_instruction
         input_path = self._write_job_input(job_id, "proposal", input_payload)
         job = self._job_record(
             job_id=job_id,

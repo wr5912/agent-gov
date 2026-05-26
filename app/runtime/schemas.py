@@ -1,6 +1,6 @@
 from typing import Any, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChatRequest(BaseModel):
@@ -127,6 +127,18 @@ class FeedbackSignalResponse(BaseModel):
     auto_captured: bool = False
     requires_review: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeedbackProposalRegenerateRequest(BaseModel):
+    regeneration_instruction: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("regeneration_instruction", mode="before")
+    @classmethod
+    def _trim_instruction(cls, value: Any) -> Any:
+        if value is None or not isinstance(value, str):
+            return value
+        text = value.strip()
+        return text or None
 
 
 class SocEventIngestRequest(BaseModel):
@@ -347,6 +359,7 @@ class FeedbackAnalysisJobResponse(BaseModel):
     validated_output_path: str
     error_path: str
     langfuse_trace_id: Optional[str] = None
+    input_json: Optional[dict[str, Any]] = None
     raw_output_json: Optional[dict[str, Any]] = None
     validated_output_json: Optional[dict[str, Any]] = None
     error_json: Optional[dict[str, Any]] = None

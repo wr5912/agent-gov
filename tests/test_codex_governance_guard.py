@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT = REPO_ROOT / "scripts" / "check_codex_governance.py"
+
+
+def _write_lines(path: Path, count: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("x = 1\n" * count, encoding="utf-8")
+
+
+def _write_budget(root: Path, baseline: str = "") -> None:
+    budget = root / ".codex" / "size-budget.yaml"
+    budget.parent.mkdir(parents=True, exist_ok=True)
+    budget.write_text(
+        "\n".join(
+            [
+                "version: 1",
+                "limits:",
+                "  python_file_lines: 2",
+                "  frontend_file_lines: 2",
+                "baseline:",
+                baseline.rstrip(),
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+
+def _run_guard(root: Path, mode: str = "fail") -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--root", str(root), "--mode", mode],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_budgeted_oversized_file_is_allowed_until_baseline(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "app" / "large.py", 5)
+    _write_budget(
+        tmp_path,
+        baseline="""
+  - path: app/large.py
+    max_lines: 5
+    target_lines: 2
+    due: "2026-07-31"
+    reason: "test baseline"
+""",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "BUDGET: app/large.py" in result.stdout
+
+
+def test_unbudgeted_oversized_file_fails_in_fail_mode(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "frontend" / "src" / "Large.tsx", 3)
+    _write_budget(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: frontend/src/Large.tsx" in result.stdout
+
+
+def test_budgeted_file_growth_fails_in_fail_mode(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "app" / "large.py", 6)
+    _write_budget(
+        tmp_path,
+        baseline="""
+  - path: app/large.py
+    max_lines: 5
+    target_lines: 2
+    due: "2026-07-31"
+    reason: "test baseline"
+""",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "budgeted file grew" in result.stdout
+
+
+def test_warn_mode_reports_but_does_not_fail(tmp_path: Path) -> None:
+    _write_lines(tmp_path / "app" / "large.py", 3)
+    _write_budget(tmp_path)
+
+    result = _run_guard(tmp_path, mode="warn")
+
+    assert result.returncode == 0
+    assert "WARN: app/large.py" in result.stdout

@@ -11,15 +11,19 @@ developer_instructions = '''
 1. `AGENTS.md`
 2. `AGENTS.override.md`（如果存在）
 3. `.codex/rules/project.rules`
-4. 与任务相关的 `.codex/skills/*/SKILL.md`
+4. `.codex/rules/architecture.rules`
+5. `.codex/rules/verify.rules`
+6. 与任务相关的 `.codex/skills/*/SKILL.md`
 
 ## 工作方式
 
 - 所有沟通、文档和代码注释使用中文。
 - 非琐碎代码变更遵循 Analyze -> Plan -> Execute -> Verify。
 - 写文件前输出计划并等待用户确认。
+- 计划中必须说明架构阈值命中情况；命中时先说明拆分、抽象或统一方案。
 - 只修改完成目标所必需的文件。
 - 优先复用项目已有模式，不引入投机性抽象或依赖。
+- 但不得以“匹配现有风格”为由继续扩大上帝模块、复制大段代码或分散状态机。
 - 如果需求含糊、存在多种解释或可能影响数据/安全，先提出问题。
 
 ## 四项准则
@@ -29,6 +33,17 @@ developer_instructions = '''
 - 精准改动：每一行修改都应能追溯到用户请求。
 - 目标驱动：先定义成功标准，再验证。
 
+## 架构阈值
+
+以下任一情况命中时，必须先计划最小重构边界：
+
+- 单文件超过 800 行。
+- 单类超过 30 个公开方法。
+- 单函数超过 80 行，或圈复杂度超过 15。
+- 路由文件超过 20 个路由。
+- 即将复制超过 40 行已有代码。
+- 状态机、schema、profile/job 类型或跨事务更新出现分散实现。
+
 ## 验证
 
 完成后必须说明：
@@ -37,4 +52,5 @@ developer_instructions = '''
 2. 验证结果。
 3. 未验证项及原因。
 4. 残余风险和建议下一步。
+5. `scripts/check_codex_governance.py --mode warn` 结果，或未运行原因。
 '''

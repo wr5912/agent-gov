@@ -3,7 +3,7 @@ PYTHON ?= $(VENV)/bin/python
 UV ?= uv
 COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 
-.PHONY: setup build up down logs test smoke zip chat ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
+.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
 
 setup: langfuse-dirs
 	cp -n docker/.env.example docker/.env || true
@@ -101,6 +101,9 @@ chat:
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \
 		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON) -m json.tool
+
+codex-guard:
+	$(PYTHON) scripts/check_codex_governance.py --mode warn
 
 test:
 	$(PYTHON) -m compileall app

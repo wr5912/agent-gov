@@ -1,0 +1,15 @@
+# 项目统一规则入口
+
+本文件是 `.codex/rules/` 的入口。Agent 读取 `AGENTS.md` 后，必须继续读取并遵守：
+
+1. `.codex/rules/architecture.rules`
+2. `.codex/rules/verify.rules`
+
+执行顺序：
+
+- Analyze 阶段先用 `architecture.rules` 判断是否命中架构阈值。
+- Plan 阶段写明阈值命中情况、处理方式、验证方式和 Docker 卷路径。
+- Execute 阶段只做已确认计划内的最小必要改动。
+- Verify 阶段按 `verify.rules` 做功能验证和架构验证。
+
+如果规则之间存在冲突，以更具体、更安全、更能防止技术债继续扩大的规则为准。

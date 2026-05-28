@@ -1,25 +1,28 @@
 # 验证规则
-
-## 功能验证
-
-- Python 运行使用仓库本地 `.venv/bin/python`。
-- 后端变更默认运行相关 `pytest`；跨模块变更运行 `make test` 或等价命令。
-- 前端变更默认运行 `pnpm build`，必要时补充浏览器验证。
-- Docker 持久化相关变更必须检查 `docker/volume/` 路径。
-
-## 架构验证
-
-完成后必须说明：
-
-- 是否新增超过阈值的文件、函数、类或路由模块。
-- 是否新增超过 40 行的重复代码块。
-- 是否新增状态字面量分散、Pydantic/dict 双轨、跨 Session 事务或硬编码 profile/job/schema 字符串。
-- 是否同步了 README、docs、OpenAPI/TS 类型或环境变量示例。
-- 是否运行了 `scripts/check_codex_governance.py --mode warn`，或说明未运行原因。
-
-## 测试纵深
-
-- 状态字段变更：至少 1 个非法状态转移或非法输入测试。
-- 并发资源变更：至少 1 个重复执行、竞争或部分失败测试。
-- 外部输入变更：至少 1 个异常、恶意或越权输入测试。
-- 只有 happy path 时，必须说明剩余风险。
+#
+# 注意：`.rules` 文件会被 Codex 按 Starlark 解析。治理说明必须写成注释，
+# 不要写 Markdown 正文，否则会触发 rules 加载失败。
+#
+# ## 功能验证
+#
+# - Python 运行使用仓库本地 `.venv/bin/python`。
+# - 后端变更默认运行相关 `pytest`；跨模块变更运行 `make test` 或等价命令。
+# - 前端变更默认运行 `pnpm build`，必要时补充浏览器验证。
+# - Docker 持久化相关变更必须检查 `docker/volume/` 路径。
+#
+# ## 架构验证
+#
+# 完成后必须说明：
+#
+# - 是否新增超过阈值的代码文件、函数、类或路由模块。
+# - 是否新增超过 40 行的重复代码块。
+# - 是否新增状态字面量分散、Pydantic/dict 双轨、跨 Session 事务或硬编码 profile/job/schema 字符串。
+# - 是否同步了 README、docs、OpenAPI/TS 类型或环境变量示例。
+# - 是否运行了 `scripts/check_codex_governance.py --mode warn`，或说明未运行原因。
+#
+# ## 测试纵深
+#
+# - 状态字段变更：至少 1 个非法状态转移或非法输入测试。
+# - 并发资源变更：至少 1 个重复执行、竞争或部分失败测试。
+# - 外部输入变更：至少 1 个异常、恶意或越权输入测试。
+# - 只有 happy path 时，必须说明剩余风险。

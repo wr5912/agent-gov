@@ -1,0 +1,277 @@
+# 关于 AGENTS.md / .codex 与代码质量的反思与改进方案
+
+> 触发：[`docs/CODE_AND_DOCS_REVIEW.md`](./CODE_AND_DOCS_REVIEW.md) 评审发现「4 个上帝模块、状态机分散、字典/Schema 双轨、跨 Session 事务、硬编码字符串、错误层次缺失」等问题。
+> 问题：项目主要由 Codex Agent 在 `AGENTS.md` + `.codex/` 指令下产出，这些指令是否是质量不高的成因之一？
+> 结论：**是部分成因**。本文给出基于证据的反思与改进方案。
+
+---
+
+## 1. 反思结论一句话
+
+> 现有指令把"个人单次任务的克制"做得很好，但**完全没有放"跨任务的架构卫生"机制**——结果是每次提交都"合规、最小、精准"，但所有提交累加起来形成了 5000 行的上帝模块。这是经典的**最小变更棘轮效应（minimum-change ratchet）**。
+
+---
+
+## 2. 现有指令做对的部分
+
+引用文件实际内容，避免空泛：
+
+- `AGENTS.md:53-81` 提出"三思而后行 / 简洁优先 / 精准改动 / 目标驱动"——这些是 Agent 最容易翻车的反面（过度工程、临时灵感、漫游 diff）的对症药
+- `AGENTS.md:19-51` 强制 Analyze → Plan → Execute → Verify，把"先思考后动手"流程化
+- `.codex/skills/project-skill/SKILL.md:111-118` "反模式"清单非常具体（未确认就实现、为简单函数引入策略模式、修一个 bug 顺手重写邻近模块、未复现就修 bug）
+- `.codex/config.toml:9-15` 沙箱 + on-request 审批 + medium reasoning——团队安全默认值合理
+- 中文协作、`uv`/`pnpm`/`docker/volume/` 路径、`50000+容器端口` 等**项目级硬性约束**写得清晰，避免基础混乱
+
+**这些条款不应被推翻**——它们防住了"AI 写出过度抽象、改半本书"的另一极端。
+
+---
+
+## 3. 现有指令没覆盖的部分（与本次 review 直接相关）
+
+### 3.1 没有"架构阈值"——每次都"小"，累积成"巨"
+
+| 指令原话 | 真实效果 |
+|---|---|
+| `SKILL.md:54-61` "不添加请求之外的功能 / 不为单次代码创建抽象 / 不为理论上不可能的场景写复杂处理" | 第 1-19 次任务都不抽象；第 20 次时 `feedback_store.py` 已 5022 行，但每一次单独看都"无可指责" |
+| `SKILL.md:64-71` "不修改无关文件 / 不重构没有坏的代码 / 匹配项目现有风格" | 第 2 个 `create_proposal_job` 直接照抄 `create_attribution_job` 的 200 行——"匹配现有风格"被字面执行 |
+| `SKILL.md:61` "代码明显臃肿时，先压缩方案" | "明显臃肿"无量化定义；个人感受阈值 + 精准改动惯性 → 永远不到"明显" |
+
+**根因**：指令里没有任何**可机器判定的阈值**（行数、函数数、复杂度、重复度），所以"是否应该停下来重构"这个决策永远落在 Agent 的主观判断上，而 Agent 的主观判断又被"不重构没坏的"这条规则强烈反向拉扯。
+
+### 3.2 没有"复制粘贴 → 抽象"的触发器
+
+`feedback_store.py` 中 `create_attribution_job` / `create_proposal_job` / `create_batch_plan_job` 三个函数有 70% 重复。每一个都是合规的"精准改动"，但合起来 600 行就是**违反 DRY 的典型债**。
+
+指令没说"当你将要复制 50+ 行时，应当先抽象"。
+
+### 3.3 没有"已有上下文是否已经过大"的入门检查
+
+新增"再加一个 endpoint"时，指令说"复用已有模式"。`app/main.py` 已经 1659 行 / 76 个路由，新 endpoint 仍然被加到这同一文件——因为指令只问"现有模式是什么"，从不问"现有容器是否还能装下"。
+
+### 3.4 没有"schema 单一来源"原则
+
+`feedback_schemas.py`（Pydantic）和 `feedback_store.py` 内 `dict` 操作并行存在，相互漂移。这种"两套表示"的债**只能在跨任务视角下识别**，单次任务中"在 dict 上多写一个字段"完全合规。
+
+### 3.5 验证规范止于"功能跑通"，不含"架构健康"
+
+`AGENTS.md:46-51` 的 Verify 段要求"运行相关测试、构建、类型检查或端到端检查"——这些都是**功能级**验证。**没有架构级验证**（如：本次 PR 是否让某文件超过 800 行？是否新增重复块？mypy 是否通过 strict？复杂度是否回归？）。
+
+### 3.6 没有"负向/状态机/并发"测试要求
+
+`SKILL.md:75-80` 的目标驱动只举了"无效输入失败、有效输入通过"——非常表层。review 报告 [F-M1] 指出 2335 行测试集中在 happy path，正是这条指令的真实回声。
+
+### 3.7 没有"何时改文档"的硬规则
+
+`README.md:418` `DEFAULT_ALLOWED_TOOLS` 与代码默认漂移、`README.md:133-138` 缺失若干 endpoint——这都是"加代码时没人提醒改文档"的产物。指令里没有"修改路由清单/环境变量时必须同步 README 对应章节"的强约束。
+
+---
+
+## 4. 把 review findings 反向对应到指令缺口
+
+| review finding | 直接对应的指令缺口 |
+|---|---|
+| **[B-S1]** main.py 1659 行 / 76 路由 | 无"单文件路由数 / 行数"阈值；无"拆 router"触发器 |
+| **[B-S2]** claude_runtime.py 1403 行 / 51 方法 | 无"类方法数 / 类行数"阈值；无依赖注入要求 |
+| **[B-S3]** Agent profile 硬编码 | 无"列表/角色/类型枚举必须经注册表"原则 |
+| **[F-S1]** feedback_store.py 5022 行 | "复用现有模式"被字面执行；无 file-size kill-switch |
+| **[F-S2]** dict / Pydantic 双轨 | 无"schema 单一来源"原则 |
+| **[F-S3]** 跨 Session 事务 | 无"跨表更新必须同事务"checklist |
+| **[F-S4]** 状态机分散 | 无"含状态字段的实体必须有集中状态机"要求 |
+| **[F-H1]** Job 创建 200 行复制粘贴 | 无"复制阈值触发抽象"规则 |
+| **[F-H2]** 全部 ValueError | 无"异常分层"规范 |
+| **[FE-S1]** ExternalFeedbackWorkspace 5124 行 | 同 B-S1（前端版） |
+| **[FE-S3]** fetch 无 timeout/retry/cancel | 无"网络调用必须可取消可超时"checklist |
+| **[FE-H1]** TS/Python schema 漂移 | 无"OpenAPI / 代码生成"约束 |
+| **[D-S1]** README env 示例失同步 | 无"修改 settings.py 必同步 README"硬约束 |
+| **[D-H1]** README 接口清单缺项 | 无"新增路由必同步 README/CI 校验"硬约束 |
+
+每一行右列都是"指令本应说而没说"的内容。这就是指令对质量贡献的边界。
+
+---
+
+## 5. 改进方案
+
+分为 **A 指令文件增补**、**B 可机器执行的护栏**、**C 修正"四项准则"边界**、**D 工具与文档同源**、**E 落地步骤** 五部分。原文件不做即时修改——本方案落地需用户审阅本文档后批准。
+
+### A. 在 `AGENTS.md` / `SKILL.md` 增补的硬性条款
+
+#### A.1 "上下文饱和检查"——动手前问 5 个问题
+
+在 Analyze 阶段必须回答：
+1. 我打算修改/扩展的文件当前行数？>**800 行**？
+2. 它的方法/路由数？类 >**30 方法** / 路由文件 >**20 路由**？
+3. 我要加的逻辑是否与该文件已有职责**不属于同一领域**？
+4. 我要复制粘贴的代码块 >**40 行**？
+5. 现有类型/状态是否已经存在另一套并行表示？
+
+**任何一条命中**，本次任务必须先输出"拆分/抽象/统一方案"并经确认；不允许直接在饱和容器内再加内容。
+
+#### A.2 在"反模式"清单（`SKILL.md:111-118`）追加
+
+```
+- 在已超 800 行的文件中继续追加新职责，理由是"匹配现有风格"。
+- 通过复制 >40 行已有函数实现新变体，理由是"精准改动"。
+- 把状态字段（如 status / phase / stage）的合法转移写成散落的 if 分支。
+- 同一实体在 Pydantic 与 dict 中各定义一遍。
+- 修改路由 / settings / docker env 但不同步 README 对应章节。
+- 修改 SQLite 表结构 / 字段语义但不写 migration。
+- 给跨表更新分两次 Session.begin() 提交。
+```
+
+#### A.3 修正"简洁优先"边界
+
+把 `SKILL.md:54-61` 中模糊的"代码明显臃肿"改为：
+
+> **下列情况之一即视为"明显臃肿"，必须重构后再继续：**
+> - 单文件 >800 行
+> - 单类 >30 公开方法
+> - 单函数 >80 行 或 圈复杂度 >15
+> - 同一文件内出现 ≥2 处 >40 行的重复块
+> - 同一职责在 ≥3 个文件中以字符串字面量耦合
+
+#### A.4 修正"精准改动"边界
+
+把 `SKILL.md:64-71` 加一条**例外**：
+
+> **以下情况"精准改动"原则让位于"先重构":**
+> - 命中 A.1 任一阈值时
+> - 待修改函数已被 A.2 中"反模式"涉及时
+> - 即将复制粘贴大段已有代码以实现新变体时
+
+#### A.5 增补"架构验证"段（Verify 段扩展）
+
+把 `AGENTS.md:46-51` 改为还要回答：
+- 本次改动后，受影响文件是否仍在 A.1 阈值之内？
+- 是否引入新的字符串字面量耦合 / 字典-Pydantic 双轨 / 跨 Session 事务？
+- 是否有状态字段被改动？状态机集中文件是否同步？
+- README / 架构文档涉及章节是否同步？
+
+#### A.6 增补"测试纵深"段
+
+新增 `SKILL.md` 一节"测试纵深"：
+- 涉及状态字段：**至少 1 个非法状态转移的负向测试**
+- 涉及并发资源（DB、文件、子进程）：**至少 1 个 race 场景测试**
+- 涉及外部输入（路径、URL、JSON schema）：**至少 1 个恶意/异常输入测试**
+- happy path 测试不计入"测试覆盖"，仅作为基线
+
+### B. 可机器执行的护栏（最关键，光靠指令记不住）
+
+在 `.codex/hooks.json` 或 CI（GitHub Actions / GitLab CI）增加以下"硬门"，写入仓库：
+
+#### B.1 文件大小红线
+
+```yaml
+# scripts/check-file-size.sh
+MAX_PY=800
+MAX_TS=600
+git diff --name-only origin/master... | while read f; do
+  case "$f" in
+    *.py)  lines=$(wc -l < "$f"); [ $lines -gt $MAX_PY ] && fail "$f: $lines > $MAX_PY" ;;
+    *.tsx) lines=$(wc -l < "$f"); [ $lines -gt $MAX_TS ] && fail "$f: $lines > $MAX_TS" ;;
+  esac
+done
+```
+
+**例外机制**：根目录维护 `.codex/size-budget.yaml`，列出已超限文件的"还款计划"（截止日期 + 拆分目标）。新文件不允许进入豁免名单。
+
+#### B.2 复杂度与重复度
+
+```bash
+# Python
+uv pip install radon ruff
+radon cc app/ -a -nb  # 圈复杂度 >15 失败
+ruff check --select C901  # mccabe
+# 重复检测
+uv pip install pylint
+pylint --disable=all --enable=duplicate-code app/
+
+# 前端
+pnpm add -D eslint-plugin-sonarjs jscpd
+jscpd frontend/src --min-lines 40 --min-tokens 100
+```
+
+#### B.3 类型严格度逐步提升
+
+- Python：`mypy --strict` 对 `app/runtime/` 强制；其余 `--no-implicit-optional`，每月迁移一个模块到 strict
+- TS：`tsconfig.json` 已有 `strict: true` 时，新增 `noUncheckedIndexedAccess: true` 与 `exactOptionalPropertyTypes: true`
+
+#### B.4 API ↔ 文档一致性自动校验
+
+```python
+# scripts/check_readme_routes.py
+# 用 FastAPI app 抓所有 routes，对比 README 的接口清单段落
+from app.main import app
+declared = set(re.findall(r"`(?:GET|POST|PATCH|DELETE) (/api/[^`]+)`", README.read_text()))
+actual = {r.path for r in app.routes if r.path.startswith("/api/")}
+assert declared == actual, f"Diff: {declared ^ actual}"
+```
+
+#### B.5 OpenAPI → TS 类型生成
+
+```bash
+# 每次 backend schemas 变更，CI 重新生成 frontend/src/types/api.ts
+uv run python -c "import json; from app.main import app; print(json.dumps(app.openapi()))" > openapi.json
+pnpm dlx openapi-typescript openapi.json -o frontend/src/types/api.ts
+git diff --exit-code frontend/src/types/api.ts  # 漂移则失败
+```
+
+#### B.6 状态字段红线
+
+```bash
+# 自定义 lint：app/runtime/state_machines.py 是唯一允许定义状态值的位置
+grep -rn 'status\s*=\s*"' app/ --include='*.py' | grep -v 'state_machines.py' && fail
+```
+
+### C. `.codex/` 结构升级建议
+
+- `.codex/rules/` 当前为空（指令里引用了 `project.rules` 但仓库里没有），建立两类规则：
+  - `architecture.rules`：A.1–A.6 的清单形式
+  - `verify.rules`：B.* 的机器校验入口列表
+- `.codex/hooks.json` 当前为空，建议至少接入：
+  - `before_write_file`：调用 B.1 阈值检查
+  - `after_task`：调用 B.4 README 校验、B.5 OpenAPI 校验
+- `.codex/skills/` 拆分为多个 SKILL，强化按需召唤：
+  - `refactor-when-saturated`：A.1 触发时执行的拆分套路
+  - `state-machine-discipline`：F-S4 类问题的指南
+  - `schema-single-source`：F-S2 类问题的指南
+
+### D. 文档同源策略
+
+- README 的"API 接口"段落改为**自动生成区块**（用注释标记 `<!-- BEGIN:routes -->` / `<!-- END:routes -->`），由 `scripts/sync_readme.py` 从 `app/main.py` 真实路由刷新
+- 环境变量段落同理由 `settings.py` 反射生成
+- 架构文档中"角色 / workspace / claude-root"路径列表由 `app/runtime/agent_profiles.py` 反射生成
+- 所有 schema 描述统一来源于 Pydantic（在 schema 字段上加 `description=`），文档通过 OpenAPI 渲染
+
+### E. 落地步骤
+
+| 阶段 | 周期 | 内容 | 验证 |
+|---|---|---|---|
+| 0. 立刻 | 1 天 | 把本文档评审、批准 | 人工 |
+| 1. 指令更新 | 2 天 | A 节并入 AGENTS.md / SKILL.md / 新建 .codex/rules/architecture.rules | diff 评审 |
+| 2. 软门接入 | 3 天 | B.1 / B.2 / B.3 接到 CI，但**只警告不阻塞**；建 `.codex/size-budget.yaml` 写入当前所有超限文件作为基线 | CI 跑通 |
+| 3. 文档同源 | 3 天 | D 节的 README 路由自动生成 + OpenAPI → TS 类型生成；DEFAULT_ALLOWED_TOOLS、PRODUCT_ADJUSTMENT_PLAN 等已知漂移 fix | `git diff` 干净 |
+| 4. 硬门切换 | 7 天后 | B.1 / B.2 / B.3 从警告升为阻塞；新文件不享豁免 | CI 红绿 |
+| 5. 还债 | 8 周 | 按 [`CODE_AND_DOCS_REVIEW.md`](./CODE_AND_DOCS_REVIEW.md) §5 路线图分阶段拆分 4 个上帝模块，每完成一项就从 size-budget 中划掉 | budget 文件递减 |
+| 6. 状态机/异常层 | 同步进行 | A.6 + F-S4 + F-H2 落地 | 新增负向测试 |
+
+**为什么先软门再硬门**：现存仓库已有大量超阈值文件，立刻硬门会让所有 PR 红灯。软门期把当前状态固化为 baseline，新文件零容忍，旧文件按预算偿还。
+
+---
+
+## 6. 元层反思——别把责任甩给指令文件
+
+最后必须坦白：
+
+1. **指令是默认值，不是替代决策**。Codex 的"简洁优先"是一种**反向偏置**，用来抵抗 AI 容易过度抽象的另一极端。如果团队的真实场景里 AI 已经被"小步快跑"反向带到"局部最优、全局发胖"，那么补充的应该是**全局视角的检查点**，不是删除"简洁优先"。
+2. **AI 不会自己跨任务回顾**。除非外部机制（CI、size budget、hooks）逼它停下来看全局，否则它每次都只看眼前。这是 AI 协作范式的内禀属性，不是这套指令的特有缺陷。
+3. **代码质量的最终责任在人**。指令可以降低基线、给出护栏，但 **review、还债、架构演进** 是人需要持续投入的活。本反思的最大价值不是修指令，而是把"AI 没救你"的具体机制摆清楚，让团队据此设计护栏，并把节奏排进迭代。
+4. **本项目目前并非失败工程**——它的功能闭环跑通了、文档真实、测试存在、文档与代码大体一致。它的问题是"技术债积累速度 > 偿还速度"，本反思方案正是把偿还机制制度化。
+
+---
+
+## 7. 推荐与 `CODE_AND_DOCS_REVIEW.md` 的关系
+
+- [`CODE_AND_DOCS_REVIEW.md`](./CODE_AND_DOCS_REVIEW.md)：**回答"代码现在怎么样"**——具体 findings + 拆分路线图
+- 本文：**回答"为什么会变成这样、怎么不再变成这样"**——指令缺口 + 护栏方案
+
+两份文档配合落地：评审报告负责"还旧债"，本文负责"不再借新债"。

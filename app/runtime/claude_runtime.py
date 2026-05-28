@@ -14,7 +14,14 @@ from .agent_profiles import AgentRuntimeProfile, build_profiles
 from .agent_profile_versions import profile_version_snapshot
 from .agent_loader import load_programmatic_agents
 from .agent_version_store import AgentVersionStore
-from .feedback_jobs import EXPECTED_SCHEMA_FIELDS, attribution_prompt, extract_json_candidates, proposal_prompt
+from .feedback_jobs import (
+    EXPECTED_SCHEMA_FIELDS,
+    attribution_prompt,
+    batch_optimization_plan_prompt,
+    execution_plan_prompt,
+    extract_json_candidates,
+    proposal_prompt,
+)
 from .feedback_store import FeedbackStore, utc_now
 from .message_utils import extract_text, message_event_name, to_plain
 from .output_formatter import DSPyOutputFormatter
@@ -568,7 +575,7 @@ class ClaudeRuntime:
     def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
-        profile = self.profiles["main"]
+        profile = self.profiles["main-agent"]
         env = self._profile_env(profile)
         if self.settings.provider_api_key:
             env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
@@ -761,7 +768,7 @@ class ClaudeRuntime:
         job_input: dict[str, Any],
         expected_schema_version: str,
     ) -> dict[str, Any] | None:
-        if job_type not in {"attribution", "proposal"}:
+        if job_type not in {"attribution", "proposal", "batch_plan", "execution"}:
             return None
         try:
             result = await asyncio.wait_for(
@@ -789,10 +796,10 @@ class ClaudeRuntime:
     async def run_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
         if self.feedback_store is None:
             return None
-        profile = self.profiles["feedback-attribution"]
+        profile = self.profiles["attribution-analyzer"]
         job = self.feedback_store.create_attribution_job(
             feedback_case_id,
-            profile_version=profile_version_snapshot(profile, version_id="feedback-attribution-v0.1.0"),
+            profile_version=profile_version_snapshot(profile, version_id="attribution-analyzer-v0.1.0"),
             force=force,
         )
         if not job:
@@ -807,7 +814,7 @@ class ClaudeRuntime:
             return self.feedback_store.get_job(job["job_id"])
         try:
             raw = await self._run_profile_json(
-                profile_name="feedback-attribution",
+                profile_name="attribution-analyzer",
                 prompt=attribution_prompt(job["input_path"]),
                 expected_schema_version="attribution-output/v1",
                 job_type="attribution",
@@ -829,10 +836,10 @@ class ClaudeRuntime:
     ) -> dict[str, Any] | None:
         if self.feedback_store is None:
             return None
-        profile = self.profiles["feedback-proposal"]
+        profile = self.profiles["proposal-generator"]
         job = self.feedback_store.create_proposal_job(
             feedback_case_id,
-            profile_version=profile_version_snapshot(profile, version_id="feedback-proposal-v0.1.0"),
+            profile_version=profile_version_snapshot(profile, version_id="proposal-generator-v0.1.0"),
             force=force,
             regeneration_instruction=regeneration_instruction,
         )
@@ -850,7 +857,7 @@ class ClaudeRuntime:
             attribution_job_id = job.get("attribution_job_id")
             attribution_output = self.feedback_store.get_job_output(str(attribution_job_id), "attribution") if attribution_job_id else None
             raw = await self._run_profile_json(
-                profile_name="feedback-proposal",
+                profile_name="proposal-generator",
                 prompt=proposal_prompt(
                     job["input_path"],
                     input_payload=job.get("input_json"),
@@ -866,6 +873,94 @@ class ClaudeRuntime:
         except Exception as exc:
             self.feedback_store.fail_job(job["job_id"], error_code="AGENT_RUNTIME_ERROR", message=f"{exc.__class__.__name__}: {exc}")
         return self.feedback_store.get_job(job["job_id"])
+
+    async def run_batch_optimization_plan(
+        self,
+        batch_id: str,
+        *,
+        regeneration_instruction: Optional[str] = None,
+        force: bool = True,
+    ) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        profile = self.profiles["proposal-generator"]
+        job = self.feedback_store.create_batch_plan_job(
+            batch_id,
+            profile_version=profile_version_snapshot(profile, version_id="proposal-generator-v0.1.0"),
+            force=force,
+            regeneration_instruction=regeneration_instruction,
+        )
+        if not job:
+            return self.feedback_store.find_optimization_batch(batch_id)
+        if job.get("_no_actionable_attributions"):
+            return self.feedback_store.find_optimization_batch(batch_id)
+        if job.get("_reused_existing"):
+            return self.feedback_store.find_optimization_batch(batch_id)
+        if job.get("status") != "queued":
+            return self.feedback_store.find_optimization_batch(batch_id)
+        self.feedback_store.start_job(job["job_id"])
+        if not self._provider_configured():
+            self.feedback_store.complete_batch_plan_job(job["job_id"], self.feedback_store.offline_batch_plan_output(job))
+            return self.feedback_store.find_optimization_batch(batch_id)
+        try:
+            input_payload = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+            raw = await self._run_profile_json(
+                profile_name="proposal-generator",
+                prompt=batch_optimization_plan_prompt(job["input_path"], input_payload=input_payload),
+                expected_schema_version="feedback-optimization-plan-output/v1",
+                job_type="batch_plan",
+                job_input=input_payload,
+            )
+            self.feedback_store.complete_batch_plan_job(job["job_id"], raw)
+        except asyncio.TimeoutError as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_TIMEOUT", message=f"{exc.__class__.__name__}: {exc}")
+        except Exception as exc:
+            self.feedback_store.fail_job(job["job_id"], error_code="AGENT_RUNTIME_ERROR", message=f"{exc.__class__.__name__}: {exc}")
+        return self.feedback_store.find_optimization_batch(batch_id)
+
+    async def run_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        profile = self.profiles["execution-optimizer"]
+        job = self.feedback_store.create_execution_job(
+            optimization_task_id,
+            profile_version=profile_version_snapshot(profile, version_id="execution-optimizer-v0.1.0"),
+            force=force,
+        )
+        if not job:
+            return None
+        if job.get("_reused_existing"):
+            return job
+        if job.get("status") != "queued":
+            return job
+        self.feedback_store.start_execution_job(job["execution_job_id"])
+        deterministic_plan = self.feedback_store.deterministic_execution_plan_output(job)
+        if deterministic_plan:
+            self.feedback_store.complete_execution_job(job["execution_job_id"], deterministic_plan)
+            return self.feedback_store.get_execution_job(job["execution_job_id"])
+        if not self._provider_configured():
+            self.feedback_store.complete_execution_job(job["execution_job_id"], self.feedback_store.offline_execution_plan_output(job))
+            return self.feedback_store.get_execution_job(job["execution_job_id"])
+        input_path = job.get("input_path")
+        if not isinstance(input_path, str) or not input_path:
+            input_path = str(self.feedback_store.tmp_jobs_dir / job["execution_job_id"] / "execution" / "input.json")
+        try:
+            raw = await self._run_profile_json(
+                profile_name="execution-optimizer",
+                prompt=execution_plan_prompt(
+                    input_path,
+                    input_payload=job.get("input_json") if isinstance(job.get("input_json"), dict) else {},
+                ),
+                expected_schema_version="execution-plan-output/v1",
+                job_type="execution",
+                job_input=job.get("input_json") if isinstance(job.get("input_json"), dict) else {},
+            )
+            self.feedback_store.complete_execution_job(job["execution_job_id"], raw)
+        except asyncio.TimeoutError as exc:
+            self.feedback_store.fail_execution_job(job["execution_job_id"], "AGENT_TIMEOUT", f"{exc.__class__.__name__}: {exc}")
+        except Exception as exc:
+            self.feedback_store.fail_execution_job(job["execution_job_id"], "AGENT_RUNTIME_ERROR", f"{exc.__class__.__name__}: {exc}")
+        return self.feedback_store.get_execution_job(job["execution_job_id"])
 
     async def run_feedback_eval(
         self,

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Security, status
@@ -31,18 +33,27 @@ from app.runtime.schemas import (
     FeedbackAnalysisJobResponse,
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
+    FeedbackEvalCaseGenerateRequest,
     FeedbackEvalDatasetSyncRequest,
     FeedbackEvalCaseUpdateRequest,
     FeedbackEvalRunCreateRequest,
+    FeedbackOptimizationBatchAttributionRequest,
+    FeedbackOptimizationBatchCreateRequest,
+    FeedbackOptimizationBatchPlanGenerateRequest,
+    FeedbackOptimizationBatchPlanReviewRequest,
+    FeedbackOptimizationPlanTaskExecuteRequest,
     FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalResponse,
+    FeedbackSourceUpdateRequest,
     OpenAIChatCompletionChoice,
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
     OpenAIChatMessage,
     OptimizationProposalReviewRequest,
     OptimizationProposalReviewResponse,
+    OptimizationExecutionApplyRequest,
+    OptimizationExecutionCreateRequest,
     OptimizationTaskCreateRequest,
     OptimizationTaskMarkAppliedRequest,
     OptimizationTaskResponse,
@@ -64,13 +75,15 @@ agent_version_store = AgentVersionStore(
 )
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
+    workspace_dir=settings.main_workspace_dir,
     agent_version_provider=agent_version_store.current_version_id,
-    runtime_version="0.2.4",
+    runtime_version="0.2.5",
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
 runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 bearer_auth = HTTPBearer(auto_error=False)
+MAX_EXECUTION_WRITE_BYTES = 500_000
 
 
 @asynccontextmanager
@@ -81,7 +94,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Claude Agent Runtime API",
-    version="0.2.4",
+    version="0.2.5",
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -113,6 +126,134 @@ def require_api_key(credentials: HTTPAuthorizationCredentials | None = Security(
         return
     if not credentials or credentials.scheme.lower() != "bearer" or credentials.credentials != settings.api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+
+def _apply_execution_operations(operations: list[Any]) -> None:
+    if not operations:
+        raise ValueError("Execution plan has no operations")
+    originals: dict[Path, bytes | None] = {}
+    writes: list[tuple[Path, bytes]] = []
+    for item in operations:
+        if not isinstance(item, dict):
+            raise ValueError("Execution operation must be an object")
+        op = str(item.get("operation") or "")
+        target_path = str(item.get("path") or "")
+        dest = _safe_workspace_target(target_path)
+        if not feedback_store.target_allowed(target_path):
+            raise ValueError(f"Target path is not allowed: {target_path}")
+        if op == "noop":
+            continue
+        if dest not in originals:
+            originals[dest] = dest.read_bytes() if dest.exists() else None
+        expected_sha = str(item.get("expected_sha256") or "").strip()
+        if op in {"append_text", "replace_file"} and not expected_sha:
+            raise ValueError(f"{op} operation requires expected_sha256: {target_path}")
+        if expected_sha and originals[dest] is not None and hashlib.sha256(originals[dest] or b"").hexdigest() != expected_sha:
+            raise ValueError(f"Target file changed before apply: {target_path}")
+        if op == "append_text":
+            append_text = item.get("append_text")
+            if not isinstance(append_text, str):
+                raise ValueError(f"append_text operation requires append_text: {target_path}")
+            before = originals[dest]
+            if before is None:
+                raise ValueError(f"append_text target does not exist: {target_path}")
+            try:
+                data = (before.decode("utf-8") + append_text).encode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ValueError(f"append_text target is not UTF-8 text: {target_path}") from exc
+        elif op in {"replace_file", "create_file"}:
+            content = item.get("content")
+            if not isinstance(content, str):
+                raise ValueError(f"{op} operation requires content: {target_path}")
+            if op == "create_file" and originals[dest] is not None:
+                raise ValueError(f"create_file target already exists: {target_path}")
+            data = content.encode("utf-8")
+        else:
+            raise ValueError(f"Unsupported operation: {op}")
+        if len(data) > MAX_EXECUTION_WRITE_BYTES:
+            raise ValueError(f"Execution write exceeds {MAX_EXECUTION_WRITE_BYTES} bytes: {target_path}")
+        writes.append((dest, data))
+    if not writes:
+        raise ValueError("Execution plan has no writable operations")
+    try:
+        for dest, data in writes:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(data)
+    except Exception as exc:
+        for dest, data in originals.items():
+            if data is None:
+                dest.unlink(missing_ok=True)
+            else:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(data)
+        raise ValueError(f"Execution apply failed and was rolled back: {exc}") from exc
+
+
+def _safe_workspace_target(target_path: str) -> Path:
+    if not target_path:
+        raise ValueError("Target path is required")
+    rel = Path(target_path)
+    if rel.is_absolute() or ".." in rel.parts:
+        raise ValueError(f"Unsafe target path: {target_path}")
+    base = settings.main_workspace_dir.resolve()
+    dest = (base / rel).resolve()
+    if base != dest and base not in dest.parents:
+        raise ValueError(f"Target path escapes main workspace: {target_path}")
+    return dest
+
+
+def _apply_ready_execution_job(task_id: str, execution_job_id: str, *, note: str | None = None) -> dict[str, Any]:
+    task = feedback_store.find_task(task_id)
+    if not task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization task not found")
+    if task.get("applied_agent_version_id"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Task is already applied")
+    job = feedback_store.get_execution_job(execution_job_id)
+    if not job or job.get("optimization_task_id") != task_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution job not found")
+    if job.get("status") != "ready":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution job is not ready")
+    plan = job.get("validated_output_json")
+    if not isinstance(plan, dict):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution job has no validated plan")
+    baseline_version_id = str(job.get("baseline_agent_version_id") or task.get("baseline_agent_version_id") or "")
+    current_version_id = agent_version_store.current_version_id()
+    if baseline_version_id and current_version_id != baseline_version_id:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Current Agent version differs from execution baseline")
+    pre_version = agent_version_store.create_snapshot(
+        reason="pre_execution",
+        source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
+        note=note or f"执行优化任务 {task_id} 前快照。",
+    )
+    try:
+        _apply_execution_operations(plan.get("operations") or [])
+    except ValueError as exc:
+        feedback_store.fail_execution_job(execution_job_id, "EXECUTION_APPLY_FAILED", str(exc))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    applied_version = agent_version_store.create_snapshot(
+        reason="execution_optimizer_applied",
+        source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
+        note=note or f"execution-optimizer 应用任务 {task_id}。",
+        parent_version_id=str(pre_version.get("agent_version_id")),
+    )
+    applied_diff = agent_version_store.diff_versions(str(pre_version["agent_version_id"]), str(applied_version["agent_version_id"]))
+    updated = feedback_store.mark_execution_job_applied(
+        execution_job_id,
+        pre_execution_version=pre_version,
+        applied_agent_version=applied_version,
+        applied_diff=applied_diff,
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Execution job not found")
+    return {"execution_job": updated, "optimization_task": feedback_store.find_task(task_id), "applied_diff": applied_diff}
+
+
+def _batch_plan_task(batch: dict[str, Any] | None, plan_task_id: str) -> dict[str, Any] | None:
+    plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+    for item in (plan or {}).get("tasks") or []:
+        if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id:
+            return item
+    return None
 
 
 @app.get("/", include_in_schema=False)
@@ -348,6 +489,354 @@ async def resolve_pending_correlation(pending_id: str, req: PendingCorrelationRe
     if not resolved:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pending correlation not found")
     return resolved
+
+
+@app.get(
+    "/api/feedback-sources",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List unified feedback sources for the product workflow",
+)
+async def list_feedback_sources(limit: int = Query(default=500, ge=1, le=1000)) -> list[dict[str, Any]]:
+    return feedback_store.list_feedback_sources(limit=limit)
+
+
+@app.get(
+    "/api/feedback-sources/{source_kind}/{source_id}",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Get one unified feedback source",
+)
+async def get_feedback_source(source_kind: str, source_id: str) -> dict[str, Any]:
+    try:
+        source = feedback_store.find_feedback_source(source_kind, source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback source not found")
+    return source
+
+
+@app.patch(
+    "/api/feedback-sources/{source_kind}/{source_id}",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Update developer annotations for one feedback source",
+)
+async def update_feedback_source(
+    source_kind: str,
+    source_id: str,
+    req: FeedbackSourceUpdateRequest,
+) -> dict[str, Any]:
+    try:
+        source = feedback_store.update_feedback_source_annotation(source_kind, source_id, req.model_dump(exclude_unset=True))
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    if not source:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback source not found")
+    return source
+
+
+@app.post(
+    "/api/feedback-sources/eval-cases/generate",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Generate default regression eval cases for selected feedback sources",
+)
+async def generate_feedback_source_eval_cases(req: FeedbackEvalCaseGenerateRequest) -> dict[str, Any]:
+    if not req.source_refs:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_refs is required")
+    return feedback_store.generate_eval_cases_for_sources(
+        [item.model_dump(mode="json") for item in req.source_refs],
+        force=req.force,
+    )
+
+
+@app.get(
+    "/api/feedback-optimization-batches",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List feedback optimization batches",
+)
+async def list_feedback_optimization_batches(
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[dict[str, Any]]:
+    return feedback_store.list_optimization_batches(status=status_filter, limit=limit)
+
+
+@app.post(
+    "/api/feedback-optimization-batches",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Create one optimization batch from selected feedback sources",
+)
+async def create_feedback_optimization_batch(req: FeedbackOptimizationBatchCreateRequest) -> dict[str, Any]:
+    if not req.source_refs:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="source_refs is required")
+    batch = feedback_store.create_optimization_batch(
+        [item.model_dump(mode="json") for item in req.source_refs],
+        title=req.title,
+        priority=req.priority,
+    )
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No selected feedback source can create an optimization batch")
+    return batch
+
+
+@app.get(
+    "/api/feedback-optimization-batches/{batch_id}",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Get one feedback optimization batch",
+)
+async def get_feedback_optimization_batch(batch_id: str) -> dict[str, Any]:
+    batch = feedback_store.find_optimization_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch not found")
+    return batch
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/attribution-jobs",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Run attribution jobs for all feedback cases in one optimization batch",
+)
+async def run_feedback_optimization_batch_attribution(
+    batch_id: str,
+    req: FeedbackOptimizationBatchAttributionRequest | None = None,
+) -> dict[str, Any]:
+    return await _run_feedback_optimization_batch_attribution(batch_id, req or FeedbackOptimizationBatchAttributionRequest())
+
+
+async def _run_feedback_optimization_batch_attribution(
+    batch_id: str,
+    req: FeedbackOptimizationBatchAttributionRequest,
+) -> dict[str, Any]:
+    batch = feedback_store.find_optimization_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch not found")
+    if req.force:
+        try:
+            batch = feedback_store.reset_batch_attribution(batch_id) or batch
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    jobs: list[dict[str, Any]] = []
+    for feedback_case_id in batch.get("feedback_case_ids") or []:
+        job = await runtime.run_attribution_job(str(feedback_case_id), force=req.force)
+        if job:
+            jobs.append(job)
+    updated = feedback_store.record_batch_attribution_jobs(batch_id, jobs)
+    return {"batch": updated, "jobs": jobs}
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Generate one aggregated optimization plan from batch attribution results",
+)
+async def generate_feedback_optimization_batch_plan(
+    batch_id: str,
+    req: FeedbackOptimizationBatchPlanGenerateRequest | None = None,
+) -> dict[str, Any]:
+    try:
+        batch = await runtime.run_batch_optimization_plan(
+            batch_id,
+            regeneration_instruction=(req or FeedbackOptimizationBatchPlanGenerateRequest()).regeneration_instruction,
+            force=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch not found")
+    return batch
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/approve",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Execute one batch optimization plan, generate an execution plan, and apply controlled changes",
+)
+async def approve_feedback_optimization_batch_plan(
+    batch_id: str,
+    req: FeedbackOptimizationBatchPlanReviewRequest,
+) -> dict[str, Any]:
+    try:
+        approved = feedback_store.approve_batch_optimization_plan(batch_id, comment=req.comment)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not approved:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Optimization plan cannot be approved")
+    task = approved["optimization_task"]
+    execution_job = await runtime.run_execution_job(task["optimization_task_id"], force=True)
+    if not execution_job:
+        feedback_store.record_batch_execution_result(batch_id, optimization_task=feedback_store.find_task(task["optimization_task_id"]))
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution optimizer could not generate a plan")
+    apply_result = None
+    if execution_job.get("status") == "ready":
+        apply_result = _apply_ready_execution_job(
+            task["optimization_task_id"],
+            execution_job["execution_job_id"],
+            note=f"执行优化批次 {batch_id} 时由 execution-optimizer 自动应用。",
+        )
+    batch = feedback_store.record_batch_execution_result(
+        batch_id,
+        execution_job=execution_job,
+        optimization_task=feedback_store.find_task(task["optimization_task_id"]),
+        applied=apply_result,
+    )
+    return {
+        "batch": batch,
+        "optimization_task": feedback_store.find_task(task["optimization_task_id"]),
+        "execution_job": execution_job,
+        "apply_result": apply_result,
+    }
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/reject",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Reject one batch optimization plan",
+)
+async def reject_feedback_optimization_batch_plan(
+    batch_id: str,
+    req: FeedbackOptimizationBatchPlanReviewRequest,
+) -> dict[str, Any]:
+    batch = feedback_store.reject_batch_optimization_plan(batch_id, comment=req.comment)
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch or plan not found")
+    return batch
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Execute one task from a batch optimization plan",
+)
+async def execute_feedback_optimization_plan_task(
+    batch_id: str,
+    plan_task_id: str,
+    req: FeedbackOptimizationPlanTaskExecuteRequest,
+) -> dict[str, Any]:
+    batch = feedback_store.find_optimization_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch not found")
+    plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
+    plan_task = next(
+        (
+            item
+            for item in (plan or {}).get("tasks") or []
+            if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id
+        ),
+        None,
+    )
+    if not plan_task:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization plan task not found")
+    execution_kind = str(plan_task.get("execution_kind") or "")
+    if execution_kind == "external_webhook":
+        if not req.webhook_alias:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="webhook_alias is required for external tasks")
+        try:
+            result = feedback_store.notify_batch_plan_task_external(batch_id, plan_task_id, webhook_alias=req.webhook_alias)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        if not result:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization plan task not found")
+        return result
+    if execution_kind != "workspace_execution":
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Optimization plan task requires manual review")
+
+    try:
+        prepared = feedback_store.prepare_batch_plan_task_execution(
+            batch_id,
+            plan_task_id,
+            comment=f"执行优化批次 {batch_id} 的任务 {plan_task_id}",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    if not prepared:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization plan task not found")
+    task = prepared["optimization_task"]
+    apply_result = None
+    execution_job = None
+    if task.get("applied_agent_version_id"):
+        batch = feedback_store.record_batch_plan_task_execution_result(batch_id, plan_task_id, optimization_task=task)
+        return {"batch": batch, "optimization_task": task, "plan_task": _batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
+
+    execution_job = await runtime.run_execution_job(task["optimization_task_id"], force=req.force)
+    if not execution_job:
+        batch = feedback_store.record_batch_plan_task_execution_result(
+            batch_id,
+            plan_task_id,
+            optimization_task=feedback_store.find_task(task["optimization_task_id"]),
+        )
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Execution optimizer could not generate a plan")
+    if execution_job.get("status") == "ready":
+        apply_result = _apply_ready_execution_job(
+            task["optimization_task_id"],
+            execution_job["execution_job_id"],
+            note=f"执行优化批次 {batch_id} 的任务 {plan_task_id} 时由 execution-optimizer 自动应用。",
+        )
+    batch = feedback_store.record_batch_plan_task_execution_result(
+        batch_id,
+        plan_task_id,
+        execution_job=execution_job,
+        optimization_task=feedback_store.find_task(task["optimization_task_id"]),
+        applied=apply_result,
+    )
+    return {
+        "batch": batch,
+        "optimization_task": feedback_store.find_task(task["optimization_task_id"]),
+        "plan_task": _batch_plan_task(batch, plan_task_id),
+        "execution_job": execution_job,
+        "apply_result": apply_result,
+    }
+
+
+@app.post(
+    "/api/feedback-optimization-batches/{batch_id}/regression-runs",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Run regression validation for all active eval cases in one optimization batch",
+)
+async def run_feedback_optimization_batch_regression(batch_id: str) -> dict[str, Any]:
+    batch = feedback_store.find_optimization_batch(batch_id)
+    if not batch:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feedback optimization batch not found")
+    task_id = str(batch.get("optimization_task_id") or "")
+    task = feedback_store.find_task(task_id)
+    if not task or not task.get("applied_agent_version_id"):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Batch optimization must be applied before regression validation")
+    eval_case_ids = [str(item) for item in batch.get("eval_case_ids") or [] if item]
+    if not eval_case_ids:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="No eval cases found for this batch")
+    result = await runtime.run_feedback_eval(
+        eval_case_ids=eval_case_ids,
+        optimization_task_id=task_id,
+        source="optimization_batch_regression",
+    )
+    if not result:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Regression run could not be started")
+    batch = feedback_store.record_batch_regression_result(batch_id, result)
+    return {"batch": batch, "eval_run": result}
 
 
 @app.get(
@@ -623,6 +1112,20 @@ async def diff_agent_versions(from_version_id: str, to_version_id: str) -> dict[
 
 
 @app.get(
+    "/api/agent-versions/main/file-diff",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Diff one file between two Agent managed configuration versions",
+)
+async def diff_agent_version_file(from_version_id: str, to_version_id: str, path: str) -> dict[str, Any]:
+    diff = agent_version_store.diff_version_file(from_version_id, to_version_id, path)
+    if not diff:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent version or file path not found")
+    return diff
+
+
+@app.get(
     "/api/agent-versions/main/{version_id}",
     response_model=dict[str, Any],
     dependencies=[Depends(require_api_key)],
@@ -801,6 +1304,50 @@ async def notify_external_governance_item(
 
 
 @app.post(
+    "/api/optimization-tasks/{task_id}/execution-jobs",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Generate one controlled execution plan for an optimization task",
+)
+async def create_optimization_execution_job(task_id: str, req: OptimizationExecutionCreateRequest) -> dict[str, Any]:
+    job = await runtime.run_execution_job(task_id, force=req.force)
+    if not job:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Optimization task cannot generate an execution plan")
+    return job
+
+
+@app.get(
+    "/api/optimization-tasks/{task_id}/execution-jobs",
+    response_model=list[dict[str, Any]],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="List controlled execution plans for one optimization task",
+)
+async def list_optimization_execution_jobs(task_id: str, limit: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:
+    if not feedback_store.find_task(task_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Optimization task not found")
+    return feedback_store.list_execution_jobs(task_id, limit=limit)
+
+
+@app.post(
+    "/api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply",
+    response_model=dict[str, Any],
+    dependencies=[Depends(require_api_key)],
+    tags=["feedback"],
+    summary="Apply one reviewed controlled execution plan",
+)
+async def apply_optimization_execution_job(
+    task_id: str,
+    execution_job_id: str,
+    req: OptimizationExecutionApplyRequest,
+) -> dict[str, Any]:
+    if not req.confirm:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="confirm must be true")
+    return _apply_ready_execution_job(task_id, execution_job_id, note=req.note)
+
+
+@app.post(
     "/api/optimization-tasks/{task_id}/mark-applied",
     response_model=OptimizationTaskResponse,
     dependencies=[Depends(require_api_key)],
@@ -821,7 +1368,7 @@ async def mark_optimization_task_applied(
     version = agent_version_store.create_snapshot(
         reason="proposal_applied",
         source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
-        note=req.note or f"优化任务 {task_id} 已人工应用，创建主 Agent 版本快照。",
+        note=req.note or f"优化任务 {task_id} 已人工应用，创建主智能体版本快照。",
     )
     updated = feedback_store.mark_task_applied(task_id, agent_version=version, note=req.note)
     if not updated:

@@ -7,11 +7,11 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from .feedback_jobs import extract_json_candidates
-from .feedback_schemas import AttributionOutput, ProposalOutput
+from .feedback_schemas import AttributionOutput, ExecutionPlanOutput, FeedbackOptimizationPlanOutput, ProposalOutput
 from .settings import AppSettings
 
 
-FormatterJobType = Literal["attribution", "proposal"]
+FormatterJobType = Literal["attribution", "proposal", "batch_plan", "execution"]
 
 
 @dataclass(frozen=True)
@@ -78,9 +78,15 @@ class DSPyOutputFormatter:
         if job_type == "attribution":
             output_model = AttributionOutput
             signature = _attribution_signature(dspy)
-        else:
+        elif job_type == "proposal":
             output_model = ProposalOutput
             signature = _proposal_signature(dspy)
+        elif job_type == "batch_plan":
+            output_model = FeedbackOptimizationPlanOutput
+            signature = _batch_plan_signature(dspy)
+        else:
+            output_model = ExecutionPlanOutput
+            signature = _execution_signature(dspy)
 
         predictor = dspy.Predict(signature)
         lm = self._lm_instance(dspy)
@@ -124,14 +130,14 @@ class DSPyOutputFormatter:
 
 def _attribution_signature(dspy: Any) -> type[Any]:
     class AttributionFormattingSignature(dspy.Signature):
-        """把归因 Agent 的自然语言或片段 JSON 转换为 attribution-output/v1。
+        """把归因分析智能体的自然语言或片段 JSON 转换为 attribution-output/v1。
 
         只能使用 raw_agent_output 和 job_input_json 中已有的信息；证据不足时输出
         insufficient_information、needs_human_analysis 或 needs_human_review。
         不要补充原文和证据没有支持的业务事实。
         """
 
-        raw_agent_output: str = dspy.InputField(desc="归因 Agent 原始输出，可能是文本、片段 JSON 或完整 JSON。")
+        raw_agent_output: str = dspy.InputField(desc="归因分析智能体原始输出，可能是文本、片段 JSON 或完整 JSON。")
         job_input_json: str = dspy.InputField(desc="归因 job 输入，包含 feedback_case_id、job_id、证据路径等。")
         candidate_json_objects: str = dspy.InputField(desc="从原始输出中抽取到的 JSON 对象候选。")
         formatted_output: AttributionOutput = dspy.OutputField(desc="符合 attribution-output/v1 的完整对象。")
@@ -141,18 +147,51 @@ def _attribution_signature(dspy: Any) -> type[Any]:
 
 def _proposal_signature(dspy: Any) -> type[Any]:
     class ProposalFormattingSignature(dspy.Signature):
-        """把优化建议 Agent 的自然语言或片段 JSON 转换为 proposal-output/v1。
+        """把优化方案生成智能体的自然语言或片段 JSON 转换为 proposal-output/v1。
 
         只能使用 raw_agent_output 和 job_input_json 中已有的信息。无法形成可执行建议时，
         proposals 置空并填写 no_action_reason；外部问题写入 external_guidance。
         """
 
-        raw_agent_output: str = dspy.InputField(desc="建议 Agent 原始输出，可能是文本、片段 JSON 或完整 JSON。")
+        raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出，可能是文本、片段 JSON 或完整 JSON。")
         job_input_json: str = dspy.InputField(desc="建议 job 输入，包含 feedback_case_id、job_id、允许目标路径等。")
         candidate_json_objects: str = dspy.InputField(desc="从原始输出中抽取到的 JSON 对象候选。")
         formatted_output: ProposalOutput = dspy.OutputField(desc="符合 proposal-output/v1 的完整对象。")
 
     return ProposalFormattingSignature
+
+
+def _batch_plan_signature(dspy: Any) -> type[Any]:
+    class BatchPlanFormattingSignature(dspy.Signature):
+        """把批次优化方案生成智能体的输出转换为 feedback-optimization-plan-output/v1。
+
+        只能使用 raw_agent_output 和 job_input_json 中已有的信息。可执行任务必须放在
+        tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；不能定位到具体对象、
+        接口、工具或问题 ID 的项放入 blocked_items。
+        """
+
+        raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出，可能是文本、片段 JSON 或完整 JSON。")
+        job_input_json: str = dspy.InputField(desc="批次优化方案 job 输入，包含 batch、归因输出、回归用例和目标策略。")
+        candidate_json_objects: str = dspy.InputField(desc="从原始输出中抽取到的 JSON 对象候选。")
+        formatted_output: FeedbackOptimizationPlanOutput = dspy.OutputField(desc="符合 feedback-optimization-plan-output/v1 的完整对象。")
+
+    return BatchPlanFormattingSignature
+
+
+def _execution_signature(dspy: Any) -> type[Any]:
+    class ExecutionFormattingSignature(dspy.Signature):
+        """把执行优化智能体的自然语言或片段 JSON 转换为 execution-plan-output/v1。
+
+        只能使用 raw_agent_output 和 job_input_json 中已有的信息。只能基于 target_file_contexts
+        为 target_paths 生成 append_text、replace_file、create_file 或 noop 操作；无法安全执行时输出 needs_human_review。
+        """
+
+        raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出，可能是文本、片段 JSON 或完整 JSON。")
+        job_input_json: str = dspy.InputField(desc="执行 job 输入，包含 optimization_task_id、execution_job_id、target_paths 和 proposal。")
+        candidate_json_objects: str = dspy.InputField(desc="从原始输出中抽取到的 JSON 对象候选。")
+        formatted_output: ExecutionPlanOutput = dspy.OutputField(desc="符合 execution-plan-output/v1 的完整对象。")
+
+    return ExecutionFormattingSignature
 
 
 def _dspy_lm_context(dspy: Any, lm: Any) -> Any:

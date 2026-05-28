@@ -92,6 +92,21 @@ class PendingCorrelationModel(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class FeedbackSourceAnnotationModel(Base):
+    __tablename__ = "feedback_source_annotations"
+
+    annotation_id: Mapped[str] = mapped_column(String(256), primary_key=True)
+    source_kind: Mapped[str] = mapped_column(String(64), index=True)
+    source_id: Mapped[str] = mapped_column(String(128), index=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_feedback_source_annotations_source", FeedbackSourceAnnotationModel.source_kind, FeedbackSourceAnnotationModel.source_id, unique=True)
+
+
 class FeedbackCaseModel(Base):
     __tablename__ = "feedback_cases"
 
@@ -202,6 +217,33 @@ class OptimizationTaskModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class FeedbackOptimizationBatchModel(Base):
+    __tablename__ = "feedback_optimization_batches"
+
+    batch_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    title: Mapped[str] = mapped_column(String(512))
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class OptimizationExecutionModel(Base):
+    __tablename__ = "optimization_executions"
+
+    execution_job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    optimization_task_id: Mapped[str] = mapped_column(String(128), ForeignKey("optimization_tasks.optimization_task_id"), index=True)
+    feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    profile_name: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    started_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    baseline_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 

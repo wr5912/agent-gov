@@ -9,6 +9,7 @@ __pycache__/
 .ruff_cache/
 .data/
 /data/
+/artifacts/
 /claude-root/
 docker/volume/claude-root/
 docker/volume/claude-roots/

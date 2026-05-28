@@ -11,14 +11,23 @@ import type {
   FeedbackCaseRecord,
   FeedbackFilters,
   FeedbackAnalysisJobRecord,
+  FeedbackEvalCaseGenerateRequest,
+  FeedbackEvalCaseGenerateResponse,
+  FeedbackOptimizationBatchCreateRequest,
+  FeedbackOptimizationBatchRecord,
+  FeedbackOptimizationPlanTaskExecuteRequest,
+  FeedbackOptimizationPlanTaskExecuteResponse,
   FeedbackProposalRegenerateRequest,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
+  FeedbackSourceRecord,
+  FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
   OptimizationProposalRecord,
   OptimizationProposalReviewRequest,
   OptimizationProposalReviewResponse,
+  OptimizationExecutionJobRecord,
   OptimizationTaskCreateRequest,
   OptimizationTaskRecord,
   PendingCorrelationRecord,
@@ -31,6 +40,7 @@ import type {
 import type {
   AgentInfo,
   AgentVersionDiff,
+  AgentVersionFileDiff,
   AgentVersionManifest,
   AgentVersionRestoreRequest,
   AgentVersionRestoreResponse,
@@ -199,6 +209,146 @@ export function resolvePendingCorrelation(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export function getFeedbackSources(config: RuntimeClientConfig, filters?: Pick<FeedbackFilters, "limit">) {
+  return requestJson<FeedbackSourceRecord[]>(config, `/api/feedback-sources${feedbackQueryString(filters)}`);
+}
+
+export function getFeedbackSource(config: RuntimeClientConfig, sourceKind: string, sourceId: string) {
+  return requestJson<FeedbackSourceRecord>(
+    config,
+    `/api/feedback-sources/${encodeURIComponent(sourceKind)}/${encodeURIComponent(sourceId)}`,
+  );
+}
+
+export function updateFeedbackSource(
+  config: RuntimeClientConfig,
+  sourceKind: string,
+  sourceId: string,
+  payload: FeedbackSourceUpdateRequest,
+) {
+  return requestJson<FeedbackSourceRecord>(
+    config,
+    `/api/feedback-sources/${encodeURIComponent(sourceKind)}/${encodeURIComponent(sourceId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function generateFeedbackSourceEvalCases(config: RuntimeClientConfig, payload: FeedbackEvalCaseGenerateRequest) {
+  return requestJson<FeedbackEvalCaseGenerateResponse>(config, "/api/feedback-sources/eval-cases/generate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getFeedbackOptimizationBatches(config: RuntimeClientConfig, filters?: FeedbackFilters) {
+  return requestJson<FeedbackOptimizationBatchRecord[]>(
+    config,
+    `/api/feedback-optimization-batches${feedbackQueryString(filters)}`,
+  );
+}
+
+export function createFeedbackOptimizationBatch(
+  config: RuntimeClientConfig,
+  payload: FeedbackOptimizationBatchCreateRequest,
+) {
+  return requestJson<FeedbackOptimizationBatchRecord>(config, "/api/feedback-optimization-batches", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function runFeedbackOptimizationBatchAttribution(
+  config: RuntimeClientConfig,
+  batchId: string,
+  options?: { force?: boolean },
+) {
+  return requestJson<{ batch: FeedbackOptimizationBatchRecord; jobs: FeedbackAnalysisJobRecord[] }>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/attribution-jobs`,
+    {
+      method: "POST",
+      headers: options ? { "Content-Type": "application/json" } : undefined,
+      body: options ? JSON.stringify(options) : undefined,
+    },
+  );
+}
+
+export function generateFeedbackOptimizationBatchPlan(
+  config: RuntimeClientConfig,
+  batchId: string,
+  options?: { regeneration_instruction?: string },
+) {
+  return requestJson<FeedbackOptimizationBatchRecord>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan`,
+    {
+      method: "POST",
+      headers: options ? { "Content-Type": "application/json" } : undefined,
+      body: options ? JSON.stringify(options) : undefined,
+    },
+  );
+}
+
+export function approveFeedbackOptimizationBatchPlan(config: RuntimeClientConfig, batchId: string, comment?: string) {
+  return requestJson<{
+    batch: FeedbackOptimizationBatchRecord;
+    optimization_task: OptimizationTaskRecord;
+    execution_job?: OptimizationExecutionJobRecord | null;
+    apply_result?: Record<string, unknown> | null;
+  }>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/approve`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment }),
+    },
+  );
+}
+
+export function rejectFeedbackOptimizationBatchPlan(config: RuntimeClientConfig, batchId: string, comment?: string) {
+  return requestJson<FeedbackOptimizationBatchRecord>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ comment }),
+    },
+  );
+}
+
+export function executeFeedbackOptimizationPlanTask(
+  config: RuntimeClientConfig,
+  batchId: string,
+  planTaskId: string,
+  payload: FeedbackOptimizationPlanTaskExecuteRequest,
+) {
+  return requestJson<FeedbackOptimizationPlanTaskExecuteResponse>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/tasks/${encodeURIComponent(planTaskId)}/execute`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function runFeedbackOptimizationBatchRegression(config: RuntimeClientConfig, batchId: string) {
+  return requestJson<{ batch: FeedbackOptimizationBatchRecord; eval_run: EvalRunRecord }>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/regression-runs`,
+    { method: "POST" },
   );
 }
 
@@ -414,6 +564,30 @@ export function runOptimizationTaskRegression(config: RuntimeClientConfig, taskI
   );
 }
 
+export function createOptimizationExecutionJob(config: RuntimeClientConfig, taskId: string, force = false) {
+  return requestJson<OptimizationExecutionJobRecord>(
+    config,
+    `/api/optimization-tasks/${encodeURIComponent(taskId)}/execution-jobs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force }),
+    },
+  );
+}
+
+export function applyOptimizationExecutionJob(config: RuntimeClientConfig, taskId: string, executionJobId: string) {
+  return requestJson<{ execution_job: OptimizationExecutionJobRecord; optimization_task: OptimizationTaskRecord; applied_diff?: Record<string, unknown> }>(
+    config,
+    `/api/optimization-tasks/${encodeURIComponent(taskId)}/execution-jobs/${encodeURIComponent(executionJobId)}/apply`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    },
+  );
+}
+
 export function syncFeedbackEvalDataset(config: RuntimeClientConfig, feedbackCaseId?: string) {
   return requestJson<{ created: number; reused: number; skipped: number; eval_cases: EvalCaseRecord[] }>(
     config,
@@ -487,12 +661,32 @@ export function diffAgentVersions(config: RuntimeClientConfig, fromVersionId: st
   return requestJson<AgentVersionDiff>(config, `/api/agent-versions/main/diff?${params.toString()}`);
 }
 
+export function diffAgentVersionFile(config: RuntimeClientConfig, fromVersionId: string, toVersionId: string, path: string) {
+  const params = new URLSearchParams({ from_version_id: fromVersionId, to_version_id: toVersionId, path });
+  return requestJson<AgentVersionFileDiff>(config, `/api/agent-versions/main/file-diff?${params.toString()}`);
+}
+
 export async function getFeedbackWorkbenchData(
   config: RuntimeClientConfig,
   filters: FeedbackFilters = { limit: 500 },
 ): Promise<FeedbackWorkbenchData> {
   const limit = filters.limit ?? 500;
-  const [runs, signals, events, pendingCorrelations, cases, proposals, tasks, externalItems, externalWebhooks, evalCases, evalRuns] = await Promise.all([
+  const [
+    sources,
+    runs,
+    signals,
+    events,
+    pendingCorrelations,
+    cases,
+    proposals,
+    tasks,
+    externalItems,
+    externalWebhooks,
+    evalCases,
+    evalRuns,
+    optimizationBatches,
+  ] = await Promise.all([
+    getFeedbackSources(config, { limit }).catch(() => []),
     getAgentRuns(config, { limit }),
     getFeedbackSignals(config, { limit }),
     getSocEvents(config, { limit }),
@@ -504,8 +698,10 @@ export async function getFeedbackWorkbenchData(
     getExternalGovernanceWebhooks(config).catch(() => []),
     getEvalCases(config, { limit }).catch(() => []),
     getEvalRuns(config, { limit }).catch(() => []),
+    getFeedbackOptimizationBatches(config, { limit }).catch(() => []),
   ]);
   return {
+    sources,
     runs,
     signals,
     events,
@@ -517,6 +713,7 @@ export async function getFeedbackWorkbenchData(
     external_webhooks: externalWebhooks,
     eval_cases: evalCases,
     eval_runs: evalRuns,
+    optimization_batches: optimizationBatches,
   };
 }
 

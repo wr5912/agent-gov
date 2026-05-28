@@ -1,18 +1,27 @@
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
+import re
 import shutil
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
 import yaml
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 
-from .feedback_schemas import validate_attribution_output, validate_proposal_output
+from .agent_version_store import SNAPSHOT_POLICY_VERSION, WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
+from .feedback_schemas import (
+    validate_attribution_output,
+    validate_execution_plan_output,
+    validate_feedback_optimization_plan_output,
+    validate_proposal_output,
+)
 from .runtime_db import (
     AgentRunModel,
     EvidenceFileModel,
@@ -23,9 +32,12 @@ from .runtime_db import (
     ExternalGovernanceItemModel,
     ExternalNotificationModel,
     FeedbackCaseModel,
+    FeedbackOptimizationBatchModel,
     FeedbackJobModel,
     FeedbackSignalModel,
+    FeedbackSourceAnnotationModel,
     OptimizationProposalModel,
+    OptimizationExecutionModel,
     OptimizationTaskModel,
     PendingCorrelationModel,
     ProposalReviewModel,
@@ -48,15 +60,7 @@ SENSITIVE_KEY_PARTS = (
     "token",
 )
 
-DIRECT_TARGET_PREFIXES = (
-    "CLAUDE.md",
-    ".mcp.json",
-    ".claude/settings.json",
-    ".claude/skills/",
-    ".claude/agents/",
-    ".claude/output-styles/",
-    "evals/",
-)
+MAX_EXECUTION_TARGET_CONTEXT_BYTES = 200_000
 
 
 class FeedbackStore:
@@ -66,12 +70,14 @@ class FeedbackStore:
         self,
         *,
         data_dir: Path,
+        workspace_dir: Optional[Path] = None,
         agent_version_provider: Optional[Callable[[], Optional[str]]] = None,
-        runtime_version: str = "0.2.4",
+        runtime_version: str = "0.2.5",
         enable_debug_evidence: bool = True,
     ) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.main_workspace_dir = workspace_dir or data_dir.parent / "main-workspace"
         self.db_path = runtime_db_path_from_data_dir(data_dir)
         self.Session = make_session_factory(self.db_path)
         self.agent_version_provider = agent_version_provider
@@ -377,8 +383,786 @@ class FeedbackStore:
             if record:
                 record.status = "resolved"
                 record.updated_at = resolved["updated_at"]
-                record.payload_json = resolved
+            record.payload_json = resolved
         return resolved
+
+    def list_feedback_sources(self, *, limit: int = 500) -> list[dict[str, Any]]:
+        annotations = self._source_annotations_by_key()
+        cases_by_source_id = self._cases_by_source_id()
+        rows: list[dict[str, Any]] = []
+        rows.extend(
+            self._source_row(
+                source_kind="signal",
+                source_id=str(item["signal_id"]),
+                raw=item,
+                annotation=annotations.get(("signal", str(item["signal_id"]))),
+                feedback_case=cases_by_source_id.get(str(item["signal_id"])),
+            )
+            for item in self.list_signals(limit=limit)
+        )
+        rows.extend(
+            self._source_row(
+                source_kind="soc_event",
+                source_id=str(item["event_id"]),
+                raw=item,
+                annotation=annotations.get(("soc_event", str(item["event_id"]))),
+                feedback_case=cases_by_source_id.get(str(item["event_id"])),
+            )
+            for item in self.list_events(limit=limit)
+        )
+        rows.extend(
+            self._source_row(
+                source_kind="pending_correlation",
+                source_id=str(item["pending_id"]),
+                raw=item,
+                annotation=annotations.get(("pending_correlation", str(item["pending_id"]))),
+                feedback_case=cases_by_source_id.get(str(item["pending_id"])),
+            )
+            for item in self.list_pending(limit=limit)
+        )
+        rows.sort(key=lambda item: str(item.get("created_at") or item.get("updated_at") or ""), reverse=True)
+        return rows[:limit]
+
+    def find_feedback_source(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+        kind = self._normalize_source_kind(source_kind)
+        raw = self._find_source_record(kind, source_id)
+        if not raw:
+            return None
+        annotation = self._find_source_annotation(kind, source_id)
+        feedback_case = self._find_case_for_source_id(source_id)
+        return self._source_row(
+            source_kind=kind,
+            source_id=source_id,
+            raw=raw,
+            annotation=annotation,
+            feedback_case=feedback_case,
+        )
+
+    def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        kind = self._normalize_source_kind(source_kind)
+        raw = self._find_source_record(kind, source_id)
+        if not raw:
+            return None
+        annotation_id = self._source_annotation_id(kind, source_id)
+        now = utc_now()
+        with self.Session.begin() as db:
+            row = db.get(FeedbackSourceAnnotationModel, annotation_id)
+            payload = dict(row.payload_json or {}) if row else {}
+            created_at = row.created_at if row else now
+            payload.update(
+                {
+                    "annotation_id": annotation_id,
+                    "source_kind": kind,
+                    "source_id": source_id,
+                    "created_at": created_at,
+                    "updated_at": now,
+                }
+            )
+            for key in ("comment", "labels", "priority", "status", "requires_review", "metadata"):
+                if key in fields:
+                    value = fields.get(key)
+                    if key == "labels" and value is not None:
+                        payload[key] = self._unique_strings([str(item).strip() for item in value if str(item).strip()])
+                    elif key == "metadata" and value is not None:
+                        payload[key] = dict(value)
+                    else:
+                        payload[key] = value
+            payload["status"] = self._string(payload.get("status")) or "triaged"
+            if row:
+                row.status = str(payload["status"])
+                row.updated_at = now
+                row.payload_json = payload
+            else:
+                db.add(
+                    FeedbackSourceAnnotationModel(
+                        annotation_id=annotation_id,
+                        source_kind=kind,
+                        source_id=source_id,
+                        status=str(payload["status"]),
+                        created_at=created_at,
+                        updated_at=now,
+                        payload_json=payload,
+                    )
+                )
+        return self.find_feedback_source(kind, source_id)
+
+    def ensure_case_for_source(self, source_kind: str, source_id: str, *, priority: str = "medium") -> Optional[dict[str, Any]]:
+        kind = self._normalize_source_kind(source_kind)
+        if not self._find_source_record(kind, source_id):
+            return None
+        existing = self._find_case_for_source_id(source_id)
+        if existing:
+            return existing
+        source = self.find_feedback_source(kind, source_id)
+        annotation_priority = self._string((source or {}).get("priority"))
+        created = self.create_case(
+            source_ids=[source_id],
+            title=self._source_case_title(source or {}),
+            priority=annotation_priority or priority or "medium",
+        )
+        return created
+
+    def generate_eval_cases_for_sources(self, source_refs: list[dict[str, Any]], *, force: bool = False) -> dict[str, Any]:
+        created = 0
+        reused = 0
+        updated = 0
+        skipped = 0
+        eval_cases: list[dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
+        for ref in self._normalize_source_refs(source_refs):
+            feedback_case = self.ensure_case_for_source(ref["source_kind"], ref["source_id"])
+            if not feedback_case:
+                skipped += 1
+                results.append({**ref, "status": "skipped", "reason": "source cannot create feedback case"})
+                continue
+            existing = self.find_eval_case(source_feedback_case_id=feedback_case["feedback_case_id"])
+            payload = self._build_eval_case_from_source(ref, feedback_case)
+            if not payload:
+                skipped += 1
+                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "status": "skipped", "reason": "missing prompt"})
+                continue
+            if existing and not force:
+                reused += 1
+                eval_cases.append(existing)
+                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": existing["eval_case_id"], "status": "reused"})
+                continue
+            if existing and force:
+                payload["eval_case_id"] = existing["eval_case_id"]
+                payload["created_at"] = existing["created_at"]
+                self._replace_eval_case_payload(payload)
+                refreshed = self.find_eval_case(existing["eval_case_id"])
+                if refreshed:
+                    eval_cases.append(refreshed)
+                updated += 1
+                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": existing["eval_case_id"], "status": "updated"})
+                continue
+            with self.Session.begin() as db:
+                db.add(
+                    EvalCaseModel(
+                        eval_case_id=payload["eval_case_id"],
+                        created_at=payload["created_at"],
+                        updated_at=payload["updated_at"],
+                        status=payload["status"],
+                        source_feedback_case_id=self._string(payload.get("source_feedback_case_id")),
+                        source_run_id=self._string(payload.get("source_run_id")),
+                        labels_json=list(payload.get("labels") or []),
+                        payload_json=payload,
+                    )
+                )
+            created += 1
+            eval_cases.append(payload)
+            results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": payload["eval_case_id"], "status": "created"})
+        return {"created": created, "reused": reused, "updated": updated, "skipped": skipped, "eval_cases": eval_cases, "results": results}
+
+    def create_optimization_batch(
+        self,
+        source_refs: list[dict[str, Any]],
+        *,
+        title: Optional[str] = None,
+        priority: str = "medium",
+    ) -> Optional[dict[str, Any]]:
+        refs = self._normalize_source_refs(source_refs)
+        if not refs:
+            return None
+        feedback_cases: list[dict[str, Any]] = []
+        skipped: list[dict[str, Any]] = []
+        for ref in refs:
+            feedback_case = self.ensure_case_for_source(ref["source_kind"], ref["source_id"], priority=priority)
+            if feedback_case:
+                feedback_cases.append(feedback_case)
+                self.update_feedback_source_annotation(ref["source_kind"], ref["source_id"], {"status": "in_batch", "priority": priority})
+            else:
+                skipped.append({**ref, "reason": "source cannot create feedback case"})
+        if not feedback_cases:
+            return None
+        eval_result = self.generate_eval_cases_for_sources(refs, force=False)
+        now = utc_now()
+        feedback_case_ids = self._unique_strings([item.get("feedback_case_id") for item in feedback_cases])
+        eval_case_ids = self._unique_strings([item.get("eval_case_id") for item in eval_result.get("eval_cases") or []])
+        batch_id = f"fob-{uuid.uuid4()}"
+        payload = {
+            "schema_version": "feedback-optimization-batch/v1",
+            "batch_id": batch_id,
+            "created_at": now,
+            "updated_at": now,
+            "status": "draft",
+            "title": title or f"反馈优化批次 {len(feedback_case_ids)} 条反馈",
+            "priority": priority or "medium",
+            "source_refs": refs,
+            "feedback_case_ids": feedback_case_ids,
+            "skipped_source_refs": skipped,
+            "eval_case_ids": eval_case_ids,
+            "eval_case_generation": eval_result,
+            "attribution_job_ids": [],
+            "optimization_plan": None,
+            "optimization_task_id": None,
+            "execution_job_id": None,
+            "eval_run_id": None,
+        }
+        with self.Session.begin() as db:
+            db.add(
+                FeedbackOptimizationBatchModel(
+                    batch_id=batch_id,
+                    created_at=now,
+                    updated_at=now,
+                    status="draft",
+                    title=payload["title"],
+                    payload_json=payload,
+                )
+            )
+        return self.find_optimization_batch(batch_id)
+
+    def list_optimization_batches(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(select(FeedbackOptimizationBatchModel).order_by(FeedbackOptimizationBatchModel.updated_at.desc())).all()
+            batches = [self._batch_to_dict(row) for row in rows]
+        return self._filter_records(batches, {"status": status}, limit)
+
+    def find_optimization_batch(self, batch_id: str) -> Optional[dict[str, Any]]:
+        if not batch_id:
+            return None
+        with self.Session() as db:
+            row = db.get(FeedbackOptimizationBatchModel, batch_id)
+            return self._batch_to_dict(row) if row else None
+
+    def record_batch_attribution_jobs(self, batch_id: str, jobs: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        job_ids = self._unique_strings([job.get("job_id") for job in jobs])
+        completed = [job for job in jobs if job.get("status") == "completed"]
+        failed = [job for job in jobs if job.get("status") in {"failed", "needs_human_review", "timeout"}]
+        running = [job for job in jobs if job.get("status") in {"created", "queued", "running", "schema_validating", "evidence_packaging"}]
+        batch = self.find_optimization_batch(batch_id)
+        expected_total = len((batch or {}).get("feedback_case_ids") or [])
+        total = max(expected_total, len(jobs))
+        if total and len(completed) == total:
+            status = "attribution_completed"
+        elif failed:
+            status = "needs_human_review"
+        else:
+            status = "attribution_running"
+        return self._update_batch(
+            batch_id,
+            status=status,
+            fields={
+                "attribution_job_ids": job_ids,
+                "attribution_jobs": jobs,
+                "attribution_summary": {
+                    "total": total,
+                    "completed": len(completed),
+                    "running": len(running),
+                    "needs_review_or_failed": len(failed),
+                },
+            },
+        )
+
+    def reset_batch_attribution(self, batch_id: str) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch:
+            return None
+        task_id = self._string(batch.get("optimization_task_id"))
+        task = self.find_task(task_id) if task_id else None
+        if task and task.get("applied_agent_version_id"):
+            raise ValueError("当前批次已应用并产生 Agent 版本，不能原地重新归因；请基于反馈信息创建新批次。")
+        for feedback_case_id in batch.get("feedback_case_ids") or []:
+            self.discard_current_attribution(str(feedback_case_id), invalidate_downstream=True)
+        self._discard_batch_draft_artifacts(batch)
+        return self._update_batch(
+            batch_id,
+            status="draft",
+            fields={
+                "attribution_job_ids": [],
+                "attribution_jobs": [],
+                "attribution_summary": {"total": len(batch.get("feedback_case_ids") or []), "completed": 0, "running": 0, "needs_review_or_failed": 0},
+                "optimization_plan": None,
+                "internal_proposal_id": None,
+                "optimization_task_id": None,
+                "optimization_task": None,
+                "execution_job_id": None,
+                "execution_job": None,
+                "eval_run_id": None,
+                "latest_eval_run": None,
+                "execution_apply_result": None,
+            },
+        )
+
+    def generate_batch_optimization_plan(self, batch_id: str, *, regeneration_instruction: Optional[str] = None) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch:
+            return None
+        self._assert_batch_plan_can_regenerate(batch)
+        instruction = regeneration_instruction.strip() if isinstance(regeneration_instruction, str) else None
+        instruction = instruction or None
+        attributions = self._batch_attribution_outputs(batch)
+        if not attributions:
+            return self._update_batch(
+                batch_id,
+                status="needs_human_review",
+                fields={"optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction)},
+            )
+        plan = self._build_batch_optimization_plan(batch, attributions, regeneration_instruction=instruction)
+        return self._update_batch(
+            batch_id,
+            status=plan["status"],
+            fields={"optimization_plan": plan, "updated_at": utc_now()},
+        )
+
+    def create_batch_plan_job(
+        self,
+        batch_id: str,
+        *,
+        profile_version: Optional[dict[str, Any]] = None,
+        force: bool = True,
+        regeneration_instruction: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch:
+            return None
+        self._assert_batch_plan_can_regenerate(batch)
+        instruction = regeneration_instruction.strip() if isinstance(regeneration_instruction, str) else None
+        instruction = instruction or None
+        if not force and not instruction and isinstance(batch.get("optimization_plan"), dict):
+            return {"_reused_existing": True, **batch}
+        attributions = self._batch_attribution_outputs(batch)
+        if not attributions:
+            self._update_batch(
+                batch_id,
+                status="needs_human_review",
+                fields={
+                    "optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction),
+                    "optimization_plan_job_id": None,
+                    "optimization_plan_job": None,
+                    "optimization_plan_error": None,
+                },
+            )
+            return {"_no_actionable_attributions": True, "batch_id": batch_id}
+
+        feedback_case_id = self._latest(batch.get("feedback_case_ids")) or self._string(attributions[0].get("feedback_case_id")) or ""
+        feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
+        evidence_package_id = self._latest((feedback_case or {}).get("evidence_package_ids")) or f"batch-evidence-{batch_id}"
+        job_id = f"fbp-{uuid.uuid4()}"
+        input_payload = {
+            "schema_version": "feedback-optimization-plan-input/v1",
+            "job_id": job_id,
+            "batch_id": batch_id,
+            "feedback_case_ids": batch.get("feedback_case_ids") or [],
+            "eval_case_ids": batch.get("eval_case_ids") or [],
+            "source_refs": batch.get("source_refs") or [],
+            "attribution_job_ids": self._unique_strings([self._string(item.get("_job_id") or item.get("attribution_job_id")) or "" for item in attributions]),
+            "attribution_outputs": attributions,
+            "eval_cases": [case for case in (self.find_eval_case(str(eval_case_id)) for eval_case_id in batch.get("eval_case_ids") or []) if case],
+            "main_agent_version_id": self._current_agent_version_id(),
+            "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
+            "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
+            "target_policy": self._execution_target_policy(),
+            "task": "generate_feedback_optimization_plan",
+        }
+        if instruction:
+            input_payload["regeneration_instruction"] = instruction
+        input_path = self._write_job_input(job_id, "batch_plan", input_payload)
+        job = self._job_record(
+            job_id=job_id,
+            job_type="batch_plan",
+            feedback_case_id=feedback_case_id,
+            evidence_package_id=evidence_package_id,
+            status="queued",
+            profile_name="proposal-generator",
+            input_path=input_path,
+            profile_version=profile_version,
+        )
+        job["input_json"] = input_payload
+        with self.Session.begin() as db:
+            db.add(self._job_model_from_dict(job))
+        self._update_batch(
+            batch_id,
+            status="optimization_plan_queued",
+            fields={
+                "optimization_plan_job_id": job_id,
+                "optimization_plan_job": self.get_job(job_id),
+                "optimization_plan_error": None,
+            },
+        )
+        return self.get_job(job_id)
+
+    def complete_batch_plan_job(self, job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+        job = self.get_job(job_id)
+        if not job:
+            return None
+        batch_id = self._job_batch_id(job)
+        self._set_job_json(job_id, raw_output_json=raw_output)
+        self._append_job_update(job_id, status="schema_validating")
+        validated, error = validate_feedback_optimization_plan_output(raw_output)
+        if not validated:
+            self._write_job_error(job, "SCHEMA_VALIDATION_FAILED", error or "invalid feedback optimization plan output")
+            completed = self._append_job_update(job_id, status="needs_human_review", completed_at=utc_now())
+            if batch_id:
+                self._update_batch(
+                    batch_id,
+                    status="needs_human_review",
+                    fields={
+                        "optimization_plan_job_id": job_id,
+                        "optimization_plan_job": completed,
+                        "optimization_plan_error": (completed or {}).get("error_json"),
+                    },
+                )
+            self._cleanup_job_tmp(job_id)
+            return completed
+
+        plan = self._normalize_batch_plan_output(validated, job)
+        self._set_job_json(job_id, validated_output_json=validated)
+        completed = self._append_job_update(job_id, status="completed", completed_at=utc_now())
+        if batch_id:
+            self._update_batch(
+                batch_id,
+                status=plan["status"],
+                fields={
+                    "optimization_plan": plan,
+                    "optimization_plan_job_id": job_id,
+                    "optimization_plan_job": completed,
+                    "optimization_plan_error": None,
+                },
+            )
+        self._cleanup_job_tmp(job_id)
+        return completed
+
+    def offline_batch_plan_output(self, job: dict[str, Any]) -> dict[str, Any]:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        batch_id = self._string(input_json.get("batch_id")) or ""
+        return {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": batch_id,
+            "status": "needs_human_review",
+            "title": "当前不能生成可执行优化方案",
+            "summary": "当前未配置模型提供商，proposal-generator 无法生成批次优化任务。",
+            "problem_types": [],
+            "confidence": "low",
+            "actionability": "needs_human_analysis",
+            "target_type": "not_actionable",
+            "target_path": None,
+            "recommendation": "配置模型提供商后重新生成优化方案，或由开发人员手工分析归因结果。",
+            "expected_effect": "离线占位不会改变主智能体行为。",
+            "validation": "重新生成真实优化方案后，再使用本批次回归测试用例验证。",
+            "risk": "离线占位没有可执行任务。",
+            "source_refs": input_json.get("source_refs") or [],
+            "feedback_case_ids": input_json.get("feedback_case_ids") or [],
+            "eval_case_ids": input_json.get("eval_case_ids") or [],
+            "attribution_job_ids": input_json.get("attribution_job_ids") or [],
+            "attribution_summaries": [],
+            "rationale": "未配置模型提供商，系统不能运行 proposal-generator。",
+            "evidence_refs": [],
+            "tasks": [],
+            "blocked_items": [
+                {
+                    "title": "未配置模型提供商",
+                    "target_type": "not_actionable",
+                    "actionability": "needs_human_analysis",
+                    "reason": "当前未配置模型提供商，不能由 proposal-generator 生成可执行优化任务。",
+                    "feedback_case_ids": input_json.get("feedback_case_ids") or [],
+                    "eval_case_ids": input_json.get("eval_case_ids") or [],
+                    "attribution_job_ids": input_json.get("attribution_job_ids") or [],
+                }
+            ],
+        }
+
+    def approve_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+        if not batch or not plan or plan.get("status") != "pending_approval":
+            return None
+        target_path = self._string(plan.get("target_path"))
+        if not target_path or not self._target_allowed(target_path):
+            raise ValueError("Optimization plan target is not actionable")
+        proposal_id = self._string(plan.get("internal_proposal_id")) or f"prop-{uuid.uuid4()}"
+        feedback_case_id = self._latest(batch.get("feedback_case_ids")) or ""
+        now = utc_now()
+        proposal_actionability = self._string(plan.get("actionability"))
+        if proposal_actionability not in {"direct_workspace_change", "workspace_config_change"}:
+            proposal_actionability = "direct_workspace_change"
+        proposal = {
+            "proposal_id": proposal_id,
+            "created_at": now,
+            "feedback_case_id": feedback_case_id,
+            "proposal_job_id": f"batch-plan-{batch_id}",
+            "status": "approved",
+            "actionability": plan.get("actionability") or "direct_workspace_change",
+            "target_type": plan.get("target_type") or plan.get("optimization_object_type") or "main_agent_claude_md",
+            "target_path": target_path,
+            "title": plan.get("title") or "反馈批次优化方案",
+            "recommendation": plan.get("recommendation") or "",
+            "expected_effect": plan.get("expected_effect") or "",
+            "validation": plan.get("validation") or "",
+            "risk": plan.get("risk") or "",
+            "regeneration_instruction": plan.get("regeneration_instruction"),
+            "requires_approval": True,
+            "base_agent_version_id": self._current_agent_version_id(),
+            "source_batch_id": batch_id,
+            "source_feedback_case_ids": batch.get("feedback_case_ids") or [],
+            "source_refs": batch.get("source_refs") or [],
+            "latest_review": {
+                "review_id": f"opr-{uuid.uuid4()}",
+                "proposal_id": proposal_id,
+                "created_at": now,
+                "action": "approve",
+                "status": "approved",
+                "comment": comment,
+                "source": "feedback_optimization_batch",
+            },
+        }
+        with self.Session.begin() as db:
+            db.merge(self._proposal_model_from_dict(proposal))
+        task = self.create_task(proposal_id=proposal_id, execution_mode="manual_or_patch", comment=comment or f"由优化批次 {batch_id} 执行创建。")
+        if not task:
+            return None
+        task = self._update_task_payload(
+            task["optimization_task_id"],
+            status=task["status"],
+            fields={
+                "source": "feedback_optimization_batch",
+                "source_batch_id": batch_id,
+                "feedback_case_ids": batch.get("feedback_case_ids") or [],
+                "eval_case_ids": batch.get("eval_case_ids") or [],
+            },
+        ) or task
+        approved_plan = {**plan, "status": "approved", "approved_at": utc_now(), "approval_comment": comment, "internal_proposal_id": proposal_id}
+        updated_batch = self._update_batch(
+            batch_id,
+            status="execution_planning",
+            fields={
+                "optimization_plan": approved_plan,
+                "internal_proposal_id": proposal_id,
+                "optimization_task_id": task["optimization_task_id"],
+                "optimization_task": task,
+            },
+        )
+        return {"batch": updated_batch, "optimization_task": task}
+
+    def reject_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+        if not batch or not plan:
+            return None
+        rejected_plan = {**plan, "status": "rejected", "rejected_at": utc_now(), "rejection_comment": comment}
+        return self._update_batch(batch_id, status="rejected", fields={"optimization_plan": rejected_plan})
+
+    def prepare_batch_plan_task_execution(
+        self,
+        batch_id: str,
+        plan_task_id: str,
+        *,
+        comment: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        batch, plan, plan_task = self._batch_plan_task(batch_id, plan_task_id)
+        if not batch or not plan or not plan_task:
+            return None
+        if plan_task.get("execution_kind") != "workspace_execution":
+            raise ValueError("Optimization plan task is not executable by execution-optimizer")
+        target_path = self._string(plan_task.get("target_path"))
+        if not target_path or not self._target_allowed(target_path):
+            raise ValueError("Optimization plan task target is not actionable")
+        existing_task_id = self._string(plan_task.get("optimization_task_id"))
+        existing_task = self.find_task(existing_task_id) if existing_task_id else None
+        if existing_task:
+            updated = self._update_batch_plan_task(
+                batch_id,
+                plan_task_id,
+                {
+                    "status": existing_task.get("status") or "execution_planning",
+                    "optimization_task_id": existing_task["optimization_task_id"],
+                    "execution_job_id": existing_task.get("latest_execution_job_id"),
+                    "latest_execution_job": existing_task.get("latest_execution_job"),
+                    "applied_agent_version_id": existing_task.get("applied_agent_version_id"),
+                },
+                batch_status=str(existing_task.get("status") or "execution_planning"),
+                top_level_fields={"optimization_task_id": existing_task["optimization_task_id"], "optimization_task": existing_task},
+            )
+            return {"batch": updated, "optimization_task": existing_task, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
+
+        proposal_id = self._string(plan_task.get("internal_proposal_id")) or f"prop-{uuid.uuid4()}"
+        feedback_case_id = self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or ""
+        now = utc_now()
+        proposal_actionability = self._string(plan_task.get("actionability"))
+        if proposal_actionability not in {"direct_workspace_change", "workspace_config_change"}:
+            proposal_actionability = "direct_workspace_change"
+        proposal = {
+            "proposal_id": proposal_id,
+            "created_at": now,
+            "feedback_case_id": feedback_case_id,
+            "proposal_job_id": f"batch-plan-task-{batch_id}-{plan_task_id}",
+            "status": "approved",
+            "actionability": proposal_actionability,
+            "target_type": plan_task.get("target_type") or "main_agent_claude_md",
+            "target_path": target_path,
+            "title": plan_task.get("title") or plan.get("title") or "反馈批次优化任务",
+            "description": plan_task.get("description") or "",
+            "objective": plan_task.get("objective") or "",
+            "target_summary": plan_task.get("target_summary") or "",
+            "task_context": plan_task.get("task_context") if isinstance(plan_task.get("task_context"), dict) else {},
+            "recommendation": plan_task.get("recommendation") or plan.get("recommendation") or "",
+            "recommended_actions": plan_task.get("recommended_actions") or [],
+            "acceptance_criteria": plan_task.get("acceptance_criteria") or [],
+            "expected_effect": plan_task.get("expected_effect") or plan.get("expected_effect") or "",
+            "validation": plan_task.get("validation") or plan.get("validation") or "",
+            "risk": plan_task.get("risk") or plan.get("risk") or "",
+            "analysis_summary": plan_task.get("analysis_summary") or "",
+            "evidence_summary": plan_task.get("evidence_summary") or "",
+            "evidence_refs": plan_task.get("evidence_refs") or [],
+            "regeneration_instruction": plan.get("regeneration_instruction"),
+            "requires_approval": True,
+            "base_agent_version_id": self._current_agent_version_id(),
+            "source_batch_id": batch_id,
+            "source_plan_task_id": plan_task_id,
+            "source_feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
+            "source_refs": batch.get("source_refs") or [],
+            "latest_review": {
+                "review_id": f"opr-{uuid.uuid4()}",
+                "proposal_id": proposal_id,
+                "created_at": now,
+                "action": "approve",
+                "status": "approved",
+                "comment": comment,
+                "source": "feedback_optimization_plan_task",
+            },
+        }
+        with self.Session.begin() as db:
+            db.merge(self._proposal_model_from_dict(proposal))
+        task = self.create_task(proposal_id=proposal_id, execution_mode="manual_or_patch", comment=comment or f"由优化批次 {batch_id} 的任务 {plan_task_id} 执行创建。")
+        if not task:
+            return None
+        task = self._update_task_payload(
+            task["optimization_task_id"],
+            status=task["status"],
+            fields={
+                "source": "feedback_optimization_batch",
+                "source_batch_id": batch_id,
+                "source_plan_task_id": plan_task_id,
+                "feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
+                "eval_case_ids": batch.get("eval_case_ids") or [],
+            },
+        ) or task
+        optimization_task_ids = self._unique_strings([*(batch.get("optimization_task_ids") or []), task["optimization_task_id"]])
+        updated = self._update_batch_plan_task(
+            batch_id,
+            plan_task_id,
+            {
+                "status": "execution_planning",
+                "internal_proposal_id": proposal_id,
+                "optimization_task_id": task["optimization_task_id"],
+            },
+            batch_status="execution_planning",
+            top_level_fields={
+                "internal_proposal_id": batch.get("internal_proposal_id") or proposal_id,
+                "optimization_task_id": batch.get("optimization_task_id") or task["optimization_task_id"],
+                "optimization_task": task,
+                "optimization_task_ids": optimization_task_ids,
+            },
+        )
+        return {"batch": updated, "optimization_task": task, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
+
+    def notify_batch_plan_task_external(
+        self,
+        batch_id: str,
+        plan_task_id: str,
+        *,
+        webhook_alias: str,
+        sender: Optional[Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]] = None,
+    ) -> Optional[dict[str, Any]]:
+        batch, plan, plan_task = self._batch_plan_task(batch_id, plan_task_id)
+        if not batch or not plan or not plan_task:
+            return None
+        if plan_task.get("execution_kind") != "external_webhook":
+            raise ValueError("Optimization plan task is not an external webhook task")
+        item = self._upsert_external_governance_item_for_plan_task(batch, plan, plan_task)
+        notified = self.notify_external_governance_item(item["external_item_id"], webhook_alias=webhook_alias, sender=sender)
+        if not notified:
+            return None
+        updated = self._update_batch_plan_task(
+            batch_id,
+            plan_task_id,
+            {
+                "status": notified.get("status") or "notification_failed",
+                "external_item_id": notified.get("external_item_id"),
+                "latest_webhook_alias": notified.get("latest_webhook_alias"),
+                "latest_notification": notified.get("latest_notification"),
+            },
+            batch_status=str(batch.get("status") or "pending_approval"),
+        )
+        return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
+
+    def record_batch_execution_result(
+        self,
+        batch_id: str,
+        *,
+        execution_job: Optional[dict[str, Any]] = None,
+        optimization_task: Optional[dict[str, Any]] = None,
+        applied: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        fields: dict[str, Any] = {}
+        status = "execution_planning"
+        if execution_job:
+            fields["execution_job_id"] = execution_job.get("execution_job_id")
+            fields["execution_job"] = execution_job
+            status = "execution_ready" if execution_job.get("status") == "ready" else str(execution_job.get("status") or status)
+        if optimization_task:
+            fields["optimization_task_id"] = optimization_task.get("optimization_task_id")
+            fields["optimization_task"] = optimization_task
+            status = str(optimization_task.get("status") or status)
+        if applied:
+            fields["execution_apply_result"] = applied
+            task = applied.get("optimization_task") if isinstance(applied.get("optimization_task"), dict) else None
+            if task:
+                fields["optimization_task"] = task
+                status = str(task.get("status") or "applied_pending_regression")
+        return self._update_batch(batch_id, status=status, fields=fields)
+
+    def record_batch_plan_task_execution_result(
+        self,
+        batch_id: str,
+        plan_task_id: str,
+        *,
+        execution_job: Optional[dict[str, Any]] = None,
+        optimization_task: Optional[dict[str, Any]] = None,
+        applied: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        task_updates: dict[str, Any] = {}
+        top_level_fields: dict[str, Any] = {}
+        status = "execution_planning"
+        if execution_job:
+            task_updates["execution_job_id"] = execution_job.get("execution_job_id")
+            task_updates["latest_execution_job"] = execution_job
+            status = "execution_ready" if execution_job.get("status") == "ready" else str(execution_job.get("status") or status)
+            top_level_fields.update({"execution_job_id": execution_job.get("execution_job_id"), "execution_job": execution_job})
+        if optimization_task:
+            task_updates["optimization_task_id"] = optimization_task.get("optimization_task_id")
+            task_updates["status"] = optimization_task.get("status") or status
+            task_updates["applied_agent_version_id"] = optimization_task.get("applied_agent_version_id")
+            status = str(optimization_task.get("status") or status)
+            top_level_fields.update({"optimization_task_id": optimization_task.get("optimization_task_id"), "optimization_task": optimization_task})
+        if applied:
+            task_updates["execution_apply_result"] = applied
+            top_level_fields["execution_apply_result"] = applied
+            applied_job = applied.get("execution_job") if isinstance(applied.get("execution_job"), dict) else None
+            if applied_job:
+                task_updates["execution_job_id"] = applied_job.get("execution_job_id")
+                task_updates["latest_execution_job"] = applied_job
+                top_level_fields["execution_job_id"] = applied_job.get("execution_job_id")
+                top_level_fields["execution_job"] = applied_job
+            task = applied.get("optimization_task") if isinstance(applied.get("optimization_task"), dict) else None
+            if task:
+                task_updates["optimization_task_id"] = task.get("optimization_task_id")
+                task_updates["status"] = task.get("status") or "applied_pending_regression"
+                task_updates["applied_agent_version_id"] = task.get("applied_agent_version_id")
+                top_level_fields["optimization_task"] = task
+                status = str(task.get("status") or "applied_pending_regression")
+        if "status" not in task_updates:
+            task_updates["status"] = status
+        return self._update_batch_plan_task(batch_id, plan_task_id, task_updates, batch_status=status, top_level_fields=top_level_fields)
+
+    def record_batch_regression_result(self, batch_id: str, eval_run: dict[str, Any]) -> Optional[dict[str, Any]]:
+        result_status = str(eval_run.get("result_status") or eval_run.get("status") or "needs_human_review")
+        status = "completed" if result_status == "passed" else result_status
+        return self._update_batch(
+            batch_id,
+            status=status,
+            fields={"eval_run_id": eval_run.get("eval_run_id"), "latest_eval_run": eval_run},
+        )
 
     def create_case(
         self,
@@ -643,6 +1427,11 @@ class FeedbackStore:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
+        if force:
+            self.discard_current_attribution(feedback_case_id, invalidate_downstream=True)
+            feedback_case = self.find_case(feedback_case_id)
+            if not feedback_case:
+                return None
         existing = None if force else self._latest_reusable_job(feedback_case_id, "attribution")
         if existing:
             return {**existing, "_reused_existing": True}
@@ -687,7 +1476,7 @@ class FeedbackStore:
             feedback_case_id=feedback_case_id,
             evidence_package_id=evidence_package_id,
             status="queued",
-            profile_name="feedback-attribution",
+            profile_name="attribution-analyzer",
             input_path=input_path,
             profile_version=profile_version,
         )
@@ -740,7 +1529,8 @@ class FeedbackStore:
             "attribution_output_path": attribution_output_path,
             "main_agent_version_id": self._current_agent_version_id(),
             "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
-            "allowed_target_paths": list(DIRECT_TARGET_PREFIXES),
+            "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
+            "target_policy": self._execution_target_policy(),
             "task": "generate_optimization_proposals",
         }
         if regeneration_instruction:
@@ -752,7 +1542,7 @@ class FeedbackStore:
             feedback_case_id=feedback_case_id,
             evidence_package_id=evidence_package_id,
             status="queued",
-            profile_name="feedback-proposal",
+            profile_name="proposal-generator",
             input_path=input_path,
             profile_version=profile_version,
             attribution_job_id=attribution_job_id,
@@ -872,6 +1662,18 @@ class FeedbackStore:
                 self._append_case_update(feedback_case, status="pending_attribution")
             elif job.get("job_type") == "proposal":
                 self._append_case_update(feedback_case, status="pending_proposal")
+        if job.get("job_type") == "batch_plan":
+            batch_id = self._job_batch_id(job)
+            if batch_id:
+                self._update_batch(
+                    batch_id,
+                    status="needs_human_review",
+                    fields={
+                        "optimization_plan_job_id": job_id,
+                        "optimization_plan_job": failed,
+                        "optimization_plan_error": (failed or {}).get("error_json"),
+                    },
+                )
         self._cleanup_job_tmp(job_id)
         return failed
 
@@ -888,6 +1690,27 @@ class FeedbackStore:
             return None
         output = job.get("validated_output_json")
         return output if isinstance(output, dict) else None
+
+    def discard_current_attribution(self, feedback_case_id: str, *, invalidate_downstream: bool = True) -> Optional[dict[str, Any]]:
+        feedback_case = self.find_case(feedback_case_id)
+        if not feedback_case:
+            return None
+        attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
+        proposal_job_id = self._latest(feedback_case.get("proposal_job_ids")) if invalidate_downstream else None
+        if attribution_job_id:
+            self._discard_job(attribution_job_id)
+        if proposal_job_id:
+            self._discard_proposal_job(proposal_job_id)
+        with self.Session.begin() as db:
+            row = db.get(FeedbackCaseModel, feedback_case_id)
+            if not row:
+                return feedback_case
+            row.updated_at = utc_now()
+            row.status = "pending_attribution"
+            row.current_attribution_job_id = None
+            if invalidate_downstream:
+                row.current_proposal_job_id = None
+        return self.find_case(feedback_case_id)
 
     def list_proposals(
         self,
@@ -969,6 +1792,10 @@ class FeedbackStore:
                 "comment": comment,
                 "target_paths": [target_path],
                 "proposal": proposal,
+                "baseline_agent_version_id": proposal.get("base_agent_version_id") or self._current_agent_version_id(),
+                "execution_job_ids": [],
+                "latest_execution_job_id": None,
+                "latest_execution_job": None,
             }
         )
         with self.Session.begin() as db:
@@ -998,12 +1825,194 @@ class FeedbackStore:
             tasks = [row.payload_json for row in db.scalars(select(OptimizationTaskModel).order_by(OptimizationTaskModel.created_at.desc())).all()]
         return self._filter_records(tasks, {"feedback_case_id": feedback_case_id, "status": status}, limit)
 
+    def target_allowed(self, target_path: str) -> bool:
+        return self._target_allowed(target_path)
+
     def find_task(self, task_id: str) -> Optional[dict[str, Any]]:
         if not task_id:
             return None
         with self.Session() as db:
             row = db.get(OptimizationTaskModel, task_id)
             return row.payload_json if row else None
+
+    def create_execution_job(
+        self,
+        task_id: str,
+        *,
+        profile_version: Optional[dict[str, Any]] = None,
+        force: bool = False,
+    ) -> Optional[dict[str, Any]]:
+        task = self.find_task(task_id)
+        if not task or task.get("applied_agent_version_id"):
+            return None
+        proposal = task.get("proposal") if isinstance(task.get("proposal"), dict) else None
+        if not proposal or proposal.get("status") != "approved":
+            return None
+        if proposal.get("actionability") not in {"direct_workspace_change", "workspace_config_change"}:
+            return None
+        target_paths = [str(path) for path in task.get("target_paths") or [] if isinstance(path, str)]
+        if not target_paths or any(not self._target_allowed(path) for path in target_paths):
+            return None
+        if not force:
+            existing = self._latest_execution_job(task_id)
+            if existing and existing.get("status") in {"queued", "running", "ready", "needs_human_review"}:
+                return {**existing, "_reused_existing": True}
+        job_id = f"fbe-{uuid.uuid4()}"
+        baseline_version_id = self._string(task.get("baseline_agent_version_id")) or self._current_agent_version_id()
+        input_payload = {
+            "schema_version": "execution-input/v1",
+            "execution_job_id": job_id,
+            "optimization_task_id": task_id,
+            "feedback_case_id": task.get("feedback_case_id"),
+            "proposal_id": task.get("proposal_id"),
+            "proposal": proposal,
+            "target_paths": target_paths,
+            "allowed_target_paths": target_paths,
+            "target_policy": self._execution_target_policy(),
+            "target_file_contexts": self._execution_target_file_contexts(target_paths),
+            "baseline_agent_version_id": baseline_version_id,
+            "current_agent_version_id": self._current_agent_version_id(),
+            "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
+            "task": "generate_controlled_execution_plan",
+        }
+        input_path = self._write_job_input(job_id, "execution", input_payload)
+        now = utc_now()
+        job = self._scrub_record(
+            {
+                "execution_job_id": job_id,
+                "optimization_task_id": task_id,
+                "feedback_case_id": task.get("feedback_case_id"),
+                "proposal_id": task.get("proposal_id"),
+                "status": "queued",
+                "profile_name": "execution-optimizer",
+                "created_at": now,
+                "started_at": None,
+                "completed_at": None,
+                "baseline_agent_version_id": baseline_version_id,
+                "input_path": input_path,
+                "input_json": input_payload,
+                "raw_output_json": None,
+                "validated_output_json": None,
+                "error_json": None,
+                "profile_version": profile_version,
+            }
+        )
+        with self.Session.begin() as db:
+            db.add(
+                OptimizationExecutionModel(
+                    execution_job_id=job_id,
+                    optimization_task_id=task_id,
+                    feedback_case_id=self._string(task.get("feedback_case_id")),
+                    proposal_id=self._string(task.get("proposal_id")),
+                    status="queued",
+                    profile_name="execution-optimizer",
+                    created_at=now,
+                    baseline_agent_version_id=baseline_version_id,
+                    payload_json=job,
+                )
+            )
+        self._attach_execution_job_to_task(task_id, job, status="execution_planning")
+        return self.get_execution_job(job_id)
+
+    def start_execution_job(self, execution_job_id: str) -> Optional[dict[str, Any]]:
+        return self._update_execution_job_payload(execution_job_id, status="running", fields={"started_at": utc_now()})
+
+    def complete_execution_job(self, execution_job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+        job = self.get_execution_job(execution_job_id)
+        if not job:
+            return None
+        output = self._execution_output_with_job_context(raw_output, job)
+        validated, error = validate_execution_plan_output(output)
+        if not validated:
+            failed = self.fail_execution_job(execution_job_id, "SCHEMA_VALIDATION_FAILED", error or "invalid execution output")
+            return failed
+        sanitized, sanitize_error = self._sanitize_execution_plan(validated, job)
+        if sanitize_error:
+            failed = self.fail_execution_job(execution_job_id, "EXECUTION_PLAN_UNSAFE", sanitize_error)
+            return failed
+        next_status = "ready" if sanitized.get("status") == "ready" else "needs_human_review"
+        updated = self._update_execution_job_payload(
+            execution_job_id,
+            status=next_status,
+            fields={
+                "completed_at": utc_now(),
+                "raw_output_json": raw_output,
+                "validated_output_json": sanitized,
+                "error_json": None,
+            },
+        )
+        if updated:
+            self._attach_execution_job_to_task(
+                str(updated["optimization_task_id"]),
+                updated,
+                status="execution_ready" if next_status == "ready" else "needs_human_review",
+            )
+        return updated
+
+    def _execution_output_with_job_context(self, raw_output: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+        output = dict(raw_output)
+        output["execution_job_id"] = self._string(output.get("execution_job_id")) or self._string(job.get("execution_job_id"))
+        output["optimization_task_id"] = self._string(output.get("optimization_task_id")) or self._string(job.get("optimization_task_id"))
+        output["baseline_agent_version_id"] = self._string(output.get("baseline_agent_version_id")) or self._string(job.get("baseline_agent_version_id"))
+        return output
+
+    def fail_execution_job(self, execution_job_id: str, error_code: str, message: str) -> Optional[dict[str, Any]]:
+        error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "execution_job_id": execution_job_id}
+        failed = self._update_execution_job_payload(
+            execution_job_id,
+            status="failed",
+            fields={"completed_at": utc_now(), "error_json": error_payload},
+        )
+        if failed:
+            self._attach_execution_job_to_task(str(failed["optimization_task_id"]), failed, status="execution_failed")
+        return failed
+
+    def mark_execution_job_applied(
+        self,
+        execution_job_id: str,
+        *,
+        pre_execution_version: dict[str, Any],
+        applied_agent_version: dict[str, Any],
+        applied_diff: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        job = self.get_execution_job(execution_job_id)
+        if not job:
+            return None
+        fields = {
+            "completed_at": utc_now(),
+            "pre_execution_agent_version_id": self._string(pre_execution_version.get("agent_version_id")),
+            "pre_execution_agent_version": pre_execution_version,
+            "applied_agent_version_id": self._string(applied_agent_version.get("agent_version_id")),
+            "applied_agent_version": applied_agent_version,
+            "applied_diff": applied_diff or {},
+        }
+        updated_job = self._update_execution_job_payload(execution_job_id, status="completed", fields=fields)
+        if updated_job:
+            self._attach_execution_job_to_task(str(updated_job["optimization_task_id"]), updated_job, status="applied_pending_regression")
+            self.mark_task_applied(
+                str(updated_job["optimization_task_id"]),
+                agent_version=applied_agent_version,
+                note=f"execution-optimizer 应用执行方案 {execution_job_id}。",
+                pre_execution_version=pre_execution_version,
+                execution_job=updated_job,
+            )
+        return updated_job
+
+    def get_execution_job(self, execution_job_id: str) -> Optional[dict[str, Any]]:
+        if not execution_job_id:
+            return None
+        with self.Session() as db:
+            row = db.get(OptimizationExecutionModel, execution_job_id)
+            return self._execution_job_to_dict(row) if row else None
+
+    def list_execution_jobs(self, task_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(
+                select(OptimizationExecutionModel)
+                .where(OptimizationExecutionModel.optimization_task_id == task_id)
+                .order_by(OptimizationExecutionModel.created_at.desc())
+            ).all()
+        return [self._execution_job_to_dict(row) for row in rows[:limit]]
 
     def list_external_webhooks(self) -> list[dict[str, Any]]:
         if not self.external_webhooks_path.exists():
@@ -1133,21 +2142,30 @@ class FeedbackStore:
         *,
         agent_version: dict[str, Any],
         note: Optional[str] = None,
+        pre_execution_version: Optional[dict[str, Any]] = None,
+        execution_job: Optional[dict[str, Any]] = None,
     ) -> Optional[dict[str, Any]]:
         task = self.find_task(task_id)
         if not task:
             return None
         if task.get("applied_agent_version_id"):
             return task
+        fields = {
+            "applied_at": utc_now(),
+            "applied_agent_version_id": self._string(agent_version.get("agent_version_id")),
+            "applied_agent_version": agent_version,
+            "application_note": note,
+        }
+        if pre_execution_version:
+            fields["pre_execution_agent_version_id"] = self._string(pre_execution_version.get("agent_version_id"))
+            fields["pre_execution_agent_version"] = pre_execution_version
+        if execution_job:
+            fields["latest_execution_job_id"] = execution_job.get("execution_job_id")
+            fields["latest_execution_job"] = execution_job
         return self._update_task_payload(
             task_id,
             status="applied_pending_regression",
-            fields={
-                "applied_at": utc_now(),
-                "applied_agent_version_id": self._string(agent_version.get("agent_version_id")),
-                "applied_agent_version": agent_version,
-                "application_note": note,
-            },
+            fields=fields,
         )
 
     def update_task_status(
@@ -1471,10 +2489,10 @@ class FeedbackStore:
                 {
                     "type": "evidence_package",
                     "id": job["evidence_package_id"],
-                    "reason": "证据包已固化；当前未配置模型提供商，需人工或归因 Agent 补充分析。",
+                    "reason": "证据包已固化；当前未配置模型提供商，需人工或归因分析智能体补充分析。",
                 }
             ],
-            "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "未形成可安全转为主 Agent workspace 修改的归因结论。"},
+            "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "未形成可安全转为主智能体 workspace 修改的归因结论。"},
             "rationale": "采集链路不再使用旧版规则归因；离线模式仅生成低置信、需人工复核的结构化占位结果。",
             "recommended_next_step": "needs_human_review",
         }
@@ -1490,11 +2508,81 @@ class FeedbackStore:
                 {
                     "owner": "needs_human_analysis",
                     "actionability": "needs_human_analysis",
-                    "recommendation": "当前没有高置信归因输出，不能创建主 Agent workspace 修改建议。",
+                    "recommendation": "当前没有高置信归因输出，不能创建主智能体 workspace 修改方案。",
                     "reason": "归因 job 未给出 direct_workspace_change 或 workspace_config_change。",
                 }
             ],
             "no_action_reason": "needs_human_analysis",
+        }
+
+    def offline_execution_plan_output(self, job: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": job["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "needs_human_review",
+            "baseline_agent_version_id": job.get("baseline_agent_version_id"),
+            "summary": "当前未配置模型提供商，系统不能自动生成受控 patch。",
+            "operations": [],
+            "validation": "人工按优化方案修改后，可继续使用人工标记已应用兜底流程。",
+            "risk": "离线占位不会修改主智能体 workspace。",
+            "human_review_required": True,
+            "no_action_reason": "MODEL_PROVIDER_NOT_CONFIGURED",
+        }
+
+    def deterministic_execution_plan_output(self, job: dict[str, Any]) -> Optional[dict[str, Any]]:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        proposal = input_json.get("proposal") if isinstance(input_json.get("proposal"), dict) else {}
+        target_paths = [str(path) for path in input_json.get("target_paths") or [] if isinstance(path, str)]
+        if len(target_paths) != 1:
+            return None
+        target_path = target_paths[0]
+        if not target_path.startswith("evals/") or proposal.get("target_type") != "eval_case":
+            return None
+        recommendation = self._string(proposal.get("recommendation")) or self._string(proposal.get("title")) or "反馈回归评估用例"
+        content = {
+            "schema_version": "feedback-eval-case/v1",
+            "source": "execution_optimizer",
+            "source_feedback_case_id": input_json.get("feedback_case_id"),
+            "source_proposal_id": input_json.get("proposal_id"),
+            "source_optimization_task_id": input_json.get("optimization_task_id"),
+            "title": self._string(proposal.get("title")) or "反馈回归评估用例",
+            "prompt": recommendation,
+            "labels": self._unique_strings(["feedback_optimization", "eval_case", "execution_optimizer"]),
+            "expected_behavior": self._string(proposal.get("expected_effect"))
+            or self._string(proposal.get("validation"))
+            or recommendation,
+            "checks_json": {
+                "requires_non_empty_answer": True,
+                "requires_no_runtime_errors": True,
+                "requires_human_review": True,
+                "notes": "由 execution-optimizer 根据已批准优化方案生成的评估用例草案，首次应用后建议人工补充精确断言。",
+            },
+            "source_summary": {
+                "recommendation": recommendation,
+                "validation": proposal.get("validation"),
+                "risk": proposal.get("risk"),
+                "target_path": target_path,
+            },
+        }
+        return {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": job["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": job.get("baseline_agent_version_id"),
+            "summary": "根据已批准的评估用例建议生成受控 create_file 执行方案。",
+            "operations": [
+                {
+                    "operation": "create_file",
+                    "path": target_path,
+                    "content": json.dumps(content, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+                    "rationale": "目标为 evals/ 下的评估用例文件，可由后端根据方案确定性生成草案，避免执行优化智能体生成超长 JSON 超时。",
+                }
+            ],
+            "validation": "应用前检查将创建的评估用例 JSON、目标路径和必需字段；应用后可在评估用例详情中补充精确断言，再手动运行回归验证。",
+            "risk": "该方案只新增评估用例草案，不修改主智能体指令；语义断言仍需人工复核。",
+            "human_review_required": True,
         }
 
     def _normalize_proposal_output(self, output: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
@@ -1584,6 +2672,1246 @@ class FeedbackStore:
                 result.append({**guidance, **payload})
             return result
 
+    def _upsert_external_governance_item_for_plan_task(
+        self,
+        batch: dict[str, Any],
+        plan: dict[str, Any],
+        plan_task: dict[str, Any],
+    ) -> dict[str, Any]:
+        existing_id = self._string(plan_task.get("external_item_id"))
+        existing = self.find_external_governance_item(existing_id) if existing_id else None
+        now = utc_now()
+        external_item_id = existing_id or f"egi-{uuid.uuid4()}"
+        feedback_case_id = self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or ""
+        proposal_job_id = f"batch-plan-task-{batch['batch_id']}-{plan_task['plan_task_id']}"
+        payload = {
+            "schema_version": "external-governance-item/v1",
+            "external_item_id": external_item_id,
+            "created_at": existing.get("created_at") if existing else now,
+            "updated_at": now,
+            "status": existing.get("status") if existing else "pending_notification",
+            "feedback_case_id": feedback_case_id,
+            "proposal_job_id": proposal_job_id,
+            "source_index": int(plan_task.get("source_index") or 0),
+            "owner": self._string(plan_task.get("owner")) or self._string(plan_task.get("target_type")) or "external_system",
+            "actionability": self._string(plan_task.get("actionability")) or "external_guidance",
+            "title": self._string(plan_task.get("title")) or "外部系统优化任务",
+            "description": self._string(plan_task.get("description")) or "",
+            "objective": self._string(plan_task.get("objective")) or "",
+            "target_summary": self._string(plan_task.get("target_summary")) or "",
+            "task_context": plan_task.get("task_context") if isinstance(plan_task.get("task_context"), dict) else {},
+            "recommendation": self._string(plan_task.get("recommendation")) or "",
+            "recommended_actions": self._string_list(plan_task.get("recommended_actions")),
+            "acceptance_criteria": self._string_list(plan_task.get("acceptance_criteria")),
+            "expected_effect": self._string(plan_task.get("expected_effect")) or "",
+            "validation": self._string(plan_task.get("validation")) or "",
+            "risk": self._string(plan_task.get("risk")) or "",
+            "analysis_summary": self._string(plan_task.get("analysis_summary")) or "",
+            "evidence_summary": self._string(plan_task.get("evidence_summary")) or "",
+            "evidence_refs": [dict(ref) for ref in plan_task.get("evidence_refs") or [] if isinstance(ref, dict)],
+            "reason": self._string(plan_task.get("reason")) or self._string(plan_task.get("rationale")),
+            "latest_notification_id": existing.get("latest_notification_id") if existing else None,
+            "latest_webhook_alias": existing.get("latest_webhook_alias") if existing else None,
+            "latest_notification": existing.get("latest_notification") if existing else None,
+            "source": "feedback_optimization_batch",
+            "batch_id": batch.get("batch_id"),
+            "optimization_plan_id": plan.get("optimization_plan_id"),
+            "plan_task_id": plan_task.get("plan_task_id"),
+            "target_type": plan_task.get("target_type"),
+            "target_path": plan_task.get("target_path"),
+            "feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
+            "eval_case_ids": batch.get("eval_case_ids") or [],
+            "source_attribution_job_ids": plan_task.get("attribution_job_ids") or [],
+        }
+        with self.Session.begin() as db:
+            row = db.get(ExternalGovernanceItemModel, external_item_id)
+            if row:
+                row.updated_at = now
+                row.status = payload["status"]
+                row.owner = payload["owner"]
+                row.actionability = payload["actionability"]
+                row.payload_json = {**(row.payload_json or {}), **payload}
+            else:
+                db.add(
+                    ExternalGovernanceItemModel(
+                        external_item_id=external_item_id,
+                        created_at=payload["created_at"],
+                        updated_at=payload["updated_at"],
+                        status=payload["status"],
+                        feedback_case_id=payload["feedback_case_id"],
+                        proposal_job_id=payload["proposal_job_id"],
+                        owner=payload["owner"],
+                        actionability=payload["actionability"],
+                        latest_notification_id=payload["latest_notification_id"],
+                        payload_json=payload,
+                    )
+                )
+        return self.find_external_governance_item(external_item_id) or payload
+
+    def _normalize_source_kind(self, source_kind: str) -> str:
+        normalized = str(source_kind or "").strip()
+        aliases = {
+            "feedback_signal": "signal",
+            "event": "soc_event",
+            "pending": "pending_correlation",
+        }
+        normalized = aliases.get(normalized, normalized)
+        if normalized not in {"signal", "soc_event", "pending_correlation"}:
+            raise ValueError(f"Unsupported feedback source kind: {source_kind}")
+        return normalized
+
+    def _normalize_source_refs(self, source_refs: list[dict[str, Any]]) -> list[dict[str, str]]:
+        refs: list[dict[str, str]] = []
+        seen: set[tuple[str, str]] = set()
+        for item in source_refs:
+            if not isinstance(item, dict):
+                continue
+            try:
+                kind = self._normalize_source_kind(str(item.get("source_kind") or item.get("kind") or ""))
+            except ValueError:
+                continue
+            source_id = self._string(item.get("source_id") or item.get("id"))
+            if not source_id:
+                continue
+            key = (kind, source_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            refs.append({"source_kind": kind, "source_id": source_id})
+        return refs
+
+    def _find_source_record(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+        kind = self._normalize_source_kind(source_kind)
+        if kind == "signal":
+            return self.find_signal(source_id)
+        if kind == "soc_event":
+            return self.find_event(source_id)
+        return self.find_pending(source_id)
+
+    def _source_annotation_id(self, source_kind: str, source_id: str) -> str:
+        return f"{self._normalize_source_kind(source_kind)}:{source_id}"
+
+    def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.get(FeedbackSourceAnnotationModel, self._source_annotation_id(source_kind, source_id))
+            return dict(row.payload_json or {}) if row else None
+
+    def _source_annotations_by_key(self) -> dict[tuple[str, str], dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(select(FeedbackSourceAnnotationModel)).all()
+        return {(row.source_kind, row.source_id): dict(row.payload_json or {}) for row in rows}
+
+    def _cases_by_source_id(self) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for feedback_case in self.list_cases(limit=1000):
+            for source_id in feedback_case.get("source_ids") or []:
+                if isinstance(source_id, str) and source_id and source_id not in result:
+                    result[source_id] = feedback_case
+        return result
+
+    def _find_case_for_source_id(self, source_id: str) -> Optional[dict[str, Any]]:
+        if not source_id:
+            return None
+        for feedback_case in self.list_cases(limit=1000):
+            if source_id in (feedback_case.get("source_ids") or []):
+                return feedback_case
+        return None
+
+    def _source_row(
+        self,
+        *,
+        source_kind: str,
+        source_id: str,
+        raw: dict[str, Any],
+        annotation: Optional[dict[str, Any]] = None,
+        feedback_case: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        annotation = annotation or {}
+        feedback_case_id = self._string((feedback_case or {}).get("feedback_case_id"))
+        eval_case = self.find_eval_case(source_feedback_case_id=feedback_case_id) if feedback_case_id else None
+        attribution_job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))
+        attribution_job = self.get_job(attribution_job_id) if attribution_job_id else None
+        run_id = (
+            self._string(raw.get("run_id"))
+            or self._string(raw.get("matched_run_id"))
+            or self._string(raw.get("resolved_run_id"))
+        )
+        labels = annotation.get("labels") if isinstance(annotation.get("labels"), list) else raw.get("labels")
+        if not isinstance(labels, list):
+            labels = [raw.get("event_type")] if raw.get("event_type") else []
+        comment = self._string(annotation.get("comment")) or self._string(raw.get("comment"))
+        created_at = self._string(raw.get("created_at")) or self._string(raw.get("timestamp")) or self._string(annotation.get("created_at"))
+        updated_at = self._string(annotation.get("updated_at")) or self._string(raw.get("updated_at")) or created_at
+        return {
+            "schema_version": "feedback-source/v1",
+            "source_kind": self._normalize_source_kind(source_kind),
+            "source_id": source_id,
+            "id": source_id,
+            "created_at": created_at,
+            "updated_at": updated_at,
+            "status": self._string(annotation.get("status")) or self._base_source_status(source_kind, raw),
+            "label": self._source_label(source_kind, raw, labels, comment),
+            "labels": self._unique_strings([str(item) for item in labels or [] if str(item).strip()]),
+            "comment": comment,
+            "priority": self._string(annotation.get("priority")) or "medium",
+            "requires_review": bool(annotation.get("requires_review") if "requires_review" in annotation else raw.get("requires_review")),
+            "metadata": annotation.get("metadata") if isinstance(annotation.get("metadata"), dict) else {},
+            "run_id": run_id,
+            "session_id": self._string(raw.get("session_id")),
+            "alert_id": self._string(raw.get("alert_id")),
+            "case_id": self._string(raw.get("case_id")),
+            "feedback_case_id": feedback_case_id,
+            "eval_case_id": self._string((eval_case or {}).get("eval_case_id")),
+            "latest_attribution_job_id": attribution_job_id,
+            "latest_attribution_status": self._string((attribution_job or {}).get("status")),
+            "raw": raw,
+        }
+
+    def _base_source_status(self, source_kind: str, raw: dict[str, Any]) -> str:
+        kind = self._normalize_source_kind(source_kind)
+        if kind == "signal":
+            return "needs_review" if raw.get("requires_review") else "collected"
+        if kind == "soc_event":
+            return "matched" if raw.get("matched_run_id") or raw.get("run_id") else "pending_correlation"
+        return self._string(raw.get("status")) or "pending"
+
+    def _source_label(self, source_kind: str, raw: dict[str, Any], labels: Any, comment: Optional[str]) -> str:
+        if comment:
+            return comment[:120]
+        if isinstance(labels, list) and labels:
+            return ", ".join(str(item) for item in labels[:3])
+        if raw.get("event_type"):
+            return str(raw["event_type"])
+        if raw.get("source_type"):
+            return str(raw["source_type"])
+        return self._normalize_source_kind(source_kind)
+
+    def _source_case_title(self, source: dict[str, Any]) -> str:
+        return (
+            self._string(source.get("comment"))
+            or self._string(source.get("label"))
+            or f"{source.get('source_kind') or 'feedback'} {source.get('source_id') or ''}"
+        )[:120]
+
+    def _build_eval_case_from_source(self, ref: dict[str, str], feedback_case: dict[str, Any]) -> Optional[dict[str, Any]]:
+        source = self.find_feedback_source(ref["source_kind"], ref["source_id"])
+        if not source:
+            return None
+        run_id = self._latest(feedback_case.get("run_ids")) or self._string(source.get("run_id"))
+        source_run = self.find_run(run_id=run_id) if run_id else None
+        prompt = (
+            self._string((source_run or {}).get("message"))
+            or self._string(source.get("comment"))
+            or self._string(source.get("label"))
+            or self._string(feedback_case.get("title"))
+        )
+        if not prompt:
+            return None
+        labels = self._unique_strings(
+            [
+                "feedback_optimization",
+                str(source.get("source_kind") or ""),
+                *[str(item) for item in source.get("labels") or []],
+            ]
+        )
+        checks = {
+            "requires_non_empty_answer": True,
+            "requires_no_runtime_errors": True,
+            "requires_tool_use": any(label in labels for label in ("tool_data_incomplete", "tool_data_quality", "tool_misuse", "evidence_gap")),
+            "preferred_tools": ["Read", "Grep", "Glob"],
+            "notes": "由反馈信息默认生成；开发人员可在反馈信息详情中逐条编辑输入、期望行为和检查规则。",
+        }
+        created_at = utc_now()
+        expected_behavior = (
+            f"复测“{feedback_case.get('title') or source.get('label') or ref['source_id']}”对应原始输入，"
+            "回答应解决反馈备注指出的问题，并保持输出完整、可核查、无运行错误。"
+        )
+        return {
+            "schema_version": "feedback-eval-case/v1",
+            "eval_case_id": f"evc-{uuid.uuid4()}",
+            "created_at": created_at,
+            "updated_at": created_at,
+            "status": "active",
+            "source": "feedback_source_default",
+            "source_feedback_case_id": feedback_case["feedback_case_id"],
+            "source_run_id": run_id,
+            "source_kind": ref["source_kind"],
+            "source_id": ref["source_id"],
+            "source_refs": [ref],
+            "prompt": prompt,
+            "labels": labels,
+            "expected_behavior": expected_behavior,
+            "checks_json": checks,
+            "source_summary": {
+                "feedback_title": feedback_case.get("title"),
+                "source_label": source.get("label"),
+                "comment": source.get("comment"),
+                "original_answer_summary": (source_run or {}).get("answer_summary"),
+            },
+        }
+
+    def _replace_eval_case_payload(self, payload: dict[str, Any]) -> None:
+        with self.Session.begin() as db:
+            row = db.get(EvalCaseModel, payload["eval_case_id"])
+            if not row:
+                return
+            row.updated_at = payload["updated_at"]
+            row.status = payload["status"]
+            row.source_feedback_case_id = self._string(payload.get("source_feedback_case_id"))
+            row.source_run_id = self._string(payload.get("source_run_id"))
+            row.labels_json = list(payload.get("labels") or [])
+            row.payload_json = payload
+
+    def _batch_to_dict(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "batch_id": row.batch_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "status": row.status,
+                "title": row.title,
+            }
+        )
+        task_id = self._string(payload.get("optimization_task_id"))
+        execution_job_id = self._string(payload.get("execution_job_id"))
+        eval_run_id = self._string(payload.get("eval_run_id"))
+        plan = payload.get("optimization_plan") if isinstance(payload.get("optimization_plan"), dict) else None
+        if plan is not None:
+            payload["optimization_plan"] = self._normalize_plan_task_collections(payload, plan)
+        task = self.find_task(task_id) if task_id else None
+        if task:
+            payload["optimization_task"] = task
+            latest_execution = task.get("latest_execution_job") if isinstance(task.get("latest_execution_job"), dict) else None
+            if latest_execution:
+                payload["execution_job"] = latest_execution
+                payload["execution_job_id"] = latest_execution.get("execution_job_id")
+            if not eval_run_id:
+                task_status = self._string(task.get("status"))
+                if task_status in {"execution_planning", "execution_ready", "execution_failed", "needs_human_review", "failed", "applied_pending_regression", "regression_running"}:
+                    payload["status"] = task_status
+        elif execution_job_id and not isinstance(payload.get("execution_job"), dict):
+            payload["execution_job"] = self.get_execution_job(execution_job_id)
+        if eval_run_id and not isinstance(payload.get("latest_eval_run"), dict):
+            payload["latest_eval_run"] = self.get_eval_run(eval_run_id)
+        return payload
+
+    def _normalize_plan_task_collections(self, batch: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+        raw_tasks = [dict(item) for item in plan.get("tasks") or [] if isinstance(item, dict)]
+        executable_tasks = [
+            self._normalize_plan_task(batch, plan, item)
+            for item in raw_tasks
+            if item.get("execution_kind") in {"workspace_execution", "external_webhook"}
+        ]
+        blocked_items = [self._normalize_blocked_item(batch, plan, dict(item)) for item in plan.get("blocked_items") or [] if isinstance(item, dict)]
+        blocked_items.extend(self._blocked_items_from_tasks(batch, plan, raw_tasks))
+        if not raw_tasks and not blocked_items:
+            legacy_item = self._legacy_plan_task_or_blocked_item(batch, plan)
+            if legacy_item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
+                executable_tasks.append(self._normalize_plan_task(batch, plan, legacy_item))
+            else:
+                blocked_items.append(self._normalize_blocked_item(batch, plan, legacy_item))
+        return {
+            **plan,
+            "tasks": executable_tasks,
+            "blocked_items": blocked_items,
+            "task_summary": self._plan_task_summary(executable_tasks),
+            "blocked_summary": {"total": len(blocked_items)},
+        }
+
+    def _normalize_plan_task(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+        target_type = self._string(item.get("target_type")) or self._string(plan.get("target_type")) or "not_actionable"
+        execution_kind = self._string(item.get("execution_kind")) or "workspace_execution"
+        target_path = self._string(item.get("target_path")) or None
+        owner = self._string(item.get("owner")) or self._external_owner_for_target(target_type) or target_type
+        rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
+        analysis_summary = self._string(item.get("analysis_summary")) or self._short_text(rationale, 420)
+        evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
+        evidence_summary = self._string(item.get("evidence_summary")) or self._evidence_summary(evidence_refs)
+        task_context = self._normalize_task_context(item.get("task_context"), rationale, owner)
+        if execution_kind == "external_webhook":
+            owner = self._external_owner_from_context(owner, task_context)
+        target_summary = self._string(item.get("target_summary"))
+        if execution_kind == "external_webhook" and (
+            not target_summary
+            or target_type in target_summary
+            or "external-mcp-service" in target_summary
+            or "对应外部系统" in target_summary
+        ):
+            target_summary = self._plan_task_target_summary(target_type, execution_kind, owner, target_path)
+        normalized = {
+            **item,
+            "schema_version": "feedback-optimization-plan-task/v2",
+            "plan_task_id": self._string(item.get("plan_task_id")) or f"fopt-{uuid.uuid4()}",
+            "execution_kind": execution_kind,
+            "owner": owner,
+            "title": self._clean_plan_task_title(item.get("title"), target_type, execution_kind, int(item.get("source_index") or 0), task_context),
+            "description": self._clean_plan_task_description(item.get("description"), target_type, execution_kind, owner, target_path, task_context),
+            "objective": self._clean_plan_task_objective(item.get("objective"), target_type, execution_kind, task_context),
+            "target_summary": target_summary,
+            "recommended_actions": self._string_list(item.get("recommended_actions")) or self._plan_task_actions(target_type, execution_kind, target_path, owner),
+            "acceptance_criteria": self._clean_plan_task_acceptance_criteria(item.get("acceptance_criteria"), execution_kind, target_path, task_context),
+            "task_context": task_context,
+            "analysis_summary": analysis_summary,
+            "evidence_summary": evidence_summary,
+            "evidence_refs": evidence_refs,
+            "recommendation": self._clean_plan_task_recommendation(item.get("recommendation"), target_type, execution_kind),
+            "feedback_case_ids": self._string_list(item.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
+            "eval_case_ids": self._string_list(item.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
+            "attribution_job_ids": self._string_list(item.get("attribution_job_ids")) or self._string_list(plan.get("attribution_job_ids")),
+        }
+        return normalized
+
+    def _normalize_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+        target_type = self._string(item.get("target_type")) or "not_actionable"
+        evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
+        rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
+        return {
+            **item,
+            "schema_version": "feedback-optimization-blocked-item/v1",
+            "blocked_item_id": self._string(item.get("blocked_item_id")) or self._string(item.get("plan_task_id")) or f"fobi-{uuid.uuid4()}",
+            "status": "blocked",
+            "title": self._string(item.get("title")) or "未形成可执行优化任务",
+            "target_type": target_type,
+            "reason": self._string(item.get("reason")) or rationale or "该项不能自动执行，也没有可通知的外部目标。",
+            "analysis_summary": self._string(item.get("analysis_summary")) or self._short_text(rationale, 420),
+            "evidence_summary": self._string(item.get("evidence_summary")) or self._evidence_summary(evidence_refs),
+            "feedback_case_ids": self._string_list(item.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
+            "eval_case_ids": self._string_list(item.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
+            "attribution_job_ids": self._string_list(item.get("attribution_job_ids")) or self._string_list(plan.get("attribution_job_ids")),
+        }
+
+    def _blocked_items_from_tasks(self, batch: dict[str, Any], plan: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        blocked: list[dict[str, Any]] = []
+        for item in tasks:
+            if item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
+                continue
+            blocked.append(self._normalize_blocked_item(batch, plan, item))
+        return blocked
+
+    def _legacy_plan_task_or_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+        target_type = self._string(plan.get("target_type") or plan.get("optimization_object_type")) or "not_actionable"
+        target_path = self._string(plan.get("target_path")) or None
+        actionability = self._string(plan.get("actionability")) or "needs_human_analysis"
+        execution_kind = "blocked"
+        status = "blocked"
+        reason = self._string(plan.get("no_action_reason")) or self._string(plan.get("recommendation"))
+        if actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"} and target_path and self._target_allowed(target_path):
+            execution_kind = "workspace_execution"
+            status = "pending_execution"
+            reason = None
+        elif actionability == "external_guidance" or target_type in {"external_mcp_service", "soc_process", "mcp_description"}:
+            execution_kind = "external_webhook"
+            status = "pending_notification"
+            reason = None
+        item_id = f"fopt-legacy-{self._string(plan.get('optimization_plan_id')) or self._string(batch.get('batch_id'))}"
+        item = {
+            "schema_version": "feedback-optimization-plan-task/v1",
+            "plan_task_id": item_id,
+            "source_index": 0,
+            "execution_kind": execution_kind,
+            "status": status,
+            "title": plan.get("title") or "历史优化方案任务",
+            "target_type": target_type,
+            "target_path": target_path,
+            "owner": self._external_owner_for_target(target_type) or target_type,
+            "actionability": actionability,
+            "confidence": plan.get("confidence"),
+            "problem_type": self._latest(plan.get("problem_types") or []),
+            "recommendation": plan.get("recommendation") or "",
+            "expected_effect": plan.get("expected_effect") or "",
+            "validation": plan.get("validation") or "",
+            "risk": plan.get("risk") or "",
+            "rationale": plan.get("rationale") or "",
+            "reason": reason,
+            "feedback_case_ids": plan.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
+            "eval_case_ids": plan.get("eval_case_ids") or batch.get("eval_case_ids") or [],
+            "attribution_job_ids": plan.get("attribution_job_ids") or [],
+            "created_at": plan.get("created_at") or batch.get("created_at"),
+        }
+        if execution_kind == "blocked":
+            item.update(
+                {
+                    "schema_version": "feedback-optimization-blocked-item/v1",
+                    "blocked_item_id": item_id,
+                    "reason": reason or "历史方案未形成可执行任务。",
+                }
+            )
+        return item
+
+    def _update_batch(self, batch_id: str, *, status: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        now = utc_now()
+        with self.Session.begin() as db:
+            row = db.get(FeedbackOptimizationBatchModel, batch_id)
+            if not row:
+                return None
+            payload = dict(row.payload_json or {})
+            payload.update(fields)
+            payload["status"] = status
+            payload["updated_at"] = now
+            row.status = status
+            row.updated_at = now
+            row.title = self._string(payload.get("title")) or row.title
+            row.payload_json = payload
+        return self.find_optimization_batch(batch_id)
+
+    def _batch_plan_task(self, batch_id: str, plan_task_id: str) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+        batch = self.find_optimization_batch(batch_id)
+        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+        if not batch or not plan:
+            return None, None, None
+        task = self._plan_task_from_batch(batch, plan_task_id)
+        return batch, plan, task
+
+    def _plan_task_from_batch(self, batch: Optional[dict[str, Any]], plan_task_id: str) -> Optional[dict[str, Any]]:
+        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+        for task in (plan or {}).get("tasks") or []:
+            if isinstance(task, dict) and self._string(task.get("plan_task_id")) == plan_task_id:
+                return dict(task)
+        return None
+
+    def _update_batch_plan_task(
+        self,
+        batch_id: str,
+        plan_task_id: str,
+        updates: dict[str, Any],
+        *,
+        batch_status: Optional[str] = None,
+        top_level_fields: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+        if not batch or not plan:
+            return None
+        tasks = [dict(item) for item in plan.get("tasks") or [] if isinstance(item, dict)]
+        changed = False
+        now = utc_now()
+        for index, task in enumerate(tasks):
+            if self._string(task.get("plan_task_id")) == plan_task_id:
+                tasks[index] = {**task, **updates, "updated_at": now}
+                changed = True
+                break
+        if not changed:
+            return None
+        next_plan = {**plan, "tasks": tasks, "updated_at": now, "task_summary": self._plan_task_summary(tasks)}
+        fields = {"optimization_plan": next_plan, **(top_level_fields or {})}
+        return self._update_batch(batch_id, status=batch_status or str(batch.get("status") or "pending_approval"), fields=fields)
+
+    def _plan_task_summary(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
+        summary: dict[str, Any] = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0}
+        for task in tasks:
+            kind = self._string(task.get("execution_kind"))
+            if kind not in {"workspace_execution", "external_webhook"}:
+                continue
+            summary[kind] = int(summary.get(kind) or 0) + 1
+        return summary
+
+    def _batch_attribution_outputs(self, batch: dict[str, Any]) -> list[dict[str, Any]]:
+        job_ids = self._unique_strings(batch.get("attribution_job_ids") or [])
+        if not job_ids:
+            for feedback_case_id in batch.get("feedback_case_ids") or []:
+                feedback_case = self.find_case(str(feedback_case_id))
+                job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))
+                if job_id:
+                    job_ids.append(job_id)
+        outputs: list[dict[str, Any]] = []
+        for job_id in job_ids:
+            output = self.get_job_output(job_id, "attribution")
+            if output:
+                outputs.append({**output, "_job_id": job_id})
+        return outputs
+
+    def _assert_batch_plan_can_regenerate(self, batch: dict[str, Any]) -> None:
+        plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
+        plan_status = self._string((plan or {}).get("status"))
+        if (
+            plan_status == "approved"
+            or batch.get("optimization_task_id")
+            or batch.get("execution_job_id")
+            or batch.get("execution_apply_result")
+        ):
+            raise ValueError("当前优化方案已执行或进入执行链路，不能原地重新生成；请基于反馈信息创建新批次。")
+
+    def _non_actionable_plan(self, batch: dict[str, Any], reason: str, regeneration_instruction: Optional[str] = None) -> dict[str, Any]:
+        blocked_items = [
+            {
+                "schema_version": "feedback-optimization-blocked-item/v1",
+                "blocked_item_id": f"fobi-{uuid.uuid4()}",
+                "source_index": 0,
+                "status": "blocked",
+                "title": "未形成可执行优化任务",
+                "target_type": "not_actionable",
+                "target_path": None,
+                "owner": "developer",
+                "actionability": "needs_human_analysis",
+                "recommendation": reason,
+                "reason": reason,
+                "feedback_case_ids": batch.get("feedback_case_ids") or [],
+                "eval_case_ids": batch.get("eval_case_ids") or [],
+                "attribution_job_ids": [],
+                "created_at": utc_now(),
+            }
+        ]
+        plan = {
+            "schema_version": "feedback-optimization-plan/v1",
+            "optimization_plan_id": f"fop-{uuid.uuid4()}",
+            "batch_id": batch.get("batch_id"),
+            "created_at": utc_now(),
+            "status": "needs_human_review",
+            "title": "不能生成可执行优化方案",
+            "actionability": "needs_human_analysis",
+            "target_type": "not_actionable",
+            "target_path": None,
+            "recommendation": reason,
+            "expected_effect": "-",
+            "validation": "-",
+            "risk": "-",
+            "source_refs": batch.get("source_refs") or [],
+            "attribution_summaries": [],
+            "tasks": [],
+            "blocked_items": blocked_items,
+            "task_summary": self._plan_task_summary([]),
+            "blocked_summary": {"total": len(blocked_items)},
+        }
+        instruction = self._string(regeneration_instruction)
+        if instruction:
+            plan["regeneration_instruction"] = instruction
+        return plan
+
+    def _normalize_batch_plan_output(self, validated: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        batch_id = self._string(validated.get("batch_id")) or self._string(input_json.get("batch_id")) or ""
+        batch = self.find_optimization_batch(batch_id) or {}
+        plan = {
+            **validated,
+            "schema_version": "feedback-optimization-plan/v1",
+            "source_output_schema_version": validated.get("schema_version"),
+            "optimization_plan_id": self._string(validated.get("optimization_plan_id")) or f"fop-{uuid.uuid4()}",
+            "batch_id": batch_id,
+            "created_at": self._string(validated.get("created_at")) or utc_now(),
+            "status": self._string(validated.get("status")) or "needs_human_review",
+            "title": self._string(validated.get("title")) or "反馈批次优化方案",
+            "recommendation": self._string(validated.get("recommendation")) or self._string(validated.get("summary")) or "根据归因结果生成优化任务。",
+            "expected_effect": self._string(validated.get("expected_effect")) or "降低同类反馈再次出现的概率。",
+            "validation": self._string(validated.get("validation")) or "使用本批次关联回归测试用例验证优化效果。",
+            "risk": self._string(validated.get("risk")) or "需要关注优化后是否引入新的行为退化。",
+            "source_refs": validated.get("source_refs") or batch.get("source_refs") or [],
+            "feedback_case_ids": self._string_list(validated.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
+            "eval_case_ids": self._string_list(validated.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
+            "attribution_job_ids": self._string_list(validated.get("attribution_job_ids")) or self._string_list(input_json.get("attribution_job_ids")),
+            "attribution_summaries": validated.get("attribution_summaries") or self._batch_plan_attribution_summaries(input_json.get("attribution_outputs")),
+            "optimization_plan_job_id": job["job_id"],
+            "generated_by": "proposal-generator",
+        }
+        if input_json.get("regeneration_instruction") and not plan.get("regeneration_instruction"):
+            plan["regeneration_instruction"] = input_json["regeneration_instruction"]
+        return self._normalize_plan_task_collections(batch or plan, plan)
+
+    def _batch_plan_attribution_summaries(self, attributions: Any) -> list[dict[str, Any]]:
+        summaries: list[dict[str, Any]] = []
+        for item in attributions or []:
+            if not isinstance(item, dict):
+                continue
+            summaries.append(
+                {
+                    "attribution_job_id": item.get("_job_id") or item.get("attribution_job_id"),
+                    "feedback_case_id": item.get("feedback_case_id"),
+                    "problem_type": item.get("problem_type"),
+                    "optimization_object_type": item.get("optimization_object_type"),
+                    "actionability": item.get("actionability"),
+                    "confidence": item.get("confidence"),
+                    "rationale": item.get("rationale"),
+                }
+            )
+        return summaries
+
+    def _build_batch_optimization_plan(
+        self,
+        batch: dict[str, Any],
+        attributions: list[dict[str, Any]],
+        *,
+        regeneration_instruction: Optional[str] = None,
+    ) -> dict[str, Any]:
+        task_candidates = [self._build_batch_plan_task_or_blocked_item(batch, item, index) for index, item in enumerate(attributions)]
+        tasks = [item for item in task_candidates if item.get("execution_kind") in {"workspace_execution", "external_webhook"}]
+        blocked_items = [item for item in task_candidates if item.get("execution_kind") not in {"workspace_execution", "external_webhook"}]
+        executable_tasks = tasks
+        workspace_tasks = [item for item in tasks if item.get("execution_kind") == "workspace_execution"]
+        primary = workspace_tasks[0] if workspace_tasks else executable_tasks[0] if executable_tasks else blocked_items[0]
+        target_type = self._string(primary.get("target_type") or primary.get("optimization_object_type")) or "main_agent_claude_md"
+        target_path = self._string(primary.get("target_path")) or self._plan_target_path(target_type)
+        problem_types = self._unique_strings([self._string(item.get("problem_type")) or "" for item in attributions])
+        confidence_values = self._unique_strings([self._string(item.get("confidence")) or "" for item in attributions])
+        status = "pending_approval" if executable_tasks else "needs_human_review"
+        actionability = self._string(primary.get("actionability")) or "needs_human_analysis"
+        rationale_lines = [self._string(item.get("rationale")) for item in attributions if self._string(item.get("rationale"))]
+        evidence_refs = [
+            ref
+            for item in attributions
+            for ref in (item.get("evidence_refs") or [])
+            if isinstance(ref, dict)
+        ][:20]
+        eval_case_ids = batch.get("eval_case_ids") or []
+        recommendation = (
+            "根据本批次归因结果，调整目标 Agent 配置，要求其在回答反馈暴露的场景时使用当前工作区的权威配置、"
+            "工具调用和运行证据进行核查，避免依赖过期上下文或记忆回答。"
+        )
+        rationale = "\n\n".join(rationale_lines) or "归因结果未提供详细 rationale。"
+        instruction = self._string(regeneration_instruction)
+        if instruction:
+            recommendation = f"{recommendation}\n\n开发人员补充要求：{instruction}"
+            rationale = f"{rationale}\n\n生成补充要求：{instruction}"
+        plan = {
+            "schema_version": "feedback-optimization-plan/v1",
+            "optimization_plan_id": f"fop-{uuid.uuid4()}",
+            "batch_id": batch.get("batch_id"),
+            "created_at": utc_now(),
+            "status": status,
+            "title": f"统筹 {len(batch.get('feedback_case_ids') or [])} 条反馈优化 {target_type}",
+            "problem_types": problem_types,
+            "confidence": "high" if "high" in confidence_values else "medium" if "medium" in confidence_values else "low",
+            "actionability": actionability,
+            "optimization_object_type": primary.get("target_type") or target_type,
+            "target_type": primary.get("target_type") or target_type,
+            "target_path": target_path,
+            "recommendation": recommendation,
+            "expected_effect": "提高反馈场景回答的完整性、可核查性和稳定性，降低同类反馈再次出现的概率。",
+            "validation": (
+                f"使用本批次关联的 {len(eval_case_ids)} 条回归测试用例逐条验证；所有用例均展示完整运行过程，"
+                "失败项进入继续优化。"
+            ),
+            "risk": "可能增加回答前的工具调用成本；如指令过强，简单问题可能产生不必要的检查步骤。",
+            "source_refs": batch.get("source_refs") or [],
+            "feedback_case_ids": batch.get("feedback_case_ids") or [],
+            "eval_case_ids": eval_case_ids,
+            "attribution_job_ids": self._unique_strings([self._string(item.get("_job_id")) or "" for item in attributions]),
+            "attribution_summaries": [
+                {
+                    "attribution_job_id": item.get("_job_id"),
+                    "feedback_case_id": item.get("feedback_case_id"),
+                    "problem_type": item.get("problem_type"),
+                    "optimization_object_type": item.get("optimization_object_type"),
+                    "actionability": item.get("actionability"),
+                    "confidence": item.get("confidence"),
+                    "rationale": item.get("rationale"),
+                }
+                for item in attributions
+            ],
+            "rationale": rationale,
+            "evidence_refs": evidence_refs,
+            "tasks": tasks,
+            "task_summary": self._plan_task_summary(tasks),
+            "blocked_items": blocked_items,
+            "blocked_summary": {"total": len(blocked_items)},
+        }
+        if instruction:
+            plan["regeneration_instruction"] = instruction
+        return plan
+
+    def _build_batch_plan_task_or_blocked_item(self, batch: dict[str, Any], attribution: dict[str, Any], index: int) -> dict[str, Any]:
+        target_type = self._string(attribution.get("optimization_object_type")) or "not_actionable"
+        actionability = self._string(attribution.get("actionability")) or "needs_human_analysis"
+        target_path = self._plan_target_path(target_type)
+        boundary = attribution.get("responsibility_boundary") if isinstance(attribution.get("responsibility_boundary"), dict) else {}
+        owner = self._string(boundary.get("owner")) or self._external_owner_for_target(target_type) or target_type
+        rationale = self._string(attribution.get("rationale"))
+        attribution_job_id = self._string(attribution.get("_job_id") or attribution.get("attribution_job_id"))
+        feedback_case_id = self._string(attribution.get("feedback_case_id"))
+        evidence_refs = [dict(ref) for ref in attribution.get("evidence_refs") or [] if isinstance(ref, dict)]
+        task_context = self._task_context_from_attribution(batch, attribution, evidence_refs, owner)
+        execution_kind = "blocked"
+        status = "blocked"
+        next_step = self._string(attribution.get("recommended_next_step"))
+        reason = None if next_step in {"generate_proposal", "needs_human_review", "stop"} else next_step
+        if actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"} and target_path and self._target_allowed(target_path):
+            execution_kind = "workspace_execution"
+            status = "pending_execution"
+            reason = None
+        elif actionability == "external_guidance" or target_type in {"external_mcp_service", "soc_process", "mcp_description"}:
+            if self._task_context_is_actionable_external(task_context):
+                execution_kind = "external_webhook"
+                status = "pending_notification"
+                reason = None
+            else:
+                reason = "当前证据不足以定位具体外部对象、接口或问题 ID，不能生成可执行外部优化任务；请补充 trace 或重新归因。"
+        elif not target_path:
+            reason = reason or "归因结果未指向可由当前 workspace 受控修改的目标文件。"
+        if execution_kind == "external_webhook":
+            owner = self._external_owner_from_context(owner, task_context)
+        title = self._plan_task_title(target_type, execution_kind, index, task_context)
+        recommendation = self._plan_task_recommendation(target_type, execution_kind)
+        analysis_summary = self._short_text(rationale, 420)
+        evidence_summary = self._evidence_summary(evidence_refs)
+        item = {
+            "schema_version": "feedback-optimization-plan-task/v2",
+            "plan_task_id": f"fopt-{uuid.uuid4()}",
+            "source_index": index,
+            "execution_kind": execution_kind,
+            "status": status,
+            "title": title,
+            "description": self._plan_task_description(target_type, execution_kind, owner, target_path, task_context),
+            "objective": self._plan_task_objective(target_type, execution_kind, task_context),
+            "target_summary": self._plan_task_target_summary(target_type, execution_kind, owner, target_path),
+            "task_context": task_context,
+            "target_type": target_type,
+            "target_path": target_path,
+            "owner": owner,
+            "actionability": actionability,
+            "confidence": attribution.get("confidence"),
+            "problem_type": attribution.get("problem_type"),
+            "recommendation": recommendation,
+            "recommended_actions": self._plan_task_actions(target_type, execution_kind, target_path, owner),
+            "acceptance_criteria": self._plan_task_acceptance_criteria(execution_kind, target_path, task_context),
+            "expected_effect": "降低同类反馈再次出现的概率。",
+            "validation": "使用本批次关联回归用例验证优化效果。",
+            "risk": "需要关注优化后是否引入额外工具调用成本或外部系统变更风险。",
+            "analysis_summary": analysis_summary,
+            "evidence_summary": evidence_summary,
+            "evidence_refs": evidence_refs,
+            "rationale": rationale,
+            "reason": reason,
+            "feedback_case_ids": [feedback_case_id] if feedback_case_id else batch.get("feedback_case_ids") or [],
+            "eval_case_ids": batch.get("eval_case_ids") or [],
+            "attribution_job_ids": [attribution_job_id] if attribution_job_id else [],
+            "created_at": utc_now(),
+        }
+        if execution_kind == "blocked":
+            item.update(
+                {
+                    "schema_version": "feedback-optimization-blocked-item/v1",
+                    "blocked_item_id": f"fobi-{uuid.uuid4()}",
+                    "reason": reason or "归因结果未形成可执行 workspace 任务或外部 webhook 任务。",
+                }
+            )
+        return item
+
+    def _plan_task_title(self, target_type: str, execution_kind: str, index: int, task_context: Optional[dict[str, Any]] = None) -> str:
+        if execution_kind == "workspace_execution":
+            label = {
+                "main_agent_claude_md": "优化 Agent 工作区指令",
+                "instruction_gap": "补充 Agent 行为约束",
+                "skill_gap": "优化 Agent 技能说明",
+                "mcp_config": "优化 MCP 配置",
+                "eval_case": "补充回归测试用例",
+            }.get(target_type, "优化 Agent 工作区配置")
+            return f"任务 {index + 1}: {label}"
+        if execution_kind == "external_webhook":
+            context_title = self._external_task_title_from_context(task_context or {})
+            if context_title:
+                return f"任务 {index + 1}: {context_title}"
+            label = {
+                "external_mcp_service": "补齐 MCP 服务返回数据能力",
+                "mcp_description": "完善 MCP 服务描述",
+                "soc_process": "优化 SOC 处置流程",
+            }.get(target_type, "处理外部系统优化事项")
+            return f"任务 {index + 1}: {label}"
+        return f"阻塞项 {index + 1}: 未形成可执行优化任务"
+
+    def _plan_task_description(
+        self,
+        target_type: str,
+        execution_kind: str,
+        owner: str,
+        target_path: Optional[str],
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        if execution_kind == "workspace_execution":
+            return "根据反馈归因结果，调整受管 workspace 中的 Agent 配置、指令或用例，让 Agent 在同类场景中按当前证据和配置作答。"
+        if execution_kind == "external_webhook":
+            context_description = self._external_task_description_from_context(task_context or {})
+            if context_description:
+                return context_description
+            owner_label = owner if owner and owner != target_type else "对应外部系统"
+            return f"将反馈暴露的问题整理为外部系统优化任务，派发给 {owner_label} 处理。"
+        return "该项没有形成可执行 workspace 任务或明确的外部系统派发目标。"
+
+    def _plan_task_objective(self, target_type: str, execution_kind: str, task_context: Optional[dict[str, Any]] = None) -> str:
+        if execution_kind == "workspace_execution":
+            return "通过修改 workspace 受管配置或指令，降低同类反馈再次出现的概率。"
+        if execution_kind == "external_webhook":
+            context_objective = self._external_task_objective_from_context(task_context or {})
+            if context_objective:
+                return context_objective
+            return "推动对应外部系统补齐能力、数据或流程，使 Agent 后续可获得可靠输入。"
+        return "补充更多上下文后重新归因或重新生成优化方案。"
+
+    def _plan_task_target_summary(self, target_type: str, execution_kind: str, owner: str, target_path: Optional[str]) -> str:
+        if execution_kind == "workspace_execution":
+            return f"workspace:{target_path or target_type}"
+        if execution_kind == "external_webhook":
+            return f"external:{owner or target_type}"
+        return f"blocked:{target_type}"
+
+    def _plan_task_actions(self, target_type: str, execution_kind: str, target_path: Optional[str], owner: str) -> list[str]:
+        if execution_kind == "workspace_execution":
+            return [
+                f"由 execution-optimizer 读取已审批任务并生成针对 {target_path or target_type} 的受控执行方案。",
+                "后端校验执行方案的目标路径、操作类型和文件哈希后应用变更。",
+                "应用成功后创建 Agent 新版本，并使用本批次回归用例验证效果。",
+            ]
+        if execution_kind == "external_webhook":
+            return [
+                f"通过已配置 Webhook 将任务派发给 {owner or target_type}。",
+                "Webhook payload 携带反馈、归因、测试用例、验收标准和证据摘要。",
+                "本阶段以通知成功作为派发完成状态，不等待外部系统回调完成。",
+            ]
+        return ["重新补充反馈上下文后运行归因，或调整优化方案生成提示。"]
+
+    def _plan_task_acceptance_criteria(
+        self,
+        execution_kind: str,
+        target_path: Optional[str],
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> list[str]:
+        if execution_kind == "workspace_execution":
+            return [
+                "关联回归测试用例通过，反馈指出的同类问题不再复现。",
+                "Agent 在同类场景中能按优化目标使用当前配置、工具或数据完成回答。",
+                "优化后回答满足反馈用例的期望行为，且不引入新的明显退化。",
+            ]
+        if execution_kind == "external_webhook":
+            context_criteria = self._external_acceptance_criteria_from_context(task_context or {})
+            if context_criteria:
+                return context_criteria
+            return [
+                "外部系统在同类请求中提供 Agent 完成任务所需的完整、可靠输入。",
+                "Agent 使用外部系统返回结果后，能完整回答反馈指出的缺失或错误内容。",
+                "关联回归测试用例通过，反馈指出的问题不再复现。",
+            ]
+        return ["阻塞原因清晰可见，开发人员可据此重新归因或重新生成优化方案。"]
+
+    def _clean_plan_task_title(
+        self,
+        value: Any,
+        target_type: str,
+        execution_kind: str,
+        index: int,
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        title = self._string(value)
+        generic_fragments = ("补齐 MCP 服务返回数据能力", "外部系统优化", "external_mcp_service", "对应外部系统")
+        if not title or target_type in title or any(fragment in title for fragment in generic_fragments):
+            return self._plan_task_title(target_type, execution_kind, index, task_context)
+        return title
+
+    def _clean_plan_task_description(
+        self,
+        value: Any,
+        target_type: str,
+        execution_kind: str,
+        owner: str,
+        target_path: Optional[str],
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        description = self._string(value)
+        generic_fragments = ("对应外部系统", "外部系统优化任务", "external_mcp_service")
+        text_quality_markers = ("时 返回", "时 时", "时 的")
+        if (
+            not description
+            or target_type in description
+            or any(fragment in description for fragment in generic_fragments)
+            or any(marker in description for marker in text_quality_markers)
+        ):
+            return self._plan_task_description(target_type, execution_kind, owner, target_path, task_context)
+        return description
+
+    def _clean_plan_task_objective(
+        self,
+        value: Any,
+        target_type: str,
+        execution_kind: str,
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> str:
+        objective = self._string(value)
+        generic_fragments = ("对应外部系统", "external_mcp_service")
+        if not objective or target_type in objective or any(fragment in objective for fragment in generic_fragments):
+            return self._plan_task_objective(target_type, execution_kind, task_context)
+        return objective
+
+    def _clean_plan_task_acceptance_criteria(
+        self,
+        value: Any,
+        execution_kind: str,
+        target_path: Optional[str],
+        task_context: Optional[dict[str, Any]] = None,
+    ) -> list[str]:
+        criteria = self._string_list(value)
+        process_markers = ("Webhook", "2xx", "payload", "notification_failed", "execution-optimizer", "版本快照", "目标文件", "派发")
+        generic_markers = ("外部系统在同类请求中", "完整、可靠输入")
+        text_quality_markers = ("时 时", "时 的", "时 返回")
+        if not criteria or any(any(marker in item for marker in (*process_markers, *generic_markers, *text_quality_markers)) for item in criteria):
+            return self._plan_task_acceptance_criteria(execution_kind, target_path, task_context)
+        return criteria
+
+    def _task_context_from_attribution(
+        self,
+        batch: dict[str, Any],
+        attribution: dict[str, Any],
+        evidence_refs: list[dict[str, Any]],
+        owner: str,
+    ) -> dict[str, Any]:
+        feedback_case_id = self._string(attribution.get("feedback_case_id"))
+        feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
+        text_parts = [
+            self._string(attribution.get("rationale")) or "",
+            self._string(attribution.get("recommended_next_step")) or "",
+            self._string((attribution.get("responsibility_boundary") or {}).get("reason")) if isinstance(attribution.get("responsibility_boundary"), dict) else "",
+            " ".join(self._string(ref.get("reason")) or "" for ref in evidence_refs),
+        ]
+        text = "\n".join(part for part in text_parts if part)
+        tool_matches = list(re.finditer(r"\bmcp__([A-Za-z0-9_-]+)__([A-Za-z0-9_]+)__([A-Za-z0-9_]+)\b", text))
+        tool_names = self._unique_strings(match.group(0) for match in tool_matches)
+        mcp_server = tool_matches[0].group(1) if tool_matches else self._server_from_owner(owner)
+        tool_operation = tool_matches[0].group(3) if tool_matches else ""
+        api_info = self._api_info_from_tool_operation(tool_operation)
+        alert_ids = self._unique_strings(
+            [
+                *(re.findall(r"\balert[-_][A-Za-z0-9]+\b", text, flags=re.IGNORECASE)),
+                *self._string_list((feedback_case or {}).get("alert_ids")),
+            ]
+        )
+        case_ids = self._unique_strings(
+            [
+                *(re.findall(r"\bcase[-_][A-Za-z0-9]+\b", text, flags=re.IGNORECASE)),
+                *self._string_list((feedback_case or {}).get("case_ids")),
+            ]
+        )
+        asset_ids = self._unique_strings(re.findall(r"\basset[-_][A-Za-z0-9]+\b", text, flags=re.IGNORECASE))
+        seed_values = self._unique_strings(f"seed={value}" for value in re.findall(r"\bseed\s*[=:]\s*([A-Za-z0-9_-]+)", text, flags=re.IGNORECASE))
+        query_ids = self._unique_strings([*alert_ids, *case_ids, *asset_ids, *seed_values])
+        dates = self._unique_strings(re.findall(r"\b20\d{2}-\d{2}-\d{2}\b", text))
+        affected_fields = self._affected_fields_from_text(text)
+        observed_issue = self._observed_issue_from_text(text)
+        context = {
+            "mcp_server": mcp_server,
+            "tool_name": tool_names[0] if tool_names else "",
+            "tool_names": tool_names,
+            "api_name": api_info.get("api_name") or "",
+            "api_path": api_info.get("api_path") or "",
+            "api_method": api_info.get("api_method") or "",
+            "endpoint": api_info.get("endpoint") or "",
+            "query_ids": query_ids,
+            "alert_ids": alert_ids,
+            "case_ids": case_ids,
+            "asset_ids": asset_ids,
+            "dates": dates,
+            "affected_fields": affected_fields,
+            "observed_issue": observed_issue,
+            "expected_fix": self._expected_fix_from_context(mcp_server, api_info, query_ids, affected_fields, observed_issue),
+        }
+        return {key: value for key, value in context.items() if value not in ("", [], None)}
+
+    def _normalize_task_context(self, value: Any, rationale: Optional[str], owner: str) -> dict[str, Any]:
+        if isinstance(value, dict) and value:
+            cleaned = {key: item for key, item in value.items() if item not in ("", [], None)}
+            if isinstance(cleaned.get("expected_fix"), str):
+                cleaned["expected_fix"] = (
+                    cleaned["expected_fix"]
+                    .replace("时 的", "时的")
+                    .replace("时 返回", "时返回")
+                    .replace("时 时", "时")
+                )
+            return cleaned
+        attribution = {"rationale": rationale or "", "responsibility_boundary": {"owner": owner}}
+        return self._task_context_from_attribution({}, attribution, [], owner)
+
+    def _task_context_specificity(self, context: dict[str, Any]) -> int:
+        categories = [
+            bool(context.get("mcp_server")),
+            bool(context.get("tool_name") or context.get("api_name") or context.get("api_path")),
+            bool(context.get("query_ids") or context.get("dates")),
+            bool(context.get("observed_issue")),
+            bool(context.get("affected_fields")),
+        ]
+        return sum(1 for item in categories if item)
+
+    def _task_context_is_actionable_external(self, context: dict[str, Any]) -> bool:
+        has_interface = bool(context.get("tool_name") or context.get("api_name") or context.get("api_path"))
+        return has_interface and self._task_context_specificity(context) >= 2
+
+    def _external_owner_from_context(self, owner: str, context: dict[str, Any]) -> str:
+        server = self._string(context.get("mcp_server"))
+        generic_owners = {
+            "",
+            "external_mcp_service",
+            "external-mcp-service",
+            "mcp_description",
+            "mcp-owner",
+            "soc_process",
+            "soc-process",
+            "external_system",
+            "external-system",
+        }
+        if server and owner in generic_owners:
+            return server
+        return owner
+
+    def _server_from_owner(self, owner: str) -> str:
+        if owner and owner not in {"external_mcp_service", "mcp_description", "soc_process", "external_system"}:
+            return owner
+        return ""
+
+    def _api_info_from_tool_operation(self, operation: str) -> dict[str, str]:
+        if not operation:
+            return {}
+        api_name = operation.split("_api_", 1)[0] if "_api_" in operation else operation
+        result = {"api_name": api_name}
+        if "_api_" not in operation:
+            return result
+        rest = operation.split("_api_", 1)[1]
+        parts = [part for part in rest.split("_") if part]
+        method = parts[-1].upper() if parts and parts[-1].lower() in {"get", "post", "put", "patch", "delete"} else ""
+        path_parts = parts[:-1] if method else parts
+        if path_parts:
+            api_path = f"/api/{'/'.join(path_parts)}"
+            result["api_path"] = api_path
+            if method:
+                result["api_method"] = method
+                result["endpoint"] = f"{method} {api_path}"
+        return result
+
+    def _affected_fields_from_text(self, text: str) -> list[str]:
+        candidates = [
+            "event_time",
+            "timestamp",
+            "severity",
+            "source",
+            "status",
+            "title",
+            "asset_id",
+            "alert_id",
+            "case_id",
+            "hostname",
+            "ip",
+            "process",
+            "technique",
+            "tactic",
+        ]
+        return [field for field in candidates if field in text]
+
+    def _observed_issue_from_text(self, text: str) -> str:
+        if not text:
+            return ""
+        fragments = re.split(r"(?<=[。！？；;])|\n+", text)
+        keywords = ("缺失", "不足", "不完整", "固定", "不匹配", "不支持", "无法", "相距", "event_time", "时间戳", "字段")
+        for fragment in fragments:
+            clean = self._short_text(fragment, 260)
+            if clean and any(keyword in clean for keyword in keywords):
+                return clean
+        return self._short_text(text, 260)
+
+    def _expected_fix_from_context(
+        self,
+        mcp_server: str,
+        api_info: dict[str, str],
+        query_ids: list[str],
+        affected_fields: list[str],
+        observed_issue: str,
+    ) -> str:
+        if not any([mcp_server, api_info, query_ids, affected_fields, observed_issue]):
+            return ""
+        target = " ".join(part for part in [mcp_server, api_info.get("endpoint") or api_info.get("api_name")] if part) or "外部系统接口"
+        query = f" 在查询 {', '.join(query_ids)} 时" if query_ids else ""
+        fields = f"字段 {', '.join(affected_fields)}" if affected_fields else "完整业务字段"
+        return f"修复 {target}{query}的数据返回逻辑，确保返回 {fields} 且与查询上下文一致。"
+
+    def _external_task_title_from_context(self, context: dict[str, Any]) -> str:
+        server = self._string(context.get("mcp_server"))
+        api_name = self._string(context.get("api_name")) or self._string(context.get("endpoint")) or self._string(context.get("tool_name"))
+        if server and api_name:
+            return f"修复 {server} {api_name} 数据返回问题"
+        if server:
+            return f"修复 {server} 数据返回问题"
+        return ""
+
+    def _external_task_description_from_context(self, context: dict[str, Any]) -> str:
+        server = self._string(context.get("mcp_server"))
+        target = self._string(context.get("endpoint")) or self._string(context.get("api_name")) or self._string(context.get("tool_name"))
+        observed_issue = self._string(context.get("observed_issue"))
+        query_ids = self._string_list(context.get("query_ids"))
+        if not (server and (target or observed_issue)):
+            return ""
+        query = f" 在查询 {', '.join(query_ids)} 时，" if query_ids else ""
+        target_text = f" 的 {target}" if target else ""
+        issue = f"具体表现为：{observed_issue}" if observed_issue else "存在数据不完整或与查询上下文不一致的问题。"
+        return f"{server}{target_text}{query}返回的数据无法支撑 Agent 完成反馈场景回答。{issue}需要修复该接口或底层数据源，确保返回可被 Agent 稳定读取和使用的完整可靠数据。"
+
+    def _external_task_objective_from_context(self, context: dict[str, Any]) -> str:
+        server = self._string(context.get("mcp_server"))
+        target = self._string(context.get("endpoint")) or self._string(context.get("api_name")) or self._string(context.get("tool_name"))
+        if not server:
+            return ""
+        target_text = f" {target}" if target else ""
+        return f"确保 {server}{target_text} 在同类查询中返回完整、可靠且与查询上下文匹配的数据，使 Agent 能基于返回结果完整回答反馈中指出的问题。"
+
+    def _external_acceptance_criteria_from_context(self, context: dict[str, Any]) -> list[str]:
+        server = self._string(context.get("mcp_server"))
+        target = self._string(context.get("tool_name")) or self._string(context.get("endpoint")) or self._string(context.get("api_name"))
+        query_ids = self._string_list(context.get("query_ids"))
+        affected_fields = self._string_list(context.get("affected_fields"))
+        observed_issue = self._string(context.get("observed_issue"))
+        if not (server and (target or query_ids or affected_fields)):
+            return []
+        query = f" 在查询 {', '.join(query_ids)} 时" if query_ids else ""
+        fields = f"，并包含 {', '.join(affected_fields)} 等关键字段" if affected_fields else ""
+        criteria = [
+            f"调用 {target or server}{query}，返回结果与查询上下文一致{fields}。",
+        ]
+        if observed_issue:
+            criteria.append(f"返回结果不再出现该问题：{observed_issue}")
+        criteria.append("关联回归测试中，Agent 能基于该返回结果完整回答反馈指出的问题。")
+        return criteria
+
+    def _plan_task_recommendation(self, target_type: str, execution_kind: str) -> str:
+        if execution_kind == "workspace_execution":
+            base = "由 execution-optimizer 根据归因结果生成受控执行方案，并在安全校验通过后应用到 workspace。"
+        elif execution_kind == "external_webhook":
+            base = "将该优化任务发送给对应外部系统，由外部系统处理服务、知识库、MCP server 或流程侧变更。"
+        else:
+            base = "当前归因结果不能转为 workspace 执行任务，也没有明确的外部 webhook 执行目标。"
+        return base
+
+    def _clean_plan_task_recommendation(self, value: Any, target_type: str, execution_kind: str) -> str:
+        text = self._string(value) or self._plan_task_recommendation(target_type, execution_kind)
+        marker = "归因依据："
+        if marker in text:
+            text = text.split(marker, 1)[0].rstrip()
+        return text or self._plan_task_recommendation(target_type, execution_kind)
+
+    def _evidence_summary(self, evidence_refs: list[dict[str, Any]]) -> str:
+        summaries: list[str] = []
+        for ref in evidence_refs[:5]:
+            ref_id = self._string(ref.get("id")) or self._string(ref.get("path")) or self._string(ref.get("type")) or "evidence"
+            reason = self._string(ref.get("reason"))
+            summaries.append(f"{ref_id}: {reason}" if reason else ref_id)
+        return "\n".join(summaries)
+
+    def _external_owner_for_target(self, target_type: str) -> Optional[str]:
+        if target_type == "external_mcp_service":
+            return "external-mcp-service"
+        if target_type == "soc_process":
+            return "soc-process"
+        if target_type == "mcp_description":
+            return "mcp-owner"
+        return None
+
+    def _plan_target_path(self, target_type: str) -> Optional[str]:
+        if target_type in {"main_agent_claude_md", "instruction_gap", "skill_gap", "tool_misuse", "evidence_gap"}:
+            return "CLAUDE.md"
+        if target_type == "mcp_config":
+            return ".mcp.json"
+        if target_type == "skill":
+            return ".claude/skills/feedback-optimization.md"
+        if target_type == "subagent":
+            return ".claude/agents/feedback-optimization.md"
+        if target_type == "output_style":
+            return ".claude/output-styles/feedback-optimization.md"
+        if target_type == "eval_case":
+            return "evals/feedback-optimization.json"
+        if target_type in {"mcp_description", "runtime_code", "external_mcp_service", "soc_process", "not_actionable"}:
+            return None
+        return "CLAUDE.md"
+
     def _external_webhook_by_alias(self, alias: str) -> dict[str, Any]:
         requested = self._string(alias)
         if not requested:
@@ -1608,18 +3936,45 @@ class FeedbackStore:
         raise ValueError(f"Unknown external governance webhook alias: {requested}")
 
     def _external_notification_payload(self, item: dict[str, Any], webhook: dict[str, Any]) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": "external-governance-notification/v1",
             "webhook_alias": webhook["alias"],
             "external_item_id": item["external_item_id"],
             "feedback_case_id": item.get("feedback_case_id"),
             "proposal_job_id": item.get("proposal_job_id"),
+            "title": item.get("title"),
+            "description": item.get("description"),
+            "objective": item.get("objective"),
+            "target_summary": item.get("target_summary"),
             "owner": item.get("owner"),
             "actionability": item.get("actionability"),
             "recommendation": item.get("recommendation"),
+            "recommended_actions": item.get("recommended_actions") or [],
+            "acceptance_criteria": item.get("acceptance_criteria") or [],
+            "expected_effect": item.get("expected_effect"),
+            "validation": item.get("validation"),
+            "risk": item.get("risk"),
+            "analysis_summary": item.get("analysis_summary"),
+            "evidence_summary": item.get("evidence_summary"),
+            "evidence_refs": item.get("evidence_refs") or [],
             "reason": item.get("reason"),
             "created_at": item.get("created_at"),
         }
+        for key in (
+            "source",
+            "batch_id",
+            "optimization_plan_id",
+            "plan_task_id",
+            "target_type",
+            "target_path",
+            "task_context",
+            "feedback_case_ids",
+            "eval_case_ids",
+            "source_attribution_job_ids",
+        ):
+            if item.get(key) is not None:
+                payload[key] = item.get(key)
+        return payload
 
     def _send_external_webhook(self, webhook: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -1814,6 +4169,10 @@ class FeedbackStore:
             job["attribution_job_id"] = row.attribution_job_id
         return job
 
+    def _job_batch_id(self, job: dict[str, Any]) -> Optional[str]:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        return self._string(input_json.get("batch_id"))
+
     def _append_job_update(
         self,
         job_id: str,
@@ -1898,6 +4257,21 @@ class FeedbackStore:
         return error_payload
 
     def _latest_reusable_job(self, feedback_case_id: str, job_type: str) -> Optional[dict[str, Any]]:
+        if job_type == "attribution":
+            feedback_case = self.find_case(feedback_case_id)
+            current_job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))
+            if not current_job_id:
+                return None
+            job = self.get_job(current_job_id)
+            if not job:
+                return None
+            if job.get("status") == "failed":
+                self.discard_current_attribution(feedback_case_id, invalidate_downstream=True)
+                return None
+            if self._job_is_stale(job):
+                self.discard_current_attribution(feedback_case_id, invalidate_downstream=True)
+                return None
+            return job
         with self.Session() as db:
             row = db.scalar(
                 select(FeedbackJobModel)
@@ -1908,6 +4282,15 @@ class FeedbackStore:
             if not row or row.status == "failed":
                 return None
             return self._job_to_dict(row)
+
+    def _job_is_stale(self, job: dict[str, Any]) -> bool:
+        if job.get("status") not in {"created", "queued", "running", "schema_validating", "evidence_packaging"}:
+            return False
+        base = self._parse_datetime(self._string(job.get("started_at")) or self._string(job.get("created_at")))
+        if not base:
+            return False
+        timeout_seconds = int(job.get("timeout_seconds") or 300)
+        return datetime.now(timezone.utc) >= base + timedelta(seconds=timeout_seconds)
 
     def _proposal_model_from_dict(self, proposal: dict[str, Any]) -> OptimizationProposalModel:
         return OptimizationProposalModel(
@@ -2002,6 +4385,128 @@ class FeedbackStore:
             row.status = status
             row.payload_json = payload
         return self.find_task(task_id)
+
+    def _latest_execution_job(self, task_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.scalars(
+                select(OptimizationExecutionModel)
+                .where(OptimizationExecutionModel.optimization_task_id == task_id)
+                .order_by(OptimizationExecutionModel.created_at.desc())
+            ).first()
+            return self._execution_job_to_dict(row) if row else None
+
+    def _execution_job_to_dict(self, row: OptimizationExecutionModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload["execution_job_id"] = row.execution_job_id
+        payload["optimization_task_id"] = row.optimization_task_id
+        payload["feedback_case_id"] = row.feedback_case_id
+        payload["proposal_id"] = row.proposal_id
+        payload["status"] = row.status
+        payload["profile_name"] = row.profile_name
+        payload["created_at"] = row.created_at
+        payload["started_at"] = row.started_at
+        payload["completed_at"] = row.completed_at
+        payload["baseline_agent_version_id"] = row.baseline_agent_version_id
+        return payload
+
+    def _update_execution_job_payload(
+        self,
+        execution_job_id: str,
+        *,
+        status: str,
+        fields: dict[str, Any],
+    ) -> Optional[dict[str, Any]]:
+        with self.Session.begin() as db:
+            row = db.get(OptimizationExecutionModel, execution_job_id)
+            if not row:
+                return None
+            payload = dict(row.payload_json or {})
+            payload.update(fields)
+            payload["status"] = status
+            row.status = status
+            if fields.get("started_at") is not None:
+                row.started_at = self._string(fields.get("started_at"))
+            if fields.get("completed_at") is not None:
+                row.completed_at = self._string(fields.get("completed_at"))
+            row.payload_json = payload
+        return self.get_execution_job(execution_job_id)
+
+    def _attach_execution_job_to_task(self, task_id: str, job: dict[str, Any], *, status: str) -> Optional[dict[str, Any]]:
+        task = self.find_task(task_id)
+        if not task:
+            return None
+        job_id = self._string(job.get("execution_job_id"))
+        job_ids = [str(item) for item in task.get("execution_job_ids") or [] if item]
+        if job_id and job_id not in job_ids:
+            job_ids.append(job_id)
+        fields = {
+            "execution_job_ids": job_ids,
+            "latest_execution_job_id": job_id,
+            "latest_execution_job": job,
+        }
+        if job.get("baseline_agent_version_id"):
+            fields["baseline_agent_version_id"] = job.get("baseline_agent_version_id")
+        if job.get("pre_execution_agent_version_id"):
+            fields["pre_execution_agent_version_id"] = job.get("pre_execution_agent_version_id")
+            fields["pre_execution_agent_version"] = job.get("pre_execution_agent_version")
+        if job.get("applied_agent_version_id"):
+            fields["applied_agent_version_id"] = job.get("applied_agent_version_id")
+            fields["applied_agent_version"] = job.get("applied_agent_version")
+            fields["applied_at"] = job.get("completed_at") or utc_now()
+            fields["application_note"] = f"execution-optimizer 应用执行方案 {job.get('execution_job_id')}。"
+        return self._update_task_payload(task_id, status=status, fields=fields)
+
+    def _sanitize_execution_plan(self, plan: dict[str, Any], job: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        sanitized = dict(plan)
+        sanitized["execution_job_id"] = job["execution_job_id"]
+        sanitized["optimization_task_id"] = job["optimization_task_id"]
+        sanitized["baseline_agent_version_id"] = sanitized.get("baseline_agent_version_id") or job.get("baseline_agent_version_id")
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        target_paths = set(str(path) for path in input_json.get("target_paths") or [])
+        target_contexts = {
+            str(item.get("path")): item
+            for item in input_json.get("target_file_contexts") or []
+            if isinstance(item, dict) and item.get("path")
+        }
+        operations = []
+        seen_write_paths: set[str] = set()
+        for item in sanitized.get("operations") or []:
+            if not isinstance(item, dict):
+                return None, "operations must be objects"
+            operation = dict(item)
+            path = self._string(operation.get("path"))
+            if not path or path not in target_paths:
+                return None, f"operation path is not in task target_paths: {path or '-'}"
+            if not self._target_allowed(path):
+                return None, f"operation path is not allowed: {path}"
+            op = self._string(operation.get("operation"))
+            if op not in {"append_text", "replace_file", "create_file", "noop"}:
+                return None, f"operation is not supported: {op or '-'}"
+            context = target_contexts.get(path) or self._execution_target_file_context(path)
+            skipped_reason = self._string(context.get("skipped_reason")) if isinstance(context, dict) else None
+            if op != "noop":
+                if skipped_reason:
+                    return None, f"operation target is not safely editable: {path} ({skipped_reason})"
+                if path in seen_write_paths:
+                    return None, f"multiple write operations for one path are not supported: {path}"
+                seen_write_paths.add(path)
+            if op == "append_text" and not isinstance(operation.get("append_text"), str):
+                return None, f"append_text operation must include append_text: {path}"
+            if op in {"replace_file", "create_file"} and not isinstance(operation.get("content"), str):
+                return None, f"{op} operation must include content: {path}"
+            if op in {"append_text", "replace_file"}:
+                if not context.get("exists") or context.get("type") != "file":
+                    return None, f"{op} target must be an existing managed text file: {path}"
+                expected_sha = self._string(context.get("sha256"))
+                if expected_sha and not operation.get("expected_sha256"):
+                    operation["expected_sha256"] = expected_sha
+            if op == "create_file" and context.get("exists"):
+                return None, f"create_file target already exists: {path}"
+            operations.append(operation)
+        sanitized["operations"] = operations
+        if sanitized.get("status") == "ready" and not operations:
+            return None, "ready execution plan has no operations"
+        return sanitized, None
 
     def _attach_task_regression_run(self, task_id: str, eval_run: dict[str, Any], *, status: str) -> Optional[dict[str, Any]]:
         task = self.find_task(task_id)
@@ -2104,7 +4609,7 @@ class FeedbackStore:
         title = self._string(feedback_case.get("title")) or "原反馈场景"
         parts = [
             f"复测“{title}”对应的原始输入，回答应纠正 {problem_type}。",
-            validation or recommendation or "输出应完整、可核查，并符合当前主 Agent 配置。",
+            validation or recommendation or "输出应完整、可核查，并符合当前主智能体配置。",
         ]
         return " ".join(part for part in parts if part)
 
@@ -2192,10 +4697,125 @@ class FeedbackStore:
     def _same_case_or_alert(self, run: dict[str, Any], alert_id: Optional[str], case_id: Optional[str]) -> bool:
         return bool((alert_id and run.get("alert_id") == alert_id) or (case_id and run.get("case_id") == case_id))
 
+    def _execution_target_policy(self) -> dict[str, Any]:
+        return {
+            "type": "main_workspace_managed_full_with_excludes",
+            "snapshot_policy_version": SNAPSHOT_POLICY_VERSION,
+            "workspace_root": str(self.main_workspace_dir),
+            "excluded_names": sorted(WORKSPACE_EXCLUDED_NAMES),
+            "excluded_patterns": list(WORKSPACE_EXCLUDED_PATTERNS),
+            "max_inline_text_bytes": MAX_EXECUTION_TARGET_CONTEXT_BYTES,
+        }
+
+    def _execution_target_file_contexts(self, target_paths: list[str]) -> list[dict[str, Any]]:
+        return [self._execution_target_file_context(path) for path in target_paths]
+
+    def _execution_target_file_context(self, target_path: str) -> dict[str, Any]:
+        context: dict[str, Any] = {
+            "path": target_path,
+            "managed": False,
+            "exists": False,
+            "type": "missing",
+            "size_bytes": None,
+            "sha256": None,
+            "content_encoding": None,
+            "content_text": None,
+            "skipped_reason": None,
+        }
+        denied = self._target_denied_reason(target_path)
+        if denied:
+            context["skipped_reason"] = denied
+            return context
+        context["managed"] = True
+        dest = self._workspace_target_path(target_path)
+        if not dest:
+            context["skipped_reason"] = "target_path_escapes_workspace"
+            return context
+        try:
+            stat = dest.lstat()
+        except FileNotFoundError:
+            return context
+        except OSError as exc:
+            context["skipped_reason"] = f"stat_failed:{exc.__class__.__name__}"
+            return context
+        context["exists"] = True
+        if dest.is_symlink():
+            context["type"] = "symlink"
+            context["size_bytes"] = len(str(dest.readlink()))
+            context["skipped_reason"] = "symlink_target_not_auto_editable"
+            return context
+        if dest.is_dir():
+            context["type"] = "dir"
+            context["size_bytes"] = 0
+            context["skipped_reason"] = "directory_target_not_auto_editable"
+            return context
+        if not dest.is_file():
+            context["type"] = "other"
+            context["size_bytes"] = stat.st_size
+            context["skipped_reason"] = "special_file_not_auto_editable"
+            return context
+        context["type"] = "file"
+        context["size_bytes"] = stat.st_size
+        try:
+            data = dest.read_bytes()
+        except OSError as exc:
+            context["skipped_reason"] = f"read_failed:{exc.__class__.__name__}"
+            return context
+        context["sha256"] = hashlib.sha256(data).hexdigest()
+        if len(data) > MAX_EXECUTION_TARGET_CONTEXT_BYTES:
+            context["skipped_reason"] = "file_too_large_for_inline_context"
+            return context
+        if b"\x00" in data:
+            context["skipped_reason"] = "binary_file_not_auto_editable"
+            return context
+        try:
+            context["content_text"] = data.decode("utf-8")
+        except UnicodeDecodeError:
+            context["skipped_reason"] = "non_utf8_file_not_auto_editable"
+            return context
+        context["content_encoding"] = "utf-8"
+        return context
+
     def _target_allowed(self, target_path: str) -> bool:
-        if target_path.startswith("/") or ".." in Path(target_path).parts:
-            return False
-        return any(target_path == prefix or target_path.startswith(prefix) for prefix in DIRECT_TARGET_PREFIXES)
+        return self._target_denied_reason(target_path) is None
+
+    def _target_denied_reason(self, target_path: str) -> Optional[str]:
+        rel = self._workspace_relative_path(target_path)
+        if rel is None:
+            return "unsafe_target_path"
+        if self._workspace_rel_excluded(rel):
+            return "workspace_excluded_path"
+        if not self._workspace_target_path(target_path):
+            return "target_path_escapes_workspace"
+        return None
+
+    def _workspace_relative_path(self, target_path: str) -> Optional[Path]:
+        if not isinstance(target_path, str):
+            return None
+        raw = target_path.strip()
+        if not raw or "\\" in raw:
+            return None
+        rel = Path(raw)
+        if rel.is_absolute() or rel == Path(".") or ".." in rel.parts:
+            return None
+        return rel
+
+    def _workspace_rel_excluded(self, rel: Path) -> bool:
+        parts = rel.parts
+        if any(part in WORKSPACE_EXCLUDED_NAMES for part in parts):
+            return True
+        name = rel.name
+        return any(fnmatch.fnmatch(name, pattern) for pattern in WORKSPACE_EXCLUDED_PATTERNS)
+
+    def _workspace_target_path(self, target_path: str) -> Optional[Path]:
+        rel = self._workspace_relative_path(target_path)
+        if rel is None:
+            return None
+        base = self.main_workspace_dir.resolve()
+        dest = (base / rel).resolve(strict=False)
+        if base != dest and base not in dest.parents:
+            return None
+        return dest
 
     def _evidence_payload(self, value: Any) -> Any:
         if self.enable_debug_evidence:
@@ -2290,6 +4910,58 @@ class FeedbackStore:
     def _cleanup_job_tmp(self, job_id: str) -> None:
         shutil.rmtree(self.tmp_jobs_dir / job_id, ignore_errors=True)
 
+    def _discard_job(self, job_id: str) -> None:
+        if not job_id:
+            return
+        with self.Session.begin() as db:
+            row = db.get(FeedbackJobModel, job_id)
+            if row:
+                db.delete(row)
+        self._cleanup_job_tmp(job_id)
+
+    def _discard_proposal_job(self, proposal_job_id: str) -> None:
+        if not proposal_job_id:
+            return
+        with self.Session.begin() as db:
+            proposals = db.scalars(select(OptimizationProposalModel).where(OptimizationProposalModel.proposal_job_id == proposal_job_id)).all()
+            proposal_ids = [proposal.proposal_id for proposal in proposals]
+            for proposal_id in proposal_ids:
+                db.execute(delete(ProposalReviewModel).where(ProposalReviewModel.proposal_id == proposal_id))
+            if proposal_ids:
+                db.execute(delete(OptimizationProposalModel).where(OptimizationProposalModel.proposal_id.in_(proposal_ids)))
+            external_items = db.scalars(select(ExternalGovernanceItemModel).where(ExternalGovernanceItemModel.proposal_job_id == proposal_job_id)).all()
+            for item in external_items:
+                notifications = db.scalars(select(ExternalNotificationModel).where(ExternalNotificationModel.external_item_id == item.external_item_id)).all()
+                for notification in notifications:
+                    db.delete(notification)
+                db.delete(item)
+            row = db.get(FeedbackJobModel, proposal_job_id)
+            if row:
+                db.delete(row)
+        self._cleanup_job_tmp(proposal_job_id)
+
+    def _discard_batch_draft_artifacts(self, batch: dict[str, Any]) -> None:
+        task_id = self._string(batch.get("optimization_task_id"))
+        execution_job_id = self._string(batch.get("execution_job_id"))
+        internal_proposal_id = self._string(batch.get("internal_proposal_id"))
+        with self.Session.begin() as db:
+            if task_id:
+                execution_rows = db.scalars(select(OptimizationExecutionModel).where(OptimizationExecutionModel.optimization_task_id == task_id)).all()
+                for execution in execution_rows:
+                    db.delete(execution)
+                    self._cleanup_job_tmp(execution.execution_job_id)
+                task = db.get(OptimizationTaskModel, task_id)
+                if task and not (task.payload_json or {}).get("applied_agent_version_id"):
+                    db.delete(task)
+            if execution_job_id:
+                execution = db.get(OptimizationExecutionModel, execution_job_id)
+                if execution:
+                    db.delete(execution)
+                self._cleanup_job_tmp(execution_job_id)
+            if internal_proposal_id:
+                db.execute(delete(ProposalReviewModel).where(ProposalReviewModel.proposal_id == internal_proposal_id))
+                db.execute(delete(OptimizationProposalModel).where(OptimizationProposalModel.proposal_id == internal_proposal_id))
+
     def _append_jsonl(self, path: Path, record: dict[str, Any]) -> None:
         return None
 
@@ -2316,6 +4988,19 @@ class FeedbackStore:
             result.append(value)
         return result
 
+    def _string_list(self, values: Any) -> list[str]:
+        if isinstance(values, str):
+            return [values] if values else []
+        if not isinstance(values, list):
+            return []
+        return [item for item in values if isinstance(item, str) and item]
+
+    def _short_text(self, value: Optional[str], limit: int = 420) -> str:
+        text = " ".join(str(value or "").split())
+        if not text:
+            return ""
+        return text if len(text) <= limit else f"{text[:limit]}..."
+
     def _latest(self, values: Any) -> Optional[str]:
         if not isinstance(values, list) or not values:
             return None
@@ -2324,3 +5009,14 @@ class FeedbackStore:
 
     def _string(self, value: Any) -> Optional[str]:
         return value if isinstance(value, str) and value else None
+
+    def _parse_datetime(self, value: Optional[str]) -> Optional[datetime]:
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)

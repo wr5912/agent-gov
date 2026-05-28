@@ -6,9 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.feedback_schemas import validate_execution_plan_output, validate_feedback_optimization_plan_output
 from app.runtime.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     FeedbackAnalysisJobResponse,
+    FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     SocEventIngestRequest,
@@ -19,25 +21,27 @@ from app.runtime.settings import AppSettings
 
 def _settings(tmp_path):
     workspace = tmp_path / "docker" / "volume" / "main-workspace"
-    attribution_workspace = tmp_path / "docker" / "volume" / "attribution-workspace"
-    proposal_workspace = tmp_path / "docker" / "volume" / "proposal-workspace"
+    attribution_workspace = tmp_path / "docker" / "volume" / "attribution-analyzer-workspace"
+    proposal_workspace = tmp_path / "docker" / "volume" / "proposal-generator-workspace"
     data = tmp_path / "docker" / "volume" / "data"
     claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
-    attribution_root = tmp_path / "docker" / "volume" / "claude-roots" / "attribution"
-    proposal_root = tmp_path / "docker" / "volume" / "claude-roots" / "proposal"
+    attribution_root = tmp_path / "docker" / "volume" / "claude-roots" / "attribution-analyzer"
+    proposal_root = tmp_path / "docker" / "volume" / "claude-roots" / "proposal-generator"
     for path in (workspace, attribution_workspace, proposal_workspace, claude_root / ".claude", attribution_root / ".claude", proposal_root / ".claude"):
         path.mkdir(parents=True, exist_ok=True)
+    (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
+    (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
     return AppSettings(
         _env_file=None,
         WORKSPACE_DIR=workspace,
         MAIN_WORKSPACE_DIR=workspace,
-        ATTRIBUTION_WORKSPACE_DIR=attribution_workspace,
-        PROPOSAL_WORKSPACE_DIR=proposal_workspace,
+        ATTRIBUTION_ANALYZER_WORKSPACE_DIR=attribution_workspace,
+        PROPOSAL_GENERATOR_WORKSPACE_DIR=proposal_workspace,
         DATA_DIR=data,
         CLAUDE_ROOT=claude_root,
         MAIN_CLAUDE_ROOT=claude_root,
-        ATTRIBUTION_CLAUDE_ROOT=attribution_root,
-        PROPOSAL_CLAUDE_ROOT=proposal_root,
+        ATTRIBUTION_ANALYZER_CLAUDE_ROOT=attribution_root,
+        PROPOSAL_GENERATOR_CLAUDE_ROOT=proposal_root,
         CLAUDE_HOME=claude_root / ".claude",
         ENABLE_POLICY_HOOKS=True,
     )
@@ -130,6 +134,77 @@ def _create_eval_case(store: FeedbackStore):
     return sync["eval_cases"][0], feedback_case
 
 
+def _create_batch_with_completed_attribution(store: FeedbackStore):
+    _record_run(store)
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(
+            run_id="run-1",
+            labels=["tool_data_incomplete"],
+            comment="数据不全，需要进入批次优化",
+        )
+    )
+    batch = store.create_optimization_batch(
+        [{"source_kind": "signal", "source_id": signal["signal_id"]}],
+        title="数据不全批次",
+    )
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": batch["feedback_case_ids"][0],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "tool_misuse",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "direct_workspace_change",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置"}],
+            "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "主智能体指令需要约束配置核查"},
+            "rationale": "Agent 回答工作区能力问题时未读取当前配置文件。",
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    return store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+
+
+def _create_approved_task_for_target(store: FeedbackStore, target_path: str):
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "title": f"修改 {target_path}",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "workspace_file",
+                    "target_path": target_path,
+                    "recommendation": f"按反馈调整 {target_path}。",
+                    "expected_effect": "提高反馈场景表现。",
+                    "validation": "复测反馈场景。",
+                    "risk": "需确认文件内容变更符合预期。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    return store.create_task(proposal_id=proposal["proposal_id"])
+
+
 def test_feedback_signal_only_writes_signal_pool(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
@@ -158,6 +233,17 @@ def test_proposal_regenerate_request_trims_optional_instruction():
         FeedbackProposalRegenerateRequest(regeneration_instruction="x" * 2001)
 
 
+def test_batch_plan_generate_request_trims_optional_instruction():
+    assert FeedbackOptimizationBatchPlanGenerateRequest().regeneration_instruction is None
+    assert FeedbackOptimizationBatchPlanGenerateRequest(regeneration_instruction="   ").regeneration_instruction is None
+    assert (
+        FeedbackOptimizationBatchPlanGenerateRequest(regeneration_instruction="  优先保留 triage-alert 约束  ").regeneration_instruction
+        == "优先保留 triage-alert 约束"
+    )
+    with pytest.raises(ValidationError):
+        FeedbackOptimizationBatchPlanGenerateRequest(regeneration_instruction="x" * 2001)
+
+
 def test_implicit_signal_defaults_to_review(tmp_path):
     store, _ = _store(tmp_path)
 
@@ -171,6 +257,450 @@ def test_implicit_signal_defaults_to_review(tmp_path):
 
     assert signal["auto_captured"] is True
     assert signal["requires_review"] is True
+
+
+def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(
+            run_id="run-1",
+            labels=["tool_data_incomplete"],
+            comment="数据不全，需要复测",
+        )
+    )
+
+    source = store.update_feedback_source_annotation(
+        "signal",
+        signal["signal_id"],
+        {
+            "comment": "数据不全，需要复测",
+            "labels": ["tool_data_incomplete", "workspace_config"],
+            "priority": "high",
+            "status": "triaged",
+        },
+    )
+    generated = store.generate_eval_cases_for_sources(
+        [{"source_kind": "signal", "source_id": signal["signal_id"]}],
+    )
+    batch = store.create_optimization_batch(
+        [{"source_kind": "signal", "source_id": signal["signal_id"]}],
+        title="数据不全批次",
+        priority="high",
+    )
+
+    assert source["comment"] == "数据不全，需要复测"
+    assert generated["created"] == 1
+    assert batch["status"] == "draft"
+    assert batch["eval_case_ids"] == [generated["eval_cases"][0]["eval_case_id"]]
+
+    feedback_case_id = batch["feedback_case_ids"][0]
+    attribution_job = store.create_attribution_job(feedback_case_id)
+    completed_job = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": feedback_case_id,
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "tool_data_quality",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "direct_workspace_change",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "tool_calls.json", "reason": "工具调用不足"}],
+            "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "需要补充工作区配置核查要求"},
+            "rationale": "Agent 没有基于当前工作区配置核查后回答。",
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed_job])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="同意执行")
+
+    assert batch["status"] == "pending_approval"
+    assert batch["optimization_plan"]["target_path"] == "CLAUDE.md"
+    assert approved["optimization_task"]["source"] == "feedback_optimization_batch"
+    assert approved["optimization_task"]["source_batch_id"] == batch["batch_id"]
+    assert approved["optimization_task"]["eval_case_ids"] == batch["eval_case_ids"]
+    assert store.find_proposal(approved["batch"]["internal_proposal_id"])["status"] == "approved"
+
+
+def test_batch_plan_regeneration_records_instruction_and_replaces_plan(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+
+    first = store.generate_batch_optimization_plan(
+        batch["batch_id"],
+        regeneration_instruction="优先修改 triage-alert skill 的使用说明",
+    )
+    second = store.generate_batch_optimization_plan(
+        batch["batch_id"],
+        regeneration_instruction="避免改动无关 MCP 配置",
+    )
+
+    first_plan = first["optimization_plan"]
+    second_plan = second["optimization_plan"]
+    assert first_plan["optimization_plan_id"] != second_plan["optimization_plan_id"]
+    assert second_plan["status"] == "pending_approval"
+    assert second_plan["regeneration_instruction"] == "避免改动无关 MCP 配置"
+    assert "避免改动无关 MCP 配置" in second_plan["recommendation"]
+    assert "避免改动无关 MCP 配置" in second_plan["rationale"]
+
+
+def test_feedback_optimization_plan_output_requires_actionable_external_context():
+    validated, error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-test",
+            "status": "pending_approval",
+            "title": "外部服务优化方案",
+            "summary": "统筹归因结果生成任务。",
+            "confidence": "high",
+            "actionability": "external_guidance",
+            "target_type": "external_mcp_service",
+            "target_path": None,
+            "recommendation": "修复外部 MCP 服务返回数据不完整问题。",
+            "expected_effect": "Agent 可获得完整数据。",
+            "validation": "回归用例通过。",
+            "risk": "外部系统需要变更。",
+            "tasks": [
+                {
+                    "execution_kind": "external_webhook",
+                    "title": "补齐外部数据",
+                    "description": "任务缺少具体接口和问题对象。",
+                    "objective": "提高数据完整性。",
+                    "target_type": "external_mcp_service",
+                    "owner": "sec-ops-data",
+                    "actionability": "external_guidance",
+                    "recommendation": "修复数据返回。",
+                    "expected_effect": "数据完整。",
+                    "validation": "回归通过。",
+                    "risk": "需外部系统配合。",
+                    "task_context": {"mcp_server": "sec-ops-data"},
+                }
+            ],
+            "blocked_items": [],
+        }
+    )
+
+    assert error is None
+    assert validated is not None
+    assert validated["status"] == "needs_human_review"
+    assert validated["tasks"] == []
+    assert validated["blocked_items"][0]["reason"] == "任务缺少明确的外部对象、接口或问题 ID，不能派发到外部系统。"
+
+
+def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, monkeypatch):
+    store, settings = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), feedback_store=store)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+    seen = {}
+
+    async def fake_run_profile_json(**kwargs):
+        seen.update(kwargs)
+        job_input = kwargs["job_input"]
+        return {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": job_input["batch_id"],
+            "status": "pending_approval",
+            "title": "补强工作区配置核查",
+            "summary": "根据归因结果生成一个 workspace 优化任务。",
+            "problem_types": ["tool_misuse"],
+            "confidence": "high",
+            "actionability": "direct_workspace_change",
+            "target_type": "main_agent_claude_md",
+            "target_path": "CLAUDE.md",
+            "recommendation": "在 CLAUDE.md 中补充回答工作区配置问题前必须读取配置文件的要求。",
+            "expected_effect": "Agent 回答同类问题时先读取当前配置。",
+            "validation": "使用批次回归用例验证是否读取配置并回答完整。",
+            "risk": "可能增加少量工具调用。",
+            "source_refs": job_input["source_refs"],
+            "feedback_case_ids": job_input["feedback_case_ids"],
+            "eval_case_ids": job_input["eval_case_ids"],
+            "attribution_job_ids": job_input["attribution_job_ids"],
+            "attribution_summaries": [],
+            "rationale": "归因结果显示 Agent 未读取当前工作区配置。",
+            "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
+            "tasks": [
+                {
+                    "execution_kind": "workspace_execution",
+                    "status": "pending_execution",
+                    "title": "补充工作区配置核查指令",
+                    "description": "在主智能体指令中要求回答工作区配置问题前读取当前配置文件。",
+                    "objective": "让 Agent 对配置枚举类问题使用当前文件内容作答。",
+                    "target_summary": "workspace:CLAUDE.md",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "owner": "main_agent_workspace",
+                    "actionability": "direct_workspace_change",
+                    "confidence": "high",
+                    "problem_type": "tool_misuse",
+                    "recommendation": "追加配置核查要求。",
+                    "recommended_actions": ["由 execution-optimizer 生成 CLAUDE.md 的受控追加方案。"],
+                    "acceptance_criteria": ["回归用例通过，且回答前读取当前配置文件。"],
+                    "expected_effect": "同类反馈不再复现。",
+                    "validation": "运行批次回归测试。",
+                    "risk": "回答耗时略增。",
+                    "analysis_summary": "Agent 未读取当前配置。",
+                    "evidence_summary": "messages.json 显示回答来自记忆。",
+                    "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
+                    "task_context": {"target_file": "CLAUDE.md", "config_section": "workspace-capability-answering"},
+                    "feedback_case_ids": job_input["feedback_case_ids"],
+                    "eval_case_ids": job_input["eval_case_ids"],
+                    "attribution_job_ids": job_input["attribution_job_ids"],
+                }
+            ],
+            "blocked_items": [],
+        }
+
+    monkeypatch.setattr(runtime, "_run_profile_json", fake_run_profile_json)
+
+    updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], regeneration_instruction="优先保持指令简洁"))
+    plan = updated["optimization_plan"]
+    plan_task = plan["tasks"][0]
+    job = store.get_job(updated["optimization_plan_job_id"])
+
+    assert seen["profile_name"] == "proposal-generator"
+    assert seen["expected_schema_version"] == "feedback-optimization-plan-output/v1"
+    assert seen["job_type"] == "batch_plan"
+    assert "batch_plan_input_json" in seen["prompt"]
+    assert seen["job_input"]["regeneration_instruction"] == "优先保持指令简洁"
+    assert job["job_type"] == "batch_plan"
+    assert job["profile_name"] == "proposal-generator"
+    assert job["status"] == "completed"
+    assert plan["generated_by"] == "proposal-generator"
+    assert plan["status"] == "pending_approval"
+    assert plan["source_output_schema_version"] == "feedback-optimization-plan-output/v1"
+    assert plan_task["title"] == "补充工作区配置核查指令"
+    assert plan_task["target_path"] == "CLAUDE.md"
+    assert plan_task["task_context"]["target_file"] == "CLAUDE.md"
+    assert plan_task["task_context"]["config_section"] == "workspace-capability-answering"
+
+
+def test_batch_plan_lists_workspace_tasks_and_prepares_task_execution(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="执行任务")
+
+    assert plan_task["schema_version"] == "feedback-optimization-plan-task/v2"
+    assert plan_task["execution_kind"] == "workspace_execution"
+    assert plan_task["target_path"] == "CLAUDE.md"
+    assert plan_task["description"]
+    assert plan_task["objective"]
+    assert plan_task["target_summary"] == "workspace:CLAUDE.md"
+    assert "main_agent_claude_md" not in plan_task["title"]
+    assert plan_task["recommended_actions"]
+    assert plan_task["acceptance_criteria"]
+    assert any("回归测试用例通过" in item for item in plan_task["acceptance_criteria"])
+    assert all("execution-optimizer" not in item for item in plan_task["acceptance_criteria"])
+    assert all("版本快照" not in item for item in plan_task["acceptance_criteria"])
+    assert "归因依据" not in plan_task["recommendation"]
+    assert "未读取当前配置文件" in plan_task["analysis_summary"]
+    assert prepared["optimization_task"]["source"] == "feedback_optimization_batch"
+    assert prepared["optimization_task"]["source_plan_task_id"] == plan_task["plan_task_id"]
+    assert prepared["optimization_task"]["proposal"]["description"] == plan_task["description"]
+    assert prepared["optimization_task"]["proposal"]["recommended_actions"] == plan_task["recommended_actions"]
+    assert prepared["optimization_task"]["proposal"]["acceptance_criteria"] == plan_task["acceptance_criteria"]
+    assert prepared["plan_task"]["optimization_task_id"] == prepared["optimization_task"]["optimization_task_id"]
+
+
+def test_batch_plan_external_task_notifies_selected_webhook(tmp_path):
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["external_mcp_service"], comment="alert-0002 事件数据不全"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="外部 MCP 优化")
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": batch["feedback_case_ids"][0],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "tool_data_quality",
+            "optimization_object_type": "external_mcp_service",
+            "actionability": "external_guidance",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "tool_calls.json", "reason": "list_events 查询 alert-0002 时 event_time 与告警窗口不匹配"}],
+            "responsibility_boundary": {"owner": "sec-ops-data", "reason": "sec-ops-data 的 list_events 接口需要支持按告警上下文返回事件"},
+            "rationale": (
+                "sec-ops-data MCP 工具 mcp__sec-ops-data__local_api__list_events_api_v1_events_get 查询 alert-0002 时，"
+                "返回事件的 event_time 全部是 2026-02-11，无法支撑 2026-05-25 的告警研判。"
+                "需要修复 list_events 接口或底层数据源，按 alert_id 和告警时间窗口返回完整事件。"
+            ),
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    (settings.data_dir / "external-governance-webhooks.yaml").write_text(
+        "webhooks:\n  - alias: kb\n    name: 知识库\n    url: http://example.invalid/kb\n",
+        encoding="utf-8",
+    )
+    seen = {}
+
+    def fake_sender(webhook, payload):
+        seen["webhook"] = webhook
+        seen["payload"] = payload
+        return {"http_status": 202, "response_body": "accepted"}
+
+    result = store.notify_batch_plan_task_external(batch["batch_id"], plan_task["plan_task_id"], webhook_alias="kb", sender=fake_sender)
+
+    assert plan_task["execution_kind"] == "external_webhook"
+    assert plan_task["schema_version"] == "feedback-optimization-plan-task/v2"
+    assert plan_task["target_summary"] == "external:sec-ops-data"
+    assert "external_mcp_service" not in plan_task["title"]
+    assert "sec-ops-data" in plan_task["title"]
+    assert "alert-0002" in plan_task["description"]
+    assert "event_time" in plan_task["description"]
+    assert plan_task["task_context"]["mcp_server"] == "sec-ops-data"
+    assert plan_task["task_context"]["tool_name"] == "mcp__sec-ops-data__local_api__list_events_api_v1_events_get"
+    assert plan_task["task_context"]["endpoint"] == "GET /api/v1/events"
+    assert "alert-0002" in plan_task["task_context"]["query_ids"]
+    assert "event_time" in plan_task["task_context"]["affected_fields"]
+    assert plan_task["recommended_actions"]
+    assert plan_task["acceptance_criteria"]
+    assert any("mcp__sec-ops-data__local_api__list_events_api_v1_events_get" in item for item in plan_task["acceptance_criteria"])
+    assert any("alert-0002" in item for item in plan_task["acceptance_criteria"])
+    assert all("时 时" not in item for item in plan_task["acceptance_criteria"])
+    assert all("Webhook" not in item for item in plan_task["acceptance_criteria"])
+    assert all("2xx" not in item for item in plan_task["acceptance_criteria"])
+    assert all("payload" not in item for item in plan_task["acceptance_criteria"])
+    assert "归因依据" not in plan_task["recommendation"]
+    assert seen["payload"]["batch_id"] == batch["batch_id"]
+    assert seen["payload"]["plan_task_id"] == plan_task["plan_task_id"]
+    assert seen["payload"]["title"] == plan_task["title"]
+    assert seen["payload"]["description"] == plan_task["description"]
+    assert seen["payload"]["objective"] == plan_task["objective"]
+    assert seen["payload"]["target_summary"] == "external:sec-ops-data"
+    assert seen["payload"]["task_context"]["mcp_server"] == "sec-ops-data"
+    assert seen["payload"]["task_context"]["endpoint"] == "GET /api/v1/events"
+    assert seen["payload"]["recommended_actions"] == plan_task["recommended_actions"]
+    assert seen["payload"]["acceptance_criteria"] == plan_task["acceptance_criteria"]
+    assert "alert-0002" in seen["payload"]["analysis_summary"]
+    assert seen["payload"]["source_attribution_job_ids"] == [attribution_job["job_id"]]
+    assert result["external_item"]["status"] == "notified"
+    assert result["plan_task"]["external_item_id"] == result["external_item"]["external_item_id"]
+    assert result["plan_task"]["latest_webhook_alias"] == "kb"
+
+
+def test_batch_plan_blocks_external_task_without_specific_object_context(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["external_mcp_service"], comment="MCP 数据不全"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="外部 MCP 优化")
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": batch["feedback_case_ids"][0],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "tool_data_quality",
+            "optimization_object_type": "external_mcp_service",
+            "actionability": "external_guidance",
+            "confidence": "medium",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "tool_calls.json", "reason": "MCP 返回字段缺失"}],
+            "responsibility_boundary": {"owner": "knowledge-base-mcp", "reason": "外部 MCP 服务需要补齐字段"},
+            "rationale": "知识库 MCP 返回的数据字段不足，需要外部服务侧处理。",
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    plan = batch["optimization_plan"]
+
+    assert plan["tasks"] == []
+    assert plan["task_summary"]["total"] == 0
+    assert len(plan["blocked_items"]) == 1
+    assert "证据不足以定位具体外部对象" in plan["blocked_items"][0]["reason"]
+
+
+def test_batch_plan_puts_non_executable_results_in_blocked_items(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["not_actionable"], comment="无法优化"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="不可执行批次")
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": batch["feedback_case_ids"][0],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "needs_human_review",
+            "problem_type": "insufficient_information",
+            "optimization_object_type": "not_actionable",
+            "actionability": "needs_human_analysis",
+            "confidence": "low",
+            "human_review_required": True,
+            "evidence_refs": [{"type": "evidence_file", "id": "feedback.json", "reason": "反馈信息不足"}],
+            "responsibility_boundary": {"owner": "developer", "reason": "缺少可落地优化目标"},
+            "rationale": "当前反馈没有足够上下文，不能形成 workspace 或外部系统优化任务。",
+            "recommended_next_step": "needs_human_review",
+        },
+    )
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    plan = batch["optimization_plan"]
+
+    assert batch["status"] == "needs_human_review"
+    assert plan["tasks"] == []
+    assert plan["task_summary"]["total"] == 0
+    assert len(plan["blocked_items"]) == 1
+    assert plan["blocked_items"][0]["blocked_item_id"].startswith("fobi-")
+    assert plan["blocked_items"][0]["attribution_job_ids"] == [attribution_job["job_id"]]
+    assert "未指向可由当前 workspace" in plan["blocked_items"][0]["reason"]
+
+
+def test_legacy_manual_plan_is_exposed_as_blocked_item_not_task(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["not_actionable"], comment="历史数据"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="历史批次")
+    legacy_plan = {
+        "schema_version": "feedback-optimization-plan/v1",
+        "optimization_plan_id": "fop-legacy-manual",
+        "batch_id": batch["batch_id"],
+        "created_at": "2026-05-20T00:00:00+00:00",
+        "status": "needs_human_review",
+        "title": "历史不可执行方案",
+        "actionability": "needs_human_analysis",
+        "target_type": "not_actionable",
+        "target_path": None,
+        "recommendation": "历史方案没有可执行任务。",
+        "no_action_reason": "历史方案需要人工分析。",
+    }
+
+    updated = store._update_batch(batch["batch_id"], status="needs_human_review", fields={"optimization_plan": legacy_plan})  # noqa: SLF001
+    plan = updated["optimization_plan"]
+
+    assert plan["tasks"] == []
+    assert plan["task_summary"]["total"] == 0
+    assert len(plan["blocked_items"]) == 1
+    assert plan["blocked_items"][0]["blocked_item_id"] == "fopt-legacy-fop-legacy-manual"
+    assert plan["blocked_items"][0]["reason"] == "历史方案需要人工分析。"
+
+
+def test_batch_plan_regeneration_rejects_approved_plan(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    batch = store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="优先保留现有技能入口")
+    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="同意执行")
+    proposal = store.find_proposal(approved["batch"]["internal_proposal_id"])
+
+    assert proposal["regeneration_instruction"] == "优先保留现有技能入口"
+    with pytest.raises(ValueError, match="已执行或进入执行链路"):
+        store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="重新改写目标")
 
 
 def test_soc_event_idempotency_and_pending_correlation(tmp_path):
@@ -486,6 +1016,133 @@ def test_failed_feedback_jobs_can_retry_without_duplicating_active_jobs(tmp_path
     assert retried_proposal["job_id"] != proposal_job["job_id"]
 
 
+def test_force_attribution_discards_current_job_and_downstream_proposal(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(proposal_job["job_id"], store.offline_proposal_output(proposal_job))
+
+    regenerated = store.create_attribution_job(feedback_case["feedback_case_id"], force=True)
+    updated_case = store.find_case(feedback_case["feedback_case_id"])
+
+    assert regenerated["job_id"] != attribution_job["job_id"]
+    assert store.get_job(attribution_job["job_id"]) is None
+    assert store.get_job(proposal_job["job_id"]) is None
+    assert updated_case["attribution_job_ids"] == [regenerated["job_id"]]
+    assert updated_case["proposal_job_ids"] == []
+
+
+def test_stale_running_attribution_is_discarded_before_retry(tmp_path):
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    stale_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store._append_job_update(stale_job["job_id"], status="running", started_at="2026-01-01T00:00:00+00:00")  # noqa: SLF001
+    stale_dir = settings.data_dir / ".runtime-tmp" / "jobs" / stale_job["job_id"]
+
+    retried = store.create_attribution_job(feedback_case["feedback_case_id"])
+    updated_case = store.find_case(feedback_case["feedback_case_id"])
+
+    assert retried["job_id"] != stale_job["job_id"]
+    assert store.get_job(stale_job["job_id"]) is None
+    assert not stale_dir.exists()
+    assert updated_case["attribution_job_ids"] == [retried["job_id"]]
+
+
+def test_batch_attribution_uses_current_jobs_and_resets_downstream_plan(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    feedback_case_id = batch["feedback_case_ids"][0]
+    attribution_job = store.create_attribution_job(feedback_case_id)
+    completed = store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+
+    reset = store.reset_batch_attribution(batch["batch_id"])
+
+    assert batch["optimization_plan"]
+    assert reset["status"] == "draft"
+    assert reset["attribution_job_ids"] == []
+    assert reset["optimization_plan"] is None
+    assert store.get_job(attribution_job["job_id"]) is None
+
+
+def test_batch_attribution_status_requires_all_current_jobs_completed(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    first = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="第一条"))
+    second = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="第二条"))
+    batch = store.create_optimization_batch(
+        [
+            {"source_kind": "signal", "source_id": first["signal_id"]},
+            {"source_kind": "signal", "source_id": second["signal_id"]},
+        ]
+    )
+    first_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    second_job = store.create_attribution_job(batch["feedback_case_ids"][1])
+    completed = store.complete_attribution_job(first_job["job_id"], store.offline_attribution_output(first_job))
+    running = store.start_job(second_job["job_id"])
+
+    running_batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed, running])
+    failed = store.fail_job(second_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
+    failed_batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed, failed])
+
+    assert running_batch["status"] == "attribution_running"
+    assert running_batch["attribution_summary"]["running"] == 1
+    assert failed_batch["status"] == "needs_human_review"
+    assert failed_batch["attribution_summary"]["needs_review_or_failed"] == 1
+
+
+def test_batch_detail_refreshes_latest_task_execution_job(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="执行优化")
+    task_id = approved["optimization_task"]["optimization_task_id"]
+
+    first = store.create_execution_job(task_id, force=True)
+    store.start_execution_job(first["execution_job_id"])
+    store.complete_execution_job(
+        first["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task_id,
+            "execution_job_id": first["execution_job_id"],
+            "status": "needs_human_review",
+            "summary": "首次执行需要复核。",
+            "operations": [],
+            "no_action_reason": "首次执行不可用。",
+        },
+    )
+    second = store.create_execution_job(task_id, force=True)
+    store.start_execution_job(second["execution_job_id"])
+    store.complete_execution_job(
+        second["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task_id,
+            "execution_job_id": second["execution_job_id"],
+            "status": "needs_human_review",
+            "summary": "重试执行需要复核。",
+            "operations": [],
+            "no_action_reason": "重试执行不可用。",
+        },
+    )
+
+    refreshed = store.find_optimization_batch(batch["batch_id"])
+
+    assert refreshed["optimization_task"]["latest_execution_job_id"] == second["execution_job_id"]
+    assert refreshed["execution_job_id"] == second["execution_job_id"]
+    assert refreshed["execution_job"]["validated_output_json"]["summary"] == "重试执行需要复核。"
+
+
 def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
@@ -542,7 +1199,7 @@ def test_legacy_schema_error_message_is_normalized_on_read(tmp_path):
     assert job["error_json"]["validation_errors"] == validation_errors
 
 
-def test_proposal_target_allowlist_and_task_requires_approval(tmp_path):
+def test_proposal_target_policy_and_task_requires_approval(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["skill_gap"]))
@@ -587,10 +1244,10 @@ def test_proposal_target_allowlist_and_task_requires_approval(tmp_path):
                     "requires_approval": True,
                 },
                 {
-                    "title": "非法目标",
+                    "title": "排除目标",
                     "actionability": "direct_workspace_change",
                     "target_type": "secret",
-                    "target_path": ".env",
+                    "target_path": "node_modules/pkg/index.js",
                     "recommendation": "不应进入 task。",
                     "expected_effect": "无",
                     "validation": "无",
@@ -618,7 +1275,400 @@ def test_proposal_target_allowlist_and_task_requires_approval(tmp_path):
     assert len(tasks) == 1
 
 
-def test_proposal_output_normalizes_minimal_agent_proposal(tmp_path):
+def test_execution_job_lifecycle_updates_task(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec",
+                    "title": "追加配置读取要求",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
+                    "expected_effect": "提高回答完整性。",
+                    "validation": "复测反馈场景。",
+                    "risk": "响应略变慢。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+
+    job = store.create_execution_job(task["optimization_task_id"])
+    assert job["input_path"].endswith("/execution/input.json")
+    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    assert input_payload["execution_job_id"] == job["execution_job_id"]
+    assert input_payload["target_paths"] == ["CLAUDE.md"]
+
+    store.start_execution_job(job["execution_job_id"])
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "追加一条配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n配置读取要求。\n",
+                    "rationale": "让 Agent 回答前读取配置。",
+                }
+            ],
+            "validation": "复测反馈场景。",
+            "risk": "响应略变慢。",
+            "human_review_required": True,
+        },
+    )
+    updated_task = store.find_task(task["optimization_task_id"])
+
+    assert completed["status"] == "ready"
+    assert updated_task["status"] == "execution_ready"
+    assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
+    assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
+
+
+def test_execution_job_accepts_any_managed_workspace_file(tmp_path):
+    store, settings = _store(tmp_path)
+    target = settings.main_workspace_dir / "mcp_servers" / "security_kb_mcp" / "kb.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("rules:\n  - old\n", encoding="utf-8")
+    task = _create_approved_task_for_target(store, "mcp_servers/security_kb_mcp/kb.yaml")
+
+    job = store.create_execution_job(task["optimization_task_id"])
+    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    context = input_payload["target_file_contexts"][0]
+
+    assert input_payload["allowed_target_paths"] == ["mcp_servers/security_kb_mcp/kb.yaml"]
+    assert input_payload["target_policy"]["type"] == "main_workspace_managed_full_with_excludes"
+    assert context["path"] == "mcp_servers/security_kb_mcp/kb.yaml"
+    assert context["managed"] is True
+    assert context["exists"] is True
+    assert context["type"] == "file"
+    assert context["content_text"] == "rules:\n  - old\n"
+    assert context["sha256"]
+
+
+def test_execution_targets_reject_workspace_excluded_paths(tmp_path):
+    store, _ = _store(tmp_path)
+
+    assert store.target_allowed("README.md") is True
+    assert store.target_allowed("mcp_servers/security_kb_mcp/kb.yaml") is True
+    assert store.target_allowed("node_modules/pkg/index.js") is False
+    assert store.target_allowed(".git/config") is False
+    assert store.target_allowed("dist/bundle.js") is False
+    assert store.target_allowed(".venv/bin/python") is False
+    assert store.target_allowed("../escape") is False
+    assert store.target_allowed("/main-workspace/CLAUDE.md") is False
+
+
+def test_execution_plan_binds_expected_sha_from_target_context(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    context = job["input_json"]["target_file_contexts"][0]
+    store.start_execution_job(job["execution_job_id"])
+
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "替换 CLAUDE.md。",
+            "operations": [
+                {
+                    "operation": "replace_file",
+                    "path": "CLAUDE.md",
+                    "content": "# Updated\n",
+                    "rationale": "测试绑定 hash。",
+                }
+            ],
+            "validation": "检查文件内容。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    operation = completed["validated_output_json"]["operations"][0]
+    assert operation["expected_sha256"] == context["sha256"]
+
+
+def test_execution_output_fills_system_fields_from_job_context(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, ".mcp.json")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "execution_job_id": job["execution_job_id"],
+            "status": "needs_human_review",
+            "summary": "目标文件与提案意图不匹配，需要人工确认。",
+            "operations": [],
+            "no_action_reason": "提案要求调整 Agent 行为，但 .mcp.json 仅用于 MCP 连接配置。",
+            "validation": None,
+            "risk": None,
+        },
+    )
+
+    assert completed["status"] == "needs_human_review"
+    assert completed["validated_output_json"]["optimization_task_id"] == task["optimization_task_id"]
+    assert completed["validated_output_json"]["baseline_agent_version_id"] == task["baseline_agent_version_id"]
+    assert completed["error_json"] is None
+
+
+def test_execution_plan_rejects_non_text_or_skipped_target(tmp_path):
+    store, settings = _store(tmp_path)
+    target = settings.main_workspace_dir / "assets" / "logo.bin"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"\x00\x01binary")
+    task = _create_approved_task_for_target(store, "assets/logo.bin")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    failed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "替换二进制文件。",
+            "operations": [
+                {
+                    "operation": "replace_file",
+                    "path": "assets/logo.bin",
+                    "content": "not-binary",
+                    "rationale": "二进制目标不应自动改。",
+                }
+            ],
+            "validation": "不应通过。",
+            "risk": "不应通过。",
+            "human_review_required": True,
+        },
+    )
+
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["error_code"] == "EXECUTION_PLAN_UNSAFE"
+    assert "not safely editable" in failed["error_json"]["message"]
+
+
+def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    import claude_agent_sdk
+
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec-runtime",
+                    "title": "补充配置读取要求",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
+                    "expected_effect": "回答更完整。",
+                    "validation": "复测配置类问题。",
+                    "risk": "响应耗时可能增加。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
+    seen: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        prompt_items = []
+        async for item in prompt:
+            prompt_items.append(item)
+        prompt_text = prompt_items[0]["message"]["content"]
+        input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
+        input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+        output = {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": input_payload["optimization_task_id"],
+            "execution_job_id": input_payload["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": input_payload["baseline_agent_version_id"],
+            "summary": "追加配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n回答配置类问题前必须读取当前 workspace 配置。\n",
+                    "rationale": "根据已批准方案补充主智能体配置读取要求。",
+                }
+            ],
+            "validation": "运行评估套件。",
+            "risk": "用例格式需人工确认。",
+            "human_review_required": True,
+        }
+        text = json.dumps(output, ensure_ascii=False)
+        seen["prompt_text"] = prompt_text
+        seen["input_path"] = input_path
+        seen["allowed_tools"] = options.allowed_tools
+        seen["disallowed_tools"] = options.disallowed_tools
+        yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-execution-session")
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-execution-session",
+            result=text,
+        )
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+
+    job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
+    updated_task = store.find_task(task["optimization_task_id"])
+
+    assert job["status"] == "ready"
+    assert seen["input_path"] == job["input_path"]
+    assert str(seen["input_path"]).endswith("/execution/input.json")
+    assert "execution-input.json" not in str(seen["input_path"])
+    assert seen["allowed_tools"] == []
+    assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob", "Bash", "Edit", "Write"}
+    assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
+    assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
+
+
+def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path, monkeypatch):
+    import claude_agent_sdk
+
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec-eval",
+                    "title": "增加告警误报评估用例",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "eval_case",
+                    "target_path": "evals/alert-triage-false-positive.json",
+                    "recommendation": "创建告警误报评估用例。",
+                    "expected_effect": "覆盖误报回归场景。",
+                    "validation": "运行评估套件。",
+                    "risk": "用例格式需人工确认。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
+
+    async def fail_query(*, prompt, options, transport=None):
+        raise AssertionError("eval execution plans should be generated deterministically")
+        if False:
+            yield None
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fail_query)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+
+    job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
+    operation = job["validated_output_json"]["operations"][0]
+
+    assert job["status"] == "ready"
+    assert operation["operation"] == "create_file"
+    assert operation["path"] == "evals/alert-triage-false-positive.json"
+    assert "feedback-eval-case/v1" in operation["content"]
+    assert "创建告警误报评估用例" in operation["content"]
+    assert "手动运行回归验证" in job["validated_output_json"]["validation"]
+
+
+def test_execution_plan_output_normalizes_agent_friendly_fields():
+    validated, error = validate_execution_plan_output(
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": "opt-1",
+            "execution_job_id": "fbe-1",
+            "status": "safe_to_apply",
+            "summary": "创建评估用例。",
+            "operations": [
+                {
+                    "operation": "create_file",
+                    "path": "evals/example.json",
+                    "content": "{}",
+                    "rationale": {"reason": "根据建议创建文件"},
+                }
+            ],
+            "validation": {"steps": ["检查 JSON 语法"], "expected_result": "评估用例可加载"},
+            "risk": {"level": "low", "reason": "仅新增评估文件"},
+            "human_review_required": True,
+        }
+    )
+
+    assert error is None
+    assert validated["status"] == "ready"
+    assert "检查 JSON 语法" in validated["validation"]
+    assert "仅新增评估文件" in validated["risk"]
+    assert "根据建议创建文件" in validated["operations"][0]["rationale"]
+
+
+def test_proposal_output_normalizes_compact_agent_proposal(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
@@ -992,12 +2042,12 @@ def test_runtime_feedback_jobs_use_offline_outputs_without_provider(tmp_path):
     proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
     reused_proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
 
-    assert attribution_job["profile_name"] == "feedback-attribution"
+    assert attribution_job["profile_name"] == "attribution-analyzer"
     assert attribution_job["status"] == "completed"
     assert reused_attribution_job["job_id"] == attribution_job["job_id"]
     assert reused_attribution_job["status"] == "completed"
-    assert attribution_job["profile_version"]["profile_name"] == "feedback-attribution"
-    assert proposal_job["profile_name"] == "feedback-proposal"
+    assert attribution_job["profile_version"]["profile_name"] == "attribution-analyzer"
+    assert proposal_job["profile_name"] == "proposal-generator"
     assert proposal_job["status"] == "completed"
     assert reused_proposal_job["job_id"] == proposal_job["job_id"]
     assert reused_proposal_job["status"] == "completed"
@@ -1098,8 +2148,8 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert evidence["completeness"]["has_runs"] is True
     assert evidence["completeness"]["has_tool_calls"] is False
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "tool_calls.json")["content"] == []
-    assert "归因分析 Agent" in str(seen["prompt_text"])
-    assert seen["cwd"] == settings.attribution_workspace_dir
+    assert "归因分析智能体" in str(seen["prompt_text"])
+    assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
     assert seen["max_turns"] == settings.max_turns
     assert attribution_job["status"] == "completed"
     assert output["schema_version"] == "attribution-output/v1"
@@ -1170,7 +2220,7 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
                 "human_review_required": True,
                 "evidence_refs": [{"type": "evidence_file", "id": "feedback.json", "reason": "反馈指出原告警结论错误。"}],
                 "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "原始输出只有证据片段，需要人工确认真实责任边界。"},
-                "rationale": "归因 Agent 只输出了证据片段，格式化器保守转为需人工复核。",
+                "rationale": "归因分析智能体只输出了证据片段，格式化器保守转为需人工复核。",
                 "recommended_next_step": "needs_human_review",
                 "_formatter": {"name": "fake-dspy"},
             }

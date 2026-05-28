@@ -32,6 +32,7 @@ export interface ExternalFeedbackWorkspaceProps {
 
 export type FeedbackConfidence = "low" | "medium" | "high";
 export type FeedbackSourceType = "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
+export type FeedbackSourceKind = "signal" | "soc_event" | "pending_correlation";
 export type SocEventType =
   | "case.verdict_changed"
   | "case.severity_changed"
@@ -40,7 +41,7 @@ export type SocEventType =
   | "recommendation.modified"
   | "evidence.added"
   | "tool.manual_query_after_agent";
-export type JobType = "attribution" | "proposal";
+export type JobType = "attribution" | "proposal" | "batch_plan";
 export type JobStatus =
   | "created"
   | "evidence_packaging"
@@ -205,6 +206,60 @@ export interface PendingCorrelationResolveRequest {
   comment?: string;
 }
 
+export interface FeedbackSourceRef {
+  source_kind: FeedbackSourceKind;
+  source_id: string;
+}
+
+export interface FeedbackSourceRecord {
+  schema_version?: string;
+  source_kind: FeedbackSourceKind;
+  source_id: string;
+  id?: string;
+  created_at?: string | null;
+  updated_at?: string | null;
+  status: string;
+  label: string;
+  labels?: string[];
+  comment?: string | null;
+  priority?: "high" | "medium" | "low" | string;
+  requires_review?: boolean;
+  metadata?: Record<string, unknown>;
+  run_id?: string | null;
+  session_id?: string | null;
+  alert_id?: string | null;
+  case_id?: string | null;
+  feedback_case_id?: string | null;
+  eval_case_id?: string | null;
+  latest_attribution_job_id?: string | null;
+  latest_attribution_status?: string | null;
+  raw?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface FeedbackSourceUpdateRequest {
+  comment?: string | null;
+  labels?: string[];
+  priority?: "high" | "medium" | "low";
+  status?: "new" | "triaged" | "in_batch" | "resolved" | "archived";
+  requires_review?: boolean;
+  metadata?: Record<string, unknown>;
+}
+
+export interface FeedbackEvalCaseGenerateRequest {
+  source_refs: FeedbackSourceRef[];
+  force?: boolean;
+}
+
+export interface FeedbackEvalCaseGenerateResponse {
+  created: number;
+  reused: number;
+  updated?: number;
+  skipped: number;
+  eval_cases: EvalCaseRecord[];
+  results?: Array<Record<string, unknown>>;
+}
+
 export interface FeedbackCaseCreateRequest {
   source_ids: string[];
   title?: string;
@@ -348,7 +403,20 @@ export interface ExternalGovernanceItemRecord {
   source_index: number;
   owner: string;
   actionability: string;
+  title?: string;
+  description?: string;
+  objective?: string;
+  target_summary?: string;
+  task_context?: Record<string, unknown>;
   recommendation: string;
+  recommended_actions?: string[];
+  acceptance_criteria?: string[];
+  expected_effect?: string;
+  validation?: string;
+  risk?: string;
+  analysis_summary?: string;
+  evidence_summary?: string;
+  evidence_refs?: Array<Record<string, unknown>>;
   reason?: string | null;
   latest_notification_id?: string | null;
   latest_webhook_alias?: string | null;
@@ -408,6 +476,9 @@ export interface OptimizationTaskRecord {
   created_at: string;
   status:
     | "pending_execution"
+    | "execution_planning"
+    | "execution_ready"
+    | "execution_failed"
     | "applied_pending_regression"
     | "regression_running"
     | "completed"
@@ -423,6 +494,12 @@ export interface OptimizationTaskRecord {
   comment?: string | null;
   target_paths?: string[];
   proposal?: OptimizationProposalRecord;
+  baseline_agent_version_id?: string | null;
+  execution_job_ids?: string[];
+  latest_execution_job_id?: string | null;
+  latest_execution_job?: OptimizationExecutionJobRecord | null;
+  pre_execution_agent_version_id?: string | null;
+  pre_execution_agent_version?: Record<string, unknown> | null;
   applied_at?: string | null;
   applied_agent_version_id?: string | null;
   applied_agent_version?: Record<string, unknown> | null;
@@ -430,6 +507,60 @@ export interface OptimizationTaskRecord {
   latest_regression_run_id?: string | null;
   latest_regression_run?: EvalRunRecord | null;
   regression_completed_at?: string | null;
+  [key: string]: unknown;
+}
+
+export interface OptimizationExecutionJobRecord {
+  execution_job_id: string;
+  optimization_task_id: string;
+  feedback_case_id?: string | null;
+  proposal_id?: string | null;
+  status: "queued" | "running" | "ready" | "completed" | "failed" | "needs_human_review" | string;
+  profile_name?: string;
+  created_at: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+  baseline_agent_version_id?: string | null;
+  input_json?: Record<string, unknown> | null;
+  raw_output_json?: Record<string, unknown> | null;
+  validated_output_json?: ExecutionPlanOutput | null;
+  error_json?: Record<string, unknown> | null;
+  pre_execution_agent_version_id?: string | null;
+  pre_execution_agent_version?: Record<string, unknown> | null;
+  applied_agent_version_id?: string | null;
+  applied_agent_version?: Record<string, unknown> | null;
+  applied_diff?: {
+    added?: Array<Record<string, unknown>>;
+    modified?: Array<Record<string, unknown>>;
+    deleted?: Array<Record<string, unknown>>;
+    unchanged_count?: number;
+    [key: string]: unknown;
+  } | null;
+  [key: string]: unknown;
+}
+
+export interface ExecutionPlanOutput {
+  schema_version?: string;
+  optimization_task_id?: string;
+  execution_job_id?: string;
+  status?: string;
+  baseline_agent_version_id?: string | null;
+  summary?: string;
+  operations?: ExecutionPlanOperation[];
+  validation?: string | null;
+  risk?: string | null;
+  human_review_required?: boolean;
+  no_action_reason?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ExecutionPlanOperation {
+  operation?: "append_text" | "replace_file" | "create_file" | "noop" | string;
+  path?: string;
+  expected_sha256?: string | null;
+  content?: string | null;
+  append_text?: string | null;
+  rationale?: string | null;
   [key: string]: unknown;
 }
 
@@ -497,7 +628,160 @@ export interface EvalRunRecord {
   [key: string]: unknown;
 }
 
+export interface FeedbackOptimizationPlanRecord {
+  schema_version?: string;
+  optimization_plan_id?: string;
+  batch_id?: string;
+  created_at?: string;
+  status: "pending_approval" | "approved" | "rejected" | "needs_human_review" | string;
+  title?: string;
+  problem_types?: string[];
+  confidence?: string;
+  actionability?: string;
+  optimization_object_type?: string;
+  target_type?: string;
+  target_path?: string | null;
+  recommendation?: string;
+  regeneration_instruction?: string | null;
+  expected_effect?: string;
+  validation?: string;
+  risk?: string;
+  rationale?: string;
+  evidence_refs?: Array<Record<string, unknown>>;
+  source_refs?: FeedbackSourceRef[];
+  feedback_case_ids?: string[];
+  eval_case_ids?: string[];
+  attribution_job_ids?: string[];
+  attribution_summaries?: Array<Record<string, unknown>>;
+  tasks?: FeedbackOptimizationPlanTaskRecord[];
+  task_summary?: Record<string, number>;
+  blocked_items?: FeedbackOptimizationBlockedItemRecord[];
+  blocked_summary?: Record<string, number>;
+  [key: string]: unknown;
+}
+
+export interface FeedbackOptimizationPlanTaskRecord {
+  schema_version?: string;
+  plan_task_id: string;
+  source_index?: number;
+  execution_kind: "workspace_execution" | "external_webhook" | string;
+  status: string;
+  title?: string;
+  target_type?: string;
+  target_path?: string | null;
+  owner?: string;
+  actionability?: string;
+  confidence?: string;
+  problem_type?: string;
+  description?: string;
+  objective?: string;
+  target_summary?: string;
+  task_context?: Record<string, unknown>;
+  recommendation?: string;
+  recommended_actions?: string[];
+  acceptance_criteria?: string[];
+  expected_effect?: string;
+  validation?: string;
+  risk?: string;
+  analysis_summary?: string;
+  evidence_summary?: string;
+  evidence_refs?: Array<Record<string, unknown>>;
+  rationale?: string;
+  reason?: string | null;
+  feedback_case_ids?: string[];
+  eval_case_ids?: string[];
+  attribution_job_ids?: string[];
+  internal_proposal_id?: string | null;
+  optimization_task_id?: string | null;
+  execution_job_id?: string | null;
+  latest_execution_job?: OptimizationExecutionJobRecord | null;
+  applied_agent_version_id?: string | null;
+  external_item_id?: string | null;
+  latest_webhook_alias?: string | null;
+  latest_notification?: ExternalGovernanceNotificationRecord | null;
+  execution_apply_result?: Record<string, unknown> | null;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+export interface FeedbackOptimizationBlockedItemRecord {
+  schema_version?: string;
+  blocked_item_id: string;
+  source_index?: number;
+  status?: string;
+  title?: string;
+  target_type?: string;
+  target_path?: string | null;
+  owner?: string;
+  actionability?: string;
+  confidence?: string;
+  problem_type?: string;
+  analysis_summary?: string;
+  evidence_summary?: string;
+  recommendation?: string;
+  reason?: string | null;
+  feedback_case_ids?: string[];
+  eval_case_ids?: string[];
+  attribution_job_ids?: string[];
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+}
+
+export interface FeedbackOptimizationPlanTaskExecuteRequest {
+  webhook_alias?: string;
+  force?: boolean;
+}
+
+export interface FeedbackOptimizationPlanTaskExecuteResponse {
+  batch: FeedbackOptimizationBatchRecord;
+  plan_task?: FeedbackOptimizationPlanTaskRecord | null;
+  optimization_task?: OptimizationTaskRecord | null;
+  execution_job?: OptimizationExecutionJobRecord | null;
+  apply_result?: Record<string, unknown> | null;
+  external_item?: ExternalGovernanceItemRecord | null;
+}
+
+export interface FeedbackOptimizationBatchCreateRequest {
+  source_refs: FeedbackSourceRef[];
+  title?: string;
+  priority?: "high" | "medium" | "low";
+}
+
+export interface FeedbackOptimizationBatchRecord {
+  schema_version?: string;
+  batch_id: string;
+  created_at: string;
+  updated_at: string;
+  status: string;
+  title: string;
+  priority?: "high" | "medium" | "low" | string;
+  source_refs?: FeedbackSourceRef[];
+  feedback_case_ids?: string[];
+  skipped_source_refs?: Array<Record<string, unknown>>;
+  eval_case_ids?: string[];
+  eval_case_generation?: FeedbackEvalCaseGenerateResponse;
+  attribution_job_ids?: string[];
+  attribution_jobs?: FeedbackAnalysisJobRecord[];
+  attribution_summary?: Record<string, unknown>;
+  optimization_plan?: FeedbackOptimizationPlanRecord | null;
+  optimization_plan_job_id?: string | null;
+  optimization_plan_job?: FeedbackAnalysisJobRecord | null;
+  optimization_plan_error?: Record<string, unknown> | null;
+  internal_proposal_id?: string | null;
+  optimization_task_id?: string | null;
+  optimization_task?: OptimizationTaskRecord | null;
+  execution_job_id?: string | null;
+  execution_job?: OptimizationExecutionJobRecord | null;
+  eval_run_id?: string | null;
+  latest_eval_run?: EvalRunRecord | null;
+  execution_apply_result?: Record<string, unknown> | null;
+  [key: string]: unknown;
+}
+
 export interface FeedbackWorkbenchData {
+  sources: FeedbackSourceRecord[];
   runs: FeedbackRunRecord[];
   signals: FeedbackSignalRecord[];
   events: SocEventRecord[];
@@ -509,4 +793,5 @@ export interface FeedbackWorkbenchData {
   external_webhooks: ExternalGovernanceWebhookRecord[];
   eval_cases: EvalCaseRecord[];
   eval_runs: EvalRunRecord[];
+  optimization_batches: FeedbackOptimizationBatchRecord[];
 }

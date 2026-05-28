@@ -86,3 +86,18 @@ def test_agent_version_restore_preserves_unmanaged_claude_state(tmp_path):
     assert not workspace.joinpath("new.md").exists()
     assert claude_root.joinpath(".claude", "settings.json").read_text(encoding="utf-8") == '{"mode":"two"}'
     assert claude_root.joinpath(".claude.json").read_text(encoding="utf-8") == "keep-current"
+
+
+def test_agent_version_file_diff_returns_unified_diff(tmp_path):
+    store = _store(tmp_path)
+    workspace = store.workspace_dir
+    workspace.joinpath("CLAUDE.md").write_text("one\n", encoding="utf-8")
+    v1 = store.create_snapshot(reason="manual_snapshot")
+    workspace.joinpath("CLAUDE.md").write_text("one\ntwo\n", encoding="utf-8")
+    v2 = store.create_snapshot(reason="manual_snapshot")
+
+    diff = store.diff_version_file(v1["agent_version_id"], v2["agent_version_id"], "CLAUDE.md")
+
+    assert diff["status"] == "modified"
+    assert diff["is_text"] is True
+    assert "+two" in diff["unified_diff"]

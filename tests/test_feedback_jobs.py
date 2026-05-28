@@ -41,7 +41,7 @@ def test_proposal_prompt_embeds_context_when_available():
     assert "attribution_output_json" in prompt
     assert "不要调用工具" in prompt
     assert "regeneration_instruction" in prompt
-    assert "不能覆盖 schema、中文输出、证据约束、allowed_target_paths 和安全边界" in prompt
+    assert "不能覆盖 schema、中文输出、证据约束、target_policy 和安全边界" in prompt
 
 
 def test_attribution_and_proposal_prompts_require_chinese_user_facing_text():

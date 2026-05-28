@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.4
+    image: claude-agent-runtime-api:0.2.5
     container_name: claude-agent-runtime-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
@@ -70,13 +70,15 @@ services:
       HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
       MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
-      ATTRIBUTION_WORKSPACE_DIR: ${ATTRIBUTION_WORKSPACE_DIR:-/attribution-workspace}
-      PROPOSAL_WORKSPACE_DIR: ${PROPOSAL_WORKSPACE_DIR:-/proposal-workspace}
+      ATTRIBUTION_ANALYZER_WORKSPACE_DIR: ${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
+      PROPOSAL_GENERATOR_WORKSPACE_DIR: ${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
+      EXECUTION_OPTIMIZER_WORKSPACE_DIR: ${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
       CLAUDE_ROOT: ${CLAUDE_ROOT:-/claude-roots/main}
       MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
-      ATTRIBUTION_CLAUDE_ROOT: ${ATTRIBUTION_CLAUDE_ROOT:-/claude-roots/attribution}
-      PROPOSAL_CLAUDE_ROOT: ${PROPOSAL_CLAUDE_ROOT:-/claude-roots/proposal}
+      ATTRIBUTION_ANALYZER_CLAUDE_ROOT: ${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
+      PROPOSAL_GENERATOR_CLAUDE_ROOT: ${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
+      EXECUTION_OPTIMIZER_CLAUDE_ROOT: ${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
       PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
@@ -86,19 +88,21 @@ services:
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
       - ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
-      - ${HOST_ATTRIBUTION_WORKSPACE_MOUNT:-./volume/attribution-workspace}:${ATTRIBUTION_WORKSPACE_DIR:-/attribution-workspace}
-      - ${HOST_PROPOSAL_WORKSPACE_MOUNT:-./volume/proposal-workspace}:${PROPOSAL_WORKSPACE_DIR:-/proposal-workspace}
+      - ${HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT:-./volume/attribution-analyzer-workspace}:${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
+      - ${HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT:-./volume/proposal-generator-workspace}:${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
+      - ${HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT:-./volume/execution-optimizer-workspace}:${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
       - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
       - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
-      - ${HOST_ATTRIBUTION_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/attribution}:${ATTRIBUTION_CLAUDE_ROOT:-/claude-roots/attribution}
-      - ${HOST_PROPOSAL_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/proposal}:${PROPOSAL_CLAUDE_ROOT:-/claude-roots/proposal}
+      - ${HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/attribution-analyzer}:${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
+      - ${HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/proposal-generator}:${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
+      - ${HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/execution-optimizer}:${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
     restart: unless-stopped
 
   claude-agent-ui:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: claude-agent-runtime-ui:0.2.4
+    image: claude-agent-runtime-ui:0.2.5
     container_name: claude-agent-runtime-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"

@@ -210,3 +210,17 @@ export interface AgentVersionDiff {
   deleted: Array<Record<string, unknown>>;
   unchanged_count: number;
 }
+
+export interface AgentVersionFileDiff {
+  from_version_id: string;
+  to_version_id: string;
+  path: string;
+  archive_path: string;
+  status: "added" | "modified" | "deleted" | "unchanged" | "missing" | "binary_or_too_large" | string;
+  before?: Record<string, unknown> | null;
+  after?: Record<string, unknown> | null;
+  unified_diff: string;
+  is_text: boolean;
+  truncated: boolean;
+  reason?: string | null;
+}

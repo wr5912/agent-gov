@@ -7,7 +7,7 @@ from typing import Literal
 from .settings import AppSettings
 
 
-AgentRole = Literal["main", "feedback-attribution", "feedback-proposal", "execution-optimizer"]
+AgentRole = Literal["main-agent", "attribution-analyzer", "proposal-generator", "execution-optimizer"]
 
 
 @dataclass(frozen=True)
@@ -36,9 +36,9 @@ class AgentRuntimeProfile:
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     data_dir = settings.data_dir
     return {
-        "main": AgentRuntimeProfile(
-            name="main",
-            role="main",
+        "main-agent": AgentRuntimeProfile(
+            name="main-agent",
+            role="main-agent",
             workspace_dir=settings.main_workspace_dir,
             claude_root=settings.main_claude_root,
             claude_config_dir=settings.main_claude_root / ".claude",
@@ -48,35 +48,39 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
             langfuse_observation_name="runtime.main_agent",
             readable_paths=(settings.main_workspace_dir, data_dir),
             writable_paths=(data_dir,),
-            denied_paths=(settings.attribution_claude_root, settings.proposal_claude_root),
+            denied_paths=(
+                settings.attribution_analyzer_claude_root,
+                settings.proposal_generator_claude_root,
+                settings.execution_optimizer_claude_root,
+            ),
             allowed_mcp_servers=("sec-ops-data", "security-kb"),
             permission_mode=settings.permission_mode or "default",
         ),
-        "feedback-attribution": AgentRuntimeProfile(
-            name="feedback-attribution",
-            role="feedback-attribution",
-            workspace_dir=settings.attribution_workspace_dir,
-            claude_root=settings.attribution_claude_root,
-            claude_config_dir=settings.attribution_claude_root / ".claude",
+        "attribution-analyzer": AgentRuntimeProfile(
+            name="attribution-analyzer",
+            role="attribution-analyzer",
+            workspace_dir=settings.attribution_analyzer_workspace_dir,
+            claude_root=settings.attribution_analyzer_claude_root,
+            claude_config_dir=settings.attribution_analyzer_claude_root / ".claude",
             data_dir=data_dir,
-            mcp_config_path=settings.attribution_workspace_dir / ".mcp.json",
-            project_settings_path=settings.attribution_workspace_dir / ".claude" / "settings.json",
-            langfuse_observation_name="runtime.feedback_attribution_agent",
+            mcp_config_path=settings.attribution_analyzer_workspace_dir / ".mcp.json",
+            project_settings_path=settings.attribution_analyzer_workspace_dir / ".claude" / "settings.json",
+            langfuse_observation_name="runtime.attribution_analyzer",
             readable_paths=(data_dir,),
             writable_paths=(data_dir / ".runtime-tmp" / "jobs",),
             denied_paths=(settings.main_workspace_dir, settings.main_claude_root),
             allowed_mcp_servers=("feedback-evidence", "readonly-trace"),
         ),
-        "feedback-proposal": AgentRuntimeProfile(
-            name="feedback-proposal",
-            role="feedback-proposal",
-            workspace_dir=settings.proposal_workspace_dir,
-            claude_root=settings.proposal_claude_root,
-            claude_config_dir=settings.proposal_claude_root / ".claude",
+        "proposal-generator": AgentRuntimeProfile(
+            name="proposal-generator",
+            role="proposal-generator",
+            workspace_dir=settings.proposal_generator_workspace_dir,
+            claude_root=settings.proposal_generator_claude_root,
+            claude_config_dir=settings.proposal_generator_claude_root / ".claude",
             data_dir=data_dir,
-            mcp_config_path=settings.proposal_workspace_dir / ".mcp.json",
-            project_settings_path=settings.proposal_workspace_dir / ".claude" / "settings.json",
-            langfuse_observation_name="runtime.feedback_proposal_agent",
+            mcp_config_path=settings.proposal_generator_workspace_dir / ".mcp.json",
+            project_settings_path=settings.proposal_generator_workspace_dir / ".claude" / "settings.json",
+            langfuse_observation_name="runtime.proposal_generator",
             readable_paths=(data_dir,),
             writable_paths=(data_dir / ".runtime-tmp" / "jobs",),
             denied_paths=(settings.main_workspace_dir, settings.main_claude_root),
@@ -84,5 +88,23 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
             allowed_tools=(),
             disallowed_tools=("Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "WebSearch"),
             max_turns=16,
+        ),
+        "execution-optimizer": AgentRuntimeProfile(
+            name="execution-optimizer",
+            role="execution-optimizer",
+            workspace_dir=settings.execution_optimizer_workspace_dir,
+            claude_root=settings.execution_optimizer_claude_root,
+            claude_config_dir=settings.execution_optimizer_claude_root / ".claude",
+            data_dir=data_dir,
+            mcp_config_path=settings.execution_optimizer_workspace_dir / ".mcp.json",
+            project_settings_path=settings.execution_optimizer_workspace_dir / ".claude" / "settings.json",
+            langfuse_observation_name="runtime.execution_optimizer_agent",
+            readable_paths=(data_dir, settings.main_workspace_dir),
+            writable_paths=(data_dir / ".runtime-tmp" / "jobs",),
+            denied_paths=(settings.main_claude_root,),
+            allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
+            allowed_tools=(),
+            disallowed_tools=("Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "WebSearch"),
+            max_turns=12,
         ),
     }

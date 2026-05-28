@@ -184,6 +184,56 @@ class PendingCorrelationResolveRequest(BaseModel):
     comment: Optional[str] = None
 
 
+class FeedbackSourceRef(BaseModel):
+    source_kind: Literal["signal", "soc_event", "pending_correlation"]
+    source_id: str
+
+
+class FeedbackSourceUpdateRequest(BaseModel):
+    comment: Optional[str] = None
+    labels: Optional[list[str]] = None
+    priority: Optional[Literal["high", "medium", "low"]] = None
+    status: Optional[Literal["new", "triaged", "in_batch", "resolved", "archived"]] = None
+    requires_review: Optional[bool] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class FeedbackEvalCaseGenerateRequest(BaseModel):
+    source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
+    force: bool = False
+
+
+class FeedbackOptimizationBatchCreateRequest(BaseModel):
+    source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
+    title: Optional[str] = None
+    priority: Literal["high", "medium", "low"] = "medium"
+
+
+class FeedbackOptimizationBatchAttributionRequest(BaseModel):
+    force: bool = False
+
+
+class FeedbackOptimizationBatchPlanGenerateRequest(BaseModel):
+    regeneration_instruction: Optional[str] = Field(default=None, max_length=2000)
+
+    @field_validator("regeneration_instruction", mode="before")
+    @classmethod
+    def _trim_instruction(cls, value: Any) -> Any:
+        if value is None or not isinstance(value, str):
+            return value
+        text = value.strip()
+        return text or None
+
+
+class FeedbackOptimizationBatchPlanReviewRequest(BaseModel):
+    comment: Optional[str] = None
+
+
+class FeedbackOptimizationPlanTaskExecuteRequest(BaseModel):
+    webhook_alias: Optional[str] = None
+    force: bool = False
+
+
 class AgentRunResponse(BaseModel):
     run_id: str
     session_id: Optional[str] = None
@@ -244,6 +294,15 @@ class OptimizationTaskMarkAppliedRequest(BaseModel):
     note: Optional[str] = None
 
 
+class OptimizationExecutionCreateRequest(BaseModel):
+    force: bool = False
+
+
+class OptimizationExecutionApplyRequest(BaseModel):
+    confirm: bool = True
+    note: Optional[str] = None
+
+
 class FeedbackEvalDatasetSyncRequest(BaseModel):
     feedback_case_id: Optional[str] = None
     limit: int = Field(default=100, ge=1, le=500)
@@ -274,6 +333,12 @@ class OptimizationTaskResponse(BaseModel):
     comment: Optional[str] = None
     target_paths: list[str] = Field(default_factory=list)
     proposal: Optional[dict[str, Any]] = None
+    baseline_agent_version_id: Optional[str] = None
+    execution_job_ids: list[str] = Field(default_factory=list)
+    latest_execution_job_id: Optional[str] = None
+    latest_execution_job: Optional[dict[str, Any]] = None
+    pre_execution_agent_version_id: Optional[str] = None
+    pre_execution_agent_version: Optional[dict[str, Any]] = None
     applied_at: Optional[str] = None
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[dict[str, Any]] = None

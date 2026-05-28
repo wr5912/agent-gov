@@ -60,7 +60,7 @@ export function AgentVersionsWorkspace({
     const systemItems = searchedVersions.filter((version) => version.agent_version_id !== currentId && version.reason === "pre_restore");
     const groups: VersionGroup[] = [
       { key: "current", title: "当前生效", description: "runtime 当前使用的受管配置版本。", versions: currentItems },
-      { key: "snapshot", title: "人工/优化快照", description: "初始化基线、手动快照和优化建议应用后的快照。", versions: snapshotItems },
+      { key: "snapshot", title: "人工/优化快照", description: "初始化基线、手动快照和优化方案应用后的快照。", versions: snapshotItems },
       { key: "rollback", title: "回滚记录", description: "基于历史版本恢复后新创建的当前或历史版本。", versions: rollbackItems },
     ];
     if (showSystemSnapshots) {

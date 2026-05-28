@@ -27,9 +27,16 @@ import {
   createAttributionJob,
   createEvidencePackage,
   createFeedbackCase,
+  createFeedbackOptimizationBatch,
   createEvalRun,
+  applyOptimizationExecutionJob,
   createOptimizationTask,
+  createOptimizationExecutionJob,
+  executeFeedbackOptimizationPlanTask,
   createProposalJob,
+  diffAgentVersionFile,
+  generateFeedbackOptimizationBatchPlan,
+  generateFeedbackSourceEvalCases,
   getAttributionOutput,
   getEvidencePackage,
   getEvidencePackageFile,
@@ -40,8 +47,11 @@ import {
   notifyExternalGovernanceItem,
   regenerateAttributionJob,
   regenerateProposalJob,
+  rejectFeedbackOptimizationBatchPlan,
   revalidateProposalOutput,
   reviewOptimizationProposal,
+  runFeedbackOptimizationBatchAttribution,
+  runFeedbackOptimizationBatchRegression,
   runOptimizationTaskRegression,
   runtimeApi,
   syncFeedbackEvalDataset,
@@ -59,9 +69,17 @@ import type {
   ExternalFeedbackWorkspaceProps,
   FeedbackAnalysisJobRecord,
   FeedbackCaseRecord,
+  FeedbackOptimizationBlockedItemRecord,
+  FeedbackOptimizationBatchRecord,
+  FeedbackOptimizationPlanTaskRecord,
   FeedbackRunRecord,
   FeedbackSignalRecord,
+  FeedbackSourceKind,
+  FeedbackSourceRecord,
+  FeedbackSourceRef,
   FeedbackWorkbenchData,
+  ExecutionPlanOperation,
+  OptimizationExecutionJobRecord,
   OptimizationProposalRecord,
   OptimizationProposalReviewAction,
   OptimizationTaskRecord,
@@ -69,12 +87,14 @@ import type {
   ProposalOutput,
   SocEventRecord,
 } from "../types/feedback";
+import type { AgentVersionFileDiff } from "../types/runtime";
 
-type MenuKey = "signals" | "cases" | "evals" | "versions";
-type SourceKind = "signal" | "event" | "pending";
+type MenuKey = "signals" | "batches" | "cases" | "evals" | "versions";
+type SourceKind = FeedbackSourceKind;
 type CaseDetailView = "summary" | "evidence" | "attribution" | "proposal" | "runs" | "tasks" | "evals";
 type ProposalDetailTab = "proposals" | "raw" | "records";
 type AttributionDetailTab = "result" | "raw" | "records";
+type BatchDetailView = "feedback" | "attribution" | "plan" | "regression";
 
 interface EvalCaseEditDraft {
   prompt: string;
@@ -87,6 +107,19 @@ interface EvalCaseEditDraft {
 interface ProposalRegenerateDraft {
   feedbackCaseId: string;
   instruction: string;
+}
+
+interface BatchPlanGenerateDraft {
+  batch: FeedbackOptimizationBatchRecord;
+  instruction: string;
+}
+
+interface ExecutionApplyDraft {
+  task: OptimizationTaskRecord;
+}
+
+interface ManualApplyDraft {
+  task: OptimizationTaskRecord;
 }
 
 interface DetailTabItem<T extends string> {
@@ -104,7 +137,9 @@ interface SourceRow {
   sessionId?: string | null;
   alertId?: string | null;
   caseId?: string | null;
-  raw: FeedbackSignalRecord | SocEventRecord | PendingCorrelationRecord;
+  feedbackCaseId?: string | null;
+  evalCaseId?: string | null;
+  raw: FeedbackSourceRecord | FeedbackSignalRecord | SocEventRecord | PendingCorrelationRecord;
 }
 
 interface CaseDetails {
@@ -119,6 +154,7 @@ interface CaseDetails {
 }
 
 const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
+  sources: [],
   runs: [],
   signals: [],
   events: [],
@@ -130,19 +166,19 @@ const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
   external_webhooks: [],
   eval_cases: [],
   eval_runs: [],
+  optimization_batches: [],
 };
 
-const menuText: Record<MenuKey, string> = {
-  signals: "反馈信息",
-  cases: "反馈处置",
-  evals: "回归评估",
-  versions: "版本管理",
-};
+const visibleMenuItems: Array<{ key: MenuKey; label: string }> = [
+  { key: "signals", label: "反馈信息" },
+  { key: "batches", label: "优化批次" },
+  { key: "versions", label: "版本管理" },
+];
 
 const sourceKindText: Record<SourceKind, string> = {
   signal: "Feedback signal",
-  event: "SOC event",
-  pending: "待关联",
+  soc_event: "SOC event",
+  pending_correlation: "待关联",
 };
 
 const caseStatusText: Record<string, string> = {
@@ -181,6 +217,7 @@ export function ExternalFeedbackWorkspace({
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | null>(null);
   const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
   const [caseDetailView, setCaseDetailView] = useState<CaseDetailView>("summary");
   const [attributionDetailTab, setAttributionDetailTab] = useState<AttributionDetailTab>("result");
   const [caseDetails, setCaseDetails] = useState<CaseDetails>({});
@@ -189,13 +226,20 @@ export function ExternalFeedbackWorkspace({
   const [actionId, setActionId] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [proposalRegenerateDraft, setProposalRegenerateDraft] = useState<ProposalRegenerateDraft | null>(null);
+  const [batchPlanGenerateDraft, setBatchPlanGenerateDraft] = useState<BatchPlanGenerateDraft | null>(null);
+  const [executionApplyDraft, setExecutionApplyDraft] = useState<ExecutionApplyDraft | null>(null);
+  const [manualApplyDraft, setManualApplyDraft] = useState<ManualApplyDraft | null>(null);
   const proposalRegenerateBusy = Boolean(actionId?.startsWith("proposal-regenerate:"));
+  const batchPlanGenerateBusy = Boolean(actionId?.startsWith("batch-plan:"));
+  const executionApplyBusy = Boolean(actionId?.startsWith("execution-apply:"));
+  const manualApplyBusy = Boolean(actionId?.startsWith("apply:"));
 
   const refreshWorkbench = useCallback(async () => {
     try {
       const next = await getFeedbackWorkbenchData(clientConfig, { limit: 500 });
       setData(next);
       setSelectedCaseId((current) => current || next.cases[0]?.feedback_case_id || null);
+      setSelectedBatchId((current) => current || next.optimization_batches[0]?.batch_id || null);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "反馈数据加载失败");
     }
@@ -211,6 +255,7 @@ export function ExternalFeedbackWorkspace({
 
   const sourceRows = useMemo(() => buildSourceRows(data), [data]);
   const visibleSources = useMemo(() => filterSourceRows(sourceRows, query), [sourceRows, query]);
+  const visibleBatches = useMemo(() => filterBatches(data.optimization_batches, query), [data.optimization_batches, query]);
   const selectedSource = useMemo(() => {
     if (!visibleSources.length) return null;
     if (selectedSourceKey) {
@@ -219,6 +264,14 @@ export function ExternalFeedbackWorkspace({
     }
     return visibleSources[0];
   }, [visibleSources, selectedSourceKey]);
+  const selectedBatch = useMemo(() => {
+    if (!visibleBatches.length) return null;
+    if (selectedBatchId) {
+      const matched = visibleBatches.find((batch) => batch.batch_id === selectedBatchId);
+      if (matched) return matched;
+    }
+    return visibleBatches[0];
+  }, [visibleBatches, selectedBatchId]);
   const visibleCases = useMemo(() => filterCases(data.cases, query), [data.cases, query]);
   const selectedCaseRuns = useMemo(() => {
     if (!selectedCase) return [];
@@ -253,6 +306,17 @@ export function ExternalFeedbackWorkspace({
       return sourceRowKey(visibleSources[0]);
     });
   }, [visibleSources]);
+
+  useEffect(() => {
+    if (!visibleBatches.length) {
+      setSelectedBatchId(null);
+      return;
+    }
+    setSelectedBatchId((current) => {
+      if (current && visibleBatches.some((batch) => batch.batch_id === current)) return current;
+      return visibleBatches[0].batch_id;
+    });
+  }, [visibleBatches]);
 
   useEffect(() => {
     let cancelled = false;
@@ -314,6 +378,55 @@ export function ExternalFeedbackWorkspace({
     });
   }
 
+  function selectedSourceRefs(): FeedbackSourceRef[] {
+    const selectedRows = sourceRows.filter((row) => selectedSourceIds.includes(row.id));
+    return selectedRows.map((row) => ({ source_kind: row.kind, source_id: row.id }));
+  }
+
+  async function generateEvalCasesFromSelection() {
+    const refs = selectedSourceRefs();
+    if (!refs.length) {
+      setToast("请先选择反馈信息");
+      return;
+    }
+    setActionId("generate-eval-cases");
+    try {
+      const result = await generateFeedbackSourceEvalCases(clientConfig, { source_refs: refs });
+      setToast(`已生成/复用回归用例：新增 ${result.created}，复用 ${result.reused}`);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "生成回归用例失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function createBatchFromSelection() {
+    const refs = selectedSourceRefs();
+    if (!refs.length) {
+      setToast("请先选择反馈信息");
+      return;
+    }
+    setActionId("create-batch");
+    try {
+      const batch = await createFeedbackOptimizationBatch(clientConfig, {
+        source_refs: refs,
+        priority: refs.length >= 5 ? "high" : "medium",
+      });
+      setToast(`已创建优化批次 ${shortId(batch.batch_id)}`);
+      setSelectedSourceIds([]);
+      setSelectedBatchId(batch.batch_id);
+      setActiveMenu("batches");
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "创建优化批次失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
   async function createCaseFromSelection() {
     if (!selectedSourceIds.length) {
       setToast("请先选择反馈信息");
@@ -328,7 +441,7 @@ export function ExternalFeedbackWorkspace({
       setToast(`已创建反馈处置单 ${shortId(created.feedback_case_id)}`);
       setSelectedSourceIds([]);
       setSelectedCaseId(created.feedback_case_id);
-      setActiveMenu("cases");
+      setActiveMenu("batches");
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -353,7 +466,7 @@ export function ExternalFeedbackWorkspace({
     }
     if (action === "proposal" && selectedCase.proposal_job_ids.length && !isRetryableJobStatus(caseDetails.proposalJob?.status)) {
       setCaseDetailView("proposal");
-      setToast("已有优化建议生成记录，可在详情中查看");
+      setToast("已有优化方案生成记录，可在详情中查看");
       return;
     }
     setActionId(`${action}:${selectedCase.feedback_case_id}`);
@@ -422,17 +535,23 @@ export function ExternalFeedbackWorkspace({
     const { feedbackCaseId } = proposalRegenerateDraft;
     const instruction = proposalRegenerateDraft.instruction.trim();
     setActionId(`proposal-regenerate:${feedbackCaseId}`);
+    setCaseDetailView("proposal");
+    setProposalRegenerateDraft(null);
+    setToast("已提交重新生成优化方案请求");
+    const regeneratePromise = regenerateProposalJob(clientConfig, feedbackCaseId, {
+      regeneration_instruction: instruction,
+    });
+    window.setTimeout(() => {
+      void refreshWorkbench();
+    }, 500);
     try {
-      const job = await regenerateProposalJob(clientConfig, feedbackCaseId, {
-        regeneration_instruction: instruction,
-      });
+      const job = await regeneratePromise;
       setToast(`已重新生成建议 job ${shortId(job.job_id)}：${job.status}`);
-      setCaseDetailView("proposal");
-      setProposalRegenerateDraft(null);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "重新生成建议失败");
+      await refreshWorkbench();
     } finally {
       setActionId(null);
     }
@@ -458,10 +577,117 @@ export function ExternalFeedbackWorkspace({
     if (task.feedback_case_id) {
       setSelectedCaseId(task.feedback_case_id);
       setCaseDetailView("tasks");
-      setActiveMenu("cases");
+      setActiveMenu("batches");
       return;
     }
-    setActiveMenu("cases");
+    setActiveMenu("batches");
+  }
+
+  async function runBatchAttribution(batch: FeedbackOptimizationBatchRecord, force = false) {
+    setActionId(`batch-attribution:${batch.batch_id}`);
+    try {
+      const result = await runFeedbackOptimizationBatchAttribution(clientConfig, batch.batch_id, force ? { force: true } : undefined);
+      setToast(`${force ? "已重新归因" : "批次归因完成"}：${result.jobs.length} 个当前 job`);
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "批次归因失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  function openBatchPlanGeneration(batch: FeedbackOptimizationBatchRecord) {
+    if (batch.optimization_plan) {
+      setBatchPlanGenerateDraft({ batch, instruction: "" });
+      return;
+    }
+    void generateBatchPlan(batch);
+  }
+
+  async function submitBatchPlanGeneration(event: FormEvent) {
+    event.preventDefault();
+    if (!batchPlanGenerateDraft) return;
+    const { batch } = batchPlanGenerateDraft;
+    const instruction = batchPlanGenerateDraft.instruction.trim();
+    setBatchPlanGenerateDraft(null);
+    await generateBatchPlan(batch, instruction);
+  }
+
+  async function generateBatchPlan(batch: FeedbackOptimizationBatchRecord, instruction?: string) {
+    setActionId(`batch-plan:${batch.batch_id}`);
+    try {
+      const updated = await generateFeedbackOptimizationBatchPlan(
+        clientConfig,
+        batch.batch_id,
+        instruction ? { regeneration_instruction: instruction } : undefined,
+      );
+      setToast(`${batch.optimization_plan ? "已重新生成优化方案" : "已生成优化方案"}：${updated.optimization_plan?.status || updated.status}`);
+      setSelectedBatchId(updated.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "生成优化方案失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function executePlanTask(batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) {
+    setActionId(`plan-task:${planTask.plan_task_id}`);
+    try {
+      const result = await executeFeedbackOptimizationPlanTask(clientConfig, batch.batch_id, planTask.plan_task_id, {
+        force: true,
+        webhook_alias: webhookAlias || undefined,
+      });
+      if (result.apply_result || result.optimization_task?.applied_agent_version_id) {
+        setToast(`已执行任务，生成版本 ${shortId(result.optimization_task?.applied_agent_version_id)}`);
+        await onRefreshVersions?.();
+      } else if (result.external_item) {
+        setToast(`${result.external_item.status === "notified" ? "已发送外部任务" : "外部任务发送失败"}：${webhookAlias || result.external_item.latest_webhook_alias || "-"}`);
+      } else {
+        setToast(`任务已执行：${result.plan_task?.status || result.execution_job?.status || result.batch.status}`);
+      }
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "执行方案任务失败");
+      await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function rejectBatchPlan(batch: FeedbackOptimizationBatchRecord) {
+    setActionId(`batch-reject:${batch.batch_id}`);
+    try {
+      const updated = await rejectFeedbackOptimizationBatchPlan(clientConfig, batch.batch_id, `拒绝优化批次 ${batch.batch_id}`);
+      setToast("已拒绝优化方案");
+      setSelectedBatchId(updated.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "拒绝优化方案失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function runBatchRegression(batch: FeedbackOptimizationBatchRecord) {
+    setActionId(`batch-regression:${batch.batch_id}`);
+    try {
+      const result = await runFeedbackOptimizationBatchRegression(clientConfig, batch.batch_id);
+      setToast(`批次回归测试完成：${result.eval_run.result_status || result.eval_run.status}`);
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "批次回归测试失败");
+    } finally {
+      setActionId(null);
+    }
   }
 
   async function createTask(proposal: OptimizationProposalRecord) {
@@ -489,16 +715,78 @@ export function ExternalFeedbackWorkspace({
     }
   }
 
-  async function markTaskApplied(task: OptimizationTaskRecord) {
+  function markTaskApplied(task: OptimizationTaskRecord) {
+    if (task.applied_agent_version_id) {
+      setToast("当前任务已创建应用版本");
+      return;
+    }
+    setManualApplyDraft({ task });
+  }
+
+  async function submitManualApply() {
+    if (!manualApplyDraft) return;
+    const task = manualApplyDraft.task;
     setActionId(`apply:${task.optimization_task_id}`);
     try {
       const updated = await markOptimizationTaskApplied(clientConfig, task.optimization_task_id, `由反馈处置界面确认任务 ${task.optimization_task_id} 已应用。`);
       setToast(`已创建版本快照 ${shortId(updated.applied_agent_version_id)}`);
+      setManualApplyDraft(null);
       await refreshWorkbench();
       await onRefreshVersions?.();
       onFeedbackChanged?.();
     } catch (error) {
       setToast(error instanceof Error ? error.message : "标记已应用失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function createExecutionJob(task: OptimizationTaskRecord, force = false) {
+    setActionId(`execution:${task.optimization_task_id}`);
+    try {
+      const job = await createOptimizationExecutionJob(clientConfig, task.optimization_task_id, force);
+      setToast(`执行方案 ${shortId(job.execution_job_id)}：${job.status}`);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "生成执行方案失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  function applyExecutionJob(task: OptimizationTaskRecord) {
+    const jobId = task.latest_execution_job?.execution_job_id || task.latest_execution_job_id;
+    if (!jobId) {
+      setToast("当前任务没有可应用的执行方案");
+      return;
+    }
+    if (task.latest_execution_job?.status !== "ready") {
+      setToast("执行方案尚未 ready，不能应用");
+      return;
+    }
+    setExecutionApplyDraft({ task });
+  }
+
+  async function submitExecutionApply() {
+    if (!executionApplyDraft) return;
+    const task = executionApplyDraft.task;
+    const jobId = task.latest_execution_job?.execution_job_id || task.latest_execution_job_id;
+    if (!jobId) {
+      setToast("当前任务没有可应用的执行方案");
+      setExecutionApplyDraft(null);
+      return;
+    }
+    setActionId(`execution-apply:${task.optimization_task_id}`);
+    try {
+      const result = await applyOptimizationExecutionJob(clientConfig, task.optimization_task_id, jobId);
+      setToast(`已应用执行方案，生成版本 ${shortId(result.optimization_task?.applied_agent_version_id)}`);
+      setExecutionApplyDraft(null);
+      await refreshWorkbench();
+      await onRefreshVersions?.();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "应用执行方案失败");
     } finally {
       setActionId(null);
     }
@@ -579,10 +867,10 @@ export function ExternalFeedbackWorkspace({
   return (
     <div className="fw-shell">
       <aside className="fw-sidebar">
-        {(Object.keys(menuText) as MenuKey[]).map((key) => (
-          <button className={activeMenu === key ? "active" : ""} key={key} onClick={() => setActiveMenu(key)} type="button">
-            {menuText[key]}
-            {key === "versions" && agentVersions.length > 0 ? <span className="fw-menu-badge">{agentVersions.length}</span> : null}
+        {visibleMenuItems.map((item) => (
+          <button className={activeMenu === item.key ? "active" : ""} key={item.key} onClick={() => setActiveMenu(item.key)} type="button">
+            {item.label}
+            {item.key === "versions" && agentVersions.length > 0 ? <span className="fw-menu-badge">{agentVersions.length}</span> : null}
           </button>
         ))}
       </aside>
@@ -617,7 +905,27 @@ export function ExternalFeedbackWorkspace({
             actionId={actionId}
             onToggle={toggleSource}
             onSelectSource={(row) => setSelectedSourceKey(sourceRowKey(row))}
-            onCreateCase={createCaseFromSelection}
+            onCreateBatch={createBatchFromSelection}
+            onGenerateEvalCases={generateEvalCasesFromSelection}
+          />
+        ) : null}
+
+        {activeMenu === "batches" ? (
+          <BatchesPanel
+            actionId={actionId}
+            batches={visibleBatches}
+            clientConfig={clientConfig}
+            externalWebhooks={data.external_webhooks}
+            selectedBatch={selectedBatch}
+            sources={data.sources}
+            onApplyExecutionJob={applyExecutionJob}
+            onCreateExecutionJob={createExecutionJob}
+            onExecutePlanTask={executePlanTask}
+            onGeneratePlan={openBatchPlanGeneration}
+            onRejectPlan={rejectBatchPlan}
+            onRunAttribution={runBatchAttribution}
+            onRunRegression={runBatchRegression}
+            onSelectBatch={(batch) => setSelectedBatchId(batch.batch_id)}
           />
         ) : null}
 
@@ -651,6 +959,8 @@ export function ExternalFeedbackWorkspace({
             onRunProposal={() => runCaseAction("proposal")}
             onReviewProposal={reviewProposal}
             onCreateTask={createTask}
+            onCreateExecutionJob={createExecutionJob}
+            onApplyExecutionJob={applyExecutionJob}
             onNotifyExternalItem={notifyExternalItem}
             onOpenTask={openTask}
             onMarkTaskApplied={markTaskApplied}
@@ -693,7 +1003,7 @@ export function ExternalFeedbackWorkspace({
         {activeMenu !== "versions" ? (
           <footer className="fw-info-bar">
             <GitBranch size={18} />
-            <span>{"当前链路：feedback signal / SOC event -> feedback case -> evidence package -> attribution job -> proposal job -> approval -> optimization task -> regression eval。"}</span>
+            <span>{"当前链路：反馈信息 -> 默认回归用例 -> 优化批次 -> 归因分析智能体-> 优化方案生成智能体-> 执行优化智能体-> 批次回归测试。"}</span>
             {monitoringConfig?.langfuseUrl ? <a href={monitoringConfig.langfuseUrl} target="_blank" rel="noreferrer">Langfuse</a> : null}
           </footer>
         ) : null}
@@ -705,13 +1015,13 @@ export function ExternalFeedbackWorkspace({
             className="modal-card fw-proposal-regenerate-modal"
             role="dialog"
             aria-modal="true"
-            aria-label="重新生成优化建议"
+            aria-label="重新生成优化方案"
             onClick={(event) => event.stopPropagation()}
             onSubmit={submitProposalRegenerate}
           >
             <header className="modal-head">
               <div>
-                <h3>重新生成优化建议</h3>
+                <h3>重新生成优化方案</h3>
                 <p>重新生成会废弃当前反馈单中未审批、未通知的旧建议，并保留历史记录。</p>
               </div>
               <button className="mini-icon-button" type="button" onClick={() => setProposalRegenerateDraft(null)} aria-label="关闭" disabled={proposalRegenerateBusy}>
@@ -745,6 +1055,71 @@ export function ExternalFeedbackWorkspace({
         </div>
       ) : null}
 
+      {batchPlanGenerateDraft ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => !batchPlanGenerateBusy && setBatchPlanGenerateDraft(null)}>
+          <form
+            className="modal-card fw-proposal-regenerate-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="重新生成优化方案"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={submitBatchPlanGeneration}
+          >
+            <header className="modal-head">
+              <div>
+                <h3>重新生成优化方案</h3>
+                <p>重新生成会覆盖当前未审批优化方案，并使用补充要求生成新的方案。</p>
+              </div>
+              <button className="mini-icon-button" type="button" onClick={() => setBatchPlanGenerateDraft(null)} aria-label="关闭" disabled={batchPlanGenerateBusy}>
+                <X size={16} />
+              </button>
+            </header>
+            <label className="form-field">
+              <span>补充要求</span>
+              <textarea
+                maxLength={2000}
+                placeholder="补充本次优化方案生成要求，可留空"
+                value={batchPlanGenerateDraft.instruction}
+                onChange={(event) =>
+                  setBatchPlanGenerateDraft((current) => (current ? { ...current, instruction: event.target.value } : current))
+                }
+              />
+            </label>
+            <div className="fw-modal-inline-meta">
+              <span>{batchPlanGenerateDraft.instruction.length}/2000</span>
+            </div>
+            <div className="modal-actions">
+              <button className="fw-small-secondary" type="button" onClick={() => setBatchPlanGenerateDraft(null)} disabled={batchPlanGenerateBusy}>
+                取消
+              </button>
+              <button className="fw-small-primary" type="submit" disabled={batchPlanGenerateBusy}>
+                {batchPlanGenerateBusy ? <Loader2 size={16} className="fw-spin" /> : <RotateCcw size={16} />}
+                重新生成
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
+      {executionApplyDraft ? (
+        <ExecutionApplyConfirmModal
+          busy={executionApplyBusy}
+          onCancel={() => setExecutionApplyDraft(null)}
+          onConfirm={submitExecutionApply}
+          task={executionApplyDraft.task}
+        />
+      ) : null}
+
+      {manualApplyDraft ? (
+        <ManualApplyConfirmModal
+          busy={manualApplyBusy}
+          currentVersion={currentAgentVersion || null}
+          onCancel={() => setManualApplyDraft(null)}
+          onConfirm={submitManualApply}
+          task={manualApplyDraft.task}
+        />
+      ) : null}
+
       {toast ? <div className="fw-toast" onAnimationEnd={() => setToast(null)}>{toast}</div> : null}
     </div>
   );
@@ -757,7 +1132,8 @@ function SignalsPanel({
   actionId,
   onToggle,
   onSelectSource,
-  onCreateCase,
+  onCreateBatch,
+  onGenerateEvalCases,
 }: {
   rows: SourceRow[];
   selectedIds: string[];
@@ -765,16 +1141,23 @@ function SignalsPanel({
   actionId: string | null;
   onToggle: (sourceId: string, checked: boolean) => void;
   onSelectSource: (row: SourceRow) => void;
-  onCreateCase: () => void;
+  onCreateBatch: () => void;
+  onGenerateEvalCases: () => void;
 }) {
   return (
     <section className="fw-panel fw-signals-page">
       <div className="fw-panel-header">
         <strong>反馈信息</strong>
-        <button className="fw-small-primary" type="button" onClick={onCreateCase} disabled={!selectedIds.length || actionId === "create-case"}>
-          {actionId === "create-case" ? <Loader2 size={16} className="fw-spin" /> : <FolderKanban size={16} />}
-          创建反馈处置单
-        </button>
+        <div className="fw-panel-header-actions">
+          <button className="fw-small-secondary" type="button" onClick={onGenerateEvalCases} disabled={!selectedIds.length || actionId === "generate-eval-cases"}>
+            {actionId === "generate-eval-cases" ? <Loader2 size={16} className="fw-spin" /> : <Database size={16} />}
+            生成回归用例
+          </button>
+          <button className="fw-small-primary" type="button" onClick={onCreateBatch} disabled={!selectedIds.length || actionId === "create-batch"}>
+            {actionId === "create-batch" ? <Loader2 size={16} className="fw-spin" /> : <FolderKanban size={16} />}
+            创建优化批次
+          </button>
+        </div>
       </div>
       <div className="fw-signal-layout">
         <div className="fw-signal-table">
@@ -805,12 +1188,12 @@ function SignalsPanel({
                 <input
                   aria-label={`选择 ${row.id}`}
                   checked={selectedIds.includes(row.id)}
-                  disabled={row.kind === "pending"}
+                  disabled={row.kind === "pending_correlation" && row.status !== "resolved"}
                   onChange={(event) => onToggle(row.id, event.target.checked)}
                   type="checkbox"
                 />
               </span>
-              <span><Pill tone={row.kind === "pending" ? "orange" : row.kind === "event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill></span>
+              <span><Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill></span>
               <span className="fw-signal-main">
                 <strong>{row.label}</strong>
                 <small title={row.id}>{shortId(row.id)} · {summaryText(row.raw)}</small>
@@ -853,13 +1236,13 @@ function SignalDetailPanel({
     <aside className="fw-signal-detail-panel">
       <div className="fw-signal-detail-head">
         <div>
-          <Pill tone={row.kind === "pending" ? "orange" : row.kind === "event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill>
+          <Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill>
           <h3>{row.label}</h3>
           <small title={row.id}>{row.id}</small>
         </div>
-        {row.kind !== "pending" ? (
+        {row.kind !== "pending_correlation" || row.status === "resolved" ? (
           <button className={selected ? "fw-small-secondary" : "fw-small-primary"} onClick={() => onToggle(row.id, !selected)} type="button">
-            {selected ? "已选择" : "加入处置单"}
+            {selected ? "已选择" : "加入批次"}
           </button>
         ) : null}
       </div>
@@ -870,6 +1253,8 @@ function SignalDetailPanel({
         <Metric label="session_id" value={row.sessionId || "-"} />
         <Metric label="case_id" value={row.caseId || "-"} />
         <Metric label="alert_id" value={row.alertId || "-"} />
+        <Metric label="反馈单" value={shortId(row.feedbackCaseId)} />
+        <Metric label="回归用例" value={shortId(row.evalCaseId)} />
       </div>
       <div className="fw-json-preview fw-json-preview-standalone">
         <div className="fw-json-preview-header">
@@ -879,6 +1264,807 @@ function SignalDetailPanel({
         <pre>{jsonPreview(row.raw)}</pre>
       </div>
     </aside>
+  );
+}
+
+function BatchesPanel({
+  actionId,
+  batches,
+  clientConfig,
+  externalWebhooks,
+  selectedBatch,
+  sources,
+  onApplyExecutionJob,
+  onCreateExecutionJob,
+  onExecutePlanTask,
+  onGeneratePlan,
+  onRejectPlan,
+  onRunAttribution,
+  onRunRegression,
+  onSelectBatch,
+}: {
+  actionId: string | null;
+  batches: FeedbackOptimizationBatchRecord[];
+  clientConfig: ExternalFeedbackWorkspaceProps["clientConfig"];
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
+  selectedBatch: FeedbackOptimizationBatchRecord | null;
+  sources: FeedbackSourceRecord[];
+  onApplyExecutionJob: (task: OptimizationTaskRecord) => void;
+  onCreateExecutionJob: (task: OptimizationTaskRecord, force?: boolean) => void;
+  onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
+  onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
+  onRejectPlan: (batch: FeedbackOptimizationBatchRecord) => void;
+  onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
+  onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
+  onSelectBatch: (batch: FeedbackOptimizationBatchRecord) => void;
+}) {
+  const [activeBatchDetail, setActiveBatchDetail] = useState<BatchDetailView>(() => defaultBatchDetail(selectedBatch));
+  const batchSourceRows = useMemo(() => buildBatchSourceRows(selectedBatch, sources), [selectedBatch, sources]);
+  const attributionJobs = useMemo(() => buildBatchAttributionJobs(selectedBatch), [selectedBatch]);
+  const hasBatchAttribution = Boolean(attributionJobs.length || selectedBatch?.attribution_job_ids?.length);
+  const planLocked = Boolean(
+    selectedBatch?.optimization_plan?.status === "approved" ||
+      selectedBatch?.optimization_task_id ||
+      selectedBatch?.execution_job_id ||
+      selectedBatch?.execution_apply_result,
+  );
+  const canRunBatchRegression = Boolean(selectedBatch?.optimization_task?.applied_agent_version_id);
+  const regressionDisabledReason = selectedBatch?.optimization_task
+    ? "执行方案尚未应用，未产生 Agent 版本，不能运行回归测试。"
+    : "尚未执行优化方案，不能运行回归测试。";
+
+  useEffect(() => {
+    setActiveBatchDetail(defaultBatchDetail(selectedBatch));
+  }, [selectedBatch?.batch_id]);
+
+  return (
+    <div className="fw-workspace-grid fw-batch-workspace">
+      <section className="fw-panel fw-case-list-panel">
+        <div className="fw-panel-header">
+          <strong>优化批次</strong>
+          <span className="fw-muted">{batches.length} 个</span>
+        </div>
+        <div className="fw-case-list">
+          {batches.map((batch) => (
+            <button
+              className={`fw-case-card ${selectedBatch?.batch_id === batch.batch_id ? "is-active" : ""}`}
+              key={batch.batch_id}
+              onClick={() => onSelectBatch(batch)}
+              type="button"
+            >
+              <span className="fw-case-main">
+                <span className="fw-case-title"><strong>{shortId(batch.batch_id)}</strong>{batch.title}</span>
+                <span className="fw-case-tags">
+                  <Pill tone={batchStatusTone(batch.status)}>{batch.status}</Pill>
+                  <Pill tone="blue">反馈 {batch.feedback_case_ids?.length || 0}</Pill>
+                  <Pill tone="green">用例 {batch.eval_case_ids?.length || 0}</Pill>
+                </span>
+                <span className="fw-case-cause">更新：{formatDate(batch.updated_at)}</span>
+              </span>
+            </button>
+          ))}
+          {!batches.length ? <div className="fw-empty-inline">暂无优化批次。先在反馈信息中选择反馈并创建批次。</div> : null}
+        </div>
+      </section>
+
+      <main className="fw-center-stack">
+        {selectedBatch ? (
+          <section className="fw-panel fw-batch-detail-panel">
+            <div className="fw-panel-header">
+              <div>
+                <strong>{selectedBatch.title}</strong>
+                <span className="fw-muted" title={selectedBatch.batch_id}> {shortId(selectedBatch.batch_id)}</span>
+              </div>
+              <Pill tone={batchStatusTone(selectedBatch.status)}>{selectedBatch.status}</Pill>
+            </div>
+            <BatchResultNav
+              active={activeBatchDetail}
+              attributionJobs={attributionJobs}
+              batch={selectedBatch}
+              feedbackCount={batchSourceRows.length || selectedBatch.source_refs?.length || 0}
+              onChange={setActiveBatchDetail}
+            />
+            <div className="fw-current-case-actions fw-batch-actions">
+              <button
+                className="fw-small-secondary"
+                type="button"
+                disabled={Boolean(actionId)}
+                onClick={() => {
+                  setActiveBatchDetail("attribution");
+                  onRunAttribution(selectedBatch, hasBatchAttribution);
+                }}
+              >
+                {actionId === `batch-attribution:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <ShieldCheck size={16} />}
+                {hasBatchAttribution ? "重新归因" : "运行归因分析"}
+              </button>
+              <button
+                className="fw-small-secondary"
+                type="button"
+                disabled={Boolean(actionId) || !hasBatchAttribution || planLocked}
+                title={planLocked ? "当前优化方案已执行或进入执行链路，请创建新批次后重新生成。" : undefined}
+                onClick={() => {
+                  setActiveBatchDetail("plan");
+                  onGeneratePlan(selectedBatch);
+                }}
+              >
+                {actionId === `batch-plan:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <MessageSquare size={16} />}
+                {selectedBatch.optimization_plan ? "重新生成优化方案" : "生成优化方案"}
+              </button>
+              <button
+                className="fw-small-secondary"
+                type="button"
+                disabled={Boolean(actionId) || !selectedBatch.optimization_plan || selectedBatch.optimization_plan.status !== "pending_approval"}
+                onClick={() => {
+                  setActiveBatchDetail("plan");
+                  onRejectPlan(selectedBatch);
+                }}
+              >
+                <XCircle size={16} />
+                拒绝方案
+              </button>
+              <button
+                className="fw-small-primary"
+                type="button"
+                disabled={Boolean(actionId) || !canRunBatchRegression}
+                title={!canRunBatchRegression ? regressionDisabledReason : undefined}
+                onClick={() => {
+                  setActiveBatchDetail("regression");
+                  onRunRegression(selectedBatch);
+                }}
+              >
+                {actionId === `batch-regression:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <PlayCircle size={16} />}
+                运行回归测试
+              </button>
+            </div>
+            {activeBatchDetail === "feedback" ? <BatchFeedbackSourcesDetails rows={batchSourceRows} /> : null}
+            {activeBatchDetail === "attribution" ? <BatchAttributionDetails jobs={attributionJobs} /> : null}
+            {activeBatchDetail === "plan" ? (
+              <>
+                <BatchPlanDetails
+                  actionId={actionId}
+                  batch={selectedBatch}
+                  externalWebhooks={externalWebhooks}
+                  onExecutePlanTask={onExecutePlanTask}
+                />
+                <BatchExecutionSummary batch={selectedBatch} />
+                {selectedBatch.optimization_task ? (
+                  <TasksDetails
+                    clientConfig={clientConfig}
+                    tasks={[selectedBatch.optimization_task]}
+                    actionId={actionId}
+                    onCreateExecutionJob={onCreateExecutionJob}
+                    onApplyExecutionJob={onApplyExecutionJob}
+                  />
+                ) : null}
+              </>
+            ) : null}
+            {activeBatchDetail === "regression" ? <BatchRegressionDetails batch={selectedBatch} /> : null}
+          </section>
+        ) : (
+          <section className="fw-panel fw-empty-workspace">
+            <FolderKanban size={28} />
+            <h3>暂无优化批次</h3>
+            <p>从反馈信息中选择若干反馈，创建一个批次后再执行归因、优化和回归测试。</p>
+          </section>
+        )}
+      </main>
+    </div>
+  );
+}
+
+function BatchResultNav({
+  active,
+  attributionJobs,
+  batch,
+  feedbackCount,
+  onChange,
+}: {
+  active: BatchDetailView;
+  attributionJobs: FeedbackAnalysisJobRecord[];
+  batch: FeedbackOptimizationBatchRecord;
+  feedbackCount: number;
+  onChange: (view: BatchDetailView) => void;
+}) {
+  const attributionTotal = Math.max(attributionJobs.length, batch.attribution_job_ids?.length || 0);
+  const items: Array<{
+    key: BatchDetailView;
+    title: string;
+    value: string;
+    hint: string;
+    tone: "blue" | "green" | "orange" | "red" | "gray" | "purple";
+    icon: ReactNode;
+  }> = [
+    {
+      key: "feedback",
+      title: "反馈信息",
+      value: `${feedbackCount} 条`,
+      hint: "查看本批次纳入的反馈原文、标签和关联用例",
+      tone: feedbackCount ? "blue" : "gray",
+      icon: <FileText size={17} />,
+    },
+    {
+      key: "attribution",
+      title: "归因结果",
+      value: attributionStatusText(attributionJobs, attributionTotal),
+      hint: attributionTotal ? "查看逐条归因、责任边界和引用证据" : "运行归因分析后展示结果",
+      tone: attributionStatusTone(attributionJobs, attributionTotal),
+      icon: <ShieldCheck size={17} />,
+    },
+    {
+      key: "plan",
+      title: "优化方案",
+      value: batch.optimization_plan?.status || "未生成",
+      hint: batch.optimization_plan ? batchPlanDisplayTitle(batch) : "统筹归因结果后生成待执行方案",
+      tone: batch.optimization_plan ? batchStatusTone(batch.optimization_plan.status) : "gray",
+      icon: <MessageSquare size={17} />,
+    },
+    {
+      key: "regression",
+      title: "回归测试结果",
+      value: batchRegressionStatusText(batch),
+      hint: batch.latest_eval_run ? "查看用例执行过程、检查结果和错误信息" : "优化应用后运行批次回归测试",
+      tone: batch.latest_eval_run ? evalStatusTone(batch.latest_eval_run.result_status || batch.latest_eval_run.status) : "gray",
+      icon: <PlayCircle size={17} />,
+    },
+  ];
+
+  return (
+    <div className="fw-batch-result-nav" role="tablist" aria-label="批次详情与结果查看区">
+      {items.map((item) => (
+        <button
+          aria-selected={active === item.key}
+          className={`fw-batch-result-tab ${active === item.key ? "is-active" : ""}`}
+          key={item.key}
+          onClick={() => onChange(item.key)}
+          role="tab"
+          type="button"
+        >
+          <span className={`fw-batch-result-icon fw-pill-${item.tone}`}>{item.icon}</span>
+          <span className="fw-batch-result-main">
+            <span>{item.title}</span>
+            <strong>{item.value}</strong>
+            <small>{item.hint}</small>
+          </span>
+          <ChevronRight size={16} />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const selectedRow = useMemo(() => {
+    if (!rows.length) return null;
+    if (selectedKey) {
+      const matched = rows.find((row) => sourceRowKey(row) === selectedKey);
+      if (matched) return matched;
+    }
+    return rows[0];
+  }, [rows, selectedKey]);
+
+  useEffect(() => {
+    setSelectedKey((current) => {
+      if (current && rows.some((row) => sourceRowKey(row) === current)) return current;
+      return rows[0] ? sourceRowKey(rows[0]) : null;
+    });
+  }, [rows]);
+
+  if (!rows.length) {
+    return (
+      <section className="fw-task-source fw-batch-feedback-section">
+        <div className="fw-task-section-head">
+          <h4>反馈信息</h4>
+          <small>当前批次没有可展示的反馈来源。</small>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="fw-task-source fw-batch-feedback-section">
+      <div className="fw-task-section-head">
+        <h4>反馈信息</h4>
+        <small>点击左侧列表项查看当前批次中每条反馈的详情和原始数据。</small>
+      </div>
+      <div className="fw-batch-feedback-layout">
+        <div className="fw-batch-feedback-list" role="list">
+          {rows.map((row) => (
+            <button
+              className={selectedRow && sourceRowKey(selectedRow) === sourceRowKey(row) ? "is-active" : ""}
+              key={sourceRowKey(row)}
+              onClick={() => setSelectedKey(sourceRowKey(row))}
+              type="button"
+            >
+              <span>
+                <Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill>
+                <strong>{row.label}</strong>
+              </span>
+              <small title={row.id}>{shortId(row.id)} · {row.status} · {formatDate(row.createdAt)}</small>
+            </button>
+          ))}
+        </div>
+        <div className="fw-batch-feedback-detail">
+          {selectedRow ? (
+            <>
+              <div className="fw-signal-detail-head">
+                <div>
+                  <Pill tone={selectedRow.kind === "pending_correlation" ? "orange" : selectedRow.kind === "soc_event" ? "green" : "blue"}>
+                    {sourceKindText[selectedRow.kind]}
+                  </Pill>
+                  <h3>{selectedRow.label}</h3>
+                  <small title={selectedRow.id}>{selectedRow.id}</small>
+                </div>
+              </div>
+              <div className="fw-signal-detail-grid">
+                <Metric label="状态" value={selectedRow.status} />
+                <Metric label="时间" value={formatDate(selectedRow.createdAt)} />
+                <Metric label="run_id" value={shortId(selectedRow.runId)} />
+                <Metric label="session_id" value={shortId(selectedRow.sessionId)} />
+                <Metric label="反馈单" value={shortId(selectedRow.feedbackCaseId)} />
+                <Metric label="回归用例" value={shortId(selectedRow.evalCaseId)} />
+              </div>
+              <div className="fw-json-preview fw-json-preview-standalone">
+                <div className="fw-json-preview-header">
+                  <strong>反馈原始数据</strong>
+                  <span>{sourceKindText[selectedRow.kind]}</span>
+                </div>
+                <pre>{jsonPreview(selectedRow.raw)}</pre>
+              </div>
+            </>
+          ) : (
+            <div className="fw-empty-inline">选择一条反馈信息后查看详情。</div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function BatchAttributionDetails({
+  jobs,
+}: {
+  jobs: FeedbackAnalysisJobRecord[];
+}) {
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const selectedJob = useMemo(() => {
+    if (!jobs.length) return null;
+    if (selectedJobId) {
+      const matched = jobs.find((job) => job.job_id === selectedJobId);
+      if (matched) return matched;
+    }
+    return jobs[0];
+  }, [jobs, selectedJobId]);
+
+  useEffect(() => {
+    setSelectedJobId((current) => {
+      if (current && jobs.some((job) => job.job_id === current)) return current;
+      return jobs[0]?.job_id || null;
+    });
+  }, [jobs]);
+
+  return (
+    <section className="fw-task-source fw-batch-attribution-section">
+      <div className="fw-task-section-head">
+        <h4>归因分析结果</h4>
+        <small>点击左侧归因任务查看结构化归因、责任边界、引用证据和错误详情。</small>
+      </div>
+      {jobs.length ? (
+        <div className="fw-batch-attribution-layout">
+          <div className="fw-batch-attribution-list" role="list">
+            {jobs.map((job) => {
+              const output = attributionOutputFromJob(job);
+              return (
+                <button
+                  className={selectedJob?.job_id === job.job_id ? "is-active" : ""}
+                  key={job.job_id}
+                  onClick={() => setSelectedJobId(job.job_id)}
+                  type="button"
+                >
+                  <span>
+                    <Pill tone={jobStatusTone(job.status)}>{job.status}</Pill>
+                    <strong>{shortId(job.job_id)}</strong>
+                  </span>
+                  <small>{output?.problem_type || profileDisplayName(job.profile_name)} · 反馈单 {shortId(job.feedback_case_id)}</small>
+                </button>
+              );
+            })}
+          </div>
+          <div className="fw-batch-attribution-detail">
+            {selectedJob ? <BatchAttributionJobDetail job={selectedJob} /> : <div className="fw-empty-inline">选择一个归因任务后查看详情。</div>}
+          </div>
+        </div>
+      ) : (
+        <p className="fw-note-box">归因分析正在启动或等待刷新；完成后这里会显示每条反馈对应的归因结果。</p>
+      )}
+    </section>
+  );
+}
+
+function BatchAttributionJobDetail({ job }: { job: FeedbackAnalysisJobRecord }) {
+  const output = attributionOutputFromJob(job);
+  return (
+    <div className="fw-batch-attribution-job-detail">
+      <DetailMetricGrid
+        items={[
+          ["job_id", shortId(job.job_id)],
+          ["状态", job.status],
+          ["反馈单", shortId(job.feedback_case_id)],
+          ["证据包", shortId(job.evidence_package_id)],
+          ["创建", formatDate(job.created_at)],
+          ["完成", formatDate(job.completed_at)],
+        ]}
+      />
+      {output ? (
+        <AttributionResult output={output} />
+      ) : job.error_json ? (
+        <div className="fw-job-error">
+          <strong>{job.error_json.error_code || "ATTRIBUTION_FAILED"}</strong>
+          <FormattedText value={job.error_json.message || "归因分析未生成可用结果。"} />
+        </div>
+      ) : (
+        <p className="fw-note-box">当前归因任务状态为 {job.status}，尚未产生结构化归因结果。</p>
+      )}
+      <details className="fw-batch-attribution-raw">
+        <summary>查看原始输出与输入</summary>
+        <DetailJsonPreview title="归因输出" value={job.validated_output_json || job.raw_output_json || job.error_json || {}} />
+        <DetailJsonPreview title="任务输入" value={job.input_json || {}} />
+      </details>
+    </div>
+  );
+}
+
+function BatchPlanDetails({
+  actionId,
+  batch,
+  externalWebhooks,
+  onExecutePlanTask,
+}: {
+  actionId: string | null;
+  batch: FeedbackOptimizationBatchRecord;
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
+  onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
+}) {
+  const plan = batch.optimization_plan;
+  if (!plan) {
+    return (
+      <section className="fw-task-source fw-batch-plan-section">
+        <div className="fw-task-section-head">
+          <h4>优化方案</h4>
+          <small>统筹归因结果后生成待执行方案。</small>
+        </div>
+        <p className="fw-note-box">尚未生成优化方案。先运行归因分析，再生成统筹优化方案。</p>
+      </section>
+    );
+  }
+  const tasks = (plan.tasks || []).filter((task) => task.execution_kind === "workspace_execution" || task.execution_kind === "external_webhook");
+  const blockedItems = plan.blocked_items || [];
+  const displayTitle = batchPlanDisplayTitle(batch);
+  return (
+    <section className="fw-task-source fw-batch-plan-section">
+      <div className="fw-task-section-head">
+        <h4>优化方案</h4>
+        <Pill tone={plan.status === "pending_approval" ? "orange" : plan.status === "approved" ? "green" : "gray"}>{plan.status}</Pill>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["优化任务", tasks.length],
+          ["未形成任务", blockedItems.length],
+          ["关联反馈", plan.feedback_case_ids?.length || batch.feedback_case_ids?.length || 0],
+          ["关联用例", plan.eval_case_ids?.length || batch.eval_case_ids?.length || 0],
+        ]}
+      />
+      {plan.regeneration_instruction ? <FormattedTextSection title="补充优化要求" value={plan.regeneration_instruction} compact /> : null}
+      <FormattedTextSection title={displayTitle} value={plan.recommendation || "-"} />
+      <FormattedTextFields
+        fields={[
+          ["预期效果", plan.expected_effect || "-"],
+          ["回归测试", plan.validation || "-"],
+          ["风险", plan.risk || "-"],
+        ]}
+      />
+      {plan.rationale ? (
+        <details className="fw-plan-task-disclosure">
+          <summary>查看方案分析</summary>
+          <FormattedTextSection title="归因依据" value={plan.rationale} compact />
+        </details>
+      ) : null}
+      <div className="fw-plan-task-list">
+        <div className="fw-task-section-head">
+          <h4>优化任务</h4>
+          <small>{tasks.length ? `${tasks.length} 个任务，可按任务类型分别执行` : "当前方案未形成可执行优化任务"}</small>
+        </div>
+        {tasks.map((task) => (
+          <BatchPlanTaskCard
+            actionId={actionId}
+            batch={batch}
+            externalWebhooks={externalWebhooks}
+            key={task.plan_task_id}
+            planTask={task}
+            onExecutePlanTask={onExecutePlanTask}
+          />
+        ))}
+        {!tasks.length ? <p className="fw-note-box">当前优化方案没有可执行任务。请查看下方原因，必要时重新归因或重新生成优化方案。</p> : null}
+      </div>
+      {blockedItems.length ? (
+        <div className="fw-plan-task-list">
+          <div className="fw-task-section-head">
+            <h4>未形成可执行任务的原因</h4>
+            <small>{blockedItems.length} 个阻塞项，仅用于诊断，不作为优化任务执行。</small>
+          </div>
+          {blockedItems.map((item) => (
+            <BatchPlanBlockedItemCard item={item} key={item.blocked_item_id || `${item.target_type}:${item.source_index}`} />
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function BatchPlanBlockedItemCard({ item }: { item: FeedbackOptimizationBlockedItemRecord }) {
+  return (
+    <article className="fw-plan-task-card fw-plan-blocked-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone="orange">{item.status || "blocked"}</Pill>
+        <h4>{item.title || "未形成可执行优化任务"}</h4>
+        <small>{item.target_type || "not_actionable"}</small>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["目标类型", item.target_type || "-"],
+          ["目标文件", item.target_path || "-"],
+          ["负责人", item.owner || "-"],
+          ["归因任务", (item.attribution_job_ids || []).map(shortId).join(", ") || "-"],
+        ]}
+      />
+      {item.reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={item.reason} /> : null}
+      {item.recommendation ? <FormattedText className="fw-proposal-long-text" value={item.recommendation} /> : null}
+      {item.analysis_summary || item.evidence_summary ? (
+        <details className="fw-plan-task-disclosure">
+          <summary>查看分析过程</summary>
+          {item.analysis_summary ? <FormattedTextSection title="分析摘要" value={item.analysis_summary} compact /> : null}
+          {item.evidence_summary ? <FormattedTextSection title="证据摘要" value={item.evidence_summary} compact /> : null}
+        </details>
+      ) : null}
+      <div className="fw-external-notify-meta">
+        <span>阻塞项：{shortId(item.blocked_item_id)}</span>
+        <span>操作建议：重新归因或重新生成优化方案</span>
+      </div>
+    </article>
+  );
+}
+
+function batchPlanDisplayTitle(batch: FeedbackOptimizationBatchRecord): string {
+  const plan = batch.optimization_plan;
+  if (!plan) return "统筹归因结果生成优化方案";
+  const rawTitle = typeof plan.title === "string" ? plan.title : "";
+  const technicalType = String(plan.target_type || plan.optimization_object_type || "");
+  if (rawTitle && (!technicalType || !rawTitle.includes(technicalType))) {
+    return rawTitle;
+  }
+  const count = plan.feedback_case_ids?.length || batch.feedback_case_ids?.length || 0;
+  return count ? `统筹 ${count} 条反馈生成优化方案` : "统筹归因结果生成优化方案";
+}
+
+function PlanTaskListSection({ items, title }: { items?: string[]; title: string }) {
+  const visibleItems = (items || []).filter(Boolean);
+  if (!visibleItems.length) return null;
+  return (
+    <section className="fw-plan-task-list-section">
+      <h5>{title}</h5>
+      <ul>
+        {visibleItems.map((item, index) => (
+          <li key={`${title}:${index}`}>{item}</li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function PlanTaskContextSummary({ context }: { context?: Record<string, unknown> }) {
+  if (!context || !Object.keys(context).length) return null;
+  const text = (key: string) => {
+    const value = context[key];
+    if (Array.isArray(value)) return value.filter((item) => typeof item === "string" && item).join(", ");
+    return typeof value === "string" ? value : "";
+  };
+  return (
+    <DetailMetricGrid
+      items={[
+        ["MCP Server", text("mcp_server") || "-"],
+        ["工具", text("tool_name") || "-"],
+        ["接口", text("endpoint") || text("api_path") || text("api_name") || "-"],
+        ["查询对象", text("query_ids") || text("dates") || "-"],
+        ["字段", text("affected_fields") || "-"],
+      ]}
+    />
+  );
+}
+
+function BatchPlanTaskCard({
+  actionId,
+  batch,
+  externalWebhooks,
+  planTask,
+  onExecutePlanTask,
+}: {
+  actionId: string | null;
+  batch: FeedbackOptimizationBatchRecord;
+  externalWebhooks: ExternalGovernanceWebhookRecord[];
+  planTask: FeedbackOptimizationPlanTaskRecord;
+  onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
+}) {
+  const [selectedAlias, setSelectedAlias] = useState(externalWebhooks[0]?.alias || "");
+  const currentAlias = selectedAlias || externalWebhooks[0]?.alias || "";
+  const running = actionId === `plan-task:${planTask.plan_task_id}`;
+  const executionKind = planTask.execution_kind || "workspace_execution";
+  const workspaceDone = Boolean(planTask.applied_agent_version_id);
+  const external = executionKind === "external_webhook";
+  const workspace = executionKind === "workspace_execution";
+  const canExecute = workspace
+    ? !workspaceDone && !running
+    : external
+      ? Boolean(currentAlias && externalWebhooks.length && !running)
+      : false;
+  const buttonLabel = workspace
+    ? planTask.execution_job_id && !workspaceDone ? "重试执行" : "执行"
+    : planTask.status === "notification_failed" ? "重试发送" : "发送任务";
+  const targetSummary = planTask.target_summary || (workspace ? `workspace:${planTask.target_path || "-"}` : `external:${planTask.owner || planTask.target_type || "-"}`);
+  const feedbackCount = planTask.feedback_case_ids?.length || 0;
+  const evalCount = planTask.eval_case_ids?.length || 0;
+  const taskScopeLabel = workspace ? "受管 workspace 优化" : external ? "外部系统优化" : "优化任务";
+  return (
+    <article className="fw-plan-task-card">
+      <div className="fw-proposal-detail-title">
+        <Pill tone={planTaskTone(planTask)}>{planTask.status || executionKind}</Pill>
+        <h4>{planTask.title || shortId(planTask.plan_task_id)}</h4>
+        <small>{taskScopeLabel}</small>
+      </div>
+      <FormattedText className="fw-proposal-long-text fw-plan-task-description" value={planTask.description || planTask.recommendation || "-"} />
+      <div className="fw-plan-task-text-grid">
+        <FormattedTextSection title="任务目标" value={planTask.objective || "-"} compact />
+        <FormattedTextSection title="风险/注意事项" value={planTask.risk || "暂无明显额外风险。"} compact />
+      </div>
+      <PlanTaskListSection title="验收标准" items={planTask.acceptance_criteria} />
+      {planTask.reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={planTask.reason} /> : null}
+      {planTask.recommended_actions?.length || planTask.analysis_summary || planTask.evidence_summary || planTask.rationale ? (
+        <details className="fw-plan-task-disclosure">
+          <summary>执行与调试信息</summary>
+          <PlanTaskListSection title="执行提示" items={planTask.recommended_actions} />
+          <FormattedTextFields
+            fields={[
+              ["预期效果", planTask.expected_effect || "-"],
+              ["回归测试", planTask.validation || "-"],
+            ]}
+          />
+          <PlanTaskContextSummary context={planTask.task_context} />
+          <DetailMetricGrid
+            items={[
+              ["执行对象", targetSummary],
+              ["目标类型", planTask.target_type || "-"],
+              ["目标文件/系统", workspace ? planTask.target_path || "-" : planTask.owner || "-"],
+              ["反馈/用例", `${feedbackCount} / ${evalCount}`],
+              ["归因任务", (planTask.attribution_job_ids || []).map(shortId).join(", ") || "-"],
+            ]}
+          />
+          {planTask.analysis_summary ? <FormattedTextSection title="分析摘要" value={planTask.analysis_summary} compact /> : null}
+          {planTask.evidence_summary ? <FormattedTextSection title="证据摘要" value={planTask.evidence_summary} compact /> : null}
+          {planTask.rationale ? <FormattedTextSection title="归因全文" value={planTask.rationale} compact /> : null}
+          <div className="fw-external-notify-meta">
+            <span>任务：{shortId(planTask.plan_task_id)}</span>
+            {planTask.optimization_task_id ? <span>优化任务：{shortId(planTask.optimization_task_id)}</span> : null}
+            {planTask.execution_job_id ? <span>执行方案：{shortId(planTask.execution_job_id)}</span> : null}
+            {planTask.external_item_id ? <span>外部任务：{shortId(planTask.external_item_id)}</span> : null}
+            {planTask.latest_webhook_alias ? <span>最近目标：{planTask.latest_webhook_alias}</span> : null}
+          </div>
+        </details>
+      ) : null}
+      <div className="fw-detail-action-row fw-plan-task-actions">
+        {external ? (
+          <label className="fw-select-field">
+            <span>Webhook</span>
+            <select value={currentAlias} onChange={(event) => setSelectedAlias(event.target.value)} disabled={!externalWebhooks.length || running}>
+              {!externalWebhooks.length ? <option value="">未配置Webhook，请在 /data/external-governance-webhooks.yaml 文件中增加</option> : null}
+              {externalWebhooks.map((webhook) => (
+                <option key={webhook.alias} value={webhook.alias}>{webhook.name || webhook.alias}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        {workspace || external ? (
+          <button className="fw-small-primary" type="button" disabled={!canExecute} onClick={() => onExecutePlanTask(batch, planTask, external ? currentAlias : undefined)}>
+            {running ? <Loader2 size={16} className="fw-spin" /> : workspace ? <CheckCircle2 size={16} /> : <ChevronRight size={16} />}
+            {running ? "执行中" : buttonLabel}
+          </button>
+        ) : (
+          <Pill tone="orange">需人工复核</Pill>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function BatchExecutionSummary({ batch }: { batch: FeedbackOptimizationBatchRecord }) {
+  const task = batch.optimization_task || null;
+  const execution = task?.latest_execution_job || batch.execution_job || null;
+  if (!task && !execution) return null;
+  const output = execution?.validated_output_json || null;
+  const operations = output?.operations || [];
+  const appliedVersion = task?.applied_agent_version_id || execution?.applied_agent_version_id || null;
+  const noActionReason = output?.no_action_reason || execution?.error_json?.message || null;
+  const nextStep = appliedVersion
+    ? "优化已应用并产生 Agent 版本，可以运行回归测试。"
+    : execution?.status === "ready"
+      ? "执行方案已 ready，请先应用执行方案以产生 Agent 版本。"
+      : execution
+        ? "执行方案尚未可应用，请查看未执行原因或重新生成执行方案。"
+        : "优化任务已创建，等待生成执行方案。";
+  return (
+    <section className="fw-task-source fw-batch-execution-summary">
+      <div className="fw-task-section-head">
+        <h4>执行状态</h4>
+        <Pill tone={appliedVersion ? "green" : execution?.status === "ready" ? "blue" : execution ? jobStatusTone(execution.status) : "gray"}>
+          {appliedVersion ? "applied" : execution?.status || task?.status || "pending"}
+        </Pill>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["优化任务", shortId(task?.optimization_task_id)],
+          ["执行方案", shortId(execution?.execution_job_id)],
+          ["操作数", operations.length],
+          ["应用版本", shortId(appliedVersion)],
+        ]}
+      />
+      <p className="fw-note-box">{nextStep}</p>
+      {noActionReason ? <FormattedTextSection title="未执行原因" value={String(noActionReason)} compact /> : null}
+    </section>
+  );
+}
+
+function BatchRegressionDetails({ batch }: { batch: FeedbackOptimizationBatchRecord }) {
+  const run = batch.latest_eval_run || null;
+  if (!run) {
+    return (
+      <section className="fw-task-source fw-task-regression-section fw-batch-regression-section">
+        <div className="fw-task-section-head">
+          <h4>回归测试</h4>
+          <small>优化应用后可运行本批次关联的回归用例。</small>
+        </div>
+        <p className="fw-note-box">尚未运行批次回归测试。</p>
+      </section>
+    );
+  }
+  return (
+    <section className="fw-task-source fw-task-regression-section fw-batch-regression-section">
+      <div className="fw-task-section-head">
+        <h4>回归测试结果</h4>
+        <Pill tone={evalStatusTone(run.result_status || run.status)}>{run.result_status || run.status}</Pill>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["eval_run", shortId(run.eval_run_id)],
+          ["版本", shortId(run.agent_version_id)],
+          ["总数", run.summary?.total ?? 0],
+          ["通过", run.summary?.passed ?? 0],
+          ["失败", run.summary?.failed ?? 0],
+          ["需复核", run.summary?.needs_human_review ?? 0],
+        ]}
+      />
+      <div className="fw-batch-regression-list">
+        {(run.items || []).map((item) => (
+          <details className="fw-eval-item-detail" key={item.eval_run_item_id}>
+            <summary>
+              <span>{shortId(item.eval_case_id)}</span>
+              <Pill tone={evalStatusTone(item.status)}>{item.status}</Pill>
+              <strong>查看详情</strong>
+            </summary>
+            <FormattedText value={evalItemSummary(item)} />
+            <DetailJsonPreview title="检查结果" value={item.check_results || []} />
+            {item.error_json ? <DetailJsonPreview title="错误信息" value={item.error_json} /> : null}
+          </details>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -906,6 +2092,8 @@ function CasesPanel({
   onRunProposal,
   onReviewProposal,
   onCreateTask,
+  onCreateExecutionJob,
+  onApplyExecutionJob,
   onNotifyExternalItem,
   onOpenTask,
   onMarkTaskApplied,
@@ -940,6 +2128,8 @@ function CasesPanel({
   onRunProposal: () => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onCreateExecutionJob: (task: OptimizationTaskRecord, force?: boolean) => void;
+  onApplyExecutionJob: (task: OptimizationTaskRecord) => void;
   onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
   onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
@@ -1007,7 +2197,7 @@ function CasesPanel({
                 <Metric label="状态" value={caseStatusText[selectedCase.status] || selectedCase.status} />
                 <DetailMetric label="证据包" count={evidenceCount} active={detailView === "evidence"} onClick={() => onSelectDetailView("evidence")} />
                 <DetailMetric label="归因分析" count={attributionCount} active={detailView === "attribution"} onClick={() => onSelectDetailView("attribution")} />
-                <DetailMetric label="优化建议" count={proposalItemCount || proposalJobCount} active={detailView === "proposal"} onClick={() => onSelectDetailView("proposal")} />
+                <DetailMetric label="优化方案" count={proposalItemCount || proposalJobCount} active={detailView === "proposal"} onClick={() => onSelectDetailView("proposal")} />
                 <DetailMetric label="关联运行" count={selectedCase.run_ids.length} active={detailView === "runs"} onClick={() => onSelectDetailView("runs")} />
                 <DetailMetric label="优化任务" count={selectedCaseTasks.length} active={detailView === "tasks"} onClick={() => onSelectDetailView("tasks")} />
                 <DetailMetric label="评估用例" count={selectedCaseEvalCases.length} active={detailView === "evals"} onClick={() => onSelectDetailView("evals")} />
@@ -1046,6 +2236,8 @@ function CasesPanel({
               detailsLoading={detailsLoading}
               onSelectDetailView={onSelectDetailView}
               onCreateTask={onCreateTask}
+              onCreateExecutionJob={onCreateExecutionJob}
+              onApplyExecutionJob={onApplyExecutionJob}
               onNotifyExternalItem={onNotifyExternalItem}
               onOpenTask={onOpenTask}
               onMarkTaskApplied={onMarkTaskApplied}
@@ -1095,6 +2287,8 @@ function CaseDetailPanel({
   onSelectDetailView,
   onReviewProposal,
   onCreateTask,
+  onCreateExecutionJob,
+  onApplyExecutionJob,
   onNotifyExternalItem,
   onOpenTask,
   onMarkTaskApplied,
@@ -1123,6 +2317,8 @@ function CaseDetailPanel({
   onSelectDetailView: (view: CaseDetailView) => void;
   onReviewProposal: (proposalId: string, action: OptimizationProposalReviewAction) => void;
   onCreateTask: (proposal: OptimizationProposalRecord) => void;
+  onCreateExecutionJob: (task: OptimizationTaskRecord, force?: boolean) => void;
+  onApplyExecutionJob: (task: OptimizationTaskRecord) => void;
   onNotifyExternalItem: (item: ExternalGovernanceItemRecord, webhookAlias: string) => void;
   onOpenTask: (task: OptimizationTaskRecord) => void;
   onMarkTaskApplied: (task: OptimizationTaskRecord) => void;
@@ -1138,7 +2334,7 @@ function CaseDetailPanel({
     summary: "处置摘要",
     evidence: "证据包详情",
     attribution: "归因分析详情",
-    proposal: "优化建议详情",
+    proposal: "优化方案详情",
     runs: "关联运行详情",
     tasks: "优化任务详情",
     evals: "评估用例详情",
@@ -1247,9 +2443,12 @@ function CaseDetailPanel({
       {detailView === "runs" ? <RunsDetails runs={runs} /> : null}
       {detailView === "tasks" ? (
         <TasksDetails
+          clientConfig={clientConfig}
           tasks={tasks}
           actionId={actionId}
           onMarkApplied={onMarkTaskApplied}
+          onCreateExecutionJob={onCreateExecutionJob}
+          onApplyExecutionJob={onApplyExecutionJob}
           onRunRegression={onRunTaskRegression}
         />
       ) : null}
@@ -1613,7 +2812,7 @@ function AttributionReviewNotice({
         <AlertTriangle size={18} />
         <div>
           <strong>归因分析需要人工复核</strong>
-          <span>{jobErrorCode(job)} · {jobErrorMessage(job, "归因 Agent 输出未通过校验。")}</span>
+          <span>{jobErrorCode(job)} · {jobErrorMessage(job, "归因分析智能体输出未通过校验。")}</span>
           {validationCount > 0 ? <small>Schema 校验错误 {validationCount} 项{validationFieldSummary(job)}</small> : null}
         </div>
       </div>
@@ -1652,7 +2851,7 @@ function AttributionReviewCard({
       <div className="fw-review-card-head">
         <div>
           <h4>未生成可用归因结果</h4>
-          <p>归因 Agent 已返回内容，但没有通过 schema 校验，需要查看原始输出后重新归因或调整输出格式化策略。</p>
+          <p>归因分析智能体已返回内容，但没有通过 schema 校验，需要查看原始输出后重新归因或调整输出格式化策略。</p>
         </div>
         <Pill tone="orange">{job.status}</Pill>
       </div>
@@ -1666,7 +2865,7 @@ function AttributionReviewCard({
       />
       <div className="fw-job-error">
         <strong>{jobErrorCode(job)}</strong>
-        <FormattedText value={jobErrorMessage(job, "归因 Agent 输出未通过校验。")} />
+        <FormattedText value={jobErrorMessage(job, "归因分析智能体输出未通过校验。")} />
       </div>
       {validationErrors.length ? (
         <div className="fw-review-validation-list">
@@ -1710,7 +2909,7 @@ function AttributionDetails({
 }) {
   const latestJob = latestItem(jobs);
   const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
-  const rawOutputTitle = output ? "归因输出" : latestJob?.raw_output_json ? "归因 Agent 原始输出" : "归因校验错误";
+  const rawOutputTitle = output ? "归因输出" : latestJob?.raw_output_json ? "归因分析智能体原始输出" : "归因校验错误";
 
   return (
     <div className="fw-detail-tabbed">
@@ -1830,14 +3029,14 @@ function ProposalDetails({
   const noActionReason = output?.no_action_reason || rawString(latestJob?.raw_output_json, "no_action_reason");
   const hasUnvalidatedSuggestions = !proposalCount && Boolean(latestJob?.error_json) && rawSuggestionCount > 0;
   const rawOutput = output || latestJob?.raw_output_json || latestJob?.error_json || null;
-  const rawOutputTitle = output ? "建议输出" : latestJob?.raw_output_json ? "建议 Agent 原始输出" : "建议校验错误";
+  const rawOutputTitle = output ? "方案输出" : latestJob?.raw_output_json ? "优化方案生成智能体原始输出" : "方案校验错误";
   const regenerationInstruction = rawString(latestJob?.input_json, "regeneration_instruction");
 
   return (
     <div className="fw-proposal-detail">
       <div className="fw-proposal-detail-meta">
         <div className="fw-proposal-detail-meta-main">
-          <h4>{shortId(latestJob?.job_id || output?.proposal_job_id)} · {latestJob?.profile_name || "feedback-proposal"}</h4>
+          <h4>{shortId(latestJob?.job_id || output?.proposal_job_id)} · {profileDisplayName(latestJob?.profile_name || "proposal-generator")}</h4>
           <Pill tone={jobStatusTone(latestJob?.status || output?.status)}>{latestJob?.status || output?.status || "-"}</Pill>
         </div>
         <div className="fw-proposal-detail-meta-line">
@@ -1858,7 +3057,7 @@ function ProposalDetails({
 
       <DetailTabs
         active={activeTab}
-        label="优化建议详情视图"
+        label="优化方案详情视图"
         onChange={setActiveTab}
         tabs={[
           { key: "proposals", label: `建议(${proposalCount || rawSuggestionCount})` },
@@ -1913,7 +3112,7 @@ function ProposalDetails({
                 <FormattedText value={noActionReason} />
               </div>
             ) : null}
-            {!proposalCount && !hasUnvalidatedSuggestions && !noActionReason ? <div className="fw-empty-inline">暂无优化建议</div> : null}
+            {!proposalCount && !hasUnvalidatedSuggestions && !noActionReason ? <div className="fw-empty-inline">暂无优化方案</div> : null}
           </div>
         ) : null}
 
@@ -1991,7 +3190,7 @@ function ProposalDetailCard({
 }
 
 function RawProposalCard({ item }: { item: Record<string, unknown> }) {
-  const title = rawString(item, "title") || rawString(item, "recommendation") || "未入库优化建议";
+  const title = rawString(item, "title") || rawString(item, "recommendation") || "未入库优化方案";
   const recommendation = rawString(item, "recommendation") || "-";
   const rationale = rawString(item, "rationale") || rawString(item, "reason");
   return (
@@ -2076,14 +3275,20 @@ function RunToolList({ tools }: { tools: string[] }) {
 }
 
 function TasksDetails({
+  clientConfig,
   tasks,
   actionId,
   onMarkApplied,
+  onCreateExecutionJob,
+  onApplyExecutionJob,
   onRunRegression,
 }: {
+  clientConfig?: ExternalFeedbackWorkspaceProps["clientConfig"];
   tasks: OptimizationTaskRecord[];
   actionId?: string | null;
   onMarkApplied?: (task: OptimizationTaskRecord) => void;
+  onCreateExecutionJob?: (task: OptimizationTaskRecord, force?: boolean) => void;
+  onApplyExecutionJob?: (task: OptimizationTaskRecord) => void;
   onRunRegression?: (task: OptimizationTaskRecord) => void;
 }) {
   return (
@@ -2091,9 +3296,12 @@ function TasksDetails({
       {tasks.map((task) => (
         <TaskDetailCard
           key={task.optimization_task_id}
+          clientConfig={clientConfig}
           task={task}
           actionId={actionId || null}
           onMarkApplied={onMarkApplied}
+          onCreateExecutionJob={onCreateExecutionJob}
+          onApplyExecutionJob={onApplyExecutionJob}
           onRunRegression={onRunRegression}
         />
       ))}
@@ -2276,23 +3484,198 @@ function EvalCaseDetailCard({
   );
 }
 
+function ExecutionApplyConfirmModal({
+  busy,
+  onCancel,
+  onConfirm,
+  task,
+}: {
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+  task: OptimizationTaskRecord;
+}) {
+  const execution = task.latest_execution_job || null;
+  const plan = execution?.validated_output_json || null;
+  const operations = plan?.operations || [];
+  const targetPaths = Array.from(
+    new Set([
+      ...((task.target_paths || []) as string[]),
+      ...operations.map((operation) => operation.path || "").filter(Boolean),
+    ]),
+  );
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={() => !busy && onCancel()}>
+      <div
+        className="modal-card fw-execution-apply-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="应用执行方案确认"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-head">
+          <div>
+            <h3>应用执行方案</h3>
+            <p>确认后会修改主智能体受管配置，并创建执行前、执行后两个版本快照。</p>
+          </div>
+          <button className="mini-icon-button" type="button" onClick={onCancel} aria-label="关闭" disabled={busy}>
+            <X size={16} />
+          </button>
+        </header>
+        <div className="fw-execution-apply-body">
+          <DetailMetricGrid
+            items={[
+              ["优化任务", shortId(task.optimization_task_id)],
+              ["执行方案", shortId(execution?.execution_job_id)],
+              ["状态", execution?.status || "-"],
+              ["基线版本", shortId(execution?.baseline_agent_version_id || task.baseline_agent_version_id)],
+              ["操作数", operations.length],
+            ]}
+          />
+          {plan?.summary ? (
+            <section className="fw-execution-apply-section">
+              <h4>方案摘要</h4>
+              <FormattedText value={plan.summary} />
+            </section>
+          ) : null}
+          <section className="fw-execution-apply-section">
+            <h4>目标文件</h4>
+            <div className="fw-execution-apply-targets">
+              {targetPaths.length ? targetPaths.map((path) => <span key={path}>{path}</span>) : <span>-</span>}
+            </div>
+          </section>
+          <section className="fw-execution-apply-section">
+            <h4>计划操作</h4>
+            {operations.length ? (
+              <div className="fw-execution-apply-list">
+                {operations.map((operation, index) => (
+                  <article className="fw-execution-apply-operation" key={`${operation.path || "operation"}:${index}`}>
+                    <div>
+                      <strong>{operation.operation || "operation"}</strong>
+                      <code>{operation.path || "-"}</code>
+                    </div>
+                    {operation.rationale ? <FormattedText value={operation.rationale} /> : null}
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="fw-note-box">当前执行方案没有可应用操作。</p>
+            )}
+          </section>
+          <p className="fw-modal-warning">
+            应用前系统会检查当前版本是否仍等于执行方案基线；如已发生变更，将拒绝应用并要求重新生成执行方案。
+          </p>
+        </div>
+        <div className="modal-actions">
+          <button className="fw-small-secondary" type="button" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button className="fw-small-primary" type="button" onClick={onConfirm} disabled={busy || !operations.length}>
+            {busy ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
+            确认应用
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ManualApplyConfirmModal({
+  busy,
+  currentVersion,
+  onCancel,
+  onConfirm,
+  task,
+}: {
+  busy: boolean;
+  currentVersion?: ExternalFeedbackWorkspaceProps["currentAgentVersion"];
+  onCancel: () => void;
+  onConfirm: () => void;
+  task: OptimizationTaskRecord;
+}) {
+  const targetPaths = task.target_paths || [];
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={() => !busy && onCancel()}>
+      <div
+        className="modal-card fw-execution-apply-modal fw-manual-apply-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label="人工已应用确认"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="modal-head">
+          <div>
+            <h3>人工已应用，创建快照</h3>
+            <p>仅当你已在外部或手工完成优化修改时使用；此操作不会执行任何优化方案。</p>
+          </div>
+          <button className="mini-icon-button" type="button" onClick={onCancel} aria-label="关闭" disabled={busy}>
+            <X size={16} />
+          </button>
+        </header>
+        <div className="fw-execution-apply-body">
+          <DetailMetricGrid
+            items={[
+              ["优化任务", shortId(task.optimization_task_id)],
+              ["任务状态", task.status],
+              ["当前版本", shortId(currentVersion?.agent_version_id)],
+              ["基线版本", shortId(task.baseline_agent_version_id)],
+              ["目标文件数", targetPaths.length],
+            ]}
+          />
+          <section className="fw-execution-apply-section">
+            <h4>目标文件</h4>
+            <div className="fw-execution-apply-targets">
+              {targetPaths.length ? targetPaths.map((path) => <span key={path}>{path}</span>) : <span>-</span>}
+            </div>
+          </section>
+          <p className="fw-modal-warning">
+            确认后系统只会对当前主智能体受管配置创建版本快照，并把任务推进到回归验证阶段。它不会写入文件，也不会应用执行优化智能体的计划操作。
+          </p>
+        </div>
+        <div className="modal-actions">
+          <button className="fw-small-secondary" type="button" onClick={onCancel} disabled={busy}>
+            取消
+          </button>
+          <button className="fw-small-primary" type="button" onClick={onConfirm} disabled={busy}>
+            {busy ? <Loader2 size={16} className="fw-spin" /> : <GitBranch size={16} />}
+            确认创建快照
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskDetailCard({
+  clientConfig,
   task,
   actionId,
   onMarkApplied,
+  onCreateExecutionJob,
+  onApplyExecutionJob,
   onRunRegression,
 }: {
+  clientConfig?: ExternalFeedbackWorkspaceProps["clientConfig"];
   task: OptimizationTaskRecord;
   actionId?: string | null;
   onMarkApplied?: (task: OptimizationTaskRecord) => void;
+  onCreateExecutionJob?: (task: OptimizationTaskRecord, force?: boolean) => void;
+  onApplyExecutionJob?: (task: OptimizationTaskRecord) => void;
   onRunRegression?: (task: OptimizationTaskRecord) => void;
 }) {
   const proposal = task.proposal;
   const proposalId = taskProposalId(task);
   const targetPaths = task.target_paths || [];
   const latestRegression = task.latest_regression_run || null;
-  const canMarkApplied = !task.applied_agent_version_id && ["pending_execution", "failed", "needs_human_review"].includes(task.status);
+  const latestExecution = task.latest_execution_job || null;
+  const diffFromVersion = task.pre_execution_agent_version_id || rawString(task.applied_agent_version, "parent_version_id");
+  const diffToVersion = task.applied_agent_version_id || "";
+  const canManualMarkApplied = !task.applied_agent_version_id && ["pending_execution", "failed", "needs_human_review"].includes(task.status);
+  const canCreateExecution = !task.applied_agent_version_id && ["pending_execution", "execution_failed", "execution_ready", "failed", "needs_human_review"].includes(task.status);
+  const canApplyExecution = !task.applied_agent_version_id && latestExecution?.status === "ready";
   const canRunRegression = Boolean(task.applied_agent_version_id) && task.status !== "regression_running";
+  const showManualFallback = Boolean(onMarkApplied && canManualMarkApplied);
+  const regressionButtonLabel = latestRegression ? "重新运行回归验证" : "运行回归验证";
   return (
     <article className="fw-task-detail-card">
       <div className="fw-detail-record-head">
@@ -2307,6 +3690,7 @@ function TaskDetailCard({
           ["执行模式", task.execution_mode],
           ["来源", task.source],
           ["创建时间", formatDate(task.created_at)],
+          ["基线版本", shortId(task.baseline_agent_version_id)],
           ["目标文件数", targetPaths.length],
           ["应用版本", shortId(task.applied_agent_version_id)],
           ["最近回归", latestRegression?.result_status || "-"],
@@ -2320,7 +3704,7 @@ function TaskDetailCard({
       </div>
       {proposal ? (
         <section className="fw-task-source">
-          <h4>{proposal.title || "来源优化建议"}</h4>
+          <h4>{proposal.title || "来源优化方案"}</h4>
           <FormattedText value={proposal.recommendation || "-"} />
           <DetailMetricGrid items={[["审批状态", proposalStatusText[proposal.status] || proposal.status]]} />
           <FormattedTextFields
@@ -2332,33 +3716,34 @@ function TaskDetailCard({
           />
         </section>
       ) : null}
-      {latestRegression ? (
-        <section className="fw-task-source">
-          <h4>最近回归验证</h4>
-          <DetailMetricGrid
-            items={[
-              ["eval_run", shortId(latestRegression.eval_run_id)],
-              ["结果", latestRegression.result_status || latestRegression.status],
-              ["通过", latestRegression.summary?.passed ?? 0],
-              ["失败", latestRegression.summary?.failed ?? 0],
-              ["需复核", latestRegression.summary?.needs_human_review ?? 0],
-              ["完成时间", formatDate(latestRegression.completed_at)],
-            ]}
-          />
-        </section>
+      {latestExecution ? (
+        <TaskExecutionPlanSection task={task} execution={latestExecution} />
       ) : null}
+      <TaskRegressionSection task={task} latestRegression={latestRegression} canRunRegression={canRunRegression} />
+      <TaskVersionDiffSection clientConfig={clientConfig} task={task} targetPaths={targetPaths} fromVersionId={diffFromVersion} toVersionId={diffToVersion} />
       <p className="fw-note-box fw-task-status-note">{taskStatusDescription(task.status)}</p>
-      {onMarkApplied || onRunRegression ? (
+      {onCreateExecutionJob || onApplyExecutionJob || onRunRegression ? (
         <div className="fw-detail-action-row">
-          {onMarkApplied ? (
+          {onCreateExecutionJob ? (
             <button
               className="fw-small-secondary"
               type="button"
-              disabled={!canMarkApplied || actionId === `apply:${task.optimization_task_id}`}
-              onClick={() => onMarkApplied(task)}
+              disabled={!canCreateExecution || actionId === `execution:${task.optimization_task_id}`}
+              onClick={() => onCreateExecutionJob(task, Boolean(latestExecution))}
             >
-              {actionId === `apply:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <GitBranch size={16} />}
-              标记已应用并创建版本
+              {actionId === `execution:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <ShieldCheck size={16} />}
+              {latestExecution ? "重新生成执行方案" : "生成执行方案"}
+            </button>
+          ) : null}
+          {onApplyExecutionJob ? (
+            <button
+              className="fw-small-primary"
+              type="button"
+              disabled={!canApplyExecution || actionId === `execution-apply:${task.optimization_task_id}`}
+              onClick={() => onApplyExecutionJob(task)}
+            >
+              {actionId === `execution-apply:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
+              应用执行方案
             </button>
           ) : null}
           {onRunRegression ? (
@@ -2369,12 +3754,282 @@ function TaskDetailCard({
               onClick={() => onRunRegression(task)}
             >
               {actionId === `regression:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <PlayCircle size={16} />}
-              运行回归验证
+              {regressionButtonLabel}
             </button>
           ) : null}
         </div>
       ) : null}
+      {showManualFallback ? (
+        <details className="fw-manual-fallback">
+          <summary>兜底操作</summary>
+          <div className="fw-manual-fallback-body">
+            <p>仅当你已在外部或手工完成优化修改时使用。该操作不会应用执行方案，只会为当前主智能体配置创建快照。</p>
+            <button
+              className="fw-small-secondary"
+              type="button"
+              disabled={actionId === `apply:${task.optimization_task_id}`}
+              onClick={() => onMarkApplied?.(task)}
+            >
+              {actionId === `apply:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <GitBranch size={16} />}
+              人工已应用，创建快照
+            </button>
+          </div>
+        </details>
+      ) : null}
     </article>
+  );
+}
+
+function TaskExecutionPlanSection({ task, execution }: { task: OptimizationTaskRecord; execution: OptimizationExecutionJobRecord }) {
+  const output = execution.validated_output_json;
+  const operations = output?.operations || [];
+  const createsEvalCase = isEvalCaseExecutionPlan(task, execution);
+  const title = createsEvalCase ? "执行方案：创建评估用例文件" : "执行方案";
+  return (
+    <section className={`fw-task-source fw-task-execution-section ${createsEvalCase ? "fw-task-execution-section-eval" : ""}`.trim()}>
+      <div className="fw-task-section-head">
+        <h4>{title}</h4>
+        <small>{createsEvalCase ? "这里展示的是待写入文件内容，不是回归验证结果。" : "这里展示将要修改什么文件以及如何修改。"}</small>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["execution_job", shortId(execution.execution_job_id)],
+          ["状态", execution.status],
+          ["基线版本", shortId(execution.baseline_agent_version_id)],
+          ["操作数", operations.length],
+        ]}
+      />
+      {output?.summary ? <FormattedText value={output.summary} /> : null}
+      {output?.validation || output?.risk || output?.no_action_reason ? (
+        <FormattedTextFields
+          fields={[
+            ["应用前检查", output.validation || "-"],
+            ["风险", output.risk || "-"],
+            ["未执行原因", output.no_action_reason || "-"],
+          ]}
+        />
+      ) : null}
+      {execution.error_json?.message ? <FormattedText className="fw-warning-text" value={String(execution.error_json.message)} /> : null}
+      {operations.length ? (
+        <div className="fw-execution-operation-list">
+          {operations.map((operation, index) => (
+            <ExecutionOperationCard createsEvalCase={createsEvalCase} operation={operation} key={`${operation.path || "operation"}:${index}`} />
+          ))}
+        </div>
+      ) : (
+        <p className="fw-note-box">当前执行方案没有可应用操作。</p>
+      )}
+    </section>
+  );
+}
+
+function ExecutionOperationCard({ createsEvalCase, operation }: { createsEvalCase: boolean; operation: ExecutionPlanOperation }) {
+  const content = operation.content || operation.append_text || "";
+  return (
+    <div className="fw-execution-operation">
+      <span>{operation.operation || "operation"}</span>
+      <code>{operation.path || "-"}</code>
+      {operation.rationale ? <small>{operation.rationale}</small> : null}
+      {createsEvalCase && content ? (
+        <details className="fw-execution-operation-content">
+          <summary>查看将创建的评估用例草案</summary>
+          <p>这是执行方案准备写入的 JSON 文件内容；真正的回归验证结果会在“回归验证”区域展示。</p>
+          <pre>{content}</pre>
+        </details>
+      ) : null}
+    </div>
+  );
+}
+
+function TaskRegressionSection({
+  task,
+  latestRegression,
+  canRunRegression,
+}: {
+  task: OptimizationTaskRecord;
+  latestRegression: EvalRunRecord | null;
+  canRunRegression: boolean;
+}) {
+  const evalCaseCount = latestRegression?.eval_case_ids?.length || latestRegression?.summary?.total || 0;
+  const statusText = latestRegression ? latestRegression.result_status || latestRegression.status : "尚未运行";
+  return (
+    <section className="fw-task-source fw-task-regression-section">
+      <div className="fw-task-section-head">
+        <h4>回归验证</h4>
+        <small>这里展示应用优化后的评估运行结果，不展示执行方案 JSON。</small>
+      </div>
+      <DetailMetricGrid
+        items={
+          latestRegression
+            ? [
+                ["eval_run", shortId(latestRegression.eval_run_id)],
+                ["结果", statusText],
+                ["用例数", evalCaseCount],
+                ["通过", latestRegression.summary?.passed ?? 0],
+                ["失败", latestRegression.summary?.failed ?? 0],
+                ["需复核", latestRegression.summary?.needs_human_review ?? 0],
+                ["完成时间", formatDate(latestRegression.completed_at)],
+              ]
+            : [
+                ["状态", statusText],
+                ["应用版本", shortId(task.applied_agent_version_id)],
+                ["任务状态", task.status],
+              ]
+        }
+      />
+      <p className="fw-note-box">
+        {latestRegression
+          ? "最近一次回归验证已完成；如执行方案或评估用例发生变化，可重新运行。"
+          : canRunRegression
+            ? "任务已应用，可以手动运行回归验证，使用当前启用的反馈评估用例集。"
+            : "任务尚未应用，需先应用执行方案或人工标记已应用后再运行回归验证。"}
+      </p>
+    </section>
+  );
+}
+
+function TaskVersionDiffSection({
+  clientConfig,
+  task,
+  targetPaths,
+  fromVersionId,
+  toVersionId,
+}: {
+  clientConfig?: ExternalFeedbackWorkspaceProps["clientConfig"];
+  task: OptimizationTaskRecord;
+  targetPaths: string[];
+  fromVersionId?: string | null;
+  toVersionId?: string | null;
+}) {
+  const appliedDiff = task.latest_execution_job?.applied_diff || null;
+  const targetRows = targetPaths.map((path) => ({ path, status: fileStatusFromDiff(appliedDiff, path) }));
+  const nonTargetRows = changedPathsFromDiff(appliedDiff).filter((path) => !targetPaths.includes(path));
+  if (!task.applied_agent_version_id) {
+    return (
+      <section className="fw-task-source">
+        <h4>变更对比</h4>
+        <p className="fw-note-box">任务尚未应用，暂无修改后版本。生成执行方案后可先查看计划操作，应用后再查看真实文件差异。</p>
+      </section>
+    );
+  }
+  if (!fromVersionId || !toVersionId) {
+    return (
+      <section className="fw-task-source">
+        <h4>变更对比</h4>
+        <p className="fw-note-box">缺少基线版本，无法展示前后对比。</p>
+      </section>
+    );
+  }
+  if (!clientConfig) {
+    return (
+      <section className="fw-task-source">
+        <h4>变更对比</h4>
+        <p className="fw-note-box">当前视图缺少 API 配置，无法加载文件级对比。</p>
+      </section>
+    );
+  }
+  return (
+    <section className="fw-task-source">
+      <h4>变更对比</h4>
+      <DetailMetricGrid
+        items={[
+          ["修改前", shortId(fromVersionId)],
+          ["修改后", shortId(toVersionId)],
+          ["新增", appliedDiff?.added?.length ?? "-"],
+          ["修改", appliedDiff?.modified?.length ?? "-"],
+          ["删除", appliedDiff?.deleted?.length ?? "-"],
+        ]}
+      />
+      <div className="fw-file-diff-list">
+        {targetRows.map((row) => (
+          <TaskFileDiffRow
+            clientConfig={clientConfig}
+            fromVersionId={fromVersionId}
+            key={row.path}
+            path={row.path}
+            statusText={row.status}
+            toVersionId={toVersionId}
+          />
+        ))}
+      </div>
+      {nonTargetRows.length ? (
+        <details className="fw-nontarget-diff">
+          <summary>非目标文件变更 {nonTargetRows.length}</summary>
+          <div className="fw-file-diff-list">
+            {nonTargetRows.map((path) => (
+              <TaskFileDiffRow
+                clientConfig={clientConfig}
+                fromVersionId={fromVersionId}
+                key={path}
+                path={path}
+                statusText={fileStatusFromDiff(appliedDiff, path)}
+                toVersionId={toVersionId}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
+    </section>
+  );
+}
+
+function isEvalCaseExecutionPlan(task: OptimizationTaskRecord, execution: OptimizationExecutionJobRecord): boolean {
+  const operations = execution.validated_output_json?.operations || [];
+  if (!operations.length) return false;
+  const proposalTargetType = task.proposal?.target_type;
+  return proposalTargetType === "eval_case" || operations.some((operation) => (operation.path || "").startsWith("evals/"));
+}
+
+function TaskFileDiffRow({
+  clientConfig,
+  fromVersionId,
+  path,
+  statusText,
+  toVersionId,
+}: {
+  clientConfig: ExternalFeedbackWorkspaceProps["clientConfig"];
+  fromVersionId: string;
+  path: string;
+  statusText: string;
+  toVersionId: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const [diff, setDiff] = useState<AgentVersionFileDiff | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function toggle() {
+    const next = !expanded;
+    setExpanded(next);
+    if (!next || diff || loading) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setDiff(await diffAgentVersionFile(clientConfig, fromVersionId, toVersionId, path));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "加载文件对比失败");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="fw-file-diff-row">
+      <button className="fw-file-diff-toggle" type="button" onClick={toggle}>
+        <ChevronRight size={15} className={expanded ? "is-open" : ""} />
+        <span>{path}</span>
+        <Pill tone={fileStatusTone(statusText)}>{fileStatusText(statusText)}</Pill>
+      </button>
+      {expanded ? (
+        <div className="fw-file-diff-body">
+          {loading ? <p className="fw-muted">加载对比中...</p> : null}
+          {error ? <p className="fw-warning-text">{error}</p> : null}
+          {diff ? (
+            diff.unified_diff ? <pre>{diff.unified_diff}</pre> : <p className="fw-muted">{diff.reason || fileStatusText(diff.status)}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2403,7 +4058,7 @@ function ProposalsPanel({
   return (
     <section className="fw-panel fw-proposal-panel">
       <div className="fw-panel-header">
-        <strong>优化建议审批</strong>
+        <strong>优化方案审批</strong>
         <span className="fw-muted">{totalCount} 条</span>
       </div>
       <ProposalList
@@ -2473,7 +4128,7 @@ function ProposalList({
               ]}
             />
             {proposal.actionability === "external_guidance" ? (
-              <p className="fw-warning-text">该建议不能自动修改主 Agent workspace。</p>
+              <p className="fw-warning-text">该方案不能自动修改主智能体 workspace。</p>
             ) : null}
             <div className="fw-detail-action-row">
               {pending ? (
@@ -2511,7 +4166,7 @@ function ProposalList({
             <Pill tone="gray">{item.actionability}</Pill>
           </div>
           <FormattedText className="fw-proposal-long-text" value={item.recommendation} />
-          <p className="fw-warning-text">该建议不能自动修改主 Agent workspace。</p>
+          <p className="fw-warning-text">该方案不能自动修改主智能体 workspace。</p>
           {item.reason ? <FormattedText className="fw-warning-text fw-proposal-long-text" value={item.reason} /> : null}
         </article>
       ))}
@@ -2525,7 +4180,7 @@ function ProposalList({
           onNotifyExternalItem={onNotifyExternalItem || (() => undefined)}
         />
       ))}
-      {!proposals.length && !externalGuidance.length && !externalItemsAsGuidance.length ? <div className="fw-empty-inline">暂无优化建议</div> : null}
+      {!proposals.length && !externalGuidance.length && !externalItemsAsGuidance.length ? <div className="fw-empty-inline">暂无优化方案</div> : null}
     </div>
   );
 }
@@ -2794,6 +4449,24 @@ function Pill({ children, tone = "blue" }: { children: ReactNode; tone?: "blue" 
 }
 
 function buildSourceRows(data: FeedbackWorkbenchData): SourceRow[] {
+  if (data.sources?.length) {
+    return data.sources
+      .map<SourceRow>((item) => ({
+        id: item.source_id,
+        kind: item.source_kind,
+        label: item.label || item.labels?.join(", ") || item.source_kind,
+        status: item.status,
+        createdAt: item.created_at || item.updated_at || undefined,
+        runId: item.run_id,
+        sessionId: item.session_id,
+        alertId: item.alert_id,
+        caseId: item.case_id,
+        feedbackCaseId: item.feedback_case_id,
+        evalCaseId: item.eval_case_id,
+        raw: item,
+      }))
+      .sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+  }
   const signalRows = data.signals.map<SourceRow>((item) => ({
     id: item.signal_id,
     kind: "signal",
@@ -2808,7 +4481,7 @@ function buildSourceRows(data: FeedbackWorkbenchData): SourceRow[] {
   }));
   const eventRows = data.events.map<SourceRow>((item) => ({
     id: item.event_id,
-    kind: "event",
+    kind: "soc_event",
     label: item.event_type,
     status: item.matched_run_id || item.run_id ? "matched" : "pending_correlation",
     createdAt: item.created_at || item.timestamp,
@@ -2822,7 +4495,7 @@ function buildSourceRows(data: FeedbackWorkbenchData): SourceRow[] {
     .filter((item) => item.status !== "resolved")
     .map<SourceRow>((item) => ({
       id: item.pending_id,
-      kind: "pending",
+      kind: "pending_correlation",
       label: item.event_type || "pending correlation",
       status: item.status || "pending",
       createdAt: item.created_at,
@@ -2832,6 +4505,110 @@ function buildSourceRows(data: FeedbackWorkbenchData): SourceRow[] {
       raw: item,
     }));
   return [...signalRows, ...eventRows, ...pendingRows].sort((left, right) => String(right.createdAt || "").localeCompare(String(left.createdAt || "")));
+}
+
+function buildBatchSourceRows(batch: FeedbackOptimizationBatchRecord | null, sources: FeedbackSourceRecord[]): SourceRow[] {
+  if (!batch) return [];
+  const sourceByKey = new Map(sources.map((source) => [`${source.source_kind}:${source.source_id}`, source]));
+  return (batch.source_refs || []).map<SourceRow>((ref) => {
+    const source = sourceByKey.get(`${ref.source_kind}:${ref.source_id}`);
+    if (source) {
+      return {
+        id: source.source_id,
+        kind: source.source_kind,
+        label: source.label || source.labels?.join(", ") || source.source_kind,
+        status: source.status,
+        createdAt: source.created_at || source.updated_at || undefined,
+        runId: source.run_id,
+        sessionId: source.session_id,
+        alertId: source.alert_id,
+        caseId: source.case_id,
+        feedbackCaseId: source.feedback_case_id,
+        evalCaseId: source.eval_case_id,
+        raw: source,
+      };
+    }
+    return {
+      id: ref.source_id,
+      kind: ref.source_kind,
+      label: ref.source_id,
+      status: "source_ref",
+      raw: ref as unknown as FeedbackSourceRecord,
+    };
+  });
+}
+
+function buildBatchAttributionJobs(batch: FeedbackOptimizationBatchRecord | null): FeedbackAnalysisJobRecord[] {
+  if (!batch) return [];
+  const jobs = Array.isArray(batch.attribution_jobs) ? batch.attribution_jobs.filter(Boolean) : [];
+  const byId = new Map(jobs.map((job) => [job.job_id, job]));
+  for (const jobId of batch.attribution_job_ids || []) {
+    if (byId.has(jobId)) continue;
+    byId.set(jobId, {
+      job_id: jobId,
+      job_type: "attribution",
+      feedback_case_id: "",
+      evidence_package_id: "",
+      status: "unknown",
+      profile_name: "attribution-analyzer",
+      created_at: "",
+      input_path: "",
+      raw_output_path: "",
+      validated_output_path: "",
+      error_path: "",
+    });
+  }
+  return Array.from(byId.values());
+}
+
+function attributionOutputFromJob(job: FeedbackAnalysisJobRecord): AttributionOutput | null {
+  const output = job.validated_output_json || job.raw_output_json;
+  if (!output || typeof output !== "object" || Array.isArray(output)) return null;
+  if ((output as Record<string, unknown>).schema_version !== "attribution-output/v1") return null;
+  return output as AttributionOutput;
+}
+
+function defaultBatchDetail(batch: FeedbackOptimizationBatchRecord | null): BatchDetailView {
+  if (!batch) return "feedback";
+  if (batch.latest_eval_run) return "regression";
+  if (batch.optimization_plan || batch.optimization_task || batch.execution_job) return "plan";
+  if (batch.attribution_jobs?.length || batch.attribution_job_ids?.length) return "attribution";
+  return "feedback";
+}
+
+function attributionStatusText(jobs: FeedbackAnalysisJobRecord[], total: number): string {
+  if (!total) return "未运行";
+  const completed = jobs.filter((job) => job.status === "completed").length;
+  const failed = jobs.filter((job) => job.status === "failed" || job.status === "timeout").length;
+  const review = jobs.filter((job) => job.status === "needs_human_review").length;
+  const running = jobs.filter((job) => ["created", "queued", "running", "schema_validating", "evidence_packaging"].includes(String(job.status))).length;
+  if (failed) return `失败 ${failed}/${total}`;
+  if (review) return `复核 ${review}/${total}`;
+  if (running) return `运行中 ${running}/${total}`;
+  if (completed === total) return `完成 ${completed}/${total}`;
+  return `${jobs.length}/${total} 条`;
+}
+
+function attributionStatusTone(jobs: FeedbackAnalysisJobRecord[], total: number): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (!total) return "gray";
+  if (jobs.some((job) => job.status === "failed" || job.status === "timeout")) return "red";
+  if (jobs.some((job) => job.status === "needs_human_review")) return "orange";
+  if (jobs.some((job) => ["created", "queued", "running", "schema_validating", "evidence_packaging"].includes(String(job.status)))) return "blue";
+  if (jobs.filter((job) => job.status === "completed").length === total) return "green";
+  return "gray";
+}
+
+function batchRegressionStatusText(batch: FeedbackOptimizationBatchRecord): string {
+  const run = batch.latest_eval_run;
+  if (!run) return "未运行";
+  const total = run.summary?.total ?? run.items?.length ?? 0;
+  const passed = run.summary?.passed ?? 0;
+  const failed = run.summary?.failed ?? 0;
+  const review = run.summary?.needs_human_review ?? 0;
+  if (total) return `${run.result_status || run.status} · ${passed}/${total} 通过`;
+  if (failed) return `${run.result_status || run.status} · ${failed} 失败`;
+  if (review) return `${run.result_status || run.status} · ${review} 复核`;
+  return run.result_status || run.status || "已运行";
 }
 
 function sourceRowKey(row: SourceRow): string {
@@ -2847,6 +4624,13 @@ function filterSourceRows(rows: SourceRow[], query: string): SourceRow[] {
 function filterCases(cases: FeedbackCaseRecord[], query: string): FeedbackCaseRecord[] {
   const normalized = query.trim().toLowerCase();
   const sorted = [...cases].sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+  if (!normalized) return sorted;
+  return sorted.filter((item) => JSON.stringify(item, null, 0).toLowerCase().includes(normalized));
+}
+
+function filterBatches(batches: FeedbackOptimizationBatchRecord[], query: string): FeedbackOptimizationBatchRecord[] {
+  const normalized = query.trim().toLowerCase();
+  const sorted = [...batches].sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
   if (!normalized) return sorted;
   return sorted.filter((item) => JSON.stringify(item, null, 0).toLowerCase().includes(normalized));
 }
@@ -3158,10 +4942,18 @@ function parseEvalCaseLabels(value: string): string[] {
 
 function jobStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
   if (status === "completed") return "green";
-  if (status === "failed") return "red";
-  if (status === "needs_human_review") return "orange";
-  if (status === "queued" || status === "running") return "blue";
+  if (status === "failed" || status === "execution_failed") return "red";
+  if (status === "needs_human_review" || status === "execution_ready" || status === "ready") return "orange";
+  if (status === "queued" || status === "running" || status === "execution_planning") return "blue";
   return "gray";
+}
+
+function profileDisplayName(profileName?: string | null): string {
+  if (profileName === "main-agent") return "主智能体";
+  if (profileName === "attribution-analyzer") return "归因分析智能体";
+  if (profileName === "proposal-generator") return "优化方案生成智能体";
+  if (profileName === "execution-optimizer") return "执行优化智能体";
+  return profileName || "-";
 }
 
 function evalStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
@@ -3170,6 +4962,32 @@ function evalStatusTone(status?: string | null): "blue" | "green" | "orange" | "
   if (status === "needs_human_review") return "orange";
   if (status === "running") return "blue";
   return "gray";
+}
+
+function batchStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "completed" || status === "applied_pending_regression" || status === "passed") return "green";
+  if (status === "failed" || status === "rejected" || status === "execution_failed") return "red";
+  if (status === "pending_approval" || status === "needs_human_review" || status === "execution_ready") return "orange";
+  if (status === "draft" || status === "attribution_running" || status === "execution_planning" || status === "regression_running") return "blue";
+  return "gray";
+}
+
+function fileStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (status === "modified") return "orange";
+  if (status === "added") return "green";
+  if (status === "deleted") return "red";
+  if (status === "unchanged") return "gray";
+  return "blue";
+}
+
+function fileStatusText(status?: string | null): string {
+  if (status === "modified") return "已修改";
+  if (status === "added") return "新增";
+  if (status === "deleted") return "删除";
+  if (status === "unchanged") return "未变化";
+  if (status === "missing") return "未纳入快照";
+  if (status === "binary_or_too_large") return "不可预览";
+  return status || "未知";
 }
 
 function proposalStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
@@ -3184,6 +5002,14 @@ function externalGovernanceTone(status?: string | null): "blue" | "green" | "ora
   if (status === "notified") return "green";
   if (status === "notification_failed") return "red";
   if (status === "pending_notification") return "orange";
+  return "gray";
+}
+
+function planTaskTone(task: FeedbackOptimizationPlanTaskRecord): "blue" | "green" | "orange" | "red" | "gray" | "purple" {
+  if (task.applied_agent_version_id || task.status === "notified") return "green";
+  if (task.status === "failed" || task.status === "execution_failed" || task.status === "notification_failed") return "red";
+  if (task.status === "needs_human_review" || task.status === "pending_notification") return "orange";
+  if (task.status === "pending_execution" || task.status === "execution_planning" || task.status === "queued" || task.status === "running") return "blue";
   return "gray";
 }
 
@@ -3218,13 +5044,45 @@ function taskProposalId(task: OptimizationTaskRecord): string | null {
 
 function taskStatusDescription(status?: string | null): string {
   if (status === "pending_execution") return "当前任务已创建，等待人工或后续 patch 执行；系统尚未自动修改文件。";
-  if (status === "applied_pending_regression") return "当前任务已确认应用并创建主 Agent 版本快照，等待手动回归验证。";
+  if (status === "execution_planning") return "执行优化智能体正在生成受控执行方案，尚未修改文件。";
+  if (status === "execution_ready") return "执行方案已生成，等待确认应用。";
+  if (status === "execution_failed") return "执行方案生成或应用失败，需要重新生成或人工复核。";
+  if (status === "applied_pending_regression") return "当前任务已确认应用并创建主智能体版本快照，等待手动回归验证。";
   if (status === "regression_running") return "当前任务正在运行回归验证。";
   if (status === "completed") return "当前任务已完成。";
   if (status === "failed") return "当前任务回归验证失败，需要继续修复或人工复核。";
   if (status === "needs_human_review") return "当前任务需要人工复核回归结果。";
   if (status === "closed") return "当前任务已关闭。";
   return "当前任务仅记录优化交接信息，具体执行状态以任务状态为准。";
+}
+
+function fileStatusFromDiff(diff: unknown, targetPath: string): string {
+  if (!diff || typeof diff !== "object") return "unknown";
+  const archivePath = toArchivePath(targetPath);
+  const record = diff as { added?: Array<Record<string, unknown>>; modified?: Array<Record<string, unknown>>; deleted?: Array<Record<string, unknown>> };
+  if ((record.added || []).some((item) => rawString(item, "path") === archivePath)) return "added";
+  if ((record.deleted || []).some((item) => rawString(item, "path") === archivePath)) return "deleted";
+  if ((record.modified || []).some((item) => rawString(item, "path") === archivePath)) return "modified";
+  return "unchanged";
+}
+
+function changedPathsFromDiff(diff: unknown): string[] {
+  if (!diff || typeof diff !== "object") return [];
+  const record = diff as { added?: Array<Record<string, unknown>>; modified?: Array<Record<string, unknown>>; deleted?: Array<Record<string, unknown>> };
+  const paths = [
+    ...(record.added || []).map((item) => fromArchivePath(rawString(item, "path"))),
+    ...(record.deleted || []).map((item) => fromArchivePath(rawString(item, "path"))),
+    ...(record.modified || []).map((item) => fromArchivePath(rawString(item, "path"))),
+  ].filter(Boolean);
+  return Array.from(new Set(paths));
+}
+
+function toArchivePath(path: string): string {
+  return path.startsWith("workspace/") ? path : `workspace/${path}`;
+}
+
+function fromArchivePath(path: string): string {
+  return path.startsWith("workspace/") ? path.slice("workspace/".length) : path;
 }
 
 function proposalEvidenceText(proposal: OptimizationProposalRecord): string {

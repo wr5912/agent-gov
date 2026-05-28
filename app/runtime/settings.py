@@ -46,13 +46,15 @@ class AppSettings(BaseSettings):
 
     workspace_dir: Path = Field(default=Path("/main-workspace"), alias="WORKSPACE_DIR")
     main_workspace_dir: Path = Field(default=Path("/main-workspace"), alias="MAIN_WORKSPACE_DIR")
-    attribution_workspace_dir: Path = Field(default=Path("/attribution-workspace"), alias="ATTRIBUTION_WORKSPACE_DIR")
-    proposal_workspace_dir: Path = Field(default=Path("/proposal-workspace"), alias="PROPOSAL_WORKSPACE_DIR")
+    attribution_analyzer_workspace_dir: Path = Field(default=Path("/attribution-analyzer-workspace"), alias="ATTRIBUTION_ANALYZER_WORKSPACE_DIR")
+    proposal_generator_workspace_dir: Path = Field(default=Path("/proposal-generator-workspace"), alias="PROPOSAL_GENERATOR_WORKSPACE_DIR")
+    execution_optimizer_workspace_dir: Path = Field(default=Path("/execution-optimizer-workspace"), alias="EXECUTION_OPTIMIZER_WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
     claude_root: Path = Field(default=Path("/claude-roots/main"), alias="CLAUDE_ROOT")
     main_claude_root: Path = Field(default=Path("/claude-roots/main"), alias="MAIN_CLAUDE_ROOT")
-    attribution_claude_root: Path = Field(default=Path("/claude-roots/attribution"), alias="ATTRIBUTION_CLAUDE_ROOT")
-    proposal_claude_root: Path = Field(default=Path("/claude-roots/proposal"), alias="PROPOSAL_CLAUDE_ROOT")
+    attribution_analyzer_claude_root: Path = Field(default=Path("/claude-roots/attribution-analyzer"), alias="ATTRIBUTION_ANALYZER_CLAUDE_ROOT")
+    proposal_generator_claude_root: Path = Field(default=Path("/claude-roots/proposal-generator"), alias="PROPOSAL_GENERATOR_CLAUDE_ROOT")
+    execution_optimizer_claude_root: Path = Field(default=Path("/claude-roots/execution-optimizer"), alias="EXECUTION_OPTIMIZER_CLAUDE_ROOT")
     claude_home: Path = Field(default=Path("/claude-roots/main/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
@@ -122,14 +124,18 @@ class AppSettings(BaseSettings):
             self.main_workspace_dir = self.workspace_dir
         if self.main_claude_root == Path("/claude-roots/main") and self.claude_root != Path("/claude-roots/main"):
             self.main_claude_root = self.claude_root
-        if self.attribution_workspace_dir == Path("/attribution-workspace") and self.main_workspace_dir != Path("/main-workspace"):
-            self.attribution_workspace_dir = self.main_workspace_dir.parent / "attribution-workspace"
-        if self.proposal_workspace_dir == Path("/proposal-workspace") and self.main_workspace_dir != Path("/main-workspace"):
-            self.proposal_workspace_dir = self.main_workspace_dir.parent / "proposal-workspace"
-        if self.attribution_claude_root == Path("/claude-roots/attribution") and self.main_claude_root != Path("/claude-roots/main"):
-            self.attribution_claude_root = self.main_claude_root.parent / "attribution"
-        if self.proposal_claude_root == Path("/claude-roots/proposal") and self.main_claude_root != Path("/claude-roots/main"):
-            self.proposal_claude_root = self.main_claude_root.parent / "proposal"
+        if self.attribution_analyzer_workspace_dir == Path("/attribution-analyzer-workspace") and self.main_workspace_dir != Path("/main-workspace"):
+            self.attribution_analyzer_workspace_dir = self.main_workspace_dir.parent / "attribution-analyzer-workspace"
+        if self.proposal_generator_workspace_dir == Path("/proposal-generator-workspace") and self.main_workspace_dir != Path("/main-workspace"):
+            self.proposal_generator_workspace_dir = self.main_workspace_dir.parent / "proposal-generator-workspace"
+        if self.execution_optimizer_workspace_dir == Path("/execution-optimizer-workspace") and self.main_workspace_dir != Path("/main-workspace"):
+            self.execution_optimizer_workspace_dir = self.main_workspace_dir.parent / "execution-optimizer-workspace"
+        if self.attribution_analyzer_claude_root == Path("/claude-roots/attribution-analyzer") and self.main_claude_root != Path("/claude-roots/main"):
+            self.attribution_analyzer_claude_root = self.main_claude_root.parent / "attribution-analyzer"
+        if self.proposal_generator_claude_root == Path("/claude-roots/proposal-generator") and self.main_claude_root != Path("/claude-roots/main"):
+            self.proposal_generator_claude_root = self.main_claude_root.parent / "proposal-generator"
+        if self.execution_optimizer_claude_root == Path("/claude-roots/execution-optimizer") and self.main_claude_root != Path("/claude-roots/main"):
+            self.execution_optimizer_claude_root = self.main_claude_root.parent / "execution-optimizer"
         if self.claude_home == Path("/claude-roots/main/.claude") and self.main_claude_root != Path("/claude-roots/main"):
             self.claude_home = self.main_claude_root / ".claude"
 
@@ -300,21 +306,27 @@ def get_settings() -> AppSettings:
         settings.main_workspace_dir = settings.workspace_dir
     if "MAIN_CLAUDE_ROOT" not in os.environ and "CLAUDE_ROOT" in os.environ:
         settings.main_claude_root = settings.claude_root
-    if "ATTRIBUTION_WORKSPACE_DIR" not in os.environ:
-        settings.attribution_workspace_dir = settings.main_workspace_dir.parent / "attribution-workspace"
-    if "PROPOSAL_WORKSPACE_DIR" not in os.environ:
-        settings.proposal_workspace_dir = settings.main_workspace_dir.parent / "proposal-workspace"
-    if "ATTRIBUTION_CLAUDE_ROOT" not in os.environ:
-        settings.attribution_claude_root = settings.main_claude_root.parent / "attribution"
-    if "PROPOSAL_CLAUDE_ROOT" not in os.environ:
-        settings.proposal_claude_root = settings.main_claude_root.parent / "proposal"
+    if "ATTRIBUTION_ANALYZER_WORKSPACE_DIR" not in os.environ:
+        settings.attribution_analyzer_workspace_dir = settings.main_workspace_dir.parent / "attribution-analyzer-workspace"
+    if "PROPOSAL_GENERATOR_WORKSPACE_DIR" not in os.environ:
+        settings.proposal_generator_workspace_dir = settings.main_workspace_dir.parent / "proposal-generator-workspace"
+    if "EXECUTION_OPTIMIZER_WORKSPACE_DIR" not in os.environ:
+        settings.execution_optimizer_workspace_dir = settings.main_workspace_dir.parent / "execution-optimizer-workspace"
+    if "ATTRIBUTION_ANALYZER_CLAUDE_ROOT" not in os.environ:
+        settings.attribution_analyzer_claude_root = settings.main_claude_root.parent / "attribution-analyzer"
+    if "PROPOSAL_GENERATOR_CLAUDE_ROOT" not in os.environ:
+        settings.proposal_generator_claude_root = settings.main_claude_root.parent / "proposal-generator"
+    if "EXECUTION_OPTIMIZER_CLAUDE_ROOT" not in os.environ:
+        settings.execution_optimizer_claude_root = settings.main_claude_root.parent / "execution-optimizer"
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
-    settings.attribution_workspace_dir.mkdir(parents=True, exist_ok=True)
-    settings.proposal_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.proposal_generator_workspace_dir.mkdir(parents=True, exist_ok=True)
+    settings.execution_optimizer_workspace_dir.mkdir(parents=True, exist_ok=True)
     settings.main_claude_root.mkdir(parents=True, exist_ok=True)
-    settings.attribution_claude_root.mkdir(parents=True, exist_ok=True)
-    settings.proposal_claude_root.mkdir(parents=True, exist_ok=True)
+    settings.attribution_analyzer_claude_root.mkdir(parents=True, exist_ok=True)
+    settings.proposal_generator_claude_root.mkdir(parents=True, exist_ok=True)
+    settings.execution_optimizer_claude_root.mkdir(parents=True, exist_ok=True)
     settings.claude_home.mkdir(parents=True, exist_ok=True)
     if settings.resolved_claude_config_dir:
         settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)

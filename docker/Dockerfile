@@ -14,13 +14,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     API_PORT=8080 \
     WORKSPACE_DIR=/main-workspace \
     MAIN_WORKSPACE_DIR=/main-workspace \
-    ATTRIBUTION_WORKSPACE_DIR=/attribution-workspace \
-    PROPOSAL_WORKSPACE_DIR=/proposal-workspace \
+    ATTRIBUTION_ANALYZER_WORKSPACE_DIR=/attribution-analyzer-workspace \
+    PROPOSAL_GENERATOR_WORKSPACE_DIR=/proposal-generator-workspace \
+    EXECUTION_OPTIMIZER_WORKSPACE_DIR=/execution-optimizer-workspace \
     DATA_DIR=/data \
     CLAUDE_ROOT=/claude-roots/main \
     MAIN_CLAUDE_ROOT=/claude-roots/main \
-    ATTRIBUTION_CLAUDE_ROOT=/claude-roots/attribution \
-    PROPOSAL_CLAUDE_ROOT=/claude-roots/proposal \
+    ATTRIBUTION_ANALYZER_CLAUDE_ROOT=/claude-roots/attribution-analyzer \
+    PROPOSAL_GENERATOR_CLAUDE_ROOT=/claude-roots/proposal-generator \
+    EXECUTION_OPTIMIZER_CLAUDE_ROOT=/claude-roots/execution-optimizer \
     CLAUDE_HOME=/claude-roots/main/.claude
 
 WORKDIR /app
@@ -78,8 +80,10 @@ COPY app /app/app
 COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
 RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
-    && mkdir -p /main-workspace /attribution-workspace /proposal-workspace \
-        /claude-roots/main/.claude /claude-roots/attribution/.claude /claude-roots/proposal/.claude /data
+    && mkdir -p /main-workspace /attribution-analyzer-workspace /proposal-generator-workspace \
+        /execution-optimizer-workspace \
+        /claude-roots/main/.claude /claude-roots/attribution-analyzer/.claude /claude-roots/proposal-generator/.claude \
+        /claude-roots/execution-optimizer/.claude /data
 
 ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]

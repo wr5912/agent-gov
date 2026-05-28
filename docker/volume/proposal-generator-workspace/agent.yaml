@@ -1,14 +1,14 @@
 agent:
-  id: feedback-proposal
-  name: 反馈优化建议 Agent
+  id: proposal-generator
+  name: 优化方案生成智能体
   version: 0.2.1
   language: zh-CN
   runtime: claude-code
-  profile: feedback-proposal
+  profile: proposal-generator
 
 paths:
-  workspace: /proposal-workspace
-  claude_home: /claude-roots/proposal/.claude
+  workspace: /proposal-generator-workspace
+  claude_home: /claude-roots/proposal-generator/.claude
   data_root: /data
 
 outputs:

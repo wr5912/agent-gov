@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import fcntl
 import fnmatch
 import hashlib
@@ -18,6 +19,7 @@ import yaml
 
 
 SNAPSHOT_POLICY_VERSION = "main-workspace-managed-config-v2"
+MAX_FILE_DIFF_BYTES = 200_000
 WORKSPACE_EXCLUDED_NAMES = {
     ".cache",
     ".git",
@@ -250,12 +252,126 @@ class AgentVersionStore:
             "unchanged_count": len(unchanged),
         }
 
+    def diff_version_file(self, from_version_id: str, to_version_id: str, path: str) -> Optional[dict[str, Any]]:
+        archive_path = self._archive_path_for_user_path(path)
+        if not archive_path:
+            return None
+        left = self.get_manifest(from_version_id)
+        right = self.get_manifest(to_version_id)
+        if not left or not right:
+            return None
+        left_entry = self._manifest_entry(left, archive_path)
+        right_entry = self._manifest_entry(right, archive_path)
+        status = self._file_diff_status(left_entry, right_entry)
+        result: dict[str, Any] = {
+            "from_version_id": from_version_id,
+            "to_version_id": to_version_id,
+            "path": path,
+            "archive_path": archive_path,
+            "status": status,
+            "before": left_entry,
+            "after": right_entry,
+            "unified_diff": "",
+            "is_text": False,
+            "truncated": False,
+            "reason": None,
+        }
+        if status == "missing":
+            result["reason"] = "文件未出现在两个版本快照中。"
+            return result
+        if status == "unchanged":
+            result["reason"] = "文件内容未变化。"
+            return result
+        for entry in (left_entry, right_entry):
+            if entry and entry.get("type") != "file":
+                result["reason"] = "目标不是普通文本文件，无法展示内容级 diff。"
+                return result
+            if entry and int(entry.get("size") or 0) > MAX_FILE_DIFF_BYTES:
+                result["status"] = "binary_or_too_large"
+                result["truncated"] = True
+                result["reason"] = f"文件超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"
+                return result
+        before_bytes = self._read_version_file_bytes(left, archive_path) if left_entry else b""
+        after_bytes = self._read_version_file_bytes(right, archive_path) if right_entry else b""
+        if before_bytes is None or after_bytes is None:
+            result["reason"] = "版本包中缺少对应文件内容。"
+            return result
+        if b"\x00" in before_bytes or b"\x00" in after_bytes:
+            result["status"] = "binary_or_too_large"
+            result["reason"] = "文件包含二进制内容，未展开内容。"
+            return result
+        try:
+            before_text = before_bytes.decode("utf-8")
+            after_text = after_bytes.decode("utf-8")
+        except UnicodeDecodeError:
+            result["status"] = "binary_or_too_large"
+            result["reason"] = "文件不是 UTF-8 文本，未展开内容。"
+            return result
+        before_lines = before_text.splitlines(keepends=True)
+        after_lines = after_text.splitlines(keepends=True)
+        result["is_text"] = True
+        result["unified_diff"] = "".join(
+            difflib.unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"{from_version_id}:{archive_path}",
+                tofile=f"{to_version_id}:{archive_path}",
+                lineterm="\n",
+            )
+        )
+        return result
+
     def _collect_entries(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         entries: list[dict[str, Any]] = []
         skipped: list[dict[str, Any]] = []
         self._collect_workspace_entries(entries, skipped)
         entries.sort(key=lambda entry: str(entry.get("path") or ""))
         return entries, skipped
+
+    def _archive_path_for_user_path(self, path: str) -> Optional[str]:
+        if not path:
+            return None
+        raw = str(path).strip().replace("\\", "/")
+        parts = Path(raw).parts
+        if Path(raw).is_absolute() or ".." in parts:
+            return None
+        if raw == "workspace" or raw.startswith("workspace/"):
+            return raw
+        return f"workspace/{raw}"
+
+    def _manifest_entry(self, manifest: dict[str, Any], archive_path: str) -> Optional[dict[str, Any]]:
+        for entry in manifest.get("files", []) or []:
+            if isinstance(entry, dict) and entry.get("path") == archive_path:
+                return entry
+        return None
+
+    def _file_diff_status(self, before: Optional[dict[str, Any]], after: Optional[dict[str, Any]]) -> str:
+        if before is None and after is None:
+            return "missing"
+        if before is None:
+            return "added"
+        if after is None:
+            return "deleted"
+        if self._entry_fingerprint(before) == self._entry_fingerprint(after):
+            return "unchanged"
+        return "modified"
+
+    def _read_version_file_bytes(self, manifest: dict[str, Any], archive_path: str) -> Optional[bytes]:
+        bundle_path = Path(str(manifest.get("bundle_path") or self.bundles_dir / f"{manifest.get('agent_version_id')}.tar.gz"))
+        expected_sha = str(manifest.get("bundle_sha256") or "")
+        if not bundle_path.exists():
+            return None
+        if expected_sha and self._sha256_file(bundle_path) != expected_sha:
+            return None
+        try:
+            with tarfile.open(bundle_path, "r:gz") as tar:
+                member = tar.getmember(archive_path)
+                if not member.isfile():
+                    return None
+                handle = tar.extractfile(member)
+                return handle.read(MAX_FILE_DIFF_BYTES + 1) if handle else None
+        except (KeyError, OSError, tarfile.TarError):
+            return None
 
     def _collect_workspace_entries(self, entries: list[dict[str, Any]], skipped: list[dict[str, Any]]) -> None:
         if not self.workspace_dir.exists():

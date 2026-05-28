@@ -4,7 +4,7 @@ agent:
   version: 0.1.0
   language: zh-CN
   runtime: claude-code
-  profile: defensive-secops
+  profile: main-agent
 
 capabilities:
   - data_query_statistics

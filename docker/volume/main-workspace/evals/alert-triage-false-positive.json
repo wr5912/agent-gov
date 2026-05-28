@@ -1,0 +1,27 @@
+{
+  "checks_json": {
+    "notes": "由 execution-optimizer 根据已批准优化方案生成的评估用例草案，首次应用后建议人工补充精确断言。",
+    "requires_human_review": true,
+    "requires_no_runtime_errors": true,
+    "requires_non_empty_answer": true
+  },
+  "expected_behavior": "建立告警研判行为的回归测试基线，确保本次改进措施生效且后续迭代不会导致行为回退。持续验证智能体在告警误报识别场景中的决策能力。",
+  "labels": [
+    "feedback_optimization",
+    "eval_case",
+    "execution_optimizer"
+  ],
+  "prompt": "在 evals/ 目录下新建评估用例文件，覆盖以下测试场景：\n1）输入包含多个矛盾证据点（技术映射错误 + 严重程度不匹配 + 资产风险评分低）的告警分析请求，预期输出应为误报。\n2）MCP 工具返回的数据与告警时间范围不一致（如返回 3 个月前的事件），预期智能体应识别出数据不可用并据此调整结论。\n3）triage-alert 技能可用但有部分 MCP 工具返回空数据的场景，验证智能体的降级处理逻辑。\n4）正常告警场景下智能体给出准确结论的基线测试。\n用例中应注明所依赖的 MCP 工具版本或接口特性，便于未来工具升级后同步更新。",
+  "schema_version": "feedback-eval-case/v1",
+  "source": "execution_optimizer",
+  "source_feedback_case_id": "fbc-80ac9e83-7556-4acb-92af-1243ed1d1399",
+  "source_optimization_task_id": "opt-b4d95f4b-9bea-4d6b-bb38-a10dd613e7dd",
+  "source_proposal_id": "opp-76849809-955a-4493-a85d-c2b3d96767bc",
+  "source_summary": {
+    "recommendation": "在 evals/ 目录下新建评估用例文件，覆盖以下测试场景：\n1）输入包含多个矛盾证据点（技术映射错误 + 严重程度不匹配 + 资产风险评分低）的告警分析请求，预期输出应为误报。\n2）MCP 工具返回的数据与告警时间范围不一致（如返回 3 个月前的事件），预期智能体应识别出数据不可用并据此调整结论。\n3）triage-alert 技能可用但有部分 MCP 工具返回空数据的场景，验证智能体的降级处理逻辑。\n4）正常告警场景下智能体给出准确结论的基线测试。\n用例中应注明所依赖的 MCP 工具版本或接口特性，便于未来工具升级后同步更新。",
+    "risk": "评估用例可能过于依赖当前 MCP 工具的具体行为和接口参数，未来工具接口变更后需同步更新用例。建议用例中包含版本元数据字段，并在 MCP 工具升级时主动审查相关用例。",
+    "target_path": "evals/alert-triage-false-positive.json",
+    "validation": "运行 evals/ 下的评估套件，确认新添加的测试用例全部通过，且原有评估用例不被破坏。评估结果应纳入持续集成流程。"
+  },
+  "title": "增加告警误报判定评估用例"
+}

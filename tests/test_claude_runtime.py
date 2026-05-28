@@ -128,7 +128,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
-    assert options.env["AGENT_PROFILE"] == "main"
+    assert options.env["AGENT_PROFILE"] == "main-agent"
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
@@ -137,7 +137,7 @@ def test_feedback_job_options_use_configured_max_turns(tmp_path):
     settings.max_turns = 12
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["feedback-attribution"])
+    options = runtime._build_job_options(runtime.profiles["attribution-analyzer"])
 
     assert options.max_turns == 12
 
@@ -146,7 +146,7 @@ def test_feedback_proposal_job_options_use_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["feedback-proposal"])
+    options = runtime._build_job_options(runtime.profiles["proposal-generator"])
 
     assert options.max_turns == 16
     assert options.allowed_tools == []
@@ -158,7 +158,7 @@ def test_feedback_proposal_job_options_allow_global_max_turn_override(tmp_path):
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["feedback-proposal"])
+    options = runtime._build_job_options(runtime.profiles["proposal-generator"])
 
     assert options.max_turns == 20
 

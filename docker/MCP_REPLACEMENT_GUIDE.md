@@ -182,7 +182,7 @@ mcp__<server-name>__<tool-name>
 mcp__soc-data__query_alerts
 ```
 
-为了 MVP 阶段快速迭代，可以先允许：
+开发联调阶段可使用：
 
 ```json
 "mcp__sec-ops-data__*"

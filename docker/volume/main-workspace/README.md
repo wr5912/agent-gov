@@ -15,8 +15,8 @@
 
 ```text
 volume/
-├── workspace/                 # 项目级 Claude Code 工作区
-│   ├── CLAUDE.md              # 主 Agent 指令
+├── main-workspace/            # 主智能体 Claude Code 工作区
+│   ├── CLAUDE.md              # 主智能体指令
 │   ├── agent.yaml             # 平台元配置
 │   ├── .mcp.json              # 项目级 MCP 配置
 │   ├── .claude/               # 项目级 settings/subagents/skills/commands/rules
@@ -24,7 +24,7 @@ volume/
 │   ├── mcp_servers/           # 示例 MCP server
 │   ├── templates/             # 报告模板
 │   └── docs/                  # 使用文档
-├── claude-root/               # 用户级 Claude Code 配置和状态目录挂载点
+├── claude-roots/main/         # 用户级 Claude Code 配置和状态目录挂载点
 └── data/                      # session/transcript/upload/output/memory 数据目录
 ```
 

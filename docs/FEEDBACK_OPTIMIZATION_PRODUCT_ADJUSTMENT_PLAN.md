@@ -1,0 +1,723 @@
+# 反馈优化产品调整方案
+
+> 用途：指导反馈优化功能从“反馈处置单主导”调整为“反馈信息主导”的正式产品开发。
+> 状态：开发调整方案
+> 日期：2026-05-27
+
+本文档定义反馈优化下一阶段的产品边界、前端菜单、后端对象关系、Agent 职责和实施计划。现有多 Agent 架构文档仍作为运行隔离、证据包、版本管理和 execution-optimizer 的技术基础；本文档用于修正产品流程和交互主线。
+
+---
+
+## 1. 调整目标
+
+反馈优化面向开发人员，用于持续调试、评估和优化主智能体。该功能不面向终端业务用户，不在 UI 中强调敏感信息过滤、脱敏或面向客户展示的合规措辞。
+
+调整后的核心目标：
+
+1. 接收和管理所有反馈信息。
+2. 支持开发人员调整反馈备注、标签、优先级、状态等调试信息。
+3. 支持单条或多条反馈选择，因为多条反馈才能发现全局最优优化方向。
+4. 支持开发人员手动批量调用 AI 生成回归测试用例。
+5. 支持逐条编辑每条反馈的回归测试用例。
+6. 支持开发人员选择单条或多条反馈，逐条运行归因分析。
+7. 统筹所有归因结果后生成优化方案。
+8. 开发人员阅读优化方案后点击具体任务的“执行”，这就是唯一确认动作。
+9. 执行动作触发 execution-optimizer 生成执行方案，并由后端按受控规则应用。
+10. 应用后创建新 Agent 版本，并用本批次反馈对应测试用例逐条回归验证。
+
+---
+
+## 2. 产品对象定义
+
+### 2.1 用户主对象：反馈信息
+
+反馈信息是用户在工作台中的主对象，包含：
+
+```text
+feedback signal
+SOC event
+pending correlation
+```
+
+用户应围绕反馈信息完成：
+
+```text
+查看详情
+编辑备注
+编辑标签
+调整优先级
+标记处理状态
+生成/编辑回归测试用例
+加入优化批次
+查看归因和回归结果
+```
+
+### 2.2 内部对象：feedback case
+
+`feedback case` 继续保留，但不作为前端一级主对象。
+
+它的定位调整为后端内部处理容器，用于承载：
+
+```text
+evidence package
+attribution job
+proposal job
+job input/output
+case 级历史兼容数据
+```
+
+对每条进入优化流程的反馈，系统应确保存在一个内部单反馈 case。多选反馈时，优化批次引用这些内部 case，而不是让用户直接管理 case。
+
+### 2.3 批次对象：feedback optimization batch
+
+优化批次是多条反馈的统一优化容器。
+
+它记录：
+
+```text
+batch_id
+source feedback IDs
+internal feedback_case_ids
+eval_case_ids
+attribution_job_ids
+internal proposal_job_id
+optimization_task_id
+baseline_agent_version_id
+applied_agent_version_id
+regression_run_ids
+status
+```
+
+批次负责把多条反馈串成一个完整优化闭环。
+
+### 2.4 后端内部对象：optimization proposal
+
+`optimization proposal` 不再作为前端独立审批对象。
+
+它保留为后端内部产物，用于：
+
+```text
+保存 AI 生成的结构化优化方案
+保存 target_path、risk、validation、expected_effect
+做 schema 校验
+做 main-workspace 受管路径校验
+做 external guidance 分流
+给优化方案提供来源依据
+支持重新生成和审计追溯
+```
+
+用户看到的是“优化方案”，而不是“优化方案审批”或“执行方案二次确认”。
+
+---
+
+## 3. 新闭环流程
+
+调整后的正式流程：
+
+```text
+反馈信息
+  -> 开发人员单选/多选反馈
+  -> 手动批量生成回归测试用例
+  -> 开发人员逐条编辑测试用例
+  -> 创建优化批次
+  -> 批次内逐条归因分析
+  -> 统筹所有归因结果生成优化方案
+  -> 开发人员审批优化方案
+  -> execution-optimizer 生成执行方案
+  -> 后端按已审批优化方案受控应用执行方案
+  -> 创建执行前/执行后 Agent 版本
+  -> 批次内逐条运行回归测试
+  -> 批次完成并呈现回归测试结果
+```
+
+中间的 `proposal job` 和 `optimization proposal` 是后端内部步骤：
+
+```text
+归因结果
+  -> internal proposal job
+  -> internal optimization proposal
+  -> optimization plan
+  -> approved optimization task
+```
+
+---
+
+## 4. 前端菜单设计
+
+顶级菜单只保留：
+
+```text
+反馈信息 | 优化批次 | 版本管理
+```
+
+不再把以下对象作为一级菜单：
+
+```text
+反馈处置单
+优化方案审批
+优化任务
+回归测试
+```
+
+这些对象进入对应详情区域：
+
+```text
+反馈处置单 -> 反馈信息详情中的内部链路
+优化方案 -> 优化方案的内部来源
+优化任务 -> 优化批次详情中的任务草案/执行状态
+回归测试 -> 反馈信息详情和优化批次详情
+```
+
+### 4.1 反馈信息页面
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 反馈信息                                      [刷新] [生成测试用例] [创建优化批次] │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 筛选: [全部] [待处理] [已归因] [已验证]     搜索: [                        ]    │
+├───────────────────────────────┬──────────────────────────────────────────────┤
+│ □ 数据不全BBB                  │ 反馈详情                                      │
+│   fbs-7b61...                  │ fbs-7b61...                                  │
+│   标签: tool_data_incomplete   │ 状态: 待处理   来源: playground               │
+│   用例: 已生成  归因: 已完成     │                                              │
+│                               │ 备注                                          │
+│ ☑ 告警结论错误                 │ ┌──────────────────────────────────────────┐ │
+│   fbs-a9c2...                  │ │ 数据不全BBB                               │ │
+│   标签: verdict_mismatch       │ └──────────────────────────────────────────┘ │
+│   用例: 未生成  归因: 未开始     │                                              │
+│                               │ 标签                                          │
+│ ☑ 漏查 MCP 数据                │ [tool_data_incomplete] [manual] [+ 添加]       │
+│   fbs-13aa...                  │                                              │
+│   用例: 已生成  归因: 未开始     │ 回归测试用例                                  │
+│                               │ 状态: 已生成                                  │
+│                               │ [查看/编辑测试用例] [重新生成]                 │
+│                               │                                              │
+│                               │ 归因分析                                      │
+│                               │ 状态: 已完成                                  │
+│                               │ problem_type: tool_data_quality              │
+│                               │ [查看归因详情]                                │
+│                               │                                              │
+│                               │ 内部链路                                      │
+│                               │ case: fbc-...  evidence: evp-...  run: ...    │
+└───────────────────────────────┴──────────────────────────────────────────────┘
+```
+
+### 4.2 优化批次页面
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 优化批次                                                   [新建批次] [刷新]   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ 批次列表                         │ 批次详情                                      │
+│ ┌─────────────────────────────┐ │ batch-20260527-001                           │
+│ │ batch-001                   │ │ 状态: 待审批                                  │
+│ │ 3 条反馈 · 3 条归因 · 1 个方案 │ │ 反馈: 3  用例: 3  归因: 3  版本: -             │
+│ │ 状态: 待审批                 │ │                                              │
+│ └─────────────────────────────┘ │ 流程                                          │
+│                                 │ [反馈] -> [测试用例] -> [归因] -> [优化方案]    │
+│                                 │   -> [审批] -> [执行] -> [新版本] -> [回归]     │
+│                                 │                                              │
+│                                 │ Tabs:                                        │
+│                                 │ [反馈范围] [归因结果] [优化方案] [执行记录]     │
+│                                 │ [回归测试] [版本与差异]                       │
+│                                 │                                              │
+│                                 │ 优化方案                                      │
+│                                 │ ┌──────────────────────────────────────────┐ │
+│                                 │ │ 修改 CLAUDE.md 中工具验证策略              │ │
+│                                 │ │ 目标文件: CLAUDE.md                        │ │
+│                                 │ │ 影响反馈: 3 条                             │ │
+│                                 │ │ 风险: 可能增加工具调用成本                  │ │
+│                                 │ │ 验证: 使用本批次 3 个测试用例逐条回归         │ │
+│                                 │ │             [执行任务] [重新生成优化方案]     │ │
+│                                 │ └──────────────────────────────────────────┘ │
+└─────────────────────────────────┴──────────────────────────────────────────────┘
+```
+
+回归测试放在优化批次详情中：
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 回归测试                                                                      │
+│ 基线版本: agent-version-A        优化后版本: agent-version-B                   │
+│ 测试用例: 3                      最近结果: 2 passed / 1 failed                 │
+│                                                                              │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ fbs-7b61... 数据不全BBB                         evc-a12...   passed      │ │
+│ │ 期望: 回答前必须读取当前 workspace 配置                                      │ │
+│ │ 实际: 已调用 Read/Grep，并引用配置文件内容                                    │ │
+│ │                                                   [查看详情] [重新运行此条] │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+│ ┌──────────────────────────────────────────────────────────────────────────┐ │
+│ │ fbs-a9c2... 告警结论错误                       evc-b33...   failed       │ │
+│ │ 失败原因: 未调用 MCP 获取告警详情                                             │ │
+│ │                                                   [查看详情] [重新运行此条] │ │
+│ └──────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+│                                              [运行本批次回归测试] [重跑失败项] │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+回归测试结果中的每条用例都必须提供“查看详情”，包括 `passed`、`failed` 和 `needs_human_review`。点击后在当前批次详情内展开完整运行过程，不跳出到版本管理或原始 JSON 页面。
+
+详情展开内容至少包含：
+
+```text
+1. 测试用例输入 prompt。
+2. 期望输出/期望行为。
+3. 实际 Agent 回答。
+4. 使用的 Agent 版本、run_id、session_id。
+5. 工具调用和关键观察结果。
+6. check_results 中每条检查的 passed/failed、原因和证据。
+7. 错误信息、耗时和成本信息。
+```
+
+### 4.3 版本管理页面
+
+版本管理只负责版本审计、对比和恢复，不承载回归测试入口。
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ 版本管理                                                   [创建快照] [刷新]   │
+├───────────────────────────────┬──────────────────────────────────────────────┤
+│ 版本记录                       │ 版本详情                                      │
+│ ┌───────────────────────────┐ │ agent-version-B                              │
+│ │ 当前版本                  │ │ 状态: 当前使用                                │
+│ │ batch-001 执行后版本       │ │ 来源: batch-001                               │
+│ └───────────────────────────┘ │                                              │
+│ ┌───────────────────────────┐ │ 可执行操作                                    │
+│ │ 可恢复                    │ │ [恢复此版本] [与当前版本对比]                  │
+│ │ agent-version-A           │ │                                              │
+│ └───────────────────────────┘ │ 关联记录                                      │
+│                               │ 来源批次: batch-001                            │
+│                               │ 回归结果: 3 passed / 0 failed                  │
+│                               │                                              │
+│                               │ 文件差异                                      │
+│                               │ ▸ CLAUDE.md                                   │
+└───────────────────────────────┴──────────────────────────────────────────────┘
+```
+
+不得在版本管理中增加“运行版本验证”或“选择为回归测试目标”按钮。回归测试统一放在优化批次中。
+
+---
+
+## 5. 后端数据模型调整
+
+### 5.1 反馈注解
+
+新增反馈注解层，用于保存开发人员对反馈的编辑，不覆盖原始采集记录。
+
+建议表：
+
+```text
+feedback_source_annotations
+```
+
+核心字段：
+
+```text
+source_kind: signal | soc_event | pending_correlation
+source_id
+updated_at
+status
+priority
+labels_json
+comment
+requires_review
+payload_json
+```
+
+读取反馈列表时，将原始 feedback source 与 annotation 合并返回。
+
+### 5.2 优化批次
+
+新增：
+
+```text
+feedback_optimization_batches
+```
+
+核心字段：
+
+```text
+batch_id
+created_at
+updated_at
+status
+source_ids_json
+source_refs_json
+feedback_case_ids_json
+eval_case_ids_json
+attribution_job_ids_json
+proposal_job_id
+internal_proposal_ids_json
+optimization_task_id
+baseline_agent_version_id
+applied_agent_version_id
+regression_run_ids_json
+payload_json
+```
+
+### 5.3 回归测试用例
+
+现有 `eval_cases` 继续使用，但需要调整语义：
+
+1. 每条反馈最多一个默认 active eval case。
+2. `source_feedback_case_id` 保留兼容。
+3. 新增或在 payload 中保存 `source_kind` 和 `source_id`。
+4. 支持从反馈信息详情直接编辑 prompt、expected_behavior、checks_json、labels、status。
+
+---
+
+## 6. 后端 API 调整
+
+### 6.1 反馈信息管理
+
+```text
+GET   /api/feedback-sources
+GET   /api/feedback-sources/{source_kind}/{source_id}
+PATCH /api/feedback-sources/{source_kind}/{source_id}
+```
+
+`PATCH` 支持：
+
+```json
+{
+  "comment": "数据不全BBB",
+  "labels": ["tool_data_incomplete", "manual"],
+  "priority": "high",
+  "status": "selected_for_optimization",
+  "requires_review": false
+}
+```
+
+### 6.2 回归测试用例生成
+
+```text
+POST /api/feedback-sources/eval-cases/generate
+```
+
+请求：
+
+```json
+{
+  "source_refs": [
+    {"source_kind": "signal", "source_id": "fbs-..."},
+    {"source_kind": "soc_event", "source_id": "soe-..."}
+  ],
+  "force": false
+}
+```
+
+行为：
+
+1. `force=false` 时复用已有 active/draft eval case。
+2. 缺失用例时调用 `feedback-eval-case` Agent 生成。
+3. 每条反馈独立返回状态，允许局部失败。
+
+### 6.3 优化批次
+
+```text
+POST /api/feedback-optimization-batches
+GET  /api/feedback-optimization-batches
+GET  /api/feedback-optimization-batches/{batch_id}
+POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs
+POST /api/feedback-optimization-batches/{batch_id}/optimization-plans
+POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/approve
+POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/reject
+GET  /api/feedback-optimization-batches/{batch_id}/execution-jobs
+POST /api/feedback-optimization-batches/{batch_id}/regression-runs
+```
+
+批次归因行为：
+
+1. 为批次内每条反馈确保内部单反馈 case。
+2. 为每个 case 创建 evidence package。
+3. 逐条调用 `attribution-analyzer`。
+4. 批次状态汇总所有 attribution job 结果。
+
+优化方案生成行为：
+
+1. 读取批次内所有 attribution outputs。
+2. 读取批次内 eval cases。
+3. 调用 `proposal-generator` Runtime Profile 生成 `feedback-optimization-plan-output/v1`。
+4. 后端只做 DSPy 输出格式化、Pydantic Schema 校验、路径策略校验和持久化；不再用规则拼接优化方案主体。
+5. 校验后的输出转换为前端展示的 optimization plan，plan 内直接包含可执行 tasks 和 blocked_items。
+6. 开发人员阅读优化方案后点击具体任务的“执行”，即表示同意执行该任务；不再保留单独的优化建议审批对象。
+
+---
+
+## 7. Agent 职责调整
+
+### 7.1 feedback-eval-case
+
+新增 profile，用于根据反馈信息生成回归测试用例。
+
+输入：
+
+```text
+feedback source
+关联 run/session/answer
+开发人员备注和标签
+可选 evidence 摘要
+```
+
+输出：
+
+```text
+feedback-eval-case/v1
+```
+
+要求：
+
+1. 输出中文。
+2. 生成可编辑的 prompt、expected_behavior、checks_json。
+3. 不直接写文件。
+4. 不修改 main-workspace。
+
+### 7.2 attribution-analyzer
+
+保持逐条归因，不做全局优化设计。
+
+### 7.3 proposal-generator
+
+调整为批次级优化方案生成智能体。
+
+输入：
+
+```text
+batch
+多个 attribution outputs
+多个 eval cases
+当前 Agent 版本信息
+可选 regeneration_instruction
+target_policy
+```
+
+输出：
+
+```text
+feedback-optimization-plan-output/v1
+```
+
+要求：
+
+1. 直接输出 optimization plan 所需的任务列表，不把主要内容留给后端规则抽取。
+2. 每个可执行任务必须包含任务名称、任务描述、任务目标、推荐改动、优化后结果的验收标准、验证方式和风险。
+3. `task_context` 必须嵌套在对应 task 内；外部系统任务必须明确到系统、MCP server、tool/API/endpoint、问题 ID、受影响字段或观察到的问题。
+4. 不能定位到具体执行对象的问题进入 `blocked_items`。
+
+### 7.4 execution-optimizer
+
+保持现有职责：
+
+```text
+读取已确认执行的 optimization task
+生成受控 execution plan
+由后端应用 patch
+创建执行前/执行后版本
+```
+
+---
+
+## 8. 状态机
+
+### 8.1 反馈信息状态
+
+```text
+new
+annotated
+eval_case_ready
+attribution_ready
+included_in_batch
+validated
+archived
+```
+
+### 8.2 优化批次状态
+
+```text
+draft
+eval_cases_generating
+eval_cases_ready
+attribution_running
+attribution_ready
+plan_generating
+pending_plan_approval
+plan_rejected
+execution_planning
+execution_ready
+execution_applied
+regression_running
+completed
+needs_human_review
+failed
+```
+
+---
+
+## 9. 分阶段实施计划
+
+### 阶段 1：文档和 UI 主线调整
+
+目标：
+
+1. 顶级菜单调整为 `反馈信息 | 优化批次 | 版本管理`。
+2. 移除顶级“回归测试”“优化方案审批”“优化任务”入口。
+3. 反馈信息页面增加目标交互骨架。
+4. 优化批次页面增加详情 tabs 和状态展示骨架。
+
+验收：
+
+```text
+用户能明确看到反馈信息是主入口。
+回归测试只出现在反馈详情和批次详情中。
+版本管理只保留恢复和对比，不提供验证入口。
+```
+
+### 阶段 2：反馈注解和测试用例编辑
+
+目标：
+
+1. 新增 feedback source annotation。
+2. 支持反馈备注、标签、优先级、状态编辑。
+3. 支持按反馈手动批量生成回归测试用例。
+4. 支持逐条编辑测试用例。
+
+验收：
+
+```text
+反馈编辑不修改原始采集数据。
+单条和多条反馈都能生成测试用例。
+已有测试用例默认复用。
+```
+
+### 阶段 3：优化批次和逐条归因
+
+目标：
+
+1. 新增 optimization batch。
+2. 多选反馈创建批次。
+3. 批次内逐条创建内部 case/evidence/attribution job。
+4. 展示逐条归因结果和汇总状态。
+
+验收：
+
+```text
+一个批次可包含多条反馈。
+每条反馈有独立归因结果。
+单条失败不阻断其他反馈归因。
+```
+
+### 阶段 4：优化方案任务化并取消二次确认
+
+目标：
+
+1. 批次级统筹归因结果，由 `proposal-generator` 生成 `feedback-optimization-plan-output/v1`。
+2. 后端校验并转换为 optimization plan，plan 内包含可执行 tasks 和 blocked_items。
+3. 前端展示优化方案并提供“执行任务”和“重新生成优化方案”。
+4. 不再暴露优化方案审批页面或中间优化建议审批对象。
+5. 不再提供“确认应用执行方案”的二次审批动作；开发人员点击任务执行即表示确认。
+
+验收：
+
+```text
+用户只确认一次优化任务执行。
+优化方案中能看到来源归因、目标文件、风险、验证方式和执行影响。
+批次 plan job、任务执行 job 和版本记录可审计追溯。
+```
+
+### 阶段 5：执行、版本和批次回归
+
+目标：
+
+1. 优化方案中的 workspace 任务点击执行后进入 execution-optimizer。
+2. 后端根据已确认执行的任务受控应用执行方案。
+3. 创建执行前/执行后版本。
+4. 批次内逐条运行回归测试。
+5. 版本管理展示批次来源、回归摘要、文件差异。
+
+验收：
+
+```text
+优化批次能完整走到 completed，并呈现逐条回归测试结果。
+版本管理能恢复历史版本和查看差异。
+回归结果按反馈逐条展示。
+```
+
+---
+
+## 10. 测试要求
+
+后端测试：
+
+```text
+反馈注解创建和更新
+反馈 source 合并 annotation 后返回
+批量生成 eval cases 的复用、创建、局部失败
+创建 optimization batch
+批次逐条归因
+批次 optimization plan 生成
+优化方案审批和拒绝
+execution job 生成和应用
+批次 regression run 逐条结果
+历史 case/proposal/task 兼容读取
+```
+
+前端测试/构建：
+
+```text
+pnpm build
+反馈信息多选和按钮状态
+反馈详情编辑交互
+批次详情 tabs 展示
+优化方案审批按钮状态
+版本管理不出现回归验证入口
+```
+
+端到端验收：
+
+```text
+选择 3 条反馈
+生成 3 个测试用例
+创建 1 个优化批次
+得到 3 条归因结果
+生成 1 个优化方案
+审批优化方案后执行优化
+创建新 Agent 版本
+运行 3 条回归测试并展示逐条结果
+```
+
+---
+
+## 11. 不做事项
+
+本轮调整不做：
+
+```text
+面向终端用户的反馈门户
+敏感信息脱敏 UI
+自动后台生成所有反馈测试用例
+版本管理中的独立验证入口
+删除历史 feedback case / proposal / task 表
+让归因分析智能体直接修改 main-workspace
+绕过优化方案审批直接应用 execution plan
+```
+
+---
+
+## 12. 最终决策
+
+最终产品决策如下：
+
+```text
+1. 反馈信息是用户主对象。
+2. feedback case 是后端内部处理容器。
+3. 优化批次承载多反馈全局优化。
+4. 回归测试不作为顶级菜单。
+5. 版本管理只做审计、对比和恢复。
+6. 优化方案不再作为用户审批对象。
+7. 用户只审批一次优化方案。
+8. optimization proposal 作为后端内部审计产物保留。
+9. 回归验证统一在优化批次中运行和展示。
+10. execution-optimizer 仍按受控执行方案工作。
+```

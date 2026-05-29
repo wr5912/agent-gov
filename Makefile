@@ -103,8 +103,8 @@ chat:
 		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON) -m json.tool
 
 codex-guard:
-	$(PYTHON) scripts/check_codex_governance.py --mode warn
+	$(PYTHON) scripts/check_codex_governance.py --mode fail
 
-test:
+test: codex-guard
 	$(PYTHON) -m compileall app
 	$(PYTHON) -m pytest -q

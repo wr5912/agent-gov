@@ -10,7 +10,7 @@ license: "MIT-compatible adaptation with attribution"
 
 ## 来源与适配
 
-本技能结合本项目 `docs/` 中的环境、工作流、开发标准，并改写保留 `forrestchang/andrej-karpathy-skills` 的通用工程行为规则。
+本技能结合团队通用环境、工作流和开发标准，并改写保留 `forrestchang/andrej-karpathy-skills` 的通用工程行为规则；项目专属补充应放在 `AGENTS.override.md`。
 
 来源仓库: https://github.com/forrestchang/andrej-karpathy-skills
 许可: MIT
@@ -22,7 +22,8 @@ license: "MIT-compatible adaptation with attribution"
 - 是否已经读过 `AGENTS.md` 和 `AGENTS.override.md`？
 - 是否已经读过 `.codex/rules/project.rules`、`architecture.rules` 和 `verify.rules`？
 - 是否已经确认相关代码、配置、测试和文档？
-- 是否已经检查待修改文件的行数、类/函数/路由规模、复制风险、状态机和 schema 表示？
+- 是否已经检查待修改文件的行数、类/函数/路由规模、复制风险、生命周期状态和 schema 表示？
+- 是否已经识别治理硬门暂未覆盖的结构风险？检查未报警不能替代架构判断。
 - 是否存在多个合理解释？如果存在，先列出并确认。
 - 是否存在更简单的实现路径？如果存在，优先提出。
 
@@ -38,7 +39,7 @@ license: "MIT-compatible adaptation with attribution"
 完成后：
 
 - 运行相关测试、构建、类型检查或人工验证。
-- 运行或说明未运行 `scripts/check_codex_governance.py --mode warn`。
+- 运行项目覆盖层声明的治理硬门；`warn` / dry-run 类模式只允许用于 Analyze 阶段观察。
 - 对照原始目标说明是否达成。
 - 说明未验证项、原因和残余风险。
 
@@ -94,16 +95,26 @@ license: "MIT-compatible adaptation with attribution"
 - 路由文件超过 20 个路由。
 - 即将复制超过 40 行已有代码。
 - 同一职责在 3 个及以上文件中通过字符串字面量耦合。
-- 同一实体存在 Pydantic 模型与手写 dict 双轨表示。
-- `status` / `phase` / `stage` 等状态转移散落在多个分支中。
-- 跨表更新拆成多个 `Session.begin()`，或 DB + 文件系统更新缺少幂等/回滚说明。
+- 同一实体存在多套手写 schema、DTO、ORM 或序列化表示且缺少单一真相来源；Python 项目中包括 Pydantic 模型与手写 dict 双轨表示。
+- 表达持久化生命周期的状态字段（如 `status` / `state` / `phase` / `stage`）的合法转移散落在多个分支中，或集中状态机只登记状态集合但缺完整转移表。
+- 跨表、跨文件、跨服务或 DB + 文件系统更新拆成多个不可恢复的事务步骤，或事务块内执行不可回滚副作用。
 - 修改路由、settings、Docker env、公开 schema 或默认值但不同步 README / docs。
 
 命中阈值不等于允许大范围重写。默认只抽出完成当前目标所需的最小稳定边界。
+治理硬门以 git base 对比判定旧债；既有超限可暂存但本次不得增长，新增超限直接失败。
+普通文档或 issue 可用于人工还债排期，但不得作为治理放行豁免。
+
+## 生命周期状态硬约束
+
+- 当字段表达持久化生命周期且存在受约束的合法转移时，必须进入集中状态机。
+- `status` / `state` / `phase` / `stage` 只是常见信号；只读外部字段、展示标签、临时 UI 步骤或无受限转移的简单属性，不强制状态机。
+- 集中状态机必须有状态集合和完整合法转移表；缺表视为未实现，不得称为已治理。
+- 生命周期状态写入必须经统一 helper 调用转移校验；不得新增绕过 helper 的直写路径。
+- 涉及生命周期状态字段时，必须补充非法转移或非法状态输入的负向测试。
 
 ## 测试纵深
 
-- 状态字段变更：至少补充 1 个非法状态转移或非法状态输入测试。
+- 生命周期状态字段变更：至少补充 1 个非法状态转移或非法状态输入测试。
 - 并发资源变更：至少补充 1 个重复执行、竞争或部分失败场景测试。
 - 外部输入变更：至少补充 1 个异常、恶意或越权输入测试。
 - happy path 只作为基线，不单独代表测试充分。
@@ -120,7 +131,7 @@ Python：
 Node.js：
 
 - 使用 Node.js 20+。
-- 优先使用 `pnpm`。
+- 必须使用 `pnpm`，不得新增 npm/yarn lockfile 或以 npm/yarn 作为项目默认入口。
 
 Docker：
 
@@ -128,13 +139,13 @@ Docker：
 - 环境变量放在 `docker/.env`。
 - 卷挂载放在 `docker/volume/`。
 - 端口映射遵循 `50000 + 容器端口`。
-- 下载源优先使用国内源，例外必须说明。
+- 下载源必须优先使用国内源，例外必须说明。
 
 ## 安全规则
 
 - 不输出或写入 API key、MCP header、数据库凭据和敏感工具输入。
 - 不把个人路径、个人 token 或私有账号配置写入团队文件。
-- 必需工作流不得依赖远程服务。
+- 如项目声明离线或内网运行不变量，必需工作流不得依赖远程服务。
 - 配置值不得硬编码到业务逻辑。
 
 ## 反模式
@@ -147,8 +158,9 @@ Docker：
 - 用“应该可以”代替测试、构建或明确的人工验证。
 - 在已超 800 行的文件中继续追加新职责，理由是“匹配现有风格”。
 - 通过复制超过 40 行已有函数实现新变体，理由是“精准改动”。
-- 把状态字段的合法转移写成散落的 if 分支。
-- 同一实体在 Pydantic 与 dict 中各定义一遍。
+- 把生命周期状态字段的合法转移写成散落的 if 分支。
+- 只把状态值放进集中集合，却没有合法转移表和非法转移测试。
+- 同一实体在多套 schema、DTO、ORM 或手写 dict 中重复定义。
 - 修改路由、settings 或 Docker env 但不同步 README / docs 对应章节。
-- 修改 SQLite 表结构或字段语义但不写 migration。
-- 给跨表更新分两次 `Session.begin()` 提交。
+- 修改数据库表结构或字段语义但不写项目约定的 migration。
+- 给跨资源更新分多次不可恢复的事务提交。

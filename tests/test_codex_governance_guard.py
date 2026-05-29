@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -14,64 +15,79 @@ def _write_lines(path: Path, count: int) -> None:
     path.write_text("x = 1\n" * count, encoding="utf-8")
 
 
-def _write_budget(root: Path, baseline: str = "") -> None:
-    budget = root / ".codex" / "size-budget.yaml"
-    budget.parent.mkdir(parents=True, exist_ok=True)
-    budget.write_text(
-        "\n".join(
-            [
-                "version: 1",
-                "limits:",
-                "  python_file_lines: 2",
-                "  frontend_file_lines: 2",
-                "baseline:",
-                baseline.rstrip(),
-                "",
-            ]
-        ),
-        encoding="utf-8",
+def _git(root: Path, *args: str) -> None:
+    env = os.environ.copy()
+    env.update(
+        {
+            "GIT_AUTHOR_NAME": "Test",
+            "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test",
+            "GIT_COMMITTER_EMAIL": "test@example.com",
+        }
     )
+    subprocess.run(["git", "-C", str(root), *args], check=True, env=env, capture_output=True)
 
 
-def _run_guard(root: Path, mode: str = "fail") -> subprocess.CompletedProcess[str]:
+def _commit_all(root: Path, message: str = "baseline") -> None:
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", message)
+
+
+def _init_repo(root: Path) -> None:
+    _git(root, "init")
+    _git(root, "config", "user.name", "Test")
+    _git(root, "config", "user.email", "test@example.com")
+
+
+def _run_guard(root: Path, mode: str = "fail", *extra: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, str(SCRIPT), "--root", str(root), "--mode", mode],
+        [sys.executable, str(SCRIPT), "--root", str(root), "--mode", mode, *extra],
         check=False,
         capture_output=True,
         text=True,
     )
 
 
-def test_budgeted_oversized_file_is_allowed_until_baseline(tmp_path: Path) -> None:
+def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "large.py", 5)
-    _write_budget(
-        tmp_path,
-        baseline="""
-  - path: app/large.py
-    max_lines: 5
-    target_lines: 2
-    due: "2026-07-31"
-    reason: "test baseline"
-""",
-    )
+    _commit_all(tmp_path)
 
-    result = _run_guard(tmp_path)
+    result = _run_guard(tmp_path, "fail", "--python-file-lines", "2")
 
     assert result.returncode == 0
-    assert "BUDGET: app/large.py" in result.stdout
+    assert "BASELINE: app/large.py" in result.stdout
+    assert "existing oversized file not grown" in result.stdout
 
 
-def test_unbudgeted_oversized_file_fails_in_fail_mode(tmp_path: Path) -> None:
-    _write_lines(tmp_path / "frontend" / "src" / "Large.tsx", 3)
-    _write_budget(tmp_path)
+def test_existing_oversized_file_growth_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "large.py", 5)
+    _commit_all(tmp_path)
+    _write_lines(tmp_path / "app" / "large.py", 6)
 
-    result = _run_guard(tmp_path)
+    result = _run_guard(tmp_path, "fail", "--python-file-lines", "2")
 
     assert result.returncode == 1
-    assert "FAIL: frontend/src/Large.tsx" in result.stdout
+    assert "existing oversized file grew: 5 -> 6" in result.stdout
+
+
+def test_new_oversized_file_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    _write_lines(tmp_path / "frontend" / "src" / "Large.tsx", 3)
+
+    result = _run_guard(tmp_path, "fail", "--frontend-file-lines", "2")
+
+    assert result.returncode == 1
+    assert "new oversized file: 3 > 2" in result.stdout
 
 
 def test_generated_oversized_file_is_ignored(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
     generated = tmp_path / "frontend" / "src" / "types" / "api.ts"
     generated.parent.mkdir(parents=True, exist_ok=True)
     generated.write_text(
@@ -79,38 +95,164 @@ def test_generated_oversized_file_is_ignored(tmp_path: Path) -> None:
         + "export type X = string;\n" * 10,
         encoding="utf-8",
     )
-    _write_budget(tmp_path)
 
-    result = _run_guard(tmp_path)
+    result = _run_guard(tmp_path, "fail", "--frontend-file-lines", "2")
 
     assert result.returncode == 0
     assert "api.ts" not in result.stdout
 
 
-def test_budgeted_file_growth_fails_in_fail_mode(tmp_path: Path) -> None:
-    _write_lines(tmp_path / "app" / "large.py", 6)
-    _write_budget(
-        tmp_path,
-        baseline="""
-  - path: app/large.py
-    max_lines: 5
-    target_lines: 2
-    due: "2026-07-31"
-    reason: "test baseline"
-""",
+def test_warn_mode_reports_but_does_not_fail(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    _write_lines(tmp_path / "app" / "large.py", 3)
+
+    result = _run_guard(tmp_path, "warn", "--python-file-lines", "2")
+
+    assert result.returncode == 0
+    assert "WARN: app/large.py" in result.stdout
+
+
+def test_existing_long_function_is_allowed_when_not_growing(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    body = "\n".join(f"    value_{index} = {index}" for index in range(4))
+    path = tmp_path / "app" / "long_function.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"def too_long():\n{body}\n", encoding="utf-8")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path, "fail", "--python-function-lines", "2")
+
+    assert result.returncode == 0
+    assert "existing long function too_long not grown" in result.stdout
+
+
+def test_existing_long_function_growth_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "long_function.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def too_long():\n    a = 1\n    b = 2\n", encoding="utf-8")
+    _commit_all(tmp_path)
+    path.write_text("def too_long():\n    a = 1\n    b = 2\n    c = 3\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path, "fail", "--python-function-lines", "2")
+
+    assert result.returncode == 1
+    assert "existing long function too_long grew: 3 -> 4" in result.stdout
+
+
+def test_new_long_function_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    body = "\n".join(f"    value_{index} = {index}" for index in range(3))
+    path = tmp_path / "app" / "long_function.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"def too_long():\n{body}\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path, "fail", "--python-function-lines", "2")
+
+    assert result.returncode == 1
+    assert "new long function too_long" in result.stdout
+
+
+def test_existing_large_class_growth_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "large_class.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "class Large:\n"
+        "    def one(self):\n        return 1\n"
+        "    def two(self):\n        return 2\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+    path.write_text(
+        "class Large:\n"
+        "    def one(self):\n        return 1\n"
+        "    def two(self):\n        return 2\n"
+        "    def three(self):\n        return 3\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path, "fail", "--python-class-public-methods", "1")
+
+    assert result.returncode == 1
+    assert "existing large class Large grew: 2 -> 3" in result.stdout
+
+
+def test_existing_router_count_growth_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "routers" / "many_routes.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "router = object()\n"
+        "@router.get('/one')\ndef one():\n    return None\n"
+        "@router.get('/two')\ndef two():\n    return None\n",
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+    path.write_text(
+        "router = object()\n"
+        "@router.get('/one')\ndef one():\n    return None\n"
+        "@router.get('/two')\ndef two():\n    return None\n"
+        "@router.get('/three')\ndef three():\n    return None\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path, "fail", "--python-route-count", "1")
+
+    assert result.returncode == 1
+    assert "existing oversized router file grew: 2 -> 3" in result.stdout
+
+
+def test_existing_state_machine_missing_transition_is_allowed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "runtime" / "state_machines.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n'
+        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "BASELINE: app/runtime/state_machines.py" in result.stdout
+
+
+def test_new_state_machine_missing_transition_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "runtime" / "state_machines.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        '_KNOWN_STATES = {"job": {"queued"}}\n'
+        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        encoding="utf-8",
+    )
+    _commit_all(tmp_path)
+    path.write_text(
+        '_KNOWN_STATES = {"job": {"queued"}, "batch": {"draft"}}\n'
+        '_TRANSITIONS = {"job": {"queued": set()}}\n',
+        encoding="utf-8",
     )
 
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert "budgeted file grew" in result.stdout
+    assert "new state machine without transitions: batch" in result.stdout
 
 
-def test_warn_mode_reports_but_does_not_fail(tmp_path: Path) -> None:
-    _write_lines(tmp_path / "app" / "large.py", 3)
-    _write_budget(tmp_path)
+def test_default_scan_includes_scripts(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    _write_lines(tmp_path / "scripts" / "large.py", 3)
 
-    result = _run_guard(tmp_path, mode="warn")
+    result = _run_guard(tmp_path, "fail", "--python-file-lines", "2")
 
-    assert result.returncode == 0
-    assert "WARN: app/large.py" in result.stdout
+    assert result.returncode == 1
+    assert "FAIL: scripts/large.py" in result.stdout

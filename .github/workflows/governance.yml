@@ -1,0 +1,43 @@
+name: governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    env:
+      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install --python .venv/bin/python -r requirements.txt pytest
+
+      - name: Governance guard
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base_ref="origin/${{ github.base_ref }}"
+          else
+            base_ref="HEAD^"
+          fi
+          .venv/bin/python scripts/check_codex_governance.py --mode fail --base-ref "$base_ref"
+
+      - name: Tests
+        run: make test

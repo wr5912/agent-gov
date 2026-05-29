@@ -7,6 +7,7 @@
 #
 # 1. `.codex/rules/architecture.rules`
 # 2. `.codex/rules/verify.rules`
+# 3. `AGENTS.override.md` 中声明的项目覆盖规则、治理命令和 base-ref 策略（如果存在）
 #
 # 执行顺序：
 #
@@ -14,5 +15,6 @@
 # - Plan 阶段写明阈值命中情况、处理方式、验证方式和 Docker 卷路径。
 # - Execute 阶段只做已确认计划内的最小必要改动。
 # - Verify 阶段按 `verify.rules` 做功能验证和架构验证。
+# - 治理检查默认使用 fail 模式；具体命令由项目覆盖层声明。warn 模式只用于 Analyze 阶段观察，不得作为通过标准。
 #
 # 如果规则之间存在冲突，以更具体、更安全、更能防止技术债继续扩大的规则为准。

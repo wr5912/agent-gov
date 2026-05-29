@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found
 from app.runtime.agent_version_store import AgentVersionStore
-from app.runtime.agent_version_response_schemas import (
+from app.runtime.response_schemas.agent_version_response_schemas import (
     AgentVersionDiffResponse,
     AgentVersionFileDiffResponse,
     AgentVersionManifestResponse,

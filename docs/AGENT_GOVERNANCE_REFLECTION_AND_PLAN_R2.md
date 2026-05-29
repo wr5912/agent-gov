@@ -4,6 +4,7 @@
 > 问题：本项目由 Codex Agent 在 `AGENTS.md` + `.codex/` 指令下开发。**当前实现质量是否由这些指令文件决定？**
 > 与第一轮的关系：[R1 反思](./AGENT_GOVERNANCE_REFLECTION_AND_PLAN.md)（提交 `850e33e`）促成了护栏落地（`126a2e6`/`88fd96e`）与拆分（`2210f95`）。**本轮是对"护栏是否真正生效、是否闭环"的实测复盘。**
 > 结论：**是部分成因，且因果是非对称的**——指令对"单次任务克制"有强正贡献，对"跨任务架构卫生"只有弱且会空转的贡献。
+> 整改注记（2026-05-30）：当前 `.codex/` 不再存放项目债务账本，`.codex/size-budget.yaml` 不存在；治理硬门以 `scripts/check_codex_governance.py --mode fail` 对比 git base 执行行数、函数、类、路由与状态机缺表检查。本文涉及 size-budget 的段落保留为发现时的治理反思，不代表当前仓库结构。
 
 ---
 

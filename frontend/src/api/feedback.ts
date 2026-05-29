@@ -32,6 +32,7 @@ import type {
   OptimizationExecutionApplyResponse,
   OptimizationExecutionJobRecord,
   OptimizationProposalRecord,
+  OptimizationProposalReviewAction,
   OptimizationProposalReviewRequest,
   OptimizationProposalReviewResponse,
   OptimizationTaskCreateRequest,
@@ -372,12 +373,15 @@ export function reviewOptimizationProposal(
   payload: OptimizationProposalReviewRequest,
 ) {
   const action = payload.action || "approve";
-  const routeByAction: Record<string, string> = {
+  const routeByAction: Record<OptimizationProposalReviewAction, string> = {
     approve: "approve",
     reject: "reject",
     request_more_analysis: "request-more-analysis",
   };
-  const route = routeByAction[action] || "request-more-analysis";
+  const route = routeByAction[action];
+  if (!route) {
+    throw new Error(`Unsupported proposal review action: ${action}`);
+  }
   return requestJson<OptimizationProposalReviewResponse>(
     config,
     `/api/optimization-proposals/${encodeURIComponent(proposalId)}/${route}`,
@@ -547,6 +551,13 @@ export async function getFeedbackWorkbenchData(
   filters: FeedbackFilters = { limit: 500 },
 ): Promise<FeedbackWorkbenchData> {
   const limit = filters.limit ?? 500;
+  const optionalList = async <T>(request: Promise<T[]>): Promise<T[]> => {
+    try {
+      return await request;
+    } catch {
+      return [];
+    }
+  };
   const [
     sources,
     runs,
@@ -562,19 +573,19 @@ export async function getFeedbackWorkbenchData(
     evalRuns,
     optimizationBatches,
   ] = await Promise.all([
-    getFeedbackSources(config, { limit }).catch(() => []),
-    getAgentRuns(config, { limit }),
-    getFeedbackSignals(config, { limit }),
-    getSocEvents(config, { limit }),
-    getPendingCorrelations(config, { limit }),
-    getFeedbackCases(config, { limit }),
-    getOptimizationProposals(config, { limit }),
-    getOptimizationTasks(config, { limit }).catch(() => []),
-    getExternalGovernanceItems(config, { limit }).catch(() => []),
-    getExternalGovernanceWebhooks(config).catch(() => []),
-    getEvalCases(config, { limit }).catch(() => []),
-    getEvalRuns(config, { limit }).catch(() => []),
-    getFeedbackOptimizationBatches(config, { limit }).catch(() => []),
+    optionalList(getFeedbackSources(config, { limit })),
+    optionalList(getAgentRuns(config, { limit })),
+    optionalList(getFeedbackSignals(config, { limit })),
+    optionalList(getSocEvents(config, { limit })),
+    optionalList(getPendingCorrelations(config, { limit })),
+    optionalList(getFeedbackCases(config, { limit })),
+    optionalList(getOptimizationProposals(config, { limit })),
+    optionalList(getOptimizationTasks(config, { limit })),
+    optionalList(getExternalGovernanceItems(config, { limit })),
+    optionalList(getExternalGovernanceWebhooks(config)),
+    optionalList(getEvalCases(config, { limit })),
+    optionalList(getEvalRuns(config, { limit })),
+    optionalList(getFeedbackOptimizationBatches(config, { limit })),
   ]);
   return {
     sources,

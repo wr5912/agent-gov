@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .collection_utils import unique_strings
 from .message_utils import to_plain
 from .schemas import ChatRequest
 from .settings import AppSettings
@@ -207,14 +208,7 @@ class RuntimeActivityExtractor:
 
     @staticmethod
     def _unique_strings(values: Any) -> list[str]:
-        result: list[str] = []
-        seen: set[str] = set()
-        for value in values:
-            if not isinstance(value, str) or not value or value in seen:
-                continue
-            seen.add(value)
-            result.append(value)
-        return result
+        return unique_strings(values)
 
     @staticmethod
     def _string_value(value: Any) -> str | None:

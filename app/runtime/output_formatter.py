@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
-from .feedback_jobs import extract_json_candidates
+from .prompts.feedback_prompts import extract_json_candidates
 from .feedback_schemas import AttributionOutput, ExecutionPlanOutput, FeedbackOptimizationPlanOutput, ProposalOutput
 from .settings import AppSettings
 

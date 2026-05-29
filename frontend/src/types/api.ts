@@ -1488,37 +1488,51 @@ export interface components {
         };
         /** AttributionOutputResponse */
         AttributionOutputResponse: {
-            /** Actionability */
-            actionability: string;
+            /**
+             * Actionability
+             * @enum {string}
+             */
+            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
             /** Attribution Job Id */
             attribution_job_id: string;
-            /** Confidence */
-            confidence: string;
+            /**
+             * Confidence
+             * @enum {string}
+             */
+            confidence: "low" | "medium" | "high";
             /** Evidence Refs */
             evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
             /** Feedback Case Id */
             feedback_case_id: string;
             /** Human Review Required */
             human_review_required: boolean;
-            /** Optimization Object Type */
-            optimization_object_type: string;
-            /** Problem Type */
-            problem_type: string;
+            /**
+             * Optimization Object Type
+             * @enum {string}
+             */
+            optimization_object_type: "main_agent_claude_md" | "skill" | "subagent" | "mcp_config" | "mcp_description" | "output_style" | "eval_case" | "runtime_code" | "external_mcp_service" | "soc_process" | "not_actionable";
+            /**
+             * Problem Type
+             * @enum {string}
+             */
+            problem_type: "evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information";
             /** Rationale */
             rationale: string;
             /**
              * Recommended Next Step
              * @default generate_proposal
+             * @enum {string}
              */
-            recommended_next_step: string;
+            recommended_next_step: "generate_proposal" | "needs_human_review" | "stop";
             responsibility_boundary: components["schemas"]["ResponsibilityBoundaryResponse"];
             /** Schema Version */
             schema_version: string;
             /**
              * Status
              * @default completed
+             * @enum {string}
              */
-            status: string;
+            status: "completed" | "needs_human_review";
         } & {
             [key: string]: unknown;
         };
@@ -2046,9 +2060,7 @@ export interface components {
             /** Eval Case Ids */
             eval_case_ids?: string[];
             /** Evidence Refs */
-            evidence_refs?: {
-                [key: string]: unknown;
-            }[];
+            evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
             /** Evidence Summary */
             evidence_summary?: string | null;
             /** Expected Effect */
@@ -2082,6 +2094,11 @@ export interface components {
             recommended_actions?: string[];
             /** Risk */
             risk?: string | null;
+            /**
+             * Schema Version
+             * @default external-governance-item/v1
+             */
+            schema_version: string;
             /** Source */
             source?: string | null;
             /** Source Attribution Job Ids */
@@ -2093,6 +2110,12 @@ export interface components {
             source_index: number;
             /** Status */
             status: string;
+            /** Superseded At */
+            superseded_at?: string | null;
+            /** Superseded By Job Id */
+            superseded_by_job_id?: string | null;
+            /** Superseded Reason */
+            superseded_reason?: string | null;
             /** Target Path */
             target_path?: string | null;
             /** Target Summary */
@@ -2158,8 +2181,11 @@ export interface components {
         };
         /** ExternalGuidanceResponse */
         ExternalGuidanceResponse: {
-            /** Actionability */
-            actionability: string;
+            /**
+             * Actionability
+             * @enum {string}
+             */
+            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
             /** External Item Id */
             external_item_id?: string | null;
             /** Latest Notification Id */
@@ -2371,17 +2397,17 @@ export interface components {
         /** FeedbackOptimizationAttributionSummaryResponse */
         FeedbackOptimizationAttributionSummaryResponse: {
             /** Actionability */
-            actionability?: string | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
             /** Attribution Job Id */
             attribution_job_id?: string | null;
             /** Confidence */
-            confidence?: string | null;
+            confidence?: ("low" | "medium" | "high") | null;
             /** Feedback Case Id */
             feedback_case_id?: string | null;
             /** Optimization Object Type */
-            optimization_object_type?: string | null;
+            optimization_object_type?: ("main_agent_claude_md" | "skill" | "subagent" | "mcp_config" | "mcp_description" | "output_style" | "eval_case" | "runtime_code" | "external_mcp_service" | "soc_process" | "not_actionable") | null;
             /** Problem Type */
-            problem_type?: string | null;
+            problem_type?: ("evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
             /** Rationale */
             rationale?: string | null;
         } & {
@@ -2528,7 +2554,7 @@ export interface components {
             /** Eval Case Ids */
             eval_case_ids?: string[];
             /** Evidence Refs */
-            evidence_refs?: components["schemas"]["FeedbackOptimizationEvidenceRefResponse"][];
+            evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
             /** Evidence Summary */
             evidence_summary?: string | null;
             /** Feedback Case Ids */
@@ -2558,17 +2584,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** FeedbackOptimizationEvidenceRefResponse */
-        FeedbackOptimizationEvidenceRefResponse: {
-            /** Id */
-            id?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Type */
-            type?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
         /** FeedbackOptimizationPlanResponse */
         FeedbackOptimizationPlanResponse: {
             /** Actionability */
@@ -2592,7 +2607,7 @@ export interface components {
             /** Eval Case Ids */
             eval_case_ids?: string[];
             /** Evidence Refs */
-            evidence_refs?: components["schemas"]["FeedbackOptimizationEvidenceRefResponse"][];
+            evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
             /** Expected Effect */
             expected_effect?: string | null;
             /** Feedback Case Ids */
@@ -2660,7 +2675,7 @@ export interface components {
             /** Acceptance Criteria */
             acceptance_criteria?: string[];
             /** Actionability */
-            actionability?: string | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
             /** Analysis Summary */
             analysis_summary?: string | null;
             /** Applied Agent Version Id */
@@ -2668,7 +2683,7 @@ export interface components {
             /** Attribution Job Ids */
             attribution_job_ids?: string[];
             /** Confidence */
-            confidence?: string | null;
+            confidence?: ("low" | "medium" | "high") | null;
             /** Created At */
             created_at?: string | null;
             /** Description */
@@ -2676,7 +2691,7 @@ export interface components {
             /** Eval Case Ids */
             eval_case_ids?: string[];
             /** Evidence Refs */
-            evidence_refs?: components["schemas"]["FeedbackOptimizationEvidenceRefResponse"][];
+            evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
             /** Evidence Summary */
             evidence_summary?: string | null;
             /** Execution Job Id */
@@ -2700,7 +2715,7 @@ export interface components {
             /** Plan Task Id */
             plan_task_id: string;
             /** Problem Type */
-            problem_type?: string | null;
+            problem_type?: ("evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
             /** Rationale */
             rationale?: string | null;
             /** Reason */
@@ -3251,7 +3266,7 @@ export interface components {
             /** Acceptance Criteria */
             acceptance_criteria?: string[];
             /** Actionability */
-            actionability?: string | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
             /** Base Agent Version Id */
             base_agent_version_id?: string | null;
             /** Created At */
@@ -3383,8 +3398,11 @@ export interface components {
         };
         /** ProposalItemResponse */
         ProposalItemResponse: {
-            /** Actionability */
-            actionability: string;
+            /**
+             * Actionability
+             * @enum {string}
+             */
+            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
             /** Base Agent Version Id */
             base_agent_version_id?: string | null;
             /** Created At */
@@ -3436,8 +3454,9 @@ export interface components {
             /**
              * Status
              * @default completed
+             * @enum {string}
              */
-            status: string;
+            status: "completed" | "needs_human_review";
         } & {
             [key: string]: unknown;
         };

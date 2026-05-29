@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Metric, Pill, jsonPreview } from "./common";
-import { formatDate, shortId, sourceRowKey, type SourceRow } from "./selectors";
-import type { FeedbackSourceKind } from "../../types/feedback";
-
-const sourceKindText: Record<FeedbackSourceKind, string> = {
-  signal: "Feedback signal",
-  soc_event: "SOC event",
-  pending_correlation: "待关联",
-};
+import { formatDate, shortId, sourceKindText, sourceKindTone, sourceRowKey, type SourceRow } from "./selectors";
 
 export function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -54,7 +47,7 @@ export function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
               type="button"
             >
               <span>
-                <Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill>
+                <Pill tone={sourceKindTone(row.kind)}>{sourceKindText[row.kind]}</Pill>
                 <strong>{row.label}</strong>
               </span>
               <small title={row.id}>{shortId(row.id)} · {row.status} · {formatDate(row.createdAt)}</small>
@@ -66,7 +59,7 @@ export function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
             <>
               <div className="fw-signal-detail-head">
                 <div>
-                  <Pill tone={selectedRow.kind === "pending_correlation" ? "orange" : selectedRow.kind === "soc_event" ? "green" : "blue"}>
+                  <Pill tone={sourceKindTone(selectedRow.kind)}>
                     {sourceKindText[selectedRow.kind]}
                   </Pill>
                   <h3>{selectedRow.label}</h3>

@@ -6,9 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
+from app.runtime.response_schemas.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
 from app.runtime.feedback_schemas import validate_execution_plan_output, validate_feedback_optimization_plan_output
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackProposalRegenerateRequest,
@@ -204,4 +204,26 @@ def _create_approved_task_for_target(store: FeedbackStore, target_path: str):
     store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
     return store.create_task(proposal_id=proposal["proposal_id"])
 
-__all__ = [name for name in globals() if not name.startswith('__')]
+__all__ = [
+    "asyncio",
+    "json",
+    "Path",
+    "pytest",
+    "ValidationError",
+    "ClaudeRuntime",
+    "FeedbackAnalysisJobResponse",
+    "FeedbackOptimizationBatchPlanGenerateRequest",
+    "FeedbackProposalRegenerateRequest",
+    "FeedbackSignalCreateRequest",
+    "FeedbackStore",
+    "LocalSessionStore",
+    "SocEventIngestRequest",
+    "validate_execution_plan_output",
+    "validate_feedback_optimization_plan_output",
+    "_create_approved_task_for_target",
+    "_create_batch_with_completed_attribution",
+    "_create_eval_case",
+    "_record_run",
+    "_settings",
+    "_store",
+]

@@ -98,3 +98,35 @@ def test_agent_version_route_conflict_returns_structured_error(monkeypatch, tmp_
         "detail": "Agent version bundle hash mismatch",
         "error_code": "AGENT_VERSION_INTEGRITY_ERROR",
     }
+
+
+def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.agent_version_store, "is_maintenance_active", lambda: True)
+
+    with TestClient(module.app) as client:
+        response = client.post("/api/chat", json={"message": "hello"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Agent version maintenance is in progress; retry after restore completes.",
+        "error_code": "RUNTIME_UNAVAILABLE",
+    }
+
+
+def test_api_key_authentication_returns_structured_401(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path, api_key="secret-token")
+
+    with TestClient(module.app) as client:
+        missing = client.get("/api/agents")
+        wrong_scheme = client.get("/api/agents", headers={"Authorization": "Basic secret-token"})
+        wrong_token = client.get("/api/agents", headers={"Authorization": "Bearer wrong-token"})
+        ok = client.get("/api/agents", headers={"Authorization": "Bearer secret-token"})
+
+    for response in (missing, wrong_scheme, wrong_token):
+        assert response.status_code == 401
+        assert response.json() == {
+            "detail": "Invalid API key",
+            "error_code": "UNAUTHORIZED",
+        }
+    assert ok.status_code == 200

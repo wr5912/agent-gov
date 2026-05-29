@@ -10,6 +10,7 @@ type OpenApiAgentVersionRestoreRequest = components["schemas"]["AgentVersionRest
 type OpenApiAgentVersionRestoreResponse = components["schemas"]["AgentVersionRestoreResponse"];
 type OpenApiAgentVersionSnapshotRequest = components["schemas"]["AgentVersionSnapshotRequest"];
 type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
+type OpenApiChatRequest = components["schemas"]["ChatRequest"];
 type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
 type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
 type OpenApiRuntimeHealth = components["schemas"]["RuntimeHealthResponse"];
@@ -23,36 +24,7 @@ export type SessionInfo = OpenApiSessionInfo;
 export type ConfigMappingItem = OpenApiConfigMappingItem;
 export type ConfigMappingResponse = OpenApiConfigMappingResponse;
 
-export interface ChatRequest {
-  message: string;
-  session_id?: string;
-  alert_id?: string;
-  case_id?: string;
-  agent?: string;
-  skills?: string[];
-  skills_mode?: "all" | "default" | "none";
-  allowed_tools?: string[];
-  disallowed_tools?: string[];
-  max_turns?: number;
-  model?: string;
-  permission_mode?: string;
-  system_append?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface ChatResponse {
-  run_id: string;
-  session_id: string;
-  sdk_session_id?: string | null;
-  agent_version_id?: string | null;
-  answer: string;
-  messages: Record<string, unknown>[];
-  agent_activity: AgentActivity;
-  usage?: Record<string, unknown> | null;
-  total_cost_usd?: number | null;
-  stop_reason?: string | null;
-  errors: string[];
-}
+export type ChatRequest = OpenApiChatRequest;
 
 export interface AgentActivity {
   requested_skills: string[];

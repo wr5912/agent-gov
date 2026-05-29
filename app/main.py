@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +10,7 @@ from app.routers.agent_versions import create_agent_versions_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
-from app.routers.core import build_health_payload, create_core_router
+from app.routers.core import create_core_router
 from app.routers.eval import create_eval_router
 from app.routers.error_handlers import register_error_handlers
 from app.routers.feedback_batches import create_feedback_batches_router
@@ -23,9 +22,10 @@ from app.routers.sessions import create_sessions_router
 from app.services.execution_application import ExecutionApplicationService
 from app.runtime.agent_version_store import AgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
+from app.version import APP_VERSION
 
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
@@ -38,7 +38,7 @@ feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
     workspace_dir=settings.main_workspace_dir,
     agent_version_provider=agent_version_store.current_version_id,
-    runtime_version="0.2.6",
+    runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
 runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
@@ -59,7 +59,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(
     title="Claude Agent Runtime API",
-    version="0.2.6",
+    version=APP_VERSION,
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     docs_url="/docs",
     redoc_url="/redoc",
@@ -122,12 +122,7 @@ app.include_router(
     create_optimization_router(
         feedback_store=feedback_store,
         runtime=runtime,
-        agent_version_store=agent_version_store,
         execution_application=execution_application,
         require_api_key=require_api_key,
     )
 )
-
-
-async def health() -> dict[str, Any]:
-    return build_health_payload(settings=settings, app=app, agent_version_store=agent_version_store)

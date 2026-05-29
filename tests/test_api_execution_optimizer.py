@@ -10,7 +10,7 @@ from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.services.execution_application import ExecutionApplicationError
 
 
-def _load_app(monkeypatch, tmp_path):
+def _load_app(monkeypatch, tmp_path, *, api_key=""):
     root = tmp_path / "docker" / "volume"
     workspace = root / "main-workspace"
     data = root / "data"
@@ -49,7 +49,7 @@ def _load_app(monkeypatch, tmp_path):
     monkeypatch.setenv("CLAUDE_HOME", str(claude_root / ".claude"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
-    monkeypatch.setenv("API_KEY", "")
+    monkeypatch.setenv("API_KEY", api_key)
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
 
     import app.runtime.settings as settings_module
@@ -215,6 +215,38 @@ def test_apply_execution_job_rejects_baseline_conflict(monkeypatch, tmp_path):
     assert response.status_code == 409
     assert response.json()["error_code"] == "CONFLICT"
     assert "baseline" in response.json()["detail"].lower()
+
+
+def test_mark_task_applied_endpoint_creates_agent_version(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        task = _approved_task(module)
+        response = client.post(
+            f"/api/optimization-tasks/{task['optimization_task_id']}/mark-applied",
+            json={"note": "人工已应用"},
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "applied_pending_regression"
+    assert payload["applied_agent_version_id"]
+    assert payload["application_note"] == "人工已应用"
+
+
+def test_mark_task_applied_rejects_invalid_status_without_snapshot(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        task = _approved_task(module)
+        module.feedback_store.update_task_status(task["optimization_task_id"], status="execution_planning")
+        version_count = len(module.agent_version_store.list_versions())
+        response = client.post(
+            f"/api/optimization-tasks/{task['optimization_task_id']}/mark-applied",
+            json={"note": "不应创建版本"},
+        )
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "CONFLICT"
+    assert len(module.agent_version_store.list_versions()) == version_count
 
 
 def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path):

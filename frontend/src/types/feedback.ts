@@ -1,5 +1,5 @@
 import type { components } from "./api";
-import type { AgentVersionDiff, AgentVersionSummary, RuntimeClientConfig } from "./runtime";
+import type { AgentVersionDiff, AgentVersionSummary } from "./runtime";
 
 type OpenApiAttributionOutputResponse = components["schemas"]["AttributionOutputResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
@@ -50,36 +50,6 @@ type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestRespon
 type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
 type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
-export interface RuntimeIntegrationContext {
-  runId?: string;
-  sessionId?: string;
-  sdkSessionId?: string;
-  agentVersionId?: string;
-  alertId?: string;
-  caseId?: string;
-  actorId?: string;
-  eventId?: string;
-  sourceSystem?: string;
-}
-
-export interface MonitoringIntegrationConfig {
-  langfuseUrl?: string;
-  traceUrlTemplate?: string;
-}
-
-export interface ExternalFeedbackWorkspaceProps {
-  clientConfig: RuntimeClientConfig;
-  runtimeContext?: RuntimeIntegrationContext;
-  monitoringConfig?: MonitoringIntegrationConfig;
-  currentAgentVersion?: AgentVersionSummary | null;
-  agentVersions?: AgentVersionSummary[];
-  versionLoading?: boolean;
-  versionError?: string;
-  onRefreshVersions?: () => void | Promise<void>;
-  refreshToken?: number;
-  onFeedbackChanged?: () => void;
-}
-
 export type FeedbackConfidence = "low" | "medium" | "high";
 export type FeedbackSourceType = "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
 export type FeedbackSourceKind = "signal" | "soc_event" | "pending_correlation";
@@ -100,7 +70,6 @@ export type JobStatus =
   | "schema_validating"
   | "completed"
   | "failed"
-  | "cancelled"
   | "timeout"
   | "needs_human_review";
 export type OptimizationProposalReviewAction = "approve" | "reject" | "request_more_analysis";
@@ -249,10 +218,6 @@ export type OptimizationProposalReviewRecord = OpenApiOptimizationProposalReview
 
 export type OptimizationProposalRecord = OpenApiOptimizationProposalResponse & {
   status: "pending_review" | "approved" | "rejected" | "needs_more_analysis" | string;
-  actionability?: string;
-  target_type?: string;
-  title?: string;
-  recommendation?: string;
   latest_review?: OptimizationProposalReviewRecord | null;
 };
 

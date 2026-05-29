@@ -1,4 +1,12 @@
-from feedback_store_test_utils import *
+from feedback_store_test_utils import (
+    FeedbackSignalCreateRequest,
+    _create_eval_case,
+    _record_run,
+    _store,
+    pytest,
+)
+
+from app.runtime.errors import ConflictError
 
 
 def test_proposal_output_normalizes_compact_agent_proposal(tmp_path):
@@ -271,3 +279,45 @@ def test_force_regenerate_supersedes_unused_existing_proposals(tmp_path):
     assert superseded_proposals[0]["superseded_by_job_id"] == regenerated["job_id"]
     assert active_external_items == []
     assert superseded_external_items[0]["owner"] == "knowledge-base"
+
+
+def test_superseded_external_governance_item_cannot_be_notified(tmp_path):
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [],
+            "external_guidance": [
+                {
+                    "owner": "knowledge-base",
+                    "actionability": "external_guidance",
+                    "recommendation": "补充知识库条目。",
+                    "reason": "知识库缺少对应说明。",
+                }
+            ],
+            "no_action_reason": None,
+        },
+    )
+    item = store.list_external_governance_items(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.create_proposal_job(feedback_case["feedback_case_id"], force=True)
+    (settings.data_dir / "external-governance-webhooks.yaml").write_text(
+        "webhooks:\n  - alias: knowledge-base\n    name: 知识库\n    url: http://example.invalid/kb\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConflictError, match="superseded"):
+        store.notify_external_governance_item(
+            item["external_item_id"],
+            webhook_alias="knowledge-base",
+            sender=lambda webhook, payload: {"http_status": 200, "response_body": "ok"},
+        )

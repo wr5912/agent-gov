@@ -1,0 +1,163 @@
+from __future__ import annotations
+
+import warnings
+from contextlib import nullcontext
+from typing import Any, Optional
+
+from ..message_utils import to_plain
+from ..settings import AppSettings
+
+
+def ensure_langfuse_otel_compat() -> None:
+    """Backfill the OpenTelemetry env constant expected by Langfuse 4.x."""
+    try:
+        import opentelemetry.sdk.environment_variables as otel_env
+    except Exception:
+        return
+    if not hasattr(otel_env, "OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED"):
+        # google-adk 2.0.0 pins OpenTelemetry <=1.41.1, while Langfuse 4.6.1
+        # imports this newer constant. The constant value is only the env name.
+        otel_env.OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED = "OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED"
+
+
+class RuntimeLangfuseClient:
+    """Small adapter for Langfuse runtime enrichment and OTEL environment."""
+
+    def __init__(self, settings: AppSettings) -> None:
+        self.settings = settings
+        self.client: Any | None = None
+        self.unavailable = False
+
+    def get_client(self) -> Any | None:
+        if not self.settings.langfuse_enabled or self.unavailable:
+            return None
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            return None
+        if self.client is not None:
+            return self.client
+        try:
+            ensure_langfuse_otel_compat()
+            from langfuse import Langfuse
+
+            self.client = Langfuse(
+                public_key=self.settings.langfuse_public_key,
+                secret_key=self.settings.langfuse_secret_key,
+                base_url=self.settings.langfuse_base_url,
+                environment=self.settings.langfuse_deployment_environment,
+                flush_interval=max(self.settings.langfuse_export_interval_ms / 1000, 0.1),
+            )
+            return self.client
+        except Exception as exc:
+            self.unavailable = True
+            print(f"[WARN] failed to initialize Langfuse runtime enrichment: {exc}", flush=True)
+            return None
+
+    def current_trace_ref(self) -> tuple[Optional[str], Optional[str]]:
+        if self.client is None:
+            return None, None
+        try:
+            trace_id = self.client.get_current_trace_id()
+            trace_url = self.client.get_trace_url(trace_id=trace_id) if trace_id else None
+            return trace_id, trace_url
+        except Exception as exc:
+            print(f"[WARN] failed to read current Langfuse trace: {exc}", flush=True)
+            return None, None
+
+    def fetch_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
+        if not trace_id or not self.settings.langfuse_enabled:
+            return None
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            return None
+        try:
+            ensure_langfuse_otel_compat()
+            from langfuse.api.client import LangfuseAPI
+
+            client = LangfuseAPI(
+                base_url=self.settings.langfuse_base_url,
+                username=self.settings.langfuse_public_key,
+                password=self.settings.langfuse_secret_key,
+                x_langfuse_public_key=self.settings.langfuse_public_key,
+                timeout=10,
+            )
+            trace = client.trace.get(trace_id, fields="core,io,scores,observations,metrics")
+            return to_plain(trace)
+        except Exception as exc:
+            return {"fetch_status": "failed", "error": f"{exc.__class__.__name__}: {exc}"}
+
+    def start_observation(self, **kwargs: Any) -> Any:
+        client = self.get_client()
+        if client is None:
+            return nullcontext(None)
+        try:
+            return client.start_as_current_observation(**kwargs)
+        except Exception as exc:
+            print(f"[WARN] failed to start Langfuse observation: {exc}", flush=True)
+            return nullcontext(None)
+
+    @staticmethod
+    def update_observation(observation: Any, **kwargs: Any) -> None:
+        if observation is None:
+            return
+        clean = {key: value for key, value in kwargs.items() if value is not None}
+        try:
+            observation.update(**clean)
+        except Exception as exc:
+            print(f"[WARN] failed to update Langfuse observation: {exc}", flush=True)
+
+    @staticmethod
+    def set_trace_io(observation: Any, *, input: Any, output: Any) -> None:
+        if observation is None:
+            return
+        try:
+            with warnings.catch_warnings():
+                warnings.filterwarnings(
+                    "ignore",
+                    message="Trace-level input/output is deprecated.*",
+                    category=DeprecationWarning,
+                )
+                observation.set_trace_io(input=input, output=output)
+        except Exception as exc:
+            print(f"[WARN] failed to set Langfuse trace input/output: {exc}", flush=True)
+
+    def flush(self) -> None:
+        client = self.client or self.get_client()
+        if client is None:
+            return
+        try:
+            client.flush()
+        except Exception as exc:
+            print(f"[WARN] failed to flush Langfuse runtime enrichment: {exc}", flush=True)
+
+    def build_env(self) -> dict[str, str]:
+        if not self.settings.langfuse_enabled:
+            return {}
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            raise ValueError("LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY")
+
+        signals = set(self.settings.langfuse_otel_signals)
+        if not signals:
+            raise ValueError("LANGFUSE_OTEL_SIGNALS must include at least one of: traces, metrics, logs")
+
+        env = {
+            "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+            "OTEL_EXPORTER_OTLP_ENDPOINT": self.settings.langfuse_effective_otel_endpoint,
+            "OTEL_EXPORTER_OTLP_HEADERS": self.settings.langfuse_otel_headers,
+            "OTEL_SERVICE_NAME": self.settings.langfuse_service_name,
+            "OTEL_RESOURCE_ATTRIBUTES": self.settings.langfuse_resource_attributes,
+            "OTEL_METRIC_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_LOGS_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_TRACES_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
+            "OTEL_LOG_USER_PROMPTS": "1",
+            "OTEL_LOG_TOOL_DETAILS": "1",
+            "OTEL_LOG_TOOL_CONTENT": "1",
+            "OTEL_LOG_RAW_API_BODIES": "1",
+        }
+        if "traces" in signals:
+            env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
+            env["OTEL_TRACES_EXPORTER"] = "otlp"
+        if "metrics" in signals:
+            env["OTEL_METRICS_EXPORTER"] = "otlp"
+        if "logs" in signals:
+            env["OTEL_LOGS_EXPORTER"] = "otlp"
+        return env

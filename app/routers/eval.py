@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     EvalCaseResponse,
     EvalRunResponse,
@@ -39,11 +39,11 @@ def create_eval_router(
         summary="List feedback-derived eval cases",
     )
     async def list_eval_cases(
-        status_filter: str | None = Query(default=None, alias="status"),
+        status: str | None = None,
         source_feedback_case_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
-        return feedback_store.list_eval_cases(status=status_filter, source_feedback_case_id=source_feedback_case_id, limit=limit)
+        return feedback_store.list_eval_cases(status=status, source_feedback_case_id=source_feedback_case_id, limit=limit)
 
     @router.patch(
         "/eval-cases/{eval_case_id}",
@@ -60,16 +60,7 @@ def create_eval_router(
         summary="Run a manual feedback dataset evaluation against the current main Agent",
     )
     async def create_eval_run(req: FeedbackEvalRunCreateRequest) -> dict[str, Any]:
-        if not req.eval_case_ids:
-            feedback_store.sync_feedback_eval_cases(limit=500)
-        result = await runtime.run_feedback_eval(
-            eval_case_ids=req.eval_case_ids or None,
-            optimization_task_id=req.optimization_task_id,
-            source="manual_feedback_dataset",
-        )
-        if not result:
-            raise_conflict("No active eval cases found")
-        return result
+        return await _run_manual_feedback_eval(feedback_store=feedback_store, runtime=runtime, req=req)
 
     @router.get(
         "/eval-runs",
@@ -79,13 +70,13 @@ def create_eval_router(
     async def list_eval_runs(
         optimization_task_id: str | None = None,
         agent_version_id: str | None = None,
-        status_filter: str | None = Query(default=None, alias="status"),
+        status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
         return feedback_store.list_eval_runs(
             optimization_task_id=optimization_task_id,
             agent_version_id=agent_version_id,
-            status=status_filter,
+            status=status,
             limit=limit,
         )
 
@@ -99,3 +90,21 @@ def create_eval_router(
         return ensure_found(eval_run, "Eval run not found")
 
     return router
+
+
+async def _run_manual_feedback_eval(
+    *,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+    req: FeedbackEvalRunCreateRequest,
+) -> dict[str, Any]:
+    if not req.eval_case_ids:
+        feedback_store.sync_feedback_eval_cases(limit=500)
+    result = await runtime.run_feedback_eval(
+        eval_case_ids=req.eval_case_ids or None,
+        optimization_task_id=req.optimization_task_id,
+        source="manual_feedback_dataset",
+    )
+    if not result:
+        raise_conflict("No active eval cases found")
+    return result

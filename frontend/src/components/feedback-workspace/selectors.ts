@@ -1,4 +1,6 @@
 import type { PillTone } from "./common";
+import { formatDate, shortId } from "../../utils/format";
+import { isRecord } from "../../utils/records";
 import type {
   AttributionOutput,
   EvalCaseRecord,
@@ -20,6 +22,7 @@ import type {
 } from "../../types/feedback";
 
 type Tone = PillTone;
+export { formatDate, shortId };
 
 export type BatchDetailView = "feedback" | "attribution" | "plan" | "regression";
 
@@ -54,19 +57,16 @@ export interface SourceRow {
   raw: FeedbackSourceRecord | FeedbackSignalRecord | SocEventRecord | PendingCorrelationRecord;
 }
 
-export function externalGuidanceFromItem(item: ExternalGovernanceItemRecord): {
-  item: ExternalGovernanceItemRecord;
-  guidance: { owner: string; actionability: string; recommendation: string; reason?: string | null };
-} {
-  return {
-    item,
-    guidance: {
-      owner: item.owner,
-      actionability: item.actionability,
-      recommendation: item.recommendation,
-      reason: item.reason,
-    },
-  };
+export const sourceKindText: Record<FeedbackSourceKind, string> = {
+  signal: "Feedback signal",
+  soc_event: "SOC event",
+  pending_correlation: "待关联",
+};
+
+export function sourceKindTone(kind: FeedbackSourceKind): Tone {
+  if (kind === "pending_correlation") return "orange";
+  if (kind === "soc_event") return "green";
+  return "blue";
 }
 
 export function buildSourceRows(data: FeedbackWorkbenchData): SourceRow[] {
@@ -270,10 +270,6 @@ export function rawRecordArray(value: unknown, key: string): Array<Record<string
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
   const items = (value as Record<string, unknown>)[key];
   return Array.isArray(items) ? items.filter(isRecord) : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 export function rawString(value: unknown, key: string): string {
@@ -567,19 +563,6 @@ function proposalEvidenceRefText(value: unknown): string {
   const id = typeof record.id === "string" ? shortId(record.id) : "";
   const reason = typeof record.reason === "string" ? record.reason : "";
   return [type, id, reason].filter(Boolean).join(" / ");
-}
-
-export function shortId(value?: string | null): string {
-  if (!value) return "-";
-  if (value.length <= 16) return value;
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
-}
-
-export function formatDate(value?: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString();
 }
 
 export function reviewComment(action: OptimizationProposalReviewAction): string {

@@ -2,6 +2,7 @@ import { ListTree, MessageSquare, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
 import type { AgentActivity, ChatMessage, StreamLogEvent } from "../types/runtime";
+import { isRecord } from "../utils/records";
 
 interface Props {
   message: ChatMessage;
@@ -584,10 +585,6 @@ function safeJson(value: unknown): string {
   } catch {
     return String(value);
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function stringValue(value: unknown): string | undefined {

@@ -1,9 +1,31 @@
-from feedback_store_test_utils import *
+from pathlib import Path
+import json
+
+from feedback_store_test_utils import (
+    FeedbackAnalysisJobResponse,
+    FeedbackProposalRegenerateRequest,
+    FeedbackSignalCreateRequest,
+    FeedbackStore,
+    SocEventIngestRequest,
+    ValidationError,
+    _create_approved_task_for_target,
+    _create_batch_with_completed_attribution,
+    _record_run,
+    _settings,
+    _store,
+    pytest,
+)
 from sqlalchemy import select
 
 from app.runtime.errors import BusinessRuleViolation, ConfigurationError
-from app.runtime.external_governance_models import ExternalGovernanceItemRecord
-from app.runtime.runtime_db import EvidenceFileModel, EvidencePackageModel, FeedbackJobModel, OptimizationProposalModel
+from app.runtime.records.external_governance_records import ExternalGovernanceItemRecord
+from app.runtime.runtime_db import (
+    EvidenceFileModel,
+    EvidencePackageModel,
+    ExternalNotificationModel,
+    FeedbackJobModel,
+    OptimizationProposalModel,
+)
 
 
 def test_soc_event_idempotency_and_pending_correlation(tmp_path):
@@ -215,6 +237,13 @@ webhooks:
     def fake_sender(webhook, payload):
         seen["webhook"] = webhook
         seen["payload"] = payload
+        with store.Session() as db:
+            rows = db.scalars(
+                select(ExternalNotificationModel).where(
+                    ExternalNotificationModel.external_item_id == items[0]["external_item_id"]
+                )
+            ).all()
+        seen["pre_send_notification_statuses"] = [row.status for row in rows]
         return {"http_status": 201, "response_body": "created"}
 
     updated = store.notify_external_governance_item(items[0]["external_item_id"], webhook_alias="knowledge-base", sender=fake_sender)
@@ -223,6 +252,7 @@ webhooks:
     assert seen["webhook"]["token"] == "dev-token"
     assert seen["payload"]["schema_version"] == "external-governance-notification/v1"
     assert seen["payload"]["webhook_alias"] == "knowledge-base"
+    assert seen["pre_send_notification_statuses"] == ["sending"]
     assert updated["status"] == "notified"
     assert updated["latest_notification"]["status"] == "sent"
     assert updated["latest_notification"]["http_status"] == 201
@@ -598,6 +628,34 @@ def test_batch_attribution_uses_current_jobs_and_resets_downstream_plan(tmp_path
     assert reset["attribution_job_ids"] == []
     assert reset["optimization_plan"] is None
     assert store.get_job(attribution_job["job_id"]) is None
+    assert not (store.tmp_jobs_dir / attribution_job["job_id"]).exists()
+
+
+def test_reset_batch_attribution_rolls_back_db_and_keeps_tmp_when_batch_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    feedback_case_id = batch["feedback_case_ids"][0]
+    attribution_job = store.create_attribution_job(feedback_case_id)
+    completed = store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    job_tmp_dir = store.tmp_jobs_dir / attribution_job["job_id"]
+    job_tmp_dir.mkdir(parents=True, exist_ok=True)
+    job_tmp_dir.joinpath("marker.txt").write_text("must survive rollback", encoding="utf-8")
+
+    def fail_batch_update(*args, **kwargs):
+        raise RuntimeError("batch reset failed")
+
+    monkeypatch.setattr(store, "_update_batch_row", fail_batch_update)
+
+    with pytest.raises(RuntimeError, match="batch reset failed"):
+        store.reset_batch_attribution(batch["batch_id"])
+
+    assert store.get_job(attribution_job["job_id"]) is not None
+    assert job_tmp_dir.exists()
+    assert store.find_optimization_batch(batch["batch_id"])["status"] == batch["status"]
 
 
 def test_create_optimization_batch_rolls_back_partial_writes_on_batch_failure(tmp_path, monkeypatch):

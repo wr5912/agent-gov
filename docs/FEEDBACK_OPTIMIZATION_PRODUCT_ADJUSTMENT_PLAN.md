@@ -387,7 +387,7 @@ PATCH /api/feedback-sources/{source_kind}/{source_id}
   "comment": "数据不全BBB",
   "labels": ["tool_data_incomplete", "manual"],
   "priority": "high",
-  "status": "selected_for_optimization",
+  "status": "triaged",
   "requires_review": false
 }
 ```
@@ -423,10 +423,10 @@ POST /api/feedback-optimization-batches
 GET  /api/feedback-optimization-batches
 GET  /api/feedback-optimization-batches/{batch_id}
 POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs
-POST /api/feedback-optimization-batches/{batch_id}/optimization-plans
+POST /api/feedback-optimization-batches/{batch_id}/optimization-plan
 POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/approve
 POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/reject
-GET  /api/feedback-optimization-batches/{batch_id}/execution-jobs
+POST /api/feedback-optimization-batches/{batch_id}/plan-tasks/{plan_task_id}/execute
 POST /api/feedback-optimization-batches/{batch_id}/regression-runs
 ```
 
@@ -526,34 +526,48 @@ feedback-optimization-plan-output/v1
 ### 8.1 反馈信息状态
 
 ```text
-new
-annotated
-eval_case_ready
-attribution_ready
-included_in_batch
-validated
-archived
+collected
+needs_review
+triaged
+matched
+pending_correlation
+resolved
+pending
 ```
+
+反馈信息状态由 `feedback_source_store.py` 的来源聚合逻辑产生：显式反馈默认
+`collected` 或 `needs_review`，SOC 事件默认 `matched` 或
+`pending_correlation`，待关联记录使用 `pending` / `resolved`；开发人员可通过
+annotation 将状态调整为 `triaged` 等工作台状态。
 
 ### 8.2 优化批次状态
 
 ```text
 draft
-eval_cases_generating
-eval_cases_ready
 attribution_running
-attribution_ready
-plan_generating
-pending_plan_approval
-plan_rejected
+attribution_completed
+attribution_failed
+optimization_plan_queued
+pending_approval
+approved
+rejected
 execution_planning
 execution_ready
-execution_applied
-regression_running
-completed
 needs_human_review
 failed
+applied_pending_regression
+regression_running
+regression_passed
+regression_failed
+completed
+blocked
+sent
+notification_failed
+pending_execution
+execution_failed
 ```
+
+优化批次状态以 `app/runtime/state_machines.py` 的 `BATCH_STATES` 为准；任务级执行状态以同文件 `TASK_STATES` 为准。
 
 ---
 

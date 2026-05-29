@@ -2,6 +2,7 @@ import { ArrowLeft, GitBranch, RefreshCw, RotateCcw, Search, ShieldCheck } from 
 import { useEffect, useMemo, useState } from "react";
 import { createAgentVersionSnapshot, diffAgentVersions, getAgentVersion, restoreAgentVersion } from "../api/runtime";
 import type { AgentVersionDiff, AgentVersionManifest, AgentVersionSummary, RuntimeClientConfig } from "../types/runtime";
+import { formatDate, shortId } from "../utils/format";
 
 interface AgentVersionsWorkspaceProps {
   clientConfig: RuntimeClientConfig;
@@ -383,26 +384,7 @@ function translateReason(value?: string): string {
   } as Record<string, string>)[value] || value : "-";
 }
 
-function shortId(value?: string | null): string {
-  if (!value) return "-";
-  return value.length > 22 ? `${value.slice(0, 22)}...` : value;
-}
-
 function shortHash(value?: string | null): string {
   if (!value) return "-";
   return value.length > 12 ? value.slice(0, 12) : value;
-}
-
-function formatDate(value?: string): string {
-  if (!value) return "-";
-  try {
-    return new Intl.DateTimeFormat("zh-CN", {
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(value));
-  } catch {
-    return value;
-  }
 }

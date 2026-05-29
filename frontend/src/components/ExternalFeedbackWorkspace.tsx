@@ -5,26 +5,17 @@ import {
   Search,
 } from "lucide-react";
 import { AgentVersionsWorkspace } from "./AgentVersionsWorkspace";
-import { AnalysisJobRecordList, AttributionDetails, AttributionResult } from "./feedback-workspace/AttributionDetails";
+import { AttributionResult } from "./feedback-workspace/AttributionResult";
 import { BatchesPanel } from "./feedback-workspace/BatchesWorkspace";
-import { CasesPanel, type CaseDetails } from "./feedback-workspace/CasesWorkspace";
-import { EvalCaseDetails, EvalPanel } from "./feedback-workspace/EvalWorkspace";
-import { EvidencePackageDetails, RunsDetails } from "./feedback-workspace/EvidenceRunsDetails";
-import { ExecutionApplyConfirmModal, InstructionModal, ManualApplyConfirmModal } from "./feedback-workspace/FeedbackModals";
-import { ProposalDetails } from "./feedback-workspace/ProposalWorkspace";
+import { ExecutionApplyConfirmModal, InstructionModal } from "./feedback-workspace/FeedbackModals";
 import { SignalsPanel } from "./feedback-workspace/SignalsWorkspace";
 import { TasksDetails } from "./feedback-workspace/TasksDetails";
 import { useFeedbackWorkspaceActions } from "./feedback-workspace/useFeedbackWorkspaceActions";
 import { useFeedbackWorkspaceState, visibleMenuItems } from "./feedback-workspace/useFeedbackWorkspaceState";
 import {
-  DetailMetricGrid,
-  FormattedTextSection,
-} from "./feedback-workspace/common";
-import {
-  shortId,
   sourceRowKey,
 } from "./feedback-workspace/selectors";
-import type { ExternalFeedbackWorkspaceProps } from "../types/feedback";
+import type { ExternalFeedbackWorkspaceProps } from "./feedback-workspace/types";
 
 export function ExternalFeedbackWorkspace({
   clientConfig,
@@ -47,14 +38,7 @@ export function ExternalFeedbackWorkspace({
     selectedSourceIds,
     setSelectedSourceIds,
     setSelectedSourceKey,
-    setSelectedCaseId,
     setSelectedBatchId,
-    caseDetailView,
-    setCaseDetailView,
-    attributionDetailTab,
-    setAttributionDetailTab,
-    caseDetails,
-    detailsLoading,
     runtimeStatus,
     toast,
     setToast,
@@ -65,73 +49,38 @@ export function ExternalFeedbackWorkspace({
     selectedSource,
     visibleBatches,
     selectedBatch,
-    visibleCases,
-    selectedCase,
-    selectedCaseRuns,
-    selectedCaseProposals,
-    selectedCaseTasks,
-    selectedCaseExternalItems,
-    selectedCaseEvalCases,
-    tasksByProposalId,
   } = useFeedbackWorkspaceState({ clientConfig, refreshToken });
   const {
     actionId,
-    proposalRegenerateDraft,
-    setProposalRegenerateDraft,
     batchPlanGenerateDraft,
     setBatchPlanGenerateDraft,
     executionApplyDraft,
     setExecutionApplyDraft,
-    manualApplyDraft,
-    setManualApplyDraft,
-    proposalRegenerateBusy,
     batchPlanGenerateBusy,
     executionApplyBusy,
-    manualApplyBusy,
     toggleSource,
     generateEvalCasesFromSelection,
     createBatchFromSelection,
-    runCaseAction,
-    reviewProposal,
-    revalidateProposalJob,
-    regenerateProposal,
-    submitProposalRegenerate,
-    regenerateAttribution,
-    openTask,
     runBatchAttribution,
     openBatchPlanGeneration,
     submitBatchPlanGeneration,
     executePlanTask,
     rejectBatchPlan,
     runBatchRegression,
-    createTask,
-    markTaskApplied,
-    submitManualApply,
     createExecutionJob,
     applyExecutionJob,
     submitExecutionApply,
     restoreCompensation,
-    runTaskRegression,
-    notifyExternalItem,
-    syncEvalDataset,
-    runDatasetEval,
-    updateEvalCaseRecord,
   } = useFeedbackWorkspaceActions({
     clientConfig,
     onFeedbackChanged,
     onRefreshVersions,
     selectedSourceIds,
     setSelectedSourceIds,
-    setSelectedCaseId,
     setSelectedBatchId,
     setActiveMenu,
     sourceRows,
-    selectedCase,
-    caseDetails,
-    setCaseDetailView,
-    setAttributionDetailTab,
     refreshWorkbench,
-    tasksByProposalId,
     setToast,
   });
 
@@ -208,105 +157,6 @@ export function ExternalFeedbackWorkspace({
           />
         ) : null}
 
-        {activeMenu === "cases" ? (
-          <CasesPanel
-            cases={visibleCases}
-            selectedCase={selectedCase}
-            selectedCaseProposals={selectedCaseProposals}
-            selectedCaseTasks={selectedCaseTasks}
-            selectedCaseExternalItems={selectedCaseExternalItems}
-            details={caseDetails}
-            detailView={caseDetailView}
-            detailsLoading={detailsLoading}
-            actionId={actionId}
-            onSelectCase={(feedbackCase) => {
-              setSelectedCaseId(feedbackCase.feedback_case_id);
-              setCaseDetailView("summary");
-              setAttributionDetailTab("result");
-            }}
-            onSelectDetailView={setCaseDetailView}
-            onOpenAttributionTab={(tab) => {
-              setCaseDetailView("attribution");
-              setAttributionDetailTab(tab);
-            }}
-            onCreateEvidence={() => runCaseAction("evidence")}
-            onRunAttribution={() => runCaseAction("attribution")}
-            onRunProposal={() => runCaseAction("proposal")}
-            onRegenerateAttribution={regenerateAttribution}
-            onRegenerateProposal={regenerateProposal}
-            onRevalidateProposalJob={revalidateProposalJob}
-            selectedCaseEvalCases={selectedCaseEvalCases}
-            renderDetailContent={(view) => {
-              switch (view) {
-                case "summary":
-                  return <CaseSummaryDetails details={caseDetails} />;
-                case "evidence":
-                  return <EvidencePackageDetails clientConfig={clientConfig} packages={caseDetails.evidencePackages || []} />;
-                case "attribution":
-                  return (
-                    <AttributionDetails
-                      actionId={actionId}
-                      activeTab={attributionDetailTab}
-                      jobs={caseDetails.attributionJobs || []}
-                      output={caseDetails.attribution}
-                      onRegenerateAttribution={regenerateAttribution}
-                      onTabChange={setAttributionDetailTab}
-                    />
-                  );
-                case "proposal":
-                  return (
-                    <ProposalDetails
-                      actionId={actionId}
-                      jobs={caseDetails.proposalJobs || []}
-                      output={caseDetails.proposal}
-                      proposals={selectedCaseProposals}
-                      externalGovernanceItems={selectedCaseExternalItems}
-                      externalWebhooks={data.external_webhooks}
-                      onCreateTask={createTask}
-                      onNotifyExternalItem={notifyExternalItem}
-                      onOpenEvidence={() => setCaseDetailView("evidence")}
-                      onOpenTask={openTask}
-                      onReviewProposal={reviewProposal}
-                      renderJobRecords={(jobs) => <AnalysisJobRecordList jobs={jobs} />}
-                      tasksByProposalId={tasksByProposalId}
-                    />
-                  );
-                case "runs":
-                  return <RunsDetails runs={selectedCaseRuns} />;
-                case "tasks":
-                  return (
-                    <TasksDetails
-                      clientConfig={clientConfig}
-                      tasks={selectedCaseTasks}
-                      actionId={actionId}
-                      onMarkApplied={markTaskApplied}
-                      onCreateExecutionJob={createExecutionJob}
-                      onApplyExecutionJob={applyExecutionJob}
-                      onRestoreCompensation={restoreCompensation}
-                      onRunRegression={runTaskRegression}
-                    />
-                  );
-                case "evals":
-                  return <EvalCaseDetails actionId={actionId} evalCases={selectedCaseEvalCases} evalRuns={data.eval_runs} onUpdateEvalCase={updateEvalCaseRecord} />;
-                default:
-                  return null;
-              }
-            }}
-          />
-        ) : null}
-
-        {activeMenu === "evals" ? (
-          <EvalPanel
-            evalCases={data.eval_cases}
-            evalRuns={data.eval_runs}
-            actionId={actionId}
-            selectedCase={selectedCase}
-            selectedCaseEvalCases={selectedCaseEvalCases}
-            onSyncDataset={syncEvalDataset}
-            onRunDatasetEval={runDatasetEval}
-          />
-        ) : null}
-
         {activeMenu === "versions" ? (
           <AgentVersionsWorkspace
             clientConfig={clientConfig}
@@ -327,21 +177,6 @@ export function ExternalFeedbackWorkspace({
           </footer>
         ) : null}
       </div>
-
-      {proposalRegenerateDraft ? (
-        <InstructionModal
-          ariaLabel="重新生成优化方案"
-          busy={proposalRegenerateBusy}
-          description="重新生成会废弃当前反馈单中未审批、未通知的旧建议，并保留历史记录。"
-          label="补充指令"
-          placeholder="补充本次生成指令，可留空"
-          title="重新生成优化方案"
-          value={proposalRegenerateDraft.instruction}
-          onCancel={() => setProposalRegenerateDraft(null)}
-          onChange={(instruction) => setProposalRegenerateDraft((current) => (current ? { ...current, instruction } : current))}
-          onSubmit={submitProposalRegenerate}
-        />
-      ) : null}
 
       {batchPlanGenerateDraft ? (
         <InstructionModal
@@ -367,39 +202,7 @@ export function ExternalFeedbackWorkspace({
         />
       ) : null}
 
-      {manualApplyDraft ? (
-        <ManualApplyConfirmModal
-          busy={manualApplyBusy}
-          currentVersion={currentAgentVersion || null}
-          onCancel={() => setManualApplyDraft(null)}
-          onConfirm={submitManualApply}
-          task={manualApplyDraft.task}
-        />
-      ) : null}
-
-      {toast ? <div className="fw-toast" onAnimationEnd={() => setToast(null)}>{toast}</div> : null}
-    </div>
-  );
-}
-
-function CaseSummaryDetails({ details }: { details: CaseDetails }) {
-  return (
-    <div className="fw-detail-stack">
-      <DetailMetricGrid
-        items={[
-          ["evidence_package_id", shortId(details.evidence?.evidence_package_id)],
-          ["main_agent_version_id", shortId(details.evidence?.main_agent_version_id)],
-          ["attribution_status", details.attributionJob?.status || "-"],
-          ["proposal_status", details.proposalJob?.status || "-"],
-          ["problem_type", details.attribution?.problem_type || "-"],
-          ["actionability", details.attribution?.actionability || "-"],
-        ]}
-      />
-      {details.attribution ? (
-        <FormattedTextSection title="根因摘要" value={details.attribution.rationale || "暂无归因说明"} compact />
-      ) : (
-        <div className="fw-empty-inline">暂无已校验归因输出</div>
-      )}
+      {toast ? <div className="fw-toast" key={toast.id} onAnimationEnd={() => setToast(null)}>{toast.message}</div> : null}
     </div>
   );
 }

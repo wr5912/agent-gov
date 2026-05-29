@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 from pathlib import Path
-from typing import Any
+from threading import Lock
+from typing import Any, Awaitable, Callable
 
 from app.runtime.agent_version_store import AgentVersionStore
 from app.runtime.errors import FeedbackStoreError
-from app.runtime.feedback_compensation_models import ExecutionCompensationRecord
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.settings import AppSettings
+
+
+logger = logging.getLogger(__name__)
 
 
 class ExecutionApplicationError(FeedbackStoreError):
@@ -41,8 +46,58 @@ class ExecutionApplicationService:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         self.max_write_bytes = max_write_bytes
+        self._apply_lock = Lock()
+
+    async def run_and_apply_execution_job(
+        self,
+        task_id: str,
+        *,
+        run_execution_job: Callable[..., Awaitable[dict[str, Any] | None]],
+        force: bool,
+        note: str,
+    ) -> dict[str, Any]:
+        execution_job = await run_execution_job(task_id, force=force)
+        apply_result = None
+        if execution_job and execution_job.get("status") == "ready":
+            apply_result = self.apply_ready_execution_job(
+                task_id,
+                str(execution_job["execution_job_id"]),
+                note=note,
+            )
+        return {
+            "execution_job": execution_job,
+            "apply_result": apply_result,
+            "optimization_task": self.feedback_store.find_task(task_id),
+        }
 
     def apply_ready_execution_job(
+        self,
+        task_id: str,
+        execution_job_id: str,
+        *,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        with self._apply_lock:
+            return self._apply_ready_execution_job_locked(task_id, execution_job_id, note=note)
+
+    def mark_task_applied_manually(self, task_id: str, *, note: str | None = None) -> dict[str, Any]:
+        with self._apply_lock:
+            task = self.feedback_store.ensure_task_can_mark_applied_manually(task_id)
+            if not task:
+                raise ExecutionApplicationError(404, "Optimization task not found")
+            if task.get("applied_agent_version_id"):
+                return task
+            version = self.agent_version_store.create_snapshot(
+                reason="proposal_applied",
+                source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
+                note=note or f"优化任务 {task_id} 已人工应用，创建主智能体版本快照。",
+            )
+            updated = self.feedback_store.mark_task_applied(task_id, agent_version=version, note=note)
+            if not updated:
+                raise ExecutionApplicationError(404, "Optimization task not found")
+            return updated
+
+    def _apply_ready_execution_job_locked(
         self,
         task_id: str,
         execution_job_id: str,
@@ -75,7 +130,7 @@ class ExecutionApplicationService:
         try:
             self.apply_execution_operations(plan.get("operations") or [])
         except ExecutionApplicationError as exc:
-            self.feedback_store.fail_execution_job(execution_job_id, "EXECUTION_APPLY_FAILED", str(exc))
+            self.feedback_store.fail_execution_job(execution_job_id, error_code="EXECUTION_APPLY_FAILED", message=str(exc))
             raise
 
         try:
@@ -145,7 +200,7 @@ class ExecutionApplicationService:
                 restore_error=restore_error,
             )
         except Exception:
-            pass
+            logger.exception("Failed to record execution compensation for job %s", execution_job_id)
 
         if restore_error:
             detail = (
@@ -158,9 +213,9 @@ class ExecutionApplicationService:
                 f"workspace was restored to pre-execution version {pre_version_id}; original error: {original_error}"
             )
         try:
-            self.feedback_store.fail_execution_job(execution_job_id, "EXECUTION_APPLY_STATE_SYNC_FAILED", detail)
+            self.feedback_store.fail_execution_job(execution_job_id, error_code="EXECUTION_APPLY_STATE_SYNC_FAILED", message=detail)
         except Exception:
-            pass
+            logger.exception("Failed to mark execution job %s as state-sync failed", execution_job_id)
         return detail
 
     def restore_execution_compensation(self, compensation_id: str) -> dict[str, Any]:

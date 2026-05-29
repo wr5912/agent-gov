@@ -6,8 +6,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_store import FeedbackStore
-from app.runtime.feedback_workflow_response_schemas import (
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
     FeedbackOptimizationBatchExecutionResponse,
     FeedbackOptimizationBatchRegressionResponse,
@@ -24,6 +24,14 @@ from app.runtime.schemas import (
 from app.services.execution_application import ExecutionApplicationService
 
 
+def _batch_plan_task(batch: dict[str, Any] | None, plan_task_id: str) -> dict[str, Any] | None:
+    plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
+    for item in (plan or {}).get("tasks") or []:
+        if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id:
+            return item
+    return None
+
+
 def create_feedback_batches_router(
     *,
     feedback_store: FeedbackStore,
@@ -32,13 +40,15 @@ def create_feedback_batches_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
+    _register_batch_crud_routes(router, feedback_store)
+    _register_batch_analysis_routes(router, feedback_store, runtime)
+    _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
+    _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
+    _register_batch_regression_routes(router, feedback_store, runtime)
+    return router
 
-    def batch_plan_task(batch: dict[str, Any] | None, plan_task_id: str) -> dict[str, Any] | None:
-        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
-        for item in (plan or {}).get("tasks") or []:
-            if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id:
-                return item
-        return None
+
+def _register_batch_crud_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/feedback-optimization-batches",
@@ -46,10 +56,10 @@ def create_feedback_batches_router(
         summary="List feedback optimization batches",
     )
     async def list_feedback_optimization_batches(
-        status_filter: str | None = Query(default=None, alias="status"),
+        status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
-        return feedback_store.list_optimization_batches(status=status_filter, limit=limit)
+        return feedback_store.list_optimization_batches(status=status, limit=limit)
 
     @router.post(
         "/feedback-optimization-batches",
@@ -75,6 +85,13 @@ def create_feedback_batches_router(
     async def get_feedback_optimization_batch(batch_id: str) -> dict[str, Any]:
         batch = feedback_store.find_optimization_batch(batch_id)
         return ensure_found(batch, "Feedback optimization batch not found")
+
+
+def _register_batch_analysis_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
 
     @router.post(
         "/feedback-optimization-batches/{batch_id}/attribution-jobs",
@@ -116,6 +133,14 @@ def create_feedback_batches_router(
             ensure_found(batch, "Feedback optimization batch not found")
         return batch
 
+
+def _register_batch_plan_review_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+    execution_application: ExecutionApplicationService,
+) -> None:
+
     @router.post(
         "/feedback-optimization-batches/{batch_id}/optimization-plan/approve",
         response_model=FeedbackOptimizationBatchExecutionResponse,
@@ -129,28 +154,27 @@ def create_feedback_batches_router(
         if not approved:
             raise_conflict("Optimization plan cannot be approved")
         task = approved["optimization_task"]
-        execution_job = await runtime.run_execution_job(task["optimization_task_id"], force=True)
+        execution = await execution_application.run_and_apply_execution_job(
+            task["optimization_task_id"],
+            run_execution_job=runtime.run_execution_job,
+            force=True,
+            note=f"执行优化批次 {batch_id} 时由 execution-optimizer 自动应用。",
+        )
+        execution_job = execution["execution_job"]
         if not execution_job:
-            feedback_store.record_batch_execution_result(batch_id, optimization_task=feedback_store.find_task(task["optimization_task_id"]))
+            feedback_store.record_batch_execution_result(batch_id, optimization_task=execution["optimization_task"])
             raise_conflict("Execution optimizer could not generate a plan")
-        apply_result = None
-        if execution_job.get("status") == "ready":
-            apply_result = execution_application.apply_ready_execution_job(
-                task["optimization_task_id"],
-                execution_job["execution_job_id"],
-                note=f"执行优化批次 {batch_id} 时由 execution-optimizer 自动应用。",
-            )
         batch = feedback_store.record_batch_execution_result(
             batch_id,
             execution_job=execution_job,
-            optimization_task=feedback_store.find_task(task["optimization_task_id"]),
-            applied=apply_result,
+            optimization_task=execution["optimization_task"],
+            applied=execution["apply_result"],
         )
         return {
             "batch": batch,
-            "optimization_task": feedback_store.find_task(task["optimization_task_id"]),
+            "optimization_task": execution["optimization_task"],
             "execution_job": execution_job,
-            "apply_result": apply_result,
+            "apply_result": execution["apply_result"],
         }
 
     @router.post(
@@ -165,6 +189,14 @@ def create_feedback_batches_router(
         batch = feedback_store.reject_batch_optimization_plan(batch_id, comment=req.comment)
         return ensure_found(batch, "Feedback optimization batch or plan not found")
 
+
+def _register_batch_plan_task_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+    execution_application: ExecutionApplicationService,
+) -> None:
+
     @router.post(
         "/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute",
         response_model=FeedbackOptimizationPlanTaskExecuteResponse,
@@ -177,17 +209,7 @@ def create_feedback_batches_router(
     ) -> dict[str, Any]:
         batch = feedback_store.find_optimization_batch(batch_id)
         batch = ensure_found(batch, "Feedback optimization batch not found")
-        plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
-        plan_task = next(
-            (
-                item
-                for item in (plan or {}).get("tasks") or []
-                if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id
-            ),
-            None,
-        )
-        if not plan_task:
-            ensure_found(plan_task, "Optimization plan task not found")
+        plan_task = ensure_found(_batch_plan_task(batch, plan_task_id), "Optimization plan task not found")
         execution_kind = str(plan_task.get("execution_kind") or "")
         if execution_kind == "external_webhook":
             require_request(bool(req.webhook_alias), "webhook_alias is required for external tasks")
@@ -204,40 +226,45 @@ def create_feedback_batches_router(
         if not prepared:
             ensure_found(prepared, "Optimization plan task not found")
         task = prepared["optimization_task"]
-        apply_result = None
-        execution_job = None
         if task.get("applied_agent_version_id"):
             batch = feedback_store.record_batch_plan_task_execution_result(batch_id, plan_task_id, optimization_task=task)
-            return {"batch": batch, "optimization_task": task, "plan_task": batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
+            return {"batch": batch, "optimization_task": task, "plan_task": _batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
 
-        execution_job = await runtime.run_execution_job(task["optimization_task_id"], force=req.force)
+        execution = await execution_application.run_and_apply_execution_job(
+            task["optimization_task_id"],
+            run_execution_job=runtime.run_execution_job,
+            force=req.force,
+            note=f"执行优化批次 {batch_id} 的任务 {plan_task_id} 时由 execution-optimizer 自动应用。",
+        )
+        execution_job = execution["execution_job"]
         if not execution_job:
             batch = feedback_store.record_batch_plan_task_execution_result(
                 batch_id,
                 plan_task_id,
-                optimization_task=feedback_store.find_task(task["optimization_task_id"]),
+                optimization_task=execution["optimization_task"],
             )
             raise_conflict("Execution optimizer could not generate a plan")
-        if execution_job.get("status") == "ready":
-            apply_result = execution_application.apply_ready_execution_job(
-                task["optimization_task_id"],
-                execution_job["execution_job_id"],
-                note=f"执行优化批次 {batch_id} 的任务 {plan_task_id} 时由 execution-optimizer 自动应用。",
-            )
         batch = feedback_store.record_batch_plan_task_execution_result(
             batch_id,
             plan_task_id,
             execution_job=execution_job,
-            optimization_task=feedback_store.find_task(task["optimization_task_id"]),
-            applied=apply_result,
+            optimization_task=execution["optimization_task"],
+            applied=execution["apply_result"],
         )
         return {
             "batch": batch,
-            "optimization_task": feedback_store.find_task(task["optimization_task_id"]),
-            "plan_task": batch_plan_task(batch, plan_task_id),
+            "optimization_task": execution["optimization_task"],
+            "plan_task": _batch_plan_task(batch, plan_task_id),
             "execution_job": execution_job,
-            "apply_result": apply_result,
+            "apply_result": execution["apply_result"],
         }
+
+
+def _register_batch_regression_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
 
     @router.post(
         "/feedback-optimization-batches/{batch_id}/regression-runs",
@@ -263,5 +290,3 @@ def create_feedback_batches_router(
             raise_conflict("Regression run could not be started")
         batch = feedback_store.record_batch_regression_result(batch_id, result)
         return {"batch": batch, "eval_run": result}
-
-    return router

@@ -5,11 +5,16 @@ from collections.abc import AsyncIterator
 from typing import Any, Callable
 
 from .agent_profiles import AgentRuntimeProfile
-from .feedback_jobs import EXPECTED_SCHEMA_FIELDS, extract_json_candidates
+from .prompts.feedback_prompts import EXPECTED_SCHEMA_FIELDS, extract_json_candidates
 from .message_utils import extract_text
+from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
 from .settings import AppSettings
+
+
+class ClaudeCodeResultError(RuntimeError):
+    """Raised when Claude Code reports a structured result error."""
 
 
 class AgentJobRunner:
@@ -48,11 +53,11 @@ class AgentJobRunner:
             "max_budget_usd": self.settings.max_budget_usd,
             "env": env,
             "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": str(profile.mcp_config_path) if profile.mcp_config_path.exists() else None,
+            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers),
             "strict_mcp_config": True,
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": False,
-            "hooks": build_default_hooks() if self.settings.enable_policy_hooks else None,
+            "hooks": build_default_hooks(profile) if self.settings.enable_policy_hooks else None,
             "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
             "cli_path": self.settings.claude_cli_path,
             "add_dirs": self.settings.claude_add_dirs,
@@ -99,7 +104,7 @@ class AgentJobRunner:
                     errors.extend(self.result_errors(msg))
             answer = self.dedupe_answer_parts(answer_parts)
             if errors and not answer:
-                raise RuntimeError("; ".join(errors))
+                raise ClaudeCodeResultError("; ".join(errors))
             direct = self.direct_schema_candidate(answer, expected_schema_version)
             if direct:
                 return direct

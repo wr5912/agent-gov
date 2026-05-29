@@ -1,12 +1,6 @@
 import { Database, FolderKanban, Loader2 } from "lucide-react";
 import { Metric, Pill, jsonPreview } from "./common";
-import { formatDate, shortId, sourceRowKey, summaryText, type SourceRow } from "./selectors";
-
-const sourceKindText: Record<SourceRow["kind"], string> = {
-  signal: "Feedback signal",
-  soc_event: "SOC event",
-  pending_correlation: "待关联",
-};
+import { formatDate, shortId, sourceKindText, sourceKindTone, sourceRowKey, summaryText, type SourceRow } from "./selectors";
 
 export function SignalsPanel({
   rows,
@@ -76,7 +70,7 @@ export function SignalsPanel({
                   type="checkbox"
                 />
               </span>
-              <span><Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill></span>
+              <span><Pill tone={sourceKindTone(row.kind)}>{sourceKindText[row.kind]}</Pill></span>
               <span className="fw-signal-main">
                 <strong>{row.label}</strong>
                 <small title={row.id}>{shortId(row.id)} · {summaryText(row.raw)}</small>
@@ -119,7 +113,7 @@ function SignalDetailPanel({
     <aside className="fw-signal-detail-panel">
       <div className="fw-signal-detail-head">
         <div>
-          <Pill tone={row.kind === "pending_correlation" ? "orange" : row.kind === "soc_event" ? "green" : "blue"}>{sourceKindText[row.kind]}</Pill>
+          <Pill tone={sourceKindTone(row.kind)}>{sourceKindText[row.kind]}</Pill>
           <h3>{row.label}</h3>
           <small title={row.id}>{row.id}</small>
         </div>

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-class FeedbackStoreError(ValueError):
+class FeedbackStoreError(Exception):
     """Base class for route-safe feedback optimization domain errors."""
 
     status_code = 400
@@ -25,6 +25,13 @@ class ConfigurationError(FeedbackStoreError):
     """Raised when feedback workflow configuration is missing or malformed."""
 
     error_code = "CONFIGURATION_ERROR"
+
+
+class RuntimeUnavailableError(FeedbackStoreError):
+    """Raised when the runtime is temporarily unavailable for a retryable reason."""
+
+    status_code = 503
+    error_code = "RUNTIME_UNAVAILABLE"
 
 
 class DataIntegrityError(FeedbackStoreError):

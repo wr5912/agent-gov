@@ -1,5 +1,44 @@
-from feedback_store_test_utils import *
+from pathlib import Path
+import json
+
+from feedback_store_test_utils import (
+    ClaudeRuntime,
+    FeedbackSignalCreateRequest,
+    FeedbackStore,
+    LocalSessionStore,
+    _create_eval_case,
+    _record_run,
+    _settings,
+    _store,
+    asyncio,
+    pytest,
+)
 from app.runtime.errors import BusinessRuleViolation
+from app.services.feedback_eval_runner import FeedbackEvalRunner
+
+
+def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> dict[str, object]:
+    payload = {
+        "schema_version": "feedback-eval-case/v1",
+        "eval_case_id": eval_case_id,
+        "created_at": "2026-05-29T00:00:00+00:00",
+        "updated_at": "2026-05-29T00:00:00+00:00",
+        "status": "active",
+        "source": "test",
+        "source_feedback_case_id": None,
+        "source_run_id": None,
+        "source_kind": "manual",
+        "source_id": eval_case_id,
+        "source_refs": [],
+        "prompt": prompt,
+        "labels": ["feedback_optimization"],
+        "expected_behavior": "回答非空且无运行错误。",
+        "checks_json": {"requires_non_empty_answer": True, "requires_no_runtime_errors": True},
+        "source_summary": {},
+    }
+    with store.Session.begin() as db:
+        store._add_eval_case_row(db, payload)
+    return payload
 
 
 def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(tmp_path, monkeypatch):
@@ -129,6 +168,88 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     assert eval_agent_run["metadata"]["source"] == "regression_eval"
 
 
+def test_feedback_eval_runner_records_failed_item_and_finishes_run(tmp_path):
+    store, _ = _store(tmp_path)
+    first = _insert_eval_case(store, "evc-pass", "正常用例")
+    second = _insert_eval_case(store, "evc-fail", "异常用例")
+
+    async def run_chat(req):
+        if "异常" in req.message:
+            raise RuntimeError("chat failed")
+        return {"answer": "ok", "errors": [], "agent_activity": {}}
+
+    runner = FeedbackEvalRunner(
+        feedback_store=store,
+        run_chat=run_chat,
+        current_agent_version_id=lambda: "main-v-test",
+    )
+
+    result = asyncio.run(
+        runner.run_feedback_eval(
+            eval_case_ids=[str(first["eval_case_id"]), str(second["eval_case_id"])],
+            source="manual_feedback_dataset",
+        )
+    )
+
+    assert result["status"] == "completed"
+    assert result["result_status"] == "failed"
+    assert result["summary"] == {"total": 2, "passed": 1, "failed": 1, "needs_human_review": 0}
+    failed_item = next(item for item in result["items"] if item["eval_case_id"] == "evc-fail")
+    assert failed_item["status"] == "failed"
+    assert failed_item["error_json"]["error_code"] == "EVAL_CASE_RUNTIME_ERROR"
+
+
+def test_feedback_eval_runner_marks_run_failed_when_finish_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    eval_case = _insert_eval_case(store, "evc-overall-fail", "正常用例")
+
+    async def run_chat(req):
+        return {"answer": "ok", "errors": [], "agent_activity": {}}
+
+    def fail_finish(eval_run_id):
+        raise RuntimeError("finish failed")
+
+    monkeypatch.setattr(store, "finish_eval_run", fail_finish)
+    runner = FeedbackEvalRunner(
+        feedback_store=store,
+        run_chat=run_chat,
+        current_agent_version_id=lambda: "main-v-test",
+    )
+
+    result = asyncio.run(
+        runner.run_feedback_eval(
+            eval_case_ids=[str(eval_case["eval_case_id"])],
+            source="manual_feedback_dataset",
+        )
+    )
+
+    assert result["status"] == "failed"
+    assert result["result_status"] == "failed"
+    assert result["error_json"]["error_code"] == "EVAL_RUN_RUNTIME_ERROR"
+    assert "finish failed" in result["error_json"]["message"]
+
+
+def test_feedback_eval_runner_scores_no_required_checks_as_full_pass(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case = _insert_eval_case(store, "evc-no-required", "无需检查")
+    eval_case["checks_json"] = {
+        "requires_non_empty_answer": False,
+        "requires_no_runtime_errors": False,
+        "requires_tool_use": False,
+    }
+    runner = FeedbackEvalRunner(
+        feedback_store=store,
+        run_chat=lambda req: None,
+        current_agent_version_id=lambda: "main-v-test",
+    )
+
+    status, score, check_results = runner._evaluate_eval_case(eval_case, {"answer": "", "errors": []})
+
+    assert status == "passed"
+    assert score == 1.0
+    assert check_results == []
+
+
 def test_update_eval_case_directly_overwrites_content(tmp_path):
     store, _ = _store(tmp_path)
     eval_case, _ = _create_eval_case(store)
@@ -169,7 +290,8 @@ def test_archived_eval_case_is_not_selected_for_automatic_feedback_eval(tmp_path
     store.update_eval_case(eval_case["eval_case_id"], {"status": "archived"})
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
 
-    assert runtime._selected_eval_cases(None) == []  # noqa: SLF001 - regression coverage for active-only eval selection.
+    assert runtime.eval_runner is not None
+    assert runtime.eval_runner._selected_eval_cases(None) == []  # noqa: SLF001 - regression coverage for active-only eval selection.
 
 
 def test_runtime_feedback_jobs_use_offline_outputs_without_provider(tmp_path):

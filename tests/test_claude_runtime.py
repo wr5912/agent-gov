@@ -1,7 +1,9 @@
 import asyncio
 import base64
+import json
 
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.policy import build_profile_pre_tool_use_hook
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -132,21 +134,142 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
+def test_main_runtime_profile_filters_mcp_servers(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path)
+    (settings.main_workspace_dir / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {"url": "http://127.0.0.1:1/mcp", "transport": "http"},
+                    "security-kb": {"url": "http://127.0.0.1:2/mcp", "transport": "http"},
+                    "forbidden": {"url": "http://127.0.0.1:3/mcp", "transport": "http"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    result = asyncio.run(runtime.run(ChatRequest(message="hello")))
+
+    assert result["errors"] == []
+    assert set(seen["options"].mcp_servers) == {"sec-ops-data", "security-kb"}
+
+
 def test_feedback_job_options_use_configured_max_turns(tmp_path):
     settings = _settings(tmp_path)
     settings.max_turns = 12
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["attribution-analyzer"])
+    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
 
     assert options.max_turns == 12
+
+
+def test_feedback_job_profile_filters_mcp_servers(tmp_path):
+    settings = _settings(tmp_path)
+    settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
+    (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "feedback-evidence": {"url": "http://127.0.0.1:1/mcp", "transport": "http"},
+                    "readonly-trace": {"url": "http://127.0.0.1:2/mcp", "transport": "http"},
+                    "main-only": {"url": "http://127.0.0.1:3/mcp", "transport": "http"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+
+    assert set(options.mcp_servers) == {"feedback-evidence", "readonly-trace"}
+
+
+def test_profile_path_hook_blocks_denied_read_path(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    profile = runtime.profiles["attribution-analyzer"]
+    hook = build_profile_pre_tool_use_hook(profile)
+
+    result = asyncio.run(
+        hook(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(settings.main_workspace_dir / "CLAUDE.md")},
+            },
+            None,
+            {},
+        )
+    )
+
+    output = result["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "denied for profile attribution-analyzer" in output["permissionDecisionReason"]
+
+
+def test_profile_path_hook_allows_declared_read_path(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    profile = runtime.profiles["attribution-analyzer"]
+    hook = build_profile_pre_tool_use_hook(profile)
+
+    result = asyncio.run(
+        hook(
+            {
+                "tool_name": "Read",
+                "tool_input": {"file_path": str(settings.data_dir / "evidence" / "feedback.json")},
+            },
+            None,
+            {},
+        )
+    )
+
+    assert result == {}
+
+
+def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    profile = runtime.profiles["execution-optimizer"]
+    hook = build_profile_pre_tool_use_hook(profile)
+
+    result = asyncio.run(
+        hook(
+            {
+                "tool_name": "Write",
+                "tool_input": {"file_path": str(settings.main_workspace_dir / "CLAUDE.md")},
+            },
+            None,
+            {},
+        )
+    )
+
+    output = result["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "outside allowed paths for profile execution-optimizer" in output["permissionDecisionReason"]
 
 
 def test_feedback_proposal_job_options_use_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["proposal-generator"])
+    options = runtime.job_runner.build_options(runtime.profiles["proposal-generator"])
 
     assert options.max_turns == 16
     assert options.allowed_tools == []
@@ -158,7 +281,7 @@ def test_feedback_proposal_job_options_allow_global_max_turn_override(tmp_path):
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime._build_job_options(runtime.profiles["proposal-generator"])
+    options = runtime.job_runner.build_options(runtime.profiles["proposal-generator"])
 
     assert options.max_turns == 20
 
@@ -196,7 +319,7 @@ def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_
         ENABLE_POLICY_HOOKS=True,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: None)
+    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     options = seen["options"]
@@ -240,7 +363,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         LANGFUSE_EXPORT_INTERVAL_MS=500,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: None)
+    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     env = seen["options"].env
@@ -327,6 +450,29 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
     assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
 
 
+def test_settings_derives_profile_dirs_from_custom_main_paths(tmp_path):
+    main_workspace = tmp_path / "runtime" / "main-workspace"
+    main_root = tmp_path / "runtime" / "claude-roots" / "main"
+    explicit_proposal_workspace = tmp_path / "custom-proposal-workspace"
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=main_workspace,
+        CLAUDE_ROOT=main_root,
+        PROPOSAL_GENERATOR_WORKSPACE_DIR=explicit_proposal_workspace,
+        ENABLE_POLICY_HOOKS=True,
+    )
+
+    assert settings.main_workspace_dir == main_workspace
+    assert settings.attribution_analyzer_workspace_dir == main_workspace.parent / "attribution-analyzer-workspace"
+    assert settings.proposal_generator_workspace_dir == explicit_proposal_workspace
+    assert settings.execution_optimizer_workspace_dir == main_workspace.parent / "execution-optimizer-workspace"
+    assert settings.main_claude_root == main_root
+    assert settings.attribution_analyzer_claude_root == main_root.parent / "attribution-analyzer"
+    assert settings.proposal_generator_claude_root == main_root.parent / "proposal-generator"
+    assert settings.execution_optimizer_claude_root == main_root.parent / "execution-optimizer"
+    assert settings.claude_home == main_root / ".claude"
+
+
 def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
     from app.runtime.settings import get_settings
 
@@ -356,7 +502,9 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(main, "settings", settings)
 
-    result = asyncio.run(main.health())
+    from app.routers.core import build_health_payload
+
+    result = build_health_payload(settings=settings, app=main.app, agent_version_store=main.agent_version_store)
 
     assert result["langfuse_enabled"] is True
     assert result["langfuse_otel_endpoint_configured"] is True
@@ -371,6 +519,7 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
 
 def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    from app.runtime.agent_job_runner import ClaudeCodeResultError
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
@@ -391,7 +540,7 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
             result="bad model",
             api_error_status=404,
         )
-        raise Exception("Claude Code returned an error result: success")
+        raise ClaudeCodeResultError("Claude Code API error (404): bad model")
 
     import claude_agent_sdk
 
@@ -483,7 +632,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
-    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: fake_langfuse)
+    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello", metadata={"api_key": "secret"})))
 
@@ -501,8 +650,8 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.chat",
-        "runtime.claude_sdk_query",
+        "runtime.main_agent",
+        "runtime.main_agent.claude_sdk_query",
     ]
     root, generation = fake_langfuse.observations
     assert root.kwargs["input"]["message"] == "hello"
@@ -571,7 +720,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
-    monkeypatch.setattr(runtime, "_get_langfuse_client", lambda: fake_langfuse)
+    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
 
     events = asyncio.run(collect(runtime))
 
@@ -580,6 +729,10 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert result_event["data"]["agent_activity"]["tool_names"] == ["Read"]
     assert fake_langfuse.flushed is True
     root, generation = fake_langfuse.observations
+    assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
+        "runtime.main_agent",
+        "runtime.main_agent.claude_sdk_query",
+    ]
     assert root.updates[-1]["output"]["answer"] == "stream answer"
     assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
     assert root.trace_io_updates[-1]["input"]["message"] == "stream"

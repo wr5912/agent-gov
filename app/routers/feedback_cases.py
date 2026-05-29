@@ -6,9 +6,9 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
-from app.runtime.feedback_output_response_schemas import AttributionOutputResponse, ProposalOutputResponse
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.response_schemas.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
+from app.runtime.response_schemas.feedback_output_response_schemas import AttributionOutputResponse, ProposalOutputResponse
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     EvidencePackageFileResponse,
     EvidencePackageResponse,
@@ -25,6 +25,14 @@ def create_feedback_cases_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
+    _register_case_routes(router, feedback_store)
+    _register_evidence_routes(router, feedback_store)
+    _register_feedback_analysis_job_routes(router, runtime)
+    _register_feedback_analysis_output_routes(router, feedback_store)
+    return router
+
+
+def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/feedback-cases",
@@ -57,6 +65,9 @@ def create_feedback_cases_router(
         feedback_case = feedback_store.create_case(source_ids=req.source_ids, title=req.title, priority=req.priority)
         return ensure_found(feedback_case, "Feedback source not found")
 
+
+def _register_evidence_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.post(
         "/feedback-cases/{feedback_case_id}/evidence-packages",
         response_model=EvidencePackageResponse,
@@ -83,6 +94,9 @@ def create_feedback_cases_router(
     async def get_evidence_package_file(evidence_package_id: str, file_name: str) -> dict[str, Any]:
         evidence_file = feedback_store.get_evidence_package_file(evidence_package_id, file_name)
         return ensure_found(evidence_file, "Evidence package file not found")
+
+
+def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRuntime) -> None:
 
     @router.post(
         "/feedback-cases/{feedback_case_id}/attribution-jobs",
@@ -124,6 +138,9 @@ def create_feedback_cases_router(
         )
         return ensure_found(job, "Feedback case not found or missing attribution")
 
+
+def _register_feedback_analysis_output_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.get(
         "/feedback-analysis/jobs/{job_id}",
         response_model=FeedbackAnalysisJobResponse,
@@ -159,5 +176,3 @@ def create_feedback_cases_router(
     async def revalidate_proposal_output(job_id: str) -> dict[str, Any]:
         job = feedback_store.revalidate_proposal_job(job_id)
         return ensure_found(job, "Proposal job raw output not found")
-
-    return router

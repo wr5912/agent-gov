@@ -19,9 +19,5 @@ def require_request(condition: bool, detail: str) -> None:
         raise BusinessRuleViolation(detail)
 
 
-def raise_bad_request(detail: str) -> None:
-    raise BusinessRuleViolation(detail)
-
-
 def raise_conflict(detail: str) -> None:
     raise ConflictError(detail)

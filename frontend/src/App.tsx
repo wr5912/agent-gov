@@ -6,9 +6,11 @@ import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
+import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import type { FeedbackSignalCreateRequest, FeedbackSignalRecord, RuntimeIntegrationContext } from "./types/feedback";
+import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "./types/feedback";
 import type { AgentActivity, AgentInfo, AgentVersionSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import { isRecord } from "./utils/records";
 import "./styles.css";
 
 function newId(prefix: string) {
@@ -28,10 +30,6 @@ function makeApiDocsUrl(apiBase: string): string {
 
 function defaultLangfuseUrl(): string {
   return (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function messageTextFromEnvelope(envelope: StreamEnvelope): string | undefined {

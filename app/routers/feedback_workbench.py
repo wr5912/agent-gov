@@ -5,7 +5,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentRunResponse,
     FeedbackEvalCaseGenerateResponse,
@@ -28,6 +28,15 @@ def create_feedback_workbench_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
+    _register_agent_run_routes(router, feedback_store)
+    _register_feedback_signal_routes(router, feedback_store)
+    _register_soc_event_routes(router, feedback_store)
+    _register_pending_correlation_routes(router, feedback_store)
+    _register_feedback_source_routes(router, feedback_store)
+    return router
+
+
+def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/agent-runs",
@@ -42,6 +51,9 @@ def create_feedback_workbench_router(
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
         return feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, limit=limit)
+
+
+def _register_feedback_signal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.post(
         "/feedback-signals",
@@ -82,6 +94,9 @@ def create_feedback_workbench_router(
         signal = feedback_store.find_signal(signal_id)
         return ensure_found(signal, "Feedback signal not found")
 
+
+def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.post(
         "/soc-events",
         response_model=SocEventIngestResponse,
@@ -121,16 +136,19 @@ def create_feedback_workbench_router(
         event = feedback_store.find_event(event_id)
         return ensure_found(event, "SOC event not found")
 
+
+def _register_pending_correlation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.get(
         "/pending-correlations",
         response_model=list[PendingCorrelationResponse],
         summary="List pending feedback correlations",
     )
     async def list_pending_correlations(
-        status_filter: str | None = Query(default=None, alias="status"),
+        status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
-        return feedback_store.list_pending(status=status_filter, limit=limit)
+        return feedback_store.list_pending(status=status, limit=limit)
 
     @router.post(
         "/pending-correlations/{pending_id}/resolve",
@@ -147,6 +165,9 @@ def create_feedback_workbench_router(
             comment=req.comment,
         )
         return ensure_found(resolved, "Pending correlation not found")
+
+
+def _register_feedback_source_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/feedback-sources",
@@ -189,5 +210,3 @@ def create_feedback_workbench_router(
             [item.model_dump(mode="json") for item in req.source_refs],
             force=req.force,
         )
-
-    return router

@@ -1,8 +1,9 @@
 import { type FormEvent } from "react";
 import { CheckCircle2, GitBranch, Loader2, RotateCcw, X } from "lucide-react";
-import type { ExternalFeedbackWorkspaceProps, OptimizationTaskRecord } from "../../types/feedback";
+import type { OptimizationTaskRecord } from "../../types/feedback";
 import { DetailMetricGrid, FormattedText } from "./common";
 import { shortId } from "./selectors";
+import type { ExternalFeedbackWorkspaceProps } from "./types";
 
 export function InstructionModal({
   ariaLabel,

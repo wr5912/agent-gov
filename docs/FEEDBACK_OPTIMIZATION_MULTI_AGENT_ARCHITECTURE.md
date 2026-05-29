@@ -318,10 +318,12 @@ docker/volume/
   claude-roots/
     main/                          # 主智能体HOME
       .claude/                     # 主智能体CLAUDE_CONFIG_DIR
-    attribution/                   # 归因分析智能体HOME
+    attribution-analyzer/          # 归因分析智能体HOME
       .claude/                     # 归因分析智能体CLAUDE_CONFIG_DIR
-    proposal/                      # 优化方案生成智能体HOME
+    proposal-generator/            # 优化方案生成智能体HOME
       .claude/                     # 优化方案生成智能体CLAUDE_CONFIG_DIR
+    execution-optimizer/           # 执行优化智能体HOME
+      .claude/                     # 执行优化智能体CLAUDE_CONFIG_DIR
 
   data/
     runtime.sqlite3                # 权威运行态数据库
@@ -353,6 +355,27 @@ docker/volume/
 6. runtime.sqlite3 是 feedback signal、SOC event、case、evidence package、job、proposal、task、eval 和 session 的权威存储。
 7. .runtime-tmp/jobs 是 Agent job 临时 workspace，不是 Agent workspace，也不是长期事实源。
 ```
+
+---
+
+## 5.1 代码模块边界
+
+当前后端模块边界遵循：
+
+```text
+app/routers/        HTTP 参数、响应模型和薄控制器。
+app/services/       跨 store/runtime/profile 的应用服务编排。
+app/runtime/        Claude SDK 适配、profile、schema、版本、策略和运行时支撑。
+app/runtime/stores/ 反馈闭环 SQLite store facade 与领域 mixin。
+app/runtime/response_schemas/ HTTP response schema。
+app/runtime/records/          内部 Pydantic record。
+app/runtime/integrations/     Langfuse、外部治理等外部适配器。
+app/runtime/prompts/          反馈闭环 Agent prompt 构造。
+app/runtime/normalizers/      LLM 输出归一化。
+```
+
+新增跨多个 store、Runtime Profile 或 workspace 文件系统的用例编排应优先放入
+`app/services/`；新增持久化读写能力应放入 `app/runtime/stores/`。
 
 ---
 
@@ -521,7 +544,7 @@ PROFILES: dict[str, AgentRuntimeProfile] = {
 
 ```text
 1. 当前实现中 profile 固定了 cwd、HOME、CLAUDE_CONFIG_DIR、settings、mcp_config、allowed_tools 和 disallowed_tools。
-2. readable_paths、writable_paths、denied_paths 和 allowed_mcp_servers 是安全设计字段；当前尚未实现通用路径拦截器，workspace 修改边界由受管路径策略、工具权限和独立 workspace/root 共同落地。
+2. allowed_mcp_servers 会在构造 ClaudeAgentOptions 时过滤 MCP 配置；readable_paths、writable_paths、denied_paths 通过 PreToolUse hook 对 Read/Grep/Glob/Write/Edit/MultiEdit/Notebook* 的目标路径做运行时拦截。
 3. 归因分析智能体和优化方案生成智能体不直接读写 live main-workspace；如需主智能体信息，应读取 evidence package、SQLite 中的 job 输入、版本 manifest 或提示词嵌入上下文。
 ```
 
@@ -687,9 +710,8 @@ POST /api/feedback-optimization-batches/{id}/optimization-plan
 待补强：
 
 ```text
-1. profile 级 readable_paths/writable_paths/denied_paths 通用路径拦截器。
-2. 所有写操作统一记录 actor、profile、job_id、version_id。
-3. execution-optimizer 的受控 patch 执行和 diff 审计。
+1. 所有写操作统一记录 actor、profile、job_id、version_id。
+2. execution-optimizer 的受控 patch 执行和 diff 审计。
 ```
 
 ---
@@ -1475,6 +1497,7 @@ GET  /api/agent-versions/main/{version_id}
 POST /api/agent-versions/main/snapshots
 POST /api/agent-versions/main/{version_id}/rollback
 GET  /api/agent-versions/main/diff
+GET  /api/agent-versions/main/file-diff
 ```
 
 ---

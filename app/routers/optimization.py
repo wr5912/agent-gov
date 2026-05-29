@@ -5,10 +5,9 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
-from app.runtime.agent_version_store import AgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.feedback_store import FeedbackStore
-from app.runtime.feedback_workflow_response_schemas import (
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     ExecutionCompensationResponse,
     ExternalGovernanceItemResponse,
     ExternalGovernanceWebhookResponse,
@@ -16,7 +15,7 @@ from app.runtime.feedback_workflow_response_schemas import (
     OptimizationExecutionJobResponse,
     OptimizationTaskResponse,
 )
-from app.runtime.optimization_response_schemas import (
+from app.runtime.response_schemas.optimization_response_schemas import (
     OptimizationProposalResponse,
     OptimizationProposalReviewResponse,
 )
@@ -37,11 +36,22 @@ def create_optimization_router(
     *,
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
-    agent_version_store: AgentVersionStore,
     execution_application: ExecutionApplicationService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
+    _register_proposal_routes(router, feedback_store)
+    _register_task_read_routes(router, feedback_store)
+    _register_external_governance_routes(router, feedback_store)
+    _register_execution_job_routes(router, feedback_store, runtime)
+    _register_compensation_routes(router, feedback_store)
+    _register_execution_application_routes(router, execution_application)
+    _register_task_regression_routes(router, feedback_store, runtime)
+    _register_task_creation_routes(router, feedback_store)
+    return router
+
+
+def _register_proposal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/optimization-proposals",
@@ -100,6 +110,9 @@ def create_optimization_router(
         result = feedback_store.review_proposal(proposal_id, action="request_more_analysis", comment=req.comment)
         return OptimizationProposalReviewResponse(**ensure_found(result, "Proposal not found"))
 
+
+def _register_task_read_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.get(
         "/optimization-tasks",
         response_model=list[OptimizationTaskResponse],
@@ -120,6 +133,9 @@ def create_optimization_router(
     async def get_optimization_task(task_id: str) -> dict[str, Any]:
         task = feedback_store.find_task(task_id)
         return ensure_found(task, "Optimization task not found")
+
+
+def _register_external_governance_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/external-governance-webhooks",
@@ -159,6 +175,13 @@ def create_optimization_router(
         result = feedback_store.notify_external_governance_item(external_item_id, webhook_alias=req.webhook_alias)
         return ensure_found(result, "External governance item not found")
 
+
+def _register_execution_job_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
+
     @router.post(
         "/optimization-tasks/{task_id}/execution-jobs",
         response_model=OptimizationExecutionJobResponse,
@@ -179,6 +202,9 @@ def create_optimization_router(
         if not feedback_store.find_task(task_id):
             ensure_found(None, "Optimization task not found")
         return feedback_store.list_execution_jobs(task_id, limit=limit)
+
+
+def _register_compensation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
 
     @router.get(
         "/execution-compensations",
@@ -206,6 +232,12 @@ def create_optimization_router(
     async def get_execution_compensation(compensation_id: str) -> dict[str, Any]:
         compensation = feedback_store.find_execution_compensation(compensation_id)
         return ensure_found(compensation, "Execution compensation not found")
+
+
+def _register_execution_application_routes(
+    router: APIRouter,
+    execution_application: ExecutionApplicationService,
+) -> None:
 
     @router.post(
         "/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply",
@@ -237,19 +269,34 @@ def create_optimization_router(
         task_id: str,
         req: OptimizationTaskMarkAppliedRequest,
     ) -> dict[str, Any]:
-        task = feedback_store.find_task(task_id)
-        task = ensure_found(task, "Optimization task not found")
-        if task.get("applied_agent_version_id"):
-            return task
-        if task.get("status") not in {"pending_execution", "failed", "needs_human_review"}:
-            raise_conflict("Task cannot be marked applied from current status")
-        version = agent_version_store.create_snapshot(
-            reason="proposal_applied",
-            source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
-            note=req.note or f"优化任务 {task_id} 已人工应用，创建主智能体版本快照。",
+        return execution_application.mark_task_applied_manually(task_id, note=req.note)
+
+
+def _task_regression_eval_case_ids(
+    feedback_store: FeedbackStore,
+    task: dict[str, Any],
+    requested_eval_case_ids: list[str] | None,
+) -> list[str]:
+    if task.get("feedback_case_id"):
+        feedback_store.sync_feedback_eval_cases(feedback_case_id=str(task["feedback_case_id"]))
+    eval_case_ids = list(requested_eval_case_ids or [])
+    if eval_case_ids or not task.get("feedback_case_id"):
+        return eval_case_ids
+    return [
+        item["eval_case_id"]
+        for item in feedback_store.list_eval_cases(
+            status="active",
+            source_feedback_case_id=str(task["feedback_case_id"]),
+            limit=100,
         )
-        updated = feedback_store.mark_task_applied(task_id, agent_version=version, note=req.note)
-        return ensure_found(updated, "Optimization task not found")
+    ]
+
+
+def _register_task_regression_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
 
     @router.post(
         "/optimization-tasks/{task_id}/regression-runs",
@@ -264,18 +311,7 @@ def create_optimization_router(
         task = ensure_found(task, "Optimization task not found")
         if not task.get("applied_agent_version_id"):
             raise_conflict("Task must be marked applied before regression validation")
-        if task.get("feedback_case_id"):
-            feedback_store.sync_feedback_eval_cases(feedback_case_id=str(task["feedback_case_id"]))
-        eval_case_ids = list(req.eval_case_ids or [])
-        if not eval_case_ids and task.get("feedback_case_id"):
-            eval_case_ids = [
-                item["eval_case_id"]
-                for item in feedback_store.list_eval_cases(
-                    status="active",
-                    source_feedback_case_id=str(task["feedback_case_id"]),
-                    limit=100,
-                )
-            ]
+        eval_case_ids = _task_regression_eval_case_ids(feedback_store, task, req.eval_case_ids)
         if not eval_case_ids:
             raise_conflict("No active eval cases found for this task")
         result = await runtime.run_feedback_eval(
@@ -298,6 +334,9 @@ def create_optimization_router(
     ) -> list[dict[str, Any]]:
         return feedback_store.list_eval_runs(optimization_task_id=task_id, limit=limit)
 
+
+def _register_task_creation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
     @router.post(
         "/optimization-proposals/{proposal_id}/tasks",
         response_model=OptimizationTaskResponse,
@@ -313,5 +352,3 @@ def create_optimization_router(
         if not task:
             raise_conflict("Proposal is missing, not approved, or not actionable")
         return task
-
-    return router

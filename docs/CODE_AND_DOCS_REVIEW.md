@@ -258,7 +258,10 @@
 
 > 经主线核查：之前流传的"workspace 仍叫旧名"问题已修正（`README.md:9, 24-26, 327-334, 351-356, 479-481` 与 `docs/FEEDBACK_OPTIMIZATION_MULTI_AGENT_ARCHITECTURE.md:126-129, 373-376, 384-387` 均已使用 `attribution-analyzer-workspace / proposal-generator-workspace / execution-optimizer-workspace` 与对应 claude-roots）。本节仅保留实际仍存在的不一致。
 
-**[D-S1] `README.md:418` `DEFAULT_ALLOWED_TOOLS` 示例与代码默认不一致**
+**[D-S1] `README.md:418` `DEFAULT_ALLOWED_TOOLS` 示例与代码默认不一致（已解决，历史记录）**
+
+> 当前 README 已与 `.env.example` 和运行时配置保持一致；本条保留为 R1 评审发现的历史记录。后续状态以 [`CODE_AND_DOCS_REVIEW_R2.md`](./CODE_AND_DOCS_REVIEW_R2.md) 为准。
+
 - 文档：`README.md:418` `DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,mcp__sec-ops-data__*`
 - 代码：`app/runtime/settings.py:74` 默认 `"Read,Grep,Glob,Skill"`；`docker/.env.example:145` 为 `"Read,Grep,Glob,Skill,mcp__sec-ops-data__*"`
 - 影响：用户照搬 README 会丢 `Skill`，调用 Skill 失败
@@ -320,8 +323,10 @@
 
 ## 6. 重点结论
 
-1. **核心债务在 4 个上帝模块**：`feedback_store.py` (5022) / `ExternalFeedbackWorkspace.tsx` (5124) / `main.py` (1659) / `claude_runtime.py` (1403)。任何后续功能都会被它们放大成本。**第一优先是拆分这四个文件**。
-2. **代码-文档一致性整体良好**，仅遗留 1 处严重（`DEFAULT_ALLOWED_TOOLS` 示例）、2 处重要（接口清单遗漏、PRODUCT_ADJUSTMENT_PLAN 状态滞后）需要修订；之前怀疑的工作区改名问题已修正。
+> 本节为 R1 重构前结论，用于保留当时的评审背景。R1 指出的 4 个上帝模块已拆分；`DEFAULT_ALLOWED_TOOLS`、接口清单和产品调整计划状态名等文档项已在后续提交和 R2 整改中校准。当前整改优先级以 [`CODE_AND_DOCS_REVIEW_R2.md`](./CODE_AND_DOCS_REVIEW_R2.md) 为准。
+
+1. **R1 当时的核心债务在 4 个上帝模块**：`feedback_store.py` (5022) / `ExternalFeedbackWorkspace.tsx` (5124) / `main.py` (1659) / `claude_runtime.py` (1403)。这些模块后续已系统性拆分，现状见 R2。
+2. **R1 当时的代码-文档一致性整体良好**，当时遗留的 `DEFAULT_ALLOWED_TOOLS` 示例、接口清单遗漏、PRODUCT_ADJUSTMENT_PLAN 状态滞后已纳入后续整改。
 3. **鲁棒性短板集中在两个层面**：后端的 SQLite 并发 + 跨 Session 事务，前端的无重试无超时无缓存。这些都不是"风格问题"，是真实可见的故障源。
 4. **扩展性瓶颈来自硬编码字符串**：Agent profile、job_type、object_type、状态字面量。引入 Enum / 注册表 / 配置文件后才能撑住下一波新需求。
 5. **不建议一次性大重构**。按上面的 4 阶段路线图渐进，每阶段都能独立交付且降低后续工作量。

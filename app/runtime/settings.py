@@ -3,7 +3,7 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any, Literal, Mapping, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -30,6 +30,80 @@ def _string_dict(value: dict[str, Any]) -> dict[str, str]:
 
 def _optional_string_dict(value: dict[str, Any]) -> dict[str, str | None]:
     return {str(key): None if val is None else str(val) for key, val in value.items()}
+
+
+_DEFAULT_MAIN_WORKSPACE_DIR = Path("/main-workspace")
+_DEFAULT_MAIN_CLAUDE_ROOT = Path("/claude-roots/main")
+_DEFAULT_ATTRIBUTION_WORKSPACE_DIR = Path("/attribution-analyzer-workspace")
+_DEFAULT_PROPOSAL_WORKSPACE_DIR = Path("/proposal-generator-workspace")
+_DEFAULT_EXECUTION_WORKSPACE_DIR = Path("/execution-optimizer-workspace")
+_DEFAULT_ATTRIBUTION_CLAUDE_ROOT = Path("/claude-roots/attribution-analyzer")
+_DEFAULT_PROPOSAL_CLAUDE_ROOT = Path("/claude-roots/proposal-generator")
+_DEFAULT_EXECUTION_CLAUDE_ROOT = Path("/claude-roots/execution-optimizer")
+_DEFAULT_CLAUDE_HOME = Path("/claude-roots/main/.claude")
+
+
+def _derive_profile_dirs(settings: Any, explicit_env: Mapping[str, str] = os.environ) -> None:
+    if (
+        "MAIN_WORKSPACE_DIR" not in explicit_env
+        and settings.main_workspace_dir == _DEFAULT_MAIN_WORKSPACE_DIR
+        and settings.workspace_dir != _DEFAULT_MAIN_WORKSPACE_DIR
+    ):
+        settings.main_workspace_dir = settings.workspace_dir
+    if (
+        "MAIN_CLAUDE_ROOT" not in explicit_env
+        and settings.main_claude_root == _DEFAULT_MAIN_CLAUDE_ROOT
+        and settings.claude_root != _DEFAULT_MAIN_CLAUDE_ROOT
+    ):
+        settings.main_claude_root = settings.claude_root
+    workspace_defaults = (
+        (
+            "ATTRIBUTION_ANALYZER_WORKSPACE_DIR",
+            "attribution_analyzer_workspace_dir",
+            _DEFAULT_ATTRIBUTION_WORKSPACE_DIR,
+            "attribution-analyzer-workspace",
+        ),
+        (
+            "PROPOSAL_GENERATOR_WORKSPACE_DIR",
+            "proposal_generator_workspace_dir",
+            _DEFAULT_PROPOSAL_WORKSPACE_DIR,
+            "proposal-generator-workspace",
+        ),
+        (
+            "EXECUTION_OPTIMIZER_WORKSPACE_DIR",
+            "execution_optimizer_workspace_dir",
+            _DEFAULT_EXECUTION_WORKSPACE_DIR,
+            "execution-optimizer-workspace",
+        ),
+    )
+    for env_name, attr_name, default_path, child_name in workspace_defaults:
+        if env_name not in explicit_env and getattr(settings, attr_name) == default_path:
+            setattr(settings, attr_name, settings.main_workspace_dir.parent / child_name)
+    claude_root_defaults = (
+        (
+            "ATTRIBUTION_ANALYZER_CLAUDE_ROOT",
+            "attribution_analyzer_claude_root",
+            _DEFAULT_ATTRIBUTION_CLAUDE_ROOT,
+            "attribution-analyzer",
+        ),
+        (
+            "PROPOSAL_GENERATOR_CLAUDE_ROOT",
+            "proposal_generator_claude_root",
+            _DEFAULT_PROPOSAL_CLAUDE_ROOT,
+            "proposal-generator",
+        ),
+        (
+            "EXECUTION_OPTIMIZER_CLAUDE_ROOT",
+            "execution_optimizer_claude_root",
+            _DEFAULT_EXECUTION_CLAUDE_ROOT,
+            "execution-optimizer",
+        ),
+    )
+    for env_name, attr_name, default_path, child_name in claude_root_defaults:
+        if env_name not in explicit_env and getattr(settings, attr_name) == default_path:
+            setattr(settings, attr_name, settings.main_claude_root.parent / child_name)
+    if "CLAUDE_HOME" not in explicit_env and settings.claude_home == _DEFAULT_CLAUDE_HOME:
+        settings.claude_home = settings.main_claude_root / ".claude"
 
 
 class AppSettings(BaseSettings):
@@ -120,24 +194,7 @@ class AppSettings(BaseSettings):
     langfuse_export_interval_ms: int = Field(default=1000, alias="LANGFUSE_EXPORT_INTERVAL_MS")
 
     def model_post_init(self, __context: Any) -> None:
-        if self.main_workspace_dir == Path("/main-workspace") and self.workspace_dir != Path("/main-workspace"):
-            self.main_workspace_dir = self.workspace_dir
-        if self.main_claude_root == Path("/claude-roots/main") and self.claude_root != Path("/claude-roots/main"):
-            self.main_claude_root = self.claude_root
-        if self.attribution_analyzer_workspace_dir == Path("/attribution-analyzer-workspace") and self.main_workspace_dir != Path("/main-workspace"):
-            self.attribution_analyzer_workspace_dir = self.main_workspace_dir.parent / "attribution-analyzer-workspace"
-        if self.proposal_generator_workspace_dir == Path("/proposal-generator-workspace") and self.main_workspace_dir != Path("/main-workspace"):
-            self.proposal_generator_workspace_dir = self.main_workspace_dir.parent / "proposal-generator-workspace"
-        if self.execution_optimizer_workspace_dir == Path("/execution-optimizer-workspace") and self.main_workspace_dir != Path("/main-workspace"):
-            self.execution_optimizer_workspace_dir = self.main_workspace_dir.parent / "execution-optimizer-workspace"
-        if self.attribution_analyzer_claude_root == Path("/claude-roots/attribution-analyzer") and self.main_claude_root != Path("/claude-roots/main"):
-            self.attribution_analyzer_claude_root = self.main_claude_root.parent / "attribution-analyzer"
-        if self.proposal_generator_claude_root == Path("/claude-roots/proposal-generator") and self.main_claude_root != Path("/claude-roots/main"):
-            self.proposal_generator_claude_root = self.main_claude_root.parent / "proposal-generator"
-        if self.execution_optimizer_claude_root == Path("/claude-roots/execution-optimizer") and self.main_claude_root != Path("/claude-roots/main"):
-            self.execution_optimizer_claude_root = self.main_claude_root.parent / "execution-optimizer"
-        if self.claude_home == Path("/claude-roots/main/.claude") and self.main_claude_root != Path("/claude-roots/main"):
-            self.claude_home = self.main_claude_root / ".claude"
+        _derive_profile_dirs(self)
 
     @property
     def provider_api_key(self) -> Optional[str]:
@@ -164,16 +221,6 @@ class AppSettings(BaseSettings):
     @property
     def claude_projects_dir(self) -> Path:
         return (self.claude_config_dir or self.claude_home) / "projects"
-
-    @property
-    def claude_settings_file(self) -> Optional[Path]:
-        return self.claude_settings_path
-
-    @property
-    def claude_mcp_servers(self) -> str | dict[str, Any] | None:
-        if self.claude_mcp_config_path:
-            return str(self.claude_mcp_config_path)
-        return None
 
     @property
     def claude_tools(self) -> Optional[list[str]]:
@@ -239,56 +286,8 @@ class AppSettings(BaseSettings):
         return ",".join(part for part in parts if part)
 
     @property
-    def transcript_dir(self) -> Path:
-        return self.data_dir / "transcripts"
-
-    @property
     def session_dir(self) -> Path:
         return self.data_dir / "sessions"
-
-    @property
-    def output_dir(self) -> Path:
-        return self.data_dir / "outputs"
-
-    @property
-    def upload_dir(self) -> Path:
-        return self.data_dir / "uploads"
-
-    @property
-    def agent_runs_dir(self) -> Path:
-        return self.data_dir / "agent-runs"
-
-    @property
-    def feedback_signals_dir(self) -> Path:
-        return self.data_dir / "feedback-signals"
-
-    @property
-    def soc_events_dir(self) -> Path:
-        return self.data_dir / "soc-events"
-
-    @property
-    def pending_correlations_dir(self) -> Path:
-        return self.data_dir / "pending-correlations"
-
-    @property
-    def feedback_cases_dir(self) -> Path:
-        return self.data_dir / "feedback-cases"
-
-    @property
-    def evidence_packages_dir(self) -> Path:
-        return self.data_dir / "evidence-packages"
-
-    @property
-    def feedback_analysis_jobs_dir(self) -> Path:
-        return self.data_dir / "feedback-analysis" / "jobs"
-
-    @property
-    def optimization_proposals_dir(self) -> Path:
-        return self.data_dir / "optimization-proposals"
-
-    @property
-    def optimization_tasks_dir(self) -> Path:
-        return self.data_dir / "optimization-tasks"
 
     @property
     def agent_versions_dir(self) -> Path:
@@ -302,22 +301,7 @@ class AppSettings(BaseSettings):
 @lru_cache
 def get_settings() -> AppSettings:
     settings = AppSettings()
-    if "MAIN_WORKSPACE_DIR" not in os.environ and "WORKSPACE_DIR" in os.environ:
-        settings.main_workspace_dir = settings.workspace_dir
-    if "MAIN_CLAUDE_ROOT" not in os.environ and "CLAUDE_ROOT" in os.environ:
-        settings.main_claude_root = settings.claude_root
-    if "ATTRIBUTION_ANALYZER_WORKSPACE_DIR" not in os.environ:
-        settings.attribution_analyzer_workspace_dir = settings.main_workspace_dir.parent / "attribution-analyzer-workspace"
-    if "PROPOSAL_GENERATOR_WORKSPACE_DIR" not in os.environ:
-        settings.proposal_generator_workspace_dir = settings.main_workspace_dir.parent / "proposal-generator-workspace"
-    if "EXECUTION_OPTIMIZER_WORKSPACE_DIR" not in os.environ:
-        settings.execution_optimizer_workspace_dir = settings.main_workspace_dir.parent / "execution-optimizer-workspace"
-    if "ATTRIBUTION_ANALYZER_CLAUDE_ROOT" not in os.environ:
-        settings.attribution_analyzer_claude_root = settings.main_claude_root.parent / "attribution-analyzer"
-    if "PROPOSAL_GENERATOR_CLAUDE_ROOT" not in os.environ:
-        settings.proposal_generator_claude_root = settings.main_claude_root.parent / "proposal-generator"
-    if "EXECUTION_OPTIMIZER_CLAUDE_ROOT" not in os.environ:
-        settings.execution_optimizer_claude_root = settings.main_claude_root.parent / "execution-optimizer"
+    _derive_profile_dirs(settings)
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
     settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)

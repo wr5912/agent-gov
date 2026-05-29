@@ -174,7 +174,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
     }
     assert plan_schema["properties"]["source_refs"]["items"] == {"$ref": "#/components/schemas/FeedbackSourceRef"}
     assert plan_schema["properties"]["evidence_refs"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationEvidenceRefResponse"
+        "$ref": "#/components/schemas/EvidenceRefResponse"
     }
     assert plan_schema["properties"]["attribution_summaries"]["items"] == {
         "$ref": "#/components/schemas/FeedbackOptimizationAttributionSummaryResponse"
@@ -184,7 +184,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "$ref": "#/components/schemas/FeedbackOptimizationTaskContextResponse"
     }
     assert plan_task_schema["properties"]["evidence_refs"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationEvidenceRefResponse"
+        "$ref": "#/components/schemas/EvidenceRefResponse"
     }
     execution_schema = schema["components"]["schemas"]["OptimizationExecutionJobResponse"]
     assert execution_schema["properties"]["validated_output_json"]["anyOf"][0] == {
@@ -288,6 +288,10 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "target_path",
         "plan_task_id",
         "latest_webhook_alias",
+        "schema_version",
+        "superseded_at",
+        "superseded_reason",
+        "superseded_by_job_id",
     ):
         assert field_name in external_item_schema["properties"]
 

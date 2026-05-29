@@ -1,32 +1,23 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import {
-  getAttributionOutput,
-  getEvidencePackage,
-  getFeedbackAnalysisJob,
   getFeedbackWorkbenchData,
-  getProposalOutput,
   runtimeApi,
 } from "../../api/runtime";
-import type {
-  EvidencePackageRecord,
-  ExternalFeedbackWorkspaceProps,
-  FeedbackAnalysisJobRecord,
-  FeedbackWorkbenchData,
-} from "../../types/feedback";
-import type { AttributionDetailTab, CaseDetailView, CaseDetails } from "./CasesWorkspace";
+import type { FeedbackWorkbenchData } from "../../types/feedback";
+import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
   buildSourceRows,
-  buildTaskByProposalId,
   filterBatches,
-  filterCases,
   filterSourceRows,
-  latest,
-  latestItem,
   sourceRowKey,
 } from "./selectors";
 
-export type MenuKey = "signals" | "batches" | "cases" | "evals" | "versions";
+export type MenuKey = "signals" | "batches" | "versions";
 export type RuntimeStatus = "idle" | "loading" | "ok" | "error";
+export interface WorkspaceToast {
+  id: number;
+  message: string;
+}
 
 export const visibleMenuItems: Array<{ key: MenuKey; label: string }> = [
   { key: "signals", label: "反馈信息" },
@@ -62,20 +53,25 @@ export function useFeedbackWorkspaceState({
   const [query, setQuery] = useState("");
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
   const [selectedSourceKey, setSelectedSourceKey] = useState<string | null>(null);
-  const [selectedCaseId, setSelectedCaseId] = useState<string | null>(null);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
-  const [caseDetailView, setCaseDetailView] = useState<CaseDetailView>("summary");
-  const [attributionDetailTab, setAttributionDetailTab] = useState<AttributionDetailTab>("result");
-  const [caseDetails, setCaseDetails] = useState<CaseDetails>({});
-  const [detailsLoading, setDetailsLoading] = useState(false);
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>("idle");
-  const [toast, setToast] = useState<string | null>(null);
+  const [toast, setToastState] = useState<WorkspaceToast | null>(null);
+  const setToast = useCallback<Dispatch<SetStateAction<string | null>>>((nextToast) => {
+    setToastState((current) => {
+      const currentMessage = current?.message || null;
+      const nextMessage = typeof nextToast === "function" ? nextToast(currentMessage) : nextToast;
+      if (!nextMessage) return null;
+      return {
+        id: (current?.id || 0) + 1,
+        message: nextMessage,
+      };
+    });
+  }, []);
 
   const refreshWorkbench = useCallback(async () => {
     try {
       const next = await getFeedbackWorkbenchData(clientConfig, { limit: 500 });
       setData(next);
-      setSelectedCaseId((current) => current || next.cases[0]?.feedback_case_id || null);
       setSelectedBatchId((current) => current || next.optimization_batches[0]?.batch_id || null);
     } catch (error) {
       setToast(error instanceof Error ? error.message : "反馈数据加载失败");
@@ -85,10 +81,6 @@ export function useFeedbackWorkspaceState({
   useEffect(() => {
     refreshWorkbench();
   }, [refreshWorkbench, refreshToken]);
-
-  const selectedCase = useMemo(() => {
-    return data.cases.find((item) => item.feedback_case_id === selectedCaseId) || data.cases[0] || null;
-  }, [data.cases, selectedCaseId]);
 
   const sourceRows = useMemo(() => buildSourceRows(data), [data]);
   const visibleSources = useMemo(() => filterSourceRows(sourceRows, query), [sourceRows, query]);
@@ -109,29 +101,6 @@ export function useFeedbackWorkspaceState({
     }
     return visibleBatches[0];
   }, [visibleBatches, selectedBatchId]);
-  const visibleCases = useMemo(() => filterCases(data.cases, query), [data.cases, query]);
-  const selectedCaseRuns = useMemo(() => {
-    if (!selectedCase) return [];
-    const ids = new Set(selectedCase.run_ids || []);
-    return data.runs.filter((run) => ids.has(run.run_id));
-  }, [data.runs, selectedCase]);
-  const selectedCaseProposals = useMemo(() => {
-    if (!selectedCase) return [];
-    return data.proposals.filter((proposal) => proposal.feedback_case_id === selectedCase.feedback_case_id);
-  }, [data.proposals, selectedCase]);
-  const selectedCaseTasks = useMemo(() => {
-    if (!selectedCase) return [];
-    return data.tasks.filter((task) => task.feedback_case_id === selectedCase.feedback_case_id);
-  }, [data.tasks, selectedCase]);
-  const selectedCaseExternalItems = useMemo(() => {
-    if (!selectedCase) return [];
-    return data.external_governance_items.filter((item) => item.feedback_case_id === selectedCase.feedback_case_id);
-  }, [data.external_governance_items, selectedCase]);
-  const selectedCaseEvalCases = useMemo(() => {
-    if (!selectedCase) return [];
-    return data.eval_cases.filter((item) => item.source_feedback_case_id === selectedCase.feedback_case_id);
-  }, [data.eval_cases, selectedCase]);
-  const tasksByProposalId = useMemo(() => buildTaskByProposalId(data.tasks), [data.tasks]);
 
   useEffect(() => {
     if (!visibleSources.length) {
@@ -155,47 +124,6 @@ export function useFeedbackWorkspaceState({
     });
   }, [visibleBatches]);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function loadCaseDetails() {
-      if (!selectedCase) {
-        setCaseDetails({});
-        return;
-      }
-      setDetailsLoading(true);
-      const details: CaseDetails = {};
-      try {
-        const evidenceIds = selectedCase.evidence_package_ids || [];
-        const attributionJobIds = selectedCase.attribution_job_ids || [];
-        const proposalJobIds = selectedCase.proposal_job_ids || [];
-        const attributionJobId = latest(attributionJobIds);
-        const proposalJobId = latest(proposalJobIds);
-        const [evidencePackages, attributionJobs, proposalJobs, attribution, proposal] = await Promise.all([
-          Promise.all(evidenceIds.map((id) => getEvidencePackage(clientConfig, id).catch(() => null))),
-          Promise.all(attributionJobIds.map((id) => getFeedbackAnalysisJob(clientConfig, id).catch(() => null))),
-          Promise.all(proposalJobIds.map((id) => getFeedbackAnalysisJob(clientConfig, id).catch(() => null))),
-          attributionJobId ? getAttributionOutput(clientConfig, attributionJobId).catch(() => null) : Promise.resolve(null),
-          proposalJobId ? getProposalOutput(clientConfig, proposalJobId).catch(() => null) : Promise.resolve(null),
-        ]);
-        details.evidencePackages = evidencePackages.filter(Boolean) as EvidencePackageRecord[];
-        details.attributionJobs = attributionJobs.filter(Boolean) as FeedbackAnalysisJobRecord[];
-        details.proposalJobs = proposalJobs.filter(Boolean) as FeedbackAnalysisJobRecord[];
-        details.evidence = latestItem(details.evidencePackages);
-        details.attribution = attribution;
-        details.proposal = proposal;
-        details.attributionJob = latestItem(details.attributionJobs) || null;
-        details.proposalJob = latestItem(details.proposalJobs) || null;
-        if (!cancelled) setCaseDetails(details);
-      } finally {
-        if (!cancelled) setDetailsLoading(false);
-      }
-    }
-    loadCaseDetails();
-    return () => {
-      cancelled = true;
-    };
-  }, [clientConfig, selectedCase]);
-
   async function checkRuntime() {
     try {
       setRuntimeStatus("loading");
@@ -217,14 +145,7 @@ export function useFeedbackWorkspaceState({
     selectedSourceIds,
     setSelectedSourceIds,
     setSelectedSourceKey,
-    setSelectedCaseId,
     setSelectedBatchId,
-    caseDetailView,
-    setCaseDetailView,
-    attributionDetailTab,
-    setAttributionDetailTab,
-    caseDetails,
-    detailsLoading,
     runtimeStatus,
     toast,
     setToast,
@@ -235,13 +156,5 @@ export function useFeedbackWorkspaceState({
     selectedSource,
     visibleBatches,
     selectedBatch,
-    visibleCases,
-    selectedCase,
-    selectedCaseRuns,
-    selectedCaseProposals,
-    selectedCaseTasks,
-    selectedCaseExternalItems,
-    selectedCaseEvalCases,
-    tasksByProposalId,
   };
 }

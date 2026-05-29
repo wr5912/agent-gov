@@ -5,6 +5,8 @@
 > 评审视角：面向对象、高内聚低耦合、可维护性、扩展性、灵活性、鲁棒性、代码-文档一致性
 > 评审方法：12 维并行深读智能体 → 对每条 finding 派独立对抗式校验智能体核对源码 → 主线再做事实复核（共 102 个智能体）。结构化产出 89 条，**确认 87、剔除 2**
 > 与第一轮关系：本报告取代 [`CODE_AND_DOCS_REVIEW.md`](./CODE_AND_DOCS_REVIEW.md)（R1，重构前基线）。配套治理反思见 [`AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md`](./AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md)
+> 整改注记（2026-05-30）：本文主体保留 R2 原始审查证据与行号，用作整改来源清单；部分证据路径已在后续整改中变化。当前已完成的相关变更包括：`feedback_jobs.py` 改名为 `feedback_prompts.py`；Pydantic 记录模型 `external_governance_models.py` / `feedback_compensation_models.py` 改名为 `external_governance_records.py` / `feedback_compensation_records.py`；不可达的 `CasesWorkspace.tsx`、`EvalWorkspace.tsx`、`ProposalWorkspace.tsx`、`EvidenceRunsDetails.tsx`、`AttributionDetails.tsx` 已删除，仅保留可达的批次主流程与 `AttributionResult.tsx`；profile 级 MCP 过滤与路径 hook 已落地。阅读本文时应把原始证据视为“发现时状态”，以当前代码和治理检查结果为整改准绳。
+> 治理收敛注记（2026-05-30）：R2 暴露出的机器可判定体积债已继续清理：`feedback_workbench` / `feedback_cases` / `feedback_batches` / `optimization` 路由工厂已拆成资源组注册函数；`ClaudeRuntime.run` / `ClaudeRuntime.stream` 已抽出请求上下文、查询状态与收尾记录逻辑；`AppSettings` 已移除 SQLite 迁移后不再使用的旧文件存储目录属性。后续又清理了 runtime 纯转发私有方法、统一了路由内部 `status` 参数命名、把外部治理通知改为先落库 `sending` 审计记录再发送、复用 `JOB_IN_PROGRESS_STATES` 消除在途 job 状态字面量重复、抽出反馈单 payload 构造器消除手工创建与来源创建的字段重复，将 `FeedbackJobOrchestrator` / `FeedbackEvalRunner` 迁入 `app/services/`，并将 `FeedbackStore` facade 与 `feedback_*_store.py` mixin 迁入 `app/runtime/stores/`，将 response schema、内部 record、Langfuse/外部治理适配器、prompt 构造和输出归一化分别迁入 `app/runtime/response_schemas/`、`app/runtime/records/`、`app/runtime/integrations/`、`app/runtime/prompts/`、`app/runtime/normalizers/`，使 `app/runtime` 顶层 Python 文件数从 53 收敛到 25；测试工具 `feedback_store_test_utils.__all__` 已改为显式导出清单，store 测试也已由通配导入改为显式导入。当前 `scripts/check_codex_governance.py --mode fail` 输出为 `OK: no Codex governance regressions found.`。
 
 严重度：🟧 高（架构/鲁棒性风险，应尽快整改）· 🟨 中（可维护性/一致性债，排期整改）· 🟩 低（建议项）。本轮**无架构级严重(S)问题**——R1 的 4 个上帝模块已系统性拆分。
 
@@ -29,11 +31,11 @@ R1 评审 → 治理护栏硬化 → 拆分，这条提交链（`eae5716`→`850
 
 | 维度 | R1(重构前) | R2(现状) | 主要残留风险 |
 |---|---|---|---|
-| 模块拆分(SRP) | 🟥 不及格 | 🟩 良好 | 残留"换皮上帝模块"：聚合 hook `useFeedbackWorkspaceActions` 642 行/16 入参(FC-2)、`app/runtime` 50 文件平铺包(DS-1) |
-| 内聚 | 🟧 偏低 | 🟩 较好 | `feedback_schemas.py` 把声明式 schema 与 ~500 行命令式归一化混在一起(SC-3) |
-| 耦合 | 🟧 偏高 | 🟨 一般 | profile 名仍以字面量跨 store 耦合(DS-4/RC-2)；Mixin 间隐式 `self.*` 横向调用无契约(FS-5)；编排器靠下划线魔法键(FO-3) |
+| 模块拆分(SRP) | 🟥 不及格 | 🟩 良好 | 已完成 runtime 子包拆分；`useFeedbackWorkspaceActions` 已收敛到 319 行并只保留可达主流程。剩余关注点是后续增长时继续拆领域 hook |
+| 内聚 | 🟧 偏低 | 🟩 较好 | prompt/normalizer/response schema/record 已拆出；`schemas.py` 与 `feedback_schemas.py` 作为核心契约文件保留，后续只在字段继续扩张时再拆 |
+| 耦合 | 🟧 偏高 | 🟨 一般 | profile 常量、编排器模板、状态机和服务边界已收敛；Mixin 间横向调用仍是 store 聚合实现的主要长期耦合点 |
 | 扩展性 | 🟧 偏低 | 🟨 一般 | 新增 Job 仍需复制整套 try/except(FO-2)；profile 声明的隔离策略字段无人消费(RC-1) |
-| 鲁棒性 | 🟧 偏低 | 🟧 偏低 | **状态机伪治理(dead guard)**：batch/task/case/eval_run/proposal 非法转移不被拦(SM-1/2/4)；跨事务无原子性(FS-3/4/FO-1)；apply 无幂等键(FO-1)；幂等 TOCTOU(FS-2) |
+| 鲁棒性 | 🟧 偏低 | 🟨 提升中 | 状态机 dead guard 已修复并补测试；执行应用、清理事务、外部通知、鉴权与并发去重已补关键守卫。剩余风险主要是更细粒度的跨进程锁与 schema 多轨长期治理 |
 | 安全 | 🟨 一般 | 🟨 一般 | 鉴权失败错误体不含 `error_code`，游离于域错误信封(BA-3)；401 分支无测试(TS2-4) |
 | 文档一致性 | 🟨 一般 | 🟨 一般 | `openapi.json`/README 与代码已同步；但治理与产品文档**自身**已 stale(CD-1~6) |
 | 测试覆盖 | 🟨 一般 | 🟨 一般 | 回滚/补偿覆盖扎实；但状态机非法转移、Agent 超时、鉴权、并发去重未测(TS2-1~5) |
@@ -59,7 +61,7 @@ R1 评审 → 治理护栏硬化 → 拆分，这条提交链（`eae5716`→`850
 
 ## 2. 一句话结论
 
-> **体积债已还清，但债务"换了形态存活"。** R1 的 4 个上帝模块被真实拆小、本轮无架构级严重问题；然而剩余的 5 高 + 40 中几乎全部落在"按行数数不出来"的维度。其中最危险的是 **状态机伪治理（dead guard）**：项目在 R1 后新增了 `state_machines.py` 并立下"含状态字段实体必须有集中状态机"的红线（即 R1 的 [F-S4]），但 `batch`/`task` 只登记了状态集合却没有转移表，`validate_transition` 在 `transitions is None` 时**静默 `return`**，放行任意非法转移；`case`/`eval_run`/`proposal` 三类有真实生命周期的实体则完全绕过状态机。这比"没有状态机"更危险——调用方（`feedback_batch_store.py:308`、`feedback_task_store.py:143`）与产品文档都误以为已有守卫。
+> **体积债已还清，R2 暴露出的最高风险已完成代码整改。** R1 的 4 个上帝模块被真实拆小，本轮 R2 又继续补齐了状态机转移表、case/eval_run/proposal 生命周期守卫、执行应用幂等与补偿留痕、外部通知审计、Agent profile 策略落地、OpenAPI 类型单源、不可达前端分支删除与 runtime 子包拆分。本文下方 finding 保留原始审查证据；阅读时应以顶部整改注记与第 16 节当前状态为准。
 
 ---
 
@@ -785,26 +787,26 @@ R1 评审 → 治理护栏硬化 → 拆分，这条提交链（`eae5716`→`850
 
 ### P0 · 立即（鲁棒性红线，做了一半比不做更危险）
 
-1. **修复状态机 dead guard**：为 `batch`/`task` 在 `_TRANSITIONS` 补全转移表；并把 `validate_transition` 中 `transitions is None → return`（`state_machines.py:115-117`）改为**显式抛配置错误**，杜绝"登记了状态集却静默放行"。（SM-1 / FS-1 / DS-2 / TS2-1）
-2. **状态机全实体覆盖**：将 `case`/`eval_run`/`proposal` 纳入 `state_machines.py`，并把各 store 直写 `status` 的路径统一收口到带 `validate_transition` 的 helper（消除 `feedback_job_store.py:356` 等绕过点）。（SM-2 / SM-4）
-3. **执行应用幂等与原子性**：`execution_application` 的"写文件 + 落库"加幂等键/锁，避免并发重复应用；补偿落库与 `fail_execution_job` 失败不得静默吞（至少落告警/留痕）。（FO-1 / FO-5）
-4. **收紧 `size-budget.yaml` 过期 baseline**（详见反思 R2 §4）：三个已拆分文件的 `max_lines` 仍是拆分前的 4648/1302/3072，等于给它们留了反弹回上帝模块的后门。
+1. **[已完成] 修复状态机 dead guard**：`batch` / `task` 已补完整转移表；`validate_transition` 对缺失转移表改为显式错误；`tests/test_state_machines.py` 已覆盖非法转移。（SM-1 / FS-1 / DS-2 / TS2-1）
+2. **[已完成] 状态机全实体覆盖**：`case` / `eval_run` / `proposal` / `external_governance_item` 已纳入 `state_machines.py`，关键写入路径统一调用 `validate_transition`。（SM-2 / SM-4）
+3. **[已完成] 执行应用幂等与原子性**：`ExecutionApplicationService` 已加应用锁、ready 前置校验、基线版本校验、应用后快照、失败补偿记录与日志留痕；批次路由已委派 `run_and_apply_execution_job`。（FO-1 / FO-5 / BA-1）
+4. **[已完成] 收紧过期体积基线**：当前仓库不再使用 `.codex/size-budget.yaml`；治理硬门统一由 `scripts/check_codex_governance.py --mode fail` 对比 git base 检查行数、函数、类、路由和状态机缺表。
 
 ### P1 · 近期（一致性 / 可维护性 / 测试纵深）
 
-5. **Schema 单源**：同一实体的 Output/Record/Response 三轨手写收敛为单一 Pydantic 派生；修 `evidence_ref` 三处 `required` 不一致；落地 CI 用 `app.openapi()` 生成 `frontend/src/types/api.ts`，删手写 `ChatRequest`/`ChatResponse`。（SC-1/2/6 / FT-1/2）
-6. **拆"换皮上帝模块"**：`useFeedbackWorkspaceActions` 按领域拆为 `useBatchActions`/`useProposalActions`/… 并抽 `runAction(id, fn)` 包装器消除 22 处 try/catch/finally/refresh 样板。（FC-2）
-7. **编排器去样板**：四个 `run_*_job` 抽公共模板，新增 Job 类型不再复制整套 try/except。（FO-2）
-8. **事务边界**：跨多事务的清理（`discard_current_attribution`/`reset_batch_attribution`）原子化；禁止在事务块内执行 `rmtree` 等不可回滚副作用。（FS-3 / FS-4）
-9. **补测试纵深**：状态机非法转移、编排器 `AGENT_TIMEOUT`/`AGENT_RUNTIME_ERROR`、鉴权 401、并发 job 去重。（TS2-1~5）
-10. **清死代码**：`ClaudeRuntime` 死委派、前端 CasesPanel/EvalPanel/ProposalsPanel 不可达分支、重名死类、facade 兼容属性。（RC-3/8 · FC-1/3 · SC-4/5 · DS-7 · FT-1）
+5. **[已完成主体] Schema 单源**：前端 `ChatRequest` 已派生自 OpenAPI，手写 `ChatResponse` 已删除；response schema / record / output normalizer 已拆包，`evidence_refs` 校验路径统一。`schemas.py` 与 `feedback_schemas.py` 保留为后端核心契约文件。（SC-1/2/6 / FT-1/2）
+6. **[已完成收敛] 拆"换皮上帝模块"**：不可达 Cases/Eval/Proposal 旧面板已删除；`useFeedbackWorkspaceActions` 从 642 行收敛到 319 行，只保留反馈信息、批次、执行、回归主流程动作。若未来动作再次增长，再按领域拆 hook。（FC-2）
+7. **[已完成] 编排器去样板**：`FeedbackJobOrchestrator` 已抽 `_run_profile_json_job`，四类 Agent job 共享异常映射、离线回退、schema 期望与完成/失败收口。（FO-2）
+8. **[已完成] 事务边界**：`discard_current_attribution` / `reset_batch_attribution` 已在单事务内收集 DB 变更，提交后再清理临时目录，避免事务内 `rmtree`。（FS-3 / FS-4）
+9. **[已完成] 补测试纵深**：已补状态机非法转移、Agent 编排异常、鉴权 401、并发 job 去重、执行应用与回滚补偿相关测试。（TS2-1~5）
+10. **[已完成] 清死代码**：`ClaudeRuntime` 死委派、不可达前端面板、旧 debug 脚本、重名/失配模型与旧 facade 兼容面已清理。（RC-3/8 · FC-1/3 · SC-4/5 · DS-7 · FT-1）
 
 ### P2 · 结构与可导航性
 
-11. **`app/runtime` 拆子包**：`stores/` `schemas/` `models/` `orchestration/` `integrations/`，解决 50 文件平铺。（DS-1）
-12. **协调器归位**：`FeedbackJobOrchestrator` 等同质协调器从 `runtime` 移入 `services`，厘清 runtime/services 边界。（DS-3）
-13. **统一命名约定**（`*_models` vs `*_schemas` vs `*Model`；`feedback_jobs.py` 名实不符）、移除根目录一次性调试脚本 `main_check_attribution_agent.py`。（DS-5/6/8）
-14. **文档校准**：`PRODUCT_ADJUSTMENT_PLAN` 状态机命名/路由清单、架构文档目录树与 §18 接口清单，统一以 `state_machines.py` 与 `openapi.json` 为权威。（CD-1~6）
+11. **[已完成] `app/runtime` 拆子包**：`stores/`、`response_schemas/`、`records/`、`integrations/`、`prompts/`、`normalizers/` 已落地，`app/runtime` 顶层 Python 文件数已收敛到 25。（DS-1）
+12. **[已完成] 协调器归位**：`FeedbackJobOrchestrator` / `FeedbackEvalRunner` 已移入 `services`；`FeedbackJobFactory` 保留在 store 侧作为持久化 job row 工厂。（DS-3）
+13. **[已完成] 统一命名约定**：`*_models.py` 业务记录已改为 `*_records.py`，`feedback_jobs.py` 已改为 `prompts/feedback_prompts.py`，根目录一次性调试脚本已删除。（DS-5/6/8）
+14. **[已完成] 文档校准**：`PRODUCT_ADJUSTMENT_PLAN`、架构文档目录树、README 与 OpenAPI/types 已同步到当前路由、状态机和目录结构。（CD-1~6）
 
 ---
 

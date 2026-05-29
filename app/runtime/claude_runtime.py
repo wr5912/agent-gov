@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from contextlib import nullcontext
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .agent_profiles import (
@@ -11,20 +11,46 @@ from .agent_profiles import (
     AgentRuntimeProfile,
     build_profiles,
 )
-from .agent_job_runner import AgentJobRunner
+from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_loader import load_programmatic_agents
 from .agent_version_store import AgentVersionStore
-from .feedback_eval_runner import FeedbackEvalRunner
-from .feedback_job_orchestrator import FeedbackJobOrchestrator
-from .feedback_store import FeedbackStore, utc_now
+from .errors import RuntimeUnavailableError
+from .runtime_db import utc_now
+from .stores.feedback_store import FeedbackStore
 from .message_utils import extract_text, message_event_name, to_plain
+from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
 from .runtime_activity import RuntimeActivityExtractor
-from .runtime_langfuse import RuntimeLangfuseClient, ensure_langfuse_otel_compat
+from .integrations.runtime_langfuse import RuntimeLangfuseClient, ensure_langfuse_otel_compat
 from .schemas import ChatRequest
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
+from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
+from app.services.feedback_eval_runner import FeedbackEvalRunner
+
+
+@dataclass
+class RuntimeRequestContext:
+    session: LocalSession
+    run_id: str
+    agent_version_id: Optional[str]
+    created_at: str
+    prompt: str
+    telemetry_input: dict[str, Any]
+    langfuse_trace_id: Optional[str] = None
+    langfuse_trace_url: Optional[str] = None
+
+
+@dataclass
+class RuntimeQueryState:
+    sdk_session_id: Optional[str]
+    messages: list[dict[str, Any]] = field(default_factory=list)
+    answer_parts: list[str] = field(default_factory=list)
+    usage: Any = None
+    total_cost_usd: Optional[float] = None
+    stop_reason: Optional[str] = None
+    errors: list[str] = field(default_factory=list)
 
 
 class ClaudeRuntime:
@@ -92,10 +118,6 @@ class ClaudeRuntime:
         parts.append(req.message)
         return "\n\n".join(parts)
 
-    async def _single_prompt_stream(self, prompt: str) -> AsyncIterator[dict[str, Any]]:
-        async for item in AgentJobRunner.single_prompt_stream(prompt):
-            yield item
-
     def _skills_option(self, req: ChatRequest) -> Any:
         skills_mode = req.skills_mode or self.settings.default_skills_mode
         if skills_mode == "all":
@@ -108,17 +130,10 @@ class ClaudeRuntime:
             return self.settings.default_skills
         return None
 
-    def _result_errors(self, msg: Any) -> list[str]:
-        return AgentJobRunner.result_errors(msg)
-
     def _should_suppress_exception(self, exc: Exception, errors: list[str]) -> bool:
         if not errors:
             return False
-        text = str(exc)
-        return text.startswith("Claude Code returned an error result:")
-
-    def _dedupe_answer_parts(self, parts: list[str]) -> str:
-        return AgentJobRunner.dedupe_answer_parts(parts)
+        return isinstance(exc, ClaudeCodeResultError)
 
     def _request_telemetry_input(
         self,
@@ -242,44 +257,16 @@ class ClaudeRuntime:
 
     def _raise_if_version_maintenance(self) -> None:
         if self.agent_version_store is not None and self.agent_version_store.is_maintenance_active():
-            raise RuntimeError("Agent version maintenance is in progress; retry after restore completes.")
-
-    def _agent_activity_payload(self, req: ChatRequest, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        return self.activity_extractor.agent_activity_payload(req, messages)
-
-    def _usage_details(self, usage: Any) -> Optional[dict[str, int]]:
-        return self.activity_extractor.usage_details(usage)
-
-    def _cost_details(self, total_cost_usd: Optional[float]) -> Optional[dict[str, float]]:
-        return self.activity_extractor.cost_details(total_cost_usd)
-
-    def _get_langfuse_client(self) -> Any | None:
-        return self.langfuse.get_client()
-
-    def _current_langfuse_trace_ref(self) -> tuple[Optional[str], Optional[str]]:
-        return self.langfuse.current_trace_ref()
+            raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.")
 
     def fetch_langfuse_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
         return self.langfuse.fetch_trace(trace_id)
 
-    def _start_langfuse_observation(self, **kwargs: Any) -> Any:
-        client = self._get_langfuse_client()
-        if client is None:
-            return nullcontext(None)
-        try:
-            return client.start_as_current_observation(**kwargs)
-        except Exception as exc:
-            print(f"[WARN] failed to start Langfuse observation: {exc}", flush=True)
-            return nullcontext(None)
-
-    def _update_langfuse_observation(self, observation: Any, **kwargs: Any) -> None:
-        self.langfuse.update_observation(observation, **kwargs)
-
-    def _set_langfuse_trace_io(self, observation: Any, *, input: Any, output: Any) -> None:
-        self.langfuse.set_trace_io(observation, input=input, output=output)
+    def _main_observation_name(self) -> str:
+        return self.profiles[MAIN_AGENT_PROFILE].langfuse_observation_name
 
     def _flush_langfuse(self) -> None:
-        client = self._get_langfuse_client()
+        client = self.langfuse.get_client()
         if client is None:
             return
         try:
@@ -289,7 +276,7 @@ class ClaudeRuntime:
 
     def _profile_env(self, profile: AgentRuntimeProfile) -> dict[str, str]:
         env = dict(os.environ)
-        env.update(self._build_langfuse_env())
+        env.update(self.langfuse.build_env())
         env.update(self.settings.claude_env)
         env["HOME"] = str(profile.claude_root)
         env["CLAUDE_CONFIG_DIR"] = str(profile.claude_config_dir)
@@ -308,13 +295,6 @@ class ClaudeRuntime:
             env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
         if self.settings.provider_api_url:
             env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
-
-        agents = None
-        if self.settings.enable_programmatic_agents:
-            try:
-                agents = load_programmatic_agents(profile.workspace_dir, profile.claude_config_dir)
-            except Exception as exc:  # Do not prevent service use because of malformed agent file.
-                print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
 
         system_append = "\n\n".join(
             part for part in [self.settings.claude_system_append, req.system_append] if part
@@ -343,14 +323,14 @@ class ClaudeRuntime:
             "system_prompt": system_prompt,
             "env": env,
             "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": str(profile.mcp_config_path) if profile.mcp_config_path.exists() else None,
+            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers),
             "strict_mcp_config": self.settings.strict_mcp_config,
             "skills": self._skills_option(req),
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": self.settings.include_partial_messages,
-            "hooks": build_default_hooks() if self.settings.enable_policy_hooks else None,
+            "hooks": build_default_hooks(profile) if self.settings.enable_policy_hooks else None,
             "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
-            "agents": agents,
+            "agents": self._load_main_profile_agents(profile),
             "cli_path": self.settings.claude_cli_path,
             "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
@@ -373,8 +353,6 @@ class ClaudeRuntime:
         else:
             # If caller provides a UUID-looking session id, use it for the first Claude session.
             # Invalid IDs are simply ignored by the SDK if omitted.
-            import uuid
-
             try:
                 uuid.UUID(session.session_id)
                 kwargs["session_id"] = session.session_id
@@ -385,8 +363,14 @@ class ClaudeRuntime:
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return ClaudeAgentOptions(**kwargs)
 
-    def _build_job_options(self, profile: AgentRuntimeProfile) -> Any:
-        return self.job_runner.build_options(profile)
+    def _load_main_profile_agents(self, profile: AgentRuntimeProfile) -> Any | None:
+        if not self.settings.enable_programmatic_agents:
+            return None
+        try:
+            return load_programmatic_agents(profile.workspace_dir, profile.claude_config_dir)
+        except Exception as exc:  # Do not prevent service use because of malformed agent file.
+            print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
+            return None
 
     def _provider_configured(self) -> bool:
         return bool(self.settings.provider_api_key)
@@ -408,28 +392,6 @@ class ClaudeRuntime:
             job_type=job_type,
             job_input=job_input,
         )
-
-    def _direct_schema_candidate(self, raw_text: str, expected_schema_version: str) -> dict[str, Any] | None:
-        return AgentJobRunner.direct_schema_candidate(raw_text, expected_schema_version)
-
-    async def _format_agent_text(
-        self,
-        *,
-        job_type: str,
-        raw_text: str,
-        job_input: dict[str, Any],
-        expected_schema_version: str,
-    ) -> dict[str, Any] | None:
-        self.job_runner.output_formatter = self.output_formatter
-        return await self.job_runner.format_agent_text(
-            job_type=job_type,
-            raw_text=raw_text,
-            job_input=job_input,
-            expected_schema_version=expected_schema_version,
-        )
-
-    def _raw_agent_text_payload(self, raw_text: str, expected_schema_version: str) -> dict[str, Any]:
-        return AgentJobRunner.raw_agent_text_payload(raw_text, expected_schema_version)
 
     async def run_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
         if self.job_orchestrator is None:
@@ -486,306 +448,252 @@ class ClaudeRuntime:
             source=source,
         )
 
-    def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[dict[str, Any]]:
-        if self.eval_runner is None:
-            return []
-        return self.eval_runner._selected_eval_cases(eval_case_ids)
+    def _new_runtime_request_context(self, req: ChatRequest) -> RuntimeRequestContext:
+        self._raise_if_version_maintenance()
+        session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
+        run_id = str(uuid.uuid4())
+        agent_version_id = self._current_agent_version_id()
+        created_at = utc_now()
+        prompt = self._build_prompt(req)
+        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
+        return RuntimeRequestContext(
+            session=session,
+            run_id=run_id,
+            agent_version_id=agent_version_id,
+            created_at=created_at,
+            prompt=prompt,
+            telemetry_input=telemetry_input,
+        )
 
-    def _evaluate_eval_case(self, eval_case: dict[str, Any], result: dict[str, Any]) -> tuple[str, float, list[dict[str, Any]]]:
-        if self.eval_runner is None:
-            return "failed", 0.0, []
-        return self.eval_runner._evaluate_eval_case(eval_case, result)
+    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str) -> dict[str, Any]:
+        return {
+            "api_session_id": context.session.session_id,
+            "run_id": context.run_id,
+            "agent_version_id": context.agent_version_id,
+            "mode": mode,
+        }
 
-    def _eval_tool_names(self, activity: dict[str, Any]) -> list[str]:
-        return FeedbackEvalRunner._eval_tool_names(activity)
+    def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> dict[str, Any]:
+        return {
+            "run_id": context.run_id,
+            "agent_version_id": context.agent_version_id,
+            "prompt": context.prompt,
+            "model": req.model or self.settings.agent_model,
+        }
 
-    def _build_langfuse_env(self) -> dict[str, str]:
-        return self.langfuse.build_env()
+    def _track_query_message(
+        self,
+        msg: Any,
+        state: RuntimeQueryState,
+        result_message_type: type,
+    ) -> tuple[str, str, dict[str, Any], bool, list[str]]:
+        text = extract_text(msg)
+        plain = to_plain(msg)
+        event = message_event_name(msg)
+        plain["event"] = event
+        state.messages.append(plain)
+        if text:
+            state.answer_parts.append(text)
+
+        candidate_session_id = getattr(msg, "session_id", None)
+        if candidate_session_id:
+            state.sdk_session_id = candidate_session_id
+
+        if not isinstance(msg, result_message_type):
+            return event, text, plain, False, []
+        state.usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
+        state.total_cost_usd = getattr(msg, "total_cost_usd", None)
+        state.stop_reason = getattr(msg, "stop_reason", None)
+        result_errors = AgentJobRunner.result_errors(msg)
+        state.errors.extend(result_errors)
+        return event, text, plain, True, result_errors
+
+    def _runtime_output_from_state(
+        self,
+        req: ChatRequest,
+        context: RuntimeRequestContext,
+        state: RuntimeQueryState,
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        answer = AgentJobRunner.dedupe_answer_parts(state.answer_parts)
+        agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
+        output = self._runtime_output_payload(
+            run_id=context.run_id,
+            agent_version_id=context.agent_version_id,
+            session=context.session,
+            sdk_session_id=state.sdk_session_id,
+            alert_id=req.alert_id,
+            case_id=req.case_id,
+            answer=answer,
+            messages=state.messages,
+            agent_activity=agent_activity,
+            usage=state.usage,
+            total_cost_usd=state.total_cost_usd,
+            stop_reason=state.stop_reason,
+            errors=state.errors,
+        )
+        return answer, agent_activity, output
+
+    def _update_runtime_observations(self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: dict[str, Any]) -> None:
+        level = "ERROR" if state.errors else "DEFAULT"
+        status_message = "\n".join(state.errors) if state.errors else None
+        self.langfuse.update_observation(
+            generation,
+            output=output,
+            usage_details=self.activity_extractor.usage_details(state.usage),
+            cost_details=self.activity_extractor.cost_details(state.total_cost_usd),
+            level=level,
+            status_message=status_message,
+        )
+        self.langfuse.update_observation(
+            root_span,
+            input=context.telemetry_input,
+            output=output,
+            level=level,
+            status_message=status_message,
+        )
+        self.langfuse.set_trace_io(root_span, input=context.telemetry_input, output=output)
+
+    def _complete_runtime_request(
+        self,
+        req: ChatRequest,
+        context: RuntimeRequestContext,
+        state: RuntimeQueryState,
+        answer: str,
+        agent_activity: dict[str, Any],
+    ) -> None:
+        if state.sdk_session_id:
+            context.session.sdk_session_id = state.sdk_session_id
+        context.session.turns += 1
+        if not context.session.title:
+            context.session.title = req.message[:80]
+        self.session_store.save(context.session)
+        self._record_feedback_run(
+            run_id=context.run_id,
+            agent_version_id=context.agent_version_id,
+            session=context.session,
+            sdk_session_id=state.sdk_session_id,
+            req=req,
+            answer=answer,
+            messages=state.messages,
+            agent_activity=agent_activity,
+            usage=state.usage,
+            total_cost_usd=state.total_cost_usd,
+            stop_reason=state.stop_reason,
+            errors=state.errors,
+            created_at=context.created_at,
+            completed_at=utc_now(),
+            langfuse_trace_id=context.langfuse_trace_id,
+            langfuse_trace_url=context.langfuse_trace_url,
+        )
+
+    def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "run_id": context.run_id,
+            "agent_version_id": context.agent_version_id,
+            "session_id": context.session.session_id,
+            "sdk_session_id": context.session.sdk_session_id,
+            "answer": answer,
+            "messages": state.messages,
+            "agent_activity": agent_activity,
+            "usage": state.usage,
+            "total_cost_usd": state.total_cost_usd,
+            "stop_reason": state.stop_reason,
+            "errors": state.errors,
+        }
 
     async def run(self, req: ChatRequest) -> dict[str, Any]:
         from claude_agent_sdk import ResultMessage, query
 
-        self._raise_if_version_maintenance()
-        session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
-        run_id = str(uuid.uuid4())
-        agent_version_id = self._current_agent_version_id()
-        created_at = utc_now()
-        prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
-        messages: list[dict[str, Any]] = []
-        answer_parts: list[str] = []
-        usage: Optional[dict[str, Any]] = None
-        total_cost_usd: Optional[float] = None
-        stop_reason: Optional[str] = None
-        errors: list[str] = []
-        sdk_session_id: Optional[str] = session.sdk_session_id
-        langfuse_trace_id: Optional[str] = None
-        langfuse_trace_url: Optional[str] = None
-
-        with self._start_langfuse_observation(
+        context = self._new_runtime_request_context(req)
+        state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
+        with self.langfuse.start_observation(
             as_type="span",
-            name="runtime.chat",
-            input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "run_id": run_id, "agent_version_id": agent_version_id, "mode": "non_stream"},
+            name=self._main_observation_name(),
+            input=context.telemetry_input,
+            metadata=self._runtime_observation_metadata(context, "non_stream"),
         ) as root_span:
-            langfuse_trace_id, langfuse_trace_url = self._current_langfuse_trace_ref()
-            with self._start_langfuse_observation(
+            context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
+            with self.langfuse.start_observation(
                 as_type="generation",
-                name="runtime.claude_sdk_query",
-                input={"run_id": run_id, "agent_version_id": agent_version_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
+                name=f"{self._main_observation_name()}.claude_sdk_query",
+                input=self._generation_input(req, context),
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
-                    options = self._build_options(req, session)
-                    async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
-                        plain = to_plain(msg)
-                        plain["event"] = message_event_name(msg)
-                        messages.append(plain)
-                        text = extract_text(msg)
-                        if text:
-                            answer_parts.append(text)
-
-                        candidate_session_id = getattr(msg, "session_id", None)
-                        if candidate_session_id:
-                            sdk_session_id = candidate_session_id
-
-                        if isinstance(msg, ResultMessage):
-                            usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
-                            total_cost_usd = getattr(msg, "total_cost_usd", None)
-                            stop_reason = getattr(msg, "stop_reason", None)
-                            errors.extend(self._result_errors(msg))
+                    options = self._build_options(req, context.session)
+                    stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                    async for msg in query(prompt=stream, options=options):
+                        self._track_query_message(msg, state, ResultMessage)
                 except Exception as exc:
-                    if not self._should_suppress_exception(exc, errors):
-                        errors.append(f"{exc.__class__.__name__}: {exc}")
+                    if not self._should_suppress_exception(exc, state.errors):
+                        state.errors.append(f"{exc.__class__.__name__}: {exc}")
 
-                answer = self._dedupe_answer_parts(answer_parts)
-                agent_activity = self._agent_activity_payload(req, messages)
-                output = self._runtime_output_payload(
-                    run_id=run_id,
-                    agent_version_id=agent_version_id,
-                    session=session,
-                    sdk_session_id=sdk_session_id,
-                    alert_id=req.alert_id,
-                    case_id=req.case_id,
-                    answer=answer,
-                    messages=messages,
-                    agent_activity=agent_activity,
-                    usage=usage,
-                    total_cost_usd=total_cost_usd,
-                    stop_reason=stop_reason,
-                    errors=errors,
-                )
-                self._update_langfuse_observation(
-                    generation,
-                    output=output,
-                    usage_details=self._usage_details(usage),
-                    cost_details=self._cost_details(total_cost_usd),
-                    level="ERROR" if errors else "DEFAULT",
-                    status_message="\n".join(errors) if errors else None,
-                )
-            self._update_langfuse_observation(
-                root_span,
-                input=telemetry_input,
-                output=output,
-                level="ERROR" if errors else "DEFAULT",
-                status_message="\n".join(errors) if errors else None,
-            )
-            self._set_langfuse_trace_io(
-                root_span,
-                input=telemetry_input,
-                output=output,
-            )
+                answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
+                self._update_runtime_observations(root_span, generation, context, state, output)
         self._flush_langfuse()
-
-        if sdk_session_id:
-            session.sdk_session_id = sdk_session_id
-        session.turns += 1
-        if not session.title:
-            session.title = req.message[:80]
-        self.session_store.save(session)
-        completed_at = utc_now()
-        self._record_feedback_run(
-            run_id=run_id,
-            agent_version_id=agent_version_id,
-            session=session,
-            sdk_session_id=sdk_session_id,
-            req=req,
-            answer=answer,
-            messages=messages,
-            agent_activity=agent_activity,
-            usage=usage,
-            total_cost_usd=total_cost_usd,
-            stop_reason=stop_reason,
-            errors=errors,
-            created_at=created_at,
-            completed_at=completed_at,
-            langfuse_trace_id=langfuse_trace_id,
-            langfuse_trace_url=langfuse_trace_url,
-        )
-        return {
-            "run_id": run_id,
-            "agent_version_id": agent_version_id,
-            "session_id": session.session_id,
-            "sdk_session_id": session.sdk_session_id,
-            "answer": answer,
-            "messages": messages,
-            "agent_activity": agent_activity,
-            "usage": usage,
-            "total_cost_usd": total_cost_usd,
-            "stop_reason": stop_reason,
-            "errors": errors,
-        }
+        self._complete_runtime_request(req, context, state, answer, agent_activity)
+        return self._run_response(context, state, answer, agent_activity)
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[dict[str, Any]]:
         from claude_agent_sdk import ResultMessage, query
 
-        self._raise_if_version_maintenance()
-        session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
-        run_id = str(uuid.uuid4())
-        agent_version_id = self._current_agent_version_id()
-        created_at = utc_now()
-        prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
-        sdk_session_id: Optional[str] = session.sdk_session_id
-        messages: list[dict[str, Any]] = []
-        answer_parts: list[str] = []
-        usage: Any = None
-        total_cost_usd: Optional[float] = None
-        stop_reason: Optional[str] = None
-        errors: list[str] = []
-        langfuse_trace_id: Optional[str] = None
-        langfuse_trace_url: Optional[str] = None
-
-        with self._start_langfuse_observation(
+        context = self._new_runtime_request_context(req)
+        state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
+        with self.langfuse.start_observation(
             as_type="span",
-            name="runtime.chat",
-            input=telemetry_input,
-            metadata={"api_session_id": session.session_id, "run_id": run_id, "agent_version_id": agent_version_id, "mode": "stream"},
+            name=self._main_observation_name(),
+            input=context.telemetry_input,
+            metadata=self._runtime_observation_metadata(context, "stream"),
         ) as root_span:
-            langfuse_trace_id, langfuse_trace_url = self._current_langfuse_trace_ref()
+            context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
             yield {
                 "event": "session",
                 "data": {
-                    "run_id": run_id,
-                    "agent_version_id": agent_version_id,
-                    "session_id": session.session_id,
-                    "sdk_session_id": session.sdk_session_id,
+                    "run_id": context.run_id,
+                    "agent_version_id": context.agent_version_id,
+                    "session_id": context.session.session_id,
+                    "sdk_session_id": context.session.sdk_session_id,
                     "alert_id": req.alert_id,
                     "case_id": req.case_id,
                 },
             }
-            with self._start_langfuse_observation(
+            with self.langfuse.start_observation(
                 as_type="generation",
-                name="runtime.claude_sdk_query",
-                input={"run_id": run_id, "agent_version_id": agent_version_id, "prompt": prompt, "model": req.model or self.settings.agent_model},
+                name=f"{self._main_observation_name()}.claude_sdk_query",
+                input=self._generation_input(req, context),
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
-                    options = self._build_options(req, session)
-                    async for msg in query(prompt=self._single_prompt_stream(prompt), options=options):
-                        text = extract_text(msg)
-                        plain = to_plain(msg)
-                        event = message_event_name(msg)
-                        plain["event"] = event
-                        messages.append(plain)
-                        if text:
-                            answer_parts.append(text)
+                    options = self._build_options(req, context.session)
+                    stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                    async for msg in query(prompt=stream, options=options):
+                        event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
                         yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
-
-                        candidate_session_id = getattr(msg, "session_id", None)
-                        if candidate_session_id:
-                            sdk_session_id = candidate_session_id
-
-                        if isinstance(msg, ResultMessage):
-                            usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
-                            total_cost_usd = getattr(msg, "total_cost_usd", None)
-                            stop_reason = getattr(msg, "stop_reason", None)
-                            result_errors = self._result_errors(msg)
-                            errors.extend(result_errors)
-                            agent_activity = self._agent_activity_payload(req, messages)
+                        if is_result:
+                            agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
                             yield {
                                 "event": "result",
                                 "data": {
-                                    "session_id": session.session_id,
-                                    "sdk_session_id": sdk_session_id,
-                                    "run_id": run_id,
-                                    "agent_version_id": agent_version_id,
+                                    "session_id": context.session.session_id,
+                                    "sdk_session_id": state.sdk_session_id,
+                                    "run_id": context.run_id,
+                                    "agent_version_id": context.agent_version_id,
                                     "alert_id": req.alert_id,
                                     "case_id": req.case_id,
                                     "agent_activity": agent_activity,
-                                    "usage": usage,
-                                    "total_cost_usd": total_cost_usd,
-                                    "stop_reason": stop_reason,
+                                    "usage": state.usage,
+                                    "total_cost_usd": state.total_cost_usd,
+                                    "stop_reason": state.stop_reason,
                                     "errors": result_errors,
                                 },
                             }
                 except Exception as exc:
-                    if not self._should_suppress_exception(exc, errors):
-                        errors.append(f"{exc.__class__.__name__}: {exc}")
-                        yield {"event": "error", "data": {"errors": errors}}
+                    if not self._should_suppress_exception(exc, state.errors):
+                        state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                        yield {"event": "error", "data": {"errors": state.errors}}
                 finally:
-                    if sdk_session_id:
-                        session.sdk_session_id = sdk_session_id
-                    session.turns += 1
-                    if not session.title:
-                        session.title = req.message[:80]
-                    self.session_store.save(session)
-
-                    answer = self._dedupe_answer_parts(answer_parts)
-                    agent_activity = self._agent_activity_payload(req, messages)
-                    output = self._runtime_output_payload(
-                        run_id=run_id,
-                        agent_version_id=agent_version_id,
-                        session=session,
-                        sdk_session_id=sdk_session_id,
-                        alert_id=req.alert_id,
-                        case_id=req.case_id,
-                        answer=answer,
-                        messages=messages,
-                        agent_activity=agent_activity,
-                        usage=usage,
-                        total_cost_usd=total_cost_usd,
-                        stop_reason=stop_reason,
-                        errors=errors,
-                    )
-                    completed_at = utc_now()
-                    self._record_feedback_run(
-                        run_id=run_id,
-                        agent_version_id=agent_version_id,
-                        session=session,
-                        sdk_session_id=sdk_session_id,
-                        req=req,
-                        answer=answer,
-                        messages=messages,
-                        agent_activity=agent_activity,
-                        usage=usage,
-                        total_cost_usd=total_cost_usd,
-                        stop_reason=stop_reason,
-                        errors=errors,
-                        created_at=created_at,
-                        completed_at=completed_at,
-                        langfuse_trace_id=langfuse_trace_id,
-                        langfuse_trace_url=langfuse_trace_url,
-                    )
-                    self._update_langfuse_observation(
-                        generation,
-                        output=output,
-                        usage_details=self._usage_details(usage),
-                        cost_details=self._cost_details(total_cost_usd),
-                        level="ERROR" if errors else "DEFAULT",
-                        status_message="\n".join(errors) if errors else None,
-                    )
-                    self._update_langfuse_observation(
-                        root_span,
-                        input=telemetry_input,
-                        output=output,
-                        level="ERROR" if errors else "DEFAULT",
-                        status_message="\n".join(errors) if errors else None,
-                    )
-                    self._set_langfuse_trace_io(
-                        root_span,
-                        input=telemetry_input,
-                        output=output,
-                    )
+                    answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
+                    self._complete_runtime_request(req, context, state, answer, agent_activity)
+                    self._update_runtime_observations(root_span, generation, context, state, output)
                     yield {"event": "done", "data": "[DONE]"}
         self._flush_langfuse()

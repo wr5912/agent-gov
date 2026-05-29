@@ -18,6 +18,9 @@ import type {
   SkillInfo,
   StreamEnvelope,
 } from "../types/runtime";
+import { isRecord } from "../utils/records";
+
+const STREAM_IDLE_TIMEOUT_MS = 60_000;
 
 export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");
@@ -111,45 +114,79 @@ export async function streamChat(
   handlers: StreamChatHandlers,
   signal?: AbortSignal,
 ): Promise<void> {
-  const res = await fetch(makeUrl(config, "/api/chat/stream"), {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      ...authHeaders(config),
-    },
-    body: JSON.stringify(payload),
-    signal,
-  });
-
-  if (!res.ok || !res.body) {
-    const detail = await readError(res);
-    throw new Error(detail || "Failed to start stream");
+  const controller = new AbortController();
+  let timedOut = false;
+  let timeoutId = window.setTimeout(() => {
+    timedOut = true;
+    controller.abort("timeout");
+  }, STREAM_IDLE_TIMEOUT_MS);
+  const resetIdleTimeout = () => {
+    window.clearTimeout(timeoutId);
+    timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort("timeout");
+    }, STREAM_IDLE_TIMEOUT_MS);
+  };
+  const abortFromCaller = () => controller.abort(signal?.reason || "aborted");
+  if (signal?.aborted) {
+    window.clearTimeout(timeoutId);
+    throw new Error("Stream request was aborted");
   }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const events = buffer.split("\n\n");
-      buffer = events.pop() || "";
-      for (const rawEvent of events) {
-        const envelope = parseSse(rawEvent);
-        if (envelope) dispatchEnvelope(envelope, handlers);
-      }
+    const res = await fetch(makeUrl(config, "/api/chat/stream"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        ...authHeaders(config),
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!res.ok || !res.body) {
+      const detail = await readError(res);
+      throw new Error(detail || "Failed to start stream");
     }
 
-    if (buffer.trim()) {
-      const envelope = parseSse(buffer);
-      if (envelope) dispatchEnvelope(envelope, handlers);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        resetIdleTimeout();
+        buffer += decoder.decode(value, { stream: true });
+        const events = buffer.split("\n\n");
+        buffer = events.pop() || "";
+        for (const rawEvent of events) {
+          const envelope = parseSse(rawEvent);
+          if (envelope) dispatchEnvelope(envelope, handlers);
+        }
+      }
+
+      if (buffer.trim()) {
+        const envelope = parseSse(buffer);
+        if (envelope) dispatchEnvelope(envelope, handlers);
+      }
+    } finally {
+      reader.releaseLock();
     }
+  } catch (error) {
+    if (timedOut) {
+      throw new Error(`Stream request timed out after ${STREAM_IDLE_TIMEOUT_MS / 1000}s without data`);
+    }
+    if (signal?.aborted) {
+      throw new Error("Stream request was aborted");
+    }
+    throw error;
   } finally {
-    reader.releaseLock();
+    window.clearTimeout(timeoutId);
+    signal?.removeEventListener("abort", abortFromCaller);
   }
 }
 
@@ -208,10 +245,6 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   if (envelope.event === "done") {
     handlers.onDone?.();
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

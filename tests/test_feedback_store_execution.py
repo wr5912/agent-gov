@@ -1,4 +1,18 @@
-from feedback_store_test_utils import *
+from pathlib import Path
+import json
+
+from feedback_store_test_utils import (
+    ClaudeRuntime,
+    FeedbackSignalCreateRequest,
+    LocalSessionStore,
+    _create_approved_task_for_target,
+    _create_batch_with_completed_attribution,
+    _record_run,
+    _store,
+    asyncio,
+    pytest,
+    validate_execution_plan_output,
+)
 from sqlalchemy import select
 
 from app.runtime.runtime_db import OptimizationExecutionModel
@@ -210,7 +224,7 @@ def test_fail_execution_job_rolls_back_when_task_update_fails(tmp_path, monkeypa
     monkeypatch.setattr(store, "_attach_execution_job_to_task_row", fail_task_update)
 
     with pytest.raises(RuntimeError, match="task update failed"):
-        store.fail_execution_job(job["execution_job_id"], "AGENT_RUNTIME_ERROR", "failed")
+        store.fail_execution_job(job["execution_job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
 
     unchanged_job = store.get_execution_job(job["execution_job_id"])
     unchanged_task = store.find_task(task["optimization_task_id"])

@@ -224,12 +224,14 @@ git diff --exit-code frontend/src/types/api.ts  # 漂移则失败
 grep -rn 'status\s*=\s*"' app/ --include='*.py' | grep -v 'state_machines.py' && fail
 ```
 
-### C. `.codex/` 结构升级建议
+### C. `.codex/` 结构升级建议（已落地，历史记录）
 
-- `.codex/rules/` 当前为空（指令里引用了 `project.rules` 但仓库里没有），建立两类规则：
+> 当前 `.codex/rules/project.rules`、`architecture.rules`、`verify.rules` 与 `.codex/size-budget.yaml` 已存在；本文本节保留为第一轮治理反思的历史建议。当前治理硬门与残留缺口以 [`AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md`](./AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md) 为准。
+
+- `.codex/rules/` 第一轮建议建立两类规则：
   - `architecture.rules`：A.1–A.6 的清单形式
   - `verify.rules`：B.* 的机器校验入口列表
-- `.codex/hooks.json` 当前为空，建议至少接入：
+- `.codex/hooks.json` 第一轮建议至少接入：
   - `before_write_file`：调用 B.1 阈值检查
   - `after_task`：调用 B.4 README 校验、B.5 OpenAPI 校验
 - `.codex/skills/` 拆分为多个 SKILL，强化按需召唤：

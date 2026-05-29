@@ -1,8 +1,8 @@
 from concurrent.futures import ThreadPoolExecutor
 
-from app.runtime.feedback_store import FeedbackStore
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.runtime_db import make_session_factory
-from app.runtime.schemas import FeedbackSignalCreateRequest
+from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 
 
 def test_runtime_db_reuses_engine_for_same_path(tmp_path):
@@ -33,3 +33,45 @@ def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):
     assert len(signal_ids) == 24
     assert len(set(signal_ids)) == 24
     assert len(store.list_signals(limit=50)) == 24
+
+
+def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_path):
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
+
+    def ingest_event(_: int) -> str:
+        result = store.ingest_soc_event(
+            SocEventIngestRequest(
+                event_id="event-concurrent",
+                event_type="tool.manual_query_after_agent",
+                source_system="siem",
+                timestamp="2026-05-20T00:03:00+00:00",
+                alert_id="alert-concurrent",
+                payload={"title": "并发告警"},
+            )
+        )
+        return result["correlation_status"]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        statuses = list(executor.map(ingest_event, range(24)))
+
+    assert statuses.count("pending_correlation") == 1
+    assert statuses.count("duplicate") == 23
+    assert len(store.list_events(limit=50)) == 1
+    assert len(store.list_pending(status="pending", limit=50)) == 1
+
+
+def test_feedback_store_attribution_job_create_reuses_existing_under_concurrency(tmp_path):
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
+    store.record_run({"run_id": "run-1", "session_id": "session-1", "message": "并发归因"})
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["concurrency"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+
+    def create_job(_: int) -> str:
+        job = store.create_attribution_job(feedback_case["feedback_case_id"])
+        return job["job_id"]
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        job_ids = list(executor.map(create_job, range(24)))
+
+    assert len(set(job_ids)) == 1
+    assert store.find_case(feedback_case["feedback_case_id"])["attribution_job_ids"] == [job_ids[0]]

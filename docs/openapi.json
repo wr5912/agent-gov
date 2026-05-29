@@ -913,6 +913,15 @@
         "additionalProperties": true,
         "properties": {
           "actionability": {
+            "enum": [
+              "direct_workspace_change",
+              "workspace_config_change",
+              "eval_only",
+              "external_guidance",
+              "runtime_fix",
+              "needs_human_analysis",
+              "not_actionable"
+            ],
             "title": "Actionability",
             "type": "string"
           },
@@ -921,6 +930,11 @@
             "type": "string"
           },
           "confidence": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
             "title": "Confidence",
             "type": "string"
           },
@@ -940,10 +954,37 @@
             "type": "boolean"
           },
           "optimization_object_type": {
+            "enum": [
+              "main_agent_claude_md",
+              "skill",
+              "subagent",
+              "mcp_config",
+              "mcp_description",
+              "output_style",
+              "eval_case",
+              "runtime_code",
+              "external_mcp_service",
+              "soc_process",
+              "not_actionable"
+            ],
             "title": "Optimization Object Type",
             "type": "string"
           },
           "problem_type": {
+            "enum": [
+              "evidence_gap",
+              "tool_misuse",
+              "tool_unavailable",
+              "tool_data_quality",
+              "output_style_issue",
+              "instruction_gap",
+              "skill_gap",
+              "mcp_description_gap",
+              "runtime_error",
+              "external_soc_process_issue",
+              "user_misunderstanding",
+              "insufficient_information"
+            ],
             "title": "Problem Type",
             "type": "string"
           },
@@ -953,6 +994,11 @@
           },
           "recommended_next_step": {
             "default": "generate_proposal",
+            "enum": [
+              "generate_proposal",
+              "needs_human_review",
+              "stop"
+            ],
             "title": "Recommended Next Step",
             "type": "string"
           },
@@ -965,6 +1011,10 @@
           },
           "status": {
             "default": "completed",
+            "enum": [
+              "completed",
+              "needs_human_review"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -2460,8 +2510,7 @@
           },
           "evidence_refs": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/EvidenceRefResponse"
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -2609,6 +2658,11 @@
             ],
             "title": "Risk"
           },
+          "schema_version": {
+            "default": "external-governance-item/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
           "source": {
             "anyOf": [
               {
@@ -2635,6 +2689,39 @@
           "status": {
             "title": "Status",
             "type": "string"
+          },
+          "superseded_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded At"
+          },
+          "superseded_by_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Job Id"
+          },
+          "superseded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded Reason"
           },
           "target_path": {
             "anyOf": [
@@ -2842,6 +2929,15 @@
         "additionalProperties": true,
         "properties": {
           "actionability": {
+            "enum": [
+              "direct_workspace_change",
+              "workspace_config_change",
+              "eval_only",
+              "external_guidance",
+              "runtime_fix",
+              "needs_human_analysis",
+              "not_actionable"
+            ],
             "title": "Actionability",
             "type": "string"
           },
@@ -3521,6 +3617,15 @@
           "actionability": {
             "anyOf": [
               {
+                "enum": [
+                  "direct_workspace_change",
+                  "workspace_config_change",
+                  "eval_only",
+                  "external_guidance",
+                  "runtime_fix",
+                  "needs_human_analysis",
+                  "not_actionable"
+                ],
                 "type": "string"
               },
               {
@@ -3543,6 +3648,11 @@
           "confidence": {
             "anyOf": [
               {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "type": "string"
               },
               {
@@ -3565,6 +3675,19 @@
           "optimization_object_type": {
             "anyOf": [
               {
+                "enum": [
+                  "main_agent_claude_md",
+                  "skill",
+                  "subagent",
+                  "mcp_config",
+                  "mcp_description",
+                  "output_style",
+                  "eval_case",
+                  "runtime_code",
+                  "external_mcp_service",
+                  "soc_process",
+                  "not_actionable"
+                ],
                 "type": "string"
               },
               {
@@ -3576,6 +3699,20 @@
           "problem_type": {
             "anyOf": [
               {
+                "enum": [
+                  "evidence_gap",
+                  "tool_misuse",
+                  "tool_unavailable",
+                  "tool_data_quality",
+                  "output_style_issue",
+                  "instruction_gap",
+                  "skill_gap",
+                  "mcp_description_gap",
+                  "runtime_error",
+                  "external_soc_process_issue",
+                  "user_misunderstanding",
+                  "insufficient_information"
+                ],
                 "type": "string"
               },
               {
@@ -4100,7 +4237,7 @@
           },
           "evidence_refs": {
             "items": {
-              "$ref": "#/components/schemas/FeedbackOptimizationEvidenceRefResponse"
+              "$ref": "#/components/schemas/EvidenceRefResponse"
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -4251,46 +4388,6 @@
         "title": "FeedbackOptimizationBlockedItemResponse",
         "type": "object"
       },
-      "FeedbackOptimizationEvidenceRefResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Id"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Type"
-          }
-        },
-        "title": "FeedbackOptimizationEvidenceRefResponse",
-        "type": "object"
-      },
       "FeedbackOptimizationPlanResponse": {
         "additionalProperties": true,
         "properties": {
@@ -4375,7 +4472,7 @@
           },
           "evidence_refs": {
             "items": {
-              "$ref": "#/components/schemas/FeedbackOptimizationEvidenceRefResponse"
+              "$ref": "#/components/schemas/EvidenceRefResponse"
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -4670,6 +4767,15 @@
           "actionability": {
             "anyOf": [
               {
+                "enum": [
+                  "direct_workspace_change",
+                  "workspace_config_change",
+                  "eval_only",
+                  "external_guidance",
+                  "runtime_fix",
+                  "needs_human_analysis",
+                  "not_actionable"
+                ],
                 "type": "string"
               },
               {
@@ -4710,6 +4816,11 @@
           "confidence": {
             "anyOf": [
               {
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "type": "string"
               },
               {
@@ -4749,7 +4860,7 @@
           },
           "evidence_refs": {
             "items": {
-              "$ref": "#/components/schemas/FeedbackOptimizationEvidenceRefResponse"
+              "$ref": "#/components/schemas/EvidenceRefResponse"
             },
             "title": "Evidence Refs",
             "type": "array"
@@ -4860,6 +4971,20 @@
           "problem_type": {
             "anyOf": [
               {
+                "enum": [
+                  "evidence_gap",
+                  "tool_misuse",
+                  "tool_unavailable",
+                  "tool_data_quality",
+                  "output_style_issue",
+                  "instruction_gap",
+                  "skill_gap",
+                  "mcp_description_gap",
+                  "runtime_error",
+                  "external_soc_process_issue",
+                  "user_misunderstanding",
+                  "insufficient_information"
+                ],
                 "type": "string"
               },
               {
@@ -6856,6 +6981,15 @@
           "actionability": {
             "anyOf": [
               {
+                "enum": [
+                  "direct_workspace_change",
+                  "workspace_config_change",
+                  "eval_only",
+                  "external_guidance",
+                  "runtime_fix",
+                  "needs_human_analysis",
+                  "not_actionable"
+                ],
                 "type": "string"
               },
               {
@@ -7472,6 +7606,15 @@
         "additionalProperties": true,
         "properties": {
           "actionability": {
+            "enum": [
+              "direct_workspace_change",
+              "workspace_config_change",
+              "eval_only",
+              "external_guidance",
+              "runtime_fix",
+              "needs_human_analysis",
+              "not_actionable"
+            ],
             "title": "Actionability",
             "type": "string"
           },
@@ -7636,6 +7779,10 @@
           },
           "status": {
             "default": "completed",
+            "enum": [
+              "completed",
+              "needs_human_review"
+            ],
             "title": "Status",
             "type": "string"
           }
@@ -8434,7 +8581,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.6"
+    "version": "0.2.7"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -2,7 +2,7 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.runtime.error_response_schemas import FeedbackJobErrorResponse
+from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
 class ExtensibleResponse(BaseModel):
@@ -600,13 +600,6 @@ class AgentVersionSnapshotRequest(BaseModel):
 
 class AgentVersionRestoreRequest(BaseModel):
     note: Optional[str] = None
-
-
-class AgentVersionRestoreResponse(BaseModel):
-    restored_from_version: dict[str, Any]
-    pre_restore_version: dict[str, Any]
-    current_version: dict[str, Any]
-    requires_runtime_restart: bool = True
 
 
 class OpenAIChatMessage(BaseModel):

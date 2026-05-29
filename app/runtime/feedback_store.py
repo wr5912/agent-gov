@@ -59,7 +59,7 @@ class FeedbackStore(
         data_dir: Path,
         workspace_dir: Optional[Path] = None,
         agent_version_provider: Optional[Callable[[], Optional[str]]] = None,
-        runtime_version: str = "0.2.5",
+        runtime_version: str = "0.2.6",
         enable_debug_evidence: bool = True,
     ) -> None:
         self.data_dir = data_dir

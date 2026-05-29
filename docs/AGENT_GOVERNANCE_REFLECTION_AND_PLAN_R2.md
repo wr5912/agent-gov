@@ -1,0 +1,186 @@
+# 关于 AGENTS.md / .codex 与代码质量的反思与改进方案（第二轮 · R2）
+
+> 触发：[`docs/CODE_AND_DOCS_REVIEW_R2.md`](./CODE_AND_DOCS_REVIEW_R2.md) 二次评审确认 87 条问题（🟧 高 5 / 🟨 中 40 / 🟩 低 42）。
+> 问题：本项目由 Codex Agent 在 `AGENTS.md` + `.codex/` 指令下开发。**当前实现质量是否由这些指令文件决定？**
+> 与第一轮的关系：[R1 反思](./AGENT_GOVERNANCE_REFLECTION_AND_PLAN.md)（提交 `850e33e`）促成了护栏落地（`126a2e6`/`88fd96e`）与拆分（`2210f95`）。**本轮是对"护栏是否真正生效、是否闭环"的实测复盘。**
+> 结论：**是部分成因，且因果是非对称的**——指令对"单次任务克制"有强正贡献，对"跨任务架构卫生"只有弱且会空转的贡献。
+
+---
+
+## 1. 一句话结论（相对 R1 的升级）
+
+> **R1 的诊断是"规则没写架构阈值"。本轮发现规则其实写得相当完整——`AGENTS.md` L87-109 与 `.codex/rules/architecture.rules`、`verify.rules` 几乎逐条枚举了本轮发现的所有问题类型（状态机、dict/Pydantic 双轨、跨事务、字面量耦合、40 行复制、非法转移测试、文档同步）。真正的失效是：这些规则里只有"单文件 800 行"这一条被机器执行，其余全部是"靠 Agent 在 Verify 阶段自检并自报"的散文。**
+
+所以诊断从 **"该写什么规则"** 升级为 **"如何让已经写好的规则真正生效"**。一个以"满足明示规则"为目标的 Agent，面对一条只能靠自觉、且只需在 Verify 里自报"无问题"就能通过的规则，结构上必然会绕过它——这不是某次提交的疏忽，是范式内禀。
+
+---
+
+## 2. 护栏确实生效了（正面因果，不可抹杀）
+
+R1 → 护栏硬化 → 拆分这条提交链是**可观测的成功**。四个上帝模块全部回落：
+
+| 模块 | R1 行数 | R2 行数 |
+|---|---|---|
+| `feedback_store.py` | 5022 | **298** |
+| `claude_runtime.py` | 1403 | **791** |
+| `ExternalFeedbackWorkspace.tsx` | 5124 | **405** |
+| `app/main.py` | 1659 | **133** |
+
+本轮 87 条问题中**没有任何一条是"新增的 800+ 行手写文件"**。这恰恰证明了一个朴素但关键的因果：**一条被机器执行的规则（行数门）+ 一次具体的拆分动作，真的能把对应的债按住。** 这是 R1 §5.A（指令增补阈值）与 §5.B（机器护栏）部分落地的直接成果，不应被后文的批评抹杀。
+
+`AGENTS.md` 里其余做对的部分同样应保留：L17-54 的 Analyze→Plan→Execute→Verify、L56-85 的四项准则、L139-143 的安全与离线不变量、中文协作与环境规范——它们防住了"AI 过度抽象 / 漫游 diff / 未确认就动手"的另一极端。
+
+---
+
+## 3. 本轮关键发现：规则"写了" ≠ 规则"被执行"
+
+这是本轮最重要的一张表。左列是 R2 确认的问题，中列是**指令里其实早已写明的对应规则**，右列是它为什么仍然发生。
+
+| R2 问题（finding） | 指令里其实已写明的规则 | 为何仍然发生 |
+|---|---|---|
+| batch/task/case/eval_run/proposal 状态机失效或缺席（SM-1/2/4） | `AGENTS.md:97`「状态合法转移散落即命中阈值」；`architecture.rules:17,25`「状态转移必须集中定义 / 新 status 类型进集中状态机」 | 只要求"集中"，未要求"完整转移表 + 拒绝非法转移"→ 字面合规漏洞（见 §7） |
+| 同一实体 Output/Record/Response 三轨手写、字段漂移（SC-1/2/6） | `AGENTS.md:98`「Pydantic 与手写 dict 双轨即命中」；`architecture.rules:16,26`「schema 以 Pydantic 为单一真相」 | 仅 Verify 自报（`verify.rules:19`），无机器校验同一实体的多模型表示 |
+| 跨事务无原子性、事务内 rmtree、apply 无幂等键（FS-3/4 · FO-1/5） | `AGENTS.md:99`「跨表/DB+文件被拆成多个不可恢复事务即命中」；`architecture.rules:27`「跨表更新尽量同一 `Session.begin()`，组合更新必须说明幂等/回滚」 | 规则只到"说明"级（解释即可），不是"禁止"级；无机器校验 |
+| profile 名以字面量跨 store 耦合（DS-4/RC-2） | `AGENTS.md:96`「同一职责在 3+ 文件靠字符串字面量耦合即命中」；`architecture.rules:15` 同义 | 仅 Verify 自报；无字面量耦合扫描 |
+| `_unique_strings`/`shortId` 等逐字重复、run/stream 样板（GS-6 · RC-6 · FO-2 · FS-6） | `AGENTS.md:95`「复制 40+ 行即命中」；`architecture.rules:14` 同义 | 无重复块检测；且这些是"方法级"重复，连人眼都难逐个抓 |
+| 非法状态转移无负向测试（TS2-1 · SM-7） | `AGENTS.md:106`「涉及状态字段至少补 1 个非法转移负向测试」；`verify.rules:25` 同义 | 纯文字要求，无任何机器把关测试是否存在 |
+| Agent 超时/并发去重无测试（TS2-2/5） | `AGENTS.md:107`「并发/部分失败至少补 1 个测试」；`verify.rules:26` 同义 | 同上 |
+| 鉴权 401/越权无测试（TS2-4） | `AGENTS.md:108`「权限边界至少补 1 个越权输入测试」；`verify.rules:27` 同义 | 同上 |
+| 治理/产品文档与代码漂移（CD-1~6） | `AGENTS.md:100`「改 schema/默认值必须同步 README/docs」；`architecture.rules:29` 同义 | 仅 Verify 自报；无 README↔openapi 比对门 |
+
+**规律一目了然**：凡是"能被 `check_codex_governance.py` 数出来的"（行数）都消失了；凡是"规则写了但只能靠 Agent 自觉"的，全部还在。下面三节拆解这条规律背后的三个具体失效点，外加一个最隐蔽的第四点。
+
+---
+
+## 4. 失效点一：唯一被机器执行的规则（行数），对核心文件也已空转
+
+`.codex/size-budget.yaml` 的 baseline 是拆分**前**的数字，从未随拆分下调：
+
+| 文件 | budget `max_lines` | 实际行数 | 后果 |
+|---|--:|--:|---|
+| `feedback_store.py` | 4648 | 298 | 可反弹回 4648 行而不报警 |
+| `claude_runtime.py` | 1302 | 791 | 可反弹回 1302 行 |
+| `ExternalFeedbackWorkspace.tsx` | 3072 | 405 | 可反弹回 3072 行 |
+| `frontend/src/api/runtime.ts` | 890 | 225 | 可反弹回 890 行 |
+| `BatchesWorkspace.tsx` | 852 | 753 | 预算几乎等于现状，无收紧压力 |
+
+更糟的是脚本本身的逻辑：`check_codex_governance.py:159` 是 `if lines <= limit: continue`——文件先跟全局 800 行比，298 行直接跳过，**根本不会去检查它的 budget 是否过期**。脚本只在 L202-213 检测"文件已不存在"的 stale 条目（且非阻断）；对"文件还在但已远小于 budget"完全无感。实测 `python scripts/check_codex_governance.py --mode fail` 输出 `OK: no issues`。
+
+**即：项目唯一的机器化护栏，对它最该看守的三个历史上帝模块，已经空转——给它们留了一条反弹回拆分前体积的后门。** 这是本轮最具体、最可立即修复的失效点。
+
+---
+
+## 5. 失效点二：`check_codex_governance.py` 只"数行数"，结构债全盲
+
+`architecture.rules:10-17` 与 `AGENTS.md:91-99` 列了至少 8 类阈值（行数、单类方法数、单函数行数/圈复杂度、路由数、40 行复制、字面量耦合、dict/Pydantic 双轨、状态转移分散）。但脚本全文只实现了一种检查——`_count_lines`（`check_codex_governance.py:119-121`）。
+
+于是：
+- `FC-2` 的 642 行上帝 hook（< 800）、`useFeedbackWorkspaceActions` 16 项入参/30+ 动作——**逃过行数门**；
+- `GS-6` 的 `_unique_strings` 在 10 个文件逐字重复、`FC-8` 的 `shortId` 在 10+ 文件重复——**无重复检测**；
+- `SC-1/3` 的三轨 schema 与 766 行混入命令式归一化——**无双轨/复杂度检测**；
+- `DS-4` 的 profile 名字面量跨 5+ store 耦合——**无耦合扫描**。
+
+**规则把阈值列全了，脚本一条都没实现。** 护栏与指令之间存在巨大的"言行落差"。
+
+---
+
+## 6. 失效点三：治理不闭环——没有任何自动门在提交时运行
+
+- `.codex/hooks.json` 仍为 `{"version":1,"hooks":[]}`（空），Codex 自身的 hook 机制完全未用；
+- 仓库**无任何 CI**：无 `.github/`、无 `.gitlab-ci.yml`、无 git hooks；
+- `Makefile:105-106` 的 `codex-guard` 用 `--mode warn`——**返回 0，永不阻断**；且它**不是** `test` 目标的依赖（`Makefile:108-110` 的 `test` 只跑 `compileall` + `pytest`）；
+- `verify.rules:21` / `worker.toml:55` / `SKILL.md:41` 只要求 Agent **"说明是否运行了 `check_codex_governance.py --mode warn`，或未运行原因"**——这是**带 opt-out 的自报**：Agent 可以说"本次未运行"然后继续。
+
+**结论：治理完全依赖 Agent 自觉跑一个本身就只数行数、且 warn 模式不阻断的脚本。** 这等于没有门。
+
+---
+
+## 7. 失效点四（最隐蔽）：字面合规漏洞——"集中了"但留下 dead guard
+
+这是本轮最有价值的发现，单独成节。
+
+`AGENTS.md:97` 的触发器是「`status`/`phase`/`stage` 的**合法转移散落在多个分支**」，`architecture.rules:25` 要求「新 status 类型必须进入**集中状态机**」。团队照做了：新建 `state_machines.py`，登记了 `JOB_STATES`/`BATCH_STATES`/`TASK_STATES`，并在 store 里调用 `validate_transition`。**字面上 100% 合规。**
+
+但规则从未说"集中状态机**必须为每台机器提供完整转移表并拒绝非法转移**"。于是：
+- `state_machines.py` 的 `_TRANSITIONS` 只有 `job`/`execution_job` 两台机器有转移表；
+- `batch`(22 态)/`task`(11 态) 只登记了状态集合，没有转移表；
+- `validate_transition` 在 `transitions is None` 时**静默 `return`**（`state_machines.py:115-117`）；
+- 调用方 `feedback_batch_store.py:308`、`feedback_task_store.py:143` 以为已有守卫，实则任意非法转移（如 `completed→draft`）畅通无阻；
+- `case`/`eval_run`/`proposal` 三类有真实生命周期的实体则**完全没注册**。
+
+**这比"没有状态机"更危险**——它制造了"已治理"的假象。
+
+> **本节的普适教训**：对一个以"满足明示规则"为优化目标的 Agent，**任何能被字面满足、而无需触及实质的规则，都会被字面满足。** 治理规则的成功条件，要么写成机器可判定（"`_KNOWN_STATES` 里有但 `_TRANSITIONS` 里没有 → FAIL"），要么把"实质"写进规则正文，不留"集中即可"这种可被空心化的措辞。
+
+---
+
+## 8. 因果判断（直接回答用户的问题）
+
+**当前实现质量是否由 AGENTS.md/.codex 决定？——是部分决定，且因果非对称：**
+
+- **正面（指令确实生效）**：R1 的 4 个上帝模块本轮全部拆小并稳定在阈值附近，且本轮无"新增 800+ 行手写文件"。这条由"可机器判定的行数阈值 + 拆分动作"贡献的因果，是 `850e33e`→`126a2e6`→`2210f95` 提交链可观测的成果。指令把 AI 最易翻车的"过度抽象/漫游 diff/未确认就动手"反向偏置做得很好。
+- **反面（指令空转或字面合规，债"换形态存活"）**：本轮 5 高 + 40 中几乎全部落在"行数门看不见"的维度——状态机 dead guard、schema 三轨、跨事务无原子、Mixin 隐式耦合、逐字重复、死委派、上帝 hook。这些恰是 §4-§7 四个失效点（baseline 过期 / 脚本只数行数 / 无自动门 / 字面合规）的直接产物。
+
+**综合**：当前**可见的质量提升**主要由"行数阈值 + 拆分"贡献；**剩余的高/中危债**之所以仍在，是因为护栏的"可机器判定"只覆盖一个维度、且未自动化、未闭环，再加上唯一的机器检查已过期空转。指令文件把"不再借文件体积这笔债"做到了，但"不借结构/一致性/事务/重复这几笔债"——既无机器门，也存在字面合规漏洞。
+
+---
+
+## 9. 改进方案（核心思路：不是"再写规则"，而是"让已有规则长出牙齿"）
+
+R1 的方案重点是"补规则"；规则已基本补齐。R2 的方案重点是**执行引擎**。按优先级与落地文件组织：
+
+### A. 立即修复 size-budget 空转（`.codex/size-budget.yaml` + `check_codex_governance.py`）
+- 把三个已拆分文件的 `max_lines` 下调到接近实际（如 `feedback_store.py`→320、`ExternalFeedbackWorkspace.tsx`→430），或直接删除已回落到 800 以内的条目；
+- 给脚本增加"**budget 远大于实际行数即报 stale-tighten**"的检测：当 `entry.max_lines` 显著大于 `actual_lines`（如 > 实际 +20% 且实际已 ≤ 全局 limit）时，提示"该 budget 已可收紧/移除"，防止后门长期存在。
+
+### B. 给 `check_codex_governance.py` 补齐结构检查（对齐 `architecture.rules:10-17`）
+- **圈复杂度**：接 `radon cc` 或 `ruff --select C901`，> 15 报 FAIL；
+- **重复块**：前端接 `jscpd`、Python 接 `pylint --disable=all --enable=duplicate-code` 或 token 级扫描，≥ 40 行 / ≥ 3 文件命中报 FAIL（可直接抓 `_unique_strings`/`shortId`）；
+- **单函数行数 / 函数·hook 入参个数上限**（抓 `FC-2`）；
+- **状态机完整性**（抓本轮根问题）：`_KNOWN_STATES` 中登记、但 `_TRANSITIONS` 中无转移表的 machine → FAIL；含 `status` 字段的 ORM 模型未在 `state_machines.py` 注册 → FAIL；
+- **字面量耦合 / dict-Pydantic 双轨**：先做 grep 级启发式扫描（profile 名字面量、同名实体多 Pydantic 模型）。
+
+### C. 闭环：把检查接到提交 / CI，并升为阻断（`.codex/hooks.json` + 新增 CI + `Makefile`）
+- `hooks.json` 接 `after_task` / 提交前钩子调用 `check_codex_governance.py --mode fail`；
+- 新增 `.github/workflows/governance.yml`（或 `.gitlab-ci.yml`）：PR 上跑 `--mode fail` + `pytest` + 复杂度/重复检测，红灯阻塞合并；
+- `Makefile` 把 `codex-guard` 升为 `--mode fail` 并设为 `test` 的依赖，让 `make test` 一并守门。
+
+### D. 补字面合规漏洞（`AGENTS.md` / `architecture.rules` / `state_machines.py`）
+- `AGENTS.md:97` 与 `architecture.rules:17,25` 增两条强约束：「**集中状态机必须为每台机器提供完整转移表，缺表即视为未实现**」「**每个含 `status`/`phase`/`stage` 字段的持久化实体，必须在 `state_machines.py` 注册，并在写 status 前调用 `validate_transition`**」；
+- 修 `state_machines.py:115-117`：`transitions is None` 时应抛配置错误，而非静默 `return`。
+
+### E. 事务/幂等从"说明"升为"禁止"（`architecture.rules:27`）
+- 新增「**事务块内禁止执行不可回滚副作用（文件 `rmtree`、对外发通知）**」「**apply/ingest 类写操作必须声明幂等键**」，并在脚本里加事务上下文内 `rmtree` 的 grep 级启发式扫描。
+
+### F. Schema 单源落地（CI + `architecture.rules`）
+- 落地 R1 §5.D 未完成项：CI 用 `app.openapi()` 生成 `frontend/src/types/api.ts`，`git diff --exit-code` 漂移即失败；删手写 `ChatRequest`/`ChatResponse`（`FT-1/2`）；
+- 规则新增「同一实体禁止 ≥ 2 个手写 Pydantic 表示；跨边界表示必须由单一模型派生」。
+
+### G. 文档同步纳入门（CI + `verify.rules`）
+- README/docs 的路由清单与 `docs/openapi.json` 自动比对，漂移即失败；
+- `verify.rules:13-21` 的"架构验证"项把"治理文档与代码一致"也纳入（本轮 `CD-3/CD-5` 正是治理文档自身漂移）。
+
+---
+
+## 10. 元反思（责任归属）
+
+1. **AI 不会跨任务自检，是范式内禀属性**，不是本项目的偶发缺陷。因此把治理寄托在"Agent 在 Verify 阶段自报"（`AGENTS.md:52`、`verify.rules:13-21`）——在结构上注定漏。本轮的数据就是证据：唯一机器化的行数规则真的生效了，其余靠自觉的规则**全部复发**。
+2. **唯一可靠的，是把"判断"外移到机器门**：确定性、不疲劳、不被"匹配现有风格"反向拉扯。规则的价值不在于写得多全，而在于有没有一个不知疲倦的执行者。
+3. **指令是默认值，不是决策替代品**。`AGENTS.md` 把"不应该做什么"写得很好，但"应该停下来重构"这个判断，不能继续留在 Agent 的主观感受上——要么机器判定，要么写死成无歧义的成功条件。
+4. **最终责任在人**。具体到本轮：人侧把规则写全了，却没给规则配执行引擎（脚本只数行数、hooks 空、无 CI、warn 不阻断），并且让唯一的引擎（size-budget）过期空转。这不是 Codex 写不出好代码，而是治理设计只完成了一半。
+
+---
+
+## 11. 与第一轮反思的关系（落地校验闭环）
+
+把 R1 §5 的方案逐条对账，正是本轮最有说服力的"治理有没有用"的实证：
+
+| R1 §5 方案 | 落地情况 | 后果 |
+|---|---|---|
+| §5.A 指令增补可量化架构阈值 | ✅ 已落地（`AGENTS.md:87-109` + `architecture.rules`） | 体积债解决 |
+| §5.B 机器可执行护栏（行数/复杂度/重复/类型） | ⚠️ 仅落地 size-budget **行数门**；复杂度/重复/schema 检测**未落地** | 结构债残留 |
+| §5.C `.codex` 结构升级（补 rules/hooks） | ⚠️ `rules/` 已建；`hooks.json` **仍空** | 无自动门 |
+| §5.D 文档同源（OpenAPI→TS 生成） | ❌ **未落地** | `FT-1/2` 类型漂移 |
+| §5.E 软门 → 硬门 | ⚠️ 停在 `--mode warn`，**未到 fail/CI** | 治理不阻断 |
+
+**结论**：R1 方案方向正确，但**只完成了"写规则"，没完成"让规则有牙齿"**。R2 的任务，就是把 §9 的执行引擎补上——尤其是 §9.A（修空转）、§9.B（补结构检查）、§9.C（接 CI 阻断）、§9.D（补字面合规漏洞）这四项，把治理从"数行数 + 靠自觉"升级为"查结构 + 强制门"。

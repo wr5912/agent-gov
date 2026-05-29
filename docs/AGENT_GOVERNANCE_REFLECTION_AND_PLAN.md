@@ -1,5 +1,7 @@
 # 关于 AGENTS.md / .codex 与代码质量的反思与改进方案
 
+> ⚠️ **本文为第一轮反思，部分内容已落地或过期。** 文中 §5.C 称"`.codex/rules/` 当前为空、`hooks.json` 当前为空"等描述**已被后续提交推翻**：`architecture.rules`/`project.rules`/`verify.rules`/`size-budget.yaml` 均已创建（`hooks.json` 数组仍为空待接入）。本文 §5.A-E 的改进方案大部分已落地，落地效果与残留缺口的实测复盘见第二轮 [`AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md`](./AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md)。**当前结论以 R2 为准。**
+
 > 触发：[`docs/CODE_AND_DOCS_REVIEW.md`](./CODE_AND_DOCS_REVIEW.md) 评审发现「4 个上帝模块、状态机分散、字典/Schema 双轨、跨 Session 事务、硬编码字符串、错误层次缺失」等问题。
 > 问题：项目主要由 Codex Agent 在 `AGENTS.md` + `.codex/` 指令下产出，这些指令是否是质量不高的成因之一？
 > 结论：**是部分成因**。本文给出基于证据的反思与改进方案。

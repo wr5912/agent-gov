@@ -1,4 +1,54 @@
-import type { AgentVersionSummary, RuntimeClientConfig } from "./runtime";
+import type { components } from "./api";
+import type { AgentVersionDiff, AgentVersionSummary, RuntimeClientConfig } from "./runtime";
+
+type OpenApiAttributionOutputResponse = components["schemas"]["AttributionOutputResponse"];
+type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
+type OpenApiEvidencePackageFileResponse = components["schemas"]["EvidencePackageFileResponse"];
+type OpenApiEvidencePackageResponse = components["schemas"]["EvidencePackageResponse"];
+type OpenApiEvalCaseResponse = components["schemas"]["EvalCaseResponse"];
+type OpenApiEvalRunItemResponse = components["schemas"]["EvalRunItemResponse"];
+type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
+type OpenApiExternalGovernanceItemResponse = components["schemas"]["ExternalGovernanceItemResponse"];
+type OpenApiExternalGovernanceNotificationResponse = components["schemas"]["ExternalGovernanceNotificationResponse"];
+type OpenApiExternalGovernanceWebhookResponse = components["schemas"]["ExternalGovernanceWebhookResponse"];
+type OpenApiExternalGuidanceResponse = components["schemas"]["ExternalGuidanceResponse"];
+type OpenApiFeedbackAnalysisJobResponse = components["schemas"]["FeedbackAnalysisJobResponse"];
+type OpenApiFeedbackCaseCreateRequest = components["schemas"]["FeedbackCaseCreateRequest"];
+type OpenApiFeedbackCaseResponse = components["schemas"]["FeedbackCaseResponse"];
+type OpenApiFeedbackEvalCaseUpdateRequest = components["schemas"]["FeedbackEvalCaseUpdateRequest"];
+type OpenApiFeedbackEvalCaseGenerateResponse = components["schemas"]["FeedbackEvalCaseGenerateResponse"];
+type OpenApiFeedbackOptimizationBatchAttributionResponse = components["schemas"]["FeedbackOptimizationBatchAttributionResponse"];
+type OpenApiFeedbackOptimizationBatchCreateRequest = components["schemas"]["FeedbackOptimizationBatchCreateRequest"];
+type OpenApiFeedbackOptimizationBatchExecutionResponse = components["schemas"]["FeedbackOptimizationBatchExecutionResponse"];
+type OpenApiFeedbackOptimizationBatchRegressionResponse = components["schemas"]["FeedbackOptimizationBatchRegressionResponse"];
+type OpenApiFeedbackOptimizationBatchResponse = components["schemas"]["FeedbackOptimizationBatchResponse"];
+type OpenApiFeedbackOptimizationBlockedItemResponse = components["schemas"]["FeedbackOptimizationBlockedItemResponse"];
+type OpenApiFeedbackOptimizationPlanResponse = components["schemas"]["FeedbackOptimizationPlanResponse"];
+type OpenApiFeedbackOptimizationPlanTaskExecuteRequest = components["schemas"]["FeedbackOptimizationPlanTaskExecuteRequest"];
+type OpenApiFeedbackOptimizationPlanTaskExecuteResponse = components["schemas"]["FeedbackOptimizationPlanTaskExecuteResponse"];
+type OpenApiFeedbackOptimizationPlanTaskResponse = components["schemas"]["FeedbackOptimizationPlanTaskResponse"];
+type OpenApiFeedbackSignalCreateRequest = components["schemas"]["FeedbackSignalCreateRequest"];
+type OpenApiFeedbackSignalResponse = components["schemas"]["FeedbackSignalResponse"];
+type OpenApiFeedbackEvalCaseGenerateRequest = components["schemas"]["FeedbackEvalCaseGenerateRequest"];
+type OpenApiFeedbackSourceRef = components["schemas"]["FeedbackSourceRef"];
+type OpenApiFeedbackSourceResponse = components["schemas"]["FeedbackSourceResponse"];
+type OpenApiFeedbackSourceUpdateRequest = components["schemas"]["FeedbackSourceUpdateRequest"];
+type OpenApiPendingCorrelationResponse = components["schemas"]["PendingCorrelationResponse"];
+type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCorrelationResolveRequest"];
+type OpenApiExecutionCompensationResponse = components["schemas"]["ExecutionCompensationResponse"];
+type OpenApiOptimizationExecutionApplyResponse = components["schemas"]["OptimizationExecutionApplyResponse"];
+type OpenApiOptimizationExecutionJobResponse = components["schemas"]["OptimizationExecutionJobResponse"];
+type OpenApiOptimizationExecutionPlanOperationResponse = components["schemas"]["OptimizationExecutionPlanOperationResponse"];
+type OpenApiOptimizationExecutionPlanOutputResponse = components["schemas"]["OptimizationExecutionPlanOutputResponse"];
+type OpenApiOptimizationProposalResponse = components["schemas"]["OptimizationProposalResponse"];
+type OpenApiOptimizationProposalReviewRecordResponse = components["schemas"]["OptimizationProposalReviewRecordResponse"];
+type OpenApiOptimizationProposalReviewResponse = components["schemas"]["OptimizationProposalReviewResponse"];
+type OpenApiOptimizationTaskResponse = components["schemas"]["OptimizationTaskResponse"];
+type OpenApiProposalOutputResponse = components["schemas"]["ProposalOutputResponse"];
+type OpenApiSocEventIngestRequest = components["schemas"]["SocEventIngestRequest"];
+type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestResponse"];
+type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
+type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T, K>>;
 
 export interface RuntimeIntegrationContext {
   runId?: string;
@@ -68,15 +118,7 @@ export interface FeedbackFilters {
   q?: string;
 }
 
-export interface FeedbackRunRecord {
-  run_id: string;
-  session_id?: string | null;
-  sdk_session_id?: string | null;
-  agent_version_id?: string | null;
-  alert_id?: string | null;
-  case_id?: string | null;
-  message?: string | null;
-  answer_summary?: string | null;
+export type FeedbackRunRecord = OpenApiAgentRunResponse & {
   agent_activity?: {
     requested_skills?: string[];
     skills_mode?: string;
@@ -91,187 +133,56 @@ export interface FeedbackRunRecord {
   total_cost_usd?: number | null;
   stop_reason?: string | null;
   errors?: string[];
-  created_at?: string;
-  completed_at?: string;
   [key: string]: unknown;
-}
+};
 
-export interface FeedbackSignalCreateRequest {
-  signal_id?: string;
-  source_type?: FeedbackSourceType;
-  timestamp?: string;
-  run_id?: string;
-  session_id?: string;
-  alert_id?: string;
-  case_id?: string;
-  labels?: string[];
-  comment?: string;
-  confidence?: FeedbackConfidence;
-  auto_captured?: boolean;
-  requires_review?: boolean;
-  metadata?: Record<string, unknown>;
-}
+export type FeedbackSignalCreateRequest = OptionalClientDefaults<
+  OpenApiFeedbackSignalCreateRequest,
+  "source_type" | "auto_captured" | "requires_review"
+>;
 
-export interface FeedbackSignalRecord {
-  signal_id: string;
-  created_at: string;
-  source_type: FeedbackSourceType | string;
-  timestamp?: string | null;
-  run_id?: string | null;
-  matched_run_id?: string | null;
-  session_id?: string | null;
-  alert_id?: string | null;
-  case_id?: string | null;
-  labels?: string[];
-  comment?: string | null;
-  confidence?: FeedbackConfidence | string | null;
-  auto_captured?: boolean;
-  requires_review?: boolean;
-  metadata?: Record<string, unknown>;
+export type FeedbackSignalRecord = OpenApiFeedbackSignalResponse & {
   [key: string]: unknown;
-}
+};
 
-export interface SocEventCreateRequest {
-  event_id: string;
-  source_system: string;
-  event_type: SocEventType;
-  timestamp: string;
-  run_id?: string;
-  session_id?: string;
-  alert_id?: string;
-  case_id?: string;
-  actor_id?: string;
-  before?: Record<string, unknown>;
-  after?: Record<string, unknown>;
-  entities?: Record<string, string[]>;
-  auto_captured?: boolean;
-  confidence?: FeedbackConfidence;
-  requires_review?: boolean;
-  comment?: string;
-  metadata?: Record<string, unknown>;
-}
+export type SocEventCreateRequest = OptionalClientDefaults<
+  OpenApiSocEventIngestRequest,
+  "auto_captured" | "confidence" | "requires_review"
+>;
 
-export interface SocEventRecord {
-  event_id: string;
-  source_system: string;
-  event_type: string;
-  timestamp: string;
-  created_at?: string;
-  matched_run_id?: string | null;
-  run_id?: string | null;
-  session_id?: string | null;
-  alert_id?: string | null;
-  case_id?: string | null;
-  actor_id?: string | null;
-  before?: Record<string, unknown> | null;
-  after?: Record<string, unknown> | null;
-  entities?: Record<string, string[]>;
-  auto_captured?: boolean;
-  confidence?: FeedbackConfidence | string | null;
-  requires_review?: boolean;
-  comment?: string | null;
-  metadata?: Record<string, unknown>;
-  [key: string]: unknown;
-}
+export type SocEventRecord = OpenApiSocEventResponse;
 
-export interface SocEventCreateResponse {
+export type SocEventCreateResponse = Omit<OpenApiSocEventIngestResponse, "event" | "pending_correlation"> & {
   event: SocEventRecord;
-  correlation_status: "matched" | "pending_correlation" | "duplicate" | "stored_only";
-  matched_run_id?: string | null;
   pending_correlation?: PendingCorrelationRecord | null;
-}
+};
 
-export interface PendingCorrelationRecord {
-  pending_id: string;
-  created_at: string;
-  updated_at?: string;
-  status?: "pending" | "resolved" | string;
-  reason: string;
-  event_id?: string | null;
-  event_type?: string | null;
-  source_system?: string | null;
-  session_id?: string | null;
-  alert_id?: string | null;
-  case_id?: string | null;
-  resolved_run_id?: string | null;
-  comment?: string | null;
-  [key: string]: unknown;
-}
+export type PendingCorrelationRecord = OpenApiPendingCorrelationResponse;
 
-export interface PendingCorrelationResolveRequest {
-  run_id?: string;
-  session_id?: string;
-  alert_id?: string;
-  case_id?: string;
-  comment?: string;
-}
+export type PendingCorrelationResolveRequest = OpenApiPendingCorrelationResolveRequest;
 
-export interface FeedbackSourceRef {
-  source_kind: FeedbackSourceKind;
-  source_id: string;
-}
+export type FeedbackSourceRef = OpenApiFeedbackSourceRef;
 
-export interface FeedbackSourceRecord {
-  schema_version?: string;
-  source_kind: FeedbackSourceKind;
-  source_id: string;
-  id?: string;
-  created_at?: string | null;
-  updated_at?: string | null;
-  status: string;
-  label: string;
-  labels?: string[];
-  comment?: string | null;
-  priority?: "high" | "medium" | "low" | string;
-  requires_review?: boolean;
-  metadata?: Record<string, unknown>;
-  run_id?: string | null;
-  session_id?: string | null;
-  alert_id?: string | null;
-  case_id?: string | null;
-  feedback_case_id?: string | null;
-  eval_case_id?: string | null;
-  latest_attribution_job_id?: string | null;
-  latest_attribution_status?: string | null;
-  raw?: Record<string, unknown>;
-  [key: string]: unknown;
-}
+export type FeedbackSourceRecord = OpenApiFeedbackSourceResponse;
 
-export interface FeedbackSourceUpdateRequest {
-  comment?: string | null;
-  labels?: string[];
-  priority?: "high" | "medium" | "low";
-  status?: "new" | "triaged" | "in_batch" | "resolved" | "archived";
-  requires_review?: boolean;
-  metadata?: Record<string, unknown>;
-}
+export type FeedbackSourceUpdateRequest = OpenApiFeedbackSourceUpdateRequest;
 
-export interface FeedbackEvalCaseGenerateRequest {
+export type FeedbackEvalCaseGenerateRequest = Omit<OpenApiFeedbackEvalCaseGenerateRequest, "force" | "source_refs"> & {
   source_refs: FeedbackSourceRef[];
   force?: boolean;
-}
+};
 
-export interface FeedbackEvalCaseGenerateResponse {
-  created: number;
-  reused: number;
-  updated?: number;
-  skipped: number;
-  eval_cases: EvalCaseRecord[];
-  results?: Array<Record<string, unknown>>;
-}
+export type FeedbackEvalCaseGenerateResponse = OpenApiFeedbackEvalCaseGenerateResponse & {
+  eval_cases?: EvalCaseRecord[];
+};
 
-export interface FeedbackCaseCreateRequest {
+export type FeedbackCaseCreateRequest = Omit<OpenApiFeedbackCaseCreateRequest, "priority" | "source_ids"> & {
   source_ids: string[];
   title?: string;
   priority?: "high" | "medium" | "low";
-}
+};
 
-export interface FeedbackCaseRecord {
-  feedback_case_id: string;
-  created_at: string;
-  updated_at: string;
-  status: string;
-  title: string;
+export type FeedbackCaseRecord = OpenApiFeedbackCaseResponse & {
   priority: "high" | "medium" | "low" | string;
   source_ids: string[];
   signal_ids: string[];
@@ -284,186 +195,83 @@ export interface FeedbackCaseRecord {
   evidence_package_ids: string[];
   attribution_job_ids: string[];
   proposal_job_ids: string[];
-  [key: string]: unknown;
-}
+};
 
-export interface EvidencePackageRecord {
-  schema_version: string;
-  evidence_package_id: string;
-  feedback_case_id: string;
-  created_at: string;
-  created_by: string;
-  main_agent_version_id?: string | null;
-  source_refs: Record<string, unknown>;
-  included_files: Array<Record<string, unknown>>;
-  redaction: Record<string, unknown>;
-  completeness: Record<string, unknown>;
-}
+export type EvidencePackageRecord = OpenApiEvidencePackageResponse;
 
-export interface EvidencePackageFileRecord {
-  evidence_package_id: string;
-  file_name: string;
-  sha256?: string | null;
-  content: unknown;
-}
+export type EvidencePackageFileRecord = OpenApiEvidencePackageFileResponse;
 
-export interface FeedbackAnalysisJobRecord {
-  job_id: string;
+export type FeedbackAnalysisJobRecord = OpenApiFeedbackAnalysisJobResponse & {
   job_type: JobType | string;
-  feedback_case_id: string;
-  evidence_package_id: string;
   status: JobStatus | string;
-  profile_name: string;
-  created_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  input_path: string;
-  raw_output_path: string;
-  validated_output_path: string;
-  error_path: string;
-  langfuse_trace_id?: string | null;
   main_agent_version_id?: string | null;
   runtime_version?: string;
   profile_version?: Record<string, unknown>;
   attribution_job_id?: string;
-  input_json?: Record<string, unknown> | null;
-  raw_output_json?: Record<string, unknown> | null;
-  validated_output_json?: Record<string, unknown> | null;
-  error_json?: {
-    error_code?: string;
-    message?: string;
-    created_at?: string;
-    job_id?: string;
-    [key: string]: unknown;
-  } | null;
-  [key: string]: unknown;
-}
+  validated_output_json?: AttributionOutput | ProposalOutput | FeedbackOptimizationPlanRecord | null;
+};
 
 export interface FeedbackProposalRegenerateRequest {
   regeneration_instruction?: string | null;
 }
 
-export interface AttributionOutput {
+export type AttributionOutput = OpenApiAttributionOutputResponse & {
   schema_version: "attribution-output/v1";
-  feedback_case_id: string;
-  attribution_job_id: string;
   status: "completed" | "needs_human_review";
-  problem_type: string;
-  optimization_object_type: string;
-  actionability: string;
   confidence: FeedbackConfidence | string;
-  human_review_required: boolean;
   evidence_refs: Array<{ type: string; id: string; reason: string }>;
   responsibility_boundary: { owner: string; reason: string };
-  rationale: string;
   recommended_next_step: "generate_proposal" | "needs_human_review" | "stop" | string;
-  [key: string]: unknown;
-}
+};
 
-export interface ExternalGuidanceRecord {
-  owner: string;
-  actionability: string;
-  recommendation: string;
-  reason?: string | null;
+export type ExternalGuidanceRecord = OpenApiExternalGuidanceResponse & {
   external_item_id?: string;
   source_index?: number;
   status?: string;
   latest_notification_id?: string | null;
   latest_webhook_alias?: string | null;
   latest_notification?: ExternalGovernanceNotificationRecord | null;
-}
+};
 
-export interface ExternalGovernanceWebhookRecord {
-  alias: string;
-  name: string;
-  url: string;
-  has_token?: boolean;
-}
+export type ExternalGovernanceWebhookRecord = OpenApiExternalGovernanceWebhookResponse;
 
-export interface ExternalGovernanceNotificationRecord {
-  notification_id: string;
-  external_item_id: string;
-  created_at: string;
-  completed_at?: string | null;
+export type ExternalGovernanceNotificationRecord = OpenApiExternalGovernanceNotificationResponse & {
   status: "sending" | "sent" | "failed" | string;
-  webhook_alias: string;
-  http_status?: number | null;
-  response_body?: string | null;
-  error?: string | null;
-  request_json?: Record<string, unknown>;
-}
+};
 
-export interface ExternalGovernanceItemRecord {
-  external_item_id: string;
-  created_at: string;
-  updated_at: string;
+export type ExternalGovernanceItemRecord = OpenApiExternalGovernanceItemResponse & {
   status: "pending_notification" | "notified" | "notification_failed" | string;
-  feedback_case_id: string;
-  proposal_job_id: string;
-  source_index: number;
-  owner: string;
-  actionability: string;
-  title?: string;
-  description?: string;
-  objective?: string;
-  target_summary?: string;
-  task_context?: Record<string, unknown>;
-  recommendation: string;
-  recommended_actions?: string[];
-  acceptance_criteria?: string[];
-  expected_effect?: string;
-  validation?: string;
-  risk?: string;
-  analysis_summary?: string;
-  evidence_summary?: string;
-  evidence_refs?: Array<Record<string, unknown>>;
-  reason?: string | null;
-  latest_notification_id?: string | null;
-  latest_webhook_alias?: string | null;
   latest_notification?: ExternalGovernanceNotificationRecord | null;
   [key: string]: unknown;
-}
+};
 
-export interface OptimizationProposalRecord {
-  proposal_id: string;
-  created_at?: string;
+export type OptimizationProposalReviewRecord = OpenApiOptimizationProposalReviewRecordResponse;
+
+export type OptimizationProposalRecord = OpenApiOptimizationProposalResponse & {
   status: "pending_review" | "approved" | "rejected" | "needs_more_analysis" | string;
-  feedback_case_id: string;
-  proposal_job_id: string;
-  actionability: string;
-  target_type: string;
-  target_path?: string | null;
-  title: string;
-  recommendation: string;
-  expected_effect?: string;
-  validation?: string;
-  risk?: string;
-  requires_approval?: boolean;
-  base_agent_version_id?: string | null;
-  latest_review?: Record<string, unknown>;
-  [key: string]: unknown;
-}
+  actionability?: string;
+  target_type?: string;
+  title?: string;
+  recommendation?: string;
+  latest_review?: OptimizationProposalReviewRecord | null;
+};
 
-export interface ProposalOutput {
+export type ProposalOutput = OpenApiProposalOutputResponse & {
   schema_version: "proposal-output/v1";
-  feedback_case_id: string;
-  proposal_job_id: string;
   status: "completed" | "needs_human_review";
   proposals: OptimizationProposalRecord[];
   external_guidance: ExternalGuidanceRecord[];
-  no_action_reason?: string | null;
-  [key: string]: unknown;
-}
+};
 
 export interface OptimizationProposalReviewRequest {
   action?: OptimizationProposalReviewAction;
   comment?: string;
 }
 
-export interface OptimizationProposalReviewResponse {
+export type OptimizationProposalReviewResponse = OpenApiOptimizationProposalReviewResponse & {
   proposal: OptimizationProposalRecord;
-  review: Record<string, unknown>;
-}
+  review: OptimizationProposalReviewRecord;
+};
 
 export interface OptimizationTaskCreateRequest {
   proposal_id?: string;
@@ -471,9 +279,7 @@ export interface OptimizationTaskCreateRequest {
   comment?: string;
 }
 
-export interface OptimizationTaskRecord {
-  optimization_task_id: string;
-  created_at: string;
+export type OptimizationTaskRecord = OpenApiOptimizationTaskResponse & {
   status:
     | "pending_execution"
     | "execution_planning"
@@ -486,299 +292,109 @@ export interface OptimizationTaskRecord {
     | "needs_human_review"
     | "closed"
     | string;
-  proposal_id?: string | null;
-  proposal_ids: string[];
-  feedback_case_id?: string | null;
-  execution_mode: "manual_or_patch" | string;
-  source: string;
-  comment?: string | null;
-  target_paths?: string[];
   proposal?: OptimizationProposalRecord;
-  baseline_agent_version_id?: string | null;
-  execution_job_ids?: string[];
-  latest_execution_job_id?: string | null;
   latest_execution_job?: OptimizationExecutionJobRecord | null;
-  pre_execution_agent_version_id?: string | null;
-  pre_execution_agent_version?: Record<string, unknown> | null;
-  applied_at?: string | null;
-  applied_agent_version_id?: string | null;
-  applied_agent_version?: Record<string, unknown> | null;
-  regression_run_ids?: string[];
-  latest_regression_run_id?: string | null;
+  pre_execution_agent_version?: AgentVersionSummary | null;
+  applied_agent_version?: AgentVersionSummary | null;
   latest_regression_run?: EvalRunRecord | null;
-  regression_completed_at?: string | null;
   [key: string]: unknown;
-}
+};
 
-export interface OptimizationExecutionJobRecord {
-  execution_job_id: string;
-  optimization_task_id: string;
-  feedback_case_id?: string | null;
-  proposal_id?: string | null;
+export type OptimizationExecutionJobRecord = OpenApiOptimizationExecutionJobResponse & {
   status: "queued" | "running" | "ready" | "completed" | "failed" | "needs_human_review" | string;
-  profile_name?: string;
-  created_at: string;
-  started_at?: string | null;
-  completed_at?: string | null;
-  baseline_agent_version_id?: string | null;
-  input_json?: Record<string, unknown> | null;
-  raw_output_json?: Record<string, unknown> | null;
   validated_output_json?: ExecutionPlanOutput | null;
-  error_json?: Record<string, unknown> | null;
-  pre_execution_agent_version_id?: string | null;
-  pre_execution_agent_version?: Record<string, unknown> | null;
-  applied_agent_version_id?: string | null;
-  applied_agent_version?: Record<string, unknown> | null;
-  applied_diff?: {
-    added?: Array<Record<string, unknown>>;
-    modified?: Array<Record<string, unknown>>;
-    deleted?: Array<Record<string, unknown>>;
-    unchanged_count?: number;
-    [key: string]: unknown;
-  } | null;
-  [key: string]: unknown;
-}
+  applied_diff?: AgentVersionDiff | null;
+  compensations?: ExecutionCompensationRecord[];
+};
 
-export interface ExecutionPlanOutput {
-  schema_version?: string;
-  optimization_task_id?: string;
-  execution_job_id?: string;
-  status?: string;
-  baseline_agent_version_id?: string | null;
-  summary?: string;
+export type ExecutionCompensationRecord = OpenApiExecutionCompensationResponse & {
+  status: "resolved" | "pending_manual_recovery" | string;
+  restore_status: "restored" | "restore_failed" | string;
+};
+
+export type ExecutionPlanOutput = OpenApiOptimizationExecutionPlanOutputResponse & {
   operations?: ExecutionPlanOperation[];
-  validation?: string | null;
-  risk?: string | null;
-  human_review_required?: boolean;
-  no_action_reason?: string | null;
-  [key: string]: unknown;
-}
+};
 
-export interface ExecutionPlanOperation {
-  operation?: "append_text" | "replace_file" | "create_file" | "noop" | string;
-  path?: string;
-  expected_sha256?: string | null;
-  content?: string | null;
-  append_text?: string | null;
-  rationale?: string | null;
-  [key: string]: unknown;
-}
+export type ExecutionPlanOperation = OpenApiOptimizationExecutionPlanOperationResponse & {
+  operation?: "append_text" | "replace_file" | "create_file" | "noop" | string | null;
+};
 
-export interface EvalCaseRecord {
-  eval_case_id: string;
-  created_at: string;
-  updated_at: string;
-  status: "active" | "draft" | "archived" | string;
-  source_feedback_case_id?: string | null;
-  source_run_id?: string | null;
-  prompt: string;
-  labels?: string[];
-  expected_behavior?: string;
-  checks_json?: Record<string, unknown>;
-  source_summary?: Record<string, unknown>;
-  attribution_summary?: Record<string, unknown>;
-  proposal_summary?: Record<string, unknown>;
-  [key: string]: unknown;
-}
+export type OptimizationExecutionApplyResponse = OpenApiOptimizationExecutionApplyResponse & {
+  execution_job: OptimizationExecutionJobRecord;
+  optimization_task: OptimizationTaskRecord;
+  applied_diff?: AgentVersionDiff | null;
+};
 
-export interface EvalCaseUpdateRequest {
-  prompt?: string;
-  expected_behavior?: string;
-  checks_json?: Record<string, unknown>;
-  labels?: string[];
-  status?: "active" | "draft" | "archived";
-}
+export type EvalCaseRecord = OpenApiEvalCaseResponse;
 
-export interface EvalRunItemRecord {
-  eval_run_item_id: string;
-  eval_run_id: string;
-  eval_case_id: string;
-  source_feedback_case_id?: string | null;
-  agent_run_id?: string | null;
-  agent_version_id?: string | null;
-  status: "passed" | "failed" | "needs_human_review" | string;
-  score?: number | null;
-  check_results?: Array<Record<string, unknown>>;
-  answer_summary?: string | null;
-  error_json?: Record<string, unknown> | null;
-  created_at?: string;
-  [key: string]: unknown;
-}
+export type EvalCaseUpdateRequest = OpenApiFeedbackEvalCaseUpdateRequest;
 
-export interface EvalRunRecord {
-  eval_run_id: string;
-  created_at: string;
-  completed_at?: string | null;
-  status: "running" | "completed" | "failed" | string;
-  result_status?: "running" | "passed" | "failed" | "needs_human_review" | string;
-  agent_version_id?: string | null;
-  optimization_task_id?: string | null;
-  source: string;
-  eval_case_ids?: string[];
-  item_ids?: string[];
-  summary?: {
-    total?: number;
-    passed?: number;
-    failed?: number;
-    needs_human_review?: number;
-    [key: string]: unknown;
-  };
-  items?: EvalRunItemRecord[];
-  error_json?: Record<string, unknown> | null;
-  [key: string]: unknown;
-}
+export type EvalRunItemRecord = OpenApiEvalRunItemResponse;
+export type EvalRunRecord = OpenApiEvalRunResponse;
 
-export interface FeedbackOptimizationPlanRecord {
-  schema_version?: string;
-  optimization_plan_id?: string;
-  batch_id?: string;
-  created_at?: string;
+export type FeedbackOptimizationPlanRecord = OpenApiFeedbackOptimizationPlanResponse & {
   status: "pending_approval" | "approved" | "rejected" | "needs_human_review" | string;
-  title?: string;
-  problem_types?: string[];
-  confidence?: string;
-  actionability?: string;
-  optimization_object_type?: string;
-  target_type?: string;
-  target_path?: string | null;
-  recommendation?: string;
-  regeneration_instruction?: string | null;
-  expected_effect?: string;
-  validation?: string;
-  risk?: string;
-  rationale?: string;
-  evidence_refs?: Array<Record<string, unknown>>;
-  source_refs?: FeedbackSourceRef[];
-  feedback_case_ids?: string[];
-  eval_case_ids?: string[];
-  attribution_job_ids?: string[];
-  attribution_summaries?: Array<Record<string, unknown>>;
   tasks?: FeedbackOptimizationPlanTaskRecord[];
-  task_summary?: Record<string, number>;
   blocked_items?: FeedbackOptimizationBlockedItemRecord[];
-  blocked_summary?: Record<string, number>;
-  [key: string]: unknown;
-}
+};
 
-export interface FeedbackOptimizationPlanTaskRecord {
-  schema_version?: string;
-  plan_task_id: string;
-  source_index?: number;
+export type FeedbackOptimizationPlanTaskRecord = OpenApiFeedbackOptimizationPlanTaskResponse & {
   execution_kind: "workspace_execution" | "external_webhook" | string;
-  status: string;
-  title?: string;
-  target_type?: string;
-  target_path?: string | null;
-  owner?: string;
-  actionability?: string;
-  confidence?: string;
-  problem_type?: string;
-  description?: string;
-  objective?: string;
-  target_summary?: string;
-  task_context?: Record<string, unknown>;
-  recommendation?: string;
-  recommended_actions?: string[];
-  acceptance_criteria?: string[];
-  expected_effect?: string;
-  validation?: string;
-  risk?: string;
-  analysis_summary?: string;
-  evidence_summary?: string;
-  evidence_refs?: Array<Record<string, unknown>>;
-  rationale?: string;
-  reason?: string | null;
-  feedback_case_ids?: string[];
-  eval_case_ids?: string[];
-  attribution_job_ids?: string[];
-  internal_proposal_id?: string | null;
-  optimization_task_id?: string | null;
-  execution_job_id?: string | null;
-  latest_execution_job?: OptimizationExecutionJobRecord | null;
-  applied_agent_version_id?: string | null;
-  external_item_id?: string | null;
-  latest_webhook_alias?: string | null;
-  latest_notification?: ExternalGovernanceNotificationRecord | null;
-  execution_apply_result?: Record<string, unknown> | null;
-  created_at?: string;
-  updated_at?: string;
-  [key: string]: unknown;
-}
+};
 
-export interface FeedbackOptimizationBlockedItemRecord {
-  schema_version?: string;
-  blocked_item_id: string;
-  source_index?: number;
-  status?: string;
-  title?: string;
-  target_type?: string;
-  target_path?: string | null;
-  owner?: string;
-  actionability?: string;
-  confidence?: string;
-  problem_type?: string;
-  analysis_summary?: string;
-  evidence_summary?: string;
-  recommendation?: string;
-  reason?: string | null;
-  feedback_case_ids?: string[];
-  eval_case_ids?: string[];
-  attribution_job_ids?: string[];
-  created_at?: string;
-  updated_at?: string;
-  [key: string]: unknown;
-}
+export type FeedbackOptimizationBlockedItemRecord = OpenApiFeedbackOptimizationBlockedItemResponse;
 
-export interface FeedbackOptimizationPlanTaskExecuteRequest {
-  webhook_alias?: string;
-  force?: boolean;
-}
+export type FeedbackOptimizationPlanTaskExecuteRequest = OptionalClientDefaults<
+  OpenApiFeedbackOptimizationPlanTaskExecuteRequest,
+  "force"
+>;
 
-export interface FeedbackOptimizationPlanTaskExecuteResponse {
+export type FeedbackOptimizationPlanTaskExecuteResponse = OpenApiFeedbackOptimizationPlanTaskExecuteResponse & {
   batch: FeedbackOptimizationBatchRecord;
   plan_task?: FeedbackOptimizationPlanTaskRecord | null;
   optimization_task?: OptimizationTaskRecord | null;
   execution_job?: OptimizationExecutionJobRecord | null;
-  apply_result?: Record<string, unknown> | null;
+  apply_result?: OptimizationExecutionApplyResponse | null;
   external_item?: ExternalGovernanceItemRecord | null;
-}
+};
 
-export interface FeedbackOptimizationBatchCreateRequest {
+export type FeedbackOptimizationBatchCreateRequest = Omit<
+  OpenApiFeedbackOptimizationBatchCreateRequest,
+  "priority" | "source_refs"
+> & {
   source_refs: FeedbackSourceRef[];
   title?: string;
   priority?: "high" | "medium" | "low";
-}
+};
 
-export interface FeedbackOptimizationBatchRecord {
-  schema_version?: string;
-  batch_id: string;
-  created_at: string;
-  updated_at: string;
-  status: string;
-  title: string;
+export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchResponse & {
   priority?: "high" | "medium" | "low" | string;
   source_refs?: FeedbackSourceRef[];
-  feedback_case_ids?: string[];
-  skipped_source_refs?: Array<Record<string, unknown>>;
-  eval_case_ids?: string[];
   eval_case_generation?: FeedbackEvalCaseGenerateResponse;
-  attribution_job_ids?: string[];
   attribution_jobs?: FeedbackAnalysisJobRecord[];
-  attribution_summary?: Record<string, unknown>;
   optimization_plan?: FeedbackOptimizationPlanRecord | null;
-  optimization_plan_job_id?: string | null;
   optimization_plan_job?: FeedbackAnalysisJobRecord | null;
-  optimization_plan_error?: Record<string, unknown> | null;
-  internal_proposal_id?: string | null;
-  optimization_task_id?: string | null;
   optimization_task?: OptimizationTaskRecord | null;
-  execution_job_id?: string | null;
   execution_job?: OptimizationExecutionJobRecord | null;
-  eval_run_id?: string | null;
   latest_eval_run?: EvalRunRecord | null;
-  execution_apply_result?: Record<string, unknown> | null;
-  [key: string]: unknown;
-}
+};
+
+export type FeedbackOptimizationBatchAttributionResponse = OpenApiFeedbackOptimizationBatchAttributionResponse & {
+  batch?: FeedbackOptimizationBatchRecord | null;
+  jobs: FeedbackAnalysisJobRecord[];
+};
+
+export type FeedbackOptimizationBatchExecutionResponse = OpenApiFeedbackOptimizationBatchExecutionResponse & {
+  batch?: FeedbackOptimizationBatchRecord | null;
+  optimization_task?: OptimizationTaskRecord | null;
+  execution_job?: OptimizationExecutionJobRecord | null;
+};
+
+export type FeedbackOptimizationBatchRegressionResponse = OpenApiFeedbackOptimizationBatchRegressionResponse & {
+  batch?: FeedbackOptimizationBatchRecord | null;
+  eval_run: EvalRunRecord;
+};
 
 export interface FeedbackWorkbenchData {
   sources: FeedbackSourceRecord[];

@@ -1,71 +1,27 @@
-export interface RuntimeHealth {
-  status: string;
-  api_host?: string;
-  api_port?: number;
-  host_port?: number;
-  workspace_dir?: string;
-  data_dir?: string;
-  claude_root?: string;
-  claude_home?: string;
-  claude_config_mode?: string;
-  claude_config_dir?: string | null;
-  claude_global_config_file?: string;
-  setting_sources_effective?: string[] | null;
-  model?: string | null;
-  default_agent?: string | null;
-  default_skills_mode?: "all" | "default" | "none";
-  provider_api_url_configured?: boolean;
-  provider_api_key_configured?: boolean;
-  programmatic_agents?: boolean;
-  agent_version_id?: string | null;
-  docs?: Record<string, string | null>;
-}
+import type { components } from "./api";
 
-export interface AgentInfo {
-  name: string;
-  path: string;
-  description?: string | null;
-  model?: string | null;
-  tools: string[];
-  skills: string[];
-}
+type OpenApiAgentInfo = components["schemas"]["AgentInfo"];
+type OpenApiAgentVersionDiffEntryResponse = components["schemas"]["AgentVersionDiffEntryResponse"];
+type OpenApiAgentVersionDiffResponse = components["schemas"]["AgentVersionDiffResponse"];
+type OpenApiAgentVersionFileDiffResponse = components["schemas"]["AgentVersionFileDiffResponse"];
+type OpenApiAgentVersionFileEntryResponse = components["schemas"]["AgentVersionFileEntryResponse"];
+type OpenApiAgentVersionManifestResponse = components["schemas"]["AgentVersionManifestResponse"];
+type OpenApiAgentVersionRestoreRequest = components["schemas"]["AgentVersionRestoreRequest"];
+type OpenApiAgentVersionRestoreResponse = components["schemas"]["AgentVersionRestoreResponse"];
+type OpenApiAgentVersionSnapshotRequest = components["schemas"]["AgentVersionSnapshotRequest"];
+type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
+type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
+type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
+type OpenApiRuntimeHealth = components["schemas"]["RuntimeHealthResponse"];
+type OpenApiSessionInfo = components["schemas"]["SessionInfo"];
+type OpenApiSkillInfo = components["schemas"]["SkillInfo"];
 
-export interface SkillInfo {
-  name: string;
-  path: string;
-  description?: string | null;
-}
-
-export interface SessionInfo {
-  session_id: string;
-  sdk_session_id?: string | null;
-  created_at: string;
-  updated_at: string;
-  title?: string | null;
-  turns: number;
-  metadata: Record<string, unknown>;
-}
-
-export interface ConfigMappingItem {
-  scope: string;
-  kind: string;
-  container_path: string;
-  host_mount?: string | null;
-  exists: boolean;
-  loaded_by_default: boolean;
-  git_policy: string;
-  notes?: string | null;
-}
-
-export interface ConfigMappingResponse {
-  claude_config_mode: string;
-  claude_root: string;
-  claude_home: string;
-  claude_global_config_file: string;
-  claude_config_dir?: string | null;
-  setting_sources_effective?: string[] | null;
-  mappings: ConfigMappingItem[];
-}
+export type RuntimeHealth = OpenApiRuntimeHealth;
+export type AgentInfo = OpenApiAgentInfo;
+export type SkillInfo = OpenApiSkillInfo;
+export type SessionInfo = OpenApiSessionInfo;
+export type ConfigMappingItem = OpenApiConfigMappingItem;
+export type ConfigMappingResponse = OpenApiConfigMappingResponse;
 
 export interface ChatRequest {
   message: string;
@@ -146,81 +102,38 @@ export interface RuntimeClientConfig {
   apiKey: string;
 }
 
-export interface AgentVersionSummary {
-  agent_version_id: string;
-  parent_version_id?: string | null;
-  created_at: string;
-  reason: string;
-  rollback_of_version_id?: string | null;
-  source_proposal_ids?: string[];
-  note?: string | null;
-  agent_yaml_version?: string | null;
-  snapshot_policy_version?: string;
-  bundle_sha256?: string;
-  bundle_path?: string;
-  manifest_path?: string;
-  file_count?: number;
-  entry_count?: number;
-  total_bytes?: number;
-}
-
-export interface AgentVersionManifest {
-  agent_version_id: string;
-  parent_version_id?: string | null;
-  created_at: string;
-  reason: string;
-  rollback_of_version_id?: string | null;
-  source_proposal_ids?: string[];
-  note?: string | null;
-  agent_yaml_version?: string | null;
-  snapshot_policy_version?: string;
-  included_roots?: Record<string, unknown>[];
-  excluded_paths?: Record<string, unknown>[];
-  skipped_paths?: Record<string, unknown>[];
-  bundle_sha256?: string;
-  file_count?: number;
-  entry_count?: number;
-  total_bytes?: number;
-  files: Array<Record<string, unknown>>;
-  related_data?: Record<string, unknown>;
-}
-
-export interface AgentVersionSnapshotRequest {
-  reason?: string;
-  source_proposal_ids?: string[];
-  note?: string;
-}
-
-export interface AgentVersionRestoreRequest {
-  note?: string;
-}
-
-export interface AgentVersionRestoreResponse {
+export type AgentVersionSummary = OpenApiAgentVersionSummaryResponse;
+export type AgentVersionFileEntry = OpenApiAgentVersionFileEntryResponse;
+export type AgentVersionDiffEntry = OpenApiAgentVersionDiffEntryResponse;
+export type AgentVersionManifest = Omit<OpenApiAgentVersionManifestResponse, "files"> & {
+  files?: AgentVersionFileEntry[];
+};
+export type AgentVersionSnapshotRequest = OpenApiAgentVersionSnapshotRequest;
+export type AgentVersionRestoreRequest = OpenApiAgentVersionRestoreRequest;
+export type AgentVersionRestoreResponse = Omit<
+  OpenApiAgentVersionRestoreResponse,
+  "restored_from_version" | "pre_restore_version" | "current_version"
+> & {
   restored_from_version: AgentVersionSummary;
   pre_restore_version: AgentVersionSummary;
   current_version: AgentVersionSummary;
-  requires_runtime_restart: boolean;
-}
-
-export interface AgentVersionDiff {
-  from_version_id: string;
-  to_version_id: string;
-  added: Array<Record<string, unknown>>;
-  modified: Array<Record<string, unknown>>;
-  deleted: Array<Record<string, unknown>>;
+};
+export type AgentVersionDiff = Omit<OpenApiAgentVersionDiffResponse, "added" | "modified" | "deleted" | "unchanged_count"> & {
+  added: AgentVersionFileEntry[];
+  modified: AgentVersionDiffEntry[];
+  deleted: AgentVersionFileEntry[];
   unchanged_count: number;
-}
-
-export interface AgentVersionFileDiff {
+};
+export type AgentVersionFileDiff = Omit<OpenApiAgentVersionFileDiffResponse, "status" | "before" | "after"> & {
   from_version_id: string;
   to_version_id: string;
   path: string;
   archive_path: string;
   status: "added" | "modified" | "deleted" | "unchanged" | "missing" | "binary_or_too_large" | string;
-  before?: Record<string, unknown> | null;
-  after?: Record<string, unknown> | null;
+  before?: AgentVersionFileEntry | null;
+  after?: AgentVersionFileEntry | null;
   unified_diff: string;
   is_text: boolean;
   truncated: boolean;
   reason?: string | null;
-}
+};

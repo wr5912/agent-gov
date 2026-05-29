@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from .errors import AgentOutputParseError
+
 
 ATTRIBUTION_SCHEMA_FIELDS = {
     "schema_version",
@@ -218,7 +220,7 @@ def execution_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | No
 def extract_json_object(text: str, *, expected_schema_version: str | None = None) -> dict[str, Any]:
     stripped = text.strip()
     if not stripped:
-        raise ValueError("empty agent output")
+        raise AgentOutputParseError("empty agent output")
     candidates = extract_json_candidates(stripped)
     if expected_schema_version:
         for candidate in reversed(candidates):
@@ -233,7 +235,7 @@ def extract_json_object(text: str, *, expected_schema_version: str | None = None
             return scored[0]
     if candidates:
         return candidates[0]
-    raise ValueError("agent output did not contain a JSON object")
+    raise AgentOutputParseError("agent output did not contain a JSON object")
 
 
 def extract_json_candidates(text: str) -> list[dict[str, Any]]:
@@ -264,5 +266,5 @@ def _schema_candidate_score(candidate: dict[str, Any], expected_schema_version: 
 def read_json(path: str | Path) -> dict[str, Any]:
     loaded = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
-        raise ValueError(f"Expected JSON object: {path}")
+        raise AgentOutputParseError(f"Expected JSON object: {path}")
     return loaded

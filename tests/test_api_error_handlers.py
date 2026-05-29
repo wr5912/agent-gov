@@ -1,0 +1,100 @@
+from fastapi.testclient import TestClient
+
+from app.runtime.errors import AgentVersionIntegrityError, BusinessRuleViolation
+from test_api_execution_optimizer import _load_app
+
+
+def test_feedback_store_error_handler_returns_structured_error(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        response = client.post("/api/feedback-signals", json={"labels": ["tool_data_incomplete"]})
+
+    assert response.status_code == 400
+    assert response.json()["error_code"] == "BUSINESS_RULE_VIOLATION"
+    assert "run_id, session_id, alert_id, or case_id" in response.json()["detail"]
+
+
+def test_feedback_route_not_found_returns_structured_error(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        response = client.get("/api/feedback-cases/fbc-missing")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Feedback case not found",
+        "error_code": "NOT_FOUND",
+    }
+
+
+def test_feedback_route_conflict_returns_structured_error(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        response = client.post(
+            "/api/feedback-optimization-batches",
+            json={"source_refs": [{"source_kind": "signal", "source_id": "fbs-missing"}]},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "No selected feedback source can create an optimization batch",
+        "error_code": "CONFLICT",
+    }
+
+
+def test_feedback_workbench_preserves_domain_error_code(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    def find_batch(batch_id):
+        return {"batch_id": batch_id, "feedback_case_ids": []}
+
+    def reset_batch_attribution(batch_id):
+        raise BusinessRuleViolation("domain-specific failure")
+
+    monkeypatch.setattr(module.feedback_store, "find_optimization_batch", find_batch)
+    monkeypatch.setattr(module.feedback_store, "reset_batch_attribution", reset_batch_attribution)
+
+    with TestClient(module.app) as client:
+        response = client.post(
+            "/api/feedback-optimization-batches/fob-domain/attribution-jobs",
+            json={"force": True},
+        )
+
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": "domain-specific failure",
+        "error_code": "BUSINESS_RULE_VIOLATION",
+    }
+
+
+def test_agent_version_route_not_found_returns_structured_error(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        response = client.get("/api/agent-versions/main/agent-version-missing")
+
+    assert response.status_code == 404
+    assert response.json() == {
+        "detail": "Agent version not found",
+        "error_code": "NOT_FOUND",
+    }
+
+
+def test_agent_version_route_conflict_returns_structured_error(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    def fail_restore(version_id, *, note=None):
+        raise AgentVersionIntegrityError("Agent version bundle hash mismatch")
+
+    monkeypatch.setattr(module.agent_version_store, "restore_version", fail_restore)
+
+    with TestClient(module.app) as client:
+        response = client.post("/api/agent-versions/main/agent-version-bad/rollback", json={})
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "detail": "Agent version bundle hash mismatch",
+        "error_code": "AGENT_VERSION_INTEGRITY_ERROR",
+    }

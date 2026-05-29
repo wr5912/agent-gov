@@ -9,6 +9,17 @@ from .settings import AppSettings
 
 AgentRole = Literal["main-agent", "attribution-analyzer", "proposal-generator", "execution-optimizer"]
 
+MAIN_AGENT_PROFILE = "main-agent"
+ATTRIBUTION_ANALYZER_PROFILE = "attribution-analyzer"
+PROPOSAL_GENERATOR_PROFILE = "proposal-generator"
+EXECUTION_OPTIMIZER_PROFILE = "execution-optimizer"
+
+PROFILE_VERSION_IDS: dict[AgentRole, str] = {
+    "attribution-analyzer": "attribution-analyzer-v0.1.0",
+    "proposal-generator": "proposal-generator-v0.1.0",
+    "execution-optimizer": "execution-optimizer-v0.1.0",
+}
+
 
 @dataclass(frozen=True)
 class AgentRuntimeProfile:
@@ -36,9 +47,9 @@ class AgentRuntimeProfile:
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     data_dir = settings.data_dir
     return {
-        "main-agent": AgentRuntimeProfile(
-            name="main-agent",
-            role="main-agent",
+        MAIN_AGENT_PROFILE: AgentRuntimeProfile(
+            name=MAIN_AGENT_PROFILE,
+            role=MAIN_AGENT_PROFILE,
             workspace_dir=settings.main_workspace_dir,
             claude_root=settings.main_claude_root,
             claude_config_dir=settings.main_claude_root / ".claude",
@@ -56,9 +67,9 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
             allowed_mcp_servers=("sec-ops-data", "security-kb"),
             permission_mode=settings.permission_mode or "default",
         ),
-        "attribution-analyzer": AgentRuntimeProfile(
-            name="attribution-analyzer",
-            role="attribution-analyzer",
+        ATTRIBUTION_ANALYZER_PROFILE: AgentRuntimeProfile(
+            name=ATTRIBUTION_ANALYZER_PROFILE,
+            role=ATTRIBUTION_ANALYZER_PROFILE,
             workspace_dir=settings.attribution_analyzer_workspace_dir,
             claude_root=settings.attribution_analyzer_claude_root,
             claude_config_dir=settings.attribution_analyzer_claude_root / ".claude",
@@ -71,9 +82,9 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
             denied_paths=(settings.main_workspace_dir, settings.main_claude_root),
             allowed_mcp_servers=("feedback-evidence", "readonly-trace"),
         ),
-        "proposal-generator": AgentRuntimeProfile(
-            name="proposal-generator",
-            role="proposal-generator",
+        PROPOSAL_GENERATOR_PROFILE: AgentRuntimeProfile(
+            name=PROPOSAL_GENERATOR_PROFILE,
+            role=PROPOSAL_GENERATOR_PROFILE,
             workspace_dir=settings.proposal_generator_workspace_dir,
             claude_root=settings.proposal_generator_claude_root,
             claude_config_dir=settings.proposal_generator_claude_root / ".claude",
@@ -89,9 +100,9 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
             disallowed_tools=("Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "WebSearch"),
             max_turns=16,
         ),
-        "execution-optimizer": AgentRuntimeProfile(
-            name="execution-optimizer",
-            role="execution-optimizer",
+        EXECUTION_OPTIMIZER_PROFILE: AgentRuntimeProfile(
+            name=EXECUTION_OPTIMIZER_PROFILE,
+            role=EXECUTION_OPTIMIZER_PROFILE,
             workspace_dir=settings.execution_optimizer_workspace_dir,
             claude_root=settings.execution_optimizer_claude_root,
             claude_config_dir=settings.execution_optimizer_claude_root / ".claude",

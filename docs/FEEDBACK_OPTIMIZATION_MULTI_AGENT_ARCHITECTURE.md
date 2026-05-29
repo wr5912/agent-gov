@@ -35,15 +35,16 @@ chat run
   -> feedback case
   -> evidence package
   -> attribution job
-  -> proposal job
-  -> optimization proposal
-  -> proposal approval
+  -> attribution output
+  -> optimization batch
+  -> proposal-generator 生成批次 optimization plan
+  -> 开发人员点击具体任务执行
   -> optimization task
   -> execution-optimizer plan
-  -> human-confirmed patch application
+  -> backend-controlled patch application
   -> pre/post execution snapshots
   -> main-workspace version
-  -> manual regression evaluation
+  -> batch regression evaluation
 ```
 
 ---

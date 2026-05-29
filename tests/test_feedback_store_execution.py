@@ -1,0 +1,762 @@
+from feedback_store_test_utils import *
+from sqlalchemy import select
+
+from app.runtime.runtime_db import OptimizationExecutionModel
+
+
+def test_proposal_target_policy_and_task_requires_approval(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["skill_gap"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "schema_version": "attribution-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "skill_gap",
+            "optimization_object_type": "skill",
+            "actionability": "direct_workspace_change",
+            "confidence": "medium",
+            "human_review_required": True,
+            "evidence_refs": [{"type": "run", "id": "run-1", "reason": "缺少证据链"}],
+            "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "skill 说明不足"},
+            "rationale": "需要补强技能",
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "title": "补强证据链要求",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "skill",
+                    "target_path": ".claude/skills/alert-triage/SKILL.md",
+                    "recommendation": "增加 evidence_refs 输出要求。",
+                    "expected_effect": "提高可核查性。",
+                    "validation": "新增回归样例。",
+                    "risk": "回答略变长。",
+                    "requires_approval": True,
+                },
+                {
+                    "title": "排除目标",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "secret",
+                    "target_path": "node_modules/pkg/index.js",
+                    "recommendation": "不应进入 task。",
+                    "expected_effect": "无",
+                    "validation": "无",
+                    "risk": "高",
+                    "requires_approval": True,
+                },
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+
+    proposals = store.list_proposals()
+    assert len(proposals) == 1
+    assert proposals[0]["target_path"] == ".claude/skills/alert-triage/SKILL.md"
+    assert store.create_task(proposal_id=proposals[0]["proposal_id"]) is None
+
+    store.review_proposal(proposals[0]["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="执行")
+    assert task["optimization_task_id"].startswith("opt-")
+    assert task["target_paths"] == [".claude/skills/alert-triage/SKILL.md"]
+    task_again = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="重复点击")
+    assert task_again["optimization_task_id"] == task["optimization_task_id"]
+    tasks = [item for item in store.list_tasks() if item["proposal_id"] == proposals[0]["proposal_id"]]
+    assert len(tasks) == 1
+
+
+def test_execution_job_lifecycle_updates_task(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec",
+                    "title": "追加配置读取要求",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
+                    "expected_effect": "提高回答完整性。",
+                    "validation": "复测反馈场景。",
+                    "risk": "响应略变慢。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+
+    job = store.create_execution_job(task["optimization_task_id"])
+    assert job["input_path"].endswith("/execution/input.json")
+    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    assert input_payload["execution_job_id"] == job["execution_job_id"]
+    assert input_payload["target_paths"] == ["CLAUDE.md"]
+
+    store.start_execution_job(job["execution_job_id"])
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "追加一条配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n配置读取要求。\n",
+                    "rationale": "让 Agent 回答前读取配置。",
+                }
+            ],
+            "validation": "复测反馈场景。",
+            "risk": "响应略变慢。",
+            "human_review_required": True,
+        },
+    )
+    updated_task = store.find_task(task["optimization_task_id"])
+
+    assert completed["status"] == "ready"
+    assert updated_task["status"] == "execution_ready"
+    assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
+    assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
+
+
+def test_complete_execution_job_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    def fail_task_update(*args, **kwargs):
+        raise RuntimeError("task update failed")
+
+    monkeypatch.setattr(store, "_attach_execution_job_to_task_row", fail_task_update)
+
+    with pytest.raises(RuntimeError, match="task update failed"):
+        store.complete_execution_job(
+            job["execution_job_id"],
+            {
+                "schema_version": "execution-plan-output/v1",
+                "optimization_task_id": task["optimization_task_id"],
+                "execution_job_id": job["execution_job_id"],
+                "status": "ready",
+                "baseline_agent_version_id": task["baseline_agent_version_id"],
+                "summary": "追加配置读取要求。",
+                "operations": [
+                    {
+                        "operation": "append_text",
+                        "path": "CLAUDE.md",
+                        "append_text": "\n配置读取要求。\n",
+                        "rationale": "测试回滚。",
+                    }
+                ],
+                "validation": "复测反馈场景。",
+                "risk": "测试风险。",
+                "human_review_required": True,
+            },
+        )
+
+    unchanged_job = store.get_execution_job(job["execution_job_id"])
+    unchanged_task = store.find_task(task["optimization_task_id"])
+    assert unchanged_job["status"] == "running"
+    assert unchanged_job["raw_output_json"] is None
+    assert unchanged_job["validated_output_json"] is None
+    assert unchanged_job["completed_at"] is None
+    assert unchanged_task["status"] == "execution_planning"
+
+
+def test_fail_execution_job_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    def fail_task_update(*args, **kwargs):
+        raise RuntimeError("task update failed")
+
+    monkeypatch.setattr(store, "_attach_execution_job_to_task_row", fail_task_update)
+
+    with pytest.raises(RuntimeError, match="task update failed"):
+        store.fail_execution_job(job["execution_job_id"], "AGENT_RUNTIME_ERROR", "failed")
+
+    unchanged_job = store.get_execution_job(job["execution_job_id"])
+    unchanged_task = store.find_task(task["optimization_task_id"])
+    assert unchanged_job["status"] == "running"
+    assert unchanged_job["error_json"] is None
+    assert unchanged_job["completed_at"] is None
+    assert unchanged_task["status"] == "execution_planning"
+
+
+def test_complete_execution_job_rolls_back_when_batch_plan_task_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="执行任务")
+    task = prepared["optimization_task"]
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    def fail_batch_plan_task_update(*args, **kwargs):
+        raise RuntimeError("batch plan task update failed")
+
+    monkeypatch.setattr(store, "_update_batch_plan_task_row", fail_batch_plan_task_update)
+
+    with pytest.raises(RuntimeError, match="batch plan task update failed"):
+        store.complete_execution_job(
+            job["execution_job_id"],
+            {
+                "schema_version": "execution-plan-output/v1",
+                "optimization_task_id": task["optimization_task_id"],
+                "execution_job_id": job["execution_job_id"],
+                "status": "ready",
+                "baseline_agent_version_id": task["baseline_agent_version_id"],
+                "summary": "追加配置读取要求。",
+                "operations": [
+                    {
+                        "operation": "append_text",
+                        "path": "CLAUDE.md",
+                        "append_text": "\n配置读取要求。\n",
+                        "rationale": "测试批次任务回滚。",
+                    }
+                ],
+                "validation": "复测反馈场景。",
+                "risk": "测试风险。",
+                "human_review_required": True,
+            },
+        )
+
+    unchanged_job = store.get_execution_job(job["execution_job_id"])
+    unchanged_task = store.find_task(task["optimization_task_id"])
+    unchanged_batch = store.find_optimization_batch(batch["batch_id"])
+    unchanged_plan_task = next(item for item in unchanged_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
+    assert unchanged_job["status"] == "running"
+    assert unchanged_job["validated_output_json"] is None
+    assert unchanged_task["status"] == "execution_planning"
+    assert unchanged_plan_task["status"] == "execution_planning"
+    assert unchanged_plan_task.get("latest_execution_job") is None
+
+
+def test_mark_execution_job_applied_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+    ready_job = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "追加配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n配置读取要求。\n",
+                    "rationale": "测试应用回滚。",
+                }
+            ],
+            "validation": "复测反馈场景。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    def fail_task_applied(*args, **kwargs):
+        raise RuntimeError("task applied update failed")
+
+    monkeypatch.setattr(store, "_mark_task_applied_row", fail_task_applied)
+
+    with pytest.raises(RuntimeError, match="task applied update failed"):
+        store.mark_execution_job_applied(
+            ready_job["execution_job_id"],
+            pre_execution_version={"agent_version_id": "main-v-before"},
+            applied_agent_version={"agent_version_id": "main-v-after"},
+            applied_diff={"changed_files": []},
+        )
+
+    unchanged_job = store.get_execution_job(job["execution_job_id"])
+    unchanged_task = store.find_task(task["optimization_task_id"])
+    assert unchanged_job["status"] == "ready"
+    assert unchanged_job.get("applied_agent_version_id") is None
+    assert unchanged_task["status"] == "execution_ready"
+    assert unchanged_task.get("applied_agent_version_id") is None
+
+
+def test_mark_execution_job_applied_syncs_batch_plan_task(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="执行任务")
+    task = prepared["optimization_task"]
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+    ready_job = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "追加配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n配置读取要求。\n",
+                    "rationale": "测试批次应用同步。",
+                }
+            ],
+            "validation": "复测反馈场景。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    applied = store.mark_execution_job_applied(
+        ready_job["execution_job_id"],
+        pre_execution_version={"agent_version_id": "main-v-before"},
+        applied_agent_version={"agent_version_id": "main-v-after"},
+        applied_diff={"changed_files": ["CLAUDE.md"]},
+    )
+
+    updated_task = store.find_task(task["optimization_task_id"])
+    updated_batch = store.find_optimization_batch(batch["batch_id"])
+    updated_plan_task = next(item for item in updated_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
+    assert applied["status"] == "completed"
+    assert applied["applied_agent_version_id"] == "main-v-after"
+    assert updated_task["status"] == "applied_pending_regression"
+    assert updated_batch["status"] == "applied_pending_regression"
+    assert updated_plan_task["status"] == "applied_pending_regression"
+    assert updated_plan_task["applied_agent_version_id"] == "main-v-after"
+    assert updated_plan_task["latest_execution_job"]["status"] == "completed"
+
+
+def test_mark_execution_job_applied_rolls_back_when_batch_plan_task_update_fails(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="执行任务")
+    task = prepared["optimization_task"]
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+    ready_job = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "追加配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n配置读取要求。\n",
+                    "rationale": "测试批次应用回滚。",
+                }
+            ],
+            "validation": "复测反馈场景。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    def fail_batch_plan_task_update(*args, **kwargs):
+        raise RuntimeError("batch plan task applied update failed")
+
+    monkeypatch.setattr(store, "_update_batch_plan_task_row", fail_batch_plan_task_update)
+
+    with pytest.raises(RuntimeError, match="batch plan task applied update failed"):
+        store.mark_execution_job_applied(
+            ready_job["execution_job_id"],
+            pre_execution_version={"agent_version_id": "main-v-before"},
+            applied_agent_version={"agent_version_id": "main-v-after"},
+            applied_diff={"changed_files": ["CLAUDE.md"]},
+        )
+
+    unchanged_job = store.get_execution_job(job["execution_job_id"])
+    unchanged_task = store.find_task(task["optimization_task_id"])
+    unchanged_batch = store.find_optimization_batch(batch["batch_id"])
+    unchanged_plan_task = next(item for item in unchanged_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
+    assert unchanged_job["status"] == "ready"
+    assert unchanged_job.get("applied_agent_version_id") is None
+    assert unchanged_task["status"] == "execution_ready"
+    assert unchanged_task.get("applied_agent_version_id") is None
+    assert unchanged_plan_task["status"] == "execution_ready"
+    assert unchanged_plan_task.get("applied_agent_version_id") is None
+
+
+def test_execution_job_accepts_any_managed_workspace_file(tmp_path):
+    store, settings = _store(tmp_path)
+    target = settings.main_workspace_dir / "mcp_servers" / "security_kb_mcp" / "kb.yaml"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("rules:\n  - old\n", encoding="utf-8")
+    task = _create_approved_task_for_target(store, "mcp_servers/security_kb_mcp/kb.yaml")
+
+    job = store.create_execution_job(task["optimization_task_id"])
+    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    context = input_payload["target_file_contexts"][0]
+
+    assert input_payload["allowed_target_paths"] == ["mcp_servers/security_kb_mcp/kb.yaml"]
+    assert input_payload["target_policy"]["type"] == "main_workspace_managed_full_with_excludes"
+    assert context["path"] == "mcp_servers/security_kb_mcp/kb.yaml"
+    assert context["managed"] is True
+    assert context["exists"] is True
+    assert context["type"] == "file"
+    assert context["content_text"] == "rules:\n  - old\n"
+    assert context["sha256"]
+
+
+def test_execution_targets_reject_workspace_excluded_paths(tmp_path):
+    store, _ = _store(tmp_path)
+
+    assert store.target_allowed("README.md") is True
+    assert store.target_allowed("mcp_servers/security_kb_mcp/kb.yaml") is True
+    assert store.target_allowed("node_modules/pkg/index.js") is False
+    assert store.target_allowed(".git/config") is False
+    assert store.target_allowed("dist/bundle.js") is False
+    assert store.target_allowed(".venv/bin/python") is False
+    assert store.target_allowed("../escape") is False
+    assert store.target_allowed("/main-workspace/CLAUDE.md") is False
+
+
+def test_execution_plan_binds_expected_sha_from_target_context(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    context = job["input_json"]["target_file_contexts"][0]
+    store.start_execution_job(job["execution_job_id"])
+
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "替换 CLAUDE.md。",
+            "operations": [
+                {
+                    "operation": "replace_file",
+                    "path": "CLAUDE.md",
+                    "content": "# Updated\n",
+                    "rationale": "测试绑定 hash。",
+                }
+            ],
+            "validation": "检查文件内容。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    operation = completed["validated_output_json"]["operations"][0]
+    assert operation["expected_sha256"] == context["sha256"]
+
+
+def test_create_execution_job_cleans_record_and_tmp_when_task_attach_fails(tmp_path, monkeypatch):
+    store, settings = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    task_id = task["optimization_task_id"]
+
+    def fail_task_attach(*args, **kwargs):
+        raise RuntimeError("task attach failed")
+
+    monkeypatch.setattr(store, "_attach_execution_job_to_task", fail_task_attach)
+
+    with pytest.raises(RuntimeError, match="task attach failed"):
+        store.create_execution_job(task_id, force=True)
+
+    with store.Session() as db:
+        assert db.scalars(select(OptimizationExecutionModel)).all() == []
+    assert list((settings.data_dir / ".runtime-tmp" / "jobs").iterdir()) == []
+    assert store.find_task(task_id).get("latest_execution_job_id") is None
+
+
+def test_execution_output_fills_system_fields_from_job_context(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, ".mcp.json")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "execution_job_id": job["execution_job_id"],
+            "status": "needs_human_review",
+            "summary": "目标文件与提案意图不匹配，需要人工确认。",
+            "operations": [],
+            "no_action_reason": "提案要求调整 Agent 行为，但 .mcp.json 仅用于 MCP 连接配置。",
+            "validation": None,
+            "risk": None,
+        },
+    )
+
+    assert completed["status"] == "needs_human_review"
+    assert completed["validated_output_json"]["optimization_task_id"] == task["optimization_task_id"]
+    assert completed["validated_output_json"]["baseline_agent_version_id"] == task["baseline_agent_version_id"]
+    assert completed["error_json"] is None
+
+
+def test_execution_plan_rejects_non_text_or_skipped_target(tmp_path):
+    store, settings = _store(tmp_path)
+    target = settings.main_workspace_dir / "assets" / "logo.bin"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"\x00\x01binary")
+    task = _create_approved_task_for_target(store, "assets/logo.bin")
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    failed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": "替换二进制文件。",
+            "operations": [
+                {
+                    "operation": "replace_file",
+                    "path": "assets/logo.bin",
+                    "content": "not-binary",
+                    "rationale": "二进制目标不应自动改。",
+                }
+            ],
+            "validation": "不应通过。",
+            "risk": "不应通过。",
+            "human_review_required": True,
+        },
+    )
+
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["error_code"] == "EXECUTION_PLAN_UNSAFE"
+    assert "not safely editable" in failed["error_json"]["message"]
+
+
+def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    import claude_agent_sdk
+
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec-runtime",
+                    "title": "补充配置读取要求",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
+                    "expected_effect": "回答更完整。",
+                    "validation": "复测配置类问题。",
+                    "risk": "响应耗时可能增加。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
+    seen: dict[str, object] = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        prompt_items = []
+        async for item in prompt:
+            prompt_items.append(item)
+        prompt_text = prompt_items[0]["message"]["content"]
+        input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
+        input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
+        output = {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": input_payload["optimization_task_id"],
+            "execution_job_id": input_payload["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": input_payload["baseline_agent_version_id"],
+            "summary": "追加配置读取要求。",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n回答配置类问题前必须读取当前 workspace 配置。\n",
+                    "rationale": "根据已批准方案补充主智能体配置读取要求。",
+                }
+            ],
+            "validation": "运行评估套件。",
+            "risk": "用例格式需人工确认。",
+            "human_review_required": True,
+        }
+        text = json.dumps(output, ensure_ascii=False)
+        seen["prompt_text"] = prompt_text
+        seen["input_path"] = input_path
+        seen["allowed_tools"] = options.allowed_tools
+        seen["disallowed_tools"] = options.disallowed_tools
+        yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-execution-session")
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-execution-session",
+            result=text,
+        )
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+
+    job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
+    updated_task = store.find_task(task["optimization_task_id"])
+
+    assert job["status"] == "ready"
+    assert seen["input_path"] == job["input_path"]
+    assert str(seen["input_path"]).endswith("/execution/input.json")
+    assert "execution-input.json" not in str(seen["input_path"])
+    assert seen["allowed_tools"] == []
+    assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob", "Bash", "Edit", "Write"}
+    assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
+    assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
+
+
+def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path, monkeypatch):
+    import claude_agent_sdk
+
+    store, settings = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
+    store.complete_proposal_job(
+        proposal_job["job_id"],
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": feedback_case["feedback_case_id"],
+            "proposal_job_id": proposal_job["job_id"],
+            "status": "completed",
+            "proposals": [
+                {
+                    "proposal_id": "prop-exec-eval",
+                    "title": "增加告警误报评估用例",
+                    "actionability": "direct_workspace_change",
+                    "target_type": "eval_case",
+                    "target_path": "evals/alert-triage-false-positive.json",
+                    "recommendation": "创建告警误报评估用例。",
+                    "expected_effect": "覆盖误报回归场景。",
+                    "validation": "运行评估套件。",
+                    "risk": "用例格式需人工确认。",
+                    "requires_approval": True,
+                }
+            ],
+            "external_guidance": [],
+            "no_action_reason": None,
+        },
+    )
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
+    task = store.create_task(proposal_id=proposal["proposal_id"])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
+
+    async def fail_query(*, prompt, options, transport=None):
+        raise AssertionError("eval execution plans should be generated deterministically")
+        if False:
+            yield None
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fail_query)
+    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
+
+    job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
+    operation = job["validated_output_json"]["operations"][0]
+
+    assert job["status"] == "ready"
+    assert operation["operation"] == "create_file"
+    assert operation["path"] == "evals/alert-triage-false-positive.json"
+    assert "feedback-eval-case/v1" in operation["content"]
+    assert "创建告警误报评估用例" in operation["content"]
+    assert "手动运行回归验证" in job["validated_output_json"]["validation"]
+
+
+def test_execution_plan_output_normalizes_agent_friendly_fields():
+    validated, error = validate_execution_plan_output(
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": "opt-1",
+            "execution_job_id": "fbe-1",
+            "status": "safe_to_apply",
+            "summary": "创建评估用例。",
+            "operations": [
+                {
+                    "operation": "create_file",
+                    "path": "evals/example.json",
+                    "content": "{}",
+                    "rationale": {"reason": "根据建议创建文件"},
+                }
+            ],
+            "validation": {"steps": ["检查 JSON 语法"], "expected_result": "评估用例可加载"},
+            "risk": {"level": "low", "reason": "仅新增评估文件"},
+            "human_review_required": True,
+        }
+    )
+
+    assert error is None
+    assert validated["status"] == "ready"
+    assert "检查 JSON 语法" in validated["validation"]
+    assert "仅新增评估文件" in validated["risk"]
+    assert "根据建议创建文件" in validated["operations"][0]["rationale"]

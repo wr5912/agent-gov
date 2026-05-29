@@ -17,6 +17,8 @@ from typing import Any, Optional
 
 import yaml
 
+from app.runtime.errors import AgentVersionIntegrityError
+
 
 SNAPSHOT_POLICY_VERSION = "main-workspace-managed-config-v2"
 MAX_FILE_DIFF_BYTES = 200_000
@@ -198,7 +200,7 @@ class AgentVersionStore:
                 bundle_path = Path(str(manifest.get("bundle_path") or self.bundles_dir / f"{version_id}.tar.gz"))
                 expected_sha = str(manifest.get("bundle_sha256") or "")
                 if not bundle_path.exists() or self._sha256_file(bundle_path) != expected_sha:
-                    raise ValueError("Agent version bundle hash mismatch")
+                    raise AgentVersionIntegrityError("Agent version bundle hash mismatch")
 
                 extract_dir.mkdir(parents=True, exist_ok=True)
                 self._safe_extract(bundle_path, extract_dir)
@@ -498,9 +500,9 @@ class AgentVersionStore:
             for member in tar.getmembers():
                 name = member.name
                 if Path(name).is_absolute() or ".." in Path(name).parts:
-                    raise ValueError(f"Unsafe archive path: {name}")
+                    raise AgentVersionIntegrityError(f"Unsafe archive path: {name}")
                 if not (name == "workspace" or name.startswith("workspace/")):
-                    raise ValueError(f"Unexpected archive path: {name}")
+                    raise AgentVersionIntegrityError(f"Unexpected archive path: {name}")
             tar.extractall(extract_dir)
 
     def _workspace_excluded(self, rel: Path) -> bool:

@@ -2,9 +2,12 @@ import importlib
 import sys
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app.runtime.schemas import FeedbackSignalCreateRequest
+from app.services.execution_application import ExecutionApplicationError
 
 
 def _load_app(monkeypatch, tmp_path):
@@ -210,6 +213,7 @@ def test_apply_execution_job_rejects_baseline_conflict(monkeypatch, tmp_path):
         )
 
     assert response.status_code == 409
+    assert response.json()["error_code"] == "CONFLICT"
     assert "baseline" in response.json()["detail"].lower()
 
 
@@ -227,9 +231,217 @@ def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path)
         failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
 
     assert response.status_code == 409
+    assert response.json()["error_code"] == "CONFLICT"
     assert "changed before apply" in response.json()["detail"]
     assert failed_job["status"] == "failed"
     assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
+
+
+def test_apply_execution_job_restores_workspace_when_state_sync_fails(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    workspace = module.settings.main_workspace_dir
+    original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+
+    def fail_mark(*args, **kwargs):
+        raise RuntimeError("mark failed")
+
+    monkeypatch.setattr(module.feedback_store, "mark_execution_job_applied", fail_mark)
+
+    with TestClient(module.app) as client:
+        task = _approved_task(module)
+        job = _ready_execution_job(module, task)
+        response = client.post(
+            f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs/{job['execution_job_id']}/apply",
+            json={"confirm": True},
+        )
+        job_response = client.get(f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs")
+        failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+
+    assert response.status_code == 409
+    assert "restored to pre-execution version" in response.json()["detail"]
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
+    assert failed_job["status"] == "failed"
+    assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_STATE_SYNC_FAILED"
+    compensations = module.feedback_store.list_execution_compensations(execution_job_id=job["execution_job_id"])
+    assert len(compensations) == 1
+    assert compensations[0]["status"] == "resolved"
+    assert compensations[0]["restore_status"] == "restored"
+    assert compensations[0]["optimization_task_id"] == task["optimization_task_id"]
+    assert job_response.status_code == 200
+    assert job_response.json()[0]["compensations"][0]["compensation_id"] == compensations[0]["compensation_id"]
+
+
+def test_apply_execution_job_restores_workspace_when_applied_snapshot_fails(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    workspace = module.settings.main_workspace_dir
+    original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+    create_snapshot = module.agent_version_store.create_snapshot
+
+    def fail_applied_snapshot(*args, **kwargs):
+        if kwargs.get("reason") == "execution_optimizer_applied":
+            raise RuntimeError("snapshot failed")
+        return create_snapshot(*args, **kwargs)
+
+    monkeypatch.setattr(module.agent_version_store, "create_snapshot", fail_applied_snapshot)
+
+    with TestClient(module.app) as client:
+        task = _approved_task(module)
+        job = _ready_execution_job(module, task)
+        response = client.post(
+            f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs/{job['execution_job_id']}/apply",
+            json={"confirm": True},
+        )
+        failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+
+    assert response.status_code == 409
+    assert "restored to pre-execution version" in response.json()["detail"]
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
+    assert failed_job["status"] == "failed"
+    assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_STATE_SYNC_FAILED"
+    compensations = module.feedback_store.list_execution_compensations(status="resolved")
+    assert len(compensations) == 1
+    assert compensations[0]["execution_job_id"] == job["execution_job_id"]
+
+
+def test_execution_compensation_api_lists_filters_and_gets_records(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    resolved = module.feedback_store.record_execution_compensation(
+        optimization_task_id="opt-resolved",
+        execution_job_id="fbe-resolved",
+        pre_execution_agent_version_id="agent-version-before",
+        restore_status="restored",
+        original_error="state sync failed",
+    )
+    pending = module.feedback_store.record_execution_compensation(
+        optimization_task_id="opt-pending",
+        execution_job_id="fbe-pending",
+        pre_execution_agent_version_id="agent-version-before",
+        restore_status="restore_failed",
+        original_error="state sync failed",
+        restore_error="restore failed",
+    )
+
+    with TestClient(module.app) as client:
+        pending_response = client.get("/api/execution-compensations?status=pending_manual_recovery")
+        task_response = client.get("/api/execution-compensations?optimization_task_id=opt-resolved")
+        job_response = client.get("/api/execution-compensations?execution_job_id=fbe-pending")
+        detail_response = client.get(f"/api/execution-compensations/{pending['compensation_id']}")
+        missing_response = client.get("/api/execution-compensations/fco-missing")
+
+    assert pending_response.status_code == 200
+    assert [item["compensation_id"] for item in pending_response.json()] == [pending["compensation_id"]]
+    assert task_response.status_code == 200
+    assert [item["compensation_id"] for item in task_response.json()] == [resolved["compensation_id"]]
+    assert job_response.status_code == 200
+    assert [item["compensation_id"] for item in job_response.json()] == [pending["compensation_id"]]
+    assert detail_response.status_code == 200
+    assert detail_response.json()["restore_error"] == "restore failed"
+    assert missing_response.status_code == 404
+    assert missing_response.json()["error_code"] == "NOT_FOUND"
+
+
+def test_apply_execution_job_records_pending_compensation_when_restore_fails(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    workspace = module.settings.main_workspace_dir
+    original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+    original_restore = module.agent_version_store.restore_version
+
+    def fail_mark(*args, **kwargs):
+        raise RuntimeError("mark failed")
+
+    def fail_restore(*args, **kwargs):
+        raise RuntimeError("restore failed")
+
+    monkeypatch.setattr(module.feedback_store, "mark_execution_job_applied", fail_mark)
+    monkeypatch.setattr(module.agent_version_store, "restore_version", fail_restore)
+
+    with TestClient(module.app) as client:
+        task = _approved_task(module)
+        job = _ready_execution_job(module, task)
+        response = client.post(
+            f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs/{job['execution_job_id']}/apply",
+            json={"confirm": True},
+        )
+        failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+
+    assert response.status_code == 409
+    assert "automatic restore also failed" in response.json()["detail"]
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") != original_text
+    assert failed_job["status"] == "failed"
+    compensations = module.feedback_store.list_execution_compensations(status="pending_manual_recovery")
+    assert len(compensations) == 1
+    assert compensations[0]["execution_job_id"] == job["execution_job_id"]
+    assert compensations[0]["restore_status"] == "restore_failed"
+    assert "restore failed" in compensations[0]["restore_error"]
+
+    monkeypatch.setattr(module.agent_version_store, "restore_version", original_restore)
+    with TestClient(module.app) as client:
+        restore_response = client.post(
+            f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore"
+        )
+        second_restore_response = client.post(
+            f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore"
+        )
+        job_response = client.get(f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs")
+
+    assert restore_response.status_code == 200
+    restored = restore_response.json()
+    assert restored["status"] == "resolved"
+    assert restored["restore_status"] == "restored"
+    assert restored["restore_error"] is None
+    assert restored["manual_restore_result"]["current_version"]["agent_version_id"]
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
+    assert job_response.json()[0]["compensations"][0]["status"] == "resolved"
+    assert second_restore_response.status_code == 200
+    assert second_restore_response.json()["compensation_id"] == restored["compensation_id"]
+    assert second_restore_response.json()["status"] == "resolved"
+
+
+def test_execution_compensation_restore_rejects_missing_pre_execution_version(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    compensation = module.feedback_store.record_execution_compensation(
+        optimization_task_id="opt-missing-version",
+        execution_job_id="fbe-missing-version",
+        pre_execution_agent_version_id=None,
+        restore_status="restore_failed",
+        original_error="state sync failed",
+        restore_error="restore failed",
+    )
+
+    with TestClient(module.app) as client:
+        response = client.post(f"/api/execution-compensations/{compensation['compensation_id']}/restore")
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "CONFLICT"
+    assert "pre-execution version" in response.json()["detail"]
+
+
+def test_execution_compensation_rejects_invalid_restore_status(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with pytest.raises(ValidationError):
+        module.feedback_store.record_execution_compensation(
+            optimization_task_id="opt-invalid",
+            execution_job_id="fbe-invalid",
+            pre_execution_agent_version_id=None,
+            restore_status="unknown",
+            original_error="state sync failed",
+        )
+
+    assert module.feedback_store.list_execution_compensations(limit=10) == []
+
+
+def test_execution_application_rejects_symlink_escape(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("do not edit\n", encoding="utf-8")
+    link = module.settings.main_workspace_dir / "escape.txt"
+    link.symlink_to(outside)
+
+    with pytest.raises(ExecutionApplicationError, match="escapes main workspace") as exc_info:
+        module.execution_application.safe_workspace_target("escape.txt")
+    assert exc_info.value.error_code == "CONFLICT"
+    assert exc_info.value.status_code == 409
 
 
 def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):

@@ -1,6 +1,9 @@
 import json
 
-from app.runtime.feedback_jobs import attribution_prompt, extract_json_object, proposal_prompt
+import pytest
+
+from app.runtime.errors import AgentOutputParseError
+from app.runtime.feedback_jobs import attribution_prompt, extract_json_object, proposal_prompt, read_json
 
 
 def test_extract_json_object_prefers_expected_schema_version():
@@ -24,6 +27,27 @@ def test_extract_json_object_prefers_expected_schema_version():
 
     assert parsed["schema_version"] == "proposal-output/v1"
     assert parsed["proposal_job_id"] == "fbp-test"
+
+
+def test_extract_json_object_rejects_empty_agent_output():
+    with pytest.raises(AgentOutputParseError, match="empty agent output") as exc_info:
+        extract_json_object("  ")
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.error_code == "AGENT_OUTPUT_PARSE_ERROR"
+
+
+def test_extract_json_object_rejects_output_without_json_object():
+    with pytest.raises(AgentOutputParseError, match="did not contain a JSON object"):
+        extract_json_object("这里只有自然语言，没有 JSON 对象。")
+
+
+def test_read_json_rejects_non_object_payload(tmp_path):
+    path = tmp_path / "payload.json"
+    path.write_text("[1, 2, 3]", encoding="utf-8")
+
+    with pytest.raises(AgentOutputParseError, match="Expected JSON object"):
+        read_json(path)
 
 
 def test_proposal_prompt_embeds_context_when_available():

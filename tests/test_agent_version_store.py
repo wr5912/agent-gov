@@ -1,5 +1,9 @@
+import json
 import tarfile
 
+import pytest
+
+from app.runtime.errors import AgentVersionIntegrityError
 from app.runtime.agent_version_store import AgentVersionStore
 
 
@@ -101,3 +105,32 @@ def test_agent_version_file_diff_returns_unified_diff(tmp_path):
     assert diff["status"] == "modified"
     assert diff["is_text"] is True
     assert "+two" in diff["unified_diff"]
+
+
+def test_agent_version_restore_rejects_bundle_hash_mismatch(tmp_path):
+    store = _store(tmp_path)
+    store.workspace_dir.joinpath("agent.yaml").write_text("agent:\n  version: 0.1.0\n", encoding="utf-8")
+    version = store.create_snapshot(reason="manual_snapshot")
+    bundle_path = store.bundles_dir / f"{version['agent_version_id']}.tar.gz"
+    bundle_path.write_text("corrupted", encoding="utf-8")
+
+    with pytest.raises(AgentVersionIntegrityError, match="bundle hash mismatch"):
+        store.restore_version(version["agent_version_id"])
+
+
+def test_agent_version_restore_rejects_unsafe_archive_path(tmp_path):
+    store = _store(tmp_path)
+    store.workspace_dir.joinpath("agent.yaml").write_text("agent:\n  version: 0.1.0\n", encoding="utf-8")
+    version = store.create_snapshot(reason="manual_snapshot")
+    bundle_path = store.bundles_dir / f"{version['agent_version_id']}.tar.gz"
+    payload = tmp_path / "escape.txt"
+    payload.write_text("escape", encoding="utf-8")
+    with tarfile.open(bundle_path, "w:gz") as tar:
+        tar.add(payload, arcname="../escape.txt", recursive=False)
+    manifest_path = store.manifests_dir / f"{version['agent_version_id']}.json"
+    manifest = store.get_manifest(version["agent_version_id"])
+    manifest["bundle_sha256"] = store._sha256_file(bundle_path)
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(AgentVersionIntegrityError, match="Unsafe archive path"):
+        store.restore_version(version["agent_version_id"])

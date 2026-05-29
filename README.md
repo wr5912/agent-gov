@@ -131,11 +131,17 @@ http://localhost:55173
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案和执行在 Feedback 工作台中按 `feedback case -> evidence package -> attribution-analyzer -> optimization batch -> proposal-generator -> execution-optimizer -> regression run` 链路处理。
 
-后端接口按职责分组：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 生成 [docs/openapi.json](docs/openapi.json)。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+
+前端 OpenAPI 类型由 [docs/openapi.json](docs/openapi.json) 生成，命令为：
+
+```bash
+npm --prefix frontend run generate:api-types
+```
 
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate`、`GET /api/feedback-analysis/jobs/{job_id}`、`GET /api/feedback-analysis/jobs/{job_id}/attribution`、`GET /api/feedback-analysis/jobs/{job_id}/proposal`、`POST /api/feedback-analysis/jobs/{job_id}/proposal/revalidate`。
-- 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`GET /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST/GET /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
+- 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`GET /api/optimization-tasks`、`POST /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST /api/optimization-tasks/{task_id}/mark-applied`、`POST/GET /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`POST/GET /api/optimization-tasks/{task_id}/regression-runs`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
 - 评估和版本：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`GET /api/agent-versions/main/current`、`GET /api/agent-versions/main`、`POST /api/agent-versions/main/snapshots`、`POST /api/agent-versions/main/{version_id}/rollback`、`GET /api/agent-versions/main/diff`、`GET /api/agent-versions/main/file-diff`、`GET /api/agent-versions/main/{version_id}`。
 
 运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `docker/volume/data/`：
@@ -415,7 +421,7 @@ agent: soc-analyst
 默认 `docker/.env.example` 中设置：
 
 ```bash
-DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,mcp__sec-ops-data__*
+DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,Skill,mcp__sec-ops-data__*
 DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
 PERMISSION_MODE=dontAsk
 ENABLE_POLICY_HOOKS=true

@@ -327,3 +327,104 @@
 ---
 
 > 本报告所有结论已基于 `master` 分支当前工作树进行交叉核查，纠正了"工作区目录名未更新"等已修正项的失效结论。如对某条 finding 需进一步定位或实施，建议从对应的 `file:line` 切入。
+
+---
+
+## 7. 整改进展
+
+> 更新时间：2026-05-28。以下记录用于承接原始评审结论；原始评审内容保留为问题基线。
+
+### 7.1 已完成
+
+- **[B-S1] 路由拆分**：`app/main.py` 已拆为 `app/routers/*`，当前 `main.py` 仅保留应用装配、依赖、lifespan、CORS、鉴权与 router 注册。
+- **[B-H3]/[B-H4] 执行应用服务与路径策略**：新增 `app/services/execution_application.py` 与 `app/runtime/execution_targets.py`，执行方案应用、workspace 目标校验、符号链接逃逸防护和回滚错误收集已从路由/Store 中抽离。
+- **[F-S4] 状态机集中化**：新增 `app/runtime/state_machines.py`，job、execution job、batch、task 的关键状态转移已走集中校验，并补充 `tests/test_state_machines.py`。
+- **[F-H1] Job 创建重复逻辑第一轮收敛**：新增 `app/runtime/feedback_job_factory.py`，`create_attribution_job/create_proposal_job/create_batch_plan_job` 的 queued job input 写入、记录生成、落库已统一。
+- **[F-S1] FeedbackStore 低耦合模块拆分第一轮**：新增 `app/runtime/external_governance.py` 和 `app/runtime/execution_targets.py`，外部治理/Webhook 与 workspace 执行目标策略已从 `FeedbackStore` 抽离，`FeedbackStore` 继续作为兼容 facade。
+- **[F-S1] FeedbackStore 低耦合模块拆分第二轮**：新增 `app/runtime/feedback_source_store.py`，run、feedback signal、SOC event、pending correlation、feedback source annotation 与从反馈源生成评估用例的存储方法已从 `FeedbackStore` 抽离，外部调用面保持兼容。
+- **[F-S1] FeedbackStore 低耦合模块拆分第三轮**：新增 `app/runtime/feedback_case_store.py`，反馈处置单创建、查询、状态更新与 case 模型转换已从 `FeedbackStore` 抽离；run 查询方法也归并到 `feedback_source_store.py`，与 run 写入保持同域。
+- **[F-S1] FeedbackStore 低耦合模块拆分第四轮**：新增 `app/runtime/feedback_evidence_store.py` 与 `feedback_privacy.py`，证据包生成、证据文件查询、证据物化和敏感字段常量已从 `FeedbackStore` 抽离，证据包 SQLite 表结构与 API 调用面保持不变。
+- **[F-S1] FeedbackStore 低耦合模块拆分第五轮**：新增 `app/runtime/feedback_eval_store.py`，反馈回归评估用例同步/编辑、评估运行、运行项记录和 eval case 构建/转换已从 `FeedbackStore` 抽离，`FeedbackStore` 继续作为兼容 facade。
+- **[F-S1] FeedbackStore 低耦合模块拆分第六轮**：新增 `app/runtime/feedback_external_governance_store.py`，外部治理/Webhook facade 方法与外部治理任务 upsert helper 已从 `FeedbackStore` 抽离，继续复用 `ExternalGovernanceService` 作为通知实现。
+- **[F-S1] FeedbackStore 低耦合模块拆分第七轮**：反馈源规范化、source row 组装、source annotation 查询和 source case 标题等 helper 已归并到 `app/runtime/feedback_source_store.py`，反馈源子域实现进一步收口。
+- **[F-S1] FeedbackStore 低耦合模块拆分第八轮**：新增 `app/runtime/feedback_batch_store.py`，优化批次创建、查询、归因记录、执行记录、回归记录和批次状态更新已从 `FeedbackStore` 抽离；批次方案生成与任务归一化逻辑仍留在 facade 中，作为下一轮拆分边界。
+- **[F-S1] FeedbackStore 低耦合模块拆分第九轮**：新增 `app/runtime/feedback_job_store.py`，attribution/proposal job 创建、启动、完成、失败、查询、复用判断、错误记录、临时目录清理和当前归因丢弃已从 `FeedbackStore` 抽离；batch plan 与 execution 继续复用该 job 子域的通用 helper。
+- **[F-S1] FeedbackStore 低耦合模块拆分第十轮**：新增 `app/runtime/feedback_proposal_store.py`，优化方案列表、详情、审批记录、proposal 模型转换和旧方案 supersede 逻辑已从 `FeedbackStore` 抽离，任务创建链路继续通过 facade 复用 proposal 查询。
+- **[F-S1] FeedbackStore 低耦合模块拆分第十一轮**：新增 `app/runtime/feedback_task_store.py`，优化任务创建、查询、状态更新、执行 job 反挂和回归运行反挂已从 `FeedbackStore` 抽离，继续复用集中状态机校验。
+- **[F-S1] FeedbackStore 低耦合模块拆分第十二轮**：新增 `app/runtime/feedback_execution_store.py`，execution-optimizer 执行 job 创建、完成、失败、查询、离线执行输出和执行方案安全校验已从 `FeedbackStore` 抽离。
+- **[F-S1] FeedbackStore 低耦合模块拆分第十三轮**：新增 `app/runtime/feedback_batch_plan_store.py`，批次优化方案生成、proposal-generator job、方案完成/审批/拒绝、批次任务执行准备和外部通知入口已从 `FeedbackStore` 抽离。
+- **[F-S1] FeedbackStore 低耦合模块拆分第十四轮**：新增 `app/runtime/feedback_plan_task_store.py`，批次方案任务归一化、任务摘要、外部系统上下文抽取、任务标题/描述/目标/验收标准清洗已从 `FeedbackStore` 抽离，`FeedbackStore` 已降至 800 行阈值以下。
+- **[B-S3] Agent profile 字符串收敛第一轮**：`app/runtime/agent_profiles.py` 提供 profile 名和 profile version ID 常量，`ClaudeRuntime` 不再散落这些字面量。
+- **[B-S2] ClaudeRuntime 拆分第一轮**：新增 `app/runtime/agent_job_runner.py`，feedback-loop Agent profile 的 options 构建、SDK query、schema JSON 提取与 DSPy 输出格式化协调已从 `ClaudeRuntime` 抽离；`ClaudeRuntime` 保留兼容 wrapper。
+- **[B-S2] ClaudeRuntime 拆分第二轮**：新增 `app/runtime/runtime_activity.py`、`runtime_langfuse.py`、`feedback_job_orchestrator.py`、`feedback_eval_runner.py`，Agent 活动提取、Langfuse 适配、反馈 Agent job 编排和回归评估运行已从 `ClaudeRuntime` 抽离，`claude_runtime.py` 已降至 800 行阈值以下。
+- **[FE-S1] 前端工作台组件化第一轮**：新增 `frontend/src/components/feedback-workspace/common.tsx`，通用状态胶囊、指标、详情 tab、JSON 预览和 Markdown/表格文本渲染组件已从 `ExternalFeedbackWorkspace.tsx` 抽离。
+- **[FE-S1] 前端工作台组件化第二轮**：新增 `frontend/src/components/feedback-workspace/selectors.ts`，source/batch 构造、过滤、状态 tone、ID/日期格式化、diff/path helper 等纯函数已从 `ExternalFeedbackWorkspace.tsx` 抽离。
+- **[FE-S1] 前端工作台组件化第三轮**：新增 `frontend/src/components/feedback-workspace/BatchesWorkspace.tsx`，优化批次列表、结果导航、批次反馈/归因/方案/回归详情已从主工作台抽离，主文件通过渲染回调复用现有归因结果和任务详情组件。
+- **[FE-S1] 前端工作台组件化第四轮**：新增 `frontend/src/components/feedback-workspace/CasesWorkspace.tsx`，反馈处置单列表、当前处置单操作区、详情面板标题栏和归因复核提示已从主工作台抽离，详情内容通过渲染回调继续复用现有组件。
+- **[FE-S1] 前端工作台组件化第五轮**：新增 `frontend/src/components/feedback-workspace/TasksDetails.tsx`，优化任务详情、执行方案、回归验证、版本差异对比等共享任务组件已从主工作台抽离，供批次与处置单详情复用。
+- **[FE-S1] 前端工作台组件化第六轮**：新增 `frontend/src/components/feedback-workspace/EvalWorkspace.tsx`，回归评估工作区、评估用例详情、评估用例编辑/归档表单已从主工作台抽离。
+- **[FE-S1] 前端工作台组件化第七轮**：新增 `frontend/src/components/feedback-workspace/ProposalWorkspace.tsx`，优化方案详情、建议卡片、未入库建议排查和外部治理通知卡片已从主工作台抽离。
+- **[FE-S1] 前端工作台组件化第八轮**：新增 `frontend/src/components/feedback-workspace/EvidenceRunsDetails.tsx`，证据包文件浏览、完整性标识、Langfuse trace 链接和关联运行详情已从主工作台抽离。
+- **[FE-S1] 前端工作台组件化第九轮**：新增 `frontend/src/components/feedback-workspace/AttributionDetails.tsx`，归因结果、归因复核卡片、原始输出和执行记录列表已从主工作台抽离，并继续供批次详情和优化方案详情复用。
+- **[FE-S1] 前端工作台组件化第十轮**：新增 `frontend/src/components/feedback-workspace/SignalsWorkspace.tsx`，反馈信息列表、批次选择动作和原始数据详情面板已从主工作台抽离。
+- **[FE-S1] 前端工作台组件化第十一轮**：新增 `frontend/src/components/feedback-workspace/FeedbackModals.tsx`，重新生成指令弹窗、执行方案应用确认和人工应用确认已从主工作台抽离，并删除主工作台中已不再使用的任务面板旧副本。
+- **[FE-S1] 前端工作台组件化第十二轮**：新增 `frontend/src/components/feedback-workspace/BatchFeedbackDetails.tsx`，批次反馈信息列表与原始数据详情已从 `BatchesWorkspace.tsx` 抽离，`BatchesWorkspace.tsx` 已降至 800 行阈值以下。
+- **[FE-S1] 前端工作台组件化第十三轮**：新增 `frontend/src/components/feedback-workspace/useFeedbackWorkspaceState.ts` 与 `useFeedbackWorkspaceActions.ts`，反馈工作台的数据加载、选择派生、详情加载和业务动作编排已从 `ExternalFeedbackWorkspace.tsx` 抽离，主工作台降至 800 行阈值以下。
+- **[FE-S3] 请求层健壮性第一轮**：`frontend/src/api/runtime.ts` 已加入请求超时、GET 轻量重试和 `AbortSignal` 处理。
+- **[FE-S3] 请求层组件化第二轮**：新增 `frontend/src/api/request.ts` 与 `frontend/src/api/feedback.ts`，公共请求封装和反馈优化域 API 已从 `runtime.ts` 抽离，`runtime.ts` 降至 800 行阈值以下并继续兼容原导入路径。
+- **[D-S1]/[D-H1]/[D-H2] 文档一致性**：`README.md` 与反馈优化架构/产品调整文档已同步当前接口和默认工具配置。
+- **[TEST-M1] FeedbackStore 测试拆分第一轮**：新增 `tests/feedback_store_test_utils.py`，并将原 `tests/test_feedback_store.py` 按 sources、batch plans、cases/jobs、execution、proposals、eval agents 拆为多个小测试文件，单文件均低于 800 行阈值。
+- **[F-H2] 反馈优化异常层次第一轮**：新增 `app/runtime/errors.py`，反馈闭环域内的业务规则错误、配置错误和状态机错误已从裸 `ValueError` 迁移到 `FeedbackStoreError` 子类；现有路由仍可按 `ValueError` 兼容捕获，后续再接入统一 exception handler。
+- **[B-S4]/[F-H4] SQLite 连接治理第一轮**：`app/runtime/runtime_db.py` 已按 DB 路径复用进程内 engine，显式设置 QueuePool、连接超时、WAL、`synchronous=NORMAL` 和 `busy_timeout=30000`；新增 `tests/test_runtime_db.py` 覆盖同路径 engine 复用和并发 feedback signal 写入。
+- **[B-H2]/[F-H2] 统一 exception handler 第一轮**：新增 `app/routers/error_handlers.py` 并在 `app/main.py` 注册 `FeedbackStoreError` 处理器；反馈信号、反馈源、评估用例和外部治理 Webhook 的 400 类反馈域错误已改由统一 handler 返回 `error_code` 与 `detail`，前端 `readError()` 已兼容结构化错误响应。
+- **[D-N2] OpenAPI 文档真相来源第一轮**：新增 `scripts/export_openapi.py` 与生成文件 `docs/openapi.json`，README 已说明接口详情以运行时 `/openapi.json` 或导出的 `docs/openapi.json` 为准；新增 `tests/test_openapi_export.py` 覆盖导出脚本。
+- **[F-S3] SQLite 写事务收口第一轮**：`resolve_pending()` 已从跨 Session 先读后写改为单个 `Session.begin()` 内完成 `pending_id/event_id` 查找、状态更新和 payload 写回；新增重复解析测试覆盖 `event_id` 别名、重复 resolve 和缺失 pending。
+- **[FE-H1] OpenAPI 生成 TS 类型第一轮**：前端新增 `openapi-typescript` devDependency 和 `generate:api-types` 脚本，已由 `docs/openapi.json` 生成 `frontend/src/types/api.ts`；治理脚本已识别自动生成文件头，避免把 OpenAPI 派生物计入手写文件超限；本轮先建立生成物和命令入口，不直接替换既有手写 `types/feedback.ts`。
+- **[FE-H1] OpenAPI 生成 TS 类型第二轮**：`ConfigMappingItem` / `ConfigMappingResponse` 与 `FeedbackSignalCreateRequest` / `FeedbackSignalRecord` 已改为由 `frontend/src/types/api.ts` 派生；对后端默认值字段保留前端可省略语义，避免把 OpenAPI 默认值误变成 UI 必填。
+- **[FE-H1] OpenAPI 生成 TS 类型第三轮**：`SocEventCreateRequest`、`SocEventCreateResponse`、`PendingCorrelationResolveRequest`、`FeedbackSourceRef`、`FeedbackSourceUpdateRequest` 和 `FeedbackEvalCaseGenerateRequest` 已改为由 OpenAPI schema 派生；当前 OpenAPI 仍返回 `dict` 的聚合记录保留前端细化类型。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第一轮**：`/health`、SOC event、pending correlation、feedback source、eval case/run 已补明确 response model，`tests/test_openapi_export.py` 已防止关键接口退回泛型 `dict`；前端 `RuntimeHealth`、catalog/session/config、反馈源、SOC、pending、eval case/run 类型继续由 OpenAPI 生成物派生。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第二轮**：反馈优化批次主流程接口已补明确 response model，覆盖批次列表/详情、归因任务、优化方案审批、任务执行和回归运行；`blocked_items` 已从泛型 `dict` 收口为 `FeedbackOptimizationBlockedItemResponse`，前端批次/方案/任务响应类型继续由 OpenAPI 生成物派生。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第三轮**：优化任务执行接口已补明确 response model，覆盖 execution job 生成/列表/应用与任务级回归运行；执行方案、执行操作和应用结果的前端类型已改为由 OpenAPI 生成物派生，避免执行器输出结构继续停留在手写 `dict` 类型。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第四轮**：Agent 版本管理接口已补明确 response model，覆盖当前版本、版本列表、快照创建、manifest、版本 diff、文件 diff 和回滚响应；前端版本管理类型已由 OpenAPI 生成物派生，并保留 manifest/diff 文件条目的扩展字段兼容。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第五轮**：优化方案接口已补明确 response model，覆盖 proposal 列表、详情、批准、拒绝和要求补充分析；proposal/review 前端类型已由 OpenAPI 生成物派生，并通过扩展字段兼容历史 proposal payload。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第六轮**：反馈分析输出接口已补明确 response model，覆盖归因 validated output 与建议 validated output；反馈 case、证据包、分析 job、归因输出和建议输出的前端类型继续由 OpenAPI 生成物派生，外部治理补充字段保留兼容。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第七轮**：外部治理任务公开 schema 已补齐任务名称、描述、目标、目标对象、上下文、验收标准和通知状态等字段，避免 FastAPI response model 过滤批次方案任务详情；前端运行记录、外部治理、优化任务和评估编辑请求类型继续迁移为 OpenAPI 派生。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第八轮**：反馈优化工作流响应模型已从 `schemas.py` 拆入独立 `feedback_workflow_response_schemas.py`，并补齐优化任务、执行 job、批次执行结果中的嵌套 `$ref`，使 `proposal/latest_execution_job/latest_regression_run/execution_job/apply_result` 不再停留在泛型 `dict` 契约。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第九轮**：证据包 manifest 响应已补齐 `source_refs`、`included_files`、`redaction`、`completeness` 的结构化 schema，前端 `EvidencePackageRecord` 直接使用 OpenAPI 派生类型，不再手写泛型覆盖。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十轮**：回归评估响应已补齐 eval case 摘要、生成结果、检查结果和运行摘要的结构化 schema，`EvalRun.summary` 与 `EvalRunItem.check_results` 不再使用泛型 `dict` 契约。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十一轮**：Agent 版本 manifest 响应已补齐 `included_roots`、`excluded_paths`、`skipped_paths`、`related_data` 的结构化 schema，版本快照策略、排除项和跳过项不再以泛型 `dict` 暴露给前端。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十二轮**：优化执行结果中的 `applied_diff` 已改为复用 `AgentVersionDiffResponse`，前端优化任务和执行应用响应改用 `AgentVersionSummary` / `AgentVersionDiff` 派生类型，不再把版本对象与 diff 当作泛型 `Record`。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十三轮**：`FeedbackAnalysisJobResponse` 已迁入独立响应模块，`validated_output_json` 明确为归因输出、优化方案输出或批次优化方案输出 union；批次优化方案响应模型抽出为无环依赖模块，前端分析 job 输出不再使用泛型 `Record`。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十四轮**：批次优化方案与任务响应已补齐任务上下文、证据引用、归因摘要、验收标准、执行提示和风险/验证字段的结构化 schema，前端 `FeedbackOptimizationPlanRecord` 与 `FeedbackOptimizationPlanTaskRecord` 删除对应手写字段覆盖。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十五轮**：反馈分析 job 错误、批次跳过源、批次归因统计和优化方案错误已补齐结构化 schema，前端 `FeedbackAnalysisJobRecord.error_json` 删除手写字段覆盖。
+- **[D-N2]/[FE-H1] OpenAPI schema 完整化第十六轮**：执行 job、评估运行和评估运行项的 `error_json` 已复用 `FeedbackJobErrorResponse` 结构化 schema，前端 `EvalRunRecord` 删除运行字段手写覆盖。
+- **[B-H2]/[F-H2] 统一 exception handler 第二轮**：新增路由错误 helper 与 `ConflictError`，反馈 case、反馈工作台、优化和回归评估路由中的 400/404/409 业务错误已进一步收口为 `FeedbackStoreError` 结构化响应。
+- **[B-H2] 统一 exception handler 第三轮**：Agent 版本路由的 manifest、diff、file-diff 和 rollback 404/409 已复用统一路由错误 helper，避免继续返回裸 `HTTPException` 响应。
+- **[B-H2]/[B-H4] 执行应用错误边界第一轮**：`ExecutionApplicationService` 的执行方案校验、路径校验和文件应用失败已从裸 `ValueError` 收口为 `ExecutionApplicationError`，并继续在失败时写入 execution job 错误记录。
+- **[B-H2] Agent 版本完整性错误边界第一轮**：`AgentVersionStore.restore_version()` 的 bundle hash 校验和 tar archive path 校验已从裸 `ValueError` 收口为 `AgentVersionIntegrityError`，rollback 路由直接复用统一异常 handler。
+- **[F-H2] Agent 输出解析错误边界第一轮**：`feedback_jobs.extract_json_object()` 与 `read_json()` 的空输出、无 JSON 对象和非对象 JSON payload 已从裸 `ValueError` 收口为 `AgentOutputParseError`；Pydantic validator 内部 `ValueError` 保留为 schema 校验机制。
+- **[B-H2]/[F-H2] 反馈工作台路由异常边界第一轮**：批次已进入执行链路、方案目标不可执行等状态冲突已细化为 `ConflictError`；`feedback_workbench.py` 不再捕获 `ValueError` 后二次改写错误码，领域异常直接由统一 handler 返回结构化响应。
+- **[F-S3] 优化批次创建事务收口第一轮**：`create_optimization_batch()` 已把反馈 case 创建、source annotation 标记、默认 eval case 创建和 batch 写入收口到同一个 SQLite 事务；新增失败回滚测试，避免 batch 写入失败时留下半成品 case/eval/annotation。
+- **[F-S3] 反馈源评估用例生成事务收口第一轮**：`generate_eval_cases_for_sources()` 已复用统一 source→feedback case 准备 helper，并把缺失 case 创建、eval case 创建/更新收口到同一个事务；新增 eval 写入失败回滚测试，避免直接生成评估用例时留下孤立反馈 case。
+- **[F-H4] Job 创建部分失败清理第一轮**：反馈归因/建议/批次方案 job 与 execution job 创建时，如果 input 文件写入、DB 落库或反挂 case/batch/task 失败，会清理临时 job 目录和孤立 job 记录；新增失败注入测试覆盖归因 job 与 execution job。
+- **[F-S3] 证据包创建事务收口第一轮**：`create_evidence_package()` 已把证据包 manifest/file rows 写入和反馈 case 当前证据包反挂收口到同一个 SQLite 事务；新增失败注入测试，避免 case 反挂失败时留下不可见的孤儿证据包。
+- **[F-S3] 归因/建议 Job 完成事务收口第一轮**：`complete_attribution_job()`、`complete_proposal_job()`、`revalidate_proposal_job()` 和归因/建议类 `fail_job()` 已把 job 输出/错误/状态、proposal rows、external guidance rows 与 feedback case 状态更新收口到同一个 SQLite 事务；新增失败注入测试，避免 job 已完成但 case 或 proposal rows 未同步的中间态。
+- **[F-S3] 批次方案 Job 完成事务收口第一轮**：`complete_batch_plan_job()` 与批次方案类 `fail_job()` 已把 batch plan job 输出/错误/状态和 batch payload 状态更新收口到同一个 SQLite 事务；新增失败注入测试，避免方案 job 已完成或失败但批次仍停留旧状态的中间态。
+- **[F-S3] 执行 Job 完成事务收口第一轮**：`complete_execution_job()` 与 `fail_execution_job()` 已把 execution job 输出/错误/状态、optimization task 状态和来源 batch/plan task 执行状态同步收口到同一个 SQLite 事务；新增失败注入测试，避免执行方案已 ready/failed 但任务或批次任务仍停留旧状态的中间态。
+- **[F-S3] 执行应用标记事务收口第一轮**：`mark_execution_job_applied()` 与 `mark_task_applied()` 已把 execution job completed、optimization task applied 和来源 batch/plan task applied 状态同步收口到同一个 SQLite 事务；新增失败注入测试，避免应用已标记但任务或批次任务未同步的中间态。文件写入和 Agent 版本快照仍属于 DB + 文件系统一致性补偿的后续治理项。
+- **[B-H4]/[F-S3] 执行应用补偿第一轮**：`ExecutionApplicationService.apply_ready_execution_job()` 已在 workspace 文件写入后、应用后版本快照或 DB 状态同步失败时，自动恢复到 `pre_execution` 快照并把 execution job 标记为 failed；新增 API 级失败注入测试覆盖 DB applied 标记失败和应用后版本快照失败，避免文件已修改但任务未进入 applied 状态的半应用结果。
+- **[B-H4]/[F-S3] 执行应用补偿记录第一轮**：新增 `execution_compensations` SQLite 表与 `FeedbackCompensationStoreMixin`，执行应用在 post-write 状态同步失败后会记录补偿事项；自动恢复成功记录为 `resolved`，自动恢复失败记录为 `pending_manual_recovery`，为后续 UI 展示、后台重试或人工恢复提供可查询 outbox。
+- **[FE-H1]/[B-H4] 执行应用补偿可见性第一轮**：`OptimizationExecutionJobResponse` 已挂载 `compensations`，OpenAPI/前端类型同步生成；优化任务详情的执行方案区域会展示应用补偿记录，区分“已自动恢复”和“待人工恢复”，避免补偿状态只藏在后端 error_json 或 SQLite 表中。
+- **[B-H4]/[FE-H1] 执行应用人工恢复第一轮**：新增 `POST /api/execution-compensations/{compensation_id}/restore`，开发人员可对 `pending_manual_recovery` 补偿记录触发恢复到 `pre_execution` 版本；前端补偿记录卡片已提供“恢复到应用前版本”按钮，并在恢复后刷新工作台与 Agent 版本。
+- **[B-S1] 反馈工作台路由拆分第二轮**：新增 `app/routers/feedback_batches.py`，`/api/feedback-optimization-batches*` 批次创建、归因、方案生成、任务执行和批次回归路由已从 `feedback_workbench.py` 拆出；`feedback_workbench.py` 回到反馈源/工作台入口职责，两个路由文件均低于 20 个路由阈值。
+- **[F-H5] 列表查询下推第一轮**：`list_runs/list_signals/list_events/list_pending/list_eval_cases/list_eval_runs/list_proposals/list_tasks/list_optimization_batches` 已把精确列过滤和 `limit` 下推到 SQLAlchemy 查询，避免先全表读取再 `_filter_records()`；`list_cases(q=...)` 等 JSON 模糊搜索和跨源聚合仍保留在后续治理范围。
+- **[F-H5] 列表查询下推第二轮**：`ExternalGovernanceService.list_items()` 已把 `feedback_case_id/proposal_job_id/status/limit` 下推到 SQLAlchemy 查询，并删除该模块局部 `_filter_records()`；新增测试确保外部治理任务在 materialize 前完成过滤。
+- **[F-S2] dict/Pydantic 双轨治理第一轮**：新增 `ExecutionCompensationRecord` 作为执行应用补偿记录的内部真相来源，补偿创建、读取、状态更新均先经过 Pydantic 校验再落库或返回；新增非法 `restore_status` 负向测试，避免 `execution_compensations.payload_json` 写入脏状态。
+- **[F-S2] dict/Pydantic 双轨治理第二轮**：新增 `ExternalGovernanceItemRecord` 与 `ExternalGovernanceNotificationRecord`，外部治理项创建/upsert、Webhook 通知回写和方案重生成废弃均先经过 Pydantic 校验；新增通知失败与非法 item 状态测试，避免外部治理任务状态继续以手写 dict 分散更新。
+- **[B-H4]/[FE-H1] 执行应用补偿查询闭环第一轮**：新增 `GET /api/execution-compensations` 和 `GET /api/execution-compensations/{compensation_id}`，支持按状态、优化任务和执行 job 筛选补偿记录；现有 restore 入口继续作为人工恢复重试入口，并补充列表筛选、详情 404、重复恢复幂等和缺失应用前版本 409 测试。
+
+### 7.2 当前仍待处理
+
+- `app/runtime/feedback_store.py` 已降至 800 行阈值以下；后续应继续把 dict 内部表示迁移到 Pydantic 模型边界，并收口跨 Session/跨文件系统事务。
+- `frontend/src/components/ExternalFeedbackWorkspace.tsx`、`BatchesWorkspace.tsx` 与 `frontend/src/api/runtime.ts` 已降至 800 行阈值以下；后续前端整改重点应转向统一 list-detail 抽象、ARIA/键盘可访问性和 TanStack Query 缓存策略。
+- SQLite 写事务收口、剩余 409/404 错误映射收口、执行应用补偿记录后台重试闭环，以及把现有手写前端类型逐步迁移到 OpenAPI 生成类型仍属于后续阶段整改项。

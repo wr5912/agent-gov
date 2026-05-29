@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, Optional
 
 from sqlalchemy import JSON, Float, ForeignKey, Index, String, create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.pool import QueuePool
+
+
+_ENGINE_CACHE: dict[Path, Engine] = {}
+_ENGINE_CACHE_LOCK = RLock()
 
 
 def utc_now() -> str:
@@ -247,6 +253,21 @@ class OptimizationExecutionModel(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
+class ExecutionCompensationModel(Base):
+    __tablename__ = "execution_compensations"
+
+    compensation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    compensation_type: Mapped[str] = mapped_column(String(128), index=True)
+    optimization_task_id: Mapped[str] = mapped_column(String(128), index=True)
+    execution_job_id: Mapped[str] = mapped_column(String(128), index=True)
+    pre_execution_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
+    restore_status: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
 class ExternalGovernanceItemModel(Base):
     __tablename__ = "external_governance_items"
 
@@ -321,22 +342,34 @@ def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
 
 
 def make_engine(db_path: Path) -> Engine:
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    engine = create_engine(
-        f"sqlite:///{db_path}",
-        connect_args={"check_same_thread": False},
-        future=True,
-    )
+    resolved_path = db_path.expanduser().resolve()
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    with _ENGINE_CACHE_LOCK:
+        cached = _ENGINE_CACHE.get(resolved_path)
+        if cached is not None:
+            return cached
+        engine = create_engine(
+            f"sqlite:///{resolved_path}",
+            connect_args={"check_same_thread": False, "timeout": 30.0},
+            future=True,
+            pool_pre_ping=True,
+            poolclass=QueuePool,
+            pool_size=5,
+            max_overflow=10,
+            pool_timeout=30,
+        )
+        _ENGINE_CACHE[resolved_path] = engine
 
-    @event.listens_for(engine, "connect")
-    def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
-        cursor.close()
+        @event.listens_for(engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, _connection_record) -> None:  # type: ignore[no-untyped-def]
+            cursor = dbapi_connection.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA synchronous=NORMAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
+            cursor.close()
 
-    return engine
+        return engine
 
 
 def make_session_factory(db_path: Path) -> sessionmaker:

@@ -1,4 +1,16 @@
 {
   "version": 1,
-  "hooks": {}
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".venv/bin/python scripts/check_codex_governance.py --mode fail"
+          }
+        ]
+      }
+    ]
+  }
 }

@@ -143,7 +143,7 @@ Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 
 前端 OpenAPI 类型由 [docs/openapi.json](docs/openapi.json) 生成，命令为：
 
 ```bash
-npm --prefix frontend run generate:api-types
+pnpm --dir frontend generate:api-types
 ```
 
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。

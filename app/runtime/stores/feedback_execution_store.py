@@ -4,12 +4,13 @@ import json
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from ..agent_profiles import EXECUTION_OPTIMIZER_PROFILE
+from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_execution_plan_output
-from ..runtime_db import OptimizationExecutionModel, utc_now
+from ..runtime_db import OptimizationExecutionModel, OptimizationTaskModel, utc_now
 from ..state_machines import validate_transition
 
 
@@ -195,14 +196,9 @@ class FeedbackExecutionStoreMixin:
         applied_agent_version: dict[str, Any],
         applied_diff: Optional[dict[str, Any]] = None,
     ) -> Optional[dict[str, Any]]:
-        job = self.get_execution_job(execution_job_id)
-        if not job:
-            return None
-        task = self.find_task(str(job["optimization_task_id"]))
-        if not task:
-            return None
+        now = utc_now()
         fields = {
-            "completed_at": utc_now(),
+            "completed_at": now,
             "pre_execution_agent_version_id": self._string(pre_execution_version.get("agent_version_id")),
             "pre_execution_agent_version": pre_execution_version,
             "applied_agent_version_id": self._string(applied_agent_version.get("agent_version_id")),
@@ -210,9 +206,33 @@ class FeedbackExecutionStoreMixin:
             "applied_diff": applied_diff or {},
         }
         with self.Session.begin() as db:
-            row = self._update_execution_job_payload_row(db, execution_job_id, status="completed", fields=fields)
+            row = db.get(OptimizationExecutionModel, execution_job_id, with_for_update=True)
             if not row:
                 return None
+            if row.status != "ready":
+                raise ConflictError("Execution job has already been applied or is not ready")
+            task_row = db.get(OptimizationTaskModel, row.optimization_task_id, with_for_update=True)
+            if not task_row:
+                return None
+            task = dict(task_row.payload_json or {})
+            if task_row.status != "execution_ready" or task.get("applied_agent_version_id"):
+                raise ConflictError("Optimization task is not ready for execution application")
+            validate_transition("execution_job", row.status, "completed")
+            payload = dict(row.payload_json or {})
+            payload.update(fields)
+            payload["status"] = "completed"
+            result = db.execute(
+                update(OptimizationExecutionModel)
+                .where(
+                    OptimizationExecutionModel.execution_job_id == execution_job_id,
+                    OptimizationExecutionModel.status == "ready",
+                )
+                .values(status="completed", completed_at=now, payload_json=payload)
+            )
+            if result.rowcount != 1:
+                raise ConflictError("Execution job has already been applied or is not ready")
+            db.flush()
+            db.refresh(row)
             updated_job = self._execution_job_to_dict(row)
             task_row = self._mark_task_applied_row(
                 db,

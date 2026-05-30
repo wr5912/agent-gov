@@ -17,7 +17,7 @@
 - `--mode warn` 只允许在 Analyze 阶段观察问题，不允许作为 Verify 通过标准。
 - `make test` 已依赖 `codex-guard`，会先运行上述 fail 模式治理检查。
 - `.codex/hooks.json` 的 `Stop` hook 会运行同一条治理硬门。
-- `.github/workflows/governance.yml` 是本仓库 CI 入口，会在 PR 和 `main` push 上运行治理硬门与测试。
+- `.github/workflows/governance.yml` 是本仓库 CI 入口，会在 PR 以及 `main` / `master` push 上运行治理硬门与测试。
 
 ## 本仓库差异治理
 
@@ -25,7 +25,7 @@
 
 - 本地 hook 默认对比 `HEAD`。
 - PR CI 对比目标分支。
-- `main` push CI 对比 `HEAD^`。
+- `main` / `master` push CI 对比 `HEAD^`。
 - 治理输出 `BASELINE` 表示既有超限未增长，不阻断；`FAIL` 表示新增超限或旧债增长。
 - 旧债清单如需人工跟踪，只能放在普通 docs 或 issue 中，不得作为治理放行豁免。
 

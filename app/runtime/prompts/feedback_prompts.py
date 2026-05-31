@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -182,6 +183,9 @@ def batch_optimization_plan_prompt(input_path: str, *, input_payload: dict[str, 
         "task_context 必须直接放在对应 task 内，不能作为顶层字段输出。外部任务至少包含："
         "external_system 或 mcp_server、tool_name/tool_names 或 api_name/api_path/endpoint、以及 query_ids/alert_ids/case_ids/"
         "asset_ids/affected_fields/observed_issue 中的至少一类具体对象或问题描述。"
+        "对外部 MCP 工具、数据源、知识库或 SOC 流程问题，只要能定位到系统、工具或 API、具体问题描述，"
+        "就必须生成 external_webhook 任务。例如 sec-ops-data 的 list_vulnerabilities 存在 2026 年漏洞数据缺失时，"
+        "应输出通知 sec-ops-data 工具提供方修复数据覆盖的 external_webhook 任务，而不是放入 blocked_items。"
         "如果无法明确到外部对象、接口、工具、ID 或受影响字段，不要生成 external_webhook 任务，改写入 blocked_items 并说明缺什么。\n\n"
         "blocked_items 只用于不能执行且不能派发的项；不要用 manual_review 表示可执行任务。"
         "开发人员阅读优化方案后点击执行即表示同意执行对应 task，因此不要设计二次审批字段。\n\n"
@@ -241,6 +245,7 @@ def extract_json_object(text: str, *, expected_schema_version: str | None = None
 def extract_json_candidates(text: str) -> list[dict[str, Any]]:
     decoder = json.JSONDecoder()
     candidates: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for index, char in enumerate(text):
         if char != "{":
             continue
@@ -249,8 +254,36 @@ def extract_json_candidates(text: str) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if isinstance(loaded, dict):
-            candidates.append(loaded)
+            _append_json_candidate(candidates, seen, loaded)
+    for loaded in _repair_json_candidates(text):
+        _append_json_candidate(candidates, seen, loaded)
     return candidates
+
+
+def _append_json_candidate(candidates: list[dict[str, Any]], seen: set[str], loaded: dict[str, Any]) -> None:
+    key = json.dumps(loaded, ensure_ascii=False, sort_keys=True)
+    if key in seen:
+        return
+    seen.add(key)
+    candidates.append(loaded)
+
+
+def _repair_json_candidates(text: str) -> list[dict[str, Any]]:
+    try:
+        import json_repair  # type: ignore[import-untyped]
+    except Exception:
+        return []
+
+    repaired: list[dict[str, Any]] = []
+    blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
+    for block in blocks:
+        try:
+            loaded = json_repair.loads(block)
+        except Exception:
+            continue
+        if isinstance(loaded, dict):
+            repaired.append(loaded)
+    return repaired
 
 
 def _schema_candidate_score(candidate: dict[str, Any], expected_schema_version: str) -> int:

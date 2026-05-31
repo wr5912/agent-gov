@@ -78,6 +78,185 @@ def test_feedback_optimization_plan_output_requires_actionable_external_context(
     assert validated["blocked_items"][0]["reason"] == "任务缺少明确的外部对象、接口或问题 ID，不能派发到外部系统。"
 
 
+def test_feedback_optimization_plan_output_promotes_actionable_blocked_external_item():
+    validated, error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-test",
+            "status": "pending_approval",
+            "title": "漏洞数据源优化方案",
+            "summary": "统筹归因结果生成任务。",
+            "confidence": "high",
+            "actionability": "external_guidance",
+            "target_type": "external_mcp_service",
+            "target_path": None,
+            "recommendation": "通知外部 MCP 工具提供方修复漏洞数据源。",
+            "expected_effect": "Agent 可查询到完整漏洞数据。",
+            "validation": "回归用例通过。",
+            "risk": "外部系统需要变更。",
+            "tasks": [],
+            "blocked_items": [
+                {
+                    "title": "确认并上报漏洞数据源 2026 年数据缺失问题",
+                    "target_type": "external_mcp_service",
+                    "owner": "sec-ops-data",
+                    "actionability": "external_guidance",
+                    "problem_type": "tool_data_quality",
+                    "reason": (
+                        "归因显示 sec-ops-data MCP 工具 list_vulnerabilities 查询漏洞数据时，"
+                        "无法获得 2026 年 CVE 数据。"
+                    ),
+                    "recommendation": (
+                        "请 sec-ops-data 工具提供方核查 list_vulnerabilities_api_v1_vulnerabilities_get "
+                        "的数据源覆盖范围，确认 2026 年漏洞数据是否缺失。"
+                    ),
+                    "feedback_case_ids": ["fbc-2026"],
+                    "attribution_job_ids": ["fba-2026"],
+                }
+            ],
+        }
+    )
+
+    assert error is None
+    assert validated is not None
+    assert validated["blocked_items"] == []
+    assert len(validated["tasks"]) == 1
+    task = validated["tasks"][0]
+    assert task["execution_kind"] == "external_webhook"
+    assert task["status"] == "pending_notification"
+    assert task["actionability"] == "external_guidance"
+    assert task["target_summary"] == "external:sec-ops-data"
+    assert task["task_context"]["mcp_server"] == "sec-ops-data"
+    assert task["task_context"]["tool_name"] == "list_vulnerabilities_api_v1_vulnerabilities_get"
+    assert "2026" in task["task_context"]["observed_issue"]
+    assert "year" in task["task_context"]["affected_fields"]
+    assert "cve_coverage" in task["task_context"]["affected_fields"]
+    assert task["feedback_case_ids"] == ["fbc-2026"]
+    assert task["attribution_job_ids"] == ["fba-2026"]
+
+
+def test_feedback_optimization_plan_output_promotes_blocked_item_with_plan_context():
+    validated, error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-test",
+            "status": "pending_approval",
+            "title": "漏洞数据查询优化方案",
+            "summary": (
+                "归因确认 sec-ops-data MCP 的 list_vulnerabilities_api_v1_vulnerabilities_get "
+                "返回的漏洞记录缺少 2026 年 CVE 数据。"
+            ),
+            "confidence": "medium",
+            "actionability": "external_guidance",
+            "target_type": "mcp_description",
+            "target_path": None,
+            "recommendation": "统筹处理漏洞数据覆盖和工具描述问题。",
+            "expected_effect": "Agent 能查询到 2026 年漏洞数据。",
+            "validation": "回归用例通过。",
+            "risk": "外部数据源可能需要修复。",
+            "tasks": [],
+            "blocked_items": [
+                {
+                    "title": "确认并上报漏洞数据源 2026 年数据缺失问题",
+                    "reason": "当前方案正文已定位到数据源缺失，但该项被智能体放入 blocked_items。",
+                    "recommendation": "联系 sec-ops-data 数据维护团队确认 2026 年 CVE 数据覆盖情况。",
+                }
+            ],
+        }
+    )
+
+    assert error is None
+    assert validated is not None
+    assert validated["blocked_items"] == []
+    task = validated["tasks"][0]
+    assert task["execution_kind"] == "external_webhook"
+    assert task["target_summary"] == "external:sec-ops-data"
+    assert task["task_context"]["mcp_server"] == "sec-ops-data"
+    assert task["task_context"]["tool_name"] == "list_vulnerabilities_api_v1_vulnerabilities_get"
+    assert "2026" in task["task_context"]["observed_issue"]
+
+
+def test_feedback_optimization_plan_output_keeps_generic_blocked_external_item():
+    validated, error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-test",
+            "status": "pending_approval",
+            "title": "外部问题优化方案",
+            "summary": "统筹归因结果生成任务。",
+            "confidence": "medium",
+            "actionability": "external_guidance",
+            "target_type": "external_mcp_service",
+            "target_path": None,
+            "recommendation": "通知外部系统修复。",
+            "expected_effect": "Agent 可获得完整数据。",
+            "validation": "回归用例通过。",
+            "risk": "外部系统需要变更。",
+            "tasks": [],
+            "blocked_items": [
+                {
+                    "title": "确认外部数据缺失问题",
+                    "target_type": "external_mcp_service",
+                    "actionability": "external_guidance",
+                    "reason": "数据不全，但没有定位到具体系统、工具或接口。",
+                    "recommendation": "补充外部系统信息后重新生成优化方案。",
+                }
+            ],
+        }
+    )
+
+    assert error is None
+    assert validated is not None
+    assert validated["tasks"] == []
+    assert len(validated["blocked_items"]) == 1
+    assert validated["blocked_items"][0]["title"] == "确认外部数据缺失问题"
+
+
+def test_feedback_optimization_plan_output_normalizes_string_attribution_summaries():
+    validated, error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-test",
+            "status": "ready_for_execution",
+            "title": "漏洞数据查询优化方案",
+            "summary": "统筹归因结果生成任务。",
+            "problem_types": ["tool_data_quality"],
+            "confidence": "medium",
+            "actionability": "needs_human_analysis",
+            "target_type": "mcp_description",
+            "target_path": "",
+            "recommendation": "核查漏洞查询工具是否支持年份筛选。",
+            "expected_effect": "减少同类数据缺失反馈。",
+            "validation": "运行反馈对应回归用例。",
+            "risk": "外部数据源可能仍不完整。",
+            "attribution_summaries": ["归因确认漏洞查询缺少 2026 年数据。"],
+            "tasks": [
+                {
+                    "execution_kind": "workspace_execution",
+                    "title": "核查漏洞查询工具描述",
+                    "description": "确认工具是否支持年份筛选。",
+                    "objective": "让 Agent 能查询指定年份漏洞。",
+                    "target_type": "mcp_description",
+                    "target_path": "",
+                    "actionability": "direct_workspace_change",
+                    "recommendation": "补充年份筛选说明。",
+                    "expected_effect": "查询结果覆盖指定年份。",
+                    "validation": "回归用例通过。",
+                    "risk": "底层数据可能缺失。",
+                }
+            ],
+            "blocked_items": [],
+        }
+    )
+
+    assert error is None
+    assert validated is not None
+    assert validated["status"] == "needs_human_review"
+    assert validated["attribution_summaries"] == [{"summary": "归因确认漏洞查询缺少 2026 年数据。"}]
+    assert validated["tasks"] == []
+    assert validated["blocked_items"][0]["reason"] == "任务缺少 target_path，不能交给 execution-optimizer 执行。"
+
+
 def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, monkeypatch):
     store, settings = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)

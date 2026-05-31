@@ -166,8 +166,9 @@ def _batch_plan_signature(dspy: Any) -> type[Any]:
         """把批次优化方案生成智能体的输出转换为 feedback-optimization-plan-output/v1。
 
         只能使用 raw_agent_output 和 job_input_json 中已有的信息。可执行任务必须放在
-        tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；不能定位到具体对象、
-        接口、工具或问题 ID 的项放入 blocked_items。
+        tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；能定位到外部系统、
+        工具/API 和具体问题描述的项必须生成 external_webhook 任务；不能定位到具体对象、
+        接口、工具或问题 ID 的项才放入 blocked_items。
         """
 
         raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出，可能是文本、片段 JSON 或完整 JSON。")

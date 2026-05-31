@@ -5,6 +5,10 @@ const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
 
+export type RuntimeRequestInit = RequestInit & {
+  timeoutMs?: number;
+};
+
 export function defaultRuntimeConfig(): RuntimeClientConfig {
   return {
     apiBase: DEFAULT_API_BASE,
@@ -30,28 +34,29 @@ export function authHeaders(config: RuntimeClientConfig): HeadersInit {
   return headers;
 }
 
-export async function requestJson<T>(config: RuntimeClientConfig, path: string, init?: RequestInit): Promise<T> {
+export async function requestJson<T>(config: RuntimeClientConfig, path: string, init?: RuntimeRequestInit): Promise<T> {
   const method = (init?.method || "GET").toUpperCase();
   const maxAttempts = method === "GET" ? 2 : 1;
+  const { timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, ...fetchInit } = init || {};
   let lastError: unknown;
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort("timeout"), DEFAULT_REQUEST_TIMEOUT_MS);
-    const abortFromCaller = () => controller.abort(init?.signal?.reason || "aborted");
-    if (init?.signal?.aborted) {
+    const timeoutId = window.setTimeout(() => controller.abort("timeout"), timeoutMs);
+    const abortFromCaller = () => controller.abort(fetchInit.signal?.reason || "aborted");
+    if (fetchInit.signal?.aborted) {
       window.clearTimeout(timeoutId);
       throw new Error("Request was aborted");
     }
-    init?.signal?.addEventListener("abort", abortFromCaller, { once: true });
+    fetchInit.signal?.addEventListener("abort", abortFromCaller, { once: true });
     try {
       const res = await fetch(makeUrl(config, path), {
-        ...init,
+        ...fetchInit,
         signal: controller.signal,
         headers: {
           Accept: "application/json",
           ...authHeaders(config),
-          ...(init?.headers || {}),
+          ...(fetchInit.headers || {}),
         },
       });
 
@@ -67,11 +72,11 @@ export async function requestJson<T>(config: RuntimeClientConfig, path: string, 
       return (await res.json()) as T;
     } catch (error) {
       lastError = error;
-      if (init?.signal?.aborted) {
+      if (fetchInit.signal?.aborted) {
         throw new Error("Request was aborted");
       }
       if (controller.signal.reason === "timeout") {
-        lastError = new Error(`Request timed out after ${DEFAULT_REQUEST_TIMEOUT_MS / 1000}s`);
+        lastError = new Error(`Request timed out after ${timeoutMs / 1000}s`);
       }
       if (attempt >= maxAttempts) {
         throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -79,7 +84,7 @@ export async function requestJson<T>(config: RuntimeClientConfig, path: string, 
       await delay(250 * attempt);
     } finally {
       window.clearTimeout(timeoutId);
-      init?.signal?.removeEventListener("abort", abortFromCaller);
+      fetchInit.signal?.removeEventListener("abort", abortFromCaller);
     }
   }
 

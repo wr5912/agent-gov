@@ -29,6 +29,38 @@ def test_extract_json_object_prefers_expected_schema_version():
     assert parsed["proposal_job_id"] == "fbp-test"
 
 
+def test_extract_json_object_repairs_markdown_json_candidate():
+    text = """
+以下是完整 JSON：
+```json
+{
+  "schema_version": "feedback-optimization-plan-output/v1",
+  "batch_id": "fob-test",
+  "status": "pending_approval",
+  "title": "sec-ops-data 漏洞数据未覆盖2026年",
+  "recommendation": "通知 sec-ops-data 工具提供方。",
+  "expected_effect": "修复后包含2026年数据。",
+  "validation": "复测通过。",
+  "risk": "外部系统需要变更。",
+  "rationale": "反馈内容"缺少2026年的漏情况"明确指向数据不完整问题。",
+  "tasks": [],
+  "blocked_items": [
+    {
+      "title": "确认并上报漏洞数据源 2026 年数据缺失问题",
+      "reason": "需要通知 sec-ops-data 数据维护团队。"
+    }
+  ]
+}
+```
+"""
+
+    parsed = extract_json_object(text, expected_schema_version="feedback-optimization-plan-output/v1")
+
+    assert parsed["schema_version"] == "feedback-optimization-plan-output/v1"
+    assert parsed["batch_id"] == "fob-test"
+    assert "缺少2026年" in parsed["rationale"]
+
+
 def test_extract_json_object_rejects_empty_agent_output():
     with pytest.raises(AgentOutputParseError, match="empty agent output") as exc_info:
         extract_json_object("  ")

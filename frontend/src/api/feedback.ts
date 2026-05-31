@@ -46,6 +46,8 @@ import type {
 } from "../types/feedback";
 import type { RuntimeClientConfig } from "../types/runtime";
 
+const LONG_FEEDBACK_ACTION_TIMEOUT_MS = 10 * 60_000;
+
 function feedbackQueryString(filters?: FeedbackFilters): string {
   const params = new URLSearchParams();
   if (!filters) return "";
@@ -174,6 +176,7 @@ export function runFeedbackOptimizationBatchAttribution(
       method: "POST",
       headers: options ? { "Content-Type": "application/json" } : undefined,
       body: options ? JSON.stringify(options) : undefined,
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -190,6 +193,7 @@ export function generateFeedbackOptimizationBatchPlan(
       method: "POST",
       headers: options ? { "Content-Type": "application/json" } : undefined,
       body: options ? JSON.stringify(options) : undefined,
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -231,6 +235,7 @@ export function executeFeedbackOptimizationPlanTask(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -285,7 +290,7 @@ export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs`,
-    { method: "POST" },
+    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
   );
 }
 
@@ -293,7 +298,7 @@ export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCa
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs/regenerate`,
-    { method: "POST" },
+    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
   );
 }
 
@@ -301,7 +306,7 @@ export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: s
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs`,
-    { method: "POST" },
+    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
   );
 }
 
@@ -317,6 +322,7 @@ export function regenerateProposalJob(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -349,7 +355,7 @@ export function revalidateProposalOutput(config: RuntimeClientConfig, jobId: str
   return requestJson<FeedbackAnalysisJobRecord>(
     config,
     `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal/revalidate`,
-    { method: "POST" },
+    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
   );
 }
 
@@ -454,6 +460,7 @@ export function runOptimizationTaskRegression(config: RuntimeClientConfig, taskI
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ eval_case_ids: evalCaseIds, optimization_task_id: taskId }),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -466,6 +473,7 @@ export function createOptimizationExecutionJob(config: RuntimeClientConfig, task
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ force }),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }
@@ -478,6 +486,7 @@ export function applyOptimizationExecutionJob(config: RuntimeClientConfig, taskI
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ confirm: true }),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
   );
 }

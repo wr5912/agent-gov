@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/bin/python scripts/check_codex_governance.py --mode fail"
+            "command": ".venv/bin/python .codex/hooks/codex_governance_stop.py"
           }
         ]
       }

@@ -192,6 +192,7 @@ export function attributionOutputFromJob(job: FeedbackAnalysisJobRecord): Attrib
 export function defaultBatchDetail(batch: FeedbackOptimizationBatchRecord | null): BatchDetailView {
   if (!batch) return "feedback";
   if (batch.latest_eval_run) return "regression";
+  if (batch.eval_case_ids?.length) return "regression";
   if (batch.optimization_plan || batch.optimization_task || batch.execution_job) return "plan";
   if (batch.attribution_jobs?.length || batch.attribution_job_ids?.length) return "attribution";
   return "feedback";
@@ -221,7 +222,7 @@ export function attributionStatusTone(jobs: FeedbackAnalysisJobRecord[], total: 
 
 export function batchRegressionStatusText(batch: FeedbackOptimizationBatchRecord): string {
   const run = batch.latest_eval_run;
-  if (!run) return "未运行";
+  if (!run) return batch.eval_case_ids?.length ? `用例 ${batch.eval_case_ids.length}` : "未运行";
   const total = run.summary?.total ?? run.items?.length ?? 0;
   const passed = run.summary?.passed ?? 0;
   const failed = run.summary?.failed ?? 0;

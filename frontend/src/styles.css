@@ -3542,6 +3542,43 @@ button:disabled {
   background: rgba(255, 250, 243, 0.66);
 }
 
+.fw-batch-eval-case-list {
+  margin-top: 10px;
+}
+
+.fw-batch-eval-card-head {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.fw-batch-eval-card-head h4 {
+  flex: 1 1 140px;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fw-batch-eval-form {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(255, 250, 243, 0.66);
+}
+
+.fw-eval-edit-wide {
+  grid-column: 1 / -1;
+}
+
+.fw-batch-eval-form-actions {
+  justify-content: flex-end;
+}
+
 .fw-eval-card p,
 .fw-eval-card small,
 .fw-eval-item-line {

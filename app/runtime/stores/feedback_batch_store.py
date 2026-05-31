@@ -118,6 +118,45 @@ class FeedbackBatchStoreMixin:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             return self._batch_to_dict(row) if row else None
 
+    def list_batch_eval_cases(self, batch_id: str) -> Optional[list[dict[str, Any]]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch:
+            return None
+        eval_cases: list[dict[str, Any]] = []
+        for eval_case_id in batch.get("eval_case_ids") or []:
+            eval_case = self.find_eval_case(str(eval_case_id))
+            if eval_case:
+                eval_cases.append(eval_case)
+        return eval_cases
+
+    def create_batch_eval_case(self, batch_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        with self.Session.begin() as db:
+            row = db.get(FeedbackOptimizationBatchModel, batch_id)
+            if not row:
+                return None
+            batch = self._batch_payload_snapshot(row)
+            eval_case = self._build_manual_batch_eval_case(batch, fields)
+            self._add_eval_case_row(db, eval_case)
+            self._update_batch_eval_case_ids_row(db, row, append_id=eval_case["eval_case_id"])
+        return self.find_eval_case(eval_case["eval_case_id"])
+
+    def update_batch_eval_case(self, batch_id: str, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch or eval_case_id not in set(batch.get("eval_case_ids") or []):
+            return None
+        return self.update_eval_case(eval_case_id, fields)
+
+    def remove_batch_eval_case(self, batch_id: str, eval_case_id: str) -> Optional[dict[str, Any]]:
+        with self.Session.begin() as db:
+            row = db.get(FeedbackOptimizationBatchModel, batch_id)
+            if not row:
+                return None
+            eval_case_ids = self._string_list((row.payload_json or {}).get("eval_case_ids"))
+            if eval_case_id not in eval_case_ids:
+                return None
+            self._update_batch_eval_case_ids_row(db, row, remove_id=eval_case_id)
+        return self.find_optimization_batch(batch_id)
+
     def record_batch_attribution_jobs(self, batch_id: str, jobs: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
         job_ids = self._unique_strings([job.get("job_id") for job in jobs])
         completed = [job for job in jobs if job.get("status") == "completed"]
@@ -327,6 +366,58 @@ class FeedbackBatchStoreMixin:
         row.title = self._string(payload.get("title")) or row.title
         row.payload_json = payload
         return row
+
+    def _batch_payload_snapshot(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload.update({"batch_id": row.batch_id, "status": row.status, "title": row.title})
+        return payload
+
+    def _update_batch_eval_case_ids_row(
+        self,
+        db: Any,
+        row: FeedbackOptimizationBatchModel,
+        *,
+        append_id: Optional[str] = None,
+        remove_id: Optional[str] = None,
+    ) -> None:
+        payload = dict(row.payload_json or {})
+        eval_case_ids = self._unique_strings(payload.get("eval_case_ids") or [])
+        if append_id:
+            eval_case_ids = self._unique_strings([*eval_case_ids, append_id])
+        if remove_id:
+            eval_case_ids = [item for item in eval_case_ids if item != remove_id]
+        fields = {"eval_case_ids": eval_case_ids}
+        plan = payload.get("optimization_plan") if isinstance(payload.get("optimization_plan"), dict) else None
+        if plan is not None:
+            fields["optimization_plan"] = self._sync_plan_eval_case_ids(plan, append_id=append_id, remove_id=remove_id)
+        self._update_batch_row(db, row.batch_id, status=row.status, fields=fields)
+
+    def _sync_plan_eval_case_ids(
+        self,
+        plan: dict[str, Any],
+        *,
+        append_id: Optional[str] = None,
+        remove_id: Optional[str] = None,
+    ) -> dict[str, Any]:
+        synced = dict(plan)
+
+        def sync_values(values: Any) -> list[str]:
+            items = self._unique_strings(values or [])
+            if append_id:
+                items = self._unique_strings([*items, append_id])
+            if remove_id:
+                items = [item for item in items if item != remove_id]
+            return items
+
+        synced["eval_case_ids"] = sync_values(synced.get("eval_case_ids"))
+        for key in ("tasks", "blocked_items"):
+            if not isinstance(synced.get(key), list):
+                continue
+            synced[key] = [
+                {**item, "eval_case_ids": sync_values(item.get("eval_case_ids"))} if isinstance(item, dict) else item
+                for item in synced[key]
+            ]
+        return synced
 
     def _batch_attribution_outputs(self, batch: dict[str, Any]) -> list[dict[str, Any]]:
         job_ids = self._unique_strings(batch.get("attribution_job_ids") or [])

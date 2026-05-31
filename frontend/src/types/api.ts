@@ -679,6 +679,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback-optimization-batches/{batch_id}/eval-cases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List regression eval cases associated with one optimization batch */
+        get: operations["list_feedback_optimization_batch_eval_cases_api_feedback_optimization_batches__batch_id__eval_cases_get"];
+        put?: never;
+        /** Create and associate one manual regression eval case with an optimization batch */
+        post: operations["create_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one regression eval case association from an optimization batch */
+        delete: operations["remove_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update one regression eval case associated with an optimization batch */
+        patch: operations["update_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__patch"];
+        trace?: never;
+    };
     "/api/feedback-optimization-batches/{batch_id}/optimization-plan": {
         parameters: {
             query?: never;
@@ -2464,6 +2500,25 @@ export interface components {
             source_refs?: components["schemas"]["FeedbackSourceRef"][];
             /** Title */
             title?: string | null;
+        };
+        /** FeedbackOptimizationBatchEvalCaseCreateRequest */
+        FeedbackOptimizationBatchEvalCaseCreateRequest: {
+            /** Checks Json */
+            checks_json?: {
+                [key: string]: unknown;
+            };
+            /** Expected Behavior */
+            expected_behavior?: string | null;
+            /** Labels */
+            labels?: string[];
+            /** Prompt */
+            prompt: string;
+            /**
+             * Status
+             * @default active
+             * @enum {string}
+             */
+            status: "active" | "draft" | "archived";
         };
         /** FeedbackOptimizationBatchExecutionResponse */
         FeedbackOptimizationBatchExecutionResponse: {
@@ -5018,6 +5073,140 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedbackOptimizationBatchAttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_feedback_optimization_batch_eval_cases_api_feedback_optimization_batches__batch_id__eval_cases_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackOptimizationBatchEvalCaseCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOptimizationBatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackEvalCaseUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
                 };
             };
             /** @description Validation Error */

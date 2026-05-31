@@ -3831,6 +3831,52 @@
         "title": "FeedbackOptimizationBatchCreateRequest",
         "type": "object"
       },
+      "FeedbackOptimizationBatchEvalCaseCreateRequest": {
+        "properties": {
+          "checks_json": {
+            "additionalProperties": true,
+            "title": "Checks Json",
+            "type": "object"
+          },
+          "expected_behavior": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Behavior"
+          },
+          "labels": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Labels",
+            "type": "array"
+          },
+          "prompt": {
+            "title": "Prompt",
+            "type": "string"
+          },
+          "status": {
+            "default": "active",
+            "enum": [
+              "active",
+              "draft",
+              "archived"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "title": "FeedbackOptimizationBatchEvalCaseCreateRequest",
+        "type": "object"
+      },
       "FeedbackOptimizationBatchExecutionResponse": {
         "properties": {
           "apply_result": {
@@ -8581,7 +8627,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.8"
+    "version": "0.2.9"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -10910,6 +10956,232 @@
           }
         ],
         "summary": "Run attribution jobs for all feedback cases in one optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/feedback-optimization-batches/{batch_id}/eval-cases": {
+      "get": {
+        "operationId": "list_feedback_optimization_batch_eval_cases_api_feedback_optimization_batches__batch_id__eval_cases_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseResponse"
+                  },
+                  "title": "Response List Feedback Optimization Batch Eval Cases Api Feedback Optimization Batches  Batch Id  Eval Cases Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List regression eval cases associated with one optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "post": {
+        "operationId": "create_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackOptimizationBatchEvalCaseCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create and associate one manual regression eval case with an optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}": {
+      "delete": {
+        "operationId": "remove_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOptimizationBatchResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Remove one regression eval case association from an optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "patch": {
+        "operationId": "update_feedback_optimization_batch_eval_case_api_feedback_optimization_batches__batch_id__eval_cases__eval_case_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackEvalCaseUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update one regression eval case associated with an optimization batch",
         "tags": [
           "feedback"
         ]

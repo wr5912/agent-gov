@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronRight, FileText, FolderKanban, Loader2, MessageSquare, PlayCircle, ShieldCheck, XCircle } from "lucide-react";
 import { BatchFeedbackSourcesDetails } from "./BatchFeedbackDetails";
+import { BatchRegressionDetails } from "./BatchRegressionDetails";
 import {
   DetailJsonPreview,
   DetailMetricGrid,
@@ -18,7 +19,6 @@ import {
   buildBatchAttributionJobs,
   buildBatchSourceRows,
   defaultBatchDetail,
-  evalItemSummary,
   evalStatusTone,
   formatDate,
   jobStatusTone,
@@ -29,41 +29,61 @@ import {
 } from "./selectors";
 import type {
   AttributionOutput,
+  EvalCaseRecord,
   ExternalGovernanceWebhookRecord,
   FeedbackAnalysisJobRecord,
+  FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationBlockedItemRecord,
   FeedbackOptimizationPlanTaskRecord,
   FeedbackSourceRecord,
+  EvalCaseUpdateRequest,
   OptimizationTaskRecord,
 } from "../../types/feedback";
 
 export function BatchesPanel({
   actionId,
   batches,
+  evalCases,
   externalWebhooks,
   selectedBatch,
   sources,
+  onArchiveEvalCase,
+  onCreateEvalCase,
   onExecutePlanTask,
   onGeneratePlan,
+  onRemoveEvalCase,
   onRejectPlan,
   onRunAttribution,
   onRunRegression,
   onSelectBatch,
+  onUpdateEvalCase,
   renderAttributionResult,
   renderBatchTasksDetails,
 }: {
   actionId: string | null;
   batches: FeedbackOptimizationBatchRecord[];
+  evalCases: EvalCaseRecord[];
   externalWebhooks: ExternalGovernanceWebhookRecord[];
   selectedBatch: FeedbackOptimizationBatchRecord | null;
   sources: FeedbackSourceRecord[];
+  onArchiveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCase: EvalCaseRecord) => Promise<boolean>;
+  onCreateEvalCase: (
+    batch: FeedbackOptimizationBatchRecord,
+    payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
+  ) => Promise<boolean>;
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
+  onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
   onRejectPlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
   onSelectBatch: (batch: FeedbackOptimizationBatchRecord) => void;
+  onUpdateEvalCase: (
+    batch: FeedbackOptimizationBatchRecord,
+    evalCase: EvalCaseRecord,
+    payload: EvalCaseUpdateRequest,
+  ) => Promise<boolean>;
   renderAttributionResult: (output: AttributionOutput) => ReactNode;
   renderBatchTasksDetails: (tasks: OptimizationTaskRecord[]) => ReactNode;
 }) {
@@ -199,7 +219,17 @@ export function BatchesPanel({
                 {selectedBatch.optimization_task ? renderBatchTasksDetails([selectedBatch.optimization_task]) : null}
               </>
             ) : null}
-            {activeBatchDetail === "regression" ? <BatchRegressionDetails batch={selectedBatch} /> : null}
+            {activeBatchDetail === "regression" ? (
+              <BatchRegressionDetails
+                actionId={actionId}
+                batch={selectedBatch}
+                evalCases={evalCases}
+                onArchiveEvalCase={onArchiveEvalCase}
+                onCreateEvalCase={onCreateEvalCase}
+                onRemoveEvalCase={onRemoveEvalCase}
+                onUpdateEvalCase={onUpdateEvalCase}
+              />
+            ) : null}
           </section>
         ) : (
           <section className="fw-panel fw-empty-workspace">
@@ -261,9 +291,9 @@ function BatchResultNav({
     },
     {
       key: "regression",
-      title: "回归测试结果",
+      title: "回归测试",
       value: batchRegressionStatusText(batch),
-      hint: batch.latest_eval_run ? "查看用例执行过程、检查结果和错误信息" : "优化应用后运行批次回归测试",
+      hint: batch.latest_eval_run ? "查看用例、执行过程、检查结果和错误信息" : "查看和管理本批次关联的回归用例",
       tone: batch.latest_eval_run ? evalStatusTone(batch.latest_eval_run.result_status || batch.latest_eval_run.status) : "gray",
       icon: <PlayCircle size={17} />,
     },
@@ -701,53 +731,6 @@ function BatchExecutionSummary({ batch }: { batch: FeedbackOptimizationBatchReco
       />
       <p className="fw-note-box">{nextStep}</p>
       {noActionReason ? <FormattedTextSection title="未执行原因" value={String(noActionReason)} compact /> : null}
-    </section>
-  );
-}
-
-function BatchRegressionDetails({ batch }: { batch: FeedbackOptimizationBatchRecord }) {
-  const run = batch.latest_eval_run || null;
-  if (!run) {
-    return (
-      <section className="fw-task-source fw-task-regression-section fw-batch-regression-section">
-        <div className="fw-task-section-head">
-          <h4>回归测试</h4>
-          <small>优化应用后可运行本批次关联的回归用例。</small>
-        </div>
-        <p className="fw-note-box">尚未运行批次回归测试。</p>
-      </section>
-    );
-  }
-  return (
-    <section className="fw-task-source fw-task-regression-section fw-batch-regression-section">
-      <div className="fw-task-section-head">
-        <h4>回归测试结果</h4>
-        <Pill tone={evalStatusTone(run.result_status || run.status)}>{run.result_status || run.status}</Pill>
-      </div>
-      <DetailMetricGrid
-        items={[
-          ["eval_run", shortId(run.eval_run_id)],
-          ["版本", shortId(run.agent_version_id)],
-          ["总数", run.summary?.total ?? 0],
-          ["通过", run.summary?.passed ?? 0],
-          ["失败", run.summary?.failed ?? 0],
-          ["需复核", run.summary?.needs_human_review ?? 0],
-        ]}
-      />
-      <div className="fw-batch-regression-list">
-        {(run.items || []).map((item) => (
-          <details className="fw-eval-item-detail" key={item.eval_run_item_id}>
-            <summary>
-              <span>{shortId(item.eval_case_id)}</span>
-              <Pill tone={evalStatusTone(item.status)}>{item.status}</Pill>
-              <strong>查看详情</strong>
-            </summary>
-            <FormattedText value={evalItemSummary(item)} />
-            <DetailJsonPreview title="检查结果" value={item.check_results || []} />
-            {item.error_json ? <DetailJsonPreview title="错误信息" value={item.error_json} /> : null}
-          </details>
-        ))}
-      </div>
     </section>
   );
 }

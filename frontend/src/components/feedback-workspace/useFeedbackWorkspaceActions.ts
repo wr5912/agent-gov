@@ -2,17 +2,23 @@ import { useState, type Dispatch, type FormEvent, type SetStateAction } from "re
 import {
   applyOptimizationExecutionJob,
   createFeedbackOptimizationBatch,
+  createFeedbackOptimizationBatchEvalCase,
   createOptimizationExecutionJob,
   executeFeedbackOptimizationPlanTask,
   generateFeedbackOptimizationBatchPlan,
   generateFeedbackSourceEvalCases,
+  removeFeedbackOptimizationBatchEvalCase,
   rejectFeedbackOptimizationBatchPlan,
   runFeedbackOptimizationBatchAttribution,
   runFeedbackOptimizationBatchRegression,
   restoreExecutionCompensation,
+  updateFeedbackOptimizationBatchEvalCase,
 } from "../../api/runtime";
 import type {
+  EvalCaseRecord,
+  EvalCaseUpdateRequest,
   ExecutionCompensationRecord,
+  FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationPlanTaskRecord,
   FeedbackSourceRef,
@@ -228,6 +234,68 @@ export function useFeedbackWorkspaceActions({
     }
   }
 
+  async function createBatchEvalCase(
+    batch: FeedbackOptimizationBatchRecord,
+    payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
+  ) {
+    setActionId(`batch-eval-create:${batch.batch_id}`);
+    try {
+      const evalCase = await createFeedbackOptimizationBatchEvalCase(clientConfig, batch.batch_id, payload);
+      setToast(`已新增回归用例 ${shortId(evalCase.eval_case_id)}`);
+      setSelectedBatchId(batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "新增回归用例失败");
+      return false;
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function updateBatchEvalCase(
+    batch: FeedbackOptimizationBatchRecord,
+    evalCase: EvalCaseRecord,
+    payload: EvalCaseUpdateRequest,
+  ) {
+    setActionId(`batch-eval-update:${evalCase.eval_case_id}`);
+    try {
+      const updated = await updateFeedbackOptimizationBatchEvalCase(clientConfig, batch.batch_id, evalCase.eval_case_id, payload);
+      setToast(`已更新回归用例 ${shortId(updated.eval_case_id)}`);
+      setSelectedBatchId(batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "更新回归用例失败");
+      return false;
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function archiveBatchEvalCase(batch: FeedbackOptimizationBatchRecord, evalCase: EvalCaseRecord) {
+    return updateBatchEvalCase(batch, evalCase, { status: "archived" });
+  }
+
+  async function removeBatchEvalCase(batch: FeedbackOptimizationBatchRecord, evalCaseId: string) {
+    setActionId(`batch-eval-remove:${evalCaseId}`);
+    try {
+      const updated = await removeFeedbackOptimizationBatchEvalCase(clientConfig, batch.batch_id, evalCaseId);
+      setToast(`已从批次移除回归用例 ${shortId(evalCaseId)}`);
+      setSelectedBatchId(updated.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "移除回归用例失败");
+      return false;
+    } finally {
+      setActionId(null);
+    }
+  }
+
   async function createExecutionJob(task: OptimizationTaskRecord, force = false) {
     setActionId(`execution:${task.optimization_task_id}`);
     try {
@@ -311,6 +379,10 @@ export function useFeedbackWorkspaceActions({
     executePlanTask,
     rejectBatchPlan,
     runBatchRegression,
+    createBatchEvalCase,
+    updateBatchEvalCase,
+    archiveBatchEvalCase,
+    removeBatchEvalCase,
     createExecutionJob,
     applyExecutionJob,
     submitExecutionApply,

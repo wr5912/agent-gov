@@ -654,3 +654,57 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert "回答 workspace 配置类问题前必须读取当前配置文件" in workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
     assert regression_response.json()["eval_run"]["result_status"] == "passed"
     assert final_batch["status"] == "completed"
+
+
+def test_batch_eval_case_management_api(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        signal_response = client.post(
+            "/api/feedback-signals",
+            json={
+                "session_id": "sess-batch-eval-cases",
+                "labels": ["tool_data_incomplete"],
+                "comment": "需要补充批次回归用例",
+            },
+        )
+        batch_response = client.post(
+            "/api/feedback-optimization-batches",
+            json={
+                "title": "批次用例管理",
+                "source_refs": [{"source_kind": "signal", "source_id": signal_response.json()["signal_id"]}],
+            },
+        )
+        batch = batch_response.json()
+        create_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases",
+            json={
+                "prompt": "复测：回答前读取当前配置。",
+                "expected_behavior": "必须说明已读取配置。",
+                "checks_json": {"requires_non_empty_answer": True},
+                "labels": ["manual"],
+            },
+        )
+        eval_case = create_response.json()
+        list_response = client.get(f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases")
+        patch_response = client.patch(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/{eval_case['eval_case_id']}",
+            json={"status": "archived"},
+        )
+        invalid_patch_response = client.patch(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/evc-not-linked",
+            json={"status": "active"},
+        )
+        remove_response = client.delete(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/{eval_case['eval_case_id']}",
+        )
+
+    assert signal_response.status_code == 200
+    assert batch_response.status_code == 200
+    assert create_response.status_code == 200
+    assert eval_case["eval_case_id"] in [item["eval_case_id"] for item in list_response.json()]
+    assert patch_response.status_code == 200
+    assert patch_response.json()["status"] == "archived"
+    assert invalid_patch_response.status_code == 404
+    assert remove_response.status_code == 200
+    assert eval_case["eval_case_id"] not in remove_response.json()["eval_case_ids"]

@@ -33,6 +33,7 @@ type OpenApiFeedbackEvalCaseGenerateRequest = components["schemas"]["FeedbackEva
 type OpenApiFeedbackSourceRef = components["schemas"]["FeedbackSourceRef"];
 type OpenApiFeedbackSourceResponse = components["schemas"]["FeedbackSourceResponse"];
 type OpenApiFeedbackSourceUpdateRequest = components["schemas"]["FeedbackSourceUpdateRequest"];
+type OpenApiFeedbackOptimizationBatchEvalCaseCreateRequest = components["schemas"]["FeedbackOptimizationBatchEvalCaseCreateRequest"];
 type OpenApiPendingCorrelationResponse = components["schemas"]["PendingCorrelationResponse"];
 type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCorrelationResolveRequest"];
 type OpenApiExecutionCompensationResponse = components["schemas"]["ExecutionCompensationResponse"];
@@ -144,6 +145,8 @@ export type FeedbackEvalCaseGenerateRequest = Omit<OpenApiFeedbackEvalCaseGenera
 export type FeedbackEvalCaseGenerateResponse = OpenApiFeedbackEvalCaseGenerateResponse & {
   eval_cases?: EvalCaseRecord[];
 };
+
+export type FeedbackOptimizationBatchEvalCaseCreateRequest = OpenApiFeedbackOptimizationBatchEvalCaseCreateRequest;
 
 export type FeedbackCaseCreateRequest = Omit<OpenApiFeedbackCaseCreateRequest, "priority" | "source_ids"> & {
   source_ids: string[];

@@ -15,8 +15,11 @@ from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationPlanTaskExecuteResponse,
 )
 from app.runtime.schemas import (
+    EvalCaseResponse,
+    FeedbackEvalCaseUpdateRequest,
     FeedbackOptimizationBatchAttributionRequest,
     FeedbackOptimizationBatchCreateRequest,
+    FeedbackOptimizationBatchEvalCaseCreateRequest,
     FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackOptimizationBatchPlanReviewRequest,
     FeedbackOptimizationPlanTaskExecuteRequest,
@@ -41,6 +44,7 @@ def create_feedback_batches_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
     _register_batch_crud_routes(router, feedback_store)
+    _register_batch_eval_case_routes(router, feedback_store)
     _register_batch_analysis_routes(router, feedback_store, runtime)
     _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
     _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
@@ -85,6 +89,54 @@ def _register_batch_crud_routes(router: APIRouter, feedback_store: FeedbackStore
     async def get_feedback_optimization_batch(batch_id: str) -> dict[str, Any]:
         batch = feedback_store.find_optimization_batch(batch_id)
         return ensure_found(batch, "Feedback optimization batch not found")
+
+
+def _register_batch_eval_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
+    @router.get(
+        "/feedback-optimization-batches/{batch_id}/eval-cases",
+        response_model=list[EvalCaseResponse],
+        summary="List regression eval cases associated with one optimization batch",
+    )
+    async def list_feedback_optimization_batch_eval_cases(batch_id: str) -> list[dict[str, Any]]:
+        eval_cases = feedback_store.list_batch_eval_cases(batch_id)
+        if eval_cases is None:
+            ensure_found(eval_cases, "Feedback optimization batch not found")
+        return eval_cases
+
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/eval-cases",
+        response_model=EvalCaseResponse,
+        summary="Create and associate one manual regression eval case with an optimization batch",
+    )
+    async def create_feedback_optimization_batch_eval_case(
+        batch_id: str,
+        req: FeedbackOptimizationBatchEvalCaseCreateRequest,
+    ) -> dict[str, Any]:
+        eval_case = feedback_store.create_batch_eval_case(batch_id, req.model_dump())
+        return ensure_found(eval_case, "Feedback optimization batch not found")
+
+    @router.patch(
+        "/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}",
+        response_model=EvalCaseResponse,
+        summary="Update one regression eval case associated with an optimization batch",
+    )
+    async def update_feedback_optimization_batch_eval_case(
+        batch_id: str,
+        eval_case_id: str,
+        req: FeedbackEvalCaseUpdateRequest,
+    ) -> dict[str, Any]:
+        updated = feedback_store.update_batch_eval_case(batch_id, eval_case_id, req.model_dump(exclude_unset=True))
+        return ensure_found(updated, "Feedback optimization batch eval case not found")
+
+    @router.delete(
+        "/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}",
+        response_model=FeedbackOptimizationBatchResponse,
+        summary="Remove one regression eval case association from an optimization batch",
+    )
+    async def remove_feedback_optimization_batch_eval_case(batch_id: str, eval_case_id: str) -> dict[str, Any]:
+        batch = feedback_store.remove_batch_eval_case(batch_id, eval_case_id)
+        return ensure_found(batch, "Feedback optimization batch eval case not found")
 
 
 def _register_batch_analysis_routes(

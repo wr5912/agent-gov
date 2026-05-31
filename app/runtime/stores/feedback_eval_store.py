@@ -99,12 +99,12 @@ class FeedbackEvalStoreMixin:
             payload = dict(row.payload_json or {})
 
             if "prompt" in fields:
-                prompt = self._string(fields.get("prompt")).strip()
+                prompt = (self._string(fields.get("prompt")) or "").strip()
                 if not prompt:
                     raise BusinessRuleViolation("Eval case prompt cannot be empty")
                 payload["prompt"] = prompt
             if "expected_behavior" in fields:
-                payload["expected_behavior"] = self._string(fields.get("expected_behavior")).strip()
+                payload["expected_behavior"] = (self._string(fields.get("expected_behavior")) or "").strip()
             if "checks_json" in fields:
                 checks = fields.get("checks_json")
                 if checks is not None and not isinstance(checks, dict):
@@ -128,6 +128,41 @@ class FeedbackEvalStoreMixin:
             row.updated_at = updated_at
             row.payload_json = payload
         return self.find_eval_case(eval_case_id)
+
+    def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+        prompt = (self._string(fields.get("prompt")) or "").strip()
+        if not prompt:
+            raise BusinessRuleViolation("Eval case prompt cannot be empty")
+        checks = fields.get("checks_json")
+        if checks is not None and not isinstance(checks, dict):
+            raise BusinessRuleViolation("Eval case checks_json must be an object")
+        labels = fields.get("labels")
+        if labels is not None and not isinstance(labels, list):
+            raise BusinessRuleViolation("Eval case labels must be a list")
+        status = self._string(fields.get("status")) or "active"
+        if status not in {"active", "draft", "archived"}:
+            raise BusinessRuleViolation("Eval case status must be active, draft, or archived")
+        now = utc_now()
+        normalized_labels = self._unique_strings(
+            [*(str(item).strip() for item in labels or [] if str(item).strip()), "feedback_optimization", "optimization_batch"]
+        )
+        return {
+            "schema_version": "feedback-eval-case/v1",
+            "eval_case_id": f"evc-{uuid.uuid4()}",
+            "created_at": now,
+            "updated_at": now,
+            "status": status,
+            "source": "optimization_batch_manual",
+            "source_feedback_case_id": None,
+            "source_run_id": None,
+            "source_kind": "optimization_batch",
+            "source_id": batch.get("batch_id"),
+            "source_refs": batch.get("source_refs") or [],
+            "prompt": prompt,
+            "expected_behavior": (self._string(fields.get("expected_behavior")) or "").strip(),
+            "checks_json": dict(checks or {}),
+            "labels": normalized_labels,
+        }
 
     def create_eval_run(
         self,

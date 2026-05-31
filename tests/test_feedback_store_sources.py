@@ -4,6 +4,7 @@ from feedback_store_test_utils import (
     FeedbackSignalCreateRequest,
     SocEventIngestRequest,
     ValidationError,
+    _create_batch_with_completed_attribution,
     _record_run,
     _store,
     pytest,
@@ -201,3 +202,51 @@ def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
     assert approved["optimization_task"]["source_batch_id"] == batch["batch_id"]
     assert approved["optimization_task"]["eval_case_ids"] == batch["eval_case_ids"]
     assert store.find_proposal(approved["batch"]["internal_proposal_id"])["status"] == "approved"
+
+
+def test_batch_eval_case_create_update_archive_and_remove_are_scoped_to_batch(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+
+    manual = store.create_batch_eval_case(
+        batch["batch_id"],
+        {
+            "prompt": "复测：读取当前 workspace 配置后回答。",
+            "expected_behavior": "必须读取 CLAUDE.md。",
+            "checks_json": {"requires_tool_use": True},
+            "labels": ["manual", "manual"],
+        },
+    )
+    updated_batch = store.find_optimization_batch(batch["batch_id"])
+
+    assert manual is not None
+    assert manual["source"] == "optimization_batch_manual"
+    assert manual["eval_case_id"] in updated_batch["eval_case_ids"]
+    assert manual["labels"] == ["manual", "feedback_optimization", "optimization_batch"]
+    assert store.list_batch_eval_cases(batch["batch_id"])[-1]["eval_case_id"] == manual["eval_case_id"]
+
+    edited = store.update_batch_eval_case(
+        batch["batch_id"],
+        manual["eval_case_id"],
+        {"prompt": "复测：确认回答包含 evidence refs。", "status": "archived"},
+    )
+
+    assert edited["prompt"] == "复测：确认回答包含 evidence refs。"
+    assert edited["status"] == "archived"
+    assert store.update_batch_eval_case("fob-missing", manual["eval_case_id"], {"status": "active"}) is None
+    assert store.update_batch_eval_case(batch["batch_id"], "evc-not-linked", {"status": "active"}) is None
+
+    removed = store.remove_batch_eval_case(batch["batch_id"], manual["eval_case_id"])
+
+    assert manual["eval_case_id"] not in removed["eval_case_ids"]
+    assert store.find_eval_case(manual["eval_case_id"])["status"] == "archived"
+
+
+def test_batch_eval_case_rejects_invalid_manual_payload(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+
+    with pytest.raises(BusinessRuleViolation, match="prompt"):
+        store.create_batch_eval_case(batch["batch_id"], {"prompt": "   "})
+    with pytest.raises(BusinessRuleViolation, match="checks_json"):
+        store.create_batch_eval_case(batch["batch_id"], {"prompt": "有效 prompt", "checks_json": []})

@@ -67,6 +67,10 @@ export function ExternalFeedbackWorkspace({
     executePlanTask,
     rejectBatchPlan,
     runBatchRegression,
+    createBatchEvalCase,
+    updateBatchEvalCase,
+    archiveBatchEvalCase,
+    removeBatchEvalCase,
     createExecutionJob,
     applyExecutionJob,
     submitExecutionApply,
@@ -134,15 +138,20 @@ export function ExternalFeedbackWorkspace({
           <BatchesPanel
             actionId={actionId}
             batches={visibleBatches}
+            evalCases={data.eval_cases}
             externalWebhooks={data.external_webhooks}
             selectedBatch={selectedBatch}
             sources={data.sources}
+            onArchiveEvalCase={archiveBatchEvalCase}
+            onCreateEvalCase={createBatchEvalCase}
             onExecutePlanTask={executePlanTask}
             onGeneratePlan={openBatchPlanGeneration}
+            onRemoveEvalCase={removeBatchEvalCase}
             onRejectPlan={rejectBatchPlan}
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
             onSelectBatch={(batch) => setSelectedBatchId(batch.batch_id)}
+            onUpdateEvalCase={updateBatchEvalCase}
             renderAttributionResult={(output) => <AttributionResult output={output} />}
             renderBatchTasksDetails={(tasks) => (
               <TasksDetails

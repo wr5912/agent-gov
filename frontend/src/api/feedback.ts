@@ -15,6 +15,7 @@ import type {
   FeedbackEvalCaseGenerateRequest,
   FeedbackEvalCaseGenerateResponse,
   FeedbackFilters,
+  FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchAttributionResponse,
   FeedbackOptimizationBatchCreateRequest,
   FeedbackOptimizationBatchExecutionResponse,
@@ -245,6 +246,58 @@ export function runFeedbackOptimizationBatchRegression(config: RuntimeClientConf
     config,
     `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/regression-runs`,
     { method: "POST" },
+  );
+}
+
+export function getFeedbackOptimizationBatchEvalCases(config: RuntimeClientConfig, batchId: string) {
+  return requestJson<EvalCaseRecord[]>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases`,
+  );
+}
+
+export function createFeedbackOptimizationBatchEvalCase(
+  config: RuntimeClientConfig,
+  batchId: string,
+  payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
+) {
+  return requestJson<EvalCaseRecord>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function updateFeedbackOptimizationBatchEvalCase(
+  config: RuntimeClientConfig,
+  batchId: string,
+  evalCaseId: string,
+  payload: EvalCaseUpdateRequest,
+) {
+  return requestJson<EvalCaseRecord>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/${encodeURIComponent(evalCaseId)}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function removeFeedbackOptimizationBatchEvalCase(
+  config: RuntimeClientConfig,
+  batchId: string,
+  evalCaseId: string,
+) {
+  return requestJson<FeedbackOptimizationBatchRecord>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/${encodeURIComponent(evalCaseId)}`,
+    { method: "DELETE" },
   );
 }
 

@@ -102,6 +102,31 @@ def test_export_openapi_script_writes_schema(tmp_path):
     )
     assert_schema_ref(
         schema,
+        "/api/feedback-optimization-batches/{batch_id}/eval-cases",
+        "get",
+        "EvalCaseResponse",
+        array=True,
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/eval-cases",
+        "post",
+        "EvalCaseResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}",
+        "patch",
+        "EvalCaseResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}",
+        "delete",
+        "FeedbackOptimizationBatchResponse",
+    )
+    assert_schema_ref(
+        schema,
         "/api/optimization-tasks/{task_id}/execution-jobs",
         "post",
         "OptimizationExecutionJobResponse",

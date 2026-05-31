@@ -419,6 +419,14 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
     status: Optional[Literal["active", "draft", "archived"]] = None
 
 
+class FeedbackOptimizationBatchEvalCaseCreateRequest(BaseModel):
+    prompt: str
+    expected_behavior: Optional[str] = None
+    checks_json: dict[str, Any] = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)
+    status: Literal["active", "draft", "archived"] = "active"
+
+
 class FeedbackEvalRunCreateRequest(BaseModel):
     eval_case_ids: list[str] = Field(default_factory=list)
     optimization_task_id: Optional[str] = None

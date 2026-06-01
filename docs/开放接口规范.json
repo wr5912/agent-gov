@@ -55,6 +55,193 @@
         "title": "AgentInfo",
         "type": "object"
       },
+      "AgentJobResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_json": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackJobErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "error_path": {
+            "title": "Error Path",
+            "type": "string"
+          },
+          "input_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Json"
+          },
+          "input_path": {
+            "title": "Input Path",
+            "type": "string"
+          },
+          "job_id": {
+            "title": "Job Id",
+            "type": "string"
+          },
+          "job_type": {
+            "title": "Job Type",
+            "type": "string"
+          },
+          "output_schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema Version"
+          },
+          "profile_name": {
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "profile_version": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Version"
+          },
+          "raw_output_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Output Json"
+          },
+          "raw_output_path": {
+            "title": "Raw Output Path",
+            "type": "string"
+          },
+          "retry_count": {
+            "default": 0,
+            "title": "Retry Count",
+            "type": "integer"
+          },
+          "runtime_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runtime Version"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "scope_id": {
+            "title": "Scope Id",
+            "type": "string"
+          },
+          "scope_kind": {
+            "title": "Scope Kind",
+            "type": "string"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "timeout_seconds": {
+            "default": 300,
+            "title": "Timeout Seconds",
+            "type": "integer"
+          },
+          "validated_output_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validated Output Json"
+          },
+          "validated_output_path": {
+            "title": "Validated Output Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id",
+          "job_type",
+          "scope_kind",
+          "scope_id",
+          "status",
+          "profile_name",
+          "created_at",
+          "input_path",
+          "raw_output_path",
+          "validated_output_path",
+          "error_path"
+        ],
+        "title": "AgentJobResponse",
+        "type": "object"
+      },
       "AgentRunResponse": {
         "properties": {
           "agent_activity": {
@@ -907,131 +1094,6 @@
           "reason"
         ],
         "title": "AgentVersionSummaryResponse",
-        "type": "object"
-      },
-      "AttributionOutputResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "actionability": {
-            "enum": [
-              "direct_workspace_change",
-              "workspace_config_change",
-              "eval_only",
-              "external_guidance",
-              "runtime_fix",
-              "needs_human_analysis",
-              "not_actionable"
-            ],
-            "title": "Actionability",
-            "type": "string"
-          },
-          "attribution_job_id": {
-            "title": "Attribution Job Id",
-            "type": "string"
-          },
-          "confidence": {
-            "enum": [
-              "low",
-              "medium",
-              "high"
-            ],
-            "title": "Confidence",
-            "type": "string"
-          },
-          "evidence_refs": {
-            "items": {
-              "$ref": "#/components/schemas/EvidenceRefResponse"
-            },
-            "title": "Evidence Refs",
-            "type": "array"
-          },
-          "feedback_case_id": {
-            "title": "Feedback Case Id",
-            "type": "string"
-          },
-          "human_review_required": {
-            "title": "Human Review Required",
-            "type": "boolean"
-          },
-          "optimization_object_type": {
-            "enum": [
-              "main_agent_claude_md",
-              "skill",
-              "subagent",
-              "mcp_config",
-              "mcp_description",
-              "output_style",
-              "eval_case",
-              "runtime_code",
-              "external_mcp_service",
-              "soc_process",
-              "not_actionable"
-            ],
-            "title": "Optimization Object Type",
-            "type": "string"
-          },
-          "problem_type": {
-            "enum": [
-              "evidence_gap",
-              "tool_misuse",
-              "tool_unavailable",
-              "tool_data_quality",
-              "output_style_issue",
-              "instruction_gap",
-              "skill_gap",
-              "mcp_description_gap",
-              "runtime_error",
-              "external_soc_process_issue",
-              "user_misunderstanding",
-              "insufficient_information"
-            ],
-            "title": "Problem Type",
-            "type": "string"
-          },
-          "rationale": {
-            "title": "Rationale",
-            "type": "string"
-          },
-          "recommended_next_step": {
-            "default": "generate_proposal",
-            "enum": [
-              "generate_proposal",
-              "needs_human_review",
-              "stop"
-            ],
-            "title": "Recommended Next Step",
-            "type": "string"
-          },
-          "responsibility_boundary": {
-            "$ref": "#/components/schemas/ResponsibilityBoundaryResponse"
-          },
-          "schema_version": {
-            "title": "Schema Version",
-            "type": "string"
-          },
-          "status": {
-            "default": "completed",
-            "enum": [
-              "completed",
-              "needs_human_review"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "schema_version",
-          "feedback_case_id",
-          "attribution_job_id",
-          "problem_type",
-          "optimization_object_type",
-          "actionability",
-          "confidence",
-          "human_review_required",
-          "responsibility_boundary",
-          "rationale"
-        ],
-        "title": "AttributionOutputResponse",
         "type": "object"
       },
       "ChatRequest": {
@@ -2647,6 +2709,118 @@
         "title": "EvidenceSourceRefsResponse",
         "type": "object"
       },
+      "ExecutionApplicationResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "application_id": {
+            "title": "Application Id",
+            "type": "string"
+          },
+          "applied_agent_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentVersionSummaryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "applied_agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Agent Version Id"
+          },
+          "applied_diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentVersionDiffResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_json": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackJobErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_job_id": {
+            "title": "Execution Job Id",
+            "type": "string"
+          },
+          "optimization_task_id": {
+            "title": "Optimization Task Id",
+            "type": "string"
+          },
+          "pre_execution_agent_version": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentVersionSummaryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "pre_execution_agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pre Execution Agent Version Id"
+          },
+          "schema_version": {
+            "default": "execution-application/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "execution_job_id",
+          "optimization_task_id",
+          "created_at",
+          "status"
+        ],
+        "title": "ExecutionApplicationResponse",
+        "type": "object"
+      },
       "ExecutionCompensationResponse": {
         "additionalProperties": true,
         "properties": {
@@ -3206,252 +3380,6 @@
           "url"
         ],
         "title": "ExternalGovernanceWebhookResponse",
-        "type": "object"
-      },
-      "ExternalGuidanceResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "actionability": {
-            "enum": [
-              "direct_workspace_change",
-              "workspace_config_change",
-              "eval_only",
-              "external_guidance",
-              "runtime_fix",
-              "needs_human_analysis",
-              "not_actionable"
-            ],
-            "title": "Actionability",
-            "type": "string"
-          },
-          "external_item_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "External Item Id"
-          },
-          "latest_notification_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latest Notification Id"
-          },
-          "latest_webhook_alias": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latest Webhook Alias"
-          },
-          "owner": {
-            "title": "Owner",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "recommendation": {
-            "title": "Recommendation",
-            "type": "string"
-          },
-          "source_index": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Source Index"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          }
-        },
-        "required": [
-          "owner",
-          "actionability",
-          "recommendation"
-        ],
-        "title": "ExternalGuidanceResponse",
-        "type": "object"
-      },
-      "FeedbackAnalysisJobResponse": {
-        "properties": {
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
-          "error_json": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FeedbackJobErrorResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "error_path": {
-            "title": "Error Path",
-            "type": "string"
-          },
-          "evidence_package_id": {
-            "title": "Evidence Package Id",
-            "type": "string"
-          },
-          "feedback_case_id": {
-            "title": "Feedback Case Id",
-            "type": "string"
-          },
-          "input_json": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Input Json"
-          },
-          "input_path": {
-            "title": "Input Path",
-            "type": "string"
-          },
-          "job_id": {
-            "title": "Job Id",
-            "type": "string"
-          },
-          "job_type": {
-            "title": "Job Type",
-            "type": "string"
-          },
-          "langfuse_trace_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Langfuse Trace Id"
-          },
-          "profile_name": {
-            "title": "Profile Name",
-            "type": "string"
-          },
-          "raw_output_json": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Output Json"
-          },
-          "raw_output_path": {
-            "title": "Raw Output Path",
-            "type": "string"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "validated_output_json": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AttributionOutputResponse"
-              },
-              {
-                "$ref": "#/components/schemas/ProposalOutputResponse"
-              },
-              {
-                "$ref": "#/components/schemas/FeedbackOptimizationPlanResponse"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Validated Output Json"
-          },
-          "validated_output_path": {
-            "title": "Validated Output Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "job_id",
-          "job_type",
-          "feedback_case_id",
-          "evidence_package_id",
-          "status",
-          "profile_name",
-          "created_at",
-          "input_path",
-          "raw_output_path",
-          "validated_output_path",
-          "error_path"
-        ],
-        "title": "FeedbackAnalysisJobResponse",
         "type": "object"
       },
       "FeedbackCaseCreateRequest": {
@@ -4192,7 +4120,7 @@
           },
           "jobs": {
             "items": {
-              "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+              "$ref": "#/components/schemas/AgentJobResponse"
             },
             "title": "Jobs",
             "type": "array"
@@ -4411,7 +4339,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+                "$ref": "#/components/schemas/AgentJobResponse"
               },
               {
                 "type": "null"
@@ -4502,6 +4430,16 @@
               }
             ]
           },
+          "impact_analysis_job": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentJobResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "regression_plan": {
             "anyOf": [
               {
@@ -4544,7 +4482,7 @@
           },
           "attribution_jobs": {
             "items": {
-              "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+              "$ref": "#/components/schemas/AgentJobResponse"
             },
             "title": "Attribution Jobs",
             "type": "array"
@@ -4601,7 +4539,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+                "$ref": "#/components/schemas/AgentJobResponse"
               },
               {
                 "type": "null"
@@ -4685,7 +4623,7 @@
           "optimization_plan_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+                "$ref": "#/components/schemas/AgentJobResponse"
               },
               {
                 "type": "null"
@@ -5337,7 +5275,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+                "$ref": "#/components/schemas/AgentJobResponse"
               },
               {
                 "type": "null"
@@ -6867,8 +6805,11 @@
               }
             ]
           },
+          "execution_application": {
+            "$ref": "#/components/schemas/ExecutionApplicationResponse"
+          },
           "execution_job": {
-            "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+            "$ref": "#/components/schemas/AgentJobResponse"
           },
           "optimization_task": {
             "$ref": "#/components/schemas/OptimizationTaskResponse"
@@ -6876,6 +6817,7 @@
         },
         "required": [
           "execution_job",
+          "execution_application",
           "optimization_task"
         ],
         "title": "OptimizationExecutionApplyResponse",
@@ -6890,401 +6832,6 @@
           }
         },
         "title": "OptimizationExecutionCreateRequest",
-        "type": "object"
-      },
-      "OptimizationExecutionJobResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "applied_agent_version": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "applied_agent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Applied Agent Version Id"
-          },
-          "applied_diff": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentVersionDiffResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "baseline_agent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Baseline Agent Version Id"
-          },
-          "compensations": {
-            "items": {
-              "$ref": "#/components/schemas/ExecutionCompensationResponse"
-            },
-            "title": "Compensations",
-            "type": "array"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At"
-          },
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
-          "error_json": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/FeedbackJobErrorResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "execution_job_id": {
-            "title": "Execution Job Id",
-            "type": "string"
-          },
-          "feedback_case_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Feedback Case Id"
-          },
-          "input_json": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Input Json"
-          },
-          "optimization_task_id": {
-            "title": "Optimization Task Id",
-            "type": "string"
-          },
-          "pre_execution_agent_version": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "pre_execution_agent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Pre Execution Agent Version Id"
-          },
-          "profile_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Profile Name"
-          },
-          "proposal_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Proposal Id"
-          },
-          "raw_output_json": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Raw Output Json"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "validated_output_json": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/OptimizationExecutionPlanOutputResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          }
-        },
-        "required": [
-          "execution_job_id",
-          "optimization_task_id",
-          "status",
-          "created_at"
-        ],
-        "title": "OptimizationExecutionJobResponse",
-        "type": "object"
-      },
-      "OptimizationExecutionPlanOperationResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "append_text": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Append Text"
-          },
-          "content": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Content"
-          },
-          "expected_sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Expected Sha256"
-          },
-          "operation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Operation"
-          },
-          "path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Path"
-          },
-          "rationale": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rationale"
-          }
-        },
-        "title": "OptimizationExecutionPlanOperationResponse",
-        "type": "object"
-      },
-      "OptimizationExecutionPlanOutputResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "baseline_agent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Baseline Agent Version Id"
-          },
-          "execution_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Execution Job Id"
-          },
-          "human_review_required": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Human Review Required"
-          },
-          "no_action_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "No Action Reason"
-          },
-          "operations": {
-            "items": {
-              "$ref": "#/components/schemas/OptimizationExecutionPlanOperationResponse"
-            },
-            "title": "Operations",
-            "type": "array"
-          },
-          "optimization_task_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Optimization Task Id"
-          },
-          "risk": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Risk"
-          },
-          "schema_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Schema Version"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
-          "summary": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Summary"
-          },
-          "validation": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Validation"
-          }
-        },
-        "title": "OptimizationExecutionPlanOutputResponse",
         "type": "object"
       },
       "OptimizationProposalResponse": {
@@ -7895,7 +7442,7 @@
           "latest_execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+                "$ref": "#/components/schemas/AgentJobResponse"
               },
               {
                 "type": "null"
@@ -8224,199 +7771,6 @@
           "status"
         ],
         "title": "PendingCorrelationResponse",
-        "type": "object"
-      },
-      "ProposalItemResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "actionability": {
-            "enum": [
-              "direct_workspace_change",
-              "workspace_config_change",
-              "eval_only",
-              "external_guidance",
-              "runtime_fix",
-              "needs_human_analysis",
-              "not_actionable"
-            ],
-            "title": "Actionability",
-            "type": "string"
-          },
-          "base_agent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Base Agent Version Id"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
-          },
-          "expected_effect": {
-            "title": "Expected Effect",
-            "type": "string"
-          },
-          "feedback_case_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Feedback Case Id"
-          },
-          "proposal_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Proposal Id"
-          },
-          "proposal_job_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Proposal Job Id"
-          },
-          "recommendation": {
-            "title": "Recommendation",
-            "type": "string"
-          },
-          "requires_approval": {
-            "default": true,
-            "title": "Requires Approval",
-            "type": "boolean"
-          },
-          "risk": {
-            "title": "Risk",
-            "type": "string"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
-          "target_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Target Path"
-          },
-          "target_type": {
-            "title": "Target Type",
-            "type": "string"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "validation": {
-            "title": "Validation",
-            "type": "string"
-          }
-        },
-        "required": [
-          "title",
-          "actionability",
-          "target_type",
-          "recommendation",
-          "expected_effect",
-          "validation",
-          "risk"
-        ],
-        "title": "ProposalItemResponse",
-        "type": "object"
-      },
-      "ProposalOutputResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "external_guidance": {
-            "items": {
-              "$ref": "#/components/schemas/ExternalGuidanceResponse"
-            },
-            "title": "External Guidance",
-            "type": "array"
-          },
-          "feedback_case_id": {
-            "title": "Feedback Case Id",
-            "type": "string"
-          },
-          "no_action_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "No Action Reason"
-          },
-          "proposal_job_id": {
-            "title": "Proposal Job Id",
-            "type": "string"
-          },
-          "proposals": {
-            "items": {
-              "$ref": "#/components/schemas/ProposalItemResponse"
-            },
-            "title": "Proposals",
-            "type": "array"
-          },
-          "schema_version": {
-            "title": "Schema Version",
-            "type": "string"
-          },
-          "status": {
-            "default": "completed",
-            "enum": [
-              "completed",
-              "needs_human_review"
-            ],
-            "title": "Status",
-            "type": "string"
-          }
-        },
-        "required": [
-          "schema_version",
-          "feedback_case_id",
-          "proposal_job_id"
-        ],
-        "title": "ProposalOutputResponse",
         "type": "object"
       },
       "RegressionAssetFlakyRequest": {
@@ -8789,25 +8143,6 @@
           "selection_fingerprint"
         ],
         "title": "RegressionPlanResponse",
-        "type": "object"
-      },
-      "ResponsibilityBoundaryResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "owner": {
-            "title": "Owner",
-            "type": "string"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "owner",
-          "reason"
-        ],
-        "title": "ResponsibilityBoundaryResponse",
         "type": "object"
       },
       "RuntimeDocsResponse": {
@@ -9577,10 +8912,175 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.14"
+    "version": "0.2.15"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/agent-jobs": {
+      "get": {
+        "operationId": "list_agent_jobs_api_agent_jobs_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "job_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Job Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope_kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope Kind"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scope_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scope Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentJobResponse"
+                  },
+                  "title": "Response List Agent Jobs Api Agent Jobs Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List async feedback-loop Agent jobs",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-jobs/{job_id}": {
+      "get": {
+        "operationId": "get_agent_job_api_agent_jobs__job_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentJobResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one async feedback-loop Agent job",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
     "/api/agent-runs": {
       "get": {
         "operationId": "list_agent_runs_api_agent_runs_get",
@@ -10424,7 +9924,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackEvalCaseGenerateResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -10446,7 +9946,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Sync processed feedback cases into reusable eval cases",
+        "summary": "Queue processed feedback cases into reusable eval cases",
         "tags": [
           "feedback"
         ]
@@ -10709,7 +10209,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -10731,7 +10231,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create deterministic regression impact analysis for one eval run",
+        "summary": "Queue regression impact analysis for one eval run",
         "tags": [
           "feedback"
         ]
@@ -11225,194 +10725,6 @@
         ]
       }
     },
-    "/api/feedback-analysis/jobs/{job_id}": {
-      "get": {
-        "operationId": "get_feedback_analysis_job_api_feedback_analysis_jobs__job_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get one feedback analysis job",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/feedback-analysis/jobs/{job_id}/attribution": {
-      "get": {
-        "operationId": "get_attribution_output_api_feedback_analysis_jobs__job_id__attribution_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AttributionOutputResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get one attribution job validated output",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/feedback-analysis/jobs/{job_id}/proposal": {
-      "get": {
-        "operationId": "get_proposal_output_api_feedback_analysis_jobs__job_id__proposal_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ProposalOutputResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get one proposal job validated output",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/feedback-analysis/jobs/{job_id}/proposal/revalidate": {
-      "post": {
-        "operationId": "revalidate_proposal_output_api_feedback_analysis_jobs__job_id__proposal_revalidate_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "job_id",
-            "required": true,
-            "schema": {
-              "title": "Job Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Revalidate one proposal job raw output without rerunning the Agent",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
     "/api/feedback-cases": {
       "get": {
         "operationId": "list_feedback_cases_api_feedback_cases_get",
@@ -11609,7 +10921,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -11631,7 +10943,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Run one attribution job for a feedback case",
+        "summary": "Queue one attribution job for a feedback case",
         "tags": [
           "feedback"
         ]
@@ -11656,7 +10968,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -11678,7 +10990,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Force regenerate one attribution job for a feedback case",
+        "summary": "Force queue one attribution job for a feedback case",
         "tags": [
           "feedback"
         ]
@@ -11750,7 +11062,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -11772,7 +11084,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Run one optimization proposal job for a feedback case",
+        "summary": "Queue one optimization proposal job for a feedback case",
         "tags": [
           "feedback"
         ]
@@ -11814,7 +11126,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackAnalysisJobResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -11836,7 +11148,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Force regenerate one optimization proposal job and supersede unused existing proposals",
+        "summary": "Force queue one optimization proposal job and supersede unused existing proposals",
         "tags": [
           "feedback"
         ]
@@ -12329,7 +11641,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackOptimizationBatchResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -12351,7 +11663,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Generate one aggregated optimization plan from batch attribution results",
+        "summary": "Queue one aggregated optimization plan from batch attribution results",
         "tags": [
           "feedback"
         ]
@@ -12797,7 +12109,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -12819,7 +12131,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Create deterministic impact analysis for a batch regression run",
+        "summary": "Queue impact analysis for a batch regression run",
         "tags": [
           "feedback"
         ]
@@ -13122,7 +12434,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/FeedbackEvalCaseGenerateResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -13144,7 +12456,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Generate default regression eval cases for selected feedback sources",
+        "summary": "Queue regression eval case generation for selected feedback sources",
         "tags": [
           "feedback"
         ]
@@ -13765,67 +13077,6 @@
       }
     },
     "/api/optimization-tasks/{task_id}/execution-jobs": {
-      "get": {
-        "operationId": "list_optimization_execution_jobs_api_optimization_tasks__task_id__execution_jobs_get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "task_id",
-            "required": true,
-            "schema": {
-              "title": "Task Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "maximum": 500,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
-                  },
-                  "title": "Response List Optimization Execution Jobs Api Optimization Tasks  Task Id  Execution Jobs Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List controlled execution plans for one optimization task",
-        "tags": [
-          "feedback"
-        ]
-      },
       "post": {
         "operationId": "create_optimization_execution_job_api_optimization_tasks__task_id__execution_jobs_post",
         "parameters": [
@@ -13854,7 +13105,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
+                  "$ref": "#/components/schemas/AgentJobResponse"
                 }
               }
             },
@@ -13876,7 +13127,7 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Generate one controlled execution plan for an optimization task",
+        "summary": "Queue one controlled execution plan for an optimization task",
         "tags": [
           "feedback"
         ]

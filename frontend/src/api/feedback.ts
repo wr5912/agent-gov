@@ -1,6 +1,6 @@
 import { requestJson } from "./request";
 import type {
-  AttributionOutput,
+  AgentJobRecord,
   EvidencePackageFileRecord,
   EvidencePackageRecord,
   EvalCaseRecord,
@@ -9,11 +9,9 @@ import type {
   ExecutionCompensationRecord,
   ExternalGovernanceItemRecord,
   ExternalGovernanceWebhookRecord,
-  FeedbackAnalysisJobRecord,
   FeedbackCaseCreateRequest,
   FeedbackCaseRecord,
   FeedbackEvalCaseGenerateRequest,
-  FeedbackEvalCaseGenerateResponse,
   FeedbackFilters,
   FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchAttributionResponse,
@@ -31,7 +29,6 @@ import type {
   FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
   OptimizationExecutionApplyResponse,
-  OptimizationExecutionJobRecord,
   OptimizationProposalRecord,
   OptimizationProposalReviewAction,
   OptimizationProposalReviewRequest,
@@ -40,7 +37,6 @@ import type {
   OptimizationTaskRecord,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
-  ProposalOutput,
   SocEventCreateRequest,
   SocEventCreateResponse,
   SocEventRecord,
@@ -62,6 +58,14 @@ function feedbackQueryString(filters?: FeedbackFilters): string {
 
 export function getAgentRuns(config: RuntimeClientConfig, filters?: FeedbackFilters) {
   return requestJson<FeedbackRunRecord[]>(config, `/api/agent-runs${feedbackQueryString(filters)}`);
+}
+
+export function getAgentJobs(config: RuntimeClientConfig, filters?: FeedbackFilters & { job_type?: string; scope_kind?: string; scope_id?: string }) {
+  return requestJson<AgentJobRecord[]>(config, `/api/agent-jobs${feedbackQueryString(filters)}`);
+}
+
+export function getAgentJob(config: RuntimeClientConfig, jobId: string) {
+  return requestJson<AgentJobRecord>(config, `/api/agent-jobs/${encodeURIComponent(jobId)}`);
 }
 
 export function getFeedbackSignals(config: RuntimeClientConfig, filters?: FeedbackFilters) {
@@ -140,7 +144,7 @@ export function updateFeedbackSource(
 }
 
 export function generateFeedbackSourceEvalCases(config: RuntimeClientConfig, payload: FeedbackEvalCaseGenerateRequest) {
-  return requestJson<FeedbackEvalCaseGenerateResponse>(config, "/api/feedback-sources/eval-cases/generate", {
+  return requestJson<AgentJobRecord>(config, "/api/feedback-sources/eval-cases/generate", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
@@ -187,7 +191,7 @@ export function generateFeedbackOptimizationBatchPlan(
   batchId: string,
   options?: { regeneration_instruction?: string },
 ) {
-  return requestJson<FeedbackOptimizationBatchRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan`,
     {
@@ -332,7 +336,7 @@ export function getEvidencePackageFile(config: RuntimeClientConfig, evidencePack
 }
 
 export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<FeedbackAnalysisJobRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs`,
     { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
@@ -340,7 +344,7 @@ export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId
 }
 
 export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<FeedbackAnalysisJobRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs/regenerate`,
     { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
@@ -348,7 +352,7 @@ export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCa
 }
 
 export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<FeedbackAnalysisJobRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs`,
     { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
@@ -360,7 +364,7 @@ export function regenerateProposalJob(
   feedbackCaseId: string,
   payload: FeedbackProposalRegenerateRequest = {},
 ) {
-  return requestJson<FeedbackAnalysisJobRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs/regenerate`,
     {
@@ -369,38 +373,6 @@ export function regenerateProposalJob(
       body: JSON.stringify(payload),
       timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
     },
-  );
-}
-
-export function getFeedbackAnalysisJob(config: RuntimeClientConfig, jobId: string) {
-  return requestJson<FeedbackAnalysisJobRecord>(
-    config,
-    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}`,
-  );
-}
-
-export function getAttributionOutput(
-  config: RuntimeClientConfig,
-  jobId: string,
-) {
-  return requestJson<AttributionOutput>(
-    config,
-    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/attribution`,
-  );
-}
-
-export function getProposalOutput(config: RuntimeClientConfig, jobId: string) {
-  return requestJson<ProposalOutput>(
-    config,
-    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal`,
-  );
-}
-
-export function revalidateProposalOutput(config: RuntimeClientConfig, jobId: string) {
-  return requestJson<FeedbackAnalysisJobRecord>(
-    config,
-    `/api/feedback-analysis/jobs/${encodeURIComponent(jobId)}/proposal/revalidate`,
-    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
   );
 }
 
@@ -511,7 +483,7 @@ export function runOptimizationTaskRegression(config: RuntimeClientConfig, taskI
 }
 
 export function createOptimizationExecutionJob(config: RuntimeClientConfig, taskId: string, force = false) {
-  return requestJson<OptimizationExecutionJobRecord>(
+  return requestJson<AgentJobRecord>(
     config,
     `/api/optimization-tasks/${encodeURIComponent(taskId)}/execution-jobs`,
     {
@@ -565,7 +537,7 @@ export function restoreExecutionCompensation(config: RuntimeClientConfig, compen
 }
 
 export function syncFeedbackEvalDataset(config: RuntimeClientConfig, feedbackCaseId?: string) {
-  return requestJson<FeedbackEvalCaseGenerateResponse>(
+  return requestJson<AgentJobRecord>(
     config,
     "/api/eval-datasets/feedback/sync",
     {

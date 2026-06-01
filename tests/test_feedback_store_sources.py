@@ -4,12 +4,16 @@ from feedback_store_test_utils import (
     FeedbackSignalCreateRequest,
     SocEventIngestRequest,
     ValidationError,
+    _complete_eval_case_generation_job,
     _create_batch_with_completed_attribution,
+    _eval_case_generation_output,
     _record_run,
     _store,
+    asyncio,
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
+from app.services.agent_job_worker import AgentJobWorker
 
 
 def test_feedback_signal_only_writes_signal_pool(tmp_path):
@@ -118,23 +122,35 @@ def test_source_list_filters_do_not_use_in_memory_filter(tmp_path, monkeypatch):
     assert [item["event_id"] for item in store.list_pending(status="pending")] == ["event-2"]
 
 
-def test_generate_eval_cases_rolls_back_case_when_eval_write_fails(tmp_path, monkeypatch):
+def test_generate_eval_cases_projection_failure_fails_agent_job_without_eval_case(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    job = store.generate_eval_cases_for_sources([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    feedback_case = job["input_json"]["feedback_cases"][0]["feedback_case"]
 
     def fail_add_eval_case(db, payload):
         raise RuntimeError("eval case insert failed")
 
     monkeypatch.setattr(store, "_add_eval_case_row", fail_add_eval_case)
 
-    with pytest.raises(RuntimeError, match="eval case insert failed"):
-        store.generate_eval_cases_for_sources([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    async def fake_run_profile_json(**kwargs):
+        agent_job = {
+            "job_id": kwargs["job_input"]["job_id"],
+            "scope_kind": kwargs["job_input"]["scope_kind"],
+            "scope_id": kwargs["job_input"]["scope_id"],
+            "input_json": kwargs["job_input"],
+        }
+        return _eval_case_generation_output(agent_job, feedback_case)
+
+    worker = AgentJobWorker(feedback_store=store, run_profile_json=fake_run_profile_json)
+    failed = asyncio.run(worker.run_once())
 
     source = store.find_feedback_source("signal", signal["signal_id"])
-    assert store.list_cases() == []
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
     assert store.list_eval_cases() == []
-    assert source["feedback_case_id"] is None
+    assert source["feedback_case_id"] == feedback_case["feedback_case_id"]
 
 
 def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
@@ -158,19 +174,24 @@ def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
             "status": "triaged",
         },
     )
-    generated = store.generate_eval_cases_for_sources(
+    generated_job = store.generate_eval_cases_for_sources(
         [{"source_kind": "signal", "source_id": signal["signal_id"]}],
     )
+    feedback_case = generated_job["input_json"]["feedback_cases"][0]["feedback_case"]
+    generated_eval_case = _complete_eval_case_generation_job(store, generated_job, feedback_case=feedback_case)
     batch = store.create_optimization_batch(
         [{"source_kind": "signal", "source_id": signal["signal_id"]}],
         title="数据不全批次",
         priority="high",
     )
+    batch_eval_job = store.get_agent_job(batch["eval_case_generation_job_id"])
+    _complete_eval_case_generation_job(store, batch_eval_job, feedback_case=feedback_case)
+    batch = store.find_optimization_batch(batch["batch_id"])
 
     assert source["comment"] == "数据不全，需要复测"
-    assert generated["created"] == 1
+    assert generated_job["job_type"] == "eval_case_generation"
     assert batch["status"] == "draft"
-    assert batch["eval_case_ids"] == [generated["eval_cases"][0]["eval_case_id"]]
+    assert batch["eval_case_ids"] == [generated_eval_case["eval_case_id"]]
 
     feedback_case_id = batch["feedback_case_ids"][0]
     attribution_job = store.create_attribution_job(feedback_case_id)

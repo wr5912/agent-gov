@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import sys
 from pathlib import Path
@@ -7,6 +8,12 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.runtime.schemas import FeedbackSignalCreateRequest
+from app.runtime.schema_versions import (
+    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+)
+from app.services.agent_job_worker import AgentJobWorker
 from app.services.execution_application import ExecutionApplicationError
 
 
@@ -159,16 +166,31 @@ def _ready_execution_job(module, task):
     )
 
 
-def test_create_execution_job_endpoint_uses_offline_review_when_provider_missing(monkeypatch, tmp_path):
+def _run_one_agent_job(module):
+    worker = AgentJobWorker(feedback_store=module.feedback_store, run_profile_json=module.runtime._run_profile_json)
+    return asyncio.run(worker.run_once())
+
+
+def test_create_execution_job_endpoint_reports_agent_failure(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
+
+    async def fail_run_profile_json(**kwargs):
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(module.runtime, "_run_profile_json", fail_run_profile_json)
+
     with TestClient(module.app) as client:
         task = _approved_task(module)
         response = client.post(f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs", json={"force": True})
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["status"] == "needs_human_review"
-    assert payload["validated_output_json"]["no_action_reason"] == "MODEL_PROVIDER_NOT_CONFIGURED"
+    failed = _run_one_agent_job(module)
+    assert payload["status"] == "queued"
+    assert failed["job_id"] == payload["job_id"]
+    assert failed["status"] == "failed"
+    assert failed["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert "model unavailable" in failed["error_json"]["message"]
 
 
 def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypatch, tmp_path):
@@ -261,12 +283,14 @@ def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path)
             json={"confirm": True},
         )
         failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+        application = module.feedback_store.latest_execution_application(job["execution_job_id"])
 
     assert response.status_code == 409
     assert response.json()["error_code"] == "CONFLICT"
     assert "changed before apply" in response.json()["detail"]
-    assert failed_job["status"] == "failed"
-    assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
+    assert failed_job["status"] == "completed"
+    assert application["status"] == "failed"
+    assert application["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
 
 
 def test_apply_execution_job_restores_workspace_when_state_sync_fails(monkeypatch, tmp_path):
@@ -274,10 +298,10 @@ def test_apply_execution_job_restores_workspace_when_state_sync_fails(monkeypatc
     workspace = module.settings.main_workspace_dir
     original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
 
-    def fail_mark(*args, **kwargs):
+    def fail_application_record(*args, **kwargs):
         raise RuntimeError("mark failed")
 
-    monkeypatch.setattr(module.feedback_store, "mark_execution_job_applied", fail_mark)
+    monkeypatch.setattr(module.feedback_store, "record_execution_application_applied", fail_application_record)
 
     with TestClient(module.app) as client:
         task = _approved_task(module)
@@ -286,21 +310,23 @@ def test_apply_execution_job_restores_workspace_when_state_sync_fails(monkeypatc
             f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs/{job['execution_job_id']}/apply",
             json={"confirm": True},
         )
-        job_response = client.get(f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs")
+        job_response = client.get(f"/api/agent-jobs/{job['execution_job_id']}")
         failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+        application = module.feedback_store.latest_execution_application(job["execution_job_id"])
 
     assert response.status_code == 409
     assert "restored to pre-execution version" in response.json()["detail"]
     assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
-    assert failed_job["status"] == "failed"
-    assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_STATE_SYNC_FAILED"
+    assert failed_job["status"] == "completed"
+    assert application["status"] == "compensated"
+    assert application["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
     compensations = module.feedback_store.list_execution_compensations(execution_job_id=job["execution_job_id"])
     assert len(compensations) == 1
     assert compensations[0]["status"] == "resolved"
     assert compensations[0]["restore_status"] == "restored"
     assert compensations[0]["optimization_task_id"] == task["optimization_task_id"]
     assert job_response.status_code == 200
-    assert job_response.json()[0]["compensations"][0]["compensation_id"] == compensations[0]["compensation_id"]
+    assert job_response.json()["compensations"][0]["compensation_id"] == compensations[0]["compensation_id"]
 
 
 def test_apply_execution_job_restores_workspace_when_applied_snapshot_fails(monkeypatch, tmp_path):
@@ -324,12 +350,14 @@ def test_apply_execution_job_restores_workspace_when_applied_snapshot_fails(monk
             json={"confirm": True},
         )
         failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+        application = module.feedback_store.latest_execution_application(job["execution_job_id"])
 
     assert response.status_code == 409
     assert "restored to pre-execution version" in response.json()["detail"]
     assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
-    assert failed_job["status"] == "failed"
-    assert failed_job["error_json"]["error_code"] == "EXECUTION_APPLY_STATE_SYNC_FAILED"
+    assert failed_job["status"] == "completed"
+    assert application["status"] == "compensated"
+    assert application["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
     compensations = module.feedback_store.list_execution_compensations(status="resolved")
     assert len(compensations) == 1
     assert compensations[0]["execution_job_id"] == job["execution_job_id"]
@@ -378,13 +406,13 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
     original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
     original_restore = module.agent_version_store.restore_version
 
-    def fail_mark(*args, **kwargs):
+    def fail_application_record(*args, **kwargs):
         raise RuntimeError("mark failed")
 
     def fail_restore(*args, **kwargs):
         raise RuntimeError("restore failed")
 
-    monkeypatch.setattr(module.feedback_store, "mark_execution_job_applied", fail_mark)
+    monkeypatch.setattr(module.feedback_store, "record_execution_application_applied", fail_application_record)
     monkeypatch.setattr(module.agent_version_store, "restore_version", fail_restore)
 
     with TestClient(module.app) as client:
@@ -395,11 +423,13 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
             json={"confirm": True},
         )
         failed_job = module.feedback_store.get_execution_job(job["execution_job_id"])
+        application = module.feedback_store.latest_execution_application(job["execution_job_id"])
 
     assert response.status_code == 409
     assert "automatic restore also failed" in response.json()["detail"]
     assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") != original_text
-    assert failed_job["status"] == "failed"
+    assert failed_job["status"] == "completed"
+    assert application["status"] == "pending_manual_recovery"
     compensations = module.feedback_store.list_execution_compensations(status="pending_manual_recovery")
     assert len(compensations) == 1
     assert compensations[0]["execution_job_id"] == job["execution_job_id"]
@@ -414,7 +444,7 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
         second_restore_response = client.post(
             f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore"
         )
-        job_response = client.get(f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs")
+        job_response = client.get(f"/api/agent-jobs/{job['execution_job_id']}")
 
     assert restore_response.status_code == 200
     restored = restore_response.json()
@@ -423,7 +453,7 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
     assert restored["restore_error"] is None
     assert restored["manual_restore_result"]["current_version"]["agent_version_id"]
     assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
-    assert job_response.json()[0]["compensations"][0]["status"] == "resolved"
+    assert job_response.json()["compensations"][0]["status"] == "resolved"
     assert second_restore_response.status_code == 200
     assert second_restore_response.json()["compensation_id"] == restored["compensation_id"]
     assert second_restore_response.json()["status"] == "resolved"
@@ -485,6 +515,41 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
         job_type = kwargs["job_type"]
         calls.append(job_type)
         job_input = kwargs["job_input"]
+        if job_type == "eval_case_generation":
+            eval_cases = []
+            for item in job_input["feedback_cases"]:
+                feedback_case = item["feedback_case"]
+                source_run = item.get("source_run") or {}
+                eval_cases.append(
+                    {
+                        "schema_version": FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+                        "status": "draft",
+                        "source": "eval_case_governor",
+                        "source_feedback_case_id": feedback_case["feedback_case_id"],
+                        "source_run_id": source_run.get("run_id"),
+                        "source_kind": "optimization_batch",
+                        "source_id": job_input["batch_id"],
+                        "source_refs": item.get("source_refs") or [],
+                        "asset_layer": "batch_specific",
+                        "promotion_status": "candidate",
+                        "blocking_policy": "non_blocking",
+                        "flaky_status": "stable",
+                        "variant_role": "original_reproduction",
+                        "prompt": source_run.get("message") or "复测：回答 workspace 配置前读取当前配置。",
+                        "expected_behavior": "必须读取当前配置并完整回答。",
+                        "checks_json": {"requires_non_empty_answer": True, "requires_no_runtime_errors": True},
+                        "labels": ["feedback_optimization", "workspace_config"],
+                    }
+                )
+            return {
+                "schema_version": FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+                "job_id": job_input["job_id"],
+                "scope_kind": job_input["scope_kind"],
+                "scope_id": job_input["scope_id"],
+                "status": "completed",
+                "eval_cases": eval_cases,
+                "results": [],
+            }
         if job_type == "attribution":
             return {
                 "schema_version": "attribution-output/v1",
@@ -575,6 +640,20 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
                 "risk": "响应耗时可能略增。",
                 "human_review_required": True,
             }
+        if job_type == "regression_impact_analysis":
+            eval_run = job_input["eval_run"]
+            return {
+                "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+                "eval_run_id": job_input["eval_run_id"],
+                "status": "completed",
+                "result_status": eval_run["result_status"],
+                "gate_result": eval_run["gate_result"],
+                "impacted_assets": [],
+                "recommendations": ["保留当前优化结果并继续观察同类反馈。"],
+                "summary": "回归用例通过，未发现新增影响。",
+                "risk_assessment": "low",
+                "next_steps": [],
+            }
         raise AssertionError(f"unexpected job_type: {job_type}")
 
     async def fake_run_feedback_eval(*, eval_case_ids=None, optimization_task_id=None, source="optimization_batch_regression", regression_plan_id=None, **kwargs):
@@ -601,8 +680,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
                 check_results=[{"name": "requires_non_empty_answer", "passed": True}],
             )
         return module.feedback_store.finish_eval_run(run["eval_run_id"])
-
-    monkeypatch.setattr(module.runtime, "_provider_configured", lambda: True)
     monkeypatch.setattr(module.runtime, "_run_profile_json", fake_run_profile_json)
     monkeypatch.setattr(module.runtime, "run_feedback_eval", fake_run_feedback_eval)
 
@@ -625,20 +702,32 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             },
         )
         batch = batch_response.json()
+        eval_generation_job = _run_one_agent_job(module)
+        batch = client.get(f"/api/feedback-optimization-batches/{batch['batch_id']}").json()
         promote_response = client.post(
             f"/api/regression-assets/{batch['eval_case_ids'][0]}/promote",
             json={"operator": "tester", "reason": "E2E 批次回归用例晋级", "asset_layer": "batch_specific", "blocking_policy": "blocking"},
         )
         attribution_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/attribution-jobs", json={"force": True})
+        attribution_job = _run_one_agent_job(module)
         plan_response = client.post(
             f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan",
             json={"regeneration_instruction": "保持指令简洁，避免修改无关文件。"},
         )
-        plan = plan_response.json()["optimization_plan"]
+        assert plan_response.status_code == 200, plan_response.json()
+        plan_job = _run_one_agent_job(module)
+        batch = client.get(f"/api/feedback-optimization-batches/{batch['batch_id']}").json()
+        plan = batch["optimization_plan"]
         plan_task = plan["tasks"][0]
         execute_response = client.post(
             f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan/tasks/{plan_task['plan_task_id']}/execute",
             json={"force": True},
+        )
+        execution_job = _run_one_agent_job(module)
+        apply_response = client.post(
+            f"/api/optimization-tasks/{execute_response.json()['optimization_task']['optimization_task_id']}"
+            f"/execution-jobs/{execute_response.json()['execution_job']['execution_job_id']}/apply",
+            json={"confirm": True},
         )
         regression_plan_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-plan")
         regression_plan = regression_plan_response.json()
@@ -646,6 +735,8 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs",
             json={"regression_plan_id": regression_plan["regression_plan_id"]},
         )
+        impact_job = _run_one_agent_job(module)
+        impact_response = client.get(f"/api/eval-runs/{regression_response.json()['eval_run']['eval_run_id']}/impact-analysis")
         final_batch = regression_response.json()["batch"]
 
     assert signal_response.status_code == 200
@@ -654,19 +745,27 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert attribution_response.status_code == 200
     assert plan_response.status_code == 200
     assert execute_response.status_code == 200
+    assert apply_response.status_code == 200
     assert regression_plan_response.status_code == 200
     assert regression_response.status_code == 200
-    assert calls == ["attribution", "batch_plan", "execution"]
+    assert impact_response.status_code == 200
+    assert calls == ["eval_case_generation", "attribution", "batch_plan", "execution", "regression_impact_analysis"]
+    assert eval_generation_job["status"] == "completed"
+    assert attribution_job["status"] == "completed"
+    assert plan_job["status"] == "completed"
+    assert execution_job["status"] == "completed"
+    assert impact_job["status"] == "completed"
     assert plan["generated_by"] == "proposal-generator"
     assert plan["optimization_plan_job_id"]
     assert plan_task["schema_version"] == "feedback-optimization-plan-task/v2"
     assert plan_task["task_context"]["target_file"] == "CLAUDE.md"
-    assert execute_response.json()["execution_job"]["status"] == "ready"
-    assert execute_response.json()["optimization_task"]["applied_agent_version_id"]
+    assert execute_response.json()["execution_job"]["status"] == "queued"
+    assert apply_response.json()["optimization_task"]["applied_agent_version_id"]
     assert "回答 workspace 配置类问题前必须读取当前配置文件" in workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
     assert regression_response.json()["eval_run"]["result_status"] == "passed"
     assert regression_response.json()["regression_plan"]["eval_case_ids"]
-    assert regression_response.json()["impact_analysis"]["status"] == "completed"
+    assert regression_response.json()["impact_analysis"]["status"] == "pending"
+    assert impact_response.json()["status"] == "completed"
     assert final_batch["status"] == "completed"
 
 

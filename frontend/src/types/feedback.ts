@@ -1,7 +1,7 @@
 import type { components } from "./api";
 import type { AgentVersionDiff, AgentVersionSummary } from "./runtime";
 
-type OpenApiAttributionOutputResponse = components["schemas"]["AttributionOutputResponse"];
+type OpenApiAgentJobResponse = components["schemas"]["AgentJobResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
 type OpenApiEvidencePackageFileResponse = components["schemas"]["EvidencePackageFileResponse"];
 type OpenApiEvidencePackageResponse = components["schemas"]["EvidencePackageResponse"];
@@ -13,8 +13,6 @@ type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiExternalGovernanceItemResponse = components["schemas"]["ExternalGovernanceItemResponse"];
 type OpenApiExternalGovernanceNotificationResponse = components["schemas"]["ExternalGovernanceNotificationResponse"];
 type OpenApiExternalGovernanceWebhookResponse = components["schemas"]["ExternalGovernanceWebhookResponse"];
-type OpenApiExternalGuidanceResponse = components["schemas"]["ExternalGuidanceResponse"];
-type OpenApiFeedbackAnalysisJobResponse = components["schemas"]["FeedbackAnalysisJobResponse"];
 type OpenApiFeedbackCaseCreateRequest = components["schemas"]["FeedbackCaseCreateRequest"];
 type OpenApiFeedbackCaseResponse = components["schemas"]["FeedbackCaseResponse"];
 type OpenApiFeedbackEvalCaseUpdateRequest = components["schemas"]["FeedbackEvalCaseUpdateRequest"];
@@ -40,15 +38,12 @@ type OpenApiFeedbackOptimizationBatchEvalCaseCreateRequest = components["schemas
 type OpenApiPendingCorrelationResponse = components["schemas"]["PendingCorrelationResponse"];
 type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCorrelationResolveRequest"];
 type OpenApiExecutionCompensationResponse = components["schemas"]["ExecutionCompensationResponse"];
+type OpenApiExecutionApplicationResponse = components["schemas"]["ExecutionApplicationResponse"];
 type OpenApiOptimizationExecutionApplyResponse = components["schemas"]["OptimizationExecutionApplyResponse"];
-type OpenApiOptimizationExecutionJobResponse = components["schemas"]["OptimizationExecutionJobResponse"];
-type OpenApiOptimizationExecutionPlanOperationResponse = components["schemas"]["OptimizationExecutionPlanOperationResponse"];
-type OpenApiOptimizationExecutionPlanOutputResponse = components["schemas"]["OptimizationExecutionPlanOutputResponse"];
 type OpenApiOptimizationProposalResponse = components["schemas"]["OptimizationProposalResponse"];
 type OpenApiOptimizationProposalReviewRecordResponse = components["schemas"]["OptimizationProposalReviewRecordResponse"];
 type OpenApiOptimizationProposalReviewResponse = components["schemas"]["OptimizationProposalReviewResponse"];
 type OpenApiOptimizationTaskResponse = components["schemas"]["OptimizationTaskResponse"];
-type OpenApiProposalOutputResponse = components["schemas"]["ProposalOutputResponse"];
 type OpenApiRegressionAssetGovernanceActionRequest = components["schemas"]["RegressionAssetGovernanceActionRequest"];
 type OpenApiRegressionAssetFlakyRequest = components["schemas"]["RegressionAssetFlakyRequest"];
 type OpenApiRegressionAssetSupersedeRequest = components["schemas"]["RegressionAssetSupersedeRequest"];
@@ -71,7 +66,7 @@ export type SocEventType =
   | "recommendation.modified"
   | "evidence.added"
   | "tool.manual_query_after_agent";
-export type JobType = "attribution" | "proposal" | "batch_plan";
+export type JobType = "attribution" | "proposal" | "batch_plan" | "execution" | "eval_case_generation" | "regression_impact_analysis";
 export type JobStatus =
   | "created"
   | "evidence_packaging"
@@ -146,6 +141,19 @@ export type FeedbackSourceRecord = OpenApiFeedbackSourceResponse;
 
 export type FeedbackSourceUpdateRequest = OpenApiFeedbackSourceUpdateRequest;
 
+export type AgentJobRecord = OpenApiAgentJobResponse & {
+  job_type: JobType | string;
+  status: JobStatus | string;
+  feedback_case_id?: string;
+  evidence_package_id?: string;
+  attribution_job_id?: string;
+  batch_id?: string;
+  optimization_task_id?: string;
+  execution_job_id?: string;
+  baseline_agent_version_id?: string;
+  eval_run_id?: string;
+};
+
 export type FeedbackEvalCaseGenerateRequest = Omit<OpenApiFeedbackEvalCaseGenerateRequest, "force" | "source_refs"> & {
   source_refs: FeedbackSourceRef[];
   force?: boolean;
@@ -182,36 +190,44 @@ export type EvidencePackageRecord = OpenApiEvidencePackageResponse;
 
 export type EvidencePackageFileRecord = OpenApiEvidencePackageFileResponse;
 
-export type FeedbackAnalysisJobRecord = OpenApiFeedbackAnalysisJobResponse & {
+export type FeedbackAnalysisJobRecord = AgentJobRecord & {
   job_type: JobType | string;
   status: JobStatus | string;
   main_agent_version_id?: string | null;
-  runtime_version?: string;
-  profile_version?: Record<string, unknown>;
+  runtime_version?: string | null;
+  profile_version?: Record<string, unknown> | null;
   attribution_job_id?: string;
-  validated_output_json?: AttributionOutput | ProposalOutput | FeedbackOptimizationPlanRecord | null;
+  validated_output_json?: Record<string, unknown> | AttributionOutput | ProposalOutput | FeedbackOptimizationPlanRecord | null;
 };
 
 export interface FeedbackProposalRegenerateRequest {
   regeneration_instruction?: string | null;
 }
 
-export type AttributionOutput = OpenApiAttributionOutputResponse & {
+export type AttributionOutput = {
   schema_version: "attribution-output/v1";
   status: "completed" | "needs_human_review";
+  feedback_case_id?: string;
+  attribution_job_id?: string;
+  problem_type?: string;
+  optimization_object_type?: string;
+  actionability?: string;
   confidence: FeedbackConfidence | string;
   evidence_refs: Array<{ type: string; id: string; reason: string }>;
   responsibility_boundary: { owner: string; reason: string };
+  rationale?: string;
   recommended_next_step: "generate_proposal" | "needs_human_review" | "stop" | string;
+  [key: string]: unknown;
 };
 
-export type ExternalGuidanceRecord = OpenApiExternalGuidanceResponse & {
+export type ExternalGuidanceRecord = {
   external_item_id?: string;
   source_index?: number;
   status?: string;
   latest_notification_id?: string | null;
   latest_webhook_alias?: string | null;
   latest_notification?: ExternalGovernanceNotificationRecord | null;
+  [key: string]: unknown;
 };
 
 export type ExternalGovernanceWebhookRecord = OpenApiExternalGovernanceWebhookResponse;
@@ -233,11 +249,12 @@ export type OptimizationProposalRecord = OpenApiOptimizationProposalResponse & {
   latest_review?: OptimizationProposalReviewRecord | null;
 };
 
-export type ProposalOutput = OpenApiProposalOutputResponse & {
+export type ProposalOutput = {
   schema_version: "proposal-output/v1";
   status: "completed" | "needs_human_review";
   proposals: OptimizationProposalRecord[];
   external_guidance: ExternalGuidanceRecord[];
+  [key: string]: unknown;
 };
 
 export interface OptimizationProposalReviewRequest {
@@ -271,17 +288,22 @@ export type OptimizationTaskRecord = OpenApiOptimizationTaskResponse & {
     | string;
   proposal?: OptimizationProposalRecord;
   latest_execution_job?: OptimizationExecutionJobRecord | null;
+  latest_execution_application?: ExecutionApplicationRecord | null;
   pre_execution_agent_version?: AgentVersionSummary | null;
   applied_agent_version?: AgentVersionSummary | null;
   latest_regression_run?: EvalRunRecord | null;
   [key: string]: unknown;
 };
 
-export type OptimizationExecutionJobRecord = OpenApiOptimizationExecutionJobResponse & {
-  status: "queued" | "running" | "ready" | "completed" | "failed" | "needs_human_review" | string;
+export type OptimizationExecutionJobRecord = AgentJobRecord & {
+  status: "queued" | "running" | "completed" | "failed" | "needs_human_review" | string;
   validated_output_json?: ExecutionPlanOutput | null;
-  applied_diff?: AgentVersionDiff | null;
   compensations?: ExecutionCompensationRecord[];
+};
+
+export type ExecutionApplicationRecord = OpenApiExecutionApplicationResponse & {
+  status: "created" | "applied" | "failed" | "pending_manual_recovery" | "compensated" | string;
+  applied_diff?: AgentVersionDiff | null;
 };
 
 export type ExecutionCompensationRecord = OpenApiExecutionCompensationResponse & {
@@ -289,16 +311,34 @@ export type ExecutionCompensationRecord = OpenApiExecutionCompensationResponse &
   restore_status: "restored" | "restore_failed" | string;
 };
 
-export type ExecutionPlanOutput = OpenApiOptimizationExecutionPlanOutputResponse & {
+export type ExecutionPlanOutput = {
+  schema_version?: string | null;
+  optimization_task_id?: string | null;
+  execution_job_id?: string | null;
+  status?: "ready" | "needs_human_review" | string | null;
+  baseline_agent_version_id?: string | null;
+  summary?: string | null;
   operations?: ExecutionPlanOperation[];
+  validation?: string | null;
+  risk?: string | null;
+  human_review_required?: boolean | null;
+  no_action_reason?: string | null;
+  [key: string]: unknown;
 };
 
-export type ExecutionPlanOperation = OpenApiOptimizationExecutionPlanOperationResponse & {
+export type ExecutionPlanOperation = {
   operation?: "append_text" | "replace_file" | "create_file" | "noop" | string | null;
+  path?: string | null;
+  append_text?: string | null;
+  content?: string | null;
+  expected_sha256?: string | null;
+  rationale?: string | null;
+  [key: string]: unknown;
 };
 
 export type OptimizationExecutionApplyResponse = OpenApiOptimizationExecutionApplyResponse & {
   execution_job: OptimizationExecutionJobRecord;
+  execution_application: ExecutionApplicationRecord;
   optimization_task: OptimizationTaskRecord;
   applied_diff?: AgentVersionDiff | null;
 };
@@ -357,6 +397,7 @@ export type FeedbackOptimizationBatchCreateRequest = Omit<
 export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchResponse & {
   priority?: "high" | "medium" | "low" | string;
   source_refs?: FeedbackSourceRef[];
+  eval_case_generation_job_id?: string | null;
   eval_case_generation?: FeedbackEvalCaseGenerateResponse;
   attribution_jobs?: FeedbackAnalysisJobRecord[];
   optimization_plan?: FeedbackOptimizationPlanRecord | null;
@@ -370,7 +411,7 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
 
 export type FeedbackOptimizationBatchAttributionResponse = OpenApiFeedbackOptimizationBatchAttributionResponse & {
   batch?: FeedbackOptimizationBatchRecord | null;
-  jobs: FeedbackAnalysisJobRecord[];
+  jobs: AgentJobRecord[];
 };
 
 export type FeedbackOptimizationBatchExecutionResponse = OpenApiFeedbackOptimizationBatchExecutionResponse & {
@@ -384,6 +425,7 @@ export type FeedbackOptimizationBatchRegressionResponse = OpenApiFeedbackOptimiz
   eval_run: EvalRunRecord;
   regression_plan?: RegressionPlanRecord | null;
   impact_analysis?: RegressionImpactAnalysisRecord | null;
+  impact_analysis_job?: AgentJobRecord | null;
   gate_override?: RegressionGateOverrideRecord | null;
 };
 

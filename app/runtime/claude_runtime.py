@@ -7,12 +7,19 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .agent_profiles import (
+    ATTRIBUTION_ANALYZER_PROFILE,
+    EVAL_CASE_GOVERNOR_PROFILE,
+    EXECUTION_OPTIMIZER_PROFILE,
     MAIN_AGENT_PROFILE,
+    PROFILE_VERSION_IDS,
+    PROPOSAL_GENERATOR_PROFILE,
+    REGRESSION_IMPACT_ANALYZER_PROFILE,
     AgentRuntimeProfile,
     build_profiles,
 )
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_loader import load_programmatic_agents
+from .agent_profile_versions import profile_version_snapshot
 from .agent_version_store import AgentVersionStore
 from .errors import RuntimeUnavailableError
 from .runtime_db import utc_now
@@ -88,7 +95,6 @@ class ClaudeRuntime:
             FeedbackJobOrchestrator(
                 feedback_store=feedback_store,
                 profiles=self.profiles,
-                provider_configured=lambda: self._provider_configured(),
                 run_profile_json=lambda **kwargs: self._run_profile_json(**kwargs),
             )
             if feedback_store is not None
@@ -255,6 +261,13 @@ class ClaudeRuntime:
             return None
         return self.agent_version_store.current_version_id()
 
+    def profile_version_snapshot(self, profile_name: str) -> dict[str, Any] | None:
+        profile = self.profiles.get(profile_name)
+        if profile is None:
+            return None
+        version_id = PROFILE_VERSION_IDS.get(profile_name)  # type: ignore[arg-type]
+        return profile_version_snapshot(profile, version_id=version_id) if version_id else profile_version_snapshot(profile)
+
     def _raise_if_version_maintenance(self) -> None:
         if self.agent_version_store is not None and self.agent_version_store.is_maintenance_active():
             raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.")
@@ -372,9 +385,6 @@ class ClaudeRuntime:
             print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
             return None
 
-    def _provider_configured(self) -> bool:
-        return bool(self.settings.provider_api_key)
-
     async def _run_profile_json(
         self,
         *,
@@ -398,6 +408,15 @@ class ClaudeRuntime:
             return None
         return await self.job_orchestrator.run_attribution_job(feedback_case_id, force=force)
 
+    def queue_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_attribution_agent_job(
+            feedback_case_id,
+            profile_version=self.profile_version_snapshot(ATTRIBUTION_ANALYZER_PROFILE),
+            force=force,
+        )
+
     async def run_proposal_job(
         self,
         feedback_case_id: str,
@@ -409,6 +428,22 @@ class ClaudeRuntime:
             return None
         return await self.job_orchestrator.run_proposal_job(
             feedback_case_id,
+            force=force,
+            regeneration_instruction=regeneration_instruction,
+        )
+
+    def queue_proposal_job(
+        self,
+        feedback_case_id: str,
+        *,
+        force: bool = False,
+        regeneration_instruction: Optional[str] = None,
+    ) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_proposal_agent_job(
+            feedback_case_id,
+            profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
             force=force,
             regeneration_instruction=regeneration_instruction,
         )
@@ -428,10 +463,64 @@ class ClaudeRuntime:
             force=force,
         )
 
+    def queue_batch_optimization_plan(
+        self,
+        batch_id: str,
+        *,
+        regeneration_instruction: Optional[str] = None,
+        force: bool = True,
+    ) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_batch_plan_agent_job(
+            batch_id,
+            profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
+            force=force,
+            regeneration_instruction=regeneration_instruction,
+        )
+
     async def run_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
         if self.job_orchestrator is None:
             return None
         return await self.job_orchestrator.run_execution_job(optimization_task_id, force=force)
+
+    def queue_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_execution_agent_job(
+            optimization_task_id,
+            profile_version=self.profile_version_snapshot(EXECUTION_OPTIMIZER_PROFILE),
+            force=force,
+        )
+
+    def queue_eval_case_generation_job(
+        self,
+        *,
+        feedback_case_id: Optional[str] = None,
+        source_refs: Optional[list[dict[str, Any]]] = None,
+        batch_id: Optional[str] = None,
+        limit: int = 100,
+        force: bool = False,
+    ) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_feedback_eval_case_generation_agent_job(
+            feedback_case_id=feedback_case_id,
+            source_refs=source_refs,
+            batch_id=batch_id,
+            limit=limit,
+            force=force,
+            profile_version=self.profile_version_snapshot(EVAL_CASE_GOVERNOR_PROFILE),
+        )
+
+    def queue_regression_impact_analysis_job(self, eval_run_id: str, *, force: bool = False) -> dict[str, Any] | None:
+        if self.feedback_store is None:
+            return None
+        return self.feedback_store.queue_regression_impact_agent_job(
+            eval_run_id,
+            profile_version=self.profile_version_snapshot(REGRESSION_IMPACT_ANALYZER_PROFILE),
+            force=force,
+        )
 
     async def run_feedback_eval(
         self,

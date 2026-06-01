@@ -3,6 +3,7 @@ from feedback_store_test_utils import (
     FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackSignalCreateRequest,
     LocalSessionStore,
+    _batch_plan_output,
     _create_batch_with_completed_attribution,
     _record_run,
     _store,
@@ -261,7 +262,6 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     store, settings = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), feedback_store=store)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     seen = {}
 
     async def fake_run_profile_json(**kwargs):
@@ -356,7 +356,7 @@ def test_complete_batch_plan_job_rolls_back_when_batch_update_fails(tmp_path, mo
     monkeypatch.setattr(store, "_update_batch_row", fail_batch_update)
 
     with pytest.raises(RuntimeError, match="batch update failed"):
-        store.complete_batch_plan_job(job["job_id"], store.offline_batch_plan_output(job))
+        store.complete_batch_plan_job(job["job_id"], _batch_plan_output(job))
 
     unchanged_job = store.get_job(job["job_id"])
     unchanged_batch = store.find_optimization_batch(batch["batch_id"])

@@ -15,7 +15,8 @@ from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..runtime_db import (
     OptimizationProposalModel,
-    OptimizationExecutionModel,
+    AgentJobModel,
+    ExecutionApplicationModel,
     OptimizationTaskModel,
     ProposalReviewModel,
     make_session_factory,
@@ -30,17 +31,20 @@ from .feedback_evidence_store import FeedbackEvidenceStoreMixin
 from .feedback_eval_store import FeedbackEvalStoreMixin
 from .feedback_execution_store import FeedbackExecutionStoreMixin
 from .feedback_external_governance_store import FeedbackExternalGovernanceStoreMixin
-from .feedback_job_factory import FeedbackJobFactory
 from .feedback_job_store import FeedbackJobStoreMixin
 from .feedback_plan_task_store import FeedbackPlanTaskStoreMixin
 from .feedback_proposal_store import FeedbackProposalStoreMixin
 from .feedback_regression_asset_store import FeedbackRegressionAssetStoreMixin
 from .feedback_source_store import FeedbackSourceStoreMixin
 from .feedback_task_store import FeedbackTaskStoreMixin
+from .agent_job_store import AgentJobStoreMixin
+from .agent_job_queue_store import AgentJobQueueStoreMixin
 from ...version import APP_VERSION
 
 
 class FeedbackStore(
+    AgentJobQueueStoreMixin,
+    AgentJobStoreMixin,
     FeedbackCompensationStoreMixin,
     FeedbackBatchPlanStoreMixin,
     FeedbackPlanTaskStoreMixin,
@@ -84,12 +88,6 @@ class FeedbackStore(
         self.tmp_jobs_dir = data_dir / ".runtime-tmp" / "jobs"
         self.tmp_jobs_dir.mkdir(parents=True, exist_ok=True)
         self._job_create_lock = RLock()
-        self.feedback_jobs = FeedbackJobFactory(
-            session_factory=self.Session,
-            tmp_jobs_dir=self.tmp_jobs_dir,
-            runtime_version=self.runtime_version,
-            agent_version_provider=self._current_agent_version_id,
-        )
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[dict[str, Any]]]) -> None:
         # Trace details are intentionally not persisted in SQLite; keep the setter
@@ -186,15 +184,23 @@ class FeedbackStore(
         execution_job_id = self._string(batch.get("execution_job_id"))
         internal_proposal_id = self._string(batch.get("internal_proposal_id"))
         if task_id:
-            execution_rows = db.scalars(select(OptimizationExecutionModel).where(OptimizationExecutionModel.optimization_task_id == task_id)).all()
+            db.execute(delete(ExecutionApplicationModel).where(ExecutionApplicationModel.optimization_task_id == task_id))
+            execution_rows = db.scalars(
+                select(AgentJobModel).where(
+                    AgentJobModel.job_type == "execution",
+                    AgentJobModel.scope_kind == "optimization_task",
+                    AgentJobModel.scope_id == task_id,
+                )
+            ).all()
             for execution in execution_rows:
                 db.delete(execution)
-                self._append_cleanup_job_id(cleanup_job_ids, execution.execution_job_id)
+                self._append_cleanup_job_id(cleanup_job_ids, execution.job_id)
             task = db.get(OptimizationTaskModel, task_id)
             if task and not (task.payload_json or {}).get("applied_agent_version_id"):
                 db.delete(task)
         if execution_job_id:
-            execution = db.get(OptimizationExecutionModel, execution_job_id)
+            db.execute(delete(ExecutionApplicationModel).where(ExecutionApplicationModel.execution_job_id == execution_job_id))
+            execution = db.get(AgentJobModel, execution_job_id)
             if execution:
                 db.delete(execution)
             self._append_cleanup_job_id(cleanup_job_ids, execution_job_id)

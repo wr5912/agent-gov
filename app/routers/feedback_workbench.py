@@ -5,10 +5,11 @@ from typing import Any, Callable
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
+from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentRunResponse,
-    FeedbackEvalCaseGenerateResponse,
     FeedbackEvalCaseGenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalResponse,
@@ -25,6 +26,7 @@ from app.runtime.schemas import (
 def create_feedback_workbench_router(
     *,
     feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
@@ -32,7 +34,7 @@ def create_feedback_workbench_router(
     _register_feedback_signal_routes(router, feedback_store)
     _register_soc_event_routes(router, feedback_store)
     _register_pending_correlation_routes(router, feedback_store)
-    _register_feedback_source_routes(router, feedback_store)
+    _register_feedback_source_routes(router, feedback_store, runtime)
     return router
 
 
@@ -167,7 +169,7 @@ def _register_pending_correlation_routes(router: APIRouter, feedback_store: Feed
         return ensure_found(resolved, "Pending correlation not found")
 
 
-def _register_feedback_source_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_feedback_source_routes(router: APIRouter, feedback_store: FeedbackStore, runtime: ClaudeRuntime) -> None:
 
     @router.get(
         "/feedback-sources",
@@ -201,12 +203,13 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
 
     @router.post(
         "/feedback-sources/eval-cases/generate",
-        response_model=FeedbackEvalCaseGenerateResponse,
-        summary="Generate default regression eval cases for selected feedback sources",
+        response_model=AgentJobResponse,
+        summary="Queue regression eval case generation for selected feedback sources",
     )
     async def generate_feedback_source_eval_cases(req: FeedbackEvalCaseGenerateRequest) -> dict[str, Any]:
         require_request(bool(req.source_refs), "source_refs is required")
-        return feedback_store.generate_eval_cases_for_sources(
-            [item.model_dump(mode="json") for item in req.source_refs],
+        job = runtime.queue_eval_case_generation_job(
+            source_refs=[item.model_dump(mode="json") for item in req.source_refs],
             force=req.force,
         )
+        return ensure_found(job, "No feedback sources found for eval case generation")

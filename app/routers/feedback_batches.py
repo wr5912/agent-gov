@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
@@ -161,7 +162,7 @@ def _register_batch_analysis_routes(
             batch = feedback_store.reset_batch_attribution(batch_id) or batch
         jobs: list[dict[str, Any]] = []
         for feedback_case_id in batch.get("feedback_case_ids") or []:
-            job = await runtime.run_attribution_job(str(feedback_case_id), force=request.force)
+            job = runtime.queue_attribution_job(str(feedback_case_id), force=request.force)
             if job:
                 jobs.append(job)
         updated = feedback_store.record_batch_attribution_jobs(batch_id, jobs)
@@ -169,21 +170,22 @@ def _register_batch_analysis_routes(
 
     @router.post(
         "/feedback-optimization-batches/{batch_id}/optimization-plan",
-        response_model=FeedbackOptimizationBatchResponse,
-        summary="Generate one aggregated optimization plan from batch attribution results",
+        response_model=AgentJobResponse,
+        summary="Queue one aggregated optimization plan from batch attribution results",
     )
     async def generate_feedback_optimization_batch_plan(
         batch_id: str,
         req: FeedbackOptimizationBatchPlanGenerateRequest | None = None,
     ) -> dict[str, Any]:
-        batch = await runtime.run_batch_optimization_plan(
+        job = runtime.queue_batch_optimization_plan(
             batch_id,
             regeneration_instruction=(req or FeedbackOptimizationBatchPlanGenerateRequest()).regeneration_instruction,
             force=True,
         )
-        if not batch:
-            ensure_found(batch, "Feedback optimization batch not found")
-        return batch
+        if not job:
+            ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
+            raise_conflict("Batch cannot queue an optimization plan without actionable attributions")
+        return job
 
 
 def _register_batch_plan_review_routes(
@@ -206,27 +208,21 @@ def _register_batch_plan_review_routes(
         if not approved:
             raise_conflict("Optimization plan cannot be approved")
         task = approved["optimization_task"]
-        execution = await execution_application.run_and_apply_execution_job(
-            task["optimization_task_id"],
-            run_execution_job=runtime.run_execution_job,
-            force=True,
-            note=f"执行优化批次 {batch_id} 时由 execution-optimizer 自动应用。",
-        )
-        execution_job = execution["execution_job"]
-        if not execution_job:
-            feedback_store.record_batch_execution_result(batch_id, optimization_task=execution["optimization_task"])
-            raise_conflict("Execution optimizer could not generate a plan")
+        queued_job = runtime.queue_execution_job(task["optimization_task_id"], force=True)
+        if not queued_job:
+            feedback_store.record_batch_execution_result(batch_id, optimization_task=task)
+            raise_conflict("Execution optimizer could not be queued")
+        execution_job = feedback_store.get_execution_job(str(queued_job["job_id"]))
         batch = feedback_store.record_batch_execution_result(
             batch_id,
             execution_job=execution_job,
-            optimization_task=execution["optimization_task"],
-            applied=execution["apply_result"],
+            optimization_task=task,
         )
         return {
             "batch": batch,
-            "optimization_task": execution["optimization_task"],
+            "optimization_task": task,
             "execution_job": execution_job,
-            "apply_result": execution["apply_result"],
+            "apply_result": None,
         }
 
     @router.post(
@@ -282,31 +278,25 @@ def _register_batch_plan_task_routes(
             batch = feedback_store.record_batch_plan_task_execution_result(batch_id, plan_task_id, optimization_task=task)
             return {"batch": batch, "optimization_task": task, "plan_task": _batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
 
-        execution = await execution_application.run_and_apply_execution_job(
-            task["optimization_task_id"],
-            run_execution_job=runtime.run_execution_job,
-            force=req.force,
-            note=f"执行优化批次 {batch_id} 的任务 {plan_task_id} 时由 execution-optimizer 自动应用。",
-        )
-        execution_job = execution["execution_job"]
+        queued_job = runtime.queue_execution_job(task["optimization_task_id"], force=req.force)
+        execution_job = feedback_store.get_execution_job(str(queued_job["job_id"])) if queued_job else None
         if not execution_job:
             batch = feedback_store.record_batch_plan_task_execution_result(
                 batch_id,
                 plan_task_id,
-                optimization_task=execution["optimization_task"],
+                optimization_task=task,
             )
-            raise_conflict("Execution optimizer could not generate a plan")
+            raise_conflict("Execution optimizer could not be queued")
         batch = feedback_store.record_batch_plan_task_execution_result(
             batch_id,
             plan_task_id,
             execution_job=execution_job,
-            optimization_task=execution["optimization_task"],
-            applied=execution["apply_result"],
+            optimization_task=task,
         )
         return {
             "batch": batch,
-            "optimization_task": execution["optimization_task"],
+            "optimization_task": task,
             "plan_task": _batch_plan_task(batch, plan_task_id),
             "execution_job": execution_job,
-            "apply_result": execution["apply_result"],
+            "apply_result": None,
         }

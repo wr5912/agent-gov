@@ -22,6 +22,20 @@ def test_job_state_machine_rejects_completed_reopen():
         validate_transition("job", "completed", "running")
 
 
+def test_agent_job_state_machine_rejects_completed_reopen():
+    validate_transition("agent_job", "queued", "running")
+    validate_transition("agent_job", "running", "schema_validating")
+    validate_transition("agent_job", "schema_validating", "completed")
+    with pytest.raises(StateTransitionError, match="completed -> running"):
+        validate_transition("agent_job", "completed", "running")
+
+
+def test_execution_application_state_machine_rejects_applied_reopen():
+    validate_transition("execution_application", "created", "applied")
+    with pytest.raises(StateTransitionError, match="applied -> failed"):
+        validate_transition("execution_application", "applied", "failed")
+
+
 def test_job_in_progress_states_are_known_job_states():
     assert JOB_IN_PROGRESS_STATES <= JOB_STATES
     assert "completed" not in JOB_IN_PROGRESS_STATES

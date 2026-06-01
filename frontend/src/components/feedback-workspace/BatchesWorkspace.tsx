@@ -19,6 +19,7 @@ import {
   buildBatchAttributionJobs,
   buildBatchSourceRows,
   defaultBatchDetail,
+  executionPlanReady,
   evalStatusTone,
   formatDate,
   jobStatusTone,
@@ -704,11 +705,11 @@ function BatchExecutionSummary({ batch }: { batch: FeedbackOptimizationBatchReco
   if (!task && !execution) return null;
   const output = execution?.validated_output_json || null;
   const operations = output?.operations || [];
-  const appliedVersion = task?.applied_agent_version_id || execution?.applied_agent_version_id || null;
+  const appliedVersion = task?.applied_agent_version_id || null;
   const noActionReason = output?.no_action_reason || execution?.error_json?.message || null;
   const nextStep = appliedVersion
     ? "优化已应用并产生 Agent 版本，可以运行回归测试。"
-    : execution?.status === "ready"
+    : executionPlanReady(execution)
       ? "执行方案已 ready，请先应用执行方案以产生 Agent 版本。"
       : execution
         ? "执行方案尚未可应用，请查看未执行原因或重新生成执行方案。"
@@ -717,7 +718,7 @@ function BatchExecutionSummary({ batch }: { batch: FeedbackOptimizationBatchReco
     <section className="fw-task-source fw-batch-execution-summary">
       <div className="fw-task-section-head">
         <h4>执行状态</h4>
-        <Pill tone={appliedVersion ? "green" : execution?.status === "ready" ? "blue" : execution ? jobStatusTone(execution.status) : "gray"}>
+        <Pill tone={appliedVersion ? "green" : executionPlanReady(execution) ? "blue" : execution ? jobStatusTone(execution.status) : "gray"}>
           {appliedVersion ? "applied" : execution?.status || task?.status || "pending"}
         </Pill>
       </div>

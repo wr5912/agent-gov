@@ -2,14 +2,16 @@ from pathlib import Path
 import json
 
 from feedback_store_test_utils import (
-    FeedbackAnalysisJobResponse,
+    AgentJobResponse,
     FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackStore,
     SocEventIngestRequest,
     ValidationError,
+    _attribution_output,
     _create_approved_task_for_target,
     _create_batch_with_completed_attribution,
+    _proposal_output,
     _record_run,
     _settings,
     _store,
@@ -23,7 +25,7 @@ from app.runtime.runtime_db import (
     EvidenceFileModel,
     EvidencePackageModel,
     ExternalNotificationModel,
-    FeedbackJobModel,
+    AgentJobModel,
     OptimizationProposalModel,
 )
 
@@ -141,7 +143,14 @@ def test_case_evidence_and_job_outputs(tmp_path):
 
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.start_job(attribution_job["job_id"])
-    completed = store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        _attribution_output(
+            attribution_job,
+            actionability="needs_human_analysis",
+            recommended_next_step="needs_human_review",
+        ),
+    )
     output = store.get_job_output(attribution_job["job_id"], "attribution")
 
     assert completed["status"] == "completed"
@@ -151,7 +160,7 @@ def test_case_evidence_and_job_outputs(tmp_path):
 
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.start_job(proposal_job["job_id"])
-    completed_proposal = store.complete_proposal_job(proposal_job["job_id"], store.offline_proposal_output(proposal_job))
+    completed_proposal = store.complete_proposal_job(proposal_job["job_id"], _proposal_output(proposal_job))
     proposal_output = store.get_job_output(proposal_job["job_id"], "proposal")
 
     assert completed_proposal["status"] == "completed"
@@ -167,7 +176,7 @@ def test_regenerated_proposal_job_records_single_use_instruction(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     store.create_evidence_package(feedback_case["feedback_case_id"])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
 
     empty_instruction_job = store.create_proposal_job(
         feedback_case["feedback_case_id"],
@@ -193,7 +202,7 @@ def test_external_guidance_creates_governance_item_and_notifies_selected_webhook
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"], comment="知识库缺少条目"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -264,7 +273,7 @@ def test_external_governance_notification_failure_updates_item_status(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -322,7 +331,7 @@ def test_external_governance_notify_requires_known_webhook_alias(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -425,7 +434,7 @@ def test_debug_evidence_can_be_disabled(tmp_path):
     assert tool_calls[0]["input"]["token"] == "[REDACTED]"
 
 
-def test_failed_feedback_jobs_can_retry_without_duplicating_active_jobs(tmp_path):
+def test_failed_agent_jobs_can_retry_without_duplicating_active_jobs(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"]))
@@ -438,10 +447,10 @@ def test_failed_feedback_jobs_can_retry_without_duplicating_active_jobs(tmp_path
     retried_attribution = store.create_attribution_job(feedback_case["feedback_case_id"])
 
     assert failed_attribution["error_json"]["message"] == "failed"
-    assert FeedbackAnalysisJobResponse(**failed_attribution).error_json.error_code == "AGENT_RUNTIME_ERROR"
+    assert AgentJobResponse(**failed_attribution).error_json.error_code == "AGENT_RUNTIME_ERROR"
     assert failed_case["status"] == "pending_attribution"
     assert retried_attribution["job_id"] != attribution_job["job_id"]
-    store.complete_attribution_job(retried_attribution["job_id"], store.offline_attribution_output(retried_attribution))
+    store.complete_attribution_job(retried_attribution["job_id"], _attribution_output(retried_attribution))
 
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     assert store.create_proposal_job(feedback_case["feedback_case_id"])["job_id"] == proposal_job["job_id"]
@@ -460,9 +469,9 @@ def test_force_attribution_discards_current_job_and_downstream_proposal(tmp_path
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(proposal_job["job_id"], store.offline_proposal_output(proposal_job))
+    store.complete_proposal_job(proposal_job["job_id"], _proposal_output(proposal_job))
 
     regenerated = store.create_attribution_job(feedback_case["feedback_case_id"], force=True)
     updated_case = store.find_case(feedback_case["feedback_case_id"])
@@ -508,7 +517,7 @@ def test_create_attribution_job_cleans_record_and_tmp_when_case_attach_fails(tmp
         store.create_attribution_job(feedback_case["feedback_case_id"])
 
     with store.Session() as db:
-        assert db.scalars(select(FeedbackJobModel)).all() == []
+        assert db.scalars(select(AgentJobModel)).all() == []
     assert list((settings.data_dir / ".runtime-tmp" / "jobs").iterdir()) == []
     assert store.find_case(feedback_case["feedback_case_id"])["attribution_job_ids"] == []
 
@@ -526,7 +535,7 @@ def test_complete_attribution_job_rolls_back_when_case_update_fails(tmp_path, mo
     monkeypatch.setattr(store, "_append_case_update_row", fail_case_update)
 
     with pytest.raises(RuntimeError, match="case status update failed"):
-        store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+        store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
 
     unchanged_job = store.get_job(attribution_job["job_id"])
     unchanged_case = store.find_case(feedback_case["feedback_case_id"])
@@ -543,7 +552,7 @@ def test_complete_proposal_job_rolls_back_rows_when_case_update_fails(tmp_path, 
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     raw_output = {
         "schema_version": "proposal-output/v1",
@@ -617,7 +626,7 @@ def test_batch_attribution_uses_current_jobs_and_resets_downstream_plan(tmp_path
     batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
     feedback_case_id = batch["feedback_case_ids"][0]
     attribution_job = store.create_attribution_job(feedback_case_id)
-    completed = store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    completed = store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
     batch = store.generate_batch_optimization_plan(batch["batch_id"])
 
@@ -638,7 +647,7 @@ def test_reset_batch_attribution_rolls_back_db_and_keeps_tmp_when_batch_update_f
     batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
     feedback_case_id = batch["feedback_case_ids"][0]
     attribution_job = store.create_attribution_job(feedback_case_id)
-    completed = store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    completed = store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
     batch = store.generate_batch_optimization_plan(batch["batch_id"])
     job_tmp_dir = store.tmp_jobs_dir / attribution_job["job_id"]
@@ -692,7 +701,7 @@ def test_batch_attribution_status_requires_all_current_jobs_completed(tmp_path):
     )
     first_job = store.create_attribution_job(batch["feedback_case_ids"][0])
     second_job = store.create_attribution_job(batch["feedback_case_ids"][1])
-    completed = store.complete_attribution_job(first_job["job_id"], store.offline_attribution_output(first_job))
+    completed = store.complete_attribution_job(first_job["job_id"], _attribution_output(first_job))
     running = store.start_job(second_job["job_id"])
 
     running_batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed, running])
@@ -771,7 +780,7 @@ def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     proposal_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     proposal_case = store.create_case(source_ids=[proposal_signal["signal_id"]])
     valid_attribution = store.create_attribution_job(proposal_case["feedback_case_id"])
-    store.complete_attribution_job(valid_attribution["job_id"], store.offline_attribution_output(valid_attribution))
+    store.complete_attribution_job(valid_attribution["job_id"], _attribution_output(valid_attribution))
     proposal_job = store.create_proposal_job(proposal_case["feedback_case_id"])
     reviewed_proposal = store.complete_proposal_job(proposal_job["job_id"], {"schema_version": "proposal-output/v1"})
     proposal_case_after_review = store.find_case(proposal_case["feedback_case_id"])

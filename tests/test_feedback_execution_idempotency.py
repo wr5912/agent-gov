@@ -3,7 +3,7 @@ from feedback_store_test_utils import _create_approved_task_for_target, _store, 
 from app.runtime.errors import ConflictError
 
 
-def test_mark_execution_job_applied_rejects_duplicate_application(tmp_path):
+def test_execution_application_rejects_duplicate_application(tmp_path):
     store, _ = _store(tmp_path)
     task = _create_approved_task_for_target(store, "CLAUDE.md")
     job = store.create_execution_job(task["optimization_task_id"])
@@ -31,14 +31,14 @@ def test_mark_execution_job_applied_rejects_duplicate_application(tmp_path):
         },
     )
 
-    first = store.mark_execution_job_applied(
+    first = store.record_execution_application_applied(
         ready_job["execution_job_id"],
         pre_execution_version={"agent_version_id": "main-v-before"},
         applied_agent_version={"agent_version_id": "main-v-after"},
         applied_diff={"changed_files": ["CLAUDE.md"]},
     )
-    with pytest.raises(ConflictError, match="already been applied|not ready"):
-        store.mark_execution_job_applied(
+    with pytest.raises(ConflictError, match="not ready for execution application"):
+        store.record_execution_application_applied(
             ready_job["execution_job_id"],
             pre_execution_version={"agent_version_id": "main-v-before-2"},
             applied_agent_version={"agent_version_id": "main-v-after-2"},
@@ -48,5 +48,5 @@ def test_mark_execution_job_applied_rejects_duplicate_application(tmp_path):
     updated_job = store.get_execution_job(ready_job["execution_job_id"])
     updated_task = store.find_task(task["optimization_task_id"])
     assert first["applied_agent_version_id"] == "main-v-after"
-    assert updated_job["applied_agent_version_id"] == "main-v-after"
+    assert updated_job.get("applied_agent_version_id") is None
     assert updated_task["applied_agent_version_id"] == "main-v-after"

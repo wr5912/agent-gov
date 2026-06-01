@@ -6,6 +6,8 @@ from feedback_store_test_utils import (
     FeedbackSignalCreateRequest,
     FeedbackStore,
     LocalSessionStore,
+    _attribution_output,
+    _complete_eval_case_generation_job,
     _create_eval_case,
     _record_run,
     _settings,
@@ -126,8 +128,8 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
     task = store.create_task(proposal_id=proposal["proposal_id"])
     task = store.mark_task_applied(task["optimization_task_id"], agent_version={"agent_version_id": "main-v-after"})
-    sync = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
-    eval_case = sync["eval_cases"][0]
+    sync_job = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
+    eval_case = _complete_eval_case_generation_job(store, sync_job, feedback_case=feedback_case)
     eval_case = store.promote_eval_case(
         eval_case["eval_case_id"],
         {"operator": "tester", "reason": "纳入本次手动回归验证"},
@@ -164,7 +166,7 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     regression_run = store.get_eval_run(eval_run["eval_run_id"])
     eval_agent_run = store.find_run(run_id=regression_run["items"][0]["agent_run_id"])
 
-    assert sync["created"] == 1
+    assert sync_job["job_type"] == "eval_case_generation"
     assert eval_case["promotion_status"] == "approved"
     assert "subagents 和 skills" in eval_case["prompt"]
     assert eval_case["checks_json"]["requires_tool_use"] is True
@@ -348,7 +350,10 @@ def test_promoted_eval_case_enters_regression_plan_and_gate_blocks_failures(tmp_
     assert finished["gate_result"]["blocked_case_ids"] == ["evc-blocking"]
 
 
-def test_runtime_feedback_jobs_use_offline_outputs_without_provider(tmp_path):
+def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+    import claude_agent_sdk
+
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
     _record_run(store)
@@ -356,20 +361,33 @@ def test_runtime_feedback_jobs_use_offline_outputs_without_provider(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
 
+    async def fake_query(*, prompt, options, transport=None):
+        text = "只能给出非结构化归因片段，需要 formatter 规范化。"
+        yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-attribution-session")
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="sdk-attribution-session",
+            result=text,
+        )
+
+    class FailingFormatter:
+        def format(self, **kwargs):
+            raise RuntimeError("formatter unavailable")
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    runtime.output_formatter = FailingFormatter()
+
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
-    reused_attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
-    proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
-    reused_proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
 
     assert attribution_job["profile_name"] == "attribution-analyzer"
-    assert attribution_job["status"] == "completed"
-    assert reused_attribution_job["job_id"] == attribution_job["job_id"]
-    assert reused_attribution_job["status"] == "completed"
-    assert attribution_job["profile_version"]["profile_name"] == "attribution-analyzer"
-    assert proposal_job["profile_name"] == "proposal-generator"
-    assert proposal_job["status"] == "completed"
-    assert reused_proposal_job["job_id"] == proposal_job["job_id"]
-    assert reused_proposal_job["status"] == "completed"
+    assert attribution_job["status"] == "failed"
+    assert attribution_job["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert "formatter unavailable" in attribution_job["error_json"]["message"]
+    assert attribution_job["profile_name"] == "attribution-analyzer"
 
 
 def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(tmp_path, monkeypatch):
@@ -459,7 +477,6 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
         )
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
     output = store.get_job_output(attribution_job["job_id"], "attribution")
@@ -546,7 +563,6 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
             return OutputFormatterResult(payload=payload, source="fake")
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     runtime.output_formatter = FakeFormatter()
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
@@ -623,7 +639,6 @@ def test_proposal_agent_ignores_intermediate_permissions_json(tmp_path, monkeypa
         )
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
 
     proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
     output = store.get_job_output(proposal_job["job_id"], "proposal")
@@ -644,7 +659,7 @@ def test_sqlite_store_does_not_create_legacy_runtime_dirs(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     evidence = store.create_evidence_package(feedback_case["feedback_case_id"])
     job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(job["job_id"], store.offline_attribution_output(job))
+    store.complete_attribution_job(job["job_id"], _attribution_output(job))
 
     assert settings.runtime_db_path.exists()
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "feedback.json")["content"]

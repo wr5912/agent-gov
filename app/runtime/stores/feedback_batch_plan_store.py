@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any, Callable, Optional
 
+from ..agent_job_types import agent_job_spec
 from ..agent_profiles import PROPOSAL_GENERATOR_PROFILE
 from ..errors import BusinessRuleViolation, ConflictError
 from ..feedback_job_flags import no_actionable_attributions, with_reused_existing
@@ -87,13 +88,15 @@ class FeedbackBatchPlanStoreMixin:
         if instruction:
             input_payload["regeneration_instruction"] = instruction
         try:
-            self.feedback_jobs.create_queued_job(
+            spec = agent_job_spec("batch_plan")
+            job = self.create_agent_job(
                 job_id=job_id,
-                job_type="batch_plan",
-                feedback_case_id=feedback_case_id,
-                evidence_package_id=evidence_package_id,
+                job_type=spec.job_type,
+                scope_kind="optimization_batch",
+                scope_id=batch_id,
                 profile_name=PROPOSAL_GENERATOR_PROFILE,
                 input_payload=input_payload,
+                output_schema_version=spec.output_schema_version,
                 profile_version=profile_version,
             )
             self._update_batch(
@@ -101,7 +104,7 @@ class FeedbackBatchPlanStoreMixin:
                 status="optimization_plan_queued",
                 fields={
                     "optimization_plan_job_id": job_id,
-                    "optimization_plan_job": self.get_job(job_id),
+                    "optimization_plan_job": job,
                     "optimization_plan_error": None,
                 },
             )
@@ -159,45 +162,6 @@ class FeedbackBatchPlanStoreMixin:
                 )
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
-
-    def offline_batch_plan_output(self, job: dict[str, Any]) -> dict[str, Any]:
-        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
-        batch_id = self._string(input_json.get("batch_id")) or ""
-        return {
-            "schema_version": "feedback-optimization-plan-output/v1",
-            "batch_id": batch_id,
-            "status": "needs_human_review",
-            "title": "当前不能生成可执行优化方案",
-            "summary": "当前未配置模型提供商，proposal-generator 无法生成批次优化任务。",
-            "problem_types": [],
-            "confidence": "low",
-            "actionability": "needs_human_analysis",
-            "target_type": "not_actionable",
-            "target_path": None,
-            "recommendation": "配置模型提供商后重新生成优化方案，或由开发人员手工分析归因结果。",
-            "expected_effect": "离线占位不会改变主智能体行为。",
-            "validation": "重新生成真实优化方案后，再使用本批次回归测试用例验证。",
-            "risk": "离线占位没有可执行任务。",
-            "source_refs": input_json.get("source_refs") or [],
-            "feedback_case_ids": input_json.get("feedback_case_ids") or [],
-            "eval_case_ids": input_json.get("eval_case_ids") or [],
-            "attribution_job_ids": input_json.get("attribution_job_ids") or [],
-            "attribution_summaries": [],
-            "rationale": "未配置模型提供商，系统不能运行 proposal-generator。",
-            "evidence_refs": [],
-            "tasks": [],
-            "blocked_items": [
-                {
-                    "title": "未配置模型提供商",
-                    "target_type": "not_actionable",
-                    "actionability": "needs_human_analysis",
-                    "reason": "当前未配置模型提供商，不能由 proposal-generator 生成可执行优化任务。",
-                    "feedback_case_ids": input_json.get("feedback_case_ids") or [],
-                    "eval_case_ids": input_json.get("eval_case_ids") or [],
-                    "attribution_job_ids": input_json.get("attribution_job_ids") or [],
-                }
-            ],
-        }
 
     def approve_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
         batch = self.find_optimization_batch(batch_id)

@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.routers.agent_versions import create_agent_versions_router
+from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
@@ -103,6 +104,7 @@ app.include_router(create_catalog_router(settings=settings, require_api_key=requ
 app.include_router(create_openai_router(settings=settings, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, require_api_key=require_api_key))
 app.include_router(create_agent_versions_router(agent_version_store=agent_version_store, require_api_key=require_api_key))
+app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_feedback_cases_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
@@ -117,6 +119,7 @@ app.include_router(
 app.include_router(
     create_feedback_workbench_router(
         feedback_store=feedback_store,
+        runtime=runtime,
         require_api_key=require_api_key,
     )
 )

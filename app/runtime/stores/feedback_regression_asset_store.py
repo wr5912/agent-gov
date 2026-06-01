@@ -262,37 +262,9 @@ class FeedbackRegressionAssetStoreMixin:
             ).first()
             return self._regression_plan_to_dict(row) if row else None
     def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
-        eval_run = self.get_eval_run(eval_run_id)
-        if not eval_run:
+        job = self.queue_regression_impact_agent_job(eval_run_id)
+        if not job:
             return None
-        existing = self.get_regression_impact_analysis(eval_run_id)
-        if existing:
-            return existing
-        created_at = utc_now()
-        analysis_id = f"ria-{uuid.uuid4()}"
-        payload = {
-            "schema_version": "regression-impact-analysis/v1",
-            "impact_analysis_id": analysis_id,
-            "eval_run_id": eval_run_id,
-            "created_at": created_at,
-            "completed_at": created_at,
-            "status": "completed",
-            "result_status": eval_run.get("result_status"),
-            "gate_result": eval_run.get("gate_result") or {},
-            "impacted_assets": self._impacted_assets_from_eval_run(eval_run),
-            "recommendations": self._impact_recommendations(eval_run),
-        }
-        with self.Session.begin() as db:
-            db.add(
-                RegressionImpactAnalysisModel(
-                    impact_analysis_id=analysis_id,
-                    eval_run_id=eval_run_id,
-                    created_at=created_at,
-                    completed_at=created_at,
-                    status="completed",
-                    payload_json=payload,
-                )
-            )
         return self.get_regression_impact_analysis(eval_run_id)
     def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
         with self.Session() as db:

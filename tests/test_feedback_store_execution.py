@@ -5,6 +5,7 @@ from feedback_store_test_utils import (
     ClaudeRuntime,
     FeedbackSignalCreateRequest,
     LocalSessionStore,
+    _attribution_output,
     _create_approved_task_for_target,
     _create_batch_with_completed_attribution,
     _record_run,
@@ -15,7 +16,7 @@ from feedback_store_test_utils import (
 )
 from sqlalchemy import select
 
-from app.runtime.runtime_db import OptimizationExecutionModel
+from app.runtime.runtime_db import AgentJobModel
 
 
 def test_proposal_target_policy_and_task_requires_approval(tmp_path):
@@ -100,7 +101,7 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -162,7 +163,8 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     )
     updated_task = store.find_task(task["optimization_task_id"])
 
-    assert completed["status"] == "ready"
+    assert completed["status"] == "completed"
+    assert completed["validated_output_json"]["status"] == "ready"
     assert updated_task["status"] == "execution_ready"
     assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
     assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
@@ -283,7 +285,7 @@ def test_complete_execution_job_rolls_back_when_batch_plan_task_update_fails(tmp
     assert unchanged_plan_task.get("latest_execution_job") is None
 
 
-def test_mark_execution_job_applied_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
+def test_execution_application_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     task = _create_approved_task_for_target(store, "CLAUDE.md")
     job = store.create_execution_job(task["optimization_task_id"])
@@ -317,7 +319,7 @@ def test_mark_execution_job_applied_rolls_back_when_task_update_fails(tmp_path, 
     monkeypatch.setattr(store, "_mark_task_applied_row", fail_task_applied)
 
     with pytest.raises(RuntimeError, match="task applied update failed"):
-        store.mark_execution_job_applied(
+        store.record_execution_application_applied(
             ready_job["execution_job_id"],
             pre_execution_version={"agent_version_id": "main-v-before"},
             applied_agent_version={"agent_version_id": "main-v-after"},
@@ -326,13 +328,14 @@ def test_mark_execution_job_applied_rolls_back_when_task_update_fails(tmp_path, 
 
     unchanged_job = store.get_execution_job(job["execution_job_id"])
     unchanged_task = store.find_task(task["optimization_task_id"])
-    assert unchanged_job["status"] == "ready"
+    assert unchanged_job["status"] == "completed"
     assert unchanged_job.get("applied_agent_version_id") is None
     assert unchanged_task["status"] == "execution_ready"
     assert unchanged_task.get("applied_agent_version_id") is None
+    assert store.latest_execution_application(job["execution_job_id"]) is None
 
 
-def test_mark_execution_job_applied_syncs_batch_plan_task(tmp_path):
+def test_execution_application_syncs_batch_plan_task(tmp_path):
     store, _ = _store(tmp_path)
     batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
     plan_task = batch["optimization_plan"]["tasks"][0]
@@ -363,7 +366,7 @@ def test_mark_execution_job_applied_syncs_batch_plan_task(tmp_path):
         },
     )
 
-    applied = store.mark_execution_job_applied(
+    applied = store.record_execution_application_applied(
         ready_job["execution_job_id"],
         pre_execution_version={"agent_version_id": "main-v-before"},
         applied_agent_version={"agent_version_id": "main-v-after"},
@@ -373,7 +376,7 @@ def test_mark_execution_job_applied_syncs_batch_plan_task(tmp_path):
     updated_task = store.find_task(task["optimization_task_id"])
     updated_batch = store.find_optimization_batch(batch["batch_id"])
     updated_plan_task = next(item for item in updated_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
-    assert applied["status"] == "completed"
+    assert applied["status"] == "applied"
     assert applied["applied_agent_version_id"] == "main-v-after"
     assert updated_task["status"] == "applied_pending_regression"
     assert updated_batch["status"] == "applied_pending_regression"
@@ -382,7 +385,7 @@ def test_mark_execution_job_applied_syncs_batch_plan_task(tmp_path):
     assert updated_plan_task["latest_execution_job"]["status"] == "completed"
 
 
-def test_mark_execution_job_applied_rolls_back_when_batch_plan_task_update_fails(tmp_path, monkeypatch):
+def test_execution_application_rolls_back_when_batch_plan_task_update_fails(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
     plan_task = batch["optimization_plan"]["tasks"][0]
@@ -419,7 +422,7 @@ def test_mark_execution_job_applied_rolls_back_when_batch_plan_task_update_fails
     monkeypatch.setattr(store, "_update_batch_plan_task_row", fail_batch_plan_task_update)
 
     with pytest.raises(RuntimeError, match="batch plan task applied update failed"):
-        store.mark_execution_job_applied(
+        store.record_execution_application_applied(
             ready_job["execution_job_id"],
             pre_execution_version={"agent_version_id": "main-v-before"},
             applied_agent_version={"agent_version_id": "main-v-after"},
@@ -430,12 +433,13 @@ def test_mark_execution_job_applied_rolls_back_when_batch_plan_task_update_fails
     unchanged_task = store.find_task(task["optimization_task_id"])
     unchanged_batch = store.find_optimization_batch(batch["batch_id"])
     unchanged_plan_task = next(item for item in unchanged_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
-    assert unchanged_job["status"] == "ready"
+    assert unchanged_job["status"] == "completed"
     assert unchanged_job.get("applied_agent_version_id") is None
     assert unchanged_task["status"] == "execution_ready"
     assert unchanged_task.get("applied_agent_version_id") is None
     assert unchanged_plan_task["status"] == "execution_ready"
     assert unchanged_plan_task.get("applied_agent_version_id") is None
+    assert store.latest_execution_application(job["execution_job_id"]) is None
 
 
 def test_execution_job_accepts_any_managed_workspace_file(tmp_path):
@@ -520,7 +524,7 @@ def test_create_execution_job_cleans_record_and_tmp_when_task_attach_fails(tmp_p
         store.create_execution_job(task_id, force=True)
 
     with store.Session() as db:
-        assert db.scalars(select(OptimizationExecutionModel)).all() == []
+        assert db.scalars(select(AgentJobModel).where(AgentJobModel.job_type == "execution")).all() == []
     assert list((settings.data_dir / ".runtime-tmp" / "jobs").iterdir()) == []
     assert store.find_task(task_id).get("latest_execution_job_id") is None
 
@@ -597,7 +601,7 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -673,12 +677,12 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
         )
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
     updated_task = store.find_task(task["optimization_task_id"])
 
-    assert job["status"] == "ready"
+    assert job["status"] == "completed"
+    assert job["validated_output_json"]["status"] == "ready"
     assert seen["input_path"] == job["input_path"]
     assert str(seen["input_path"]).endswith("/execution/input.json")
     assert "execution-input.json" not in str(seen["input_path"])
@@ -696,7 +700,7 @@ def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -734,12 +738,12 @@ def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path
             yield None
 
     monkeypatch.setattr(claude_agent_sdk, "query", fail_query)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
     operation = job["validated_output_json"]["operations"][0]
 
-    assert job["status"] == "ready"
+    assert job["status"] == "completed"
+    assert job["validated_output_json"]["status"] == "ready"
     assert operation["operation"] == "create_file"
     assert operation["path"] == "evals/alert-triage-false-positive.json"
     assert "feedback-eval-case/v1" in operation["content"]

@@ -8,6 +8,7 @@ import {
   executeFeedbackOptimizationPlanTask,
   generateFeedbackOptimizationBatchPlan,
   generateFeedbackSourceEvalCases,
+  getAgentJob,
   removeFeedbackOptimizationBatchEvalCase,
   rejectFeedbackOptimizationBatchPlan,
   runFeedbackOptimizationBatchAttribution,
@@ -16,6 +17,7 @@ import {
   updateFeedbackOptimizationBatchEvalCase,
 } from "../../api/runtime";
 import type {
+  AgentJobRecord,
   EvalCaseRecord,
   EvalCaseUpdateRequest,
   ExecutionCompensationRecord,
@@ -27,12 +29,21 @@ import type {
 } from "../../types/feedback";
 import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
+  executionPlanReady,
   shortId,
   type SourceRow,
 } from "./selectors";
 import type { MenuKey } from "./useFeedbackWorkspaceState";
 
 type StateSetter<T> = Dispatch<SetStateAction<T>>;
+
+const TERMINAL_AGENT_JOB_STATUSES = new Set(["completed", "failed", "needs_human_review", "timeout"]);
+const AGENT_JOB_POLL_INTERVAL_MS = 1500;
+const AGENT_JOB_POLL_ATTEMPTS = 80;
+
+function delay(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
 
 interface BatchPlanGenerateDraft {
   batch: FeedbackOptimizationBatchRecord;
@@ -72,6 +83,22 @@ export function useFeedbackWorkspaceActions({
   const batchPlanGenerateBusy = Boolean(actionId?.startsWith("batch-plan:"));
   const executionApplyBusy = Boolean(actionId?.startsWith("execution-apply:"));
 
+  async function waitForAgentJob(jobId?: string | null) {
+    if (!jobId) return null;
+    let latest: AgentJobRecord | null = null;
+    for (let attempt = 0; attempt < AGENT_JOB_POLL_ATTEMPTS; attempt += 1) {
+      latest = await getAgentJob(clientConfig, jobId);
+      if (TERMINAL_AGENT_JOB_STATUSES.has(String(latest.status))) return latest;
+      await delay(AGENT_JOB_POLL_INTERVAL_MS);
+    }
+    return latest;
+  }
+
+  async function waitForAgentJobs(jobIds: Array<string | null | undefined>) {
+    const ids = jobIds.filter((jobId): jobId is string => Boolean(jobId));
+    return Promise.all(ids.map((jobId) => waitForAgentJob(jobId)));
+  }
+
   function toggleSource(sourceId: string, checked: boolean) {
     setSelectedSourceIds((current) => {
       if (checked) return current.includes(sourceId) ? current : [...current, sourceId];
@@ -93,7 +120,8 @@ export function useFeedbackWorkspaceActions({
     setActionId("generate-eval-cases");
     try {
       const result = await generateFeedbackSourceEvalCases(clientConfig, { source_refs: refs });
-      setToast(`已生成/复用回归用例：新增 ${result.created}，复用 ${result.reused}`);
+      const completed = await waitForAgentJob(result.job_id);
+      setToast(`回归用例生成 ${completed?.status || result.status}：${shortId(result.job_id)}`);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -115,7 +143,8 @@ export function useFeedbackWorkspaceActions({
         source_refs: refs,
         priority: refs.length >= 5 ? "high" : "medium",
       });
-      setToast(`已创建优化批次 ${shortId(batch.batch_id)}`);
+      const evalJob = await waitForAgentJob(batch.eval_case_generation_job_id);
+      setToast(`已创建优化批次 ${shortId(batch.batch_id)}${evalJob ? ` · 回归用例 ${evalJob.status}` : ""}`);
       setSelectedSourceIds([]);
       setSelectedBatchId(batch.batch_id);
       setActiveMenu("batches");
@@ -132,7 +161,9 @@ export function useFeedbackWorkspaceActions({
     setActionId(`batch-attribution:${batch.batch_id}`);
     try {
       const result = await runFeedbackOptimizationBatchAttribution(clientConfig, batch.batch_id, force ? { force: true } : undefined);
-      setToast(`${force ? "已重新归因" : "批次归因完成"}：${result.jobs.length} 个当前 job`);
+      const completedJobs = await waitForAgentJobs(result.jobs.map((job) => job.job_id));
+      const done = completedJobs.filter((job) => job?.status === "completed").length;
+      setToast(`${force ? "已重新归因" : "批次归因完成"}：${done}/${result.jobs.length} 个 job`);
       setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
       await refreshWorkbench();
       onFeedbackChanged?.();
@@ -163,13 +194,14 @@ export function useFeedbackWorkspaceActions({
   async function generateBatchPlan(batch: FeedbackOptimizationBatchRecord, instruction?: string) {
     setActionId(`batch-plan:${batch.batch_id}`);
     try {
-      const updated = await generateFeedbackOptimizationBatchPlan(
+      const job = await generateFeedbackOptimizationBatchPlan(
         clientConfig,
         batch.batch_id,
         instruction ? { regeneration_instruction: instruction } : undefined,
       );
-      setToast(`${batch.optimization_plan ? "已重新生成优化方案" : "已生成优化方案"}：${updated.optimization_plan?.status || updated.status}`);
-      setSelectedBatchId(updated.batch_id);
+      const completed = await waitForAgentJob(job.job_id);
+      setToast(`${batch.optimization_plan ? "重新生成优化方案" : "优化方案生成"} ${completed?.status || job.status}：${shortId(job.job_id)}`);
+      setSelectedBatchId(batch.batch_id);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -192,7 +224,8 @@ export function useFeedbackWorkspaceActions({
       } else if (result.external_item) {
         setToast(`${result.external_item.status === "notified" ? "已发送外部任务" : "外部任务发送失败"}：${webhookAlias || result.external_item.latest_webhook_alias || "-"}`);
       } else {
-        setToast(`任务已执行：${result.plan_task?.status || result.execution_job?.status || result.batch.status}`);
+        const completed = await waitForAgentJob(result.execution_job?.execution_job_id);
+        setToast(`任务执行方案 ${completed?.status || result.execution_job?.status || result.batch.status}`);
       }
       setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
       await refreshWorkbench();
@@ -227,7 +260,8 @@ export function useFeedbackWorkspaceActions({
       const result = await runFeedbackOptimizationBatchRegression(clientConfig, batch.batch_id, {
         regression_plan_id: plan.regression_plan_id,
       });
-      setToast(`批次回归测试完成：${result.eval_run.result_status || result.eval_run.status}`);
+      const impact = await waitForAgentJob(result.impact_analysis_job?.job_id);
+      setToast(`批次回归测试完成：${result.eval_run.result_status || result.eval_run.status}${impact ? ` · 影响分析 ${impact.status}` : ""}`);
       setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
       await refreshWorkbench();
       onFeedbackChanged?.();
@@ -304,7 +338,8 @@ export function useFeedbackWorkspaceActions({
     setActionId(`execution:${task.optimization_task_id}`);
     try {
       const job = await createOptimizationExecutionJob(clientConfig, task.optimization_task_id, force);
-      setToast(`执行方案 ${shortId(job.execution_job_id)}：${job.status}`);
+      const completed = await waitForAgentJob(job.job_id);
+      setToast(`执行方案生成 ${completed?.status || job.status}：${shortId(job.job_id)}`);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -320,7 +355,7 @@ export function useFeedbackWorkspaceActions({
       setToast("当前任务没有可应用的执行方案");
       return;
     }
-    if (task.latest_execution_job?.status !== "ready") {
+    if (!executionPlanReady(task.latest_execution_job)) {
       setToast("执行方案尚未 ready，不能应用");
       return;
     }

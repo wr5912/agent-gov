@@ -9,6 +9,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.session_store import LocalSessionStore
 from feedback_store_test_utils import (
+    _attribution_output,
     _create_approved_task_for_target,
     _create_batch_with_completed_attribution,
     _record_run,
@@ -30,7 +31,7 @@ def _feedback_case_with_attribution(store: FeedbackStore) -> dict[str, Any]:
     )
     feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全")
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     return feedback_case
 
 
@@ -52,7 +53,6 @@ def test_attribution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_f
         FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全")
     )
     feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全")
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(exc_factory(), **kwargs))
 
     job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"], force=True))
@@ -71,7 +71,6 @@ def test_attribution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_f
 def test_proposal_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_factory: Callable[[], Exception], error_code: str):
     store, runtime = _store(tmp_path)
     feedback_case = _feedback_case_with_attribution(store)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(exc_factory(), **kwargs))
 
     job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"], force=True))
@@ -90,7 +89,6 @@ def test_proposal_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fact
 def test_batch_plan_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_factory: Callable[[], Exception], error_code: str):
     store, runtime = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(exc_factory(), **kwargs))
 
     updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], force=True))
@@ -110,7 +108,6 @@ def test_batch_plan_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fa
 def test_execution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_factory: Callable[[], Exception], error_code: str):
     store, runtime = _store(tmp_path)
     task = _create_approved_task_for_target(store, "CLAUDE.md")
-    monkeypatch.setattr(runtime, "_provider_configured", lambda: True)
     monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(exc_factory(), **kwargs))
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"], force=True))

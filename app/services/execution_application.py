@@ -58,10 +58,10 @@ class ExecutionApplicationService:
     ) -> dict[str, Any]:
         execution_job = await run_execution_job(task_id, force=force)
         apply_result = None
-        if execution_job and execution_job.get("status") == "ready":
+        if execution_job and self._execution_plan_ready(execution_job):
             apply_result = self.apply_ready_execution_job(
                 task_id,
-                str(execution_job["execution_job_id"]),
+                str(execution_job.get("execution_job_id") or execution_job["job_id"]),
                 note=note,
             )
         return {
@@ -112,7 +112,7 @@ class ExecutionApplicationService:
         job = self.feedback_store.get_execution_job(execution_job_id)
         if not job or job.get("optimization_task_id") != task_id:
             raise ExecutionApplicationError(404, "Execution job not found")
-        if job.get("status") != "ready":
+        if not self._execution_plan_ready(job):
             raise ExecutionApplicationError(409, "Execution job is not ready")
         plan = job.get("validated_output_json")
         if not isinstance(plan, dict):
@@ -130,7 +130,12 @@ class ExecutionApplicationService:
         try:
             self.apply_execution_operations(plan.get("operations") or [])
         except ExecutionApplicationError as exc:
-            self.feedback_store.fail_execution_job(execution_job_id, error_code="EXECUTION_APPLY_FAILED", message=str(exc))
+            self.feedback_store.record_execution_application_failed(
+                execution_job_id,
+                optimization_task_id=task_id,
+                message=str(exc),
+                pre_execution_version=pre_version,
+            )
             raise
 
         try:
@@ -144,13 +149,14 @@ class ExecutionApplicationService:
                 str(pre_version["agent_version_id"]),
                 str(applied_version["agent_version_id"]),
             )
-            updated = self.feedback_store.mark_execution_job_applied(
+            execution_application = self.feedback_store.record_execution_application_applied(
                 execution_job_id,
                 pre_execution_version=pre_version,
                 applied_agent_version=applied_version,
                 applied_diff=applied_diff,
+                note=note,
             )
-            if not updated:
+            if not execution_application:
                 raise ExecutionApplicationError(404, "Execution job not found")
         except Exception as exc:
             detail = self._compensate_post_write_failure(
@@ -161,7 +167,8 @@ class ExecutionApplicationService:
             )
             raise ExecutionApplicationError(409, detail) from exc
         return {
-            "execution_job": updated,
+            "execution_job": self.feedback_store.get_execution_job(execution_job_id),
+            "execution_application": execution_application,
             "optimization_task": self.feedback_store.find_task(task_id),
             "applied_diff": applied_diff,
         }
@@ -213,10 +220,20 @@ class ExecutionApplicationService:
                 f"workspace was restored to pre-execution version {pre_version_id}; original error: {original_error}"
             )
         try:
-            self.feedback_store.fail_execution_job(execution_job_id, error_code="EXECUTION_APPLY_STATE_SYNC_FAILED", message=detail)
+            self.feedback_store.record_execution_application_failed(
+                execution_job_id,
+                optimization_task_id=task_id,
+                message=detail,
+                pre_execution_version=pre_version,
+                status="pending_manual_recovery" if restore_error else "compensated",
+            )
         except Exception:
-            logger.exception("Failed to mark execution job %s as state-sync failed", execution_job_id)
+            logger.exception("Failed to record execution application failure for job %s", execution_job_id)
         return detail
+
+    def _execution_plan_ready(self, job: dict[str, Any]) -> bool:
+        plan = job.get("validated_output_json") if isinstance(job.get("validated_output_json"), dict) else {}
+        return job.get("status") == "completed" and plan.get("status") == "ready"
 
     def restore_execution_compensation(self, compensation_id: str) -> dict[str, Any]:
         compensation = self.feedback_store.find_execution_compensation(compensation_id)

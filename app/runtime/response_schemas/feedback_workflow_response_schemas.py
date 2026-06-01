@@ -5,8 +5,8 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 from app.runtime.response_schemas.agent_version_response_schemas import AgentVersionDiffResponse, AgentVersionSummaryResponse
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
-from app.runtime.response_schemas.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
 from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse
 from app.runtime.feedback_schemas import Actionability
 from app.runtime.response_schemas.feedback_plan_response_schemas import (
@@ -85,27 +85,20 @@ class ExecutionCompensationResponse(ExtensibleResponse):
     manual_restore_result: dict[str, Any] = Field(default_factory=dict)
 
 
-class OptimizationExecutionJobResponse(ExtensibleResponse):
+class ExecutionApplicationResponse(ExtensibleResponse):
+    schema_version: str = "execution-application/v1"
+    application_id: str
     execution_job_id: str
     optimization_task_id: str
-    feedback_case_id: Optional[str] = None
-    proposal_id: Optional[str] = None
-    status: str
-    profile_name: Optional[str] = None
     created_at: str
-    started_at: Optional[str] = None
     completed_at: Optional[str] = None
-    baseline_agent_version_id: Optional[str] = None
-    input_json: Optional[dict[str, Any]] = None
-    raw_output_json: Optional[dict[str, Any]] = None
-    validated_output_json: Optional[OptimizationExecutionPlanOutputResponse] = None
-    error_json: Optional[FeedbackJobErrorResponse] = None
+    status: str
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[AgentVersionSummaryResponse] = None
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[AgentVersionSummaryResponse] = None
     applied_diff: Optional[AgentVersionDiffResponse] = None
-    compensations: list[ExecutionCompensationResponse] = Field(default_factory=list)
+    error_json: Optional[FeedbackJobErrorResponse] = None
 
 
 class OptimizationTaskResponse(ExtensibleResponse):
@@ -123,7 +116,7 @@ class OptimizationTaskResponse(ExtensibleResponse):
     baseline_agent_version_id: Optional[str] = None
     execution_job_ids: list[str] = Field(default_factory=list)
     latest_execution_job_id: Optional[str] = None
-    latest_execution_job: Optional[OptimizationExecutionJobResponse] = None
+    latest_execution_job: Optional[AgentJobResponse] = None
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[AgentVersionSummaryResponse] = None
     applied_at: Optional[str] = None
@@ -136,7 +129,8 @@ class OptimizationTaskResponse(ExtensibleResponse):
 
 
 class OptimizationExecutionApplyResponse(BaseModel):
-    execution_job: OptimizationExecutionJobResponse
+    execution_job: AgentJobResponse
+    execution_application: ExecutionApplicationResponse
     optimization_task: OptimizationTaskResponse
     applied_diff: Optional[AgentVersionDiffResponse] = None
 
@@ -231,19 +225,19 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     eval_case_ids: list[str] = Field(default_factory=list)
     eval_case_generation: Optional[FeedbackEvalCaseGenerateResponse] = None
     attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_jobs: list[FeedbackAnalysisJobResponse] = Field(default_factory=list)
+    attribution_jobs: list[AgentJobResponse] = Field(default_factory=list)
     attribution_summary: FeedbackOptimizationBatchAttributionSummaryResponse = Field(
         default_factory=FeedbackOptimizationBatchAttributionSummaryResponse
     )
     optimization_plan: Optional[FeedbackOptimizationPlanResponse] = None
     optimization_plan_job_id: Optional[str] = None
-    optimization_plan_job: Optional[FeedbackAnalysisJobResponse] = None
+    optimization_plan_job: Optional[AgentJobResponse] = None
     optimization_plan_error: Optional[FeedbackJobErrorResponse] = None
     internal_proposal_id: Optional[str] = None
     optimization_task_id: Optional[str] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
     execution_job_id: Optional[str] = None
-    execution_job: Optional[OptimizationExecutionJobResponse] = None
+    execution_job: Optional[AgentJobResponse] = None
     eval_run_id: Optional[str] = None
     latest_eval_run: Optional[EvalRunResponse] = None
     regression_plan_id: Optional[str] = None
@@ -254,13 +248,13 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
 
 class FeedbackOptimizationBatchAttributionResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
-    jobs: list[FeedbackAnalysisJobResponse] = Field(default_factory=list)
+    jobs: list[AgentJobResponse] = Field(default_factory=list)
 
 
 class FeedbackOptimizationBatchExecutionResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
-    execution_job: Optional[OptimizationExecutionJobResponse] = None
+    execution_job: Optional[AgentJobResponse] = None
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
 
 
@@ -268,7 +262,7 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     plan_task: Optional[FeedbackOptimizationPlanTaskResponse] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
-    execution_job: Optional[OptimizationExecutionJobResponse] = None
+    execution_job: Optional[AgentJobResponse] = None
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
     external_item: Optional[ExternalGovernanceItemResponse] = None
 
@@ -278,4 +272,5 @@ class FeedbackOptimizationBatchRegressionResponse(BaseModel):
     eval_run: EvalRunResponse
     regression_plan: Optional[RegressionPlanResponse] = None
     impact_analysis: Optional[RegressionImpactAnalysisResponse] = None
+    impact_analysis_job: Optional[AgentJobResponse] = None
     gate_override: Optional[RegressionGateOverrideResponse] = None

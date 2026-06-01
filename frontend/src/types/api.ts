@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/agent-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List async feedback-loop Agent jobs */
+        get: operations["list_agent_jobs_api_agent_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one async feedback-loop Agent job */
+        get: operations["get_agent_job_api_agent_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs": {
         parameters: {
             query?: never;
@@ -260,7 +294,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Sync processed feedback cases into reusable eval cases */
+        /** Queue processed feedback cases into reusable eval cases */
         post: operations["sync_feedback_eval_dataset_api_eval_datasets_feedback_sync_post"];
         delete?: never;
         options?: never;
@@ -313,7 +347,7 @@ export interface paths {
         /** Get regression impact analysis for one eval run */
         get: operations["get_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_get"];
         put?: never;
-        /** Create deterministic regression impact analysis for one eval run */
+        /** Queue regression impact analysis for one eval run */
         post: operations["create_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_post"];
         delete?: never;
         options?: never;
@@ -457,74 +491,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/feedback-analysis/jobs/{job_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one feedback analysis job */
-        get: operations["get_feedback_analysis_job_api_feedback_analysis_jobs__job_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feedback-analysis/jobs/{job_id}/attribution": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one attribution job validated output */
-        get: operations["get_attribution_output_api_feedback_analysis_jobs__job_id__attribution_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feedback-analysis/jobs/{job_id}/proposal": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one proposal job validated output */
-        get: operations["get_proposal_output_api_feedback_analysis_jobs__job_id__proposal_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feedback-analysis/jobs/{job_id}/proposal/revalidate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Revalidate one proposal job raw output without rerunning the Agent */
-        post: operations["revalidate_proposal_output_api_feedback_analysis_jobs__job_id__proposal_revalidate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/feedback-cases": {
         parameters: {
             query?: never;
@@ -569,7 +535,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run one attribution job for a feedback case */
+        /** Queue one attribution job for a feedback case */
         post: operations["create_attribution_job_api_feedback_cases__feedback_case_id__attribution_jobs_post"];
         delete?: never;
         options?: never;
@@ -586,7 +552,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Force regenerate one attribution job for a feedback case */
+        /** Force queue one attribution job for a feedback case */
         post: operations["regenerate_attribution_job_api_feedback_cases__feedback_case_id__attribution_jobs_regenerate_post"];
         delete?: never;
         options?: never;
@@ -620,7 +586,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run one optimization proposal job for a feedback case */
+        /** Queue one optimization proposal job for a feedback case */
         post: operations["create_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_post"];
         delete?: never;
         options?: never;
@@ -637,7 +603,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Force regenerate one optimization proposal job and supersede unused existing proposals */
+        /** Force queue one optimization proposal job and supersede unused existing proposals */
         post: operations["regenerate_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_regenerate_post"];
         delete?: never;
         options?: never;
@@ -742,7 +708,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate one aggregated optimization plan from batch attribution results */
+        /** Queue one aggregated optimization plan from batch attribution results */
         post: operations["generate_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_post"];
         delete?: never;
         options?: never;
@@ -862,7 +828,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Create deterministic impact analysis for a batch regression run */
+        /** Queue impact analysis for a batch regression run */
         post: operations["create_batch_regression_impact_analysis_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__impact_analysis_post"];
         delete?: never;
         options?: never;
@@ -931,7 +897,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate default regression eval cases for selected feedback sources */
+        /** Queue regression eval case generation for selected feedback sources */
         post: operations["generate_feedback_source_eval_cases_api_feedback_sources_eval_cases_generate_post"];
         delete?: never;
         options?: never;
@@ -1100,10 +1066,9 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List controlled execution plans for one optimization task */
-        get: operations["list_optimization_execution_jobs_api_optimization_tasks__task_id__execution_jobs_get"];
+        get?: never;
         put?: never;
-        /** Generate one controlled execution plan for an optimization task */
+        /** Queue one controlled execution plan for an optimization task */
         post: operations["create_optimization_execution_job_api_optimization_tasks__task_id__execution_jobs_post"];
         delete?: never;
         options?: never;
@@ -1493,6 +1458,70 @@ export interface components {
             /** Tools */
             tools?: string[];
         };
+        /** AgentJobResponse */
+        AgentJobResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            /** Error Path */
+            error_path: string;
+            /** Input Json */
+            input_json?: {
+                [key: string]: unknown;
+            } | null;
+            /** Input Path */
+            input_path: string;
+            /** Job Id */
+            job_id: string;
+            /** Job Type */
+            job_type: string;
+            /** Output Schema Version */
+            output_schema_version?: string | null;
+            /** Profile Name */
+            profile_name: string;
+            /** Profile Version */
+            profile_version?: {
+                [key: string]: unknown;
+            } | null;
+            /** Raw Output Json */
+            raw_output_json?: {
+                [key: string]: unknown;
+            } | null;
+            /** Raw Output Path */
+            raw_output_path: string;
+            /**
+             * Retry Count
+             * @default 0
+             */
+            retry_count: number;
+            /** Runtime Version */
+            runtime_version?: string | null;
+            /** Schema Version */
+            schema_version?: string | null;
+            /** Scope Id */
+            scope_id: string;
+            /** Scope Kind */
+            scope_kind: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Timeout Seconds
+             * @default 300
+             */
+            timeout_seconds: number;
+            /** Validated Output Json */
+            validated_output_json?: {
+                [key: string]: unknown;
+            } | null;
+            /** Validated Output Path */
+            validated_output_path: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** AgentRunResponse */
         AgentRunResponse: {
             /** Agent Activity */
@@ -1743,56 +1772,6 @@ export interface components {
             source_proposal_ids?: string[];
             /** Total Bytes */
             total_bytes?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AttributionOutputResponse */
-        AttributionOutputResponse: {
-            /**
-             * Actionability
-             * @enum {string}
-             */
-            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
-            /** Attribution Job Id */
-            attribution_job_id: string;
-            /**
-             * Confidence
-             * @enum {string}
-             */
-            confidence: "low" | "medium" | "high";
-            /** Evidence Refs */
-            evidence_refs?: components["schemas"]["EvidenceRefResponse"][];
-            /** Feedback Case Id */
-            feedback_case_id: string;
-            /** Human Review Required */
-            human_review_required: boolean;
-            /**
-             * Optimization Object Type
-             * @enum {string}
-             */
-            optimization_object_type: "main_agent_claude_md" | "skill" | "subagent" | "mcp_config" | "mcp_description" | "output_style" | "eval_case" | "runtime_code" | "external_mcp_service" | "soc_process" | "not_actionable";
-            /**
-             * Problem Type
-             * @enum {string}
-             */
-            problem_type: "evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information";
-            /** Rationale */
-            rationale: string;
-            /**
-             * Recommended Next Step
-             * @default generate_proposal
-             * @enum {string}
-             */
-            recommended_next_step: "generate_proposal" | "needs_human_review" | "stop";
-            responsibility_boundary: components["schemas"]["ResponsibilityBoundaryResponse"];
-            /** Schema Version */
-            schema_version: string;
-            /**
-             * Status
-             * @default completed
-             * @enum {string}
-             */
-            status: "completed" | "needs_human_review";
         } & {
             [key: string]: unknown;
         };
@@ -2366,6 +2345,36 @@ export interface components {
             /** Trace Ids */
             trace_ids?: string[];
         };
+        /** ExecutionApplicationResponse */
+        ExecutionApplicationResponse: {
+            /** Application Id */
+            application_id: string;
+            applied_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
+            /** Applied Agent Version Id */
+            applied_agent_version_id?: string | null;
+            applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            /** Execution Job Id */
+            execution_job_id: string;
+            /** Optimization Task Id */
+            optimization_task_id: string;
+            pre_execution_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
+            /** Pre Execution Agent Version Id */
+            pre_execution_agent_version_id?: string | null;
+            /**
+             * Schema Version
+             * @default execution-application/v1
+             */
+            schema_version: string;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** ExecutionCompensationResponse */
         ExecutionCompensationResponse: {
             /** Compensation Id */
@@ -2537,74 +2546,6 @@ export interface components {
             name: string;
             /** Url */
             url: string;
-        };
-        /** ExternalGuidanceResponse */
-        ExternalGuidanceResponse: {
-            /**
-             * Actionability
-             * @enum {string}
-             */
-            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
-            /** External Item Id */
-            external_item_id?: string | null;
-            /** Latest Notification Id */
-            latest_notification_id?: string | null;
-            /** Latest Webhook Alias */
-            latest_webhook_alias?: string | null;
-            /** Owner */
-            owner: string;
-            /** Reason */
-            reason?: string | null;
-            /** Recommendation */
-            recommendation: string;
-            /** Source Index */
-            source_index?: number | null;
-            /** Status */
-            status?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** FeedbackAnalysisJobResponse */
-        FeedbackAnalysisJobResponse: {
-            /** Completed At */
-            completed_at?: string | null;
-            /** Created At */
-            created_at: string;
-            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
-            /** Error Path */
-            error_path: string;
-            /** Evidence Package Id */
-            evidence_package_id: string;
-            /** Feedback Case Id */
-            feedback_case_id: string;
-            /** Input Json */
-            input_json?: {
-                [key: string]: unknown;
-            } | null;
-            /** Input Path */
-            input_path: string;
-            /** Job Id */
-            job_id: string;
-            /** Job Type */
-            job_type: string;
-            /** Langfuse Trace Id */
-            langfuse_trace_id?: string | null;
-            /** Profile Name */
-            profile_name: string;
-            /** Raw Output Json */
-            raw_output_json?: {
-                [key: string]: unknown;
-            } | null;
-            /** Raw Output Path */
-            raw_output_path: string;
-            /** Started At */
-            started_at?: string | null;
-            /** Status */
-            status: string;
-            /** Validated Output Json */
-            validated_output_json?: components["schemas"]["AttributionOutputResponse"] | components["schemas"]["ProposalOutputResponse"] | components["schemas"]["FeedbackOptimizationPlanResponse"] | null;
-            /** Validated Output Path */
-            validated_output_path: string;
         };
         /** FeedbackCaseCreateRequest */
         FeedbackCaseCreateRequest: {
@@ -2806,7 +2747,7 @@ export interface components {
         FeedbackOptimizationBatchAttributionResponse: {
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
             /** Jobs */
-            jobs?: components["schemas"]["FeedbackAnalysisJobResponse"][];
+            jobs?: components["schemas"]["AgentJobResponse"][];
         };
         /** FeedbackOptimizationBatchAttributionSummaryResponse */
         FeedbackOptimizationBatchAttributionSummaryResponse: {
@@ -2891,7 +2832,7 @@ export interface components {
         FeedbackOptimizationBatchExecutionResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
-            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
+            execution_job?: components["schemas"]["AgentJobResponse"] | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
         };
         /** FeedbackOptimizationBatchPlanGenerateRequest */
@@ -2910,6 +2851,7 @@ export interface components {
             eval_run: components["schemas"]["EvalRunResponse"];
             gate_override?: components["schemas"]["RegressionGateOverrideResponse"] | null;
             impact_analysis?: components["schemas"]["RegressionImpactAnalysisResponse"] | null;
+            impact_analysis_job?: components["schemas"]["AgentJobResponse"] | null;
             regression_plan?: components["schemas"]["RegressionPlanResponse"] | null;
         };
         /** FeedbackOptimizationBatchRegressionRunRequest */
@@ -2922,7 +2864,7 @@ export interface components {
             /** Attribution Job Ids */
             attribution_job_ids?: string[];
             /** Attribution Jobs */
-            attribution_jobs?: components["schemas"]["FeedbackAnalysisJobResponse"][];
+            attribution_jobs?: components["schemas"]["AgentJobResponse"][];
             attribution_summary?: components["schemas"]["FeedbackOptimizationBatchAttributionSummaryResponse"];
             /** Batch Id */
             batch_id: string;
@@ -2934,7 +2876,7 @@ export interface components {
             /** Eval Run Id */
             eval_run_id?: string | null;
             execution_apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
-            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
+            execution_job?: components["schemas"]["AgentJobResponse"] | null;
             /** Execution Job Id */
             execution_job_id?: string | null;
             /** Feedback Case Ids */
@@ -2949,7 +2891,7 @@ export interface components {
             latest_regression_plan?: components["schemas"]["RegressionPlanResponse"] | null;
             optimization_plan?: components["schemas"]["FeedbackOptimizationPlanResponse"] | null;
             optimization_plan_error?: components["schemas"]["FeedbackJobErrorResponse"] | null;
-            optimization_plan_job?: components["schemas"]["FeedbackAnalysisJobResponse"] | null;
+            optimization_plan_job?: components["schemas"]["AgentJobResponse"] | null;
             /** Optimization Plan Job Id */
             optimization_plan_job_id?: string | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
@@ -3102,7 +3044,7 @@ export interface components {
         FeedbackOptimizationPlanTaskExecuteResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
-            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
+            execution_job?: components["schemas"]["AgentJobResponse"] | null;
             external_item?: components["schemas"]["ExternalGovernanceItemResponse"] | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
             plan_task?: components["schemas"]["FeedbackOptimizationPlanTaskResponse"] | null;
@@ -3516,7 +3458,8 @@ export interface components {
         /** OptimizationExecutionApplyResponse */
         OptimizationExecutionApplyResponse: {
             applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
-            execution_job: components["schemas"]["OptimizationExecutionJobResponse"];
+            execution_application: components["schemas"]["ExecutionApplicationResponse"];
+            execution_job: components["schemas"]["AgentJobResponse"];
             optimization_task: components["schemas"]["OptimizationTaskResponse"];
         };
         /** OptimizationExecutionCreateRequest */
@@ -3526,94 +3469,6 @@ export interface components {
              * @default false
              */
             force: boolean;
-        };
-        /** OptimizationExecutionJobResponse */
-        OptimizationExecutionJobResponse: {
-            applied_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
-            /** Applied Agent Version Id */
-            applied_agent_version_id?: string | null;
-            applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
-            /** Baseline Agent Version Id */
-            baseline_agent_version_id?: string | null;
-            /** Compensations */
-            compensations?: components["schemas"]["ExecutionCompensationResponse"][];
-            /** Completed At */
-            completed_at?: string | null;
-            /** Created At */
-            created_at: string;
-            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
-            /** Execution Job Id */
-            execution_job_id: string;
-            /** Feedback Case Id */
-            feedback_case_id?: string | null;
-            /** Input Json */
-            input_json?: {
-                [key: string]: unknown;
-            } | null;
-            /** Optimization Task Id */
-            optimization_task_id: string;
-            pre_execution_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
-            /** Pre Execution Agent Version Id */
-            pre_execution_agent_version_id?: string | null;
-            /** Profile Name */
-            profile_name?: string | null;
-            /** Proposal Id */
-            proposal_id?: string | null;
-            /** Raw Output Json */
-            raw_output_json?: {
-                [key: string]: unknown;
-            } | null;
-            /** Started At */
-            started_at?: string | null;
-            /** Status */
-            status: string;
-            validated_output_json?: components["schemas"]["OptimizationExecutionPlanOutputResponse"] | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** OptimizationExecutionPlanOperationResponse */
-        OptimizationExecutionPlanOperationResponse: {
-            /** Append Text */
-            append_text?: string | null;
-            /** Content */
-            content?: string | null;
-            /** Expected Sha256 */
-            expected_sha256?: string | null;
-            /** Operation */
-            operation?: string | null;
-            /** Path */
-            path?: string | null;
-            /** Rationale */
-            rationale?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** OptimizationExecutionPlanOutputResponse */
-        OptimizationExecutionPlanOutputResponse: {
-            /** Baseline Agent Version Id */
-            baseline_agent_version_id?: string | null;
-            /** Execution Job Id */
-            execution_job_id?: string | null;
-            /** Human Review Required */
-            human_review_required?: boolean | null;
-            /** No Action Reason */
-            no_action_reason?: string | null;
-            /** Operations */
-            operations?: components["schemas"]["OptimizationExecutionPlanOperationResponse"][];
-            /** Optimization Task Id */
-            optimization_task_id?: string | null;
-            /** Risk */
-            risk?: string | null;
-            /** Schema Version */
-            schema_version?: string | null;
-            /** Status */
-            status?: string | null;
-            /** Summary */
-            summary?: string | null;
-            /** Validation */
-            validation?: string | null;
-        } & {
-            [key: string]: unknown;
         };
         /** OptimizationProposalResponse */
         OptimizationProposalResponse: {
@@ -3760,7 +3615,7 @@ export interface components {
             execution_mode: string;
             /** Feedback Case Id */
             feedback_case_id?: string | null;
-            latest_execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
+            latest_execution_job?: components["schemas"]["AgentJobResponse"] | null;
             /** Latest Execution Job Id */
             latest_execution_job_id?: string | null;
             latest_regression_run?: components["schemas"]["EvalRunResponse"] | null;
@@ -3830,70 +3685,6 @@ export interface components {
             status: string;
             /** Updated At */
             updated_at?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** ProposalItemResponse */
-        ProposalItemResponse: {
-            /**
-             * Actionability
-             * @enum {string}
-             */
-            actionability: "direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable";
-            /** Base Agent Version Id */
-            base_agent_version_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
-            /** Expected Effect */
-            expected_effect: string;
-            /** Feedback Case Id */
-            feedback_case_id?: string | null;
-            /** Proposal Id */
-            proposal_id?: string | null;
-            /** Proposal Job Id */
-            proposal_job_id?: string | null;
-            /** Recommendation */
-            recommendation: string;
-            /**
-             * Requires Approval
-             * @default true
-             */
-            requires_approval: boolean;
-            /** Risk */
-            risk: string;
-            /** Status */
-            status?: string | null;
-            /** Target Path */
-            target_path?: string | null;
-            /** Target Type */
-            target_type: string;
-            /** Title */
-            title: string;
-            /** Validation */
-            validation: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** ProposalOutputResponse */
-        ProposalOutputResponse: {
-            /** External Guidance */
-            external_guidance?: components["schemas"]["ExternalGuidanceResponse"][];
-            /** Feedback Case Id */
-            feedback_case_id: string;
-            /** No Action Reason */
-            no_action_reason?: string | null;
-            /** Proposal Job Id */
-            proposal_job_id: string;
-            /** Proposals */
-            proposals?: components["schemas"]["ProposalItemResponse"][];
-            /** Schema Version */
-            schema_version: string;
-            /**
-             * Status
-             * @default completed
-             * @enum {string}
-             */
-            status: "completed" | "needs_human_review";
         } & {
             [key: string]: unknown;
         };
@@ -4053,15 +3844,6 @@ export interface components {
             };
             /** Status */
             status: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** ResponsibilityBoundaryResponse */
-        ResponsibilityBoundaryResponse: {
-            /** Owner */
-            owner: string;
-            /** Reason */
-            reason: string;
         } & {
             [key: string]: unknown;
         };
@@ -4313,6 +4095,72 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_agent_jobs_api_agent_jobs_get: {
+        parameters: {
+            query?: {
+                job_type?: string | null;
+                scope_kind?: string | null;
+                scope_id?: string | null;
+                status?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_job_api_agent_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_agent_runs_api_agent_runs_get: {
         parameters: {
             query?: {
@@ -4760,7 +4608,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackEvalCaseGenerateResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -4920,7 +4768,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RegressionImpactAnalysisResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5182,130 +5030,6 @@ export interface operations {
             };
         };
     };
-    get_feedback_analysis_job_api_feedback_analysis_jobs__job_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_attribution_output_api_feedback_analysis_jobs__job_id__attribution_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AttributionOutputResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_proposal_output_api_feedback_analysis_jobs__job_id__proposal_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ProposalOutputResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    revalidate_proposal_output_api_feedback_analysis_jobs__job_id__proposal_revalidate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                job_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     list_feedback_cases_api_feedback_cases_get: {
         parameters: {
             query?: {
@@ -5420,7 +5144,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5451,7 +5175,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5513,7 +5237,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5548,7 +5272,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackAnalysisJobResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5848,7 +5572,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackOptimizationBatchResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6123,7 +5847,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RegressionImpactAnalysisResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6287,7 +6011,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FeedbackEvalCaseGenerateResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6637,39 +6361,6 @@ export interface operations {
             };
         };
     };
-    list_optimization_execution_jobs_api_optimization_tasks__task_id__execution_jobs_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path: {
-                task_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationExecutionJobResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     create_optimization_execution_job_api_optimization_tasks__task_id__execution_jobs_post: {
         parameters: {
             query?: never;
@@ -6691,7 +6382,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["OptimizationExecutionJobResponse"];
+                    "application/json": components["schemas"]["AgentJobResponse"];
                 };
             };
             /** @description Validation Error */

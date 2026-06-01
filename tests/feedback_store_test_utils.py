@@ -6,8 +6,18 @@ import pytest
 from pydantic import ValidationError
 
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.response_schemas.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
-from app.runtime.feedback_schemas import validate_execution_plan_output, validate_feedback_optimization_plan_output
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
+from app.runtime.feedback_schemas import (
+    validate_execution_plan_output,
+    validate_feedback_optimization_plan_output,
+)
+from app.runtime.schema_versions import (
+    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    PROPOSAL_OUTPUT_SCHEMA_VERSION,
+)
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanGenerateRequest,
@@ -89,7 +99,7 @@ def _create_eval_case(store: FeedbackStore):
     store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
+            "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": feedback_case["feedback_case_id"],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -108,7 +118,7 @@ def _create_eval_case(store: FeedbackStore):
     store.complete_proposal_job(
         proposal_job["job_id"],
         {
-            "schema_version": "proposal-output/v1",
+            "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": feedback_case["feedback_case_id"],
             "proposal_job_id": proposal_job["job_id"],
             "status": "completed",
@@ -130,8 +140,9 @@ def _create_eval_case(store: FeedbackStore):
             "no_action_reason": None,
         },
     )
-    sync = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
-    return sync["eval_cases"][0], feedback_case
+    job = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
+    eval_case = _complete_eval_case_generation_job(store, job, feedback_case=feedback_case)
+    return eval_case, feedback_case
 
 
 def _create_batch_with_completed_attribution(store: FeedbackStore):
@@ -151,7 +162,7 @@ def _create_batch_with_completed_attribution(store: FeedbackStore):
     completed = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
+            "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": batch["feedback_case_ids"][0],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -169,17 +180,149 @@ def _create_batch_with_completed_attribution(store: FeedbackStore):
     return store.record_batch_attribution_jobs(batch["batch_id"], [completed])
 
 
+def _attribution_output(job: dict, **overrides):
+    output = {
+        "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+        "feedback_case_id": job["feedback_case_id"],
+        "attribution_job_id": job["job_id"],
+        "status": "completed",
+        "problem_type": "tool_data_quality",
+        "optimization_object_type": "main_agent_claude_md",
+        "actionability": "direct_workspace_change",
+        "confidence": "high",
+        "human_review_required": False,
+        "evidence_refs": [{"type": "evidence_file", "id": "feedback.json", "reason": "测试反馈指出需要优化。"}],
+        "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "测试归因指向主智能体 workspace。"},
+        "rationale": "测试用结构化归因输出。",
+        "recommended_next_step": "generate_proposal",
+    }
+    output.update(overrides)
+    return output
+
+
+def _proposal_output(job: dict, **overrides):
+    output = {
+        "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
+        "feedback_case_id": job["feedback_case_id"],
+        "proposal_job_id": job["job_id"],
+        "status": "needs_human_review",
+        "proposals": [],
+        "external_guidance": [
+            {
+                "owner": "needs_human_analysis",
+                "actionability": "needs_human_analysis",
+                "recommendation": "测试场景需要人工确认具体优化方案。",
+                "reason": "TEST_FIXTURE_NO_ACTIONABLE_PROPOSAL",
+            }
+        ],
+        "no_action_reason": "needs_human_analysis",
+    }
+    output.update(overrides)
+    return output
+
+
+def _batch_plan_output(job: dict, **overrides):
+    input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+    output = {
+        "schema_version": FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+        "batch_id": input_json.get("batch_id") or "",
+        "status": "needs_human_review",
+        "title": "测试批次优化方案",
+        "summary": "测试用批次优化方案。",
+        "problem_types": [],
+        "confidence": "medium",
+        "actionability": "needs_human_analysis",
+        "target_type": "not_actionable",
+        "target_path": None,
+        "recommendation": "测试场景不生成可执行任务。",
+        "expected_effect": "用于验证批次 plan 持久化逻辑。",
+        "validation": "测试断言通过。",
+        "risk": "无生产风险。",
+        "source_refs": input_json.get("source_refs") or [],
+        "feedback_case_ids": input_json.get("feedback_case_ids") or [],
+        "eval_case_ids": input_json.get("eval_case_ids") or [],
+        "attribution_job_ids": input_json.get("attribution_job_ids") or [],
+        "attribution_summaries": [],
+        "rationale": "测试用结构化批次方案输出。",
+        "evidence_refs": [],
+        "tasks": [],
+        "blocked_items": [
+            {
+                "title": "测试阻断项",
+                "target_type": "not_actionable",
+                "actionability": "needs_human_analysis",
+                "reason": "测试场景不生成可执行任务。",
+                "feedback_case_ids": input_json.get("feedback_case_ids") or [],
+                "eval_case_ids": input_json.get("eval_case_ids") or [],
+                "attribution_job_ids": input_json.get("attribution_job_ids") or [],
+            }
+        ],
+    }
+    output.update(overrides)
+    return output
+
+
+def _eval_case_generation_output(job: dict, feedback_case: dict, **overrides):
+    input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+    source_run = {}
+    for item in input_json.get("feedback_cases") or []:
+        if item.get("feedback_case", {}).get("feedback_case_id") == feedback_case["feedback_case_id"]:
+            source_run = item.get("source_run") or {}
+            break
+    prompt = source_run.get("message") or "复测原始反馈场景。"
+    output = {
+        "schema_version": FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+        "job_id": job["job_id"],
+        "scope_kind": job.get("scope_kind"),
+        "scope_id": job.get("scope_id"),
+        "status": "completed",
+        "eval_cases": [
+            {
+                "schema_version": FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+                "status": "draft",
+                "source": "eval_case_governor",
+                "source_feedback_case_id": feedback_case["feedback_case_id"],
+                "source_run_id": source_run.get("run_id"),
+                "source_kind": "feedback_case",
+                "source_id": feedback_case["feedback_case_id"],
+                "source_refs": [{"source_kind": "feedback_case", "source_id": feedback_case["feedback_case_id"]}],
+                "asset_layer": "candidate",
+                "promotion_status": "candidate",
+                "blocking_policy": "non_blocking",
+                "flaky_status": "stable",
+                "variant_role": "original_reproduction",
+                "prompt": prompt,
+                "expected_behavior": "回答前读取当前 workspace 配置，并基于最新配置给出完整结论。",
+                "checks_json": {
+                    "requires_non_empty_answer": True,
+                    "requires_no_runtime_errors": True,
+                    "requires_tool_use": True,
+                },
+                "labels": ["feedback_optimization", "tool_data_incomplete"],
+            }
+        ],
+        "results": [],
+    }
+    output.update(overrides)
+    return output
+
+
+def _complete_eval_case_generation_job(store: FeedbackStore, job: dict, *, feedback_case: dict, **overrides):
+    completed = store.complete_projected_agent_job(job, _eval_case_generation_output(job, feedback_case, **overrides))
+    return completed["validated_output_json"]["eval_cases"][0]
+
+
 def _create_approved_task_for_target(store: FeedbackStore, target_path: str):
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
         {
-            "schema_version": "proposal-output/v1",
+            "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": feedback_case["feedback_case_id"],
             "proposal_job_id": proposal_job["job_id"],
             "status": "completed",
@@ -211,7 +354,7 @@ __all__ = [
     "pytest",
     "ValidationError",
     "ClaudeRuntime",
-    "FeedbackAnalysisJobResponse",
+    "AgentJobResponse",
     "FeedbackOptimizationBatchPlanGenerateRequest",
     "FeedbackProposalRegenerateRequest",
     "FeedbackSignalCreateRequest",
@@ -221,8 +364,13 @@ __all__ = [
     "validate_execution_plan_output",
     "validate_feedback_optimization_plan_output",
     "_create_approved_task_for_target",
+    "_attribution_output",
+    "_batch_plan_output",
+    "_complete_eval_case_generation_job",
     "_create_batch_with_completed_attribution",
     "_create_eval_case",
+    "_eval_case_generation_output",
+    "_proposal_output",
     "_record_run",
     "_settings",
     "_store",

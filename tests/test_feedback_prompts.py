@@ -2,13 +2,19 @@ import json
 
 import pytest
 
+from app.runtime.agent_job_runner import AgentJobRunner
 from app.runtime.errors import AgentOutputParseError
 from app.runtime.prompts.feedback_prompts import attribution_prompt, extract_json_object, proposal_prompt, read_json
+from app.runtime.schema_versions import (
+    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    PROPOSAL_OUTPUT_SCHEMA_VERSION,
+)
 
 
 def test_extract_json_object_prefers_expected_schema_version():
     proposal = {
-        "schema_version": "proposal-output/v1",
+        "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
         "feedback_case_id": "fbc-test",
         "proposal_job_id": "fbp-test",
         "status": "completed",
@@ -23,18 +29,32 @@ def test_extract_json_object_prefers_expected_schema_version():
         f"```json\n{json.dumps(proposal, ensure_ascii=False)}\n```"
     )
 
-    parsed = extract_json_object(text, expected_schema_version="proposal-output/v1")
+    parsed = extract_json_object(text, expected_schema_version=PROPOSAL_OUTPUT_SCHEMA_VERSION)
 
-    assert parsed["schema_version"] == "proposal-output/v1"
+    assert parsed["schema_version"] == PROPOSAL_OUTPUT_SCHEMA_VERSION
     assert parsed["proposal_job_id"] == "fbp-test"
 
 
+def test_direct_schema_candidate_requires_exact_schema_version():
+    schema_like_payload = {
+        "feedback_case_id": "fbc-test",
+        "proposal_job_id": "fbp-test",
+        "status": "completed",
+        "proposals": [],
+        "external_guidance": [],
+        "no_action_reason": "没有可执行建议。",
+    }
+    text = f"候选对象：\n```json\n{json.dumps(schema_like_payload, ensure_ascii=False)}\n```"
+
+    assert AgentJobRunner.direct_schema_candidate(text, PROPOSAL_OUTPUT_SCHEMA_VERSION) is None
+
+
 def test_extract_json_object_repairs_markdown_json_candidate():
-    text = """
+    text = f"""
 以下是完整 JSON：
 ```json
-{
-  "schema_version": "feedback-optimization-plan-output/v1",
+{{
+  "schema_version": "{FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION}",
   "batch_id": "fob-test",
   "status": "pending_approval",
   "title": "sec-ops-data 漏洞数据未覆盖2026年",
@@ -45,18 +65,18 @@ def test_extract_json_object_repairs_markdown_json_candidate():
   "rationale": "反馈内容"缺少2026年的漏情况"明确指向数据不完整问题。",
   "tasks": [],
   "blocked_items": [
-    {
+    {{
       "title": "确认并上报漏洞数据源 2026 年数据缺失问题",
       "reason": "需要通知 sec-ops-data 数据维护团队。"
-    }
+    }}
   ]
-}
+}}
 ```
 """
 
-    parsed = extract_json_object(text, expected_schema_version="feedback-optimization-plan-output/v1")
+    parsed = extract_json_object(text, expected_schema_version=FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION)
 
-    assert parsed["schema_version"] == "feedback-optimization-plan-output/v1"
+    assert parsed["schema_version"] == FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION
     assert parsed["batch_id"] == "fob-test"
     assert "缺少2026年" in parsed["rationale"]
 
@@ -90,7 +110,10 @@ def test_proposal_prompt_embeds_context_when_available():
             "job_id": "fbp-test",
             "regeneration_instruction": "优先修改 triage-alert skill。",
         },
-        attribution_output={"schema_version": "attribution-output/v1", "recommended_next_step": "generate_proposal"},
+        attribution_output={
+            "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+            "recommended_next_step": "generate_proposal",
+        },
     )
 
     assert "proposal_input_json" in prompt

@@ -4813,6 +4813,58 @@ button:disabled {
   gap: 8px;
 }
 
+.feedback-label-picker {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.feedback-label-picker .form-field {
+  margin-bottom: 0;
+}
+
+.feedback-add-label-button {
+  min-width: 86px;
+  height: 36px;
+  align-self: end;
+}
+
+.feedback-add-label-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
+}
+
+.feedback-selected-labels {
+  min-height: 32px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.feedback-selected-chip {
+  max-width: 100%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(143, 75, 50, 0.24);
+  border-radius: 999px;
+  background: rgba(143, 75, 50, 0.08);
+  color: var(--text);
+  padding: 5px 9px;
+  font-size: 12px;
+}
+
+.feedback-selected-chip span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .feedback-check-chip {
   display: inline-flex;
   align-items: center;
@@ -4828,6 +4880,16 @@ button:disabled {
 .feedback-check-chip input {
   margin: 0;
   accent-color: var(--brand);
+}
+
+@media (max-width: 680px) {
+  .feedback-label-picker {
+    grid-template-columns: 1fr;
+  }
+
+  .feedback-add-label-button {
+    width: 100%;
+  }
 }
 
 .success-box {

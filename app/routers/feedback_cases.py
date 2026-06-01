@@ -6,8 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.response_schemas.feedback_analysis_response_schemas import FeedbackAnalysisJobResponse
-from app.runtime.response_schemas.feedback_output_response_schemas import AttributionOutputResponse, ProposalOutputResponse
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     EvidencePackageFileResponse,
@@ -28,7 +27,6 @@ def create_feedback_cases_router(
     _register_case_routes(router, feedback_store)
     _register_evidence_routes(router, feedback_store)
     _register_feedback_analysis_job_routes(router, runtime)
-    _register_feedback_analysis_output_routes(router, feedback_store)
     return router
 
 
@@ -100,79 +98,40 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
 
     @router.post(
         "/feedback-cases/{feedback_case_id}/attribution-jobs",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Run one attribution job for a feedback case",
+        response_model=AgentJobResponse,
+        summary="Queue one attribution job for a feedback case",
     )
     async def create_attribution_job(feedback_case_id: str) -> dict[str, Any]:
-        job = await runtime.run_attribution_job(feedback_case_id)
+        job = runtime.queue_attribution_job(feedback_case_id)
         return ensure_found(job, "Feedback case not found or missing evidence")
 
     @router.post(
         "/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Force regenerate one attribution job for a feedback case",
+        response_model=AgentJobResponse,
+        summary="Force queue one attribution job for a feedback case",
     )
     async def regenerate_attribution_job(feedback_case_id: str) -> dict[str, Any]:
-        job = await runtime.run_attribution_job(feedback_case_id, force=True)
+        job = runtime.queue_attribution_job(feedback_case_id, force=True)
         return ensure_found(job, "Feedback case not found or missing evidence")
 
     @router.post(
         "/feedback-cases/{feedback_case_id}/proposal-jobs",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Run one optimization proposal job for a feedback case",
+        response_model=AgentJobResponse,
+        summary="Queue one optimization proposal job for a feedback case",
     )
     async def create_proposal_job(feedback_case_id: str) -> dict[str, Any]:
-        job = await runtime.run_proposal_job(feedback_case_id)
+        job = runtime.queue_proposal_job(feedback_case_id)
         return ensure_found(job, "Feedback case not found or missing attribution")
 
     @router.post(
         "/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Force regenerate one optimization proposal job and supersede unused existing proposals",
+        response_model=AgentJobResponse,
+        summary="Force queue one optimization proposal job and supersede unused existing proposals",
     )
     async def regenerate_proposal_job(feedback_case_id: str, req: FeedbackProposalRegenerateRequest | None = None) -> dict[str, Any]:
-        job = await runtime.run_proposal_job(
+        job = runtime.queue_proposal_job(
             feedback_case_id,
             force=True,
             regeneration_instruction=req.regeneration_instruction if req else None,
         )
         return ensure_found(job, "Feedback case not found or missing attribution")
-
-
-def _register_feedback_analysis_output_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
-
-    @router.get(
-        "/feedback-analysis/jobs/{job_id}",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Get one feedback analysis job",
-    )
-    async def get_feedback_analysis_job(job_id: str) -> dict[str, Any]:
-        job = feedback_store.get_job(job_id)
-        return ensure_found(job, "Feedback analysis job not found")
-
-    @router.get(
-        "/feedback-analysis/jobs/{job_id}/attribution",
-        response_model=AttributionOutputResponse,
-        summary="Get one attribution job validated output",
-    )
-    async def get_attribution_output(job_id: str) -> dict[str, Any]:
-        output = feedback_store.get_job_output(job_id, "attribution")
-        return ensure_found(output, "Attribution output not found")
-
-    @router.get(
-        "/feedback-analysis/jobs/{job_id}/proposal",
-        response_model=ProposalOutputResponse,
-        summary="Get one proposal job validated output",
-    )
-    async def get_proposal_output(job_id: str) -> dict[str, Any]:
-        output = feedback_store.get_job_output(job_id, "proposal")
-        return ensure_found(output, "Proposal output not found")
-
-    @router.post(
-        "/feedback-analysis/jobs/{job_id}/proposal/revalidate",
-        response_model=FeedbackAnalysisJobResponse,
-        summary="Revalidate one proposal job raw output without rerunning the Agent",
-    )
-    async def revalidate_proposal_output(job_id: str) -> dict[str, Any]:
-        job = feedback_store.revalidate_proposal_job(job_id)
-        return ensure_found(job, "Proposal job raw output not found")

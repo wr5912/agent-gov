@@ -11,6 +11,12 @@ from app.runtime.agent_profiles import (
     AgentRuntimeProfile,
 )
 from app.runtime.agent_profile_versions import profile_version_snapshot
+from app.runtime.schema_versions import (
+    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+    EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    PROPOSAL_OUTPUT_SCHEMA_VERSION,
+)
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
     batch_optimization_plan_prompt,
@@ -40,12 +46,10 @@ class FeedbackJobOrchestrator:
         *,
         feedback_store: FeedbackStore,
         profiles: dict[str, AgentRuntimeProfile],
-        provider_configured: Callable[[], bool],
         run_profile_json: RunProfileJson,
     ) -> None:
         self.feedback_store = feedback_store
         self.profiles = profiles
-        self.provider_configured = provider_configured
         self.run_profile_json = run_profile_json
 
     async def run_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
@@ -63,13 +67,12 @@ class FeedbackJobOrchestrator:
         return await self._run_profile_json_job(
             profile_name=ATTRIBUTION_ANALYZER_PROFILE,
             prompt=attribution_prompt(job["input_path"]),
-            expected_schema_version="attribution-output/v1",
+            expected_schema_version=ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
             job_type="attribution",
             job_input=_job_input(job),
             complete=lambda raw: self.feedback_store.complete_attribution_job(job["job_id"], raw),
             fail=lambda code, message: self.feedback_store.fail_job(job["job_id"], error_code=code, message=message),
             final_result=lambda: self.feedback_store.get_job(job["job_id"]),
-            offline_output=self.feedback_store.offline_attribution_output(job),
         )
 
     async def run_proposal_job(
@@ -100,13 +103,12 @@ class FeedbackJobOrchestrator:
                 input_payload=job.get("input_json"),
                 attribution_output=attribution_output,
             ),
-            expected_schema_version="proposal-output/v1",
+            expected_schema_version=PROPOSAL_OUTPUT_SCHEMA_VERSION,
             job_type="proposal",
             job_input=_job_input(job),
             complete=lambda raw: self.feedback_store.complete_proposal_job(job["job_id"], raw),
             fail=lambda code, message: self.feedback_store.fail_job(job["job_id"], error_code=code, message=message),
             final_result=lambda: self.feedback_store.get_job(job["job_id"]),
-            offline_output=self.feedback_store.offline_proposal_output(job),
         )
 
     async def run_batch_optimization_plan(
@@ -132,13 +134,12 @@ class FeedbackJobOrchestrator:
         return await self._run_profile_json_job(
             profile_name=PROPOSAL_GENERATOR_PROFILE,
             prompt=batch_optimization_plan_prompt(job["input_path"], input_payload=input_payload),
-            expected_schema_version="feedback-optimization-plan-output/v1",
+            expected_schema_version=FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
             job_type="batch_plan",
             job_input=input_payload,
             complete=lambda raw: self.feedback_store.complete_batch_plan_job(job["job_id"], raw),
             fail=lambda code, message: self.feedback_store.fail_job(job["job_id"], error_code=code, message=message),
             final_result=lambda: self.feedback_store.find_optimization_batch(batch_id),
-            offline_output=self.feedback_store.offline_batch_plan_output(job),
         )
 
     async def run_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
@@ -157,9 +158,6 @@ class FeedbackJobOrchestrator:
         if deterministic_plan:
             self.feedback_store.complete_execution_job(job["execution_job_id"], deterministic_plan)
             return self.feedback_store.get_execution_job(job["execution_job_id"])
-        if not self.provider_configured():
-            self.feedback_store.complete_execution_job(job["execution_job_id"], self.feedback_store.offline_execution_plan_output(job))
-            return self.feedback_store.get_execution_job(job["execution_job_id"])
         input_path = job.get("input_path")
         if not isinstance(input_path, str) or not input_path:
             input_path = str(self.feedback_store.tmp_jobs_dir / job["execution_job_id"] / "execution" / "input.json")
@@ -167,7 +165,7 @@ class FeedbackJobOrchestrator:
         return await self._run_profile_json_job(
             profile_name=EXECUTION_OPTIMIZER_PROFILE,
             prompt=execution_plan_prompt(input_path, input_payload=input_payload),
-            expected_schema_version="execution-plan-output/v1",
+            expected_schema_version=EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
             job_type="execution",
             job_input=input_payload,
             complete=lambda raw: self.feedback_store.complete_execution_job(job["execution_job_id"], raw),
@@ -186,11 +184,7 @@ class FeedbackJobOrchestrator:
         complete: Callable[[dict[str, Any]], Any],
         fail: Callable[[str, str], Any],
         final_result: Callable[[], JobResult],
-        offline_output: dict[str, Any] | None = None,
     ) -> JobResult:
-        if offline_output is not None and not self.provider_configured():
-            complete(offline_output)
-            return final_result()
         try:
             raw = await self.run_profile_json(
                 profile_name=profile_name,

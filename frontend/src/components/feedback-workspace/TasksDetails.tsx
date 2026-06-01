@@ -12,6 +12,7 @@ import type { AgentVersionFileDiff, RuntimeClientConfig } from "../../types/runt
 import { DetailMetricGrid, DetailRecordList, FormattedText, FormattedTextFields, Pill } from "./common";
 import {
   changedPathsFromDiff,
+  executionPlanReady,
   fileStatusFromDiff,
   fileStatusText,
   fileStatusTone,
@@ -90,7 +91,7 @@ export function TaskDetailCard({
   const diffToVersion = task.applied_agent_version_id || "";
   const canManualMarkApplied = !task.applied_agent_version_id && ["pending_execution", "failed", "needs_human_review"].includes(task.status);
   const canCreateExecution = !task.applied_agent_version_id && ["pending_execution", "execution_failed", "execution_ready", "failed", "needs_human_review"].includes(task.status);
-  const canApplyExecution = !task.applied_agent_version_id && latestExecution?.status === "ready";
+  const canApplyExecution = !task.applied_agent_version_id && executionPlanReady(latestExecution);
   const canRunRegression = Boolean(task.applied_agent_version_id) && task.status !== "regression_running";
   const showManualFallback = Boolean(onMarkApplied && canManualMarkApplied);
   const regressionButtonLabel = latestRegression ? "重新运行回归验证" : "运行回归验证";
@@ -398,7 +399,7 @@ function TaskVersionDiffSection({
   fromVersionId?: string | null;
   toVersionId?: string | null;
 }) {
-  const appliedDiff = task.latest_execution_job?.applied_diff || null;
+  const appliedDiff = task.latest_execution_application?.applied_diff || null;
   const targetRows = targetPaths.map((path) => ({ path, status: fileStatusFromDiff(appliedDiff, path) }));
   const nonTargetRows = changedPathsFromDiff(appliedDiff).filter((path) => !targetPaths.includes(path));
   if (!task.applied_agent_version_id) {

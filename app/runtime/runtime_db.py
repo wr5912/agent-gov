@@ -160,16 +160,15 @@ class EvidenceFileModel(Base):
     content_json: Mapped[Any] = mapped_column(JSON)
 
 
-class FeedbackJobModel(Base):
-    __tablename__ = "feedback_jobs"
+class AgentJobModel(Base):
+    __tablename__ = "agent_jobs"
 
     job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     job_type: Mapped[str] = mapped_column(String(64), index=True)
-    feedback_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_cases.feedback_case_id"), index=True)
-    evidence_package_id: Mapped[str] = mapped_column(String(128), index=True)
-    attribution_job_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    scope_kind: Mapped[str] = mapped_column(String(64), index=True)
+    scope_id: Mapped[str] = mapped_column(String(256), index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
-    profile_name: Mapped[str] = mapped_column(String(128))
+    profile_name: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     started_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -177,10 +176,9 @@ class FeedbackJobModel(Base):
     raw_output_path: Mapped[str] = mapped_column(String(2048))
     validated_output_path: Mapped[str] = mapped_column(String(2048))
     error_path: Mapped[str] = mapped_column(String(2048))
-    langfuse_trace_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    main_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     runtime_version: Mapped[str] = mapped_column(String(64))
     schema_version: Mapped[str] = mapped_column(String(64))
+    output_schema_version: Mapped[str] = mapped_column(String(128))
     timeout_seconds: Mapped[int] = mapped_column(default=300)
     retry_count: Mapped[int] = mapped_column(default=0)
     profile_version_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
@@ -190,7 +188,8 @@ class FeedbackJobModel(Base):
     error_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
 
 
-Index("ix_feedback_jobs_case_type_created", FeedbackJobModel.feedback_case_id, FeedbackJobModel.job_type, FeedbackJobModel.created_at)
+Index("ix_agent_jobs_type_status_created", AgentJobModel.job_type, AgentJobModel.status, AgentJobModel.created_at)
+Index("ix_agent_jobs_scope_type_created", AgentJobModel.scope_kind, AgentJobModel.scope_id, AgentJobModel.job_type, AgentJobModel.created_at)
 
 
 class OptimizationProposalModel(Base):
@@ -239,22 +238,6 @@ class FeedbackOptimizationBatchModel(Base):
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-class OptimizationExecutionModel(Base):
-    __tablename__ = "optimization_executions"
-
-    execution_job_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    optimization_task_id: Mapped[str] = mapped_column(String(128), ForeignKey("optimization_tasks.optimization_task_id"), index=True)
-    feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    profile_name: Mapped[str] = mapped_column(String(128))
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    started_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    baseline_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-
-
 class ExecutionCompensationModel(Base):
     __tablename__ = "execution_compensations"
 
@@ -268,6 +251,22 @@ class ExecutionCompensationModel(Base):
     pre_execution_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     restore_status: Mapped[str] = mapped_column(String(64), index=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class ExecutionApplicationModel(Base):
+    __tablename__ = "execution_applications"
+
+    application_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    execution_job_id: Mapped[str] = mapped_column(String(128), index=True)
+    optimization_task_id: Mapped[str] = mapped_column(String(128), ForeignKey("optimization_tasks.optimization_task_id"), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_execution_applications_job_created", ExecutionApplicationModel.execution_job_id, ExecutionApplicationModel.created_at)
+Index("ix_execution_applications_task_created", ExecutionApplicationModel.optimization_task_id, ExecutionApplicationModel.created_at)
 
 
 class ExternalGovernanceItemModel(Base):
@@ -486,7 +485,11 @@ def _run_runtime_migrations(engine: Engine) -> None:
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     with factory.begin() as session:
         applied = {str(row.version) for row in session.query(SchemaMigration).all()}
-    for version, migrate in (("0002_regression_assets", _migrate_0002_regression_assets),):
+    for version, migrate in (
+        ("0002_regression_assets", _migrate_0002_regression_assets),
+        ("0003_agent_jobs", _migrate_0003_agent_jobs),
+        ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
+    ):
         if version in applied:
             continue
         with engine.begin() as connection:
@@ -562,6 +565,78 @@ def _migrate_0002_regression_assets(connection: Any) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_eval_cases_source_variant_hash ON eval_cases (source_feedback_case_id, variant_role, content_hash)"
     )
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_regression_plan_id ON eval_runs (regression_plan_id)")
+
+
+def _migrate_0003_agent_jobs(connection: Any) -> None:
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS agent_jobs (
+            job_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            job_type VARCHAR(64) NOT NULL,
+            scope_kind VARCHAR(64) NOT NULL,
+            scope_id VARCHAR(256) NOT NULL,
+            status VARCHAR(64) NOT NULL,
+            profile_name VARCHAR(128) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            started_at VARCHAR(64),
+            completed_at VARCHAR(64),
+            input_path VARCHAR(2048) NOT NULL,
+            raw_output_path VARCHAR(2048) NOT NULL,
+            validated_output_path VARCHAR(2048) NOT NULL,
+            error_path VARCHAR(2048) NOT NULL,
+            runtime_version VARCHAR(64) NOT NULL,
+            schema_version VARCHAR(64) NOT NULL,
+            output_schema_version VARCHAR(128) NOT NULL,
+            timeout_seconds INTEGER,
+            retry_count INTEGER,
+            profile_version_json JSON,
+            input_json JSON,
+            raw_output_json JSON,
+            validated_output_json JSON,
+            error_json JSON
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_job_type ON agent_jobs (job_type)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_kind ON agent_jobs (scope_kind)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_id ON agent_jobs (scope_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_status ON agent_jobs (status)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_profile_name ON agent_jobs (profile_name)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_created_at ON agent_jobs (created_at)")
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_agent_jobs_type_status_created ON agent_jobs (job_type, status, created_at)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_type_created ON agent_jobs (scope_kind, scope_id, job_type, created_at)"
+    )
+
+
+def _migrate_0004_unify_agent_jobs(connection: Any) -> None:
+    connection.exec_driver_sql("DROP TABLE IF EXISTS feedback_jobs")
+    connection.exec_driver_sql("DROP TABLE IF EXISTS optimization_executions")
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS execution_applications (
+            application_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            execution_job_id VARCHAR(128) NOT NULL,
+            optimization_task_id VARCHAR(128) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            completed_at VARCHAR(64),
+            status VARCHAR(64) NOT NULL,
+            payload_json JSON NOT NULL,
+            FOREIGN KEY(optimization_task_id) REFERENCES optimization_tasks (optimization_task_id)
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_execution_job_id ON execution_applications (execution_job_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_optimization_task_id ON execution_applications (optimization_task_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_created_at ON execution_applications (created_at)")
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_execution_applications_job_created ON execution_applications (execution_job_id, created_at)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_execution_applications_task_created ON execution_applications (optimization_task_id, created_at)"
+    )
 
 
 def _table_columns(connection: Any, table_name: str) -> set[str]:

@@ -8,14 +8,15 @@ from typing import Any, Optional
 
 from sqlalchemy import delete, select
 
+from ..agent_job_types import agent_job_spec
 from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE, PROPOSAL_GENERATOR_PROFILE
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_attribution_output, validate_proposal_output
 from ..runtime_db import (
+    AgentJobModel,
     ExternalGovernanceItemModel,
     ExternalNotificationModel,
     FeedbackCaseModel,
-    FeedbackJobModel,
     OptimizationProposalModel,
     ProposalReviewModel,
     utc_now,
@@ -28,29 +29,6 @@ _UNSET = object()
 
 class FeedbackJobStoreMixin:
     """Store operations for feedback-loop agent jobs and job artifacts."""
-
-    def offline_attribution_output(self, job: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "schema_version": "attribution-output/v1",
-            "feedback_case_id": job["feedback_case_id"],
-            "attribution_job_id": job["job_id"],
-            "status": "needs_human_review",
-            "problem_type": "insufficient_information",
-            "optimization_object_type": "not_actionable",
-            "actionability": "needs_human_analysis",
-            "confidence": "low",
-            "human_review_required": True,
-            "evidence_refs": [
-                {
-                    "type": "evidence_package",
-                    "id": job["evidence_package_id"],
-                    "reason": "证据包已固化；当前未配置模型提供商，需人工或归因分析智能体补充分析。",
-                }
-            ],
-            "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "未形成可安全转为主智能体 workspace 修改的归因结论。"},
-            "rationale": "采集链路不再使用旧版规则归因；离线模式仅生成低置信、需人工复核的结构化占位结果。",
-            "recommended_next_step": "needs_human_review",
-        }
 
     def create_attribution_job(
         self,
@@ -107,13 +85,15 @@ class FeedbackJobStoreMixin:
                 "task": "analyze_feedback_attribution",
             }
             try:
-                self.feedback_jobs.create_queued_job(
+                spec = agent_job_spec("attribution")
+                self.create_agent_job(
                     job_id=job_id,
-                    job_type="attribution",
-                    feedback_case_id=feedback_case_id,
-                    evidence_package_id=evidence_package_id,
+                    job_type=spec.job_type,
+                    scope_kind="feedback_case",
+                    scope_id=feedback_case_id,
                     profile_name=ATTRIBUTION_ANALYZER_PROFILE,
                     input_payload=input_payload,
+                    output_schema_version=spec.output_schema_version,
                     profile_version=profile_version,
                 )
                 self._append_case_update(feedback_case, attribution_job_id=job_id, status="attribution_queued")
@@ -166,15 +146,16 @@ class FeedbackJobStoreMixin:
             }
             if regeneration_instruction:
                 input_payload["regeneration_instruction"] = regeneration_instruction
-            self.feedback_jobs.create_queued_job(
+            spec = agent_job_spec("proposal")
+            self.create_agent_job(
                 job_id=job_id,
-                job_type="proposal",
-                feedback_case_id=feedback_case_id,
-                evidence_package_id=evidence_package_id,
+                job_type=spec.job_type,
+                scope_kind="feedback_case",
+                scope_id=feedback_case_id,
                 profile_name=PROPOSAL_GENERATOR_PROFILE,
                 input_payload=input_payload,
+                output_schema_version=spec.output_schema_version,
                 profile_version=profile_version,
-                attribution_job_id=attribution_job_id,
             )
             if force:
                 self._supersede_case_proposals(
@@ -300,7 +281,8 @@ class FeedbackJobStoreMixin:
         if not job:
             return None
         error_payload = self._job_error_payload(job, error_code, message)
-        feedback_case = self.find_case(str(job["feedback_case_id"]))
+        feedback_case_id = self._string(job.get("feedback_case_id"))
+        feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
         with self.Session.begin() as db:
             if not self._set_job_json_row(db, job_id, error_json=error_payload):
                 return None
@@ -328,11 +310,13 @@ class FeedbackJobStoreMixin:
         return self.get_job(job_id)
 
     def get_job(self, job_id: str) -> Optional[dict[str, Any]]:
-        if not job_id:
+        job = self.get_agent_job(job_id)
+        if not job:
             return None
-        with self.Session() as db:
-            row = db.get(FeedbackJobModel, job_id)
-            return self._job_to_dict(row) if row else None
+        job["error_json"] = self._normalize_job_error_payload(job.get("error_json"))
+        if job.get("profile_version"):
+            job[f"{job.get('job_type')}_agent_version"] = (job.get("profile_version") or {}).get("agent_version")
+        return job
 
     def get_job_output(self, job_id: str, job_type: str) -> Optional[dict[str, Any]]:
         job = self.get_job(job_id)
@@ -376,37 +360,11 @@ class FeedbackJobStoreMixin:
         return True
 
 
-    def _job_to_dict(self, row: FeedbackJobModel) -> dict[str, Any]:
-        job = {
-            "job_id": row.job_id,
-            "job_type": row.job_type,
-            "feedback_case_id": row.feedback_case_id,
-            "evidence_package_id": row.evidence_package_id,
-            "status": row.status,
-            "profile_name": row.profile_name,
-            "created_at": row.created_at,
-            "started_at": row.started_at,
-            "completed_at": row.completed_at,
-            "timeout_seconds": row.timeout_seconds,
-            "retry_count": row.retry_count,
-            "input_path": row.input_path,
-            "raw_output_path": row.raw_output_path,
-            "validated_output_path": row.validated_output_path,
-            "error_path": row.error_path,
-            "langfuse_trace_id": row.langfuse_trace_id,
-            "main_agent_version_id": row.main_agent_version_id,
-            "runtime_version": row.runtime_version,
-            "schema_version": row.schema_version,
-            "input_json": row.input_json,
-            "raw_output_json": row.raw_output_json,
-            "validated_output_json": row.validated_output_json,
-            "error_json": self._normalize_job_error_payload(row.error_json),
-        }
-        if row.profile_version_json:
-            job["profile_version"] = row.profile_version_json
-            job[f"{row.job_type}_agent_version"] = row.profile_version_json.get("agent_version")
-        if row.attribution_job_id:
-            job["attribution_job_id"] = row.attribution_job_id
+    def _job_to_dict(self, row: AgentJobModel) -> dict[str, Any]:
+        job = self._agent_job_to_dict(row)
+        job["error_json"] = self._normalize_job_error_payload(job.get("error_json"))
+        if job.get("profile_version"):
+            job[f"{job.get('job_type')}_agent_version"] = (job.get("profile_version") or {}).get("agent_version")
         return job
 
     def _job_batch_id(self, job: dict[str, Any]) -> Optional[str]:
@@ -440,11 +398,11 @@ class FeedbackJobStoreMixin:
         status: str,
         started_at: Optional[str] = None,
         completed_at: Optional[str] = None,
-    ) -> Optional[FeedbackJobModel]:
-        job = db.get(FeedbackJobModel, job_id)
+    ) -> Optional[AgentJobModel]:
+        job = db.get(AgentJobModel, job_id)
         if not job:
             return None
-        validate_transition("job", job.status, status)
+        validate_transition("agent_job", job.status, status)
         job.status = status
         if started_at is not None:
             job.started_at = started_at
@@ -477,8 +435,8 @@ class FeedbackJobStoreMixin:
         raw_output_json: Any = _UNSET,
         validated_output_json: Any = _UNSET,
         error_json: Any = _UNSET,
-    ) -> Optional[FeedbackJobModel]:
-        job = db.get(FeedbackJobModel, job_id)
+    ) -> Optional[AgentJobModel]:
+        job = db.get(AgentJobModel, job_id)
         if not job:
             return None
         if raw_output_json is not _UNSET:
@@ -532,9 +490,13 @@ class FeedbackJobStoreMixin:
             return job
         with self.Session() as db:
             row = db.scalar(
-                select(FeedbackJobModel)
-                .where(FeedbackJobModel.feedback_case_id == feedback_case_id, FeedbackJobModel.job_type == job_type)
-                .order_by(FeedbackJobModel.created_at.desc())
+                select(AgentJobModel)
+                .where(
+                    AgentJobModel.scope_kind == "feedback_case",
+                    AgentJobModel.scope_id == feedback_case_id,
+                    AgentJobModel.job_type == job_type,
+                )
+                .order_by(AgentJobModel.created_at.desc())
                 .limit(1)
             )
             if not row or row.status == "failed":
@@ -574,7 +536,7 @@ class FeedbackJobStoreMixin:
             self._cleanup_job_tmp(job_id)
 
     def _discard_job_row(self, db: Any, job_id: str) -> bool:
-        row = db.get(FeedbackJobModel, job_id)
+        row = db.get(AgentJobModel, job_id)
         if not row:
             return False
         db.delete(row)
@@ -602,7 +564,7 @@ class FeedbackJobStoreMixin:
             for notification in notifications:
                 db.delete(notification)
             db.delete(item)
-        row = db.get(FeedbackJobModel, proposal_job_id)
+        row = db.get(AgentJobModel, proposal_job_id)
         if not row:
             return bool(proposal_ids or external_items)
         db.delete(row)

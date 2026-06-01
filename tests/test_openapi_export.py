@@ -62,19 +62,12 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_schema_ref(schema, "/api/soc-events", "get", "SocEventResponse", array=True)
     assert_schema_ref(schema, "/api/pending-correlations", "get", "PendingCorrelationResponse", array=True)
     assert_schema_ref(schema, "/api/feedback-sources", "get", "FeedbackSourceResponse", array=True)
-    assert_schema_ref(schema, "/api/feedback-sources/eval-cases/generate", "post", "FeedbackEvalCaseGenerateResponse")
-    assert_schema_ref(
-        schema,
-        "/api/feedback-analysis/jobs/{job_id}/attribution",
-        "get",
-        "AttributionOutputResponse",
-    )
-    assert_schema_ref(
-        schema,
-        "/api/feedback-analysis/jobs/{job_id}/proposal",
-        "get",
-        "ProposalOutputResponse",
-    )
+    assert_schema_ref(schema, "/api/agent-jobs", "get", "AgentJobResponse", array=True)
+    assert_schema_ref(schema, "/api/agent-jobs/{job_id}", "get", "AgentJobResponse")
+    assert_schema_ref(schema, "/api/feedback-sources/eval-cases/generate", "post", "AgentJobResponse")
+    assert "/api/feedback-analysis/jobs/{job_id}" not in schema["paths"]
+    assert "/api/feedback-analysis/jobs/{job_id}/attribution" not in schema["paths"]
+    assert "/api/feedback-analysis/jobs/{job_id}/proposal" not in schema["paths"]
     assert_schema_ref(schema, "/api/eval-cases", "get", "EvalCaseResponse", array=True)
     assert_schema_ref(schema, "/api/eval-runs", "get", "EvalRunResponse", array=True)
     assert_schema_ref(schema, "/api/regression-assets", "get", "EvalCaseResponse", array=True)
@@ -95,6 +88,12 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "/api/feedback-optimization-batches/{batch_id}/attribution-jobs",
         "post",
         "FeedbackOptimizationBatchAttributionResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/optimization-plan",
+        "post",
+        "AgentJobResponse",
     )
     assert_schema_ref(
         schema,
@@ -130,7 +129,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
         schema,
         "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis",
         "post",
-        "RegressionImpactAnalysisResponse",
+        "AgentJobResponse",
     )
     assert_schema_ref(
         schema,
@@ -167,15 +166,9 @@ def test_export_openapi_script_writes_schema(tmp_path):
         schema,
         "/api/optimization-tasks/{task_id}/execution-jobs",
         "post",
-        "OptimizationExecutionJobResponse",
+        "AgentJobResponse",
     )
-    assert_schema_ref(
-        schema,
-        "/api/optimization-tasks/{task_id}/execution-jobs",
-        "get",
-        "OptimizationExecutionJobResponse",
-        array=True,
-    )
+    assert "get" not in schema["paths"]["/api/optimization-tasks/{task_id}/execution-jobs"]
     assert_schema_ref(
         schema,
         "/api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply",
@@ -249,25 +242,20 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert plan_task_schema["properties"]["evidence_refs"]["items"] == {
         "$ref": "#/components/schemas/EvidenceRefResponse"
     }
-    execution_schema = schema["components"]["schemas"]["OptimizationExecutionJobResponse"]
-    assert execution_schema["properties"]["validated_output_json"]["anyOf"][0] == {
-        "$ref": "#/components/schemas/OptimizationExecutionPlanOutputResponse"
-    }
-    assert_nullable_schema_ref(execution_schema, "pre_execution_agent_version", "AgentVersionSummaryResponse")
-    assert_nullable_schema_ref(execution_schema, "applied_agent_version", "AgentVersionSummaryResponse")
-    assert_nullable_schema_ref(execution_schema, "applied_diff", "AgentVersionDiffResponse")
-    assert_nullable_schema_ref(execution_schema, "error_json", "FeedbackJobErrorResponse")
-    assert execution_schema["properties"]["compensations"]["items"] == {"$ref": "#/components/schemas/ExecutionCompensationResponse"}
+    assert "OptimizationExecutionJobResponse" not in schema["components"]["schemas"]
+    assert "FeedbackAnalysisJobResponse" not in schema["components"]["schemas"]
     task_schema = schema["components"]["schemas"]["OptimizationTaskResponse"]
     assert_nullable_schema_ref(task_schema, "proposal", "OptimizationTaskProposalResponse")
-    assert_nullable_schema_ref(task_schema, "latest_execution_job", "OptimizationExecutionJobResponse")
+    assert_nullable_schema_ref(task_schema, "latest_execution_job", "AgentJobResponse")
     assert_nullable_schema_ref(task_schema, "pre_execution_agent_version", "AgentVersionSummaryResponse")
     assert_nullable_schema_ref(task_schema, "applied_agent_version", "AgentVersionSummaryResponse")
     assert_nullable_schema_ref(task_schema, "latest_regression_run", "EvalRunResponse")
     batch_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchResponse"]
     assert_nullable_schema_ref(batch_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(batch_schema, "execution_job", "OptimizationExecutionJobResponse")
+    assert_nullable_schema_ref(batch_schema, "execution_job", "AgentJobResponse")
     assert_nullable_schema_ref(batch_schema, "execution_apply_result", "OptimizationExecutionApplyResponse")
+    assert batch_schema["properties"]["attribution_jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
+    assert_nullable_schema_ref(batch_schema, "optimization_plan_job", "AgentJobResponse")
     assert batch_schema["properties"]["skipped_source_refs"]["items"] == {
         "$ref": "#/components/schemas/FeedbackOptimizationSkippedSourceRefResponse"
     }
@@ -277,20 +265,22 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(batch_schema, "optimization_plan_error", "FeedbackJobErrorResponse")
     batch_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchExecutionResponse"]
     assert_nullable_schema_ref(batch_execution_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(batch_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
+    assert_nullable_schema_ref(batch_execution_schema, "execution_job", "AgentJobResponse")
     assert_nullable_schema_ref(batch_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
+    batch_attribution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchAttributionResponse"]
+    assert batch_attribution_schema["properties"]["jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
     apply_schema = schema["components"]["schemas"]["OptimizationExecutionApplyResponse"]
+    assert apply_schema["properties"]["execution_job"] == {"$ref": "#/components/schemas/AgentJobResponse"}
+    assert apply_schema["properties"]["execution_application"] == {"$ref": "#/components/schemas/ExecutionApplicationResponse"}
     assert_nullable_schema_ref(apply_schema, "applied_diff", "AgentVersionDiffResponse")
     plan_task_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanTaskExecuteResponse"]
     assert_nullable_schema_ref(plan_task_execution_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
+    assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "AgentJobResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
-    analysis_job_schema = schema["components"]["schemas"]["FeedbackAnalysisJobResponse"]
-    validated_output_schema_options = analysis_job_schema["properties"]["validated_output_json"]["anyOf"]
-    for schema_name in ("AttributionOutputResponse", "ProposalOutputResponse", "FeedbackOptimizationPlanResponse"):
-        assert {"$ref": f"#/components/schemas/{schema_name}"} in validated_output_schema_options
-    assert {"type": "null"} in validated_output_schema_options
-    assert_nullable_schema_ref(analysis_job_schema, "error_json", "FeedbackJobErrorResponse")
+    agent_job_schema = schema["components"]["schemas"]["AgentJobResponse"]
+    assert_nullable_schema_ref(agent_job_schema, "error_json", "FeedbackJobErrorResponse")
+    assert "profile_version" in agent_job_schema["properties"]
+    assert "output_schema_version" in agent_job_schema["properties"]
     restore_schema = schema["components"]["schemas"]["AgentVersionRestoreResponse"]
     assert restore_schema["properties"]["current_version"] == {
         "$ref": "#/components/schemas/AgentVersionSummaryResponse"
@@ -311,10 +301,6 @@ def test_export_openapi_script_writes_schema(tmp_path):
     review_schema = schema["components"]["schemas"]["OptimizationProposalReviewResponse"]
     assert review_schema["properties"]["proposal"] == {
         "$ref": "#/components/schemas/OptimizationProposalResponse"
-    }
-    proposal_output_schema = schema["components"]["schemas"]["ProposalOutputResponse"]
-    assert proposal_output_schema["properties"]["external_guidance"]["items"] == {
-        "$ref": "#/components/schemas/ExternalGuidanceResponse"
     }
     evidence_schema = schema["components"]["schemas"]["EvidencePackageResponse"]
     assert evidence_schema["properties"]["source_refs"] == {"$ref": "#/components/schemas/EvidenceSourceRefsResponse"}

@@ -6,11 +6,11 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     EvalCaseResponse,
     EvalRunResponse,
-    FeedbackEvalCaseGenerateResponse,
     FeedbackEvalCaseUpdateRequest,
     FeedbackEvalDatasetSyncRequest,
     FeedbackEvalRunCreateRequest,
@@ -25,21 +25,22 @@ def create_eval_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
-    _register_eval_dataset_routes(router, feedback_store)
+    _register_eval_dataset_routes(router, runtime)
     _register_eval_case_routes(router, feedback_store)
     _register_eval_run_routes(router, feedback_store, runtime)
-    _register_eval_impact_routes(router, feedback_store)
+    _register_eval_impact_routes(router, feedback_store, runtime)
     return router
 
 
-def _register_eval_dataset_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_eval_dataset_routes(router: APIRouter, runtime: ClaudeRuntime) -> None:
     @router.post(
         "/eval-datasets/feedback/sync",
-        response_model=FeedbackEvalCaseGenerateResponse,
-        summary="Sync processed feedback cases into reusable eval cases",
+        response_model=AgentJobResponse,
+        summary="Queue processed feedback cases into reusable eval cases",
     )
     async def sync_feedback_eval_dataset(req: FeedbackEvalDatasetSyncRequest) -> dict[str, Any]:
-        return feedback_store.sync_feedback_eval_cases(feedback_case_id=req.feedback_case_id, limit=req.limit)
+        job = runtime.queue_eval_case_generation_job(feedback_case_id=req.feedback_case_id, limit=req.limit)
+        return ensure_found(job, "No feedback cases found for eval case generation")
 
 
 def _register_eval_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
@@ -118,14 +119,14 @@ def _register_eval_run_routes(
         return ensure_found(eval_run, "Eval run not found")
 
 
-def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStore, runtime: ClaudeRuntime) -> None:
     @router.post(
         "/eval-runs/{eval_run_id}/impact-analysis",
-        response_model=RegressionImpactAnalysisResponse,
-        summary="Create deterministic regression impact analysis for one eval run",
+        response_model=AgentJobResponse,
+        summary="Queue regression impact analysis for one eval run",
     )
     async def create_regression_impact_analysis(eval_run_id: str) -> dict[str, Any]:
-        analysis = feedback_store.create_regression_impact_analysis(eval_run_id)
+        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id)
         return ensure_found(analysis, "Eval run not found")
 
     @router.get(
@@ -144,8 +145,6 @@ async def _run_manual_feedback_eval(
     runtime: ClaudeRuntime,
     req: FeedbackEvalRunCreateRequest,
 ) -> dict[str, Any]:
-    if not req.eval_case_ids:
-        feedback_store.sync_feedback_eval_cases(limit=500)
     result = await runtime.run_feedback_eval(
         eval_case_ids=req.eval_case_ids or None,
         optimization_task_id=req.optimization_task_id,

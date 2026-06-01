@@ -6,12 +6,12 @@ from fastapi import APIRouter
 
 from app.routers.error_helpers import ensure_found, raise_conflict
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchRegressionResponse
 from app.runtime.schemas import (
     FeedbackOptimizationBatchRegressionRunRequest,
     RegressionGateOverrideRequest,
     RegressionGateOverrideResponse,
-    RegressionImpactAnalysisResponse,
     RegressionPlanCreateRequest,
     RegressionPlanResponse,
 )
@@ -25,7 +25,7 @@ def register_batch_regression_routes(
 ) -> None:
     _register_batch_regression_plan_routes(router, feedback_store)
     _register_batch_regression_run_routes(router, feedback_store, runtime)
-    _register_batch_regression_gate_routes(router, feedback_store)
+    _register_batch_regression_gate_routes(router, feedback_store, runtime)
 
 
 def _register_batch_regression_plan_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
@@ -86,20 +86,21 @@ def _register_batch_regression_run_routes(
         )
         if not result:
             raise_conflict("Regression run could not be started")
-        impact = feedback_store.create_regression_impact_analysis(result["eval_run_id"])
+        impact_job = runtime.queue_regression_impact_analysis_job(result["eval_run_id"])
+        impact = feedback_store.get_regression_impact_analysis(result["eval_run_id"])
         batch = feedback_store.record_batch_regression_result(batch_id, result)
-        return {"batch": batch, "eval_run": result, "regression_plan": plan, "impact_analysis": impact}
+        return {"batch": batch, "eval_run": result, "regression_plan": plan, "impact_analysis": impact, "impact_analysis_job": impact_job}
 
 
-def _register_batch_regression_gate_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_batch_regression_gate_routes(router: APIRouter, feedback_store: FeedbackStore, runtime: ClaudeRuntime) -> None:
     @router.post(
         "/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis",
-        response_model=RegressionImpactAnalysisResponse,
-        summary="Create deterministic impact analysis for a batch regression run",
+        response_model=AgentJobResponse,
+        summary="Queue impact analysis for a batch regression run",
     )
     async def create_batch_regression_impact_analysis(batch_id: str, eval_run_id: str) -> dict[str, Any]:
         ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
-        analysis = feedback_store.create_regression_impact_analysis(eval_run_id)
+        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id)
         return ensure_found(analysis, "Eval run not found")
 
     @router.post(

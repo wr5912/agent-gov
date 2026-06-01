@@ -6,13 +6,13 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     ExecutionCompensationResponse,
     ExternalGovernanceItemResponse,
     ExternalGovernanceWebhookResponse,
     OptimizationExecutionApplyResponse,
-    OptimizationExecutionJobResponse,
     OptimizationTaskResponse,
 )
 from app.runtime.response_schemas.optimization_response_schemas import (
@@ -43,7 +43,7 @@ def create_optimization_router(
     _register_proposal_routes(router, feedback_store)
     _register_task_read_routes(router, feedback_store)
     _register_external_governance_routes(router, feedback_store)
-    _register_execution_job_routes(router, feedback_store, runtime)
+    _register_execution_job_routes(router, runtime)
     _register_compensation_routes(router, feedback_store)
     _register_execution_application_routes(router, execution_application)
     _register_task_regression_routes(router, feedback_store, runtime)
@@ -178,30 +178,19 @@ def _register_external_governance_routes(router: APIRouter, feedback_store: Feed
 
 def _register_execution_job_routes(
     router: APIRouter,
-    feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
 ) -> None:
 
     @router.post(
         "/optimization-tasks/{task_id}/execution-jobs",
-        response_model=OptimizationExecutionJobResponse,
-        summary="Generate one controlled execution plan for an optimization task",
+        response_model=AgentJobResponse,
+        summary="Queue one controlled execution plan for an optimization task",
     )
     async def create_optimization_execution_job(task_id: str, req: OptimizationExecutionCreateRequest) -> dict[str, Any]:
-        job = await runtime.run_execution_job(task_id, force=req.force)
+        job = runtime.queue_execution_job(task_id, force=req.force)
         if not job:
-            raise_conflict("Optimization task cannot generate an execution plan")
+            raise_conflict("Optimization task cannot queue an execution plan")
         return job
-
-    @router.get(
-        "/optimization-tasks/{task_id}/execution-jobs",
-        response_model=list[OptimizationExecutionJobResponse],
-        summary="List controlled execution plans for one optimization task",
-    )
-    async def list_optimization_execution_jobs(task_id: str, limit: int = Query(default=100, ge=1, le=500)) -> list[dict[str, Any]]:
-        if not feedback_store.find_task(task_id):
-            ensure_found(None, "Optimization task not found")
-        return feedback_store.list_execution_jobs(task_id, limit=limit)
 
 
 def _register_compensation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
@@ -277,8 +266,6 @@ def _task_regression_eval_case_ids(
     task: dict[str, Any],
     requested_eval_case_ids: list[str] | None,
 ) -> list[str]:
-    if task.get("feedback_case_id"):
-        feedback_store.sync_feedback_eval_cases(feedback_case_id=str(task["feedback_case_id"]))
     eval_case_ids = list(requested_eval_case_ids or [])
     if eval_case_ids or not task.get("feedback_case_id"):
         return eval_case_ids

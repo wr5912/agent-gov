@@ -25,45 +25,21 @@ class FeedbackBatchStoreMixin:
             return None
         feedback_cases: list[dict[str, Any]] = []
         cases_to_create: list[dict[str, Any]] = []
-        eval_cases_to_create: list[dict[str, Any]] = []
         refs_to_mark: list[dict[str, str]] = []
         skipped: list[dict[str, Any]] = []
-        eval_result: dict[str, Any] = {"created": 0, "reused": 0, "updated": 0, "skipped": 0, "eval_cases": [], "results": []}
         for ref in refs:
             feedback_case, should_create = self._prepare_feedback_case_for_source(ref, priority=priority)
             if not feedback_case:
                 skipped.append({**ref, "reason": "source cannot create feedback case"})
-                eval_result["skipped"] += 1
-                eval_result["results"].append({**ref, "status": "skipped", "reason": "source cannot create feedback case"})
                 continue
             feedback_cases.append(feedback_case)
             if should_create:
                 cases_to_create.append(feedback_case)
             refs_to_mark.append(ref)
-            existing_eval = self.find_eval_case(source_feedback_case_id=feedback_case["feedback_case_id"])
-            eval_payload = self._build_eval_case_from_source(ref, feedback_case)
-            if not eval_payload:
-                eval_result["skipped"] += 1
-                eval_result["results"].append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "status": "skipped", "reason": "missing prompt"})
-                continue
-            if existing_eval:
-                eval_result["reused"] += 1
-                eval_result["eval_cases"].append(existing_eval)
-                eval_result["results"].append(
-                    {**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": existing_eval["eval_case_id"], "status": "reused"}
-                )
-                continue
-            eval_result["created"] += 1
-            eval_result["eval_cases"].append(eval_payload)
-            eval_result["results"].append(
-                {**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": eval_payload["eval_case_id"], "status": "created"}
-            )
-            eval_cases_to_create.append(eval_payload)
         if not feedback_cases:
             return None
         now = utc_now()
         feedback_case_ids = self._unique_strings([item.get("feedback_case_id") for item in feedback_cases])
-        eval_case_ids = self._unique_strings([item.get("eval_case_id") for item in eval_result.get("eval_cases") or []])
         batch_id = f"fob-{uuid.uuid4()}"
         payload = {
             "schema_version": "feedback-optimization-batch/v1",
@@ -76,8 +52,9 @@ class FeedbackBatchStoreMixin:
             "source_refs": refs,
             "feedback_case_ids": feedback_case_ids,
             "skipped_source_refs": skipped,
-            "eval_case_ids": eval_case_ids,
-            "eval_case_generation": eval_result,
+            "eval_case_ids": [],
+            "eval_case_generation": {"created": 0, "reused": 0, "updated": 0, "skipped": 0, "eval_cases": [], "results": []},
+            "eval_case_generation_job_id": None,
             "attribution_job_ids": [],
             "optimization_plan": None,
             "optimization_task_id": None,
@@ -89,9 +66,8 @@ class FeedbackBatchStoreMixin:
                 db.add(self._case_model_from_dict(feedback_case))
             for ref in refs_to_mark:
                 self._upsert_feedback_source_annotation(db, ref["source_kind"], ref["source_id"], {"status": "in_batch", "priority": priority})
-            for eval_case in eval_cases_to_create:
-                self._add_eval_case_row(db, eval_case)
             db.add(self._batch_model_from_payload(payload))
+        self.queue_feedback_eval_case_generation_agent_job(batch_id=batch_id)
         return self.find_optimization_batch(batch_id)
 
     def _batch_model_from_payload(self, payload: dict[str, Any]) -> FeedbackOptimizationBatchModel:
@@ -241,7 +217,8 @@ class FeedbackBatchStoreMixin:
         if execution_job:
             fields["execution_job_id"] = execution_job.get("execution_job_id")
             fields["execution_job"] = execution_job
-            status = "execution_ready" if execution_job.get("status") == "ready" else str(execution_job.get("status") or status)
+            plan = execution_job.get("validated_output_json") if isinstance(execution_job.get("validated_output_json"), dict) else {}
+            status = "execution_ready" if plan.get("status") == "ready" else str(execution_job.get("status") or status)
         if optimization_task:
             fields["optimization_task_id"] = optimization_task.get("optimization_task_id")
             fields["optimization_task"] = optimization_task
@@ -269,7 +246,8 @@ class FeedbackBatchStoreMixin:
         if execution_job:
             task_updates["execution_job_id"] = execution_job.get("execution_job_id")
             task_updates["latest_execution_job"] = execution_job
-            status = "execution_ready" if execution_job.get("status") == "ready" else str(execution_job.get("status") or status)
+            plan = execution_job.get("validated_output_json") if isinstance(execution_job.get("validated_output_json"), dict) else {}
+            status = "execution_ready" if plan.get("status") == "ready" else str(execution_job.get("status") or status)
             top_level_fields.update({"execution_job_id": execution_job.get("execution_job_id"), "execution_job": execution_job})
         if optimization_task:
             task_updates["optimization_task_id"] = optimization_task.get("optimization_task_id")

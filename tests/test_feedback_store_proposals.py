@@ -1,5 +1,6 @@
 from feedback_store_test_utils import (
     FeedbackSignalCreateRequest,
+    _attribution_output,
     _create_eval_case,
     _record_run,
     _store,
@@ -15,7 +16,7 @@ def test_proposal_output_normalizes_compact_agent_proposal(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
 
     completed = store.complete_proposal_job(
@@ -55,7 +56,7 @@ def test_proposal_output_normalizes_external_guidance_aliases(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
 
     completed = store.complete_proposal_job(
@@ -100,7 +101,7 @@ def test_external_governance_item_filters_are_applied_before_materialization(tmp
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     first_case = store.create_case(source_ids=[signal["signal_id"]])
     first_attribution = store.create_attribution_job(first_case["feedback_case_id"])
-    store.complete_attribution_job(first_attribution["job_id"], store.offline_attribution_output(first_attribution))
+    store.complete_attribution_job(first_attribution["job_id"], _attribution_output(first_attribution))
     first_job = store.create_proposal_job(first_case["feedback_case_id"])
     store.complete_proposal_job(
         first_job["job_id"],
@@ -118,7 +119,7 @@ def test_external_governance_item_filters_are_applied_before_materialization(tmp
     second_signal = store.create_signal(FeedbackSignalCreateRequest(session_id="second-session", labels=["tool_data_quality"]))
     second_case = store.create_case(source_ids=[second_signal["signal_id"]])
     second_attribution = store.create_attribution_job(second_case["feedback_case_id"])
-    store.complete_attribution_job(second_attribution["job_id"], store.offline_attribution_output(second_attribution))
+    store.complete_attribution_job(second_attribution["job_id"], _attribution_output(second_attribution))
     second_job = store.create_proposal_job(second_case["feedback_case_id"])
     store.complete_proposal_job(
         second_job["job_id"],
@@ -186,7 +187,7 @@ def test_revalidate_proposal_job_raw_output_persists_legacy_suggestions(tmp_path
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     raw_output = {
         "schema_version": "proposal-output/v1",
@@ -238,7 +239,7 @@ def test_force_regenerate_supersedes_unused_existing_proposals(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],
@@ -288,7 +289,7 @@ def test_superseded_external_governance_item_cannot_be_notified(tmp_path):
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], store.offline_attribution_output(attribution_job))
+    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
     proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
     store.complete_proposal_job(
         proposal_job["job_id"],

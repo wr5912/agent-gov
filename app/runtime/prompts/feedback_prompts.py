@@ -6,82 +6,14 @@ from pathlib import Path
 from typing import Any
 
 from ..errors import AgentOutputParseError
-
-
-ATTRIBUTION_SCHEMA_FIELDS = {
-    "schema_version",
-    "feedback_case_id",
-    "attribution_job_id",
-    "status",
-    "problem_type",
-    "optimization_object_type",
-    "actionability",
-    "confidence",
-    "human_review_required",
-    "evidence_refs",
-    "responsibility_boundary",
-    "rationale",
-    "recommended_next_step",
-}
-
-PROPOSAL_SCHEMA_FIELDS = {
-    "schema_version",
-    "feedback_case_id",
-    "proposal_job_id",
-    "status",
-    "proposals",
-    "external_guidance",
-    "no_action_reason",
-}
-
-BATCH_PLAN_SCHEMA_FIELDS = {
-    "schema_version",
-    "batch_id",
-    "optimization_plan_id",
-    "status",
-    "title",
-    "summary",
-    "problem_types",
-    "confidence",
-    "actionability",
-    "target_type",
-    "target_path",
-    "recommendation",
-    "expected_effect",
-    "validation",
-    "risk",
-    "source_refs",
-    "feedback_case_ids",
-    "eval_case_ids",
-    "attribution_job_ids",
-    "attribution_summaries",
-    "rationale",
-    "evidence_refs",
-    "tasks",
-    "blocked_items",
-    "regeneration_instruction",
-}
-
-EXECUTION_PLAN_SCHEMA_FIELDS = {
-    "schema_version",
-    "optimization_task_id",
-    "execution_job_id",
-    "status",
-    "baseline_agent_version_id",
-    "summary",
-    "operations",
-    "validation",
-    "risk",
-    "human_review_required",
-    "no_action_reason",
-}
-
-EXPECTED_SCHEMA_FIELDS = {
-    "attribution-output/v1": ATTRIBUTION_SCHEMA_FIELDS,
-    "proposal-output/v1": PROPOSAL_SCHEMA_FIELDS,
-    "feedback-optimization-plan-output/v1": BATCH_PLAN_SCHEMA_FIELDS,
-    "execution-plan-output/v1": EXECUTION_PLAN_SCHEMA_FIELDS,
-}
+from ..schema_versions import (
+    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+    EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    PROPOSAL_OUTPUT_SCHEMA_VERSION,
+    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+)
 
 
 NATURAL_LANGUAGE_CHINESE_RULE = (
@@ -93,12 +25,13 @@ NATURAL_LANGUAGE_CHINESE_RULE = (
 def attribution_prompt(input_path: str) -> str:
     return (
         "你是反馈闭环中的归因分析智能体。只读取 attribution input 指定的证据路径，"
-        "输出归因分析内容。系统会在后端把你的输出格式化为 attribution-output/v1；"
-        "你可以输出自然语言分析或 JSON，但必须包含足够信息供系统格式化。\n\n"
+        "输出归因分析内容。系统会在后端通过 DSPy formatter 和 Pydantic schema "
+        f"把你的输出格式化为 {ATTRIBUTION_OUTPUT_SCHEMA_VERSION}；"
+        "你可以输出自然语言分析、结构化要点或 JSON 片段，但必须包含足够信息供系统格式化。\n\n"
         f"输入文件：{input_path}\n\n"
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "其中 evidence_refs[].reason、responsibility_boundary.reason、rationale 必须使用简体中文。\n\n"
-        "归因内容应覆盖字段：schema_version、feedback_case_id、attribution_job_id、status、problem_type、"
+        "归因内容应覆盖：schema_version、feedback_case_id、attribution_job_id、status、problem_type、"
         "optimization_object_type、actionability、confidence、human_review_required、evidence_refs、"
         "responsibility_boundary、rationale、recommended_next_step。\n\n"
         "字段取值必须严格使用以下枚举：\n"
@@ -128,8 +61,9 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
         )
     return (
         "你是反馈闭环中的优化方案生成智能体。只读取 proposal input、已校验归因输出和允许的版本清单，"
-        "输出优化方案内容。系统会在后端把你的输出格式化为 proposal-output/v1；"
-        "你可以输出自然语言建议或 JSON，但必须包含足够信息供系统格式化。\n\n"
+        "输出优化方案内容。系统会在后端通过 DSPy formatter 和 Pydantic schema "
+        f"把你的输出格式化为 {PROPOSAL_OUTPUT_SCHEMA_VERSION}；"
+        "你可以输出自然语言建议、结构化要点或 JSON 片段，但必须包含足够信息供系统格式化。\n\n"
         f"输入文件：{input_path}\n\n"
         "执行方式：如果提示词提供了 proposal_input_json 和 attribution_output_json，则直接使用这些内容，"
         "不要调用工具。否则先读取输入文件，再读取其中的 attribution_output_path；如需确认当前版本，最多再读取 "
@@ -137,7 +71,7 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "其中 proposals[].title/recommendation/expected_effect/validation/risk、"
         "external_guidance[].recommendation/reason、no_action_reason 必须使用简体中文。\n\n"
-        "建议内容应覆盖字段：schema_version、feedback_case_id、proposal_job_id、status、proposals、"
+        "建议内容应覆盖：schema_version、feedback_case_id、proposal_job_id、status、proposals、"
         "external_guidance、no_action_reason。\n"
         "status: completed | needs_human_review\n"
         "external_guidance[].owner 必填，用于标识外部责任方或系统；不要用 target 替代 owner。\n"
@@ -164,13 +98,15 @@ def batch_optimization_plan_prompt(input_path: str, *, input_payload: dict[str, 
         "你是反馈闭环中的优化方案生成智能体 proposal-generator。你的职责是统筹批次内所有已校验归因结果，"
         "直接生成可供开发人员阅读并点击执行的优化任务列表。\n\n"
         f"输入文件：{input_path}\n\n"
-        "输出必须是 JSON，schema_version 固定为 feedback-optimization-plan-output/v1。"
-        "后端只做格式化、Pydantic schema 校验、路径校验和持久化；不要假设后端会根据 rationale 再抽取任务字段。\n\n"
+        "系统会在后端通过 DSPy formatter 和 Pydantic schema 把你的输出格式化为 "
+        f"{FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION}。"
+        "你可以输出自然语言方案、结构化任务要点或 JSON 片段，但必须包含足够信息供系统格式化、"
+        "路径校验和持久化；不要假设后端会根据空泛 rationale 再补全任务字段。\n\n"
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "title、summary、recommendation、expected_effect、validation、risk、rationale、"
         "tasks[].title/description/objective/recommendation/recommended_actions/acceptance_criteria/expected_effect/validation/risk、"
         "blocked_items[].title/reason/recommendation 必须使用简体中文。\n\n"
-        "输出对象字段必须覆盖：schema_version、batch_id、status、title、summary、problem_types、confidence、"
+        "方案内容必须覆盖：schema_version、batch_id、status、title、summary、problem_types、confidence、"
         "actionability、target_type、target_path、recommendation、expected_effect、validation、risk、source_refs、"
         "feedback_case_ids、eval_case_ids、attribution_job_ids、attribution_summaries、rationale、evidence_refs、tasks、blocked_items。\n\n"
         "tasks 是开发人员可以点击执行的优化任务。每个任务必须围绕任务本身描述："
@@ -206,7 +142,9 @@ def execution_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | No
         "你是反馈闭环中的执行优化智能体。你不能直接修改主智能体 workspace，只能输出受控执行方案。"
         "系统后端会校验路径、版本和文件 hash，并在用户确认后应用方案。\n\n"
         f"输入文件：{input_path}\n\n"
-        "输出必须是 JSON，schema_version 固定为 execution-plan-output/v1。"
+        "系统会在后端通过 DSPy formatter 和 Pydantic schema "
+        f"把你的输出格式化为 {EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION}。"
+        "你可以输出自然语言执行方案、结构化操作要点或 JSON 片段，但必须包含足够信息供系统格式化。"
         "status 只能使用 ready 或 needs_human_review。"
         "只允许 operations[].operation 使用 append_text、replace_file、create_file 或 noop。"
         "path 必须是相对 main-workspace 的路径，并且必须来自 input 中的 target_paths。"
@@ -221,6 +159,49 @@ def execution_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | No
     )
 
 
+def eval_case_generation_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+    embedded_context = ""
+    if input_payload is not None:
+        embedded_context = (
+            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
+            f"eval_case_generation_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+        )
+    return (
+        "你是反馈闭环中的评估用例治理智能体 eval-case-governor。你的职责是基于反馈来源、"
+        "已校验归因和优化建议，生成可复测原问题的评估用例草案。\n\n"
+        f"输入文件：{input_path}\n\n"
+        "系统会在后端通过 DSPy formatter 和 Pydantic schema 把你的输出格式化为 "
+        f"{FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION}。"
+        "你可以输出自然语言、结构化要点或 JSON 片段，但必须包含足够信息供系统格式化。\n\n"
+        f"{NATURAL_LANGUAGE_CHINESE_RULE}"
+        "每个 eval case 必须覆盖 prompt、expected_behavior、checks_json 和 labels；"
+        "prompt 应复现用户原始输入或最接近的反馈场景，expected_behavior 应描述修复后应满足的行为。"
+        "不要凭空编造证据中不存在的业务事实；证据不足时输出 no_action_reason 并说明需要人工补充。"
+        f"{embedded_context}"
+    )
+
+
+def regression_impact_analysis_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+    embedded_context = ""
+    if input_payload is not None:
+        embedded_context = (
+            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
+            f"regression_impact_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+        )
+    return (
+        "你是反馈闭环中的回归影响分析智能体 regression-impact-analyzer。你的职责是根据 eval_run、"
+        "gate_result 和每个 eval item 的结果，判断本次变更对长期回归资产的影响。\n\n"
+        f"输入文件：{input_path}\n\n"
+        "系统会在后端通过 DSPy formatter 和 Pydantic schema 把你的输出格式化为 "
+        f"{REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION}。"
+        "输出应覆盖 result_status、gate_result、impacted_assets、recommendations、summary、risk_assessment 和 next_steps。"
+        "不能判断是否阻断时，status 使用 needs_human_review 并填写 no_action_reason。\n\n"
+        f"{NATURAL_LANGUAGE_CHINESE_RULE}"
+        "summary、risk_assessment、recommendations、next_steps、no_action_reason 必须使用简体中文。"
+        f"{embedded_context}"
+    )
+
+
 def extract_json_object(text: str, *, expected_schema_version: str | None = None) -> dict[str, Any]:
     stripped = text.strip()
     if not stripped:
@@ -230,13 +211,6 @@ def extract_json_object(text: str, *, expected_schema_version: str | None = None
         for candidate in reversed(candidates):
             if candidate.get("schema_version") == expected_schema_version:
                 return candidate
-        scored = sorted(
-            candidates,
-            key=lambda item: _schema_candidate_score(item, expected_schema_version),
-            reverse=True,
-        )
-        if scored and _schema_candidate_score(scored[0], expected_schema_version) > 0:
-            return scored[0]
     if candidates:
         return candidates[0]
     raise AgentOutputParseError("agent output did not contain a JSON object")
@@ -284,16 +258,6 @@ def _repair_json_candidates(text: str) -> list[dict[str, Any]]:
         if isinstance(loaded, dict):
             repaired.append(loaded)
     return repaired
-
-
-def _schema_candidate_score(candidate: dict[str, Any], expected_schema_version: str) -> int:
-    fields = EXPECTED_SCHEMA_FIELDS.get(expected_schema_version)
-    if not fields:
-        return 0
-    score = len(set(candidate) & fields)
-    if candidate.get("schema_version") == expected_schema_version:
-        score += len(fields)
-    return score
 
 
 def read_json(path: str | Path) -> dict[str, Any]:

@@ -61,6 +61,8 @@ AGENT_MODEL=claude-sonnet-4-5
 
 `docker/.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口映射为 `58080:8080`，符合项目端口规则 `50000 + 容器端口`。
 
+离线部署表示不依赖公网远程服务，不表示无模型运行；反馈闭环、执行优化和 DSPy 输出规范化应指向本地或内网模型网关。Agent 若没有输出精确匹配 `schema_version` 的完整 JSON，Runtime 会交给 DSPy formatter 规范化，formatter 不可用时 job 会失败并写入 `error_json`，不会生成 offline/raw 占位结果。
+
 Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt 使用阿里源，uv/pip 使用阿里 PyPI 源，npm 使用 npmmirror；这些源不再通过 `docker/.env` 覆盖，避免不同机器构建时漂移。Compose 运行环境也会固定同名 pip/uv/npm 变量，避免已有本地 `docker/.env` 旧变量影响容器内后续安装命令。基础镜像固定使用 `python:3.11-slim` 和 `node:22-alpine`；基础镜像拉取没有统一、稳定的公共国内 registry 可直接写死，建议通过 Docker daemon registry mirror 或团队内网基础镜像仓库处理，如需切换应直接修改 Dockerfile 的 `FROM` 行。
 
 镜像构建阶段会安装 `a2ui-adk` 相关 Python 依赖，并从 `docker/vendor/A2UI/agent_sdks/python` 安装已 vendor 的 Google A2UI v0.9 Python SDK。PyPI 依赖在 build 阶段完成下载，容器运行时不会再为 `a2ui-adk` 访问互联网。
@@ -76,6 +78,8 @@ make build
 make up
 make logs
 ```
+
+`make up` 会同时启动 API、前端相关服务和 `claude-agent-worker`。反馈闭环中需要模型执行的归因、方案、执行计划、回归用例生成和回归影响分析都会先写入 `/api/agent-jobs` 队列，再由 worker 消费并把结构化输出投影回对应领域表。
 
 健康检查：
 
@@ -138,7 +142,7 @@ http://localhost:55173
 
 ## 反馈优化闭环
 
-Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案和执行在 Feedback 工作台中按 `feedback case -> evidence package -> attribution-analyzer -> optimization batch -> proposal-generator -> execution-optimizer -> regression run` 链路处理。
+Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案、执行计划、回归用例生成和回归影响分析统一走 `agent_jobs` 异步队列，前端通过 `GET /api/agent-jobs/{job_id}` 轮询状态。
 
 完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 生成 [docs/开放接口规范.json](docs/开放接口规范.json)。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
@@ -149,13 +153,14 @@ pnpm --dir frontend generate:api-types
 ```
 
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。
-- 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate`、`GET /api/feedback-analysis/jobs/{job_id}`、`GET /api/feedback-analysis/jobs/{job_id}/attribution`、`GET /api/feedback-analysis/jobs/{job_id}/proposal`、`POST /api/feedback-analysis/jobs/{job_id}/proposal/revalidate`。
-- 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`GET/POST /api/feedback-optimization-batches/{batch_id}/eval-cases`、`PATCH/DELETE /api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`GET /api/optimization-tasks`、`POST /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST /api/optimization-tasks/{task_id}/mark-applied`、`POST/GET /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`POST/GET /api/optimization-tasks/{task_id}/regression-runs`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
-- 评估和版本：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`GET /api/agent-versions/main/current`、`GET /api/agent-versions/main`、`POST /api/agent-versions/main/snapshots`、`POST /api/agent-versions/main/{version_id}/rollback`、`GET /api/agent-versions/main/diff`、`GET /api/agent-versions/main/file-diff`、`GET /api/agent-versions/main/{version_id}`。
+- Agent job 队列：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}`。
+- 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs`、`POST /api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate`。归因和建议输出通过 `GET /api/agent-jobs/{job_id}` 的 `validated_output_json` 读取。
+- 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`GET/POST /api/feedback-optimization-batches/{batch_id}/eval-cases`、`PATCH/DELETE /api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`GET /api/optimization-tasks`、`POST /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST /api/optimization-tasks/{task_id}/mark-applied`、`POST /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`POST/GET /api/optimization-tasks/{task_id}/regression-runs`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
+- 评估和版本：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`POST/GET /api/eval-runs/{eval_run_id}/impact-analysis`、`GET /api/agent-versions/main/current`、`GET /api/agent-versions/main`、`POST /api/agent-versions/main/snapshots`、`POST /api/agent-versions/main/{version_id}/rollback`、`GET /api/agent-versions/main/diff`、`GET /api/agent-versions/main/file-diff`、`GET /api/agent-versions/main/{version_id}`。
 
 运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `docker/volume/data/`：
 
-- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、分析任务、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
+- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、`execution_applications`、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
 - `/data/.runtime-tmp/jobs/` 是归因、建议和评估 Agent 的临时 job workspace。
 - `/data/agent-versions/main/` 保存主智能体受管配置版本 manifest 和 bundle。
 - `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/外部治理Webhook示例.yaml`。

@@ -8,8 +8,19 @@ from .normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
     normalize_feedback_optimization_plan_output,
+    normalize_feedback_eval_case_generation_output,
     normalize_proposal_output,
+    normalize_regression_impact_analysis_output,
     task_context_has_external_specificity as _task_context_has_external_specificity,
+)
+from .schema_versions import (
+    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
+    EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    PROPOSAL_OUTPUT_SCHEMA_VERSION,
+    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
 
 
@@ -67,7 +78,7 @@ class ResponsibilityBoundary(BaseModel):
 
 
 class AttributionOutput(BaseModel):
-    schema_version: Literal["attribution-output/v1"]
+    schema_version: Literal[ATTRIBUTION_OUTPUT_SCHEMA_VERSION]
     feedback_case_id: str
     attribution_job_id: str
     status: Literal["completed", "needs_human_review"] = "completed"
@@ -103,7 +114,7 @@ class ExternalGuidance(BaseModel):
 
 
 class ProposalOutput(BaseModel):
-    schema_version: Literal["proposal-output/v1"]
+    schema_version: Literal[PROPOSAL_OUTPUT_SCHEMA_VERSION]
     feedback_case_id: str
     proposal_job_id: str
     status: Literal["completed", "needs_human_review"] = "completed"
@@ -217,7 +228,7 @@ class BlockedOptimizationItemOutput(BaseModel):
 class FeedbackOptimizationPlanOutput(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    schema_version: Literal["feedback-optimization-plan-output/v1"]
+    schema_version: Literal[FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION]
     batch_id: str
     optimization_plan_id: Optional[str] = None
     created_at: Optional[str] = None
@@ -293,7 +304,7 @@ class ExecutionOperation(BaseModel):
 
 
 class ExecutionPlanOutput(BaseModel):
-    schema_version: Literal["execution-plan-output/v1"]
+    schema_version: Literal[EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION]
     optimization_task_id: str
     execution_job_id: str
     status: Literal["ready", "needs_human_review"] = "ready"
@@ -318,5 +329,93 @@ def validate_execution_plan_output(payload: dict[str, Any]) -> tuple[dict[str, A
     normalized = normalize_execution_plan_output(payload)
     try:
         return ExecutionPlanOutput.model_validate(normalized).model_dump(mode="json"), None
+    except ValidationError as exc:
+        return None, exc.json()
+
+
+class GeneratedEvalCaseOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: str = FEEDBACK_EVAL_CASE_SCHEMA_VERSION
+    eval_case_id: Optional[str] = None
+    status: Literal["active", "draft", "archived"] = "draft"
+    source: Optional[str] = "eval_case_governor"
+    source_feedback_case_id: Optional[str] = None
+    source_run_id: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_id: Optional[str] = None
+    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    asset_layer: Optional[str] = "candidate"
+    promotion_status: Optional[str] = "candidate"
+    blocking_policy: Optional[str] = "non_blocking"
+    scenario_pack: Optional[str] = None
+    severity: Optional[str] = "medium"
+    flaky_status: Optional[str] = "stable"
+    variant_role: Optional[str] = "original_reproduction"
+    prompt: str
+    expected_behavior: Optional[str] = None
+    checks_json: dict[str, Any] = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)
+    source_summary: Optional[dict[str, Any]] = None
+    attribution_summary: Optional[dict[str, Any]] = None
+    proposal_summary: Optional[dict[str, Any]] = None
+
+
+class FeedbackEvalCaseGenerationOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION]
+    job_id: Optional[str] = None
+    scope_kind: Optional[str] = None
+    scope_id: Optional[str] = None
+    status: Literal["completed", "needs_human_review"] = "completed"
+    eval_cases: list[GeneratedEvalCaseOutput] = Field(default_factory=list)
+    results: list[dict[str, Any]] = Field(default_factory=list)
+    no_action_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_eval_cases_or_reason(self) -> "FeedbackEvalCaseGenerationOutput":
+        if not self.eval_cases and not self.no_action_reason:
+            raise ValueError("eval case generation output must include eval_cases or no_action_reason")
+        if not self.eval_cases:
+            self.status = "needs_human_review"
+        return self
+
+
+class RegressionImpactAnalysisOutput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION]
+    impact_analysis_id: Optional[str] = None
+    eval_run_id: str
+    status: Literal["completed", "needs_human_review"] = "completed"
+    result_status: Optional[str] = None
+    gate_result: dict[str, Any] = Field(default_factory=dict)
+    impacted_assets: list[dict[str, Any]] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    risk_assessment: Optional[str] = None
+    next_steps: list[str] = Field(default_factory=list)
+    no_action_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_recommendation_or_reason(self) -> "RegressionImpactAnalysisOutput":
+        if not self.recommendations and not self.next_steps and not self.no_action_reason:
+            raise ValueError("regression impact output must include recommendations, next_steps, or no_action_reason")
+        return self
+
+
+def validate_feedback_eval_case_generation_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    normalized = normalize_feedback_eval_case_generation_output(payload)
+    try:
+        return FeedbackEvalCaseGenerationOutput.model_validate(normalized).model_dump(mode="json"), None
+    except ValidationError as exc:
+        return None, exc.json()
+
+
+def validate_regression_impact_analysis_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    normalized = normalize_regression_impact_analysis_output(payload)
+    try:
+        return RegressionImpactAnalysisOutput.model_validate(normalized).model_dump(mode="json"), None
     except ValidationError as exc:
         return None, exc.json()

@@ -16,6 +16,7 @@ import type {
   FeedbackWorkbenchData,
   OptimizationProposalRecord,
   OptimizationProposalReviewAction,
+  OptimizationExecutionJobRecord,
   OptimizationTaskRecord,
   PendingCorrelationRecord,
   SocEventRecord,
@@ -168,11 +169,15 @@ export function buildBatchAttributionJobs(batch: FeedbackOptimizationBatchRecord
     byId.set(jobId, {
       job_id: jobId,
       job_type: "attribution",
+      scope_kind: "feedback_case",
+      scope_id: "",
       feedback_case_id: "",
       evidence_package_id: "",
       status: "unknown",
       profile_name: "attribution-analyzer",
       created_at: "",
+      retry_count: 0,
+      timeout_seconds: 300,
       input_path: "",
       raw_output_path: "",
       validated_output_path: "",
@@ -218,6 +223,10 @@ export function attributionStatusTone(jobs: FeedbackAnalysisJobRecord[], total: 
   if (jobs.some((job) => ["created", "queued", "running", "schema_validating", "evidence_packaging"].includes(String(job.status)))) return "blue";
   if (jobs.filter((job) => job.status === "completed").length === total) return "green";
   return "gray";
+}
+
+export function executionPlanReady(job?: OptimizationExecutionJobRecord | null): boolean {
+  return Boolean(job && job.status === "completed" && job.validated_output_json?.status === "ready");
 }
 
 export function batchRegressionStatusText(batch: FeedbackOptimizationBatchRecord): string {

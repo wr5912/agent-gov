@@ -9,9 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from ..errors import BusinessRuleViolation
 from ..runtime_db import (
     AgentRunModel,
+    AgentJobModel,
     EvalCaseModel,
     FeedbackSignalModel,
-    FeedbackJobModel,
     FeedbackSourceAnnotationModel,
     PendingCorrelationModel,
     SocEventModel,
@@ -447,55 +447,14 @@ class FeedbackSourceStoreMixin:
         return feedback_case
 
     def generate_eval_cases_for_sources(self, source_refs: list[dict[str, Any]], *, force: bool = False) -> dict[str, Any]:
-        created = 0
-        reused = 0
-        updated = 0
-        skipped = 0
-        eval_cases: list[dict[str, Any]] = []
-        cases_to_create: list[dict[str, Any]] = []
-        eval_cases_to_create: list[dict[str, Any]] = []
-        eval_cases_to_update: list[dict[str, Any]] = []
-        results: list[dict[str, Any]] = []
-        for ref in self._normalize_source_refs(source_refs):
-            feedback_case, should_create = self._prepare_feedback_case_for_source(ref, priority="medium")
-            if not feedback_case:
-                skipped += 1
-                results.append({**ref, "status": "skipped", "reason": "source cannot create feedback case"})
-                continue
-            if should_create:
-                cases_to_create.append(feedback_case)
-            existing = self.find_eval_case(source_feedback_case_id=feedback_case["feedback_case_id"])
-            payload = self._build_eval_case_from_source(ref, feedback_case)
-            if not payload:
-                skipped += 1
-                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "status": "skipped", "reason": "missing prompt"})
-                continue
-            if existing and not force:
-                reused += 1
-                eval_cases.append(existing)
-                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": existing["eval_case_id"], "status": "reused"})
-                continue
-            if existing and force:
-                payload["eval_case_id"] = existing["eval_case_id"]
-                payload["created_at"] = existing["created_at"]
-                eval_cases_to_update.append(payload)
-                eval_cases.append(payload)
-                updated += 1
-                results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": existing["eval_case_id"], "status": "updated"})
-                continue
-            eval_cases_to_create.append(payload)
-            created += 1
-            eval_cases.append(payload)
-            results.append({**ref, "feedback_case_id": feedback_case["feedback_case_id"], "eval_case_id": payload["eval_case_id"], "status": "created"})
-        if cases_to_create or eval_cases_to_create or eval_cases_to_update:
-            with self.Session.begin() as db:
-                for feedback_case in cases_to_create:
-                    db.add(self._case_model_from_dict(feedback_case))
-                for eval_case in eval_cases_to_create:
-                    self._add_eval_case_row(db, eval_case)
-                for eval_case in eval_cases_to_update:
-                    self._update_eval_case_row(db, eval_case)
-        return {"created": created, "reused": reused, "updated": updated, "skipped": skipped, "eval_cases": eval_cases, "results": results}
+        return self.queue_feedback_eval_case_generation_agent_job(source_refs=source_refs, force=force) or {
+            "created": 0,
+            "reused": 0,
+            "updated": 0,
+            "skipped": 0,
+            "eval_cases": [],
+            "results": [],
+        }
 
     def _prepare_feedback_case_for_source(self, ref: dict[str, str], *, priority: str) -> tuple[Optional[dict[str, Any]], bool]:
         kind = self._normalize_source_kind(ref["source_kind"])
@@ -625,7 +584,7 @@ class FeedbackSourceStoreMixin:
         if not job_ids:
             return {}
         with self.Session() as db:
-            rows = db.scalars(select(FeedbackJobModel).where(FeedbackJobModel.job_id.in_(job_ids))).all()
+            rows = db.scalars(select(AgentJobModel).where(AgentJobModel.job_id.in_(job_ids))).all()
         return {row.job_id: self._job_to_dict(row) for row in rows}
 
     def _source_row(

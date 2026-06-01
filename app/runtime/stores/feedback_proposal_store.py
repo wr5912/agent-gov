@@ -13,24 +13,6 @@ from ..state_machines import validate_transition
 class FeedbackProposalStoreMixin:
     """Store operations for optimization proposal records and reviews."""
 
-    def offline_proposal_output(self, job: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": job["feedback_case_id"],
-            "proposal_job_id": job["job_id"],
-            "status": "needs_human_review",
-            "proposals": [],
-            "external_guidance": [
-                {
-                    "owner": "needs_human_analysis",
-                    "actionability": "needs_human_analysis",
-                    "recommendation": "当前没有高置信归因输出，不能创建主智能体 workspace 修改方案。",
-                    "reason": "归因 job 未给出 direct_workspace_change 或 workspace_config_change。",
-                }
-            ],
-            "no_action_reason": "needs_human_analysis",
-        }
-
     def _normalize_proposal_output(self, output: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
         normalized = {**output, "proposals": [], "external_guidance": list(output.get("external_guidance") or [])}
         for item in output.get("proposals") or []:

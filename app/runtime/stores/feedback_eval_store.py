@@ -23,29 +23,14 @@ class FeedbackEvalStoreMixin:
         feedback_case_id: Optional[str] = None,
         limit: int = 100,
     ) -> dict[str, Any]:
-        feedback_cases = [self.find_case(feedback_case_id)] if feedback_case_id else self.list_cases(limit=limit)
-        created = 0
-        reused = 0
-        skipped = 0
-        eval_cases: list[dict[str, Any]] = []
-        for feedback_case in feedback_cases:
-            if not feedback_case:
-                skipped += 1
-                continue
-            existing = self.find_eval_case(source_feedback_case_id=feedback_case["feedback_case_id"])
-            if existing:
-                reused += 1
-                eval_cases.append(existing)
-                continue
-            payload = self._build_eval_case_from_feedback(feedback_case)
-            if not payload:
-                skipped += 1
-                continue
-            with self.Session.begin() as db:
-                self._add_eval_case_row(db, payload)
-            created += 1
-            eval_cases.append(payload)
-        return {"created": created, "reused": reused, "skipped": skipped, "eval_cases": eval_cases}
+        return self.queue_feedback_eval_case_generation_agent_job(feedback_case_id=feedback_case_id, limit=limit) or {
+            "created": 0,
+            "reused": 0,
+            "updated": 0,
+            "skipped": 0,
+            "eval_cases": [],
+            "results": [],
+        }
 
     def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
         prompt = (self._string(fields.get("prompt")) or "").strip()

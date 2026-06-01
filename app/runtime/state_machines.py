@@ -32,6 +32,8 @@ JOB_IN_PROGRESS_STATES = {
     "evidence_packaging",
 }
 
+AGENT_JOB_STATES = JOB_STATES
+
 EXECUTION_JOB_STATES = {
     "queued",
     "running",
@@ -126,8 +128,27 @@ EXTERNAL_GOVERNANCE_ITEM_STATES = {
     "superseded",
 }
 
+EXECUTION_APPLICATION_STATES = {
+    "created",
+    "applied",
+    "failed",
+    "pending_manual_recovery",
+    "compensated",
+}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "job": {
+        "created": {"queued", "running", "failed"},
+        "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
+        "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
+        "schema_validating": {"completed", "needs_human_review", "failed"},
+        "evidence_packaging": {"queued", "running", "failed"},
+        "needs_human_review": {"schema_validating", "failed"},
+        "failed": {"schema_validating"},
+        "completed": set(),
+        "timeout": {"failed"},
+    },
+    "agent_job": {
         "created": {"queued", "running", "failed"},
         "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
         "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
@@ -234,10 +255,18 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "notified": {"notified", "notification_failed", "superseded"},
         "superseded": set(),
     },
+    "execution_application": {
+        "created": {"applied", "failed", "pending_manual_recovery", "compensated"},
+        "applied": set(),
+        "failed": set(),
+        "pending_manual_recovery": {"compensated", "failed"},
+        "compensated": set(),
+    },
 }
 
 _KNOWN_STATES = {
     "job": JOB_STATES,
+    "agent_job": AGENT_JOB_STATES,
     "execution_job": EXECUTION_JOB_STATES,
     "case": CASE_STATES,
     "batch": BATCH_STATES,
@@ -247,6 +276,7 @@ _KNOWN_STATES = {
     "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
     "proposal": PROPOSAL_STATES,
     "external_governance_item": EXTERNAL_GOVERNANCE_ITEM_STATES,
+    "execution_application": EXECUTION_APPLICATION_STATES,
 }
 
 

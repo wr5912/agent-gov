@@ -1,4 +1,4 @@
-import { ListTree, MessageSquare, Search, X } from "lucide-react";
+import { ListTree, MessageSquare, Plus, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
 import type { AgentActivity, ChatMessage, StreamLogEvent } from "../types/runtime";
@@ -21,6 +21,14 @@ const feedbackLabelOptions = [
   { value: "permission_denied", label: "权限拒绝" },
   { value: "runtime_error", label: "Runtime 错误" },
 ];
+
+function normalizeFeedbackLabel(value: string): string {
+  return value.trim().replace(/\s+/g, "_");
+}
+
+function feedbackLabelDisplay(value: string): string {
+  return feedbackLabelOptions.find((option) => option.value === value)?.label || value;
+}
 
 export function MessageBubble({ message, onCreateFeedback }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
@@ -87,11 +95,25 @@ function FeedbackModal({
 }) {
   const [analystAction, setAnalystAction] = useState("rejected");
   const [labels, setLabels] = useState<string[]>(["evidence_insufficient"]);
+  const [selectedLabelOption, setSelectedLabelOption] = useState("");
+  const [customLabel, setCustomLabel] = useState("");
   const [affectedTools, setAffectedTools] = useState<string[]>([]);
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tools = message.agentActivity?.tool_names || [];
+  const canAddCustomLabel = Boolean(normalizeFeedbackLabel(customLabel));
+
+  function addLabel(value: string) {
+    const normalized = normalizeFeedbackLabel(value);
+    if (!normalized) return;
+    setLabels((prev) => prev.includes(normalized) ? prev : [...prev, normalized]);
+  }
+
+  function addCustomLabel() {
+    addLabel(customLabel);
+    setCustomLabel("");
+  }
 
   async function submit() {
     if (!message.runId || !message.sessionId) return;
@@ -148,17 +170,49 @@ function FeedbackModal({
 
           <div className="feedback-submit-group">
             <span className="section-title">问题标签</span>
-            <div className="feedback-chip-grid">
-              {feedbackLabelOptions.map((option) => (
-                <label className="feedback-check-chip" key={option.value}>
-                  <input
-                    type="checkbox"
-                    checked={labels.includes(option.value)}
-                    onChange={() => setLabels((prev) => prev.includes(option.value) ? prev.filter((item) => item !== option.value) : [...prev, option.value])}
-                  />
-                  {option.label}
-                </label>
-              ))}
+            <div className="feedback-label-picker">
+              <label className="form-field feedback-label-select">
+                <span>下拉选择</span>
+                <select
+                  value={selectedLabelOption}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setSelectedLabelOption("");
+                    addLabel(value);
+                  }}
+                >
+                  <option value="" disabled>选择标签</option>
+                  {feedbackLabelOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="form-field feedback-label-custom">
+                <span>自定义标签</span>
+                <input
+                  value={customLabel}
+                  onChange={(event) => setCustomLabel(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      addCustomLabel();
+                    }
+                  }}
+                  placeholder="custom_label"
+                />
+              </label>
+              <button className="secondary-button feedback-add-label-button" type="button" disabled={!canAddCustomLabel} onClick={addCustomLabel}>
+                <Plus size={14} />
+                添加
+              </button>
+            </div>
+            <div className="feedback-selected-labels" aria-label="已选问题标签">
+              {labels.length ? labels.map((label) => (
+                <button className="feedback-selected-chip" type="button" key={label} onClick={() => setLabels((prev) => prev.filter((item) => item !== label))}>
+                  <span>{feedbackLabelDisplay(label)}</span>
+                  <X size={12} />
+                </button>
+              )) : <span className="empty-state">未选择标签</span>}
             </div>
           </div>
 

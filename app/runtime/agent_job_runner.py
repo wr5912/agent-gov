@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any, Callable
 
 from .agent_profiles import AgentRuntimeProfile
-from .prompts.feedback_prompts import EXPECTED_SCHEMA_FIELDS, extract_json_candidates
+from .prompts.feedback_prompts import extract_json_candidates
 from .message_utils import extract_text
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
@@ -108,15 +108,12 @@ class AgentJobRunner:
             direct = self.direct_schema_candidate(answer, expected_schema_version)
             if direct:
                 return direct
-            formatted = await self.format_agent_text(
+            return await self.format_agent_text(
                 job_type=job_type,
                 raw_text=answer,
                 job_input=job_input,
                 expected_schema_version=expected_schema_version,
             )
-            if formatted:
-                return formatted
-            return self.raw_agent_text_payload(answer, expected_schema_version)
 
         return await asyncio.wait_for(collect(), timeout=profile.max_runtime_seconds)
 
@@ -127,24 +124,18 @@ class AgentJobRunner:
         raw_text: str,
         job_input: dict[str, Any],
         expected_schema_version: str,
-    ) -> dict[str, Any] | None:
-        if job_type not in {"attribution", "proposal", "batch_plan", "execution"}:
-            return None
-        try:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(
-                    self.output_formatter.format,
-                    job_type=job_type,
-                    raw_text=raw_text,
-                    job_input=job_input,
-                    expected_schema_version=expected_schema_version,
-                ),
-                timeout=self.settings.dspy_output_formatter_timeout_seconds,
-            )
-        except Exception as exc:
-            print(f"[WARN] failed to format Agent output: {exc}", flush=True)
-            return None
-        return result.payload if result else None
+    ) -> dict[str, Any]:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                self.output_formatter.format,
+                job_type=job_type,
+                raw_text=raw_text,
+                job_input=job_input,
+                expected_schema_version=expected_schema_version,
+            ),
+            timeout=self.settings.dspy_output_formatter_timeout_seconds,
+        )
+        return result.payload
 
     @staticmethod
     async def single_prompt_stream(prompt: str) -> AsyncIterator[dict[str, Any]]:
@@ -190,18 +181,4 @@ class AgentJobRunner:
         for candidate in reversed(candidates):
             if candidate.get("schema_version") == expected_schema_version:
                 return candidate
-        expected_fields = EXPECTED_SCHEMA_FIELDS.get(expected_schema_version)
-        if not expected_fields:
-            return None
-        scored = sorted(candidates, key=lambda item: len(set(item) & expected_fields), reverse=True)
-        if scored and len(set(scored[0]) & expected_fields) >= max(3, len(expected_fields) // 2):
-            return scored[0]
         return None
-
-    @staticmethod
-    def raw_agent_text_payload(raw_text: str, expected_schema_version: str) -> dict[str, Any]:
-        return {
-            "_raw_agent_text": raw_text,
-            "_candidate_json_objects": extract_json_candidates(raw_text),
-            "_expected_schema_version": expected_schema_version,
-        }

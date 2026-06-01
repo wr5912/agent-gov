@@ -4,6 +4,13 @@ import json
 import re
 from typing import Any
 
+from ..schema_versions import (
+    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
+    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+)
+
 
 def normalize_attribution_output(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = dict(payload)
@@ -134,7 +141,7 @@ def normalize_feedback_optimization_plan_output(payload: dict[str, Any]) -> dict
     normalized = dict(payload)
     if not normalized.get("optimization_plan_id") and normalized.get("plan_id"):
         normalized["optimization_plan_id"] = str(normalized["plan_id"])
-    normalized.setdefault("schema_version", "feedback-optimization-plan-output/v1")
+    normalized.setdefault("schema_version", FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION)
     normalized["status"] = _normalize_plan_status(normalized.get("status"))
     normalized["confidence"] = _normalize_confidence(normalized.get("confidence"))
     normalized["actionability"] = _normalize_actionability(normalized.get("actionability"))
@@ -516,14 +523,12 @@ def _external_task_objective(owner: str, target: str, observed_issue: str) -> st
     issue = f"，修复{observed_issue}" if observed_issue else ""
     return f"推动 {owner} 修复 {target} 的数据或接口能力{issue}，让 Agent 后续可获得完整可靠输入。"
 
-
 def _external_task_actions(owner: str, target: str, observed_issue: str) -> list[str]:
     issue = f"：{observed_issue}" if observed_issue else ""
     return [
         f"请 {owner} 核查 {target} 的数据覆盖、筛选条件和返回逻辑{issue}",
         "修复后使用关联反馈场景验证 Agent 能获得完整数据并完成回答。",
     ]
-
 
 def _external_task_acceptance_criteria(context: dict[str, Any]) -> list[str]:
     target = _external_context_target(context)
@@ -538,11 +543,9 @@ def _external_task_acceptance_criteria(context: dict[str, Any]) -> list[str]:
     criteria.append("关联回归测试中，Agent 能基于外部系统返回结果完整回答反馈指出的问题。")
     return criteria
 
-
 def _external_task_validation(context: dict[str, Any]) -> str:
     target = _external_context_target(context)
     return f"修复后重新运行本批次回归测试，并核查 {target} 返回结果是否满足验收标准。"
-
 
 def _external_expected_fix(context: dict[str, Any]) -> str:
     server = str(context.get("mcp_server") or context.get("external_system") or "").strip()
@@ -550,7 +553,6 @@ def _external_expected_fix(context: dict[str, Any]) -> str:
     fields = _string_list(context.get("affected_fields"))
     field_text = f"，覆盖 {', '.join(fields)}" if fields else ""
     return f"修复 {server or target} 的 {target} 数据返回逻辑{field_text}，确保返回结果与查询上下文一致。"
-
 
 def _unique_strings(values: list[str]) -> list[str]:
     seen: set[str] = set()
@@ -562,7 +564,6 @@ def _unique_strings(values: list[str]) -> list[str]:
             result.append(text)
     return result
 
-
 def _normalize_plan_status(value: Any) -> str:
     status_value = str(value or "").strip().lower()
     if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval"}:
@@ -571,13 +572,11 @@ def _normalize_plan_status(value: Any) -> str:
         return "needs_human_review"
     return "pending_approval"
 
-
 def _normalize_confidence(value: Any) -> str:
     confidence = str(value or "").strip().lower()
     if confidence in {"high", "medium", "low"}:
         return confidence
     return "medium"
-
 
 def _normalize_actionability(value: Any) -> str:
     actionability = str(value or "").strip()
@@ -601,7 +600,6 @@ def _normalize_actionability(value: Any) -> str:
         "not_actionable",
     }
     return actionability if actionability in allowed else "needs_human_analysis"
-
 
 def _normalize_problem_type(value: Any) -> str:
     problem_type = str(value or "").strip()
@@ -628,7 +626,6 @@ def _normalize_problem_type(value: Any) -> str:
     }
     return problem_type if problem_type in allowed else "insufficient_information"
 
-
 def _normalize_task_context_payload(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         return {}
@@ -647,7 +644,6 @@ def _normalize_task_context_payload(value: Any) -> dict[str, Any]:
                 context[key] = [text] if key in list_keys else text
     return context
 
-
 def task_context_has_external_specificity(context: dict[str, Any]) -> bool:
     has_interface = bool(context.get("tool_name") or context.get("tool_names") or context.get("api_name") or context.get("api_path") or context.get("endpoint"))
     has_object = bool(
@@ -660,7 +656,6 @@ def task_context_has_external_specificity(context: dict[str, Any]) -> bool:
     )
     has_owner = bool(context.get("mcp_server") or context.get("external_system"))
     return has_interface and has_object and has_owner
-
 
 def _normalize_evidence_refs(value: Any) -> list[dict[str, str]]:
     refs: list[dict[str, str]] = []
@@ -732,6 +727,65 @@ def normalize_execution_plan_output(payload: dict[str, Any]) -> dict[str, Any]:
         if normalized.get(key) is not None and not isinstance(normalized.get(key), str):
             normalized[key] = _human_text(normalized.get(key))
     return normalized
+
+
+def normalize_feedback_eval_case_generation_output(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized.setdefault("schema_version", FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION)
+    if "eval_cases" not in normalized and isinstance(normalized.get("eval_case"), dict):
+        normalized["eval_cases"] = [normalized["eval_case"]]
+    cases: list[dict[str, Any]] = []
+    for item in normalized.get("eval_cases") or []:
+        if not isinstance(item, dict):
+            continue
+        case = dict(item)
+        case.setdefault("schema_version", FEEDBACK_EVAL_CASE_SCHEMA_VERSION)
+        case["status"] = _normalize_eval_case_status(case.get("status"))
+        case["asset_layer"] = str(case.get("asset_layer") or "candidate")
+        case["promotion_status"] = str(case.get("promotion_status") or ("approved" if case["status"] == "active" else "candidate"))
+        case["blocking_policy"] = str(case.get("blocking_policy") or ("blocking" if case["status"] == "active" else "non_blocking"))
+        case["severity"] = str(case.get("severity") or "medium")
+        case["flaky_status"] = str(case.get("flaky_status") or "stable")
+        case["variant_role"] = str(case.get("variant_role") or "original_reproduction")
+        case["labels"] = _string_list(case.get("labels"))
+        case["checks_json"] = case.get("checks_json") if isinstance(case.get("checks_json"), dict) else {}
+        for key in ("prompt", "expected_behavior"):
+            if case.get(key) is not None and not isinstance(case.get(key), str):
+                case[key] = _human_text(case.get(key))
+        if not str(case.get("prompt") or "").strip():
+            case["prompt"] = str(case.get("title") or case.get("source_summary") or "").strip()
+        cases.append(case)
+    normalized["eval_cases"] = cases
+    if not cases and not normalized.get("no_action_reason"):
+        normalized["no_action_reason"] = "eval-case-governor 未生成可用评估用例。"
+    normalized["status"] = "completed" if cases and normalized.get("status") != "needs_human_review" else "needs_human_review"
+    return normalized
+
+
+def normalize_regression_impact_analysis_output(payload: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(payload)
+    normalized.setdefault("schema_version", REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION)
+    normalized["gate_result"] = normalized.get("gate_result") if isinstance(normalized.get("gate_result"), dict) else {}
+    normalized["impacted_assets"] = _normalize_dict_list(normalized.get("impacted_assets"), default_key="summary")
+    normalized["recommendations"] = _string_list(normalized.get("recommendations"))
+    normalized["next_steps"] = _string_list(normalized.get("next_steps"))
+    status = str(normalized.get("status") or "").strip().lower()
+    normalized["status"] = "needs_human_review" if status in {"needs_human_review", "needs_review", "manual_review"} else "completed"
+    for key in ("summary", "risk_assessment", "no_action_reason"):
+        if normalized.get(key) is not None and not isinstance(normalized.get(key), str):
+            normalized[key] = _human_text(normalized.get(key))
+    if not normalized["recommendations"] and normalized.get("summary"):
+        normalized["recommendations"] = [str(normalized["summary"])]
+    return normalized
+
+
+def _normalize_eval_case_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in {"active", "draft", "archived"}:
+        return status
+    if status in {"approved", "blocking"}:
+        return "active"
+    return "draft"
 
 
 def _human_text(value: Any) -> str:

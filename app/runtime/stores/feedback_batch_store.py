@@ -288,11 +288,20 @@ class FeedbackBatchStoreMixin:
 
     def record_batch_regression_result(self, batch_id: str, eval_run: dict[str, Any]) -> Optional[dict[str, Any]]:
         result_status = str(eval_run.get("result_status") or eval_run.get("status") or "needs_human_review")
-        status = "completed" if result_status == "passed" else result_status
+        status = {
+            "blocked": "blocked",
+            "review_required": "needs_human_review",
+            "passed_with_notes": "completed",
+            "passed": "completed",
+        }.get(result_status, result_status)
         return self._update_batch(
             batch_id,
             status=status,
-            fields={"eval_run_id": eval_run.get("eval_run_id"), "latest_eval_run": eval_run},
+            fields={
+                "eval_run_id": eval_run.get("eval_run_id"),
+                "latest_eval_run": eval_run,
+                "latest_regression_gate": eval_run.get("gate_result") or {},
+            },
         )
 
     def _capture_batch_apply_result(self, task_updates: dict[str, Any], top_level_fields: dict[str, Any], applied: dict[str, Any]) -> None:

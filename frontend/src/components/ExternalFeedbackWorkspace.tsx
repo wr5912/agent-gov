@@ -8,6 +8,7 @@ import { AgentVersionsWorkspace } from "./AgentVersionsWorkspace";
 import { AttributionResult } from "./feedback-workspace/AttributionResult";
 import { BatchesPanel } from "./feedback-workspace/BatchesWorkspace";
 import { ExecutionApplyConfirmModal, InstructionModal } from "./feedback-workspace/FeedbackModals";
+import { RegressionAssetsPanel } from "./feedback-workspace/RegressionAssetsWorkspace";
 import { SignalsPanel } from "./feedback-workspace/SignalsWorkspace";
 import { TasksDetails } from "./feedback-workspace/TasksDetails";
 import { useFeedbackWorkspaceActions } from "./feedback-workspace/useFeedbackWorkspaceActions";
@@ -49,6 +50,7 @@ export function ExternalFeedbackWorkspace({
     selectedSource,
     visibleBatches,
     selectedBatch,
+    visibleRegressionAssets,
   } = useFeedbackWorkspaceState({ clientConfig, refreshToken });
   const {
     actionId,
@@ -166,6 +168,16 @@ export function ExternalFeedbackWorkspace({
           />
         ) : null}
 
+        {activeMenu === "regression-assets" ? (
+          <RegressionAssetsPanel
+            actionId={actionId}
+            assets={visibleRegressionAssets}
+            clientConfig={clientConfig}
+            onRefresh={refreshWorkbench}
+            setToast={setToast}
+          />
+        ) : null}
+
         {activeMenu === "versions" ? (
           <AgentVersionsWorkspace
             clientConfig={clientConfig}
@@ -181,7 +193,7 @@ export function ExternalFeedbackWorkspace({
         {activeMenu !== "versions" ? (
           <footer className="fw-info-bar">
             <GitBranch size={18} />
-            <span>{"当前链路：反馈信息 -> 默认回归用例 -> 优化批次 -> 归因分析智能体-> 优化方案生成智能体-> 执行优化智能体-> 批次回归测试。"}</span>
+            <span>{"当前链路：反馈信息 -> 候选回归用例 -> 回归资产治理 -> 优化批次 -> 归因分析智能体 -> 优化方案生成智能体 -> 执行优化智能体 -> 批次回归测试。"}</span>
             {monitoringConfig?.langfuseUrl ? <a href={monitoringConfig.langfuseUrl} target="_blank" rel="noreferrer">Langfuse</a> : null}
           </footer>
         ) : null}

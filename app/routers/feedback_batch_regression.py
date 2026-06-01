@@ -1,0 +1,117 @@
+from __future__ import annotations
+
+from typing import Any
+
+from fastapi import APIRouter
+
+from app.routers.error_helpers import ensure_found, raise_conflict
+from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchRegressionResponse
+from app.runtime.schemas import (
+    FeedbackOptimizationBatchRegressionRunRequest,
+    RegressionGateOverrideRequest,
+    RegressionGateOverrideResponse,
+    RegressionImpactAnalysisResponse,
+    RegressionPlanCreateRequest,
+    RegressionPlanResponse,
+)
+from app.runtime.stores.feedback_store import FeedbackStore
+
+
+def register_batch_regression_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
+    _register_batch_regression_plan_routes(router, feedback_store)
+    _register_batch_regression_run_routes(router, feedback_store, runtime)
+    _register_batch_regression_gate_routes(router, feedback_store)
+
+
+def _register_batch_regression_plan_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/regression-plan",
+        response_model=RegressionPlanResponse,
+        summary="Create or reuse a regression plan for one optimization batch",
+    )
+    async def create_feedback_optimization_batch_regression_plan(
+        batch_id: str,
+        req: RegressionPlanCreateRequest | None = None,
+    ) -> dict[str, Any]:
+        plan = feedback_store.create_regression_plan(batch_id, force=bool((req or RegressionPlanCreateRequest()).force))
+        return ensure_found(plan, "Feedback optimization batch not found")
+
+    @router.get(
+        "/feedback-optimization-batches/{batch_id}/regression-plan",
+        response_model=RegressionPlanResponse,
+        summary="Get latest regression plan for one optimization batch",
+    )
+    async def get_feedback_optimization_batch_regression_plan(batch_id: str) -> dict[str, Any]:
+        ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
+        plan = feedback_store.get_latest_regression_plan(batch_id)
+        return ensure_found(plan, "Regression plan not found")
+
+
+def _register_batch_regression_run_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/regression-runs",
+        response_model=FeedbackOptimizationBatchRegressionResponse,
+        summary="Run regression validation for one optimization batch from an explicit regression plan",
+    )
+    async def run_feedback_optimization_batch_regression(
+        batch_id: str,
+        req: FeedbackOptimizationBatchRegressionRunRequest,
+    ) -> dict[str, Any]:
+        batch = feedback_store.find_optimization_batch(batch_id)
+        batch = ensure_found(batch, "Feedback optimization batch not found")
+        task_id = str(batch.get("optimization_task_id") or "")
+        task = feedback_store.find_task(task_id)
+        if not task or not task.get("applied_agent_version_id"):
+            raise_conflict("Batch optimization must be applied before regression validation")
+        plan = feedback_store.get_regression_plan(req.regression_plan_id)
+        if not plan or plan.get("batch_id") != batch_id:
+            raise_conflict("Regression plan does not belong to this batch")
+        eval_case_ids = [str(item) for item in plan.get("eval_case_ids") or [] if item]
+        if not eval_case_ids:
+            raise_conflict("No approved active eval cases found for this regression plan")
+        result = await runtime.run_feedback_eval(
+            eval_case_ids=eval_case_ids,
+            optimization_task_id=task_id,
+            source="optimization_batch_regression",
+            regression_plan_id=req.regression_plan_id,
+        )
+        if not result:
+            raise_conflict("Regression run could not be started")
+        impact = feedback_store.create_regression_impact_analysis(result["eval_run_id"])
+        batch = feedback_store.record_batch_regression_result(batch_id, result)
+        return {"batch": batch, "eval_run": result, "regression_plan": plan, "impact_analysis": impact}
+
+
+def _register_batch_regression_gate_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis",
+        response_model=RegressionImpactAnalysisResponse,
+        summary="Create deterministic impact analysis for a batch regression run",
+    )
+    async def create_batch_regression_impact_analysis(batch_id: str, eval_run_id: str) -> dict[str, Any]:
+        ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
+        analysis = feedback_store.create_regression_impact_analysis(eval_run_id)
+        return ensure_found(analysis, "Eval run not found")
+
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/gate-overrides",
+        response_model=RegressionGateOverrideResponse,
+        summary="Record a break-glass override for a regression gate result",
+    )
+    async def create_batch_regression_gate_override(
+        batch_id: str,
+        eval_run_id: str,
+        req: RegressionGateOverrideRequest,
+    ) -> dict[str, Any]:
+        ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
+        override = feedback_store.record_regression_gate_override(batch_id, eval_run_id, req.model_dump())
+        return ensure_found(override, "Eval run not found")

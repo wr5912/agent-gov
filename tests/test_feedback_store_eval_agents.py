@@ -30,6 +30,11 @@ def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> d
         "source_kind": "manual",
         "source_id": eval_case_id,
         "source_refs": [],
+        "asset_layer": "core_regression",
+        "promotion_status": "approved",
+        "blocking_policy": "blocking",
+        "flaky_status": "stable",
+        "variant_role": "manual_regression",
         "prompt": prompt,
         "labels": ["feedback_optimization"],
         "expected_behavior": "回答非空且无运行错误。",
@@ -123,6 +128,10 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     task = store.mark_task_applied(task["optimization_task_id"], agent_version={"agent_version_id": "main-v-after"})
     sync = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
     eval_case = sync["eval_cases"][0]
+    eval_case = store.promote_eval_case(
+        eval_case["eval_case_id"],
+        {"operator": "tester", "reason": "纳入本次手动回归验证"},
+    )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
     seen: dict[str, object] = {}
 
@@ -156,6 +165,7 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     eval_agent_run = store.find_run(run_id=regression_run["items"][0]["agent_run_id"])
 
     assert sync["created"] == 1
+    assert eval_case["promotion_status"] == "approved"
     assert "subagents 和 skills" in eval_case["prompt"]
     assert eval_case["checks_json"]["requires_tool_use"] is True
     assert "subagents 和 skills" in str(seen["prompt"])
@@ -273,6 +283,8 @@ def test_update_eval_case_directly_overwrites_content(tmp_path):
     assert updated["labels"] == ["tool_data_incomplete", "manual"]
     assert updated["status"] == "archived"
     assert store.find_eval_case(eval_case["eval_case_id"])["prompt"] == updated["prompt"]
+    assert store.list_eval_case_revisions(eval_case["eval_case_id"])[0]["reason"] == "eval case updated"
+    assert store.list_eval_case_governance_events(eval_case["eval_case_id"])[0]["action"] == "update"
 
 
 def test_update_eval_case_rejects_empty_prompt(tmp_path):
@@ -292,6 +304,48 @@ def test_archived_eval_case_is_not_selected_for_automatic_feedback_eval(tmp_path
 
     assert runtime.eval_runner is not None
     assert runtime.eval_runner._selected_eval_cases(None) == []  # noqa: SLF001 - regression coverage for active-only eval selection.
+
+
+def test_generated_feedback_eval_case_defaults_to_candidate_draft(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case, _ = _create_eval_case(store)
+
+    assert eval_case["status"] == "draft"
+    assert eval_case["asset_layer"] == "candidate"
+    assert eval_case["promotion_status"] == "candidate"
+    assert eval_case["blocking_policy"] == "non_blocking"
+
+
+def test_promoted_eval_case_enters_regression_plan_and_gate_blocks_failures(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case = _insert_eval_case(store, "evc-blocking", "阻断用例")
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="回归计划批次")
+    with store.Session.begin() as db:
+        row = store._batch_row_for_update(db, batch["batch_id"])
+        store._update_batch_eval_case_ids_row(db, row, append_id=str(eval_case["eval_case_id"]))
+
+    plan = store.create_regression_plan(batch["batch_id"])
+    run = store.create_eval_run(
+        eval_case_ids=plan["eval_case_ids"],
+        agent_version_id="main-v-test",
+        source="optimization_batch_regression",
+        regression_plan_id=plan["regression_plan_id"],
+    )
+    store.append_eval_run_item(
+        run["eval_run_id"],
+        eval_case=store.find_eval_case(str(eval_case["eval_case_id"])),
+        agent_result={"answer": "", "errors": []},
+        status="failed",
+        score=0.0,
+        check_results=[],
+    )
+    finished = store.finish_eval_run(run["eval_run_id"])
+
+    assert plan["selection_summary"]["total"] == 1
+    assert finished["result_status"] == "blocked"
+    assert finished["gate_result"]["blocked_case_ids"] == ["evc-blocking"]
 
 
 def test_runtime_feedback_jobs_use_offline_outputs_without_provider(tmp_path):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -28,16 +29,24 @@ class FeedbackEvalRunner:
         eval_case_ids: Optional[list[str]] = None,
         optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
+        regression_plan_id: Optional[str] = None,
+        existing_eval_run_id: Optional[str] = None,
     ) -> dict[str, Any] | None:
+        if regression_plan_id and not eval_case_ids:
+            plan = self.feedback_store.get_regression_plan(regression_plan_id)
+            eval_case_ids = [str(item) for item in (plan or {}).get("eval_case_ids") or [] if item]
         eval_cases = self._selected_eval_cases(eval_case_ids)
         if not eval_cases:
             return None
-        eval_run = self.feedback_store.create_eval_run(
-            eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
-            agent_version_id=self.current_agent_version_id(),
+        eval_run = self._create_or_get_eval_run(
+            eval_cases,
             optimization_task_id=optimization_task_id,
             source=source,
+            regression_plan_id=regression_plan_id,
+            existing_eval_run_id=existing_eval_run_id,
         )
+        if not eval_run:
+            return None
         if optimization_task_id:
             self.feedback_store.update_task_status(
                 optimization_task_id,
@@ -48,18 +57,9 @@ class FeedbackEvalRunner:
             for eval_case in eval_cases:
                 result: dict[str, Any] | None = None
                 try:
-                    result = await self.run_chat(
-                        ChatRequest(
-                            message=str(eval_case.get("prompt") or ""),
-                            session_id=f"eval-{eval_run['eval_run_id']}-{eval_case['eval_case_id']}",
-                            case_id=str(eval_case.get("source_feedback_case_id") or "") or None,
-                            metadata={
-                                "source": "regression_eval",
-                                "eval_run_id": eval_run["eval_run_id"],
-                                "eval_case_id": eval_case["eval_case_id"],
-                                "optimization_task_id": optimization_task_id,
-                            },
-                        )
+                    result = await asyncio.wait_for(
+                        self.run_chat(self._eval_chat_request(eval_run, eval_case, optimization_task_id, regression_plan_id)),
+                        timeout=300,
                     )
                     status, score, check_results = self._evaluate_eval_case(eval_case, result)
                     self.feedback_store.append_eval_run_item(
@@ -88,11 +88,54 @@ class FeedbackEvalRunner:
                 message=f"{exc.__class__.__name__}: {exc}",
             )
 
+    def _create_or_get_eval_run(
+        self,
+        eval_cases: list[dict[str, Any]],
+        *,
+        optimization_task_id: Optional[str],
+        source: str,
+        regression_plan_id: Optional[str],
+        existing_eval_run_id: Optional[str],
+    ) -> dict[str, Any] | None:
+        if existing_eval_run_id:
+            return self.feedback_store.get_eval_run(existing_eval_run_id)
+        return self.feedback_store.create_eval_run(
+            eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
+            agent_version_id=self.current_agent_version_id(),
+            optimization_task_id=optimization_task_id,
+            source=source,
+            regression_plan_id=regression_plan_id,
+        )
+
+    def _eval_chat_request(
+        self,
+        eval_run: dict[str, Any],
+        eval_case: dict[str, Any],
+        optimization_task_id: Optional[str],
+        regression_plan_id: Optional[str],
+    ) -> ChatRequest:
+        return ChatRequest(
+            message=str(eval_case.get("prompt") or ""),
+            session_id=f"eval-{eval_run['eval_run_id']}-{eval_case['eval_case_id']}",
+            case_id=str(eval_case.get("source_feedback_case_id") or "") or None,
+            metadata={
+                "source": "regression_eval",
+                "eval_run_id": eval_run["eval_run_id"],
+                "eval_case_id": eval_case["eval_case_id"],
+                "optimization_task_id": optimization_task_id,
+                "regression_plan_id": regression_plan_id,
+            },
+        )
+
     def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[dict[str, Any]]:
         if eval_case_ids:
             selected = [self.feedback_store.find_eval_case(eval_case_id) for eval_case_id in eval_case_ids]
-            return [item for item in selected if item and item.get("status") == "active"]
-        return self.feedback_store.list_eval_cases(status="active", limit=100)
+            return [item for item in selected if self._eligible_eval_case(item)]
+        return self.feedback_store.list_eval_cases(status="active", promotion_status="approved", limit=100)
+
+    @staticmethod
+    def _eligible_eval_case(eval_case: Optional[dict[str, Any]]) -> bool:
+        return bool(eval_case and eval_case.get("status") == "active" and eval_case.get("promotion_status") == "approved")
 
     def _evaluate_eval_case(self, eval_case: dict[str, Any], result: dict[str, Any]) -> tuple[str, float, list[dict[str, Any]]]:
         checks = eval_case.get("checks_json") if isinstance(eval_case.get("checks_json"), dict) else {}

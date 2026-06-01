@@ -257,6 +257,13 @@ export function filterBatches(batches: FeedbackOptimizationBatchRecord[], query:
   return sorted.filter((item) => JSON.stringify(item, null, 0).toLowerCase().includes(normalized));
 }
 
+export function filterEvalCases(evalCases: EvalCaseRecord[], query: string): EvalCaseRecord[] {
+  const normalized = query.trim().toLowerCase();
+  const sorted = [...evalCases].sort((left, right) => String(right.updated_at || "").localeCompare(String(left.updated_at || "")));
+  if (!normalized) return sorted;
+  return sorted.filter((item) => JSON.stringify(item, null, 0).toLowerCase().includes(normalized));
+}
+
 export function latest(values?: string[]): string | undefined {
   if (!Array.isArray(values) || !values.length) return undefined;
   return values[values.length - 1];
@@ -415,13 +422,15 @@ export function profileDisplayName(profileName?: string | null): string {
   if (profileName === "attribution-analyzer") return "归因分析智能体";
   if (profileName === "proposal-generator") return "优化方案生成智能体";
   if (profileName === "execution-optimizer") return "执行优化智能体";
+  if (profileName === "eval-case-governor") return "用例治理智能体";
+  if (profileName === "regression-impact-analyzer") return "回归影响分析智能体";
   return profileName || "-";
 }
 
 export function evalStatusTone(status?: string | null): Tone {
-  if (status === "passed" || status === "completed") return "green";
-  if (status === "failed") return "red";
-  if (status === "needs_human_review") return "orange";
+  if (status === "passed" || status === "completed" || status === "passed_with_notes") return "green";
+  if (status === "failed" || status === "blocked") return "red";
+  if (status === "needs_human_review" || status === "review_required") return "orange";
   if (status === "running") return "blue";
   return "gray";
 }

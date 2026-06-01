@@ -18,6 +18,9 @@ from app.runtime.schemas import (
     ExtensibleResponse,
     FeedbackEvalCaseGenerateResponse,
     FeedbackSourceRef,
+    RegressionGateOverrideResponse,
+    RegressionImpactAnalysisResponse,
+    RegressionPlanResponse,
 )
 
 
@@ -243,6 +246,9 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     execution_job: Optional[OptimizationExecutionJobResponse] = None
     eval_run_id: Optional[str] = None
     latest_eval_run: Optional[EvalRunResponse] = None
+    regression_plan_id: Optional[str] = None
+    latest_regression_plan: Optional[RegressionPlanResponse] = None
+    latest_regression_gate: dict[str, Any] = Field(default_factory=dict)
     execution_apply_result: Optional[OptimizationExecutionApplyResponse] = None
 
 
@@ -270,3 +276,6 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
 class FeedbackOptimizationBatchRegressionResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     eval_run: EvalRunResponse
+    regression_plan: Optional[RegressionPlanResponse] = None
+    impact_analysis: Optional[RegressionImpactAnalysisResponse] = None
+    gate_override: Optional[RegressionGateOverrideResponse] = None

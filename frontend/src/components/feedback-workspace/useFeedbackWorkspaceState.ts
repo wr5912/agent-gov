@@ -8,11 +8,12 @@ import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
   buildSourceRows,
   filterBatches,
+  filterEvalCases,
   filterSourceRows,
   sourceRowKey,
 } from "./selectors";
 
-export type MenuKey = "signals" | "batches" | "versions";
+export type MenuKey = "signals" | "batches" | "regression-assets" | "versions";
 export type RuntimeStatus = "idle" | "loading" | "ok" | "error";
 export interface WorkspaceToast {
   id: number;
@@ -22,6 +23,7 @@ export interface WorkspaceToast {
 export const visibleMenuItems: Array<{ key: MenuKey; label: string }> = [
   { key: "signals", label: "反馈信息" },
   { key: "batches", label: "优化批次" },
+  { key: "regression-assets", label: "回归资产" },
   { key: "versions", label: "版本管理" },
 ];
 
@@ -85,6 +87,7 @@ export function useFeedbackWorkspaceState({
   const sourceRows = useMemo(() => buildSourceRows(data), [data]);
   const visibleSources = useMemo(() => filterSourceRows(sourceRows, query), [sourceRows, query]);
   const visibleBatches = useMemo(() => filterBatches(data.optimization_batches, query), [data.optimization_batches, query]);
+  const visibleRegressionAssets = useMemo(() => filterEvalCases(data.eval_cases, query), [data.eval_cases, query]);
   const selectedSource = useMemo(() => {
     if (!visibleSources.length) return null;
     if (selectedSourceKey) {
@@ -156,5 +159,6 @@ export function useFeedbackWorkspaceState({
     selectedSource,
     visibleBatches,
     selectedBatch,
+    visibleRegressionAssets,
   };
 }

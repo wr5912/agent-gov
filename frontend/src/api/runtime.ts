@@ -1,6 +1,7 @@
 import { authHeaders, makeUrl, readError, requestJson } from "./request";
 export { defaultRuntimeConfig } from "./request";
 export * from "./feedback";
+export * from "./regressionAssets";
 import type {
   AgentInfo,
   AgentVersionDiff,

@@ -33,12 +33,16 @@ def _apply_local_defaults(project_root: Path) -> None:
         "ATTRIBUTION_ANALYZER_WORKSPACE_DIR": volume_root / "attribution-analyzer-workspace",
         "PROPOSAL_GENERATOR_WORKSPACE_DIR": volume_root / "proposal-generator-workspace",
         "EXECUTION_OPTIMIZER_WORKSPACE_DIR": volume_root / "execution-optimizer-workspace",
+        "EVAL_CASE_GOVERNOR_WORKSPACE_DIR": volume_root / "eval-case-governor-workspace",
+        "REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR": volume_root / "regression-impact-analyzer-workspace",
         "DATA_DIR": volume_root / "data",
         "CLAUDE_ROOT": volume_root / "claude-roots" / "main",
         "MAIN_CLAUDE_ROOT": volume_root / "claude-roots" / "main",
         "ATTRIBUTION_ANALYZER_CLAUDE_ROOT": volume_root / "claude-roots" / "attribution-analyzer",
         "PROPOSAL_GENERATOR_CLAUDE_ROOT": volume_root / "claude-roots" / "proposal-generator",
         "EXECUTION_OPTIMIZER_CLAUDE_ROOT": volume_root / "claude-roots" / "execution-optimizer",
+        "EVAL_CASE_GOVERNOR_CLAUDE_ROOT": volume_root / "claude-roots" / "eval-case-governor",
+        "REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT": volume_root / "claude-roots" / "regression-impact-analyzer",
         "CLAUDE_HOME": volume_root / "claude-roots" / "main" / ".claude",
     }
     for key, value in defaults.items():

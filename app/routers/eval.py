@@ -14,6 +14,7 @@ from app.runtime.schemas import (
     FeedbackEvalCaseUpdateRequest,
     FeedbackEvalDatasetSyncRequest,
     FeedbackEvalRunCreateRequest,
+    RegressionImpactAnalysisResponse,
 )
 
 
@@ -24,7 +25,14 @@ def create_eval_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
+    _register_eval_dataset_routes(router, feedback_store)
+    _register_eval_case_routes(router, feedback_store)
+    _register_eval_run_routes(router, feedback_store, runtime)
+    _register_eval_impact_routes(router, feedback_store)
+    return router
 
+
+def _register_eval_dataset_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
     @router.post(
         "/eval-datasets/feedback/sync",
         response_model=FeedbackEvalCaseGenerateResponse,
@@ -33,6 +41,8 @@ def create_eval_router(
     async def sync_feedback_eval_dataset(req: FeedbackEvalDatasetSyncRequest) -> dict[str, Any]:
         return feedback_store.sync_feedback_eval_cases(feedback_case_id=req.feedback_case_id, limit=req.limit)
 
+
+def _register_eval_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
     @router.get(
         "/eval-cases",
         response_model=list[EvalCaseResponse],
@@ -41,9 +51,21 @@ def create_eval_router(
     async def list_eval_cases(
         status: str | None = None,
         source_feedback_case_id: str | None = None,
+        asset_layer: str | None = None,
+        promotion_status: str | None = None,
+        blocking_policy: str | None = None,
+        flaky_status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[dict[str, Any]]:
-        return feedback_store.list_eval_cases(status=status, source_feedback_case_id=source_feedback_case_id, limit=limit)
+        return feedback_store.list_eval_cases(
+            status=status,
+            source_feedback_case_id=source_feedback_case_id,
+            asset_layer=asset_layer,
+            promotion_status=promotion_status,
+            blocking_policy=blocking_policy,
+            flaky_status=flaky_status,
+            limit=limit,
+        )
 
     @router.patch(
         "/eval-cases/{eval_case_id}",
@@ -54,6 +76,12 @@ def create_eval_router(
         updated = feedback_store.update_eval_case(eval_case_id, req.model_dump(exclude_unset=True))
         return ensure_found(updated, "Eval case not found")
 
+
+def _register_eval_run_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
     @router.post(
         "/eval-runs",
         response_model=EvalRunResponse,
@@ -89,7 +117,25 @@ def create_eval_router(
         eval_run = feedback_store.get_eval_run(eval_run_id)
         return ensure_found(eval_run, "Eval run not found")
 
-    return router
+
+def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+    @router.post(
+        "/eval-runs/{eval_run_id}/impact-analysis",
+        response_model=RegressionImpactAnalysisResponse,
+        summary="Create deterministic regression impact analysis for one eval run",
+    )
+    async def create_regression_impact_analysis(eval_run_id: str) -> dict[str, Any]:
+        analysis = feedback_store.create_regression_impact_analysis(eval_run_id)
+        return ensure_found(analysis, "Eval run not found")
+
+    @router.get(
+        "/eval-runs/{eval_run_id}/impact-analysis",
+        response_model=RegressionImpactAnalysisResponse,
+        summary="Get regression impact analysis for one eval run",
+    )
+    async def get_regression_impact_analysis(eval_run_id: str) -> dict[str, Any]:
+        analysis = feedback_store.get_regression_impact_analysis(eval_run_id)
+        return ensure_found(analysis, "Regression impact analysis not found")
 
 
 async def _run_manual_feedback_eval(

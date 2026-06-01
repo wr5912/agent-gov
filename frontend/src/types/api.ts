@@ -303,6 +303,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/eval-runs/{eval_run_id}/impact-analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get regression impact analysis for one eval run */
+        get: operations["get_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_get"];
+        put?: never;
+        /** Create deterministic regression impact analysis for one eval run */
+        post: operations["create_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/evidence-packages/{evidence_package_id}": {
         parameters: {
             query?: never;
@@ -783,6 +801,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback-optimization-batches/{batch_id}/regression-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get latest regression plan for one optimization batch */
+        get: operations["get_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_get"];
+        put?: never;
+        /** Create or reuse a regression plan for one optimization batch */
+        post: operations["create_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/feedback-optimization-batches/{batch_id}/regression-runs": {
         parameters: {
             query?: never;
@@ -792,8 +828,42 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run regression validation for all active eval cases in one optimization batch */
+        /** Run regression validation for one optimization batch from an explicit regression plan */
         post: operations["run_feedback_optimization_batch_regression_api_feedback_optimization_batches__batch_id__regression_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/gate-overrides": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Record a break-glass override for a regression gate result */
+        post: operations["create_batch_regression_gate_override_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__gate_overrides_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create deterministic impact analysis for a batch regression run */
+        post: operations["create_batch_regression_impact_analysis_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__impact_analysis_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1121,6 +1191,160 @@ export interface paths {
         put?: never;
         /** Resolve one pending feedback correlation */
         post: operations["resolve_pending_correlation_api_pending_correlations__pending_id__resolve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List governed regression assets */
+        get: operations["list_regression_assets_api_regression_assets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one governed regression asset */
+        get: operations["get_regression_asset_api_regression_assets__eval_case_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update one governed regression asset */
+        patch: operations["update_regression_asset_api_regression_assets__eval_case_id__patch"];
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Archive one regression asset */
+        post: operations["archive_regression_asset_api_regression_assets__eval_case_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/governance-events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List governance audit events for one regression asset */
+        get: operations["list_regression_asset_governance_events_api_regression_assets__eval_case_id__governance_events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/mark-flaky": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark one regression asset as flaky */
+        post: operations["mark_regression_asset_flaky_api_regression_assets__eval_case_id__mark_flaky_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote one regression asset into the approved long-term suite */
+        post: operations["promote_regression_asset_api_regression_assets__eval_case_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable revisions for one regression asset */
+        get: operations["list_regression_asset_revisions_api_regression_assets__eval_case_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/supersede": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Supersede one regression asset with another asset */
+        post: operations["supersede_regression_asset_api_regression_assets__eval_case_id__supersede_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/regression-assets/{eval_case_id}/unmark-flaky": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Mark one regression asset as stable */
+        post: operations["unmark_regression_asset_flaky_api_regression_assets__eval_case_id__unmark_flaky_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1737,6 +1961,33 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EvalCaseGovernanceEventResponse */
+        EvalCaseGovernanceEventResponse: {
+            /** Action */
+            action: string;
+            /** After */
+            after?: {
+                [key: string]: unknown;
+            };
+            /** Before */
+            before?: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at: string;
+            /** Eval Case Id */
+            eval_case_id: string;
+            /** Event Id */
+            event_id: string;
+            /** Operator */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /** Role */
+            role: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** EvalCaseProposalSummaryResponse */
         EvalCaseProposalSummaryResponse: {
             /** Expected Effect */
@@ -1756,24 +2007,44 @@ export interface components {
         };
         /** EvalCaseResponse */
         EvalCaseResponse: {
+            /** Asset Layer */
+            asset_layer?: string | null;
             attribution_summary?: components["schemas"]["EvalCaseAttributionSummaryResponse"] | null;
+            /** Blocking Policy */
+            blocking_policy?: string | null;
             /** Checks Json */
             checks_json?: {
                 [key: string]: unknown;
             };
+            /** Content Hash */
+            content_hash?: string | null;
             /** Created At */
             created_at: string;
             /** Eval Case Id */
             eval_case_id: string;
             /** Expected Behavior */
             expected_behavior?: string | null;
+            /** Failure Rate */
+            failure_rate?: number | null;
+            /** Flaky Status */
+            flaky_status?: string | null;
             /** Labels */
             labels?: string[];
+            /** Last Result Status */
+            last_result_status?: string | null;
+            /** Last Run At */
+            last_run_at?: string | null;
+            /** Promotion Status */
+            promotion_status?: string | null;
             /** Prompt */
             prompt: string;
             proposal_summary?: components["schemas"]["EvalCaseProposalSummaryResponse"] | null;
+            /** Scenario Pack */
+            scenario_pack?: string | null;
             /** Schema Version */
             schema_version?: string | null;
+            /** Severity */
+            severity?: string | null;
             /** Source */
             source?: string | null;
             /** Source Feedback Case Id */
@@ -1789,8 +2060,35 @@ export interface components {
             source_summary?: components["schemas"]["EvalCaseSourceSummaryResponse"] | null;
             /** Status */
             status: string;
+            /** Superseded By Eval Case Id */
+            superseded_by_eval_case_id?: string | null;
             /** Updated At */
             updated_at: string;
+            /** Variant Role */
+            variant_role?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** EvalCaseRevisionResponse */
+        EvalCaseRevisionResponse: {
+            /** Content Hash */
+            content_hash?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Created By */
+            created_by: string;
+            /** Eval Case Id */
+            eval_case_id: string;
+            /** Reason */
+            reason?: string | null;
+            /** Revision Id */
+            revision_id: string;
+            /** Revision Number */
+            revision_number: number;
+            /** Snapshot */
+            snapshot?: {
+                [key: string]: unknown;
+            };
         } & {
             [key: string]: unknown;
         };
@@ -1845,6 +2143,10 @@ export interface components {
             error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
             /** Eval Case Id */
             eval_case_id: string;
+            /** Eval Case Snapshot */
+            eval_case_snapshot?: {
+                [key: string]: unknown;
+            };
             /** Eval Run Id */
             eval_run_id: string;
             /** Eval Run Item Id */
@@ -1871,12 +2173,18 @@ export interface components {
             eval_case_ids?: string[];
             /** Eval Run Id */
             eval_run_id: string;
+            /** Gate Result */
+            gate_result?: {
+                [key: string]: unknown;
+            };
             /** Item Ids */
             item_ids?: string[];
             /** Items */
             items?: components["schemas"]["EvalRunItemResponse"][];
             /** Optimization Task Id */
             optimization_task_id?: string | null;
+            /** Regression Plan Id */
+            regression_plan_id?: string | null;
             /** Result Status */
             result_status?: string | null;
             /** Source */
@@ -1889,6 +2197,11 @@ export interface components {
         };
         /** EvalRunSummaryResponse */
         EvalRunSummaryResponse: {
+            /**
+             * Blocked
+             * @default 0
+             */
+            blocked: number;
             /**
              * Failed
              * @default 0
@@ -1904,6 +2217,16 @@ export interface components {
              * @default 0
              */
             passed: number;
+            /**
+             * Passed With Notes
+             * @default 0
+             */
+            passed_with_notes: number;
+            /**
+             * Review Required
+             * @default 0
+             */
+            review_required: number;
             /**
              * Total
              * @default 0
@@ -2385,18 +2708,40 @@ export interface components {
         };
         /** FeedbackEvalCaseUpdateRequest */
         FeedbackEvalCaseUpdateRequest: {
+            /** Asset Layer */
+            asset_layer?: ("candidate" | "batch_specific" | "smoke" | "core_regression" | "scenario_pack" | "safety" | "historical_bug" | "exploratory") | null;
+            /** Blocking Policy */
+            blocking_policy?: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
             /** Checks Json */
             checks_json?: {
                 [key: string]: unknown;
             } | null;
             /** Expected Behavior */
             expected_behavior?: string | null;
+            /** Flaky Status */
+            flaky_status?: ("stable" | "flaky") | null;
             /** Labels */
             labels?: string[] | null;
+            /** Operator */
+            operator?: string | null;
+            /** Promotion Status */
+            promotion_status?: ("candidate" | "needs_review" | "approved" | "rejected" | "superseded" | "archived") | null;
             /** Prompt */
             prompt?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Role */
+            role?: string | null;
+            /** Scenario Pack */
+            scenario_pack?: string | null;
+            /** Severity */
+            severity?: string | null;
             /** Status */
             status?: ("active" | "draft" | "archived") | null;
+            /** Superseded By Eval Case Id */
+            superseded_by_eval_case_id?: string | null;
+            /** Variant Role */
+            variant_role?: string | null;
         };
         /** FeedbackEvalDatasetSyncRequest */
         FeedbackEvalDatasetSyncRequest: {
@@ -2503,6 +2848,16 @@ export interface components {
         };
         /** FeedbackOptimizationBatchEvalCaseCreateRequest */
         FeedbackOptimizationBatchEvalCaseCreateRequest: {
+            /**
+             * Asset Layer
+             * @default batch_specific
+             */
+            asset_layer: ("batch_specific" | "smoke" | "core_regression" | "scenario_pack" | "safety" | "historical_bug" | "exploratory") | null;
+            /**
+             * Blocking Policy
+             * @default blocking
+             */
+            blocking_policy: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
             /** Checks Json */
             checks_json?: {
                 [key: string]: unknown;
@@ -2511,8 +2866,20 @@ export interface components {
             expected_behavior?: string | null;
             /** Labels */
             labels?: string[];
+            /**
+             * Promotion Status
+             * @default approved
+             */
+            promotion_status: ("approved" | "needs_review" | "candidate") | null;
             /** Prompt */
             prompt: string;
+            /** Scenario Pack */
+            scenario_pack?: string | null;
+            /**
+             * Severity
+             * @default medium
+             */
+            severity: string | null;
             /**
              * Status
              * @default active
@@ -2541,6 +2908,14 @@ export interface components {
         FeedbackOptimizationBatchRegressionResponse: {
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
             eval_run: components["schemas"]["EvalRunResponse"];
+            gate_override?: components["schemas"]["RegressionGateOverrideResponse"] | null;
+            impact_analysis?: components["schemas"]["RegressionImpactAnalysisResponse"] | null;
+            regression_plan?: components["schemas"]["RegressionPlanResponse"] | null;
+        };
+        /** FeedbackOptimizationBatchRegressionRunRequest */
+        FeedbackOptimizationBatchRegressionRunRequest: {
+            /** Regression Plan Id */
+            regression_plan_id: string;
         };
         /** FeedbackOptimizationBatchResponse */
         FeedbackOptimizationBatchResponse: {
@@ -2567,6 +2942,11 @@ export interface components {
             /** Internal Proposal Id */
             internal_proposal_id?: string | null;
             latest_eval_run?: components["schemas"]["EvalRunResponse"] | null;
+            /** Latest Regression Gate */
+            latest_regression_gate?: {
+                [key: string]: unknown;
+            };
+            latest_regression_plan?: components["schemas"]["RegressionPlanResponse"] | null;
             optimization_plan?: components["schemas"]["FeedbackOptimizationPlanResponse"] | null;
             optimization_plan_error?: components["schemas"]["FeedbackJobErrorResponse"] | null;
             optimization_plan_job?: components["schemas"]["FeedbackAnalysisJobResponse"] | null;
@@ -2577,6 +2957,8 @@ export interface components {
             optimization_task_id?: string | null;
             /** Priority */
             priority?: string | null;
+            /** Regression Plan Id */
+            regression_plan_id?: string | null;
             /** Schema Version */
             schema_version?: string | null;
             /** Skipped Source Refs */
@@ -3515,6 +3897,165 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RegressionAssetFlakyRequest */
+        RegressionAssetFlakyRequest: {
+            /**
+             * Operator
+             * @default system
+             */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Role
+             * @default developer
+             */
+            role: string;
+        };
+        /** RegressionAssetGovernanceActionRequest */
+        RegressionAssetGovernanceActionRequest: {
+            /** Asset Layer */
+            asset_layer?: ("batch_specific" | "smoke" | "core_regression" | "scenario_pack" | "safety" | "historical_bug" | "exploratory") | null;
+            /** Blocking Policy */
+            blocking_policy?: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
+            /**
+             * Operator
+             * @default system
+             */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Role
+             * @default developer
+             */
+            role: string;
+        };
+        /** RegressionAssetSupersedeRequest */
+        RegressionAssetSupersedeRequest: {
+            /**
+             * Operator
+             * @default system
+             */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Role
+             * @default developer
+             */
+            role: string;
+            /** Superseded By Eval Case Id */
+            superseded_by_eval_case_id: string;
+        };
+        /** RegressionGateOverrideRequest */
+        RegressionGateOverrideRequest: {
+            /** Expires At */
+            expires_at: string;
+            /** Operator */
+            operator: string;
+            /** Reason */
+            reason: string;
+        };
+        /** RegressionGateOverrideResponse */
+        RegressionGateOverrideResponse: {
+            /** After */
+            after?: {
+                [key: string]: unknown;
+            };
+            /** Batch Id */
+            batch_id: string;
+            /** Before */
+            before?: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at: string;
+            /** Eval Run Id */
+            eval_run_id: string;
+            /** Expires At */
+            expires_at: string;
+            /** Operator */
+            operator: string;
+            /** Override Id */
+            override_id: string;
+            /** Reason */
+            reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RegressionImpactAnalysisResponse */
+        RegressionImpactAnalysisResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            /** Eval Run Id */
+            eval_run_id: string;
+            /** Gate Result */
+            gate_result?: {
+                [key: string]: unknown;
+            };
+            /** Impact Analysis Id */
+            impact_analysis_id: string;
+            /** Impacted Assets */
+            impacted_assets?: {
+                [key: string]: unknown;
+            }[];
+            /** Job Id */
+            job_id?: string | null;
+            /** Recommendations */
+            recommendations?: string[];
+            /** Result Status */
+            result_status?: string | null;
+            /** Schema Version */
+            schema_version?: string | null;
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** RegressionPlanCreateRequest */
+        RegressionPlanCreateRequest: {
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
+        };
+        /** RegressionPlanResponse */
+        RegressionPlanResponse: {
+            /** Applied Agent Version Id */
+            applied_agent_version_id?: string | null;
+            /** Batch Id */
+            batch_id: string;
+            /** Change Summary */
+            change_summary?: {
+                [key: string]: unknown;
+            };
+            /** Created At */
+            created_at: string;
+            /** Eval Case Ids */
+            eval_case_ids?: string[];
+            /** Regression Plan Id */
+            regression_plan_id: string;
+            /** Schema Version */
+            schema_version?: string | null;
+            /** Selected Cases */
+            selected_cases?: {
+                [key: string]: unknown;
+            }[];
+            /** Selection Fingerprint */
+            selection_fingerprint: string;
+            /** Selection Summary */
+            selection_summary?: {
+                [key: string]: unknown;
+            };
+            /** Status */
+            status: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** ResponsibilityBoundaryResponse */
         ResponsibilityBoundaryResponse: {
             /** Owner */
@@ -4133,6 +4674,10 @@ export interface operations {
             query?: {
                 status?: string | null;
                 source_feedback_case_id?: string | null;
+                asset_layer?: string | null;
+                promotion_status?: string | null;
+                blocking_policy?: string | null;
+                flaky_status?: string | null;
                 limit?: number;
             };
             header?: never;
@@ -4314,6 +4859,68 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvalRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionImpactAnalysisResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionImpactAnalysisResponse"];
                 };
             };
             /** @description Validation Error */
@@ -5361,7 +5968,7 @@ export interface operations {
             };
         };
     };
-    run_feedback_optimization_batch_regression_api_feedback_optimization_batches__batch_id__regression_runs_post: {
+    get_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -5378,7 +5985,145 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
+                    "application/json": components["schemas"]["RegressionPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["RegressionPlanCreateRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_feedback_optimization_batch_regression_api_feedback_optimization_batches__batch_id__regression_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackOptimizationBatchRegressionRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
                     "application/json": components["schemas"]["FeedbackOptimizationBatchRegressionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_batch_regression_gate_override_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__gate_overrides_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                eval_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionGateOverrideRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionGateOverrideResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_batch_regression_impact_analysis_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__impact_analysis_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                eval_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RegressionImpactAnalysisResponse"];
                 };
             };
             /** @description Validation Error */
@@ -6153,6 +6898,346 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PendingCorrelationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_regression_assets_api_regression_assets_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                asset_layer?: string | null;
+                promotion_status?: string | null;
+                blocking_policy?: string | null;
+                scenario_pack?: string | null;
+                flaky_status?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_regression_asset_api_regression_assets__eval_case_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_regression_asset_api_regression_assets__eval_case_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackEvalCaseUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_regression_asset_api_regression_assets__eval_case_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetGovernanceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_regression_asset_governance_events_api_regression_assets__eval_case_id__governance_events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseGovernanceEventResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mark_regression_asset_flaky_api_regression_assets__eval_case_id__mark_flaky_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetFlakyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_regression_asset_api_regression_assets__eval_case_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetGovernanceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_regression_asset_revisions_api_regression_assets__eval_case_id__revisions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseRevisionResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    supersede_regression_asset_api_regression_assets__eval_case_id__supersede_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetSupersedeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unmark_regression_asset_flaky_api_regression_assets__eval_case_id__unmark_flaky_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                eval_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetFlakyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalCaseResponse"];
                 };
             };
             /** @description Validation Error */

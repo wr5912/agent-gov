@@ -79,6 +79,18 @@ def test_eval_run_state_machine_rejects_completed_to_failed():
         validate_transition("eval_run", "completed", "failed")
 
 
+def test_eval_case_state_machine_allows_governed_lifecycle():
+    validate_transition("eval_case", "draft", "active")
+    validate_transition("eval_case", "active", "archived")
+    validate_transition("eval_case_promotion", "candidate", "approved")
+    validate_transition("eval_case_promotion", "approved", "superseded")
+
+
+def test_eval_case_state_machine_rejects_archived_reopen():
+    with pytest.raises(StateTransitionError, match="archived -> active"):
+        validate_transition("eval_case", "archived", "active")
+
+
 def test_proposal_state_machine_rejects_rejected_to_approved():
     with pytest.raises(StateTransitionError, match="rejected -> approved"):
         validate_transition("proposal", "rejected", "approved")

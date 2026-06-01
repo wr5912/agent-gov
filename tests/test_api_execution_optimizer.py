@@ -577,13 +577,14 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             }
         raise AssertionError(f"unexpected job_type: {job_type}")
 
-    async def fake_run_feedback_eval(*, eval_case_ids=None, optimization_task_id=None, source="optimization_batch_regression"):
+    async def fake_run_feedback_eval(*, eval_case_ids=None, optimization_task_id=None, source="optimization_batch_regression", regression_plan_id=None, **kwargs):
         eval_case_ids = [str(item) for item in eval_case_ids or []]
         run = module.feedback_store.create_eval_run(
             eval_case_ids=eval_case_ids,
             agent_version_id=module.agent_version_store.current_version_id(),
             optimization_task_id=optimization_task_id,
             source=source,
+            regression_plan_id=regression_plan_id,
         )
         for eval_case_id in eval_case_ids:
             eval_case = module.feedback_store.find_eval_case(eval_case_id)
@@ -624,6 +625,10 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             },
         )
         batch = batch_response.json()
+        promote_response = client.post(
+            f"/api/regression-assets/{batch['eval_case_ids'][0]}/promote",
+            json={"operator": "tester", "reason": "E2E 批次回归用例晋级", "asset_layer": "batch_specific", "blocking_policy": "blocking"},
+        )
         attribution_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/attribution-jobs", json={"force": True})
         plan_response = client.post(
             f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan",
@@ -635,14 +640,21 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan/tasks/{plan_task['plan_task_id']}/execute",
             json={"force": True},
         )
-        regression_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs")
+        regression_plan_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-plan")
+        regression_plan = regression_plan_response.json()
+        regression_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs",
+            json={"regression_plan_id": regression_plan["regression_plan_id"]},
+        )
         final_batch = regression_response.json()["batch"]
 
     assert signal_response.status_code == 200
     assert batch_response.status_code == 200
+    assert promote_response.status_code == 200
     assert attribution_response.status_code == 200
     assert plan_response.status_code == 200
     assert execute_response.status_code == 200
+    assert regression_plan_response.status_code == 200
     assert regression_response.status_code == 200
     assert calls == ["attribution", "batch_plan", "execution"]
     assert plan["generated_by"] == "proposal-generator"
@@ -653,6 +665,8 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert execute_response.json()["optimization_task"]["applied_agent_version_id"]
     assert "回答 workspace 配置类问题前必须读取当前配置文件" in workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
     assert regression_response.json()["eval_run"]["result_status"] == "passed"
+    assert regression_response.json()["regression_plan"]["eval_case_ids"]
+    assert regression_response.json()["impact_analysis"]["status"] == "completed"
     assert final_batch["status"] == "completed"
 
 

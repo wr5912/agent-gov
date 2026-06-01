@@ -241,14 +241,6 @@ export function executeFeedbackOptimizationPlanTask(
   );
 }
 
-export function runFeedbackOptimizationBatchRegression(config: RuntimeClientConfig, batchId: string) {
-  return requestJson<FeedbackOptimizationBatchRegressionResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/regression-runs`,
-    { method: "POST" },
-  );
-}
-
 export function getFeedbackOptimizationBatchEvalCases(config: RuntimeClientConfig, batchId: string) {
   return requestJson<EvalCaseRecord[]>(
     config,

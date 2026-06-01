@@ -6,7 +6,11 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
-from ..runtime_db import EvalCaseModel, EvalRunItemModel, EvalRunModel, utc_now
+from ..runtime_db import (
+    EvalRunItemModel,
+    EvalRunModel,
+    utc_now,
+)
 from ..state_machines import validate_transition
 
 
@@ -43,92 +47,6 @@ class FeedbackEvalStoreMixin:
             eval_cases.append(payload)
         return {"created": created, "reused": reused, "skipped": skipped, "eval_cases": eval_cases}
 
-    def _add_eval_case_row(self, db: Any, payload: dict[str, Any]) -> None:
-        db.add(
-            EvalCaseModel(
-                eval_case_id=payload["eval_case_id"],
-                created_at=payload["created_at"],
-                updated_at=payload["updated_at"],
-                status=payload["status"],
-                source_feedback_case_id=self._string(payload.get("source_feedback_case_id")),
-                source_run_id=self._string(payload.get("source_run_id")),
-                labels_json=list(payload.get("labels") or []),
-                payload_json=payload,
-            )
-        )
-
-    def list_eval_cases(
-        self,
-        *,
-        status: Optional[str] = None,
-        source_feedback_case_id: Optional[str] = None,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        stmt = select(EvalCaseModel).order_by(EvalCaseModel.updated_at.desc()).limit(limit)
-        if status:
-            stmt = stmt.where(EvalCaseModel.status == status)
-        if source_feedback_case_id:
-            stmt = stmt.where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id)
-        with self.Session() as db:
-            return [self._eval_case_to_dict(row) for row in db.scalars(stmt).all()]
-
-    def find_eval_case(
-        self,
-        eval_case_id: Optional[str] = None,
-        *,
-        source_feedback_case_id: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
-        with self.Session() as db:
-            row: EvalCaseModel | None = None
-            if eval_case_id:
-                row = db.get(EvalCaseModel, eval_case_id)
-            elif source_feedback_case_id:
-                row = db.scalars(
-                    select(EvalCaseModel)
-                    .where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id)
-                    .order_by(EvalCaseModel.updated_at.desc())
-                ).first()
-            return self._eval_case_to_dict(row) if row else None
-
-    def update_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
-        updated_at = utc_now()
-        with self.Session.begin() as db:
-            row = db.get(EvalCaseModel, eval_case_id)
-            if not row:
-                return None
-            payload = dict(row.payload_json or {})
-
-            if "prompt" in fields:
-                prompt = (self._string(fields.get("prompt")) or "").strip()
-                if not prompt:
-                    raise BusinessRuleViolation("Eval case prompt cannot be empty")
-                payload["prompt"] = prompt
-            if "expected_behavior" in fields:
-                payload["expected_behavior"] = (self._string(fields.get("expected_behavior")) or "").strip()
-            if "checks_json" in fields:
-                checks = fields.get("checks_json")
-                if checks is not None and not isinstance(checks, dict):
-                    raise BusinessRuleViolation("Eval case checks_json must be an object")
-                payload["checks_json"] = dict(checks or {})
-            if "labels" in fields:
-                labels = fields.get("labels")
-                if labels is not None and not isinstance(labels, list):
-                    raise BusinessRuleViolation("Eval case labels must be a list")
-                normalized_labels = self._unique_strings([str(item).strip() for item in labels or [] if str(item).strip()])
-                payload["labels"] = normalized_labels
-                row.labels_json = normalized_labels
-            if "status" in fields:
-                new_status = self._string(fields.get("status")).strip()
-                if new_status not in {"active", "draft", "archived"}:
-                    raise BusinessRuleViolation("Eval case status must be active, draft, or archived")
-                payload["status"] = new_status
-                row.status = new_status
-
-            payload["updated_at"] = updated_at
-            row.updated_at = updated_at
-            row.payload_json = payload
-        return self.find_eval_case(eval_case_id)
-
     def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
         prompt = (self._string(fields.get("prompt")) or "").strip()
         if not prompt:
@@ -158,6 +76,12 @@ class FeedbackEvalStoreMixin:
             "source_kind": "optimization_batch",
             "source_id": batch.get("batch_id"),
             "source_refs": batch.get("source_refs") or [],
+            "asset_layer": "batch_specific",
+            "promotion_status": "approved",
+            "blocking_policy": "blocking",
+            "severity": "medium",
+            "flaky_status": "stable",
+            "variant_role": "manual_regression",
             "prompt": prompt,
             "expected_behavior": (self._string(fields.get("expected_behavior")) or "").strip(),
             "checks_json": dict(checks or {}),
@@ -171,6 +95,7 @@ class FeedbackEvalStoreMixin:
         agent_version_id: Optional[str],
         optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
+        regression_plan_id: Optional[str] = None,
     ) -> dict[str, Any]:
         created_at = utc_now()
         payload = {
@@ -182,9 +107,11 @@ class FeedbackEvalStoreMixin:
             "agent_version_id": agent_version_id,
             "optimization_task_id": optimization_task_id,
             "source": source,
+            "regression_plan_id": regression_plan_id,
             "eval_case_ids": eval_case_ids,
             "item_ids": [],
             "summary": {"total": len(eval_case_ids), "passed": 0, "failed": 0, "needs_human_review": 0},
+            "gate_result": {"status": "running", "blocked_case_ids": [], "review_case_ids": [], "note_case_ids": []},
         }
         with self.Session.begin() as db:
             db.add(
@@ -196,6 +123,7 @@ class FeedbackEvalStoreMixin:
                     agent_version_id=self._string(agent_version_id),
                     optimization_task_id=self._string(optimization_task_id),
                     source=source,
+                    regression_plan_id=self._string(regression_plan_id),
                     payload_json=payload,
                 )
             )
@@ -227,6 +155,18 @@ class FeedbackEvalStoreMixin:
             "status": status,
             "score": score,
             "check_results": check_results,
+            "eval_case_snapshot": {
+                "eval_case_id": eval_case.get("eval_case_id"),
+                "status": eval_case.get("status"),
+                "asset_layer": eval_case.get("asset_layer"),
+                "promotion_status": eval_case.get("promotion_status"),
+                "blocking_policy": eval_case.get("blocking_policy"),
+                "severity": eval_case.get("severity"),
+                "flaky_status": eval_case.get("flaky_status"),
+                "variant_role": eval_case.get("variant_role"),
+                "content_hash": eval_case.get("content_hash"),
+                "labels": list(eval_case.get("labels") or []),
+            },
             "answer_summary": answer_summary,
             "error_json": error_json,
             "created_at": utc_now(),
@@ -259,22 +199,27 @@ class FeedbackEvalStoreMixin:
             items = list(db.scalars(select(EvalRunItemModel).where(EvalRunItemModel.eval_run_id == eval_run_id)).all())
             summary = self._eval_run_summary(items)
             payload = dict(run.payload_json or {})
+            gate_result = self._gate_result_for_items(items)
+            gated = bool(payload.get("regression_plan_id") or payload.get("source") == "optimization_batch_regression")
+            result_status = gate_result["status"] if gated else self._eval_result_status(summary)
             validate_transition("eval_run", run.status, "completed")
             payload.update(
                 {
                     "completed_at": completed_at,
                     "status": "completed",
-                    "result_status": self._eval_result_status(summary),
+                    "result_status": result_status,
                     "summary": summary,
+                    "gate_result": gate_result,
                 }
             )
             run.completed_at = completed_at
             run.status = "completed"
             run.payload_json = payload
+            self._update_eval_case_run_stats(db, items, completed_at)
         finished = self.get_eval_run(eval_run_id)
         task_id = self._string((finished or {}).get("optimization_task_id"))
         if task_id and finished:
-            next_status = "completed" if finished.get("result_status") == "passed" else str(finished.get("result_status") or "needs_human_review")
+            next_status = self._task_status_for_eval_result(str(finished.get("result_status") or "needs_human_review"))
             self._attach_task_regression_run(task_id, finished, status=next_status)
             return self.get_eval_run(eval_run_id)
         return finished
@@ -354,13 +299,19 @@ class FeedbackEvalStoreMixin:
             "eval_case_id": f"evc-{uuid.uuid4()}",
             "created_at": created_at,
             "updated_at": created_at,
-            "status": "active",
+            "status": "draft",
             "source": "feedback_source_default",
             "source_feedback_case_id": feedback_case["feedback_case_id"],
             "source_run_id": run_id,
             "source_kind": ref["source_kind"],
             "source_id": ref["source_id"],
             "source_refs": [ref],
+            "asset_layer": "candidate",
+            "promotion_status": "candidate",
+            "blocking_policy": "non_blocking",
+            "severity": "medium",
+            "flaky_status": "stable",
+            "variant_role": "original_reproduction",
             "prompt": prompt,
             "labels": labels,
             "expected_behavior": expected_behavior,
@@ -376,18 +327,6 @@ class FeedbackEvalStoreMixin:
     def _replace_eval_case_payload(self, payload: dict[str, Any]) -> None:
         with self.Session.begin() as db:
             self._update_eval_case_row(db, payload)
-
-    def _update_eval_case_row(self, db: Any, payload: dict[str, Any]) -> bool:
-        row = db.get(EvalCaseModel, payload["eval_case_id"])
-        if not row:
-            return False
-        row.updated_at = payload["updated_at"]
-        row.status = payload["status"]
-        row.source_feedback_case_id = self._string(payload.get("source_feedback_case_id"))
-        row.source_run_id = self._string(payload.get("source_run_id"))
-        row.labels_json = list(payload.get("labels") or [])
-        row.payload_json = payload
-        return True
 
     def _build_eval_case_from_feedback(self, feedback_case: dict[str, Any]) -> Optional[dict[str, Any]]:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
@@ -424,10 +363,16 @@ class FeedbackEvalStoreMixin:
             "eval_case_id": f"evc-{uuid.uuid4()}",
             "created_at": created_at,
             "updated_at": created_at,
-            "status": "active",
+            "status": "draft",
             "source": "feedback_dataset",
             "source_feedback_case_id": feedback_case["feedback_case_id"],
             "source_run_id": source_run_id,
+            "asset_layer": "candidate",
+            "promotion_status": "candidate",
+            "blocking_policy": "non_blocking",
+            "severity": "medium",
+            "flaky_status": "stable",
+            "variant_role": "original_reproduction",
             "source_signal_ids": feedback_case.get("signal_ids") or [],
             "source_evidence_package_id": self._latest(feedback_case.get("evidence_package_ids")),
             "source_attribution_job_id": attribution_job_id,
@@ -512,17 +457,6 @@ class FeedbackEvalStoreMixin:
             "notes": "首版使用确定性运行信号评估；语义质量保留人工复核入口。",
         }
 
-    def _eval_case_to_dict(self, row: EvalCaseModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload["eval_case_id"] = row.eval_case_id
-        payload["created_at"] = row.created_at
-        payload["updated_at"] = row.updated_at
-        payload["status"] = row.status
-        payload["source_feedback_case_id"] = row.source_feedback_case_id
-        payload["source_run_id"] = row.source_run_id
-        payload["labels"] = list(row.labels_json or payload.get("labels") or [])
-        return payload
-
     def _eval_run_to_dict(self, row: EvalRunModel) -> dict[str, Any]:
         payload = dict(row.payload_json or {})
         payload["eval_run_id"] = row.eval_run_id
@@ -532,6 +466,7 @@ class FeedbackEvalStoreMixin:
         payload["agent_version_id"] = row.agent_version_id
         payload["optimization_task_id"] = row.optimization_task_id
         payload["source"] = row.source
+        payload["regression_plan_id"] = row.regression_plan_id
         with self.Session() as db:
             items = [
                 item.payload_json

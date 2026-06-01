@@ -417,6 +417,17 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
     checks_json: Optional[dict[str, Any]] = None
     labels: Optional[list[str]] = None
     status: Optional[Literal["active", "draft", "archived"]] = None
+    asset_layer: Optional[Literal["candidate", "batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
+    promotion_status: Optional[Literal["candidate", "needs_review", "approved", "rejected", "superseded", "archived"]] = None
+    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
+    scenario_pack: Optional[str] = None
+    severity: Optional[str] = None
+    flaky_status: Optional[Literal["stable", "flaky"]] = None
+    variant_role: Optional[str] = None
+    superseded_by_eval_case_id: Optional[str] = None
+    operator: Optional[str] = None
+    role: Optional[str] = None
+    reason: Optional[str] = None
 
 
 class FeedbackOptimizationBatchEvalCaseCreateRequest(BaseModel):
@@ -425,6 +436,46 @@ class FeedbackOptimizationBatchEvalCaseCreateRequest(BaseModel):
     checks_json: dict[str, Any] = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     status: Literal["active", "draft", "archived"] = "active"
+    asset_layer: Optional[Literal["batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = "batch_specific"
+    promotion_status: Optional[Literal["approved", "needs_review", "candidate"]] = "approved"
+    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = "blocking"
+    scenario_pack: Optional[str] = None
+    severity: Optional[str] = "medium"
+
+
+class RegressionAssetGovernanceActionRequest(BaseModel):
+    operator: str = "system"
+    role: str = "developer"
+    reason: str
+    asset_layer: Optional[Literal["batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
+    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
+
+
+class RegressionAssetFlakyRequest(BaseModel):
+    operator: str = "system"
+    role: str = "developer"
+    reason: str
+
+
+class RegressionAssetSupersedeRequest(BaseModel):
+    superseded_by_eval_case_id: str
+    operator: str = "system"
+    role: str = "developer"
+    reason: str
+
+
+class RegressionPlanCreateRequest(BaseModel):
+    force: bool = False
+
+
+class FeedbackOptimizationBatchRegressionRunRequest(BaseModel):
+    regression_plan_id: str
+
+
+class RegressionGateOverrideRequest(BaseModel):
+    operator: str
+    reason: str
+    expires_at: str
 
 
 class FeedbackEvalRunCreateRequest(BaseModel):
@@ -470,6 +521,18 @@ class EvalCaseResponse(ExtensibleResponse):
     source_kind: Optional[str] = None
     source_id: Optional[str] = None
     source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
+    asset_layer: Optional[str] = None
+    promotion_status: Optional[str] = None
+    blocking_policy: Optional[str] = None
+    scenario_pack: Optional[str] = None
+    severity: Optional[str] = None
+    flaky_status: Optional[str] = None
+    variant_role: Optional[str] = None
+    content_hash: Optional[str] = None
+    last_run_at: Optional[str] = None
+    last_result_status: Optional[str] = None
+    failure_rate: Optional[float] = None
+    superseded_by_eval_case_id: Optional[str] = None
     prompt: str
     labels: list[str] = Field(default_factory=list)
     expected_behavior: Optional[str] = None
@@ -513,6 +576,7 @@ class EvalRunItemResponse(ExtensibleResponse):
     status: str
     score: Optional[float] = None
     check_results: list[EvalRunCheckResultResponse] = Field(default_factory=list)
+    eval_case_snapshot: dict[str, Any] = Field(default_factory=dict)
     answer_summary: Optional[str] = None
     error_json: Optional[FeedbackJobErrorResponse] = None
     created_at: Optional[str] = None
@@ -523,6 +587,9 @@ class EvalRunSummaryResponse(BaseModel):
     passed: int = 0
     failed: int = 0
     needs_human_review: int = 0
+    blocked: int = 0
+    review_required: int = 0
+    passed_with_notes: int = 0
 
 
 class EvalRunResponse(ExtensibleResponse):
@@ -534,11 +601,76 @@ class EvalRunResponse(ExtensibleResponse):
     agent_version_id: Optional[str] = None
     optimization_task_id: Optional[str] = None
     source: str
+    regression_plan_id: Optional[str] = None
     eval_case_ids: list[str] = Field(default_factory=list)
     item_ids: list[str] = Field(default_factory=list)
     summary: EvalRunSummaryResponse = Field(default_factory=EvalRunSummaryResponse)
+    gate_result: dict[str, Any] = Field(default_factory=dict)
     items: list[EvalRunItemResponse] = Field(default_factory=list)
     error_json: Optional[FeedbackJobErrorResponse] = None
+
+
+class EvalCaseRevisionResponse(ExtensibleResponse):
+    revision_id: str
+    eval_case_id: str
+    revision_number: int
+    created_at: str
+    created_by: str
+    reason: Optional[str] = None
+    content_hash: Optional[str] = None
+    snapshot: dict[str, Any] = Field(default_factory=dict)
+
+
+class EvalCaseGovernanceEventResponse(ExtensibleResponse):
+    event_id: str
+    eval_case_id: str
+    action: str
+    operator: str
+    role: str
+    reason: str
+    created_at: str
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegressionPlanResponse(ExtensibleResponse):
+    schema_version: Optional[str] = None
+    regression_plan_id: str
+    batch_id: str
+    created_at: str
+    status: str
+    applied_agent_version_id: Optional[str] = None
+    selection_fingerprint: str
+    eval_case_ids: list[str] = Field(default_factory=list)
+    selected_cases: list[dict[str, Any]] = Field(default_factory=list)
+    selection_summary: dict[str, Any] = Field(default_factory=dict)
+    change_summary: dict[str, Any] = Field(default_factory=dict)
+
+
+class RegressionImpactAnalysisResponse(ExtensibleResponse):
+    schema_version: Optional[str] = None
+    impact_analysis_id: str
+    eval_run_id: str
+    created_at: str
+    completed_at: Optional[str] = None
+    status: str
+    job_id: Optional[str] = None
+    result_status: Optional[str] = None
+    gate_result: dict[str, Any] = Field(default_factory=dict)
+    impacted_assets: list[dict[str, Any]] = Field(default_factory=list)
+    recommendations: list[str] = Field(default_factory=list)
+
+
+class RegressionGateOverrideResponse(ExtensibleResponse):
+    override_id: str
+    batch_id: str
+    eval_run_id: str
+    operator: str
+    reason: str
+    expires_at: str
+    created_at: str
+    before: dict[str, Any] = Field(default_factory=dict)
+    after: dict[str, Any] = Field(default_factory=dict)
 
 
 class ExternalGovernanceNotifyRequest(BaseModel):

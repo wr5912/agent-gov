@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "default",
+    "allow": [
+      "Read(/data/**)",
+      "Glob",
+      "Grep"
+    ],
+    "ask": [],
+    "deny": [
+      "Write(/main-workspace/**)",
+      "Edit(/main-workspace/**)",
+      "Write(/claude-roots/main/**)",
+      "Edit(/claude-roots/main/**)",
+      "Read(/**/.env)",
+      "Read(/**/credentials/**)",
+      "Bash(*)"
+    ]
+  },
+  "includeGitInstructions": false
+}

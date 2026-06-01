@@ -439,6 +439,8 @@ class ClaudeRuntime:
         eval_case_ids: Optional[list[str]] = None,
         optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
+        regression_plan_id: Optional[str] = None,
+        existing_eval_run_id: Optional[str] = None,
     ) -> dict[str, Any] | None:
         if self.eval_runner is None:
             return None
@@ -446,6 +448,8 @@ class ClaudeRuntime:
             eval_case_ids=eval_case_ids,
             optimization_task_id=optimization_task_id,
             source=source,
+            regression_plan_id=regression_plan_id,
+            existing_eval_run_id=existing_eval_run_id,
         )
 
     def _new_runtime_request_context(self, req: ChatRequest) -> RuntimeRequestContext:

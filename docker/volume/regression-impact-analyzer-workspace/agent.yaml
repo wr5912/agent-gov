@@ -1,0 +1,16 @@
+agent:
+  id: regression-impact-analyzer
+  name: 回归影响分析智能体
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: regression-impact-analyzer
+
+paths:
+  workspace: /regression-impact-analyzer-workspace
+  claude_home: /claude-roots/regression-impact-analyzer/.claude
+  data_root: /data
+
+outputs:
+  schema: regression-impact-analysis/v1
+  job_root: /data/.runtime-tmp/jobs

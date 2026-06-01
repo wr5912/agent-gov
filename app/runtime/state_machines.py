@@ -96,6 +96,21 @@ EVAL_RUN_STATES = {
     "failed",
 }
 
+EVAL_CASE_STATES = {
+    "draft",
+    "active",
+    "archived",
+}
+
+EVAL_CASE_PROMOTION_STATES = {
+    "candidate",
+    "needs_review",
+    "approved",
+    "rejected",
+    "superseded",
+    "archived",
+}
+
 PROPOSAL_STATES = {
     "pending_review",
     "approved",
@@ -164,8 +179,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "execution_ready": {"applied_pending_regression", "execution_failed", "needs_human_review", "failed"},
         "needs_human_review": {"draft", "attribution_running", "optimization_plan_queued", "pending_approval", "execution_planning", "failed"},
         "failed": {"execution_planning", "regression_running", "applied_pending_regression"},
-        "applied_pending_regression": {"regression_running", "regression_passed", "regression_failed", "completed", "failed"},
-        "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review"},
+        "applied_pending_regression": {"regression_running", "regression_passed", "regression_failed", "completed", "failed", "needs_human_review", "blocked"},
+        "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review", "blocked"},
         "regression_passed": {"completed"},
         "regression_failed": {"regression_running", "failed", "completed", "needs_human_review"},
         "completed": set(),
@@ -193,6 +208,19 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "completed": set(),
         "failed": set(),
     },
+    "eval_case": {
+        "draft": {"active", "archived"},
+        "active": {"draft", "archived"},
+        "archived": set(),
+    },
+    "eval_case_promotion": {
+        "candidate": {"needs_review", "approved", "rejected", "superseded", "archived"},
+        "needs_review": {"candidate", "approved", "rejected", "superseded", "archived"},
+        "approved": {"needs_review", "superseded", "archived"},
+        "rejected": {"candidate", "archived"},
+        "superseded": set(),
+        "archived": set(),
+    },
     "proposal": {
         "pending_review": {"approved", "rejected", "needs_more_analysis", "superseded"},
         "approved": set(),
@@ -215,6 +243,8 @@ _KNOWN_STATES = {
     "batch": BATCH_STATES,
     "task": TASK_STATES,
     "eval_run": EVAL_RUN_STATES,
+    "eval_case": EVAL_CASE_STATES,
+    "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
     "proposal": PROPOSAL_STATES,
     "external_governance_item": EXTERNAL_GOVERNANCE_ITEM_STATES,
 }

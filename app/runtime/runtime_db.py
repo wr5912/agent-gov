@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -305,11 +307,59 @@ class EvalCaseModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     source_feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     source_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    asset_layer: Mapped[str] = mapped_column(String(64), default="candidate", index=True)
+    promotion_status: Mapped[str] = mapped_column(String(64), default="candidate", index=True)
+    blocking_policy: Mapped[str] = mapped_column(String(64), default="non_blocking", index=True)
+    scenario_pack: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    severity: Mapped[str] = mapped_column(String(64), default="medium", index=True)
+    flaky_status: Mapped[str] = mapped_column(String(64), default="stable", index=True)
+    variant_role: Mapped[str] = mapped_column(String(64), default="original_reproduction", index=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    last_run_at: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    last_result_status: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    failure_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    superseded_by_eval_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     labels_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
-Index("ix_eval_cases_source_feedback_case_unique", EvalCaseModel.source_feedback_case_id, unique=True)
+Index(
+    "ix_eval_cases_source_variant_hash",
+    EvalCaseModel.source_feedback_case_id,
+    EvalCaseModel.variant_role,
+    EvalCaseModel.content_hash,
+    unique=True,
+)
+
+
+class EvalCaseRevisionModel(Base):
+    __tablename__ = "eval_case_revisions"
+
+    revision_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id", ondelete="CASCADE"), index=True)
+    revision_number: Mapped[int] = mapped_column(index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    created_by: Mapped[str] = mapped_column(String(128), index=True)
+    reason: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_eval_case_revisions_case_number", EvalCaseRevisionModel.eval_case_id, EvalCaseRevisionModel.revision_number, unique=True)
+
+
+class EvalCaseGovernanceEventModel(Base):
+    __tablename__ = "eval_case_governance_events"
+
+    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    operator: Mapped[str] = mapped_column(String(128), index=True)
+    role: Mapped[str] = mapped_column(String(128), default="developer", index=True)
+    reason: Mapped[str] = mapped_column(String(2048))
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 class EvalRunModel(Base):
@@ -322,6 +372,7 @@ class EvalRunModel(Base):
     agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
+    regression_plan_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
@@ -335,6 +386,50 @@ class EvalRunItemModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class RegressionPlanModel(Base):
+    __tablename__ = "regression_plans"
+
+    regression_plan_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_optimization_batches.batch_id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    status: Mapped[str] = mapped_column(String(64), default="created", index=True)
+    applied_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
+    selection_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_regression_plans_batch_fingerprint", RegressionPlanModel.batch_id, RegressionPlanModel.selection_fingerprint, unique=True)
+
+
+class RegressionImpactAnalysisModel(Base):
+    __tablename__ = "regression_impact_analyses"
+
+    impact_analysis_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
+    job_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
+    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+Index("ix_regression_impact_analyses_eval_run", RegressionImpactAnalysisModel.eval_run_id, unique=True)
+
+
+class RegressionGateOverrideModel(Base):
+    __tablename__ = "regression_gate_overrides"
+
+    override_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    batch_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_optimization_batches.batch_id", ondelete="CASCADE"), index=True)
+    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
+    operator: Mapped[str] = mapped_column(String(128), index=True)
+    reason: Mapped[str] = mapped_column(String(2048))
+    expires_at: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
 def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
@@ -380,7 +475,113 @@ def make_session_factory(db_path: Path) -> sessionmaker:
 
 def ensure_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    _run_runtime_migrations(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     with factory.begin() as session:
         if not session.get(SchemaMigration, "0001_sqlalchemy_runtime_store"):
             session.add(SchemaMigration(version="0001_sqlalchemy_runtime_store", applied_at=utc_now()))
+
+
+def _run_runtime_migrations(engine: Engine) -> None:
+    factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    with factory.begin() as session:
+        applied = {str(row.version) for row in session.query(SchemaMigration).all()}
+    for version, migrate in (("0002_regression_assets", _migrate_0002_regression_assets),):
+        if version in applied:
+            continue
+        with engine.begin() as connection:
+            migrate(connection)
+        with factory.begin() as session:
+            if not session.get(SchemaMigration, version):
+                session.add(SchemaMigration(version=version, applied_at=utc_now()))
+
+
+def _migrate_0002_regression_assets(connection: Any) -> None:
+    connection.exec_driver_sql("DROP INDEX IF EXISTS ix_eval_cases_source_feedback_case_unique")
+    columns = _table_columns(connection, "eval_cases")
+    for column_name, ddl in {
+        "asset_layer": "VARCHAR(64) DEFAULT 'candidate'",
+        "promotion_status": "VARCHAR(64) DEFAULT 'candidate'",
+        "blocking_policy": "VARCHAR(64) DEFAULT 'non_blocking'",
+        "scenario_pack": "VARCHAR(128)",
+        "severity": "VARCHAR(64) DEFAULT 'medium'",
+        "flaky_status": "VARCHAR(64) DEFAULT 'stable'",
+        "variant_role": "VARCHAR(64) DEFAULT 'original_reproduction'",
+        "content_hash": "VARCHAR(64)",
+        "last_run_at": "VARCHAR(64)",
+        "last_result_status": "VARCHAR(64)",
+        "failure_rate": "FLOAT",
+        "superseded_by_eval_case_id": "VARCHAR(128)",
+    }.items():
+        if column_name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE eval_cases ADD COLUMN {column_name} {ddl}")
+    eval_run_columns = _table_columns(connection, "eval_runs")
+    if "regression_plan_id" not in eval_run_columns:
+        connection.exec_driver_sql("ALTER TABLE eval_runs ADD COLUMN regression_plan_id VARCHAR(128)")
+
+    connection.exec_driver_sql(
+        """
+        UPDATE eval_cases
+        SET
+            asset_layer = CASE
+                WHEN status = 'draft' THEN 'candidate'
+                WHEN status = 'archived' THEN COALESCE(asset_layer, 'candidate')
+                WHEN source_feedback_case_id IS NULL THEN 'batch_specific'
+                ELSE 'historical_bug'
+            END,
+            promotion_status = CASE
+                WHEN status = 'active' THEN 'approved'
+                WHEN status = 'archived' THEN 'archived'
+                ELSE 'candidate'
+            END,
+            blocking_policy = CASE
+                WHEN status = 'active' AND source_feedback_case_id IS NULL THEN 'blocking'
+                WHEN status = 'active' THEN 'blocking_if_relevant'
+                ELSE 'non_blocking'
+            END,
+            severity = COALESCE(severity, 'medium'),
+            flaky_status = COALESCE(flaky_status, 'stable'),
+            variant_role = COALESCE(variant_role, 'original_reproduction')
+        WHERE asset_layer IS NULL OR promotion_status IS NULL OR blocking_policy IS NULL
+        """
+    )
+
+    rows = connection.exec_driver_sql("SELECT eval_case_id, payload_json FROM eval_cases WHERE content_hash IS NULL").fetchall()
+    for eval_case_id, payload_json in rows:
+        content_hash = _eval_case_content_hash(payload_json, str(eval_case_id))
+        connection.exec_driver_sql(
+            "UPDATE eval_cases SET content_hash = ? WHERE eval_case_id = ?",
+            (content_hash, eval_case_id),
+        )
+
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_source_feedback_case_id ON eval_cases (source_feedback_case_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_asset_layer ON eval_cases (asset_layer)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_promotion_status ON eval_cases (promotion_status)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_cases_blocking_policy ON eval_cases (blocking_policy)")
+    connection.exec_driver_sql(
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_eval_cases_source_variant_hash ON eval_cases (source_feedback_case_id, variant_role, content_hash)"
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_regression_plan_id ON eval_runs (regression_plan_id)")
+
+
+def _table_columns(connection: Any, table_name: str) -> set[str]:
+    return {str(row[1]) for row in connection.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()}
+
+
+def _eval_case_content_hash(payload_json: Any, fallback: str) -> str:
+    try:
+        payload = json.loads(payload_json) if isinstance(payload_json, str) else dict(payload_json or {})
+    except (TypeError, ValueError):
+        payload = {"eval_case_id": fallback}
+    stable = {
+        "prompt": payload.get("prompt"),
+        "expected_behavior": payload.get("expected_behavior"),
+        "checks_json": payload.get("checks_json") or {},
+        "labels": sorted(str(item) for item in payload.get("labels") or []),
+        "asset_layer": payload.get("asset_layer"),
+        "source_feedback_case_id": payload.get("source_feedback_case_id"),
+        "source_kind": payload.get("source_kind"),
+        "source_id": payload.get("source_id"),
+    }
+    encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

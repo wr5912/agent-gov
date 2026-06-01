@@ -1506,6 +1506,60 @@
         "title": "EvalCaseAttributionSummaryResponse",
         "type": "object"
       },
+      "EvalCaseGovernanceEventResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "after": {
+            "additionalProperties": true,
+            "title": "After",
+            "type": "object"
+          },
+          "before": {
+            "additionalProperties": true,
+            "title": "Before",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "eval_case_id": {
+            "title": "Eval Case Id",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "eval_case_id",
+          "action",
+          "operator",
+          "role",
+          "reason",
+          "created_at"
+        ],
+        "title": "EvalCaseGovernanceEventResponse",
+        "type": "object"
+      },
       "EvalCaseProposalSummaryResponse": {
         "additionalProperties": true,
         "properties": {
@@ -1582,6 +1636,17 @@
       "EvalCaseResponse": {
         "additionalProperties": true,
         "properties": {
+          "asset_layer": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Layer"
+          },
           "attribution_summary": {
             "anyOf": [
               {
@@ -1592,10 +1657,32 @@
               }
             ]
           },
+          "blocking_policy": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Policy"
+          },
           "checks_json": {
             "additionalProperties": true,
             "title": "Checks Json",
             "type": "object"
+          },
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
           },
           "created_at": {
             "title": "Created At",
@@ -1616,12 +1703,67 @@
             ],
             "title": "Expected Behavior"
           },
+          "failure_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Rate"
+          },
+          "flaky_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flaky Status"
+          },
           "labels": {
             "items": {
               "type": "string"
             },
             "title": "Labels",
             "type": "array"
+          },
+          "last_result_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Result Status"
+          },
+          "last_run_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Run At"
+          },
+          "promotion_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Status"
           },
           "prompt": {
             "title": "Prompt",
@@ -1637,6 +1779,17 @@
               }
             ]
           },
+          "scenario_pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Pack"
+          },
           "schema_version": {
             "anyOf": [
               {
@@ -1647,6 +1800,17 @@
               }
             ],
             "title": "Schema Version"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
           },
           "source": {
             "anyOf": [
@@ -1724,9 +1888,31 @@
             "title": "Status",
             "type": "string"
           },
+          "superseded_by_eval_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Eval Case Id"
+          },
           "updated_at": {
             "title": "Updated At",
             "type": "string"
+          },
+          "variant_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Role"
           }
         },
         "required": [
@@ -1737,6 +1923,67 @@
           "prompt"
         ],
         "title": "EvalCaseResponse",
+        "type": "object"
+      },
+      "EvalCaseRevisionResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "content_hash": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content Hash"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "title": "Created By",
+            "type": "string"
+          },
+          "eval_case_id": {
+            "title": "Eval Case Id",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "revision_id": {
+            "title": "Revision Id",
+            "type": "string"
+          },
+          "revision_number": {
+            "title": "Revision Number",
+            "type": "integer"
+          },
+          "snapshot": {
+            "additionalProperties": true,
+            "title": "Snapshot",
+            "type": "object"
+          }
+        },
+        "required": [
+          "revision_id",
+          "eval_case_id",
+          "revision_number",
+          "created_at",
+          "created_by"
+        ],
+        "title": "EvalCaseRevisionResponse",
         "type": "object"
       },
       "EvalCaseSourceSummaryResponse": {
@@ -1911,6 +2158,11 @@
             "title": "Eval Case Id",
             "type": "string"
           },
+          "eval_case_snapshot": {
+            "additionalProperties": true,
+            "title": "Eval Case Snapshot",
+            "type": "object"
+          },
           "eval_run_id": {
             "title": "Eval Run Id",
             "type": "string"
@@ -2005,6 +2257,11 @@
             "title": "Eval Run Id",
             "type": "string"
           },
+          "gate_result": {
+            "additionalProperties": true,
+            "title": "Gate Result",
+            "type": "object"
+          },
           "item_ids": {
             "items": {
               "type": "string"
@@ -2029,6 +2286,17 @@
               }
             ],
             "title": "Optimization Task Id"
+          },
+          "regression_plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regression Plan Id"
           },
           "result_status": {
             "anyOf": [
@@ -2064,6 +2332,11 @@
       },
       "EvalRunSummaryResponse": {
         "properties": {
+          "blocked": {
+            "default": 0,
+            "title": "Blocked",
+            "type": "integer"
+          },
           "failed": {
             "default": 0,
             "title": "Failed",
@@ -2077,6 +2350,16 @@
           "passed": {
             "default": 0,
             "title": "Passed",
+            "type": "integer"
+          },
+          "passed_with_notes": {
+            "default": 0,
+            "title": "Passed With Notes",
+            "type": "integer"
+          },
+          "review_required": {
+            "default": 0,
+            "title": "Review Required",
             "type": "integer"
           },
           "total": {
@@ -3437,6 +3720,43 @@
       },
       "FeedbackEvalCaseUpdateRequest": {
         "properties": {
+          "asset_layer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "candidate",
+                  "batch_specific",
+                  "smoke",
+                  "core_regression",
+                  "scenario_pack",
+                  "safety",
+                  "historical_bug",
+                  "exploratory"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Layer"
+          },
+          "blocking_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "blocking",
+                  "blocking_if_relevant",
+                  "non_blocking"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Policy"
+          },
           "checks_json": {
             "anyOf": [
               {
@@ -3460,6 +3780,21 @@
             ],
             "title": "Expected Behavior"
           },
+          "flaky_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "stable",
+                  "flaky"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flaky Status"
+          },
           "labels": {
             "anyOf": [
               {
@@ -3474,6 +3809,36 @@
             ],
             "title": "Labels"
           },
+          "operator": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operator"
+          },
+          "promotion_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "candidate",
+                  "needs_review",
+                  "approved",
+                  "rejected",
+                  "superseded",
+                  "archived"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Promotion Status"
+          },
           "prompt": {
             "anyOf": [
               {
@@ -3484,6 +3849,50 @@
               }
             ],
             "title": "Prompt"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Role"
+          },
+          "scenario_pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Pack"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Severity"
           },
           "status": {
             "anyOf": [
@@ -3500,6 +3909,28 @@
               }
             ],
             "title": "Status"
+          },
+          "superseded_by_eval_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Superseded By Eval Case Id"
+          },
+          "variant_role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Variant Role"
           }
         },
         "title": "FeedbackEvalCaseUpdateRequest",
@@ -3833,6 +4264,44 @@
       },
       "FeedbackOptimizationBatchEvalCaseCreateRequest": {
         "properties": {
+          "asset_layer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "batch_specific",
+                  "smoke",
+                  "core_regression",
+                  "scenario_pack",
+                  "safety",
+                  "historical_bug",
+                  "exploratory"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "batch_specific",
+            "title": "Asset Layer"
+          },
+          "blocking_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "blocking",
+                  "blocking_if_relevant",
+                  "non_blocking"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "blocking",
+            "title": "Blocking Policy"
+          },
           "checks_json": {
             "additionalProperties": true,
             "title": "Checks Json",
@@ -3856,9 +4325,49 @@
             "title": "Labels",
             "type": "array"
           },
+          "promotion_status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "approved",
+                  "needs_review",
+                  "candidate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "approved",
+            "title": "Promotion Status"
+          },
           "prompt": {
             "title": "Prompt",
             "type": "string"
+          },
+          "scenario_pack": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Pack"
+          },
+          "severity": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "medium",
+            "title": "Severity"
           },
           "status": {
             "default": "active",
@@ -3972,12 +4481,55 @@
           },
           "eval_run": {
             "$ref": "#/components/schemas/EvalRunResponse"
+          },
+          "gate_override": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegressionGateOverrideResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "impact_analysis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "regression_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegressionPlanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "eval_run"
         ],
         "title": "FeedbackOptimizationBatchRegressionResponse",
+        "type": "object"
+      },
+      "FeedbackOptimizationBatchRegressionRunRequest": {
+        "properties": {
+          "regression_plan_id": {
+            "title": "Regression Plan Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regression_plan_id"
+        ],
+        "title": "FeedbackOptimizationBatchRegressionRunRequest",
         "type": "object"
       },
       "FeedbackOptimizationBatchResponse": {
@@ -4095,6 +4647,21 @@
               }
             ]
           },
+          "latest_regression_gate": {
+            "additionalProperties": true,
+            "title": "Latest Regression Gate",
+            "type": "object"
+          },
+          "latest_regression_plan": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RegressionPlanResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "optimization_plan": {
             "anyOf": [
               {
@@ -4167,6 +4734,17 @@
               }
             ],
             "title": "Priority"
+          },
+          "regression_plan_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Regression Plan Id"
           },
           "schema_version": {
             "anyOf": [
@@ -7841,6 +8419,378 @@
         "title": "ProposalOutputResponse",
         "type": "object"
       },
+      "RegressionAssetFlakyRequest": {
+        "properties": {
+          "operator": {
+            "default": "system",
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "default": "developer",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RegressionAssetFlakyRequest",
+        "type": "object"
+      },
+      "RegressionAssetGovernanceActionRequest": {
+        "properties": {
+          "asset_layer": {
+            "anyOf": [
+              {
+                "enum": [
+                  "batch_specific",
+                  "smoke",
+                  "core_regression",
+                  "scenario_pack",
+                  "safety",
+                  "historical_bug",
+                  "exploratory"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Asset Layer"
+          },
+          "blocking_policy": {
+            "anyOf": [
+              {
+                "enum": [
+                  "blocking",
+                  "blocking_if_relevant",
+                  "non_blocking"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Blocking Policy"
+          },
+          "operator": {
+            "default": "system",
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "default": "developer",
+            "title": "Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "RegressionAssetGovernanceActionRequest",
+        "type": "object"
+      },
+      "RegressionAssetSupersedeRequest": {
+        "properties": {
+          "operator": {
+            "default": "system",
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "role": {
+            "default": "developer",
+            "title": "Role",
+            "type": "string"
+          },
+          "superseded_by_eval_case_id": {
+            "title": "Superseded By Eval Case Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "superseded_by_eval_case_id",
+          "reason"
+        ],
+        "title": "RegressionAssetSupersedeRequest",
+        "type": "object"
+      },
+      "RegressionGateOverrideRequest": {
+        "properties": {
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operator",
+          "reason",
+          "expires_at"
+        ],
+        "title": "RegressionGateOverrideRequest",
+        "type": "object"
+      },
+      "RegressionGateOverrideResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "after": {
+            "additionalProperties": true,
+            "title": "After",
+            "type": "object"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "before": {
+            "additionalProperties": true,
+            "title": "Before",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "eval_run_id": {
+            "title": "Eval Run Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "title": "Expires At",
+            "type": "string"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          },
+          "override_id": {
+            "title": "Override Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "override_id",
+          "batch_id",
+          "eval_run_id",
+          "operator",
+          "reason",
+          "expires_at",
+          "created_at"
+        ],
+        "title": "RegressionGateOverrideResponse",
+        "type": "object"
+      },
+      "RegressionImpactAnalysisResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "eval_run_id": {
+            "title": "Eval Run Id",
+            "type": "string"
+          },
+          "gate_result": {
+            "additionalProperties": true,
+            "title": "Gate Result",
+            "type": "object"
+          },
+          "impact_analysis_id": {
+            "title": "Impact Analysis Id",
+            "type": "string"
+          },
+          "impacted_assets": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Impacted Assets",
+            "type": "array"
+          },
+          "job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Job Id"
+          },
+          "recommendations": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommendations",
+            "type": "array"
+          },
+          "result_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result Status"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "impact_analysis_id",
+          "eval_run_id",
+          "created_at",
+          "status"
+        ],
+        "title": "RegressionImpactAnalysisResponse",
+        "type": "object"
+      },
+      "RegressionPlanCreateRequest": {
+        "properties": {
+          "force": {
+            "default": false,
+            "title": "Force",
+            "type": "boolean"
+          }
+        },
+        "title": "RegressionPlanCreateRequest",
+        "type": "object"
+      },
+      "RegressionPlanResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "applied_agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Applied Agent Version Id"
+          },
+          "batch_id": {
+            "title": "Batch Id",
+            "type": "string"
+          },
+          "change_summary": {
+            "additionalProperties": true,
+            "title": "Change Summary",
+            "type": "object"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "eval_case_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Eval Case Ids",
+            "type": "array"
+          },
+          "regression_plan_id": {
+            "title": "Regression Plan Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "selected_cases": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Selected Cases",
+            "type": "array"
+          },
+          "selection_fingerprint": {
+            "title": "Selection Fingerprint",
+            "type": "string"
+          },
+          "selection_summary": {
+            "additionalProperties": true,
+            "title": "Selection Summary",
+            "type": "object"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "regression_plan_id",
+          "batch_id",
+          "created_at",
+          "status",
+          "selection_fingerprint"
+        ],
+        "title": "RegressionPlanResponse",
+        "type": "object"
+      },
       "ResponsibilityBoundaryResponse": {
         "additionalProperties": true,
         "properties": {
@@ -8627,7 +9577,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.13"
+    "version": "0.2.14"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -9287,6 +10237,70 @@
           },
           {
             "in": "query",
+            "name": "asset_layer",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Layer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "promotion_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Promotion Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "blocking_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blocking Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flaky_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flaky Status"
+            }
+          },
+          {
+            "in": "query",
             "name": "limit",
             "required": false,
             "schema": {
@@ -9626,6 +10640,98 @@
           }
         ],
         "summary": "Get one feedback dataset eval run",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/eval-runs/{eval_run_id}/impact-analysis": {
+      "get": {
+        "operationId": "get_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get regression impact analysis for one eval run",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "post": {
+        "operationId": "create_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create deterministic regression impact analysis for one eval run",
         "tags": [
           "feedback"
         ]
@@ -11431,6 +12537,115 @@
         ]
       }
     },
+    "/api/feedback-optimization-batches/{batch_id}/regression-plan": {
+      "get": {
+        "operationId": "get_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get latest regression plan for one optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "post": {
+        "operationId": "create_feedback_optimization_batch_regression_plan_api_feedback_optimization_batches__batch_id__regression_plan_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/RegressionPlanCreateRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Req"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionPlanResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create or reuse a regression plan for one optimization batch",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
     "/api/feedback-optimization-batches/{batch_id}/regression-runs": {
       "post": {
         "operationId": "run_feedback_optimization_batch_regression_api_feedback_optimization_batches__batch_id__regression_runs_post",
@@ -11445,6 +12660,16 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackOptimizationBatchRegressionRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -11472,7 +12697,129 @@
             "HTTPBearer": []
           }
         ],
-        "summary": "Run regression validation for all active eval cases in one optimization batch",
+        "summary": "Run regression validation for one optimization batch from an explicit regression plan",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/gate-overrides": {
+      "post": {
+        "operationId": "create_batch_regression_gate_override_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__gate_overrides_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionGateOverrideRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionGateOverrideResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Record a break-glass override for a regression gate result",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis": {
+      "post": {
+        "operationId": "create_batch_regression_impact_analysis_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__impact_analysis_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "batch_id",
+            "required": true,
+            "schema": {
+              "title": "Batch Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "eval_run_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Run Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegressionImpactAnalysisResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create deterministic impact analysis for a batch regression run",
         "tags": [
           "feedback"
         ]
@@ -12898,6 +14245,645 @@
           }
         ],
         "summary": "Resolve one pending feedback correlation",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets": {
+      "get": {
+        "operationId": "list_regression_assets_api_regression_assets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "asset_layer",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Asset Layer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "promotion_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Promotion Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "blocking_policy",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Blocking Policy"
+            }
+          },
+          {
+            "in": "query",
+            "name": "scenario_pack",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Scenario Pack"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flaky_status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flaky Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseResponse"
+                  },
+                  "title": "Response List Regression Assets Api Regression Assets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List governed regression assets",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}": {
+      "get": {
+        "operationId": "get_regression_asset_api_regression_assets__eval_case_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one governed regression asset",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "patch": {
+        "operationId": "update_regression_asset_api_regression_assets__eval_case_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackEvalCaseUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Update one governed regression asset",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/archive": {
+      "post": {
+        "operationId": "archive_regression_asset_api_regression_assets__eval_case_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionAssetGovernanceActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Archive one regression asset",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/governance-events": {
+      "get": {
+        "operationId": "list_regression_asset_governance_events_api_regression_assets__eval_case_id__governance_events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseGovernanceEventResponse"
+                  },
+                  "title": "Response List Regression Asset Governance Events Api Regression Assets  Eval Case Id  Governance Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List governance audit events for one regression asset",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/mark-flaky": {
+      "post": {
+        "operationId": "mark_regression_asset_flaky_api_regression_assets__eval_case_id__mark_flaky_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionAssetFlakyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark one regression asset as flaky",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/promote": {
+      "post": {
+        "operationId": "promote_regression_asset_api_regression_assets__eval_case_id__promote_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionAssetGovernanceActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Promote one regression asset into the approved long-term suite",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/revisions": {
+      "get": {
+        "operationId": "list_regression_asset_revisions_api_regression_assets__eval_case_id__revisions_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseRevisionResponse"
+                  },
+                  "title": "Response List Regression Asset Revisions Api Regression Assets  Eval Case Id  Revisions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List immutable revisions for one regression asset",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/supersede": {
+      "post": {
+        "operationId": "supersede_regression_asset_api_regression_assets__eval_case_id__supersede_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionAssetSupersedeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Supersede one regression asset with another asset",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/regression-assets/{eval_case_id}/unmark-flaky": {
+      "post": {
+        "operationId": "unmark_regression_asset_flaky_api_regression_assets__eval_case_id__unmark_flaky_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "eval_case_id",
+            "required": true,
+            "schema": {
+              "title": "Eval Case Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegressionAssetFlakyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Mark one regression asset as stable",
         "tags": [
           "feedback"
         ]

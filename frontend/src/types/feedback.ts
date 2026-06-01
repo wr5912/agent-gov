@@ -6,6 +6,8 @@ type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
 type OpenApiEvidencePackageFileResponse = components["schemas"]["EvidencePackageFileResponse"];
 type OpenApiEvidencePackageResponse = components["schemas"]["EvidencePackageResponse"];
 type OpenApiEvalCaseResponse = components["schemas"]["EvalCaseResponse"];
+type OpenApiEvalCaseGovernanceEventResponse = components["schemas"]["EvalCaseGovernanceEventResponse"];
+type OpenApiEvalCaseRevisionResponse = components["schemas"]["EvalCaseRevisionResponse"];
 type OpenApiEvalRunItemResponse = components["schemas"]["EvalRunItemResponse"];
 type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiExternalGovernanceItemResponse = components["schemas"]["ExternalGovernanceItemResponse"];
@@ -21,6 +23,7 @@ type OpenApiFeedbackOptimizationBatchAttributionResponse = components["schemas"]
 type OpenApiFeedbackOptimizationBatchCreateRequest = components["schemas"]["FeedbackOptimizationBatchCreateRequest"];
 type OpenApiFeedbackOptimizationBatchExecutionResponse = components["schemas"]["FeedbackOptimizationBatchExecutionResponse"];
 type OpenApiFeedbackOptimizationBatchRegressionResponse = components["schemas"]["FeedbackOptimizationBatchRegressionResponse"];
+type OpenApiFeedbackOptimizationBatchRegressionRunRequest = components["schemas"]["FeedbackOptimizationBatchRegressionRunRequest"];
 type OpenApiFeedbackOptimizationBatchResponse = components["schemas"]["FeedbackOptimizationBatchResponse"];
 type OpenApiFeedbackOptimizationBlockedItemResponse = components["schemas"]["FeedbackOptimizationBlockedItemResponse"];
 type OpenApiFeedbackOptimizationPlanResponse = components["schemas"]["FeedbackOptimizationPlanResponse"];
@@ -46,6 +49,12 @@ type OpenApiOptimizationProposalReviewRecordResponse = components["schemas"]["Op
 type OpenApiOptimizationProposalReviewResponse = components["schemas"]["OptimizationProposalReviewResponse"];
 type OpenApiOptimizationTaskResponse = components["schemas"]["OptimizationTaskResponse"];
 type OpenApiProposalOutputResponse = components["schemas"]["ProposalOutputResponse"];
+type OpenApiRegressionAssetGovernanceActionRequest = components["schemas"]["RegressionAssetGovernanceActionRequest"];
+type OpenApiRegressionAssetFlakyRequest = components["schemas"]["RegressionAssetFlakyRequest"];
+type OpenApiRegressionAssetSupersedeRequest = components["schemas"]["RegressionAssetSupersedeRequest"];
+type OpenApiRegressionGateOverrideResponse = components["schemas"]["RegressionGateOverrideResponse"];
+type OpenApiRegressionImpactAnalysisResponse = components["schemas"]["RegressionImpactAnalysisResponse"];
+type OpenApiRegressionPlanResponse = components["schemas"]["RegressionPlanResponse"];
 type OpenApiSocEventIngestRequest = components["schemas"]["SocEventIngestRequest"];
 type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestResponse"];
 type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
@@ -297,6 +306,15 @@ export type OptimizationExecutionApplyResponse = OpenApiOptimizationExecutionApp
 export type EvalCaseRecord = OpenApiEvalCaseResponse;
 
 export type EvalCaseUpdateRequest = OpenApiFeedbackEvalCaseUpdateRequest;
+export type EvalCaseRevisionRecord = OpenApiEvalCaseRevisionResponse;
+export type EvalCaseGovernanceEventRecord = OpenApiEvalCaseGovernanceEventResponse;
+export type RegressionAssetGovernanceActionRequest = OpenApiRegressionAssetGovernanceActionRequest;
+export type RegressionAssetFlakyRequest = OpenApiRegressionAssetFlakyRequest;
+export type RegressionAssetSupersedeRequest = OpenApiRegressionAssetSupersedeRequest;
+export type RegressionPlanRecord = OpenApiRegressionPlanResponse;
+export type RegressionImpactAnalysisRecord = OpenApiRegressionImpactAnalysisResponse;
+export type RegressionGateOverrideRecord = OpenApiRegressionGateOverrideResponse;
+export type FeedbackOptimizationBatchRegressionRunRequest = OpenApiFeedbackOptimizationBatchRegressionRunRequest;
 
 export type EvalRunItemRecord = OpenApiEvalRunItemResponse;
 export type EvalRunRecord = OpenApiEvalRunResponse;
@@ -346,6 +364,8 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
   optimization_task?: OptimizationTaskRecord | null;
   execution_job?: OptimizationExecutionJobRecord | null;
   latest_eval_run?: EvalRunRecord | null;
+  latest_regression_plan?: RegressionPlanRecord | null;
+  latest_regression_gate?: Record<string, unknown>;
 };
 
 export type FeedbackOptimizationBatchAttributionResponse = OpenApiFeedbackOptimizationBatchAttributionResponse & {
@@ -362,6 +382,9 @@ export type FeedbackOptimizationBatchExecutionResponse = OpenApiFeedbackOptimiza
 export type FeedbackOptimizationBatchRegressionResponse = OpenApiFeedbackOptimizationBatchRegressionResponse & {
   batch?: FeedbackOptimizationBatchRecord | null;
   eval_run: EvalRunRecord;
+  regression_plan?: RegressionPlanRecord | null;
+  impact_analysis?: RegressionImpactAnalysisRecord | null;
+  gate_override?: RegressionGateOverrideRecord | null;
 };
 
 export interface FeedbackWorkbenchData {

@@ -153,6 +153,7 @@ def test_external_governance_item_filters_are_applied_before_materialization(tmp
 def test_workflow_list_filters_do_not_use_in_memory_filter(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     eval_case, feedback_case = _create_eval_case(store)
+    eval_case = store.promote_eval_case(eval_case["eval_case_id"], {"operator": "tester", "reason": "filter coverage"})
     proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
     store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
     task = store.create_task(proposal_id=proposal["proposal_id"])

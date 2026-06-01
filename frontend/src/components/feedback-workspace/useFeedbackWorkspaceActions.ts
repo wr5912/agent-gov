@@ -3,6 +3,7 @@ import {
   applyOptimizationExecutionJob,
   createFeedbackOptimizationBatch,
   createFeedbackOptimizationBatchEvalCase,
+  createFeedbackOptimizationBatchRegressionPlan,
   createOptimizationExecutionJob,
   executeFeedbackOptimizationPlanTask,
   generateFeedbackOptimizationBatchPlan,
@@ -222,7 +223,10 @@ export function useFeedbackWorkspaceActions({
   async function runBatchRegression(batch: FeedbackOptimizationBatchRecord) {
     setActionId(`batch-regression:${batch.batch_id}`);
     try {
-      const result = await runFeedbackOptimizationBatchRegression(clientConfig, batch.batch_id);
+      const plan = await createFeedbackOptimizationBatchRegressionPlan(clientConfig, batch.batch_id);
+      const result = await runFeedbackOptimizationBatchRegression(clientConfig, batch.batch_id, {
+        regression_plan_id: plan.regression_plan_id,
+      });
       setToast(`批次回归测试完成：${result.eval_run.result_status || result.eval_run.status}`);
       setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
       await refreshWorkbench();

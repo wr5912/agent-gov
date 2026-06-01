@@ -18,6 +18,7 @@ from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.openai import create_openai_router
 from app.routers.optimization import create_optimization_router
+from app.routers.regression_assets import create_regression_assets_router
 from app.routers.sessions import create_sessions_router
 from app.services.execution_application import ExecutionApplicationService
 from app.runtime.agent_version_store import AgentVersionStore
@@ -103,6 +104,7 @@ app.include_router(create_openai_router(settings=settings, runtime=runtime, requ
 app.include_router(create_sessions_router(session_store=session_store, require_api_key=require_api_key))
 app.include_router(create_agent_versions_router(agent_version_store=agent_version_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
+app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_feedback_cases_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(
     create_feedback_batches_router(

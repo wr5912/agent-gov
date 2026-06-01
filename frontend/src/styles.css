@@ -3576,7 +3576,27 @@ button:disabled {
 }
 
 .fw-batch-eval-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   justify-content: flex-end;
+}
+
+.fw-inline-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fw-inline-controls select,
+.fw-inline-controls input {
+  min-width: 0;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0 10px;
+  background: var(--panel);
+  color: var(--text);
 }
 
 .fw-eval-card p,

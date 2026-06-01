@@ -1,0 +1,800 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import uuid
+from typing import Any, Optional
+
+from sqlalchemy import select
+
+from ..errors import BusinessRuleViolation
+from ..runtime_db import (
+    EvalCaseGovernanceEventModel,
+    EvalCaseModel,
+    EvalCaseRevisionModel,
+    EvalRunItemModel,
+    EvalRunModel,
+    RegressionGateOverrideModel,
+    RegressionImpactAnalysisModel,
+    RegressionPlanModel,
+    utc_now,
+)
+from ..state_machines import validate_transition
+
+
+ACTIVE_ASSET_LAYERS = {"batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug"}
+ASSET_LAYERS = {"candidate", *ACTIVE_ASSET_LAYERS, "exploratory"}
+PROMOTION_STATUSES = {"candidate", "needs_review", "approved", "rejected", "superseded", "archived"}
+BLOCKING_POLICIES = {"blocking", "blocking_if_relevant", "non_blocking"}
+FLAKY_STATUSES = {"stable", "flaky"}
+
+class FeedbackRegressionAssetStoreMixin:
+    def _add_eval_case_row(self, db: Any, payload: dict[str, Any]) -> None:
+        payload = self._eval_case_with_asset_defaults(payload)
+        db.add(
+            EvalCaseModel(
+                eval_case_id=payload["eval_case_id"],
+                created_at=payload["created_at"],
+                updated_at=payload["updated_at"],
+                status=payload["status"],
+                source_feedback_case_id=self._string(payload.get("source_feedback_case_id")),
+                source_run_id=self._string(payload.get("source_run_id")),
+                asset_layer=payload["asset_layer"],
+                promotion_status=payload["promotion_status"],
+                blocking_policy=payload["blocking_policy"],
+                scenario_pack=self._string(payload.get("scenario_pack")),
+                severity=payload["severity"],
+                flaky_status=payload["flaky_status"],
+                variant_role=payload["variant_role"],
+                content_hash=payload["content_hash"],
+                last_run_at=self._string(payload.get("last_run_at")),
+                last_result_status=self._string(payload.get("last_result_status")),
+                failure_rate=payload.get("failure_rate"),
+                superseded_by_eval_case_id=self._string(payload.get("superseded_by_eval_case_id")),
+                labels_json=list(payload.get("labels") or []),
+                payload_json=payload,
+            )
+        )
+        self._add_eval_case_revision_row(db, payload, created_by="system", reason="initial")
+
+    def list_eval_cases(
+        self,
+        *,
+        status: Optional[str] = None,
+        source_feedback_case_id: Optional[str] = None,
+        asset_layer: Optional[str] = None,
+        promotion_status: Optional[str] = None,
+        blocking_policy: Optional[str] = None,
+        scenario_pack: Optional[str] = None,
+        flaky_status: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        stmt = select(EvalCaseModel).order_by(EvalCaseModel.updated_at.desc()).limit(limit)
+        for column, value in (
+            (EvalCaseModel.status, status),
+            (EvalCaseModel.source_feedback_case_id, source_feedback_case_id),
+            (EvalCaseModel.asset_layer, asset_layer),
+            (EvalCaseModel.promotion_status, promotion_status),
+            (EvalCaseModel.blocking_policy, blocking_policy),
+            (EvalCaseModel.scenario_pack, scenario_pack),
+            (EvalCaseModel.flaky_status, flaky_status),
+        ):
+            if value:
+                stmt = stmt.where(column == value)
+        with self.Session() as db:
+            return [self._eval_case_to_dict(row) for row in db.scalars(stmt).all()]
+
+    def find_eval_case(
+        self,
+        eval_case_id: Optional[str] = None,
+        *,
+        source_feedback_case_id: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row: EvalCaseModel | None = None
+            if eval_case_id:
+                row = db.get(EvalCaseModel, eval_case_id)
+            elif source_feedback_case_id:
+                row = db.scalars(
+                    select(EvalCaseModel)
+                    .where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id)
+                    .order_by(EvalCaseModel.updated_at.desc())
+                ).first()
+            return self._eval_case_to_dict(row) if row else None
+
+    def update_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        updated_at = utc_now()
+        operator = (self._string(fields.get("operator")) or "system").strip()
+        reason = (self._string(fields.get("reason")) or "eval case updated").strip()
+        with self.Session.begin() as db:
+            row = db.get(EvalCaseModel, eval_case_id)
+            if not row:
+                return None
+            before = self._eval_case_row_payload(row)
+            payload = dict(before)
+            self._apply_eval_case_update_fields(payload, fields)
+            payload["updated_at"] = updated_at
+            payload = self._eval_case_with_asset_defaults(payload)
+            validate_transition("eval_case", row.status, payload["status"])
+            validate_transition("eval_case_promotion", row.promotion_status, payload["promotion_status"])
+            self._sync_eval_case_row(row, payload)
+            self._add_eval_case_revision_row(db, payload, created_by=operator, reason=reason)
+            self._add_eval_case_governance_event_row(
+                db,
+                eval_case_id=eval_case_id,
+                action=str(fields.get("action") or "update"),
+                operator=operator,
+                role=str(fields.get("role") or "developer"),
+                reason=reason,
+                before=before,
+                after=payload,
+            )
+        return self.find_eval_case(eval_case_id)
+
+    def promote_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        asset_layer = self._string(fields.get("asset_layer")) or "core_regression"
+        blocking_policy = self._string(fields.get("blocking_policy")) or (
+            "blocking" if asset_layer in {"batch_specific", "smoke", "safety"} else "blocking_if_relevant"
+        )
+        return self.update_eval_case(
+            eval_case_id,
+            {
+                **fields,
+                "action": "promote",
+                "status": "active",
+                "promotion_status": "approved",
+                "asset_layer": asset_layer,
+                "blocking_policy": blocking_policy,
+            },
+        )
+
+    def archive_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        return self.update_eval_case(
+            eval_case_id,
+            {**fields, "action": "archive", "status": "archived", "promotion_status": "archived"},
+        )
+
+    def mark_eval_case_flaky(self, eval_case_id: str, fields: dict[str, Any], *, flaky: bool) -> Optional[dict[str, Any]]:
+        return self.update_eval_case(
+            eval_case_id,
+            {**fields, "action": "mark_flaky" if flaky else "unmark_flaky", "flaky_status": "flaky" if flaky else "stable"},
+        )
+
+    def supersede_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        target_id = self._string(fields.get("superseded_by_eval_case_id"))
+        if not target_id:
+            raise BusinessRuleViolation("superseded_by_eval_case_id is required")
+        if not self.find_eval_case(target_id):
+            raise BusinessRuleViolation("superseded target eval case not found")
+        return self.update_eval_case(
+            eval_case_id,
+            {
+                **fields,
+                "action": "supersede",
+                "status": "archived",
+                "promotion_status": "superseded",
+                "superseded_by_eval_case_id": target_id,
+            },
+        )
+
+    def list_eval_case_revisions(self, eval_case_id: str) -> list[dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(
+                select(EvalCaseRevisionModel)
+                .where(EvalCaseRevisionModel.eval_case_id == eval_case_id)
+                .order_by(EvalCaseRevisionModel.revision_number.desc())
+            ).all()
+            return [self._eval_case_revision_to_dict(row) for row in rows]
+
+    def list_eval_case_governance_events(self, eval_case_id: str) -> list[dict[str, Any]]:
+        with self.Session() as db:
+            rows = db.scalars(
+                select(EvalCaseGovernanceEventModel)
+                .where(EvalCaseGovernanceEventModel.eval_case_id == eval_case_id)
+                .order_by(EvalCaseGovernanceEventModel.created_at.desc())
+            ).all()
+            return [self._eval_case_governance_event_to_dict(row) for row in rows]
+
+    def create_regression_plan(self, batch_id: str, *, force: bool = False) -> Optional[dict[str, Any]]:
+        batch = self.find_optimization_batch(batch_id)
+        if not batch:
+            return None
+        selected_cases = self._selected_regression_cases_for_batch(batch)
+        if not selected_cases:
+            raise BusinessRuleViolation("No approved active regression assets found")
+        created_at = utc_now()
+        base_fingerprint = self._regression_plan_fingerprint(batch, selected_cases)
+        if not force:
+            existing = self._find_regression_plan_by_fingerprint(batch_id, base_fingerprint)
+            if existing:
+                return existing
+        fingerprint = base_fingerprint if not force else self._forced_regression_plan_fingerprint(base_fingerprint)
+        plan_id = f"rgp-{uuid.uuid4()}"
+        task = self.find_task(self._string(batch.get("optimization_task_id")) or "") if batch.get("optimization_task_id") else None
+        payload = {
+            "schema_version": "regression-plan/v1",
+            "regression_plan_id": plan_id,
+            "batch_id": batch_id,
+            "created_at": created_at,
+            "status": "created",
+            "applied_agent_version_id": (task or {}).get("applied_agent_version_id") or batch.get("applied_agent_version_id"),
+            "selection_fingerprint": fingerprint,
+            "base_selection_fingerprint": base_fingerprint,
+            "eval_case_ids": [case["eval_case_id"] for case in selected_cases],
+            "selected_cases": [self._regression_case_snapshot(case) for case in selected_cases],
+            "selection_summary": self._regression_selection_summary(selected_cases),
+            "change_summary": self._change_summary_for_batch(batch),
+        }
+        with self.Session.begin() as db:
+            db.add(
+                RegressionPlanModel(
+                    regression_plan_id=plan_id,
+                    batch_id=batch_id,
+                    created_at=created_at,
+                    status="created",
+                    applied_agent_version_id=self._string(payload.get("applied_agent_version_id")),
+                    selection_fingerprint=fingerprint,
+                    payload_json=payload,
+                )
+            )
+            batch_row = self._batch_row_for_update(db, batch_id)
+            if batch_row:
+                self._update_batch_row(
+                    db,
+                    batch_id,
+                    status=batch_row.status,
+                    fields={"regression_plan_id": plan_id, "latest_regression_plan": payload},
+                )
+        return self.get_regression_plan(plan_id)
+
+    def get_regression_plan(self, regression_plan_id: str) -> Optional[dict[str, Any]]:
+        if not regression_plan_id:
+            return None
+        with self.Session() as db:
+            row = db.get(RegressionPlanModel, regression_plan_id)
+            return self._regression_plan_to_dict(row) if row else None
+    def get_latest_regression_plan(self, batch_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.scalars(
+                select(RegressionPlanModel)
+                .where(RegressionPlanModel.batch_id == batch_id)
+                .order_by(RegressionPlanModel.created_at.desc())
+            ).first()
+            return self._regression_plan_to_dict(row) if row else None
+    def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+        eval_run = self.get_eval_run(eval_run_id)
+        if not eval_run:
+            return None
+        existing = self.get_regression_impact_analysis(eval_run_id)
+        if existing:
+            return existing
+        created_at = utc_now()
+        analysis_id = f"ria-{uuid.uuid4()}"
+        payload = {
+            "schema_version": "regression-impact-analysis/v1",
+            "impact_analysis_id": analysis_id,
+            "eval_run_id": eval_run_id,
+            "created_at": created_at,
+            "completed_at": created_at,
+            "status": "completed",
+            "result_status": eval_run.get("result_status"),
+            "gate_result": eval_run.get("gate_result") or {},
+            "impacted_assets": self._impacted_assets_from_eval_run(eval_run),
+            "recommendations": self._impact_recommendations(eval_run),
+        }
+        with self.Session.begin() as db:
+            db.add(
+                RegressionImpactAnalysisModel(
+                    impact_analysis_id=analysis_id,
+                    eval_run_id=eval_run_id,
+                    created_at=created_at,
+                    completed_at=created_at,
+                    status="completed",
+                    payload_json=payload,
+                )
+            )
+        return self.get_regression_impact_analysis(eval_run_id)
+    def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.scalars(
+                select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)
+            ).first()
+            return self._impact_analysis_to_dict(row) if row else None
+    def record_regression_gate_override(self, batch_id: str, eval_run_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+        eval_run = self.get_eval_run(eval_run_id)
+        if not eval_run:
+            return None
+        operator = (self._string(fields.get("operator")) or "").strip()
+        reason = (self._string(fields.get("reason")) or "").strip()
+        expires_at = (self._string(fields.get("expires_at")) or "").strip()
+        if not operator or not reason or not expires_at:
+            raise BusinessRuleViolation("operator, reason, and expires_at are required")
+        override_id = f"rgo-{uuid.uuid4()}"
+        created_at = utc_now()
+        before = dict(eval_run)
+        after = dict(eval_run)
+        gate_result = dict(after.get("gate_result") or {})
+        gate_result.update({"status": "passed_with_notes", "override_id": override_id, "override_reason": reason})
+        after["gate_result"] = gate_result
+        after["result_status"] = "passed_with_notes"
+        after["gate_overridden_at"] = created_at
+        after["gate_override_id"] = override_id
+        with self.Session.begin() as db:
+            run = db.get(EvalRunModel, eval_run_id)
+            if not run:
+                return None
+            run.payload_json = after
+            db.add(
+                RegressionGateOverrideModel(
+                    override_id=override_id,
+                    batch_id=batch_id,
+                    eval_run_id=eval_run_id,
+                    operator=operator,
+                    reason=reason,
+                    expires_at=expires_at,
+                    created_at=created_at,
+                    before_json=before,
+                    after_json=after,
+                )
+            )
+        self.record_batch_regression_result(batch_id, after)
+        return self.get_regression_gate_override(override_id)
+    def get_regression_gate_override(self, override_id: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.get(RegressionGateOverrideModel, override_id)
+            return self._gate_override_to_dict(row) if row else None
+
+    def _update_eval_case_row(self, db: Any, payload: dict[str, Any]) -> bool:
+        row = db.get(EvalCaseModel, payload["eval_case_id"])
+        if not row:
+            return False
+        payload = self._eval_case_with_asset_defaults(payload)
+        validate_transition("eval_case", row.status, payload["status"])
+        validate_transition("eval_case_promotion", row.promotion_status, payload["promotion_status"])
+        self._sync_eval_case_row(row, payload)
+        self._add_eval_case_revision_row(db, payload, created_by="system", reason="sync")
+        return True
+
+    def _eval_case_to_dict(self, row: EvalCaseModel) -> dict[str, Any]:
+        payload = self._eval_case_row_payload(row)
+        return self._eval_case_with_asset_defaults(payload)
+
+    def _eval_case_with_asset_defaults(self, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(payload)
+        labels = self._unique_strings([str(item).strip() for item in normalized.get("labels") or [] if str(item).strip()])
+        normalized["labels"] = labels
+        source = self._string(normalized.get("source"))
+        source_kind = self._string(normalized.get("source_kind"))
+        is_batch_manual = source == "optimization_batch_manual" or source_kind == "optimization_batch"
+        status = self._string(normalized.get("status")) or ("active" if is_batch_manual else "draft")
+        if status not in {"active", "draft", "archived"}:
+            raise BusinessRuleViolation("Eval case status must be active, draft, or archived")
+        normalized["status"] = status
+        normalized["asset_layer"] = self._defaulted_enum(
+            normalized.get("asset_layer"),
+            ASSET_LAYERS,
+            "batch_specific" if is_batch_manual else "candidate",
+            "asset_layer",
+        )
+        normalized["promotion_status"] = self._defaulted_enum(
+            normalized.get("promotion_status"),
+            PROMOTION_STATUSES,
+            "approved" if status == "active" and is_batch_manual else ("archived" if status == "archived" else "candidate"),
+            "promotion_status",
+        )
+        normalized["blocking_policy"] = self._defaulted_enum(
+            normalized.get("blocking_policy"),
+            BLOCKING_POLICIES,
+            self._default_blocking_policy(normalized["asset_layer"], normalized["promotion_status"], status),
+            "blocking_policy",
+        )
+        normalized["flaky_status"] = self._defaulted_enum(normalized.get("flaky_status"), FLAKY_STATUSES, "stable", "flaky_status")
+        normalized["severity"] = (self._string(normalized.get("severity")) or "medium").strip() or "medium"
+        normalized["variant_role"] = (self._string(normalized.get("variant_role")) or "original_reproduction").strip()
+        normalized["scenario_pack"] = self._string(normalized.get("scenario_pack")) or None
+        normalized["superseded_by_eval_case_id"] = self._string(normalized.get("superseded_by_eval_case_id")) or None
+        normalized["content_hash"] = self._eval_case_content_hash(normalized)
+        return normalized
+
+    def _apply_eval_case_update_fields(self, payload: dict[str, Any], fields: dict[str, Any]) -> None:
+        if "prompt" in fields:
+            prompt = (self._string(fields.get("prompt")) or "").strip()
+            if not prompt:
+                raise BusinessRuleViolation("Eval case prompt cannot be empty")
+            payload["prompt"] = prompt
+        if "expected_behavior" in fields:
+            payload["expected_behavior"] = (self._string(fields.get("expected_behavior")) or "").strip()
+        if "checks_json" in fields:
+            checks = fields.get("checks_json")
+            if checks is not None and not isinstance(checks, dict):
+                raise BusinessRuleViolation("Eval case checks_json must be an object")
+            payload["checks_json"] = dict(checks or {})
+        if "labels" in fields:
+            labels = fields.get("labels")
+            if labels is not None and not isinstance(labels, list):
+                raise BusinessRuleViolation("Eval case labels must be a list")
+            payload["labels"] = self._unique_strings([str(item).strip() for item in labels or [] if str(item).strip()])
+        if "status" in fields:
+            payload["status"] = self._defaulted_enum(fields.get("status"), {"active", "draft", "archived"}, "draft", "status")
+        for field_name, allowed in {
+            "asset_layer": ASSET_LAYERS,
+            "promotion_status": PROMOTION_STATUSES,
+            "blocking_policy": BLOCKING_POLICIES,
+            "flaky_status": FLAKY_STATUSES,
+        }.items():
+            if field_name in fields:
+                payload[field_name] = self._defaulted_enum(fields.get(field_name), allowed, "", field_name)
+        if "scenario_pack" in fields:
+            payload["scenario_pack"] = self._string(fields.get("scenario_pack")) or None
+        if "severity" in fields:
+            payload["severity"] = (self._string(fields.get("severity")) or "medium").strip() or "medium"
+        if "variant_role" in fields:
+            payload["variant_role"] = (self._string(fields.get("variant_role")) or "original_reproduction").strip()
+        if "superseded_by_eval_case_id" in fields:
+            payload["superseded_by_eval_case_id"] = self._string(fields.get("superseded_by_eval_case_id")) or None
+
+    def _sync_eval_case_row(self, row: EvalCaseModel, payload: dict[str, Any]) -> None:
+        row.updated_at = payload["updated_at"]
+        row.status = payload["status"]
+        row.source_feedback_case_id = self._string(payload.get("source_feedback_case_id"))
+        row.source_run_id = self._string(payload.get("source_run_id"))
+        row.asset_layer = payload["asset_layer"]
+        row.promotion_status = payload["promotion_status"]
+        row.blocking_policy = payload["blocking_policy"]
+        row.scenario_pack = self._string(payload.get("scenario_pack"))
+        row.severity = payload["severity"]
+        row.flaky_status = payload["flaky_status"]
+        row.variant_role = payload["variant_role"]
+        row.content_hash = payload["content_hash"]
+        row.last_run_at = self._string(payload.get("last_run_at"))
+        row.last_result_status = self._string(payload.get("last_result_status"))
+        row.failure_rate = payload.get("failure_rate")
+        row.superseded_by_eval_case_id = self._string(payload.get("superseded_by_eval_case_id"))
+        row.labels_json = list(payload.get("labels") or [])
+        row.payload_json = payload
+
+    def _eval_case_row_payload(self, row: EvalCaseModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "eval_case_id": row.eval_case_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "status": row.status,
+                "source_feedback_case_id": row.source_feedback_case_id,
+                "source_run_id": row.source_run_id,
+                "asset_layer": row.asset_layer or payload.get("asset_layer"),
+                "promotion_status": row.promotion_status or payload.get("promotion_status"),
+                "blocking_policy": row.blocking_policy or payload.get("blocking_policy"),
+                "scenario_pack": row.scenario_pack,
+                "severity": row.severity or payload.get("severity"),
+                "flaky_status": row.flaky_status or payload.get("flaky_status"),
+                "variant_role": row.variant_role or payload.get("variant_role"),
+                "content_hash": row.content_hash or payload.get("content_hash"),
+                "last_run_at": row.last_run_at,
+                "last_result_status": row.last_result_status,
+                "failure_rate": row.failure_rate,
+                "superseded_by_eval_case_id": row.superseded_by_eval_case_id,
+                "labels": list(row.labels_json or payload.get("labels") or []),
+            }
+        )
+        return payload
+
+    def _add_eval_case_revision_row(self, db: Any, payload: dict[str, Any], *, created_by: str, reason: str) -> None:
+        eval_case_id = str(payload["eval_case_id"])
+        latest = db.scalars(
+            select(EvalCaseRevisionModel)
+            .where(EvalCaseRevisionModel.eval_case_id == eval_case_id)
+            .order_by(EvalCaseRevisionModel.revision_number.desc())
+        ).first()
+        db.add(
+            EvalCaseRevisionModel(
+                revision_id=f"ecr-{uuid.uuid4()}",
+                eval_case_id=eval_case_id,
+                revision_number=(latest.revision_number if latest else 0) + 1,
+                created_at=utc_now(),
+                created_by=created_by,
+                reason=reason,
+                content_hash=payload.get("content_hash"),
+                snapshot_json=dict(payload),
+            )
+        )
+
+    def _add_eval_case_governance_event_row(
+        self,
+        db: Any,
+        *,
+        eval_case_id: str,
+        action: str,
+        operator: str,
+        role: str,
+        reason: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+    ) -> None:
+        db.add(
+            EvalCaseGovernanceEventModel(
+                event_id=f"ecg-{uuid.uuid4()}",
+                eval_case_id=eval_case_id,
+                action=action,
+                operator=operator,
+                role=role,
+                reason=reason,
+                created_at=utc_now(),
+                before_json=before,
+                after_json=after,
+            )
+        )
+
+    def _eval_case_revision_to_dict(self, row: EvalCaseRevisionModel) -> dict[str, Any]:
+        return {
+            "revision_id": row.revision_id,
+            "eval_case_id": row.eval_case_id,
+            "revision_number": row.revision_number,
+            "created_at": row.created_at,
+            "created_by": row.created_by,
+            "reason": row.reason,
+            "content_hash": row.content_hash,
+            "snapshot": dict(row.snapshot_json or {}),
+        }
+
+    def _eval_case_governance_event_to_dict(self, row: EvalCaseGovernanceEventModel) -> dict[str, Any]:
+        return {
+            "event_id": row.event_id,
+            "eval_case_id": row.eval_case_id,
+            "action": row.action,
+            "operator": row.operator,
+            "role": row.role,
+            "reason": row.reason,
+            "created_at": row.created_at,
+            "before": dict(row.before_json or {}),
+            "after": dict(row.after_json or {}),
+        }
+
+    def _gate_result_for_items(self, items: list[EvalRunItemModel]) -> dict[str, Any]:
+        blocked: list[str] = []
+        review: list[str] = []
+        notes: list[str] = []
+        for item in items:
+            payload = dict(item.payload_json or {})
+            snapshot = payload.get("eval_case_snapshot") if isinstance(payload.get("eval_case_snapshot"), dict) else {}
+            policy = str(snapshot.get("blocking_policy") or "non_blocking")
+            case_id = str(item.eval_case_id)
+            if item.status == "needs_human_review":
+                review.append(case_id)
+            elif item.status == "failed" and policy == "blocking":
+                blocked.append(case_id)
+            elif item.status == "failed" and policy == "blocking_if_relevant":
+                review.append(case_id)
+            elif item.status == "failed":
+                notes.append(case_id)
+        if blocked:
+            status = "blocked"
+        elif review:
+            status = "review_required"
+        elif notes:
+            status = "passed_with_notes"
+        else:
+            status = "passed"
+        return {"status": status, "blocked_case_ids": blocked, "review_case_ids": review, "note_case_ids": notes}
+
+    def _update_eval_case_run_stats(self, db: Any, items: list[EvalRunItemModel], completed_at: str) -> None:
+        by_case: dict[str, list[str]] = {}
+        for item in items:
+            by_case.setdefault(str(item.eval_case_id), []).append(str(item.status))
+        for eval_case_id, statuses in by_case.items():
+            row = db.get(EvalCaseModel, eval_case_id)
+            if not row:
+                continue
+            payload = self._eval_case_row_payload(row)
+            payload["last_run_at"] = completed_at
+            payload["last_result_status"] = "failed" if "failed" in statuses else ("needs_human_review" if "needs_human_review" in statuses else "passed")
+            payload["failure_rate"] = statuses.count("failed") / len(statuses)
+            payload = self._eval_case_with_asset_defaults(payload)
+            self._sync_eval_case_row(row, payload)
+
+    def _task_status_for_eval_result(self, result_status: str) -> str:
+        if result_status in {"passed", "passed_with_notes"}:
+            return "completed"
+        if result_status == "review_required":
+            return "needs_human_review"
+        if result_status == "blocked":
+            return "failed"
+        return result_status or "needs_human_review"
+
+    def _regression_plan_to_dict(self, row: RegressionPlanModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "regression_plan_id": row.regression_plan_id,
+                "batch_id": row.batch_id,
+                "created_at": row.created_at,
+                "status": row.status,
+                "applied_agent_version_id": row.applied_agent_version_id,
+                "selection_fingerprint": row.selection_fingerprint,
+            }
+        )
+        return payload
+
+    def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[dict[str, Any]]:
+        with self.Session() as db:
+            row = db.scalars(
+                select(RegressionPlanModel)
+                .where(RegressionPlanModel.batch_id == batch_id)
+                .where(RegressionPlanModel.selection_fingerprint == fingerprint)
+            ).first()
+            return self._regression_plan_to_dict(row) if row else None
+
+    def _selected_regression_cases_for_batch(self, batch: dict[str, Any]) -> list[dict[str, Any]]:
+        batch_case_ids = {str(item) for item in batch.get("eval_case_ids") or [] if item}
+        selected: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for eval_case_id in batch_case_ids:
+            case = self.find_eval_case(eval_case_id)
+            if self._eval_case_enters_regression_plan(case):
+                selected.append(case)
+                seen.add(str(case["eval_case_id"]))
+        for case in self.list_eval_cases(status="active", promotion_status="approved", limit=500):
+            case_id = str(case["eval_case_id"])
+            if case_id in seen:
+                continue
+            if case.get("asset_layer") in ACTIVE_ASSET_LAYERS:
+                selected.append(case)
+                seen.add(case_id)
+        return selected
+
+    def _eval_case_enters_regression_plan(self, eval_case: Optional[dict[str, Any]]) -> bool:
+        return bool(
+            eval_case
+            and eval_case.get("status") == "active"
+            and eval_case.get("promotion_status") == "approved"
+            and eval_case.get("asset_layer") in ACTIVE_ASSET_LAYERS
+            and eval_case.get("flaky_status") != "flaky"
+        )
+
+    def _regression_plan_fingerprint(self, batch: dict[str, Any], selected_cases: list[dict[str, Any]]) -> str:
+        task = self.find_task(self._string(batch.get("optimization_task_id")) or "") if batch.get("optimization_task_id") else None
+        stable = {
+            "batch_id": batch.get("batch_id"),
+            "applied_agent_version_id": (task or {}).get("applied_agent_version_id") or batch.get("applied_agent_version_id"),
+            "cases": [
+                {
+                    "eval_case_id": case.get("eval_case_id"),
+                    "content_hash": case.get("content_hash"),
+                    "blocking_policy": case.get("blocking_policy"),
+                    "asset_layer": case.get("asset_layer"),
+                }
+                for case in selected_cases
+            ],
+        }
+        encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _forced_regression_plan_fingerprint(self, base_fingerprint: str) -> str:
+        return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode("utf-8")).hexdigest()
+
+    def _regression_case_snapshot(self, case: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "eval_case_id": case.get("eval_case_id"),
+            "status": case.get("status"),
+            "asset_layer": case.get("asset_layer"),
+            "promotion_status": case.get("promotion_status"),
+            "blocking_policy": case.get("blocking_policy"),
+            "severity": case.get("severity"),
+            "flaky_status": case.get("flaky_status"),
+            "variant_role": case.get("variant_role"),
+            "content_hash": case.get("content_hash"),
+            "labels": list(case.get("labels") or []),
+            "prompt": case.get("prompt"),
+            "expected_behavior": case.get("expected_behavior"),
+            "checks_json": dict(case.get("checks_json") or {}),
+        }
+
+    def _regression_selection_summary(self, selected_cases: list[dict[str, Any]]) -> dict[str, Any]:
+        by_layer: dict[str, int] = {}
+        by_policy: dict[str, int] = {}
+        for case in selected_cases:
+            by_layer[str(case.get("asset_layer") or "unknown")] = by_layer.get(str(case.get("asset_layer") or "unknown"), 0) + 1
+            by_policy[str(case.get("blocking_policy") or "unknown")] = by_policy.get(str(case.get("blocking_policy") or "unknown"), 0) + 1
+        return {"total": len(selected_cases), "by_asset_layer": by_layer, "by_blocking_policy": by_policy}
+
+    def _change_summary_for_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+        task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
+        return {
+            "batch_title": batch.get("title"),
+            "batch_status": batch.get("status"),
+            "feedback_case_ids": list(batch.get("feedback_case_ids") or []),
+            "source_refs": list(batch.get("source_refs") or []),
+            "optimization_task_id": (task or {}).get("optimization_task_id") or batch.get("optimization_task_id"),
+            "target_paths": list((task or {}).get("target_paths") or []),
+        }
+
+    def _batch_row_for_update(self, db: Any, batch_id: str) -> Any:
+        from ..runtime_db import FeedbackOptimizationBatchModel
+
+        return db.get(FeedbackOptimizationBatchModel, batch_id)
+
+    def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> dict[str, Any]:
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "impact_analysis_id": row.impact_analysis_id,
+                "eval_run_id": row.eval_run_id,
+                "created_at": row.created_at,
+                "completed_at": row.completed_at,
+                "status": row.status,
+                "job_id": row.job_id,
+            }
+        )
+        return payload
+
+    def _impacted_assets_from_eval_run(self, eval_run: dict[str, Any]) -> list[dict[str, Any]]:
+        impacted: list[dict[str, Any]] = []
+        for item in eval_run.get("items") or []:
+            if not isinstance(item, dict) or item.get("status") == "passed":
+                continue
+            snapshot = item.get("eval_case_snapshot") if isinstance(item.get("eval_case_snapshot"), dict) else {}
+            impacted.append(
+                {
+                    "eval_case_id": item.get("eval_case_id"),
+                    "status": item.get("status"),
+                    "asset_layer": snapshot.get("asset_layer"),
+                    "blocking_policy": snapshot.get("blocking_policy"),
+                    "labels": list(snapshot.get("labels") or []),
+                    "answer_summary": item.get("answer_summary"),
+                }
+            )
+        return impacted
+
+    def _impact_recommendations(self, eval_run: dict[str, Any]) -> list[str]:
+        status = str(eval_run.get("result_status") or "")
+        if status == "blocked":
+            return ["阻断发布；先修复 blocking 回归失败，再重新生成回归计划并执行。"]
+        if status == "review_required":
+            return ["进入人工复核；确认 blocking_if_relevant 失败是否与本次变更相关。"]
+        if status == "passed_with_notes":
+            return ["允许继续，但应跟踪 non_blocking 失败并决定是否提升资产层级。"]
+        return ["门禁通过；保留本次运行记录作为长期回归资产趋势基线。"]
+
+    def _gate_override_to_dict(self, row: RegressionGateOverrideModel) -> dict[str, Any]:
+        return {
+            "override_id": row.override_id,
+            "batch_id": row.batch_id,
+            "eval_run_id": row.eval_run_id,
+            "operator": row.operator,
+            "reason": row.reason,
+            "expires_at": row.expires_at,
+            "created_at": row.created_at,
+            "before": dict(row.before_json or {}),
+            "after": dict(row.after_json or {}),
+        }
+
+    def _default_blocking_policy(self, asset_layer: str, promotion_status: str, status: str) -> str:
+        if status != "active" or promotion_status != "approved":
+            return "non_blocking"
+        if asset_layer in {"batch_specific", "smoke", "safety"}:
+            return "blocking"
+        if asset_layer in {"core_regression", "scenario_pack", "historical_bug"}:
+            return "blocking_if_relevant"
+        return "non_blocking"
+
+    def _defaulted_enum(self, value: Any, allowed: set[str], default: str, field_name: str) -> str:
+        text = (self._string(value) or default).strip()
+        if text not in allowed:
+            raise BusinessRuleViolation(f"Invalid eval case {field_name}: {text}")
+        return text
+
+    def _eval_case_content_hash(self, payload: dict[str, Any]) -> str:
+        stable = {
+            "prompt": payload.get("prompt"),
+            "expected_behavior": payload.get("expected_behavior"),
+            "checks_json": payload.get("checks_json") or {},
+            "labels": sorted(str(item) for item in payload.get("labels") or []),
+            "asset_layer": payload.get("asset_layer"),
+            "source_feedback_case_id": payload.get("source_feedback_case_id"),
+            "source_kind": payload.get("source_kind"),
+            "source_id": payload.get("source_id"),
+            "variant_role": payload.get("variant_role"),
+        }
+        encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

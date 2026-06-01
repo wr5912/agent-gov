@@ -15,12 +15,16 @@ def test_export_openapi_script_writes_schema(tmp_path):
             "ATTRIBUTION_ANALYZER_WORKSPACE_DIR": str(root / "attribution-analyzer-workspace"),
             "PROPOSAL_GENERATOR_WORKSPACE_DIR": str(root / "proposal-generator-workspace"),
             "EXECUTION_OPTIMIZER_WORKSPACE_DIR": str(root / "execution-optimizer-workspace"),
+            "EVAL_CASE_GOVERNOR_WORKSPACE_DIR": str(root / "eval-case-governor-workspace"),
+            "REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR": str(root / "regression-impact-analyzer-workspace"),
             "DATA_DIR": str(root / "data"),
             "CLAUDE_ROOT": str(root / "claude-roots" / "main"),
             "MAIN_CLAUDE_ROOT": str(root / "claude-roots" / "main"),
             "ATTRIBUTION_ANALYZER_CLAUDE_ROOT": str(root / "claude-roots" / "attribution-analyzer"),
             "PROPOSAL_GENERATOR_CLAUDE_ROOT": str(root / "claude-roots" / "proposal-generator"),
             "EXECUTION_OPTIMIZER_CLAUDE_ROOT": str(root / "claude-roots" / "execution-optimizer"),
+            "EVAL_CASE_GOVERNOR_CLAUDE_ROOT": str(root / "claude-roots" / "eval-case-governor"),
+            "REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT": str(root / "claude-roots" / "regression-impact-analyzer"),
             "CLAUDE_HOME": str(root / "claude-roots" / "main" / ".claude"),
             "ANTHROPIC_API_KEY": "",
             "MODEL_PROVIDER_API_KEY": "",
@@ -73,6 +77,16 @@ def test_export_openapi_script_writes_schema(tmp_path):
     )
     assert_schema_ref(schema, "/api/eval-cases", "get", "EvalCaseResponse", array=True)
     assert_schema_ref(schema, "/api/eval-runs", "get", "EvalRunResponse", array=True)
+    assert_schema_ref(schema, "/api/regression-assets", "get", "EvalCaseResponse", array=True)
+    assert_schema_ref(schema, "/api/regression-assets/{eval_case_id}/promote", "post", "EvalCaseResponse")
+    assert_schema_ref(schema, "/api/regression-assets/{eval_case_id}/revisions", "get", "EvalCaseRevisionResponse", array=True)
+    assert_schema_ref(
+        schema,
+        "/api/regression-assets/{eval_case_id}/governance-events",
+        "get",
+        "EvalCaseGovernanceEventResponse",
+        array=True,
+    )
     assert_schema_ref(schema, "/api/feedback-optimization-batches", "get", "FeedbackOptimizationBatchResponse", array=True)
     assert_schema_ref(schema, "/api/feedback-optimization-batches", "post", "FeedbackOptimizationBatchResponse")
     assert_schema_ref(schema, "/api/feedback-optimization-batches/{batch_id}", "get", "FeedbackOptimizationBatchResponse")
@@ -96,9 +110,33 @@ def test_export_openapi_script_writes_schema(tmp_path):
     )
     assert_schema_ref(
         schema,
+        "/api/feedback-optimization-batches/{batch_id}/regression-plan",
+        "post",
+        "RegressionPlanResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/regression-plan",
+        "get",
+        "RegressionPlanResponse",
+    )
+    assert_schema_ref(
+        schema,
         "/api/feedback-optimization-batches/{batch_id}/regression-runs",
         "post",
         "FeedbackOptimizationBatchRegressionResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis",
+        "post",
+        "RegressionImpactAnalysisResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/gate-overrides",
+        "post",
+        "RegressionGateOverrideResponse",
     )
     assert_schema_ref(
         schema,
@@ -289,6 +327,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(eval_case_schema, "source_summary", "EvalCaseSourceSummaryResponse")
     assert_nullable_schema_ref(eval_case_schema, "attribution_summary", "EvalCaseAttributionSummaryResponse")
     assert_nullable_schema_ref(eval_case_schema, "proposal_summary", "EvalCaseProposalSummaryResponse")
+    assert "promotion_status" in eval_case_schema["properties"]
+    assert "blocking_policy" in eval_case_schema["properties"]
     eval_generate_schema = schema["components"]["schemas"]["FeedbackEvalCaseGenerateResponse"]
     assert eval_generate_schema["properties"]["results"]["items"] == {
         "$ref": "#/components/schemas/FeedbackEvalCaseGenerateResultResponse"
@@ -299,6 +339,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
     }
     eval_run_schema = schema["components"]["schemas"]["EvalRunResponse"]
     assert eval_run_schema["properties"]["summary"] == {"$ref": "#/components/schemas/EvalRunSummaryResponse"}
+    assert "gate_result" in eval_run_schema["properties"]
     assert_nullable_schema_ref(eval_run_schema, "error_json", "FeedbackJobErrorResponse")
     assert_nullable_schema_ref(eval_item_schema, "error_json", "FeedbackJobErrorResponse")
     external_item_schema = schema["components"]["schemas"]["ExternalGovernanceItemResponse"]

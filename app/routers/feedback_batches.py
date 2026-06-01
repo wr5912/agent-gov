@@ -4,13 +4,13 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, Query
 
+from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
     FeedbackOptimizationBatchExecutionResponse,
-    FeedbackOptimizationBatchRegressionResponse,
     FeedbackOptimizationBatchResponse,
     FeedbackOptimizationPlanTaskExecuteResponse,
 )
@@ -48,7 +48,7 @@ def create_feedback_batches_router(
     _register_batch_analysis_routes(router, feedback_store, runtime)
     _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
     _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
-    _register_batch_regression_routes(router, feedback_store, runtime)
+    register_batch_regression_routes(router, feedback_store, runtime)
     return router
 
 
@@ -310,35 +310,3 @@ def _register_batch_plan_task_routes(
             "execution_job": execution_job,
             "apply_result": execution["apply_result"],
         }
-
-
-def _register_batch_regression_routes(
-    router: APIRouter,
-    feedback_store: FeedbackStore,
-    runtime: ClaudeRuntime,
-) -> None:
-
-    @router.post(
-        "/feedback-optimization-batches/{batch_id}/regression-runs",
-        response_model=FeedbackOptimizationBatchRegressionResponse,
-        summary="Run regression validation for all active eval cases in one optimization batch",
-    )
-    async def run_feedback_optimization_batch_regression(batch_id: str) -> dict[str, Any]:
-        batch = feedback_store.find_optimization_batch(batch_id)
-        batch = ensure_found(batch, "Feedback optimization batch not found")
-        task_id = str(batch.get("optimization_task_id") or "")
-        task = feedback_store.find_task(task_id)
-        if not task or not task.get("applied_agent_version_id"):
-            raise_conflict("Batch optimization must be applied before regression validation")
-        eval_case_ids = [str(item) for item in batch.get("eval_case_ids") or [] if item]
-        if not eval_case_ids:
-            raise_conflict("No eval cases found for this batch")
-        result = await runtime.run_feedback_eval(
-            eval_case_ids=eval_case_ids,
-            optimization_task_id=task_id,
-            source="optimization_batch_regression",
-        )
-        if not result:
-            raise_conflict("Regression run could not be started")
-        batch = feedback_store.record_batch_regression_result(batch_id, result)
-        return {"batch": batch, "eval_run": result}

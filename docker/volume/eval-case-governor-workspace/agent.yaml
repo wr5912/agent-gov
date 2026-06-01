@@ -1,0 +1,16 @@
+agent:
+  id: eval-case-governor
+  name: 用例治理智能体
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: eval-case-governor
+
+paths:
+  workspace: /eval-case-governor-workspace
+  claude_home: /claude-roots/eval-case-governor/.claude
+  data_root: /data
+
+outputs:
+  schema: eval-case-governance/v1
+  job_root: /data/.runtime-tmp/jobs

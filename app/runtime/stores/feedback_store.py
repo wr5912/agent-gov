@@ -34,6 +34,7 @@ from .feedback_job_factory import FeedbackJobFactory
 from .feedback_job_store import FeedbackJobStoreMixin
 from .feedback_plan_task_store import FeedbackPlanTaskStoreMixin
 from .feedback_proposal_store import FeedbackProposalStoreMixin
+from .feedback_regression_asset_store import FeedbackRegressionAssetStoreMixin
 from .feedback_source_store import FeedbackSourceStoreMixin
 from .feedback_task_store import FeedbackTaskStoreMixin
 from ...version import APP_VERSION
@@ -49,6 +50,7 @@ class FeedbackStore(
     FeedbackJobStoreMixin,
     FeedbackBatchStoreMixin,
     FeedbackExternalGovernanceStoreMixin,
+    FeedbackRegressionAssetStoreMixin,
     FeedbackEvalStoreMixin,
     FeedbackEvidenceStoreMixin,
     FeedbackCaseStoreMixin,

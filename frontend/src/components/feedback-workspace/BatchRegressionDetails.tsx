@@ -107,6 +107,8 @@ export function BatchRegressionDetails({
         items={[
           ["关联用例", linkedCases.length],
           ["Active", activeCount],
+          ["回归计划", regressionPlanTotal(batch)],
+          ["门禁", String(batch.latest_regression_gate?.status || run?.gate_result?.status || "-")],
           ["最近运行", run?.result_status || run?.status || "未运行"],
           ["通过", run?.summary?.passed ?? 0],
           ["失败", run?.summary?.failed ?? 0],
@@ -118,6 +120,7 @@ export function BatchRegressionDetails({
           items={[
             ["eval_run", shortId(run.eval_run_id)],
             ["版本", shortId(run.agent_version_id)],
+            ["计划", shortId(run.regression_plan_id)],
             ["总数", run.summary?.total ?? 0],
             ["完成时间", formatDate(run.completed_at)],
           ]}
@@ -148,6 +151,15 @@ export function BatchRegressionDetails({
       </div>
     </section>
   );
+}
+
+function regressionPlanTotal(batch: FeedbackOptimizationBatchRecord): string | number {
+  const summary = batch.latest_regression_plan?.selection_summary;
+  if (summary && typeof summary === "object" && "total" in summary) {
+    const total = (summary as { total?: unknown }).total;
+    if (typeof total === "number" || typeof total === "string") return total;
+  }
+  return batch.latest_regression_plan?.eval_case_ids?.length ?? "-";
 }
 
 function BatchEvalCaseCard({

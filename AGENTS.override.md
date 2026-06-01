@@ -4,7 +4,7 @@
 
 ## 必读项目文档
 
-- `docs/AGENT_GOVERNANCE_REFLECTION_AND_PLAN_R2.md`：解释本仓库治理硬门的来源、失效点和落地目标。
+- `docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`：解释本仓库治理硬门的来源、失效点和落地目标。
 
 ## 本仓库治理硬门
 

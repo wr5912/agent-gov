@@ -138,9 +138,9 @@ http://localhost:55173
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案和执行在 Feedback 工作台中按 `feedback case -> evidence package -> attribution-analyzer -> optimization batch -> proposal-generator -> execution-optimizer -> regression run` 链路处理。
 
-完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 生成 [docs/openapi.json](docs/openapi.json)。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 生成 [docs/开放接口规范.json](docs/开放接口规范.json)。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
-前端 OpenAPI 类型由 [docs/openapi.json](docs/openapi.json) 生成，命令为：
+前端 OpenAPI 类型由 [docs/开放接口规范.json](docs/开放接口规范.json) 生成，命令为：
 
 ```bash
 pnpm --dir frontend generate:api-types
@@ -156,10 +156,10 @@ pnpm --dir frontend generate:api-types
 - `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、分析任务、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
 - `/data/.runtime-tmp/jobs/` 是归因、建议和评估 Agent 的临时 job workspace。
 - `/data/agent-versions/main/` 保存主智能体受管配置版本 manifest 和 bundle。
-- `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/external-governance-webhooks.example.yaml`。
+- `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/外部治理Webhook示例.yaml`。
 - `/data/feedback-signals/`、`/data/soc-events/`、`/data/feedback-cases/` 等旧目录仅为兼容路径，不再是权威存储。
 
-正式设计文档见 [FEEDBACK_OPTIMIZATION_MULTI_AGENT_ARCHITECTURE.md](docs/FEEDBACK_OPTIMIZATION_MULTI_AGENT_ARCHITECTURE.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。
+正式设计文档见 [反馈优化闭环多智能体架构.md](docs/反馈优化闭环多智能体架构.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。
 
 ## Langfuse 监控
 

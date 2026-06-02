@@ -5,6 +5,7 @@ from feedback_store_test_utils import (
     _store,
 )
 from app.runtime.agent_job_types import agent_job_spec
+from app.runtime.runtime_db import AgentJobModel
 from app.runtime.schema_versions import REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION
 from pydantic import ValidationError
 import pytest
@@ -63,6 +64,26 @@ def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path):
 
     with pytest.raises(ValidationError):
         store.get_agent_job("evg-invalid-status")
+
+
+def test_agent_job_json_update_rejects_invalid_persisted_json(tmp_path):
+    store, _ = _store(tmp_path)
+    spec = agent_job_spec("eval_case_generation")
+    store.create_agent_job(
+        job_id="evg-invalid-error-json",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
+        output_schema_version=spec.output_schema_version,
+    )
+    with store.Session.begin() as db:
+        row = db.get(AgentJobModel, "evg-invalid-error-json")
+        row.error_json = ["not", "an", "object"]
+
+    with pytest.raises(ValidationError):
+        store.fail_agent_job("evg-invalid-error-json", error_code="RUNTIME_ERROR", message="failed")
 
 
 def test_eval_case_generation_agent_job_projects_to_eval_case(tmp_path):

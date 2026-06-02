@@ -12,6 +12,7 @@ from ..agent_job_types import agent_job_spec
 from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE, PROPOSAL_GENERATOR_PROFILE
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_attribution_output, validate_proposal_output
+from ..records.agent_job_records import AgentJobRecord
 from ..runtime_db import (
     AgentJobModel,
     ExternalGovernanceItemModel,
@@ -402,12 +403,14 @@ class FeedbackJobStoreMixin:
         job = db.get(AgentJobModel, job_id)
         if not job:
             return None
-        validate_transition("agent_job", job.status, status)
-        job.status = status
-        if started_at is not None:
-            job.started_at = started_at
-        if completed_at is not None:
-            job.completed_at = completed_at
+        updated = AgentJobRecord.from_row(job).transition_to(
+            status,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
+        job.status = updated.status
+        job.started_at = updated.started_at
+        job.completed_at = updated.completed_at
         return job
 
     def _set_job_json(
@@ -439,13 +442,14 @@ class FeedbackJobStoreMixin:
         job = db.get(AgentJobModel, job_id)
         if not job:
             return None
+        fields: dict[str, Any] = {}
         if raw_output_json is not _UNSET:
-            job.raw_output_json = raw_output_json
+            fields["raw_output_json"] = raw_output_json
         if validated_output_json is not _UNSET:
-            job.validated_output_json = validated_output_json
+            fields["validated_output_json"] = validated_output_json
         if error_json is not _UNSET:
-            job.error_json = error_json
-        return job
+            fields["error_json"] = error_json
+        return self._apply_agent_job_json_fields(job, fields)
 
     def _write_job_error(self, job: dict[str, Any], error_code: str, message: str) -> None:
         error_payload = self._job_error_payload(job, error_code, message)

@@ -434,12 +434,22 @@ class AgentJobStoreMixin:
         row = db.get(AgentJobModel, job_id)
         if not row:
             return None
+        fields: dict[str, Any] = {}
         if raw_output_json is not _UNSET:
-            row.raw_output_json = raw_output_json
+            fields["raw_output_json"] = raw_output_json
         if validated_output_json is not _UNSET:
-            row.validated_output_json = validated_output_json
+            fields["validated_output_json"] = validated_output_json
         if error_json is not _UNSET:
-            row.error_json = error_json
+            fields["error_json"] = error_json
+        return self._apply_agent_job_json_fields(row, fields)
+
+    def _apply_agent_job_json_fields(self, row: AgentJobModel, fields: dict[str, Any]) -> AgentJobModel:
+        payload = AgentJobRecord.from_row(row).to_payload()
+        payload.update(fields)
+        record = AgentJobRecord.model_validate(payload)
+        row.raw_output_json = record.raw_output_json
+        row.validated_output_json = record.validated_output_json
+        row.error_json = record.error_json
         return row
 
     def _append_agent_job_update_row(

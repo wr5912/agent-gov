@@ -21,6 +21,7 @@ from ..records.eval_case_records import (
 )
 from ..records.eval_run_records import EvalRunRecord
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord
+from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
     EvalCaseGovernanceEventModel,
     EvalCaseModel,
@@ -231,16 +232,17 @@ class FeedbackRegressionAssetStoreMixin:
             "selection_summary": self._regression_selection_summary(selected_cases),
             "change_summary": self._change_summary_for_batch(batch),
         }
+        record = RegressionPlanRecord.model_validate(payload)
         with self.Session.begin() as db:
             db.add(
                 RegressionPlanModel(
-                    regression_plan_id=plan_id,
-                    batch_id=batch_id,
-                    created_at=created_at,
-                    status="created",
-                    applied_agent_version_id=self._string(payload.get("applied_agent_version_id")),
-                    selection_fingerprint=fingerprint,
-                    payload_json=payload,
+                    regression_plan_id=record.regression_plan_id,
+                    batch_id=record.batch_id,
+                    created_at=record.created_at,
+                    status=record.status,
+                    applied_agent_version_id=record.applied_agent_version_id,
+                    selection_fingerprint=record.selection_fingerprint,
+                    payload_json=record.to_payload(),
                 )
             )
             batch_row = self._batch_row_for_update(db, batch_id)
@@ -249,7 +251,7 @@ class FeedbackRegressionAssetStoreMixin:
                     db,
                     batch_id,
                     status=batch_row.status,
-                    fields={"regression_plan_id": plan_id, "latest_regression_plan": payload},
+                    fields={"regression_plan_id": plan_id, "latest_regression_plan": record.to_payload()},
                 )
         return self.get_regression_plan(plan_id)
 
@@ -297,6 +299,19 @@ class FeedbackRegressionAssetStoreMixin:
         after["result_status"] = "passed_with_notes"
         after["gate_overridden_at"] = created_at
         after["gate_override_id"] = override_id
+        override = RegressionGateOverrideRecord.model_validate(
+            {
+                "override_id": override_id,
+                "batch_id": batch_id,
+                "eval_run_id": eval_run_id,
+                "operator": operator,
+                "reason": reason,
+                "expires_at": expires_at,
+                "created_at": created_at,
+                "before": before,
+                "after": after,
+            }
+        )
         with self.Session.begin() as db:
             run = db.get(EvalRunModel, eval_run_id)
             if not run:
@@ -304,15 +319,15 @@ class FeedbackRegressionAssetStoreMixin:
             run.payload_json = EvalRunRecord.from_payload(after).to_payload()
             db.add(
                 RegressionGateOverrideModel(
-                    override_id=override_id,
-                    batch_id=batch_id,
-                    eval_run_id=eval_run_id,
-                    operator=operator,
-                    reason=reason,
-                    expires_at=expires_at,
-                    created_at=created_at,
-                    before_json=before,
-                    after_json=after,
+                    override_id=override.override_id,
+                    batch_id=override.batch_id,
+                    eval_run_id=override.eval_run_id,
+                    operator=override.operator,
+                    reason=override.reason,
+                    expires_at=override.expires_at,
+                    created_at=override.created_at,
+                    before_json=override.before,
+                    after_json=override.after,
                 )
             )
         self.record_batch_regression_result(batch_id, after)
@@ -539,18 +554,7 @@ class FeedbackRegressionAssetStoreMixin:
         return result_status or "needs_human_review"
 
     def _regression_plan_to_dict(self, row: RegressionPlanModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "regression_plan_id": row.regression_plan_id,
-                "batch_id": row.batch_id,
-                "created_at": row.created_at,
-                "status": row.status,
-                "applied_agent_version_id": row.applied_agent_version_id,
-                "selection_fingerprint": row.selection_fingerprint,
-            }
-        )
-        return payload
+        return RegressionPlanRecord.from_row(row).to_payload()
 
     def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[dict[str, Any]]:
         with self.Session() as db:
@@ -682,17 +686,7 @@ class FeedbackRegressionAssetStoreMixin:
         return ["门禁通过；保留本次运行记录作为长期回归资产趋势基线。"]
 
     def _gate_override_to_dict(self, row: RegressionGateOverrideModel) -> dict[str, Any]:
-        return {
-            "override_id": row.override_id,
-            "batch_id": row.batch_id,
-            "eval_run_id": row.eval_run_id,
-            "operator": row.operator,
-            "reason": row.reason,
-            "expires_at": row.expires_at,
-            "created_at": row.created_at,
-            "before": dict(row.before_json or {}),
-            "after": dict(row.after_json or {}),
-        }
+        return RegressionGateOverrideRecord.from_row(row).to_payload()
 
     def _default_blocking_policy(self, asset_layer: str, promotion_status: str, status: str) -> str:
         if status != "active" or promotion_status != "approved":

@@ -101,6 +101,26 @@ class ExecutionApplicationResponse(ExtensibleResponse):
     error_json: Optional[FeedbackJobErrorResponse] = None
 
 
+class OptimizationExecutionJobResponse(ExtensibleResponse):
+    execution_job_id: str
+    optimization_task_id: str
+    feedback_case_id: Optional[str] = None
+    proposal_id: Optional[str] = None
+    status: str
+    profile_name: str
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    baseline_agent_version_id: Optional[str] = None
+    input_path: Optional[str] = None
+    input_json: Optional[dict[str, Any]] = None
+    raw_output_json: Optional[dict[str, Any]] = None
+    validated_output_json: Optional[OptimizationExecutionPlanOutputResponse] = None
+    error_json: Optional[FeedbackJobErrorResponse] = None
+    profile_version: Optional[dict[str, Any]] = None
+    compensations: list[ExecutionCompensationResponse] = Field(default_factory=list)
+
+
 class OptimizationTaskResponse(ExtensibleResponse):
     optimization_task_id: str
     created_at: str
@@ -116,7 +136,7 @@ class OptimizationTaskResponse(ExtensibleResponse):
     baseline_agent_version_id: Optional[str] = None
     execution_job_ids: list[str] = Field(default_factory=list)
     latest_execution_job_id: Optional[str] = None
-    latest_execution_job: Optional[AgentJobResponse] = None
+    latest_execution_job: Optional[OptimizationExecutionJobResponse] = None
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[AgentVersionSummaryResponse] = None
     applied_at: Optional[str] = None
@@ -129,7 +149,7 @@ class OptimizationTaskResponse(ExtensibleResponse):
 
 
 class OptimizationExecutionApplyResponse(BaseModel):
-    execution_job: AgentJobResponse
+    execution_job: OptimizationExecutionJobResponse
     execution_application: ExecutionApplicationResponse
     optimization_task: OptimizationTaskResponse
     applied_diff: Optional[AgentVersionDiffResponse] = None
@@ -237,7 +257,7 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     optimization_task_id: Optional[str] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
     execution_job_id: Optional[str] = None
-    execution_job: Optional[AgentJobResponse] = None
+    execution_job: Optional[OptimizationExecutionJobResponse] = None
     eval_run_id: Optional[str] = None
     latest_eval_run: Optional[EvalRunResponse] = None
     regression_plan_id: Optional[str] = None
@@ -254,7 +274,7 @@ class FeedbackOptimizationBatchAttributionResponse(BaseModel):
 class FeedbackOptimizationBatchExecutionResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
-    execution_job: Optional[AgentJobResponse] = None
+    execution_job: Optional[OptimizationExecutionJobResponse] = None
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
 
 
@@ -262,7 +282,7 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     plan_task: Optional[FeedbackOptimizationPlanTaskResponse] = None
     optimization_task: Optional[OptimizationTaskResponse] = None
-    execution_job: Optional[AgentJobResponse] = None
+    execution_job: Optional[OptimizationExecutionJobResponse] = None
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
     external_item: Optional[ExternalGovernanceItemResponse] = None
 

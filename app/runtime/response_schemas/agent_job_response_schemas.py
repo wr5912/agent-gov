@@ -12,8 +12,8 @@ class AgentJobResponse(BaseModel):
 
     job_id: str
     job_type: str
-    scope_kind: str
-    scope_id: str
+    scope_kind: Optional[str] = None
+    scope_id: Optional[str] = None
     status: str
     profile_name: str
     created_at: str

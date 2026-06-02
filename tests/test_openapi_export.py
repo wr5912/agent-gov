@@ -242,17 +242,16 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert plan_task_schema["properties"]["evidence_refs"]["items"] == {
         "$ref": "#/components/schemas/EvidenceRefResponse"
     }
-    assert "OptimizationExecutionJobResponse" not in schema["components"]["schemas"]
     assert "FeedbackAnalysisJobResponse" not in schema["components"]["schemas"]
     task_schema = schema["components"]["schemas"]["OptimizationTaskResponse"]
     assert_nullable_schema_ref(task_schema, "proposal", "OptimizationTaskProposalResponse")
-    assert_nullable_schema_ref(task_schema, "latest_execution_job", "AgentJobResponse")
+    assert_nullable_schema_ref(task_schema, "latest_execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(task_schema, "pre_execution_agent_version", "AgentVersionSummaryResponse")
     assert_nullable_schema_ref(task_schema, "applied_agent_version", "AgentVersionSummaryResponse")
     assert_nullable_schema_ref(task_schema, "latest_regression_run", "EvalRunResponse")
     batch_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchResponse"]
     assert_nullable_schema_ref(batch_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(batch_schema, "execution_job", "AgentJobResponse")
+    assert_nullable_schema_ref(batch_schema, "execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(batch_schema, "execution_apply_result", "OptimizationExecutionApplyResponse")
     assert batch_schema["properties"]["attribution_jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
     assert_nullable_schema_ref(batch_schema, "optimization_plan_job", "AgentJobResponse")
@@ -265,18 +264,22 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(batch_schema, "optimization_plan_error", "FeedbackJobErrorResponse")
     batch_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchExecutionResponse"]
     assert_nullable_schema_ref(batch_execution_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(batch_execution_schema, "execution_job", "AgentJobResponse")
+    assert_nullable_schema_ref(batch_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(batch_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
     batch_attribution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchAttributionResponse"]
     assert batch_attribution_schema["properties"]["jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
     apply_schema = schema["components"]["schemas"]["OptimizationExecutionApplyResponse"]
-    assert apply_schema["properties"]["execution_job"] == {"$ref": "#/components/schemas/AgentJobResponse"}
+    assert apply_schema["properties"]["execution_job"] == {"$ref": "#/components/schemas/OptimizationExecutionJobResponse"}
     assert apply_schema["properties"]["execution_application"] == {"$ref": "#/components/schemas/ExecutionApplicationResponse"}
     assert_nullable_schema_ref(apply_schema, "applied_diff", "AgentVersionDiffResponse")
     plan_task_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanTaskExecuteResponse"]
     assert_nullable_schema_ref(plan_task_execution_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "AgentJobResponse")
+    assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
+    execution_job_schema = schema["components"]["schemas"]["OptimizationExecutionJobResponse"]
+    assert_nullable_schema_ref(execution_job_schema, "error_json", "FeedbackJobErrorResponse")
+    assert "execution_job_id" in execution_job_schema["properties"]
+    assert "job_id" not in execution_job_schema["properties"]
     agent_job_schema = schema["components"]["schemas"]["AgentJobResponse"]
     assert_nullable_schema_ref(agent_job_schema, "error_json", "FeedbackJobErrorResponse")
     assert "profile_version" in agent_job_schema["properties"]

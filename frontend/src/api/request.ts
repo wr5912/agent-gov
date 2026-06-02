@@ -4,6 +4,7 @@ const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localh
 const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
+const LEGACY_DOCKER_API_BASES = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
 
 export type RuntimeRequestInit = RequestInit & {
   timeoutMs?: number;
@@ -16,8 +17,12 @@ export function defaultRuntimeConfig(): RuntimeClientConfig {
   };
 }
 
-function normalizeBase(apiBase: string): string {
+export function normalizeBase(apiBase: string): string {
   return apiBase.trim().replace(/\/$/, "");
+}
+
+export function isLegacyDockerApiBase(apiBase: string): boolean {
+  return LEGACY_DOCKER_API_BASES.has(normalizeBase(apiBase));
 }
 
 export function makeUrl(config: RuntimeClientConfig, path: string): string {

@@ -555,4 +555,4 @@ VITE_LANGFUSE_URL=http://localhost:53000
 pnpm dev
 ```
 
-如果浏览器 localStorage 里仍保存着旧的 `http://localhost:58080`，在前端设置弹窗里改为 `http://localhost:8080`。
+前端会把浏览器 localStorage 中旧默认值 `http://localhost:58080` 自动迁移到 `frontend/.env.local` 的 `VITE_RUNTIME_API_BASE`；如果你手工配置过其他地址，仍可在前端设置弹窗中修改。

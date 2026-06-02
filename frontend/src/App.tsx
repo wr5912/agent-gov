@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentVersions, getConfigMapping, getCurrentAgentVersion, getHealth, getSessions, getSkills, streamChat } from "./api/runtime";
+import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentVersions, getConfigMapping, getCurrentAgentVersion, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { Inspector } from "./components/Inspector";
@@ -77,11 +77,27 @@ export default function App() {
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
+  const shouldMigrateLegacyApiBase = isLegacyDockerApiBase(clientConfig.apiBase) && !isLegacyDockerApiBase(runtimeDefaults.apiBase);
+  const migratedClientConfig = useMemo<RuntimeClientConfig>(() => {
+    if (!shouldMigrateLegacyApiBase) return clientConfig;
+    return {
+      apiBase: runtimeDefaults.apiBase,
+      apiKey: clientConfig.apiKey || runtimeDefaults.apiKey,
+    };
+  }, [clientConfig, runtimeDefaults.apiBase, runtimeDefaults.apiKey, shouldMigrateLegacyApiBase]);
 
   const effectiveClientConfig = useMemo<RuntimeClientConfig>(() => ({
-    apiBase: clientConfig.apiBase || runtimeDefaults.apiBase,
-    apiKey: clientConfig.apiKey || runtimeDefaults.apiKey,
-  }), [clientConfig, runtimeDefaults]);
+    apiBase: migratedClientConfig.apiBase || runtimeDefaults.apiBase,
+    apiKey: migratedClientConfig.apiKey || runtimeDefaults.apiKey,
+  }), [migratedClientConfig, runtimeDefaults]);
+
+  useEffect(() => {
+    if (!shouldMigrateLegacyApiBase) return;
+    setClientConfig((current) => {
+      if (!isLegacyDockerApiBase(current.apiBase)) return current;
+      return migratedClientConfig;
+    });
+  }, [migratedClientConfig, setClientConfig, shouldMigrateLegacyApiBase]);
   const apiDocsUrl = useMemo(() => makeApiDocsUrl(effectiveClientConfig.apiBase), [effectiveClientConfig.apiBase]);
   const langfuseUrl = useMemo(() => defaultLangfuseUrl(), []);
 

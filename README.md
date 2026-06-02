@@ -507,11 +507,17 @@ cp docker/.env.local.example docker/.env.local
 
 编辑 `docker/.env.local`，把 `PROJECT_ROOT` 改为当前仓库绝对路径即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向 `docker/volume/`，其他 profile workspace/root 会由后端自动推导。
 
+如果刚从 Docker API/worker 切换到 PyCharm 本机调试，先修复后端共享 volume 的宿主机权限。该脚本只处理 API/worker 共享的 workspace、data 和 `claude-roots/*`，不处理 Langfuse 数据卷：
+
+```bash
+scripts/fix_host_backend_volume_permissions.sh
+```
+
 PyCharm 后端调试建议使用 Python run configuration：
 
 ```text
 Module name: uvicorn
-Parameters: app.main:app --reload --host 127.0.0.1 --port 8080
+Parameters: app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8080
 Working directory: <repo root>
 Python interpreter: <repo root>/.venv/bin/python
 Environment variables: 留空即可；如 PyCharm 已配置同名变量，会覆盖 docker/.env.local

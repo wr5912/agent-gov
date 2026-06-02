@@ -68,9 +68,53 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
     assert settings.workspace_dir == tmp_path / "docker" / "volume" / "main-workspace"
     assert settings.main_workspace_dir == settings.workspace_dir
     assert settings.attribution_analyzer_workspace_dir == tmp_path / "docker" / "volume" / "attribution-analyzer-workspace"
+    assert settings.proposal_generator_workspace_dir == tmp_path / "docker" / "volume" / "proposal-generator-workspace"
+    assert settings.execution_optimizer_workspace_dir == tmp_path / "docker" / "volume" / "execution-optimizer-workspace"
+    assert settings.eval_case_governor_workspace_dir == tmp_path / "docker" / "volume" / "eval-case-governor-workspace"
+    assert settings.regression_impact_analyzer_workspace_dir == tmp_path / "docker" / "volume" / "regression-impact-analyzer-workspace"
     assert settings.data_dir == tmp_path / "docker" / "volume" / "data"
     assert settings.claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "main"
     assert settings.main_claude_root == settings.claude_root
     assert settings.attribution_analyzer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "attribution-analyzer"
+    assert settings.proposal_generator_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "proposal-generator"
+    assert settings.execution_optimizer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "execution-optimizer"
+    assert settings.eval_case_governor_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "eval-case-governor"
+    assert settings.regression_impact_analyzer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "regression-impact-analyzer"
     assert settings.claude_home == settings.claude_root / ".claude"
     assert settings.langfuse_base_url == "http://localhost:53000"
+
+
+def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):
+    from app.runtime.settings import get_settings
+
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setenv("WORKSPACE_DIR", str(runtime_root / "main-workspace"))
+    monkeypatch.setenv("DATA_DIR", str(runtime_root / "data"))
+    monkeypatch.setenv("CLAUDE_ROOT", str(runtime_root / "claude-roots" / "main"))
+    get_settings.cache_clear()
+
+    settings = get_settings()
+
+    expected_dirs = (
+        settings.data_dir,
+        settings.main_workspace_dir,
+        settings.attribution_analyzer_workspace_dir,
+        settings.proposal_generator_workspace_dir,
+        settings.execution_optimizer_workspace_dir,
+        settings.eval_case_governor_workspace_dir,
+        settings.regression_impact_analyzer_workspace_dir,
+        settings.main_claude_root,
+        settings.attribution_analyzer_claude_root,
+        settings.proposal_generator_claude_root,
+        settings.execution_optimizer_claude_root,
+        settings.eval_case_governor_claude_root,
+        settings.regression_impact_analyzer_claude_root,
+        settings.claude_home,
+        settings.agent_versions_dir,
+    )
+    assert all(path.is_dir() for path in expected_dirs)
+
+    get_settings.cache_clear()

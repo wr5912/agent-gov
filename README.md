@@ -499,24 +499,54 @@ docker/volume/data/runtime.sqlite3
 
 ## 本地开发
 
+首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。后端配置默认读取 `docker/.env`，本机调试时可再放一个不提交的 `docker/.env.local` 覆盖容器路径和本机端口：
+
 ```bash
-make setup
-source .venv/bin/activate
-export WORKSPACE_DIR=$PWD/docker/volume/main-workspace
-export MAIN_WORKSPACE_DIR=$PWD/docker/volume/main-workspace
-export ATTRIBUTION_ANALYZER_WORKSPACE_DIR=$PWD/docker/volume/attribution-analyzer-workspace
-export PROPOSAL_GENERATOR_WORKSPACE_DIR=$PWD/docker/volume/proposal-generator-workspace
-export EXECUTION_OPTIMIZER_WORKSPACE_DIR=$PWD/docker/volume/execution-optimizer-workspace
-export EVAL_CASE_GOVERNOR_WORKSPACE_DIR=$PWD/docker/volume/eval-case-governor-workspace
-export REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR=$PWD/docker/volume/regression-impact-analyzer-workspace
-export DATA_DIR=$PWD/docker/volume/data
-export CLAUDE_ROOT=$PWD/docker/volume/claude-roots/main
-export MAIN_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/main
-export ATTRIBUTION_ANALYZER_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/attribution-analyzer
-export PROPOSAL_GENERATOR_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/proposal-generator
-export EXECUTION_OPTIMIZER_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/execution-optimizer
-export EVAL_CASE_GOVERNOR_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/eval-case-governor
-export REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT=$PWD/docker/volume/claude-roots/regression-impact-analyzer
-export CLAUDE_HOME=$CLAUDE_ROOT/.claude
-.venv/bin/python -m uvicorn app.main:app --reload --host "${API_HOST:-127.0.0.1}" --port "${API_PORT:-8080}"
+cp docker/.env.local.example docker/.env.local
 ```
+
+编辑 `docker/.env.local`，把 `PROJECT_ROOT` 改为当前仓库绝对路径即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向 `docker/volume/`，其他 profile workspace/root 会由后端自动推导。
+
+PyCharm 后端调试建议使用 Python run configuration：
+
+```text
+Module name: uvicorn
+Parameters: app.main:app --reload --host 127.0.0.1 --port 8080
+Working directory: <repo root>
+Python interpreter: <repo root>/.venv/bin/python
+Environment variables: 留空即可；如 PyCharm 已配置同名变量，会覆盖 docker/.env.local
+```
+
+异步反馈闭环、优化任务和评估生成依赖 `agent_jobs` worker。需要调试这些流程时，另建一个 PyCharm configuration：
+
+```text
+Module name: app.worker.agent_jobs
+Parameters: 留空
+Working directory: <repo root>
+Python interpreter: <repo root>/.venv/bin/python
+```
+
+前端本机启动使用 Vite 自己的本地环境文件：
+
+```bash
+cd frontend
+cp .env.example .env.local
+```
+
+把 `frontend/.env.local` 中的后端地址改成：
+
+```env
+VITE_RUNTIME_API_BASE=http://localhost:8080
+VITE_DEV_PROXY_TARGET=http://localhost:8080
+VITE_LANGFUSE_URL=http://localhost:53000
+```
+
+如果后端 `API_KEY` 非空，可在 `frontend/.env.local` 中手工加入 `VITE_RUNTIME_API_KEY=<your-runtime-api-key>`，或在 UI 设置弹窗中保存。
+
+然后直接启动：
+
+```bash
+pnpm dev
+```
+
+如果浏览器 localStorage 里仍保存着旧的 `http://localhost:58080`，在前端设置弹窗里改为 `http://localhost:8080`。

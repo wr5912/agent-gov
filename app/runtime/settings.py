@@ -90,7 +90,7 @@ def _derive_child_dirs(settings: Any, explicit_env: Mapping[str, str], parent: P
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file="docker/.env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=("docker/.env", "docker/.env.local"), extra="ignore")
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")

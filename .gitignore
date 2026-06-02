@@ -1,6 +1,7 @@
 .idea
 /.env
 docker/.env
+docker/.env.local
 .venv/
 __pycache__/
 *.pyc
@@ -37,3 +38,5 @@ docker/volume/data/agent-versions/
 docker/volume/main-workspace/CLAUDE.local.md
 docker/volume/main-workspace/.claude/settings.local.json
 docker/volume/main-workspace/.claude/agent-memory-local/
+# Added by code-review-graph
+.code-review-graph/

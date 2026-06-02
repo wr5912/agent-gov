@@ -4,6 +4,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.runtime.runtime_db import ExecutionCompensationModel
+
 
 EXECUTION_COMPENSATION_SCHEMA_VERSION = "execution-compensation/v1"
 EXECUTION_COMPENSATION_TYPE = "execution_apply_post_write_failure"
@@ -109,3 +111,31 @@ class ExecutionCompensationRecord(BaseModel):
 
     def to_payload(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
+
+    @classmethod
+    def from_row(cls, row: ExecutionCompensationModel) -> "ExecutionCompensationRecord":
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "compensation_id": row.compensation_id,
+                "created_at": row.created_at,
+                "updated_at": row.updated_at,
+                "status": row.status,
+                "compensation_type": row.compensation_type,
+                "optimization_task_id": row.optimization_task_id,
+                "execution_job_id": row.execution_job_id,
+                "pre_execution_agent_version_id": row.pre_execution_agent_version_id,
+                "restore_status": row.restore_status,
+            }
+        )
+        return cls.model_validate(payload)
+
+
+def apply_execution_compensation_record(
+    row: ExecutionCompensationModel,
+    record: ExecutionCompensationRecord,
+) -> None:
+    row.updated_at = record.updated_at
+    row.status = record.status
+    row.restore_status = record.restore_status
+    row.payload_json = record.to_payload()

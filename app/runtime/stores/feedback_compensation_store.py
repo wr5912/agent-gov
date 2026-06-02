@@ -6,7 +6,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from ..records.feedback_compensation_records import ExecutionCompensationRecord
+from ..records.feedback_compensation_records import ExecutionCompensationRecord, apply_execution_compensation_record
 from ..runtime_db import ExecutionCompensationModel, utc_now
 
 
@@ -122,7 +122,7 @@ class FeedbackCompensationStoreMixin:
         return self._execution_compensation_record(row).to_payload()
 
     def _execution_compensation_record(self, row: ExecutionCompensationModel) -> ExecutionCompensationRecord:
-        return ExecutionCompensationRecord.model_validate(row.payload_json or {})
+        return ExecutionCompensationRecord.from_row(row)
 
     def _execution_compensation_row(self, record: ExecutionCompensationRecord) -> ExecutionCompensationModel:
         payload = record.to_payload()
@@ -144,7 +144,4 @@ class FeedbackCompensationStoreMixin:
         row: ExecutionCompensationModel,
         record: ExecutionCompensationRecord,
     ) -> None:
-        row.updated_at = record.updated_at
-        row.status = record.status
-        row.restore_status = record.restore_status
-        row.payload_json = record.to_payload()
+        apply_execution_compensation_record(row, record)

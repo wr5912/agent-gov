@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional
 
 from sqlalchemy import select
 
@@ -14,9 +14,7 @@ from ..external_governance_mapping import (
 from ..records.external_governance_records import ExternalGovernanceItemRecord
 from ..records.json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, utc_now
-
-
-ExternalGovernanceRowsBySourceIndex: TypeAlias = dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]]
+from .store_projection_maps import ExternalGovernanceRowsBySourceIndex
 
 
 class FeedbackExternalGovernanceStoreMixin:

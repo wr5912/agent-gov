@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.records.json_types import JsonObject
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.session_store import LocalSessionStore
@@ -24,7 +25,7 @@ def _store(tmp_path) -> tuple[FeedbackStore, ClaudeRuntime]:
     return store, runtime
 
 
-def _feedback_case_with_attribution(store: FeedbackStore) -> dict[str, Any]:
+def _feedback_case_with_attribution(store: FeedbackStore) -> JsonObject:
     _record_run(store)
     signal = store.create_signal(
         FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全")
@@ -35,7 +36,7 @@ def _feedback_case_with_attribution(store: FeedbackStore) -> dict[str, Any]:
     return feedback_case
 
 
-async def _raise(exc: Exception, **_: Any) -> dict[str, Any]:
+async def _raise(exc: Exception, **_: Any) -> JsonObject:
     raise exc
 
 

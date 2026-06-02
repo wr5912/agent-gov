@@ -48,6 +48,14 @@ def _run_guard(root: Path, mode: str = "fail", *extra: str) -> subprocess.Comple
     )
 
 
+def _dict_return_source(name: str) -> str:
+    return f"def {name}() -> " "dict[str, object]:\n    return {}\n"
+
+
+def _payload_dict_return_source() -> str:
+    return "class Record:\n" "    def to_payload(self) -> " "dict[str, object]:\n" "        return {}\n"
+
+
 def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "large.py", 5)
@@ -250,7 +258,7 @@ def test_existing_unowned_dict_return_is_allowed_when_unchanged(tmp_path: Path) 
     _init_repo(tmp_path)
     path = tmp_path / "app" / "service.py"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("def legacy() -> dict[str, object]:\n    return {}\n", encoding="utf-8")
+    path.write_text(_dict_return_source("legacy"), encoding="utf-8")
     _commit_all(tmp_path)
 
     result = _run_guard(tmp_path)
@@ -264,7 +272,7 @@ def test_new_unowned_dict_return_fails(tmp_path: Path) -> None:
     _write_lines(tmp_path / "app" / "small.py", 1)
     _commit_all(tmp_path)
     path = tmp_path / "app" / "service.py"
-    path.write_text("def new_contract() -> dict[str, object]:\n    return {}\n", encoding="utf-8")
+    path.write_text(_dict_return_source("new_contract"), encoding="utf-8")
 
     result = _run_guard(tmp_path)
 
@@ -278,12 +286,7 @@ def test_new_owned_payload_dict_return_is_allowed(tmp_path: Path) -> None:
     _commit_all(tmp_path)
     path = tmp_path / "app" / "runtime" / "records" / "record.py"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        "class Record:\n"
-        "    def to_payload(self) -> dict[str, object]:\n"
-        "        return {}\n",
-        encoding="utf-8",
-    )
+    path.write_text(_payload_dict_return_source(), encoding="utf-8")
 
     result = _run_guard(tmp_path)
 

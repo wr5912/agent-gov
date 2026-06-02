@@ -19,13 +19,14 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
+from app.runtime.records.json_types import JsonObject
 from app.runtime.runtime_db import EvalRunItemModel
 from app.runtime.schemas import ChatResponse
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
-def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> dict[str, object]:
-    payload = {
+def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> JsonObject:
+    payload: JsonObject = {
         "schema_version": "feedback-eval-case/v1",
         "eval_case_id": eval_case_id,
         "created_at": "2026-05-29T00:00:00+00:00",

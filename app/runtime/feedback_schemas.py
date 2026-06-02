@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -13,6 +13,7 @@ from .normalizers.feedback_output_normalizers import (
     normalize_regression_impact_analysis_output,
     task_context_has_external_specificity as _task_context_has_external_specificity,
 )
+from .records.json_types import JsonObject
 from .schema_versions import (
     ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
     EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
@@ -244,11 +245,11 @@ class FeedbackOptimizationPlanOutput(BaseModel):
     expected_effect: str
     validation: str
     risk: str
-    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    source_refs: list[JsonObject] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_summaries: list[dict[str, Any]] = Field(default_factory=list)
+    attribution_summaries: list[JsonObject] = Field(default_factory=list)
     rationale: Optional[str] = None
     evidence_refs: list[EvidenceRef] = Field(default_factory=list)
     tasks: list[OptimizationPlanTaskOutput] = Field(default_factory=list)
@@ -266,7 +267,7 @@ class FeedbackOptimizationPlanOutput(BaseModel):
         return self
 
 
-def validate_attribution_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_attribution_output(payload)
     try:
         return AttributionOutput.model_validate(normalized).model_dump(mode="json"), None
@@ -275,7 +276,7 @@ def validate_attribution_output(payload: dict[str, Any]) -> tuple[dict[str, Any]
 
 
 
-def validate_proposal_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_proposal_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_proposal_output(payload)
     try:
         return ProposalOutput.model_validate(normalized).model_dump(mode="json"), None
@@ -284,7 +285,7 @@ def validate_proposal_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | 
 
 
 
-def validate_feedback_optimization_plan_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_feedback_optimization_plan_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_feedback_optimization_plan_output(payload)
     try:
         return FeedbackOptimizationPlanOutput.model_validate(normalized).model_dump(mode="json"), None
@@ -325,7 +326,7 @@ class ExecutionPlanOutput(BaseModel):
         return self
 
 
-def validate_execution_plan_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_execution_plan_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_execution_plan_output(payload)
     try:
         return ExecutionPlanOutput.model_validate(normalized).model_dump(mode="json"), None
@@ -344,7 +345,7 @@ class GeneratedEvalCaseOutput(BaseModel):
     source_run_id: Optional[str] = None
     source_kind: Optional[str] = None
     source_id: Optional[str] = None
-    source_refs: list[dict[str, Any]] = Field(default_factory=list)
+    source_refs: list[JsonObject] = Field(default_factory=list)
     asset_layer: Optional[str] = "candidate"
     promotion_status: Optional[str] = "candidate"
     blocking_policy: Optional[str] = "non_blocking"
@@ -354,11 +355,11 @@ class GeneratedEvalCaseOutput(BaseModel):
     variant_role: Optional[str] = "original_reproduction"
     prompt: str
     expected_behavior: Optional[str] = None
-    checks_json: dict[str, Any] = Field(default_factory=dict)
+    checks_json: JsonObject = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
-    source_summary: Optional[dict[str, Any]] = None
-    attribution_summary: Optional[dict[str, Any]] = None
-    proposal_summary: Optional[dict[str, Any]] = None
+    source_summary: Optional[JsonObject] = None
+    attribution_summary: Optional[JsonObject] = None
+    proposal_summary: Optional[JsonObject] = None
 
 
 class FeedbackEvalCaseGenerationOutput(BaseModel):
@@ -370,7 +371,7 @@ class FeedbackEvalCaseGenerationOutput(BaseModel):
     scope_id: Optional[str] = None
     status: Literal["completed", "needs_human_review"] = "completed"
     eval_cases: list[GeneratedEvalCaseOutput] = Field(default_factory=list)
-    results: list[dict[str, Any]] = Field(default_factory=list)
+    results: list[JsonObject] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
 
     @model_validator(mode="after")
@@ -390,8 +391,8 @@ class RegressionImpactAnalysisOutput(BaseModel):
     eval_run_id: str
     status: Literal["completed", "needs_human_review"] = "completed"
     result_status: Optional[str] = None
-    gate_result: dict[str, Any] = Field(default_factory=dict)
-    impacted_assets: list[dict[str, Any]] = Field(default_factory=list)
+    gate_result: JsonObject = Field(default_factory=dict)
+    impacted_assets: list[JsonObject] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     summary: Optional[str] = None
     risk_assessment: Optional[str] = None
@@ -405,7 +406,7 @@ class RegressionImpactAnalysisOutput(BaseModel):
         return self
 
 
-def validate_feedback_eval_case_generation_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_feedback_eval_case_generation_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_feedback_eval_case_generation_output(payload)
     try:
         return FeedbackEvalCaseGenerationOutput.model_validate(normalized).model_dump(mode="json"), None
@@ -413,7 +414,7 @@ def validate_feedback_eval_case_generation_output(payload: dict[str, Any]) -> tu
         return None, exc.json()
 
 
-def validate_regression_impact_analysis_output(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def validate_regression_impact_analysis_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_regression_impact_analysis_output(payload)
     try:
         return RegressionImpactAnalysisOutput.model_validate(normalized).model_dump(mode="json"), None

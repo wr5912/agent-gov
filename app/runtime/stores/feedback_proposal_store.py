@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional
 
 from sqlalchemy import select
 
@@ -9,10 +9,7 @@ from ..external_governance_mapping import apply_external_governance_record, exte
 from ..records.json_types import JsonObject
 from ..records.proposal_records import OptimizationProposalRecord, ProposalReviewRecord
 from ..runtime_db import ExternalGovernanceItemModel, OptimizationProposalModel, ProposalReviewModel, utc_now
-
-
-ProposalReviewsByProposalId: TypeAlias = dict[str, ProposalReviewModel]
-ProposalSupersedeCounts: TypeAlias = dict[str, int]
+from .store_projection_maps import ProposalReviewsByProposalId, ProposalSupersedeCounts
 
 
 class FeedbackProposalStoreMixin:

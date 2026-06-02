@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional, TypeAlias
+from typing import Any, Optional
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -27,13 +27,13 @@ from ..runtime_db import (
     SocEventModel,
     utc_now,
 )
-
-
-SourceAnnotationsByKey: TypeAlias = dict[tuple[str, str], JsonObject]
-FeedbackCasesBySourceId: TypeAlias = dict[str, JsonObject]
-EvalCasesByFeedbackCaseId: TypeAlias = dict[str, JsonObject]
-AgentJobsById: TypeAlias = dict[str, JsonObject]
 from ..schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
+from .store_projection_maps import (
+    AgentJobsById,
+    EvalCasesByFeedbackCaseId,
+    FeedbackCasesBySourceId,
+    SourceAnnotationsByKey,
+)
 
 
 class FeedbackSourceStoreMixin:

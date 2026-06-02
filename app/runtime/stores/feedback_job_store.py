@@ -171,7 +171,7 @@ class FeedbackJobStoreMixin:
             raise
         return self.get_job(job_id)
 
-    def revalidate_proposal_job(self, job_id: str) -> Optional[dict[str, Any]]:
+    def revalidate_proposal_job(self, job_id: str) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job or job.get("job_type") != "proposal":
             return None
@@ -211,10 +211,10 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def start_job(self, job_id: str) -> Optional[dict[str, Any]]:
+    def start_job(self, job_id: str) -> Optional[JsonObject]:
         return self._append_job_update(job_id, status="running", started_at=utc_now())
 
-    def complete_attribution_job(self, job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def complete_attribution_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
@@ -241,7 +241,7 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def complete_proposal_job(self, job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def complete_proposal_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
@@ -278,7 +278,7 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def fail_job(self, job_id: str, *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+    def fail_job(self, job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
@@ -327,7 +327,7 @@ class FeedbackJobStoreMixin:
         output = job.get("validated_output_json")
         return output if isinstance(output, dict) else None
 
-    def discard_current_attribution(self, feedback_case_id: str, *, invalidate_downstream: bool = True) -> Optional[dict[str, Any]]:
+    def discard_current_attribution(self, feedback_case_id: str, *, invalidate_downstream: bool = True) -> Optional[JsonObject]:
         cleanup_job_ids: list[str] = []
         with self.Session.begin() as db:
             if not self._discard_current_attribution_row(db, feedback_case_id, invalidate_downstream=invalidate_downstream, cleanup_job_ids=cleanup_job_ids):
@@ -369,7 +369,7 @@ class FeedbackJobStoreMixin:
             job[f"{job.get('job_type')}_agent_version"] = (job.get("profile_version") or {}).get("agent_version")
         return job
 
-    def _job_batch_id(self, job: dict[str, Any]) -> Optional[str]:
+    def _job_batch_id(self, job: JsonObject) -> Optional[str]:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         return self._string(input_json.get("batch_id"))
 
@@ -418,9 +418,9 @@ class FeedbackJobStoreMixin:
         self,
         job_id: str,
         *,
-        raw_output_json: Optional[dict[str, Any]] = None,
-        validated_output_json: Optional[dict[str, Any]] = None,
-        error_json: Optional[dict[str, Any]] = None,
+        raw_output_json: Optional[JsonObject] = None,
+        validated_output_json: Optional[JsonObject] = None,
+        error_json: Optional[JsonObject] = None,
     ) -> None:
         with self.Session.begin() as db:
             self._set_job_json_row(
@@ -443,7 +443,7 @@ class FeedbackJobStoreMixin:
         job = db.get(AgentJobModel, job_id)
         if not job:
             return None
-        fields: dict[str, Any] = {}
+        fields: JsonObject = {}
         if raw_output_json is not _UNSET:
             fields["raw_output_json"] = raw_output_json
         if validated_output_json is not _UNSET:
@@ -452,7 +452,7 @@ class FeedbackJobStoreMixin:
             fields["error_json"] = error_json
         return self._apply_agent_job_json_fields(job, fields)
 
-    def _write_job_error(self, job: dict[str, Any], error_code: str, message: str) -> None:
+    def _write_job_error(self, job: JsonObject, error_code: str, message: str) -> None:
         error_payload = self._job_error_payload(job, error_code, message)
         self._set_job_json(
             job["job_id"],
@@ -508,7 +508,7 @@ class FeedbackJobStoreMixin:
                 return None
             return self._job_to_dict(row)
 
-    def _job_is_stale(self, job: dict[str, Any]) -> bool:
+    def _job_is_stale(self, job: JsonObject) -> bool:
         if job.get("status") not in JOB_IN_PROGRESS_STATES:
             return False
         base = self._parse_datetime(self._string(job.get("started_at")) or self._string(job.get("created_at")))
@@ -518,12 +518,12 @@ class FeedbackJobStoreMixin:
         return datetime.now(timezone.utc) >= base + timedelta(seconds=timeout_seconds)
 
 
-    def _materialize_extra_json(self, job_id: str, job_type: str, file_name: str, payload: dict[str, Any]) -> str:
+    def _materialize_extra_json(self, job_id: str, job_type: str, file_name: str, payload: JsonObject) -> str:
         path = self.tmp_jobs_dir / job_id / job_type / file_name
         self._write_json(path, payload)
         return str(path)
 
-    def _write_job_input(self, job_id: str, job_type: str, payload: dict[str, Any]) -> str:
+    def _write_job_input(self, job_id: str, job_type: str, payload: JsonObject) -> str:
         path = self.tmp_jobs_dir / job_id / job_type / "input.json"
         self._write_json(path, payload)
         return str(path)

@@ -192,7 +192,7 @@ class FeedbackCaseStoreMixin:
     def _append_case_update_row(
         self,
         db: Any,
-        feedback_case: dict[str, Any],
+        feedback_case: JsonObject,
         *,
         status: Optional[str] = None,
         evidence_package_id: Optional[str] = None,
@@ -230,7 +230,7 @@ class FeedbackCaseStoreMixin:
         row.alert_ids_json = record.alert_ids
         row.case_ids_json = record.case_ids
 
-    def _case_title(self, records: list[dict[str, Any]]) -> str:
+    def _case_title(self, records: list[JsonObject]) -> str:
         for record in records:
             comment = self._string(record.get("comment"))
             if comment:

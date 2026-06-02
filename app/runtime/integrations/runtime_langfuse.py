@@ -5,6 +5,7 @@ from contextlib import nullcontext
 from typing import Any, Optional
 
 from ..message_utils import to_plain
+from ..records.json_types import JsonObject
 from ..settings import AppSettings
 
 
@@ -63,7 +64,7 @@ class RuntimeLangfuseClient:
             print(f"[WARN] failed to read current Langfuse trace: {exc}", flush=True)
             return None, None
 
-    def fetch_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
+    def fetch_trace(self, trace_id: str) -> Optional[JsonObject]:
         if not trace_id or not self.settings.langfuse_enabled:
             return None
         if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:

@@ -90,7 +90,9 @@
           "input_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -129,7 +131,9 @@
           "profile_version": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -141,7 +145,9 @@
           "raw_output_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -226,7 +232,9 @@
           "validated_output_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -257,7 +265,9 @@
       "AgentRunResponse": {
         "properties": {
           "agent_activity": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Agent Activity",
             "type": "object"
           },
@@ -1207,7 +1217,9 @@
             "type": "string"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -1301,7 +1313,9 @@
       "ChatResponse": {
         "properties": {
           "agent_activity": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Agent Activity",
             "type": "object"
           },
@@ -1329,7 +1343,9 @@
           },
           "messages": {
             "items": {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
               "type": "object"
             },
             "title": "Messages",
@@ -1379,7 +1395,9 @@
           "usage": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -1588,12 +1606,16 @@
             "type": "string"
           },
           "after": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "After",
             "type": "object"
           },
           "before": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Before",
             "type": "object"
           },
@@ -1743,7 +1765,9 @@
             "title": "Blocking Policy"
           },
           "checks_json": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Checks Json",
             "type": "object"
           },
@@ -2045,7 +2069,9 @@
             "type": "integer"
           },
           "snapshot": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Snapshot",
             "type": "object"
           }
@@ -2233,7 +2259,9 @@
             "type": "string"
           },
           "eval_case_snapshot": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Eval Case Snapshot",
             "type": "object"
           },
@@ -2332,7 +2360,9 @@
             "type": "string"
           },
           "gate_result": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Gate Result",
             "type": "object"
           },
@@ -2522,7 +2552,7 @@
       "EvidencePackageFileResponse": {
         "properties": {
           "content": {
-            "title": "Content"
+            "$ref": "#/components/schemas/JsonValue"
           },
           "evidence_package_id": {
             "title": "Evidence Package Id",
@@ -2853,7 +2883,9 @@
             "type": "string"
           },
           "manual_restore_result": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Manual Restore Result",
             "type": "object"
           },
@@ -3226,7 +3258,9 @@
             "title": "Target Type"
           },
           "task_context": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Task Context",
             "type": "object"
           },
@@ -3319,7 +3353,9 @@
             "type": "string"
           },
           "request_json": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Request Json",
             "type": "object"
           },
@@ -3700,7 +3736,9 @@
           "checks_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -4243,7 +4281,9 @@
             "title": "Blocking Policy"
           },
           "checks_json": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Checks Json",
             "type": "object"
           },
@@ -4598,7 +4638,9 @@
             ]
           },
           "latest_regression_gate": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Latest Regression Gate",
             "type": "object"
           },
@@ -6032,7 +6074,9 @@
             "type": "array"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -6173,7 +6217,9 @@
             "title": "Matched Run Id"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -6369,7 +6415,9 @@
             "title": "Latest Attribution Status"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -6385,7 +6433,9 @@
             "title": "Priority"
           },
           "raw": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Raw",
             "type": "object"
           },
@@ -6495,7 +6545,9 @@
           "metadata": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -6559,7 +6611,9 @@
           "ctx": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -6569,6 +6623,12 @@
             "title": "Ctx"
           },
           "input": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ],
             "title": "Input"
           },
           "loc": {
@@ -6635,6 +6695,7 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
+      "JsonValue": {},
       "OpenAIChatCompletionChoice": {
         "properties": {
           "finish_reason": {
@@ -6687,7 +6748,9 @@
             "type": "array"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -6748,7 +6811,9 @@
           "usage": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -6910,7 +6975,9 @@
           "input_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -6941,7 +7008,9 @@
           "profile_version": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -6964,7 +7033,9 @@
           "raw_output_json": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -8282,7 +8353,9 @@
         "additionalProperties": true,
         "properties": {
           "after": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "After",
             "type": "object"
           },
@@ -8291,7 +8364,9 @@
             "type": "string"
           },
           "before": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Before",
             "type": "object"
           },
@@ -8355,7 +8430,9 @@
             "type": "string"
           },
           "gate_result": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Gate Result",
             "type": "object"
           },
@@ -8365,7 +8442,9 @@
           },
           "impacted_assets": {
             "items": {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
               "type": "object"
             },
             "title": "Impacted Assets",
@@ -8455,7 +8534,9 @@
             "type": "string"
           },
           "change_summary": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Change Summary",
             "type": "object"
           },
@@ -8487,7 +8568,9 @@
           },
           "selected_cases": {
             "items": {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
               "type": "object"
             },
             "title": "Selected Cases",
@@ -8498,7 +8581,9 @@
             "type": "string"
           },
           "selection_summary": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Selection Summary",
             "type": "object"
           },
@@ -8791,7 +8876,9 @@
             "type": "string"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -8884,7 +8971,9 @@
           "after": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -8912,7 +9001,9 @@
           "before": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -8988,7 +9079,9 @@
             "type": "string"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -9098,7 +9191,9 @@
           "after": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -9126,7 +9221,9 @@
           "before": {
             "anyOf": [
               {
-                "additionalProperties": true,
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
                 "type": "object"
               },
               {
@@ -9209,7 +9306,9 @@
             "title": "Matched Run Id"
           },
           "metadata": {
-            "additionalProperties": true,
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
             "title": "Metadata",
             "type": "object"
           },
@@ -9302,7 +9401,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.18"
+    "version": "0.2.20"
   },
   "openapi": "3.1.0",
   "paths": {

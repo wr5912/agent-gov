@@ -43,7 +43,7 @@ class AgentJobRunner:
         if self.settings.provider_api_url:
             env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
 
-        kwargs: dict[str, Any] = {
+        kwargs: dict[str, object] = {
             "cwd": profile.workspace_dir,
             "model": self.settings.agent_model,
             "fallback_model": self.settings.fallback_model,
@@ -139,7 +139,7 @@ class AgentJobRunner:
         return result.payload
 
     @staticmethod
-    async def single_prompt_stream(prompt: str) -> AsyncIterator[dict[str, Any]]:
+    async def single_prompt_stream(prompt: str) -> AsyncIterator[JsonObject]:
         yield {
             "type": "user",
             "message": {"role": "user", "content": prompt},

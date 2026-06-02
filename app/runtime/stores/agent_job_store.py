@@ -139,7 +139,7 @@ class AgentJobStoreMixin:
             return self._complete_regression_impact_agent_job(job, raw_output)
         return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job_type}")
 
-    def fail_projected_agent_job(self, job: dict[str, Any], *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+    def fail_projected_agent_job(self, job: JsonObject, *, error_code: str, message: str) -> Optional[JsonObject]:
         job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
         if job_type in {"attribution", "proposal", "batch_plan"}:
@@ -150,7 +150,7 @@ class AgentJobStoreMixin:
             self._fail_regression_impact_projection(job, error_code=error_code, message=message)
         return self.fail_agent_job(job_id, error_code=error_code, message=message)
 
-    def fail_agent_job(self, job_id: str, *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+    def fail_agent_job(self, job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
         error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "job_id": job_id}
         with self.Session.begin() as db:
             row = self._set_agent_job_json_row(db, job_id, error_json=error_payload)
@@ -162,10 +162,10 @@ class AgentJobStoreMixin:
     def _complete_agent_job_from_domain(
         self,
         job_id: str,
-        projected: Optional[dict[str, Any]],
+        projected: Optional[JsonObject],
         *,
         ready_status: str = "completed",
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         if not projected:
             return self.fail_agent_job(job_id, error_code="DOMAIN_PROJECTION_FAILED", message="Agent job domain projection failed")
         domain_status = str(projected.get("status") or "")
@@ -188,7 +188,7 @@ class AgentJobStoreMixin:
         validated_output_json: Any = _UNSET,
         error_json: Any = _UNSET,
         status: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             row = self._set_agent_job_json_row(
                 db,
@@ -203,7 +203,7 @@ class AgentJobStoreMixin:
             self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
         return self.get_agent_job(job_id)
 
-    def _complete_eval_case_generation_agent_job(self, job: dict[str, Any], raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _complete_eval_case_generation_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
         validated, error = validate_feedback_eval_case_generation_output(raw_output)
         if not validated:
             return self._complete_agent_job(
@@ -221,7 +221,7 @@ class AgentJobStoreMixin:
             status="completed" if projected.get("status") == "completed" else "needs_human_review",
         )
 
-    def _complete_regression_impact_agent_job(self, job: dict[str, Any], raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _complete_regression_impact_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
         output = dict(raw_output)
         output["eval_run_id"] = output.get("eval_run_id") or job.get("scope_id")
         validated, error = validate_regression_impact_analysis_output(output)
@@ -242,7 +242,7 @@ class AgentJobStoreMixin:
             status="completed" if projected.get("status") == "completed" else "needs_human_review",
         )
 
-    def _sync_attribution_agent_job_to_batches(self, job: dict[str, Any], projected: Optional[dict[str, Any]]) -> None:
+    def _sync_attribution_agent_job_to_batches(self, job: JsonObject, projected: Optional[JsonObject]) -> None:
         if not projected:
             return
         feedback_case_id = self._string(projected.get("feedback_case_id")) or self._string(job.get("scope_id"))
@@ -345,7 +345,7 @@ class AgentJobStoreMixin:
                 )
         return self.get_regression_impact_analysis(eval_run_id) or payload
 
-    def _fail_regression_impact_projection(self, job: dict[str, Any], *, error_code: str, message: str) -> None:
+    def _fail_regression_impact_projection(self, job: JsonObject, *, error_code: str, message: str) -> None:
         eval_run_id = str(job.get("scope_id") or "")
         with self.Session.begin() as db:
             row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
@@ -389,13 +389,13 @@ class AgentJobStoreMixin:
     def _sync_eval_generation_scope_row(
         self,
         db: Any,
-        job: dict[str, Any],
-        eval_cases: list[dict[str, Any]],
+        job: JsonObject,
+        eval_cases: list[JsonObject],
         created: int,
         reused: int,
         updated: int,
         skipped: int,
-        results: list[dict[str, Any]],
+        results: list[JsonObject],
     ) -> None:
         if job.get("scope_kind") != "optimization_batch":
             return
@@ -435,7 +435,7 @@ class AgentJobStoreMixin:
         row = db.get(AgentJobModel, job_id)
         if not row:
             return None
-        fields: dict[str, Any] = {}
+        fields: JsonObject = {}
         if raw_output_json is not _UNSET:
             fields["raw_output_json"] = raw_output_json
         if validated_output_json is not _UNSET:
@@ -444,7 +444,7 @@ class AgentJobStoreMixin:
             fields["error_json"] = error_json
         return self._apply_agent_job_json_fields(row, fields)
 
-    def _apply_agent_job_json_fields(self, row: AgentJobModel, fields: dict[str, Any]) -> AgentJobModel:
+    def _apply_agent_job_json_fields(self, row: AgentJobModel, fields: JsonObject) -> AgentJobModel:
         payload = AgentJobRecord.from_row(row).to_payload()
         payload.update(fields)
         record = AgentJobRecord.model_validate(payload)
@@ -479,7 +479,7 @@ class AgentJobStoreMixin:
         compensations = self._execution_compensations_for_job(row.job_id) if row.job_type == "execution" else None
         return AgentJobRecord.from_row(row, compensations=compensations).to_payload()
 
-    def _write_agent_job_input(self, job_id: str, job_type: str, payload: dict[str, Any]) -> str:
+    def _write_agent_job_input(self, job_id: str, job_type: str, payload: JsonObject) -> str:
         path = self.tmp_jobs_dir / job_id / job_type / "input.json"
         self._write_json(path, payload)
         return str(path)

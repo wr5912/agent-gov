@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, cast
 
 from app.runtime.records.json_types import JsonObject
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -93,7 +93,7 @@ class FeedbackEvalRunner:
 
     def _create_or_get_eval_run(
         self,
-        eval_cases: list[dict[str, Any]],
+        eval_cases: list[JsonObject],
         *,
         optimization_task_id: Optional[str],
         source: str,
@@ -115,7 +115,7 @@ class FeedbackEvalRunner:
     def _eval_chat_request(
         self,
         eval_run: EvalRunResponse,
-        eval_case: dict[str, Any],
+        eval_case: JsonObject,
         optimization_task_id: Optional[str],
         regression_plan_id: Optional[str],
     ) -> ChatRequest:
@@ -132,23 +132,23 @@ class FeedbackEvalRunner:
             },
         )
 
-    def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[dict[str, Any]]:
+    def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[JsonObject]:
         if eval_case_ids:
             selected = [self.feedback_store.find_eval_case(eval_case_id) for eval_case_id in eval_case_ids]
             return [item for item in selected if self._eligible_eval_case(item)]
         return self.feedback_store.list_eval_cases(status="active", promotion_status="approved", limit=100)
 
     @staticmethod
-    def _eligible_eval_case(eval_case: Optional[dict[str, Any]]) -> bool:
+    def _eligible_eval_case(eval_case: Optional[JsonObject]) -> bool:
         return bool(eval_case and eval_case.get("status") == "active" and eval_case.get("promotion_status") == "approved")
 
-    def _evaluate_eval_case(self, eval_case: dict[str, Any], result: ChatResponse) -> tuple[str, float, list[dict[str, Any]]]:
+    def _evaluate_eval_case(self, eval_case: JsonObject, result: ChatResponse) -> tuple[str, float, list[JsonObject]]:
         checks = eval_case.get("checks_json") if isinstance(eval_case.get("checks_json"), dict) else {}
         errors = result.errors
         answer = result.answer.strip()
         activity = result.agent_activity
         tool_names = self._eval_tool_names(activity)
-        check_results: list[dict[str, Any]] = []
+        check_results: list[JsonObject] = []
 
         def append_check(name: str, passed: bool, required: bool, detail: str) -> None:
             check_results.append({"name": name, "passed": passed, "required": required, "detail": detail})
@@ -175,7 +175,7 @@ class FeedbackEvalRunner:
         return "passed", score, check_results
 
     @staticmethod
-    def _eval_tool_names(activity: dict[str, Any]) -> list[str]:
+    def _eval_tool_names(activity: JsonObject) -> list[str]:
         names: list[str] = []
         for item in activity.get("tool_names") or []:
             if item:
@@ -187,8 +187,8 @@ class FeedbackEvalRunner:
 
     @staticmethod
     def _chat_result_payload(result: ChatResponse | None) -> JsonObject | None:
-        return result.model_dump(mode="json") if result else None
+        return cast(JsonObject, result.model_dump(mode="json")) if result else None
 
     @staticmethod
-    def _eval_run_response(payload: dict[str, Any] | None) -> EvalRunResponse | None:
+    def _eval_run_response(payload: JsonObject | None) -> EvalRunResponse | None:
         return EvalRunResponse.model_validate(payload) if payload else None

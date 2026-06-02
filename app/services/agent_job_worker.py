@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable, cast
 
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
@@ -67,13 +67,13 @@ class AgentJobWorker:
             if result is None:
                 await asyncio.sleep(self.poll_interval_seconds)
 
-    async def _run_job(self, job: dict[str, Any]) -> JsonObject:
+    async def _run_job(self, job: JsonObject) -> JsonObject:
         if job.get("job_type") == "execution":
             execution = self.feedback_store.get_execution_job(str(job["job_id"]))
             deterministic = self.feedback_store.deterministic_execution_plan_output(execution or {})
             if deterministic:
                 return deterministic
-        job_input = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        job_input = cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
         return await self.run_profile_json(
             profile_name=str(job["profile_name"]),
             prompt=self._prompt(job, job_input),
@@ -82,7 +82,7 @@ class AgentJobWorker:
             job_input=job_input,
         )
 
-    def _prompt(self, job: dict[str, Any], job_input: JsonObject) -> str:
+    def _prompt(self, job: JsonObject, job_input: JsonObject) -> str:
         job_type = str(job.get("job_type") or "")
         input_path = str(job.get("input_path") or "")
         if job_type == "attribution":
@@ -102,5 +102,5 @@ class AgentJobWorker:
         raise RuntimeError(f"Unsupported agent job type: {job_type}")
 
     @staticmethod
-    def _job_response(payload: dict[str, Any] | None) -> AgentJobResponse | None:
+    def _job_response(payload: JsonObject | None) -> AgentJobResponse | None:
         return AgentJobResponse.model_validate(payload) if payload else None

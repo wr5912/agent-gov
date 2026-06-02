@@ -4,7 +4,7 @@ import hashlib
 import logging
 from pathlib import Path
 from threading import Lock
-from typing import Any, Awaitable, Callable
+from typing import Awaitable, Callable, cast
 
 from pydantic import BaseModel
 
@@ -67,7 +67,7 @@ class ExecutionApplicationService:
         self,
         task_id: str,
         *,
-        run_execution_job: Callable[..., Awaitable[AgentJobResponse | dict[str, Any] | None]],
+        run_execution_job: Callable[..., Awaitable[AgentJobResponse | JsonObject | None]],
         force: bool,
         note: str,
     ) -> ExecutionRunApplyResult:
@@ -199,7 +199,7 @@ class ExecutionApplicationService:
         *,
         task_id: str,
         execution_job_id: str,
-        pre_version: dict[str, Any],
+        pre_version: JsonObject,
         error: Exception,
     ) -> str:
         pre_version_id = str(pre_version.get("agent_version_id") or "")
@@ -252,7 +252,7 @@ class ExecutionApplicationService:
             logger.exception("Failed to record execution application failure for job %s", execution_job_id)
         return detail
 
-    def _execution_plan_ready(self, job: dict[str, Any]) -> bool:
+    def _execution_plan_ready(self, job: JsonObject) -> bool:
         plan = job.get("validated_output_json") if isinstance(job.get("validated_output_json"), dict) else {}
         return job.get("status") == "completed" and plan.get("status") == "ready"
 
@@ -288,7 +288,7 @@ class ExecutionApplicationService:
             raise ExecutionApplicationError(404, "Execution compensation not found")
         return ExecutionCompensationResponse.model_validate(updated)
 
-    def apply_execution_operations(self, operations: list[Any]) -> None:
+    def apply_execution_operations(self, operations: list[object]) -> None:
         if not operations:
             raise ExecutionApplicationError(409, "Execution plan has no operations")
         originals: dict[Path, bytes | None] = {}
@@ -360,7 +360,7 @@ class ExecutionApplicationService:
         if job is None:
             return None
         if isinstance(job, AgentJobResponse):
-            return job.model_dump(mode="json")
+            return cast(JsonObject, job.model_dump(mode="json"))
         return job
 
     def safe_workspace_target(self, target_path: str) -> Path:

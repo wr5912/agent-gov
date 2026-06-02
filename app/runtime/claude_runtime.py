@@ -49,7 +49,7 @@ class RuntimeRequestContext:
 @dataclass
 class RuntimeQueryState:
     sdk_session_id: Optional[str]
-    messages: list[dict[str, Any]] = field(default_factory=list)
+    messages: list[JsonObject] = field(default_factory=list)
     answer_parts: list[str] = field(default_factory=list)
     usage: Any = None
     total_cost_usd: Optional[float] = None
@@ -183,8 +183,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         alert_id: Optional[str],
         case_id: Optional[str],
         answer: str,
-        messages: list[dict[str, Any]],
-        agent_activity: dict[str, Any],
+        messages: list[JsonObject],
+        agent_activity: JsonObject,
         usage: Any,
         total_cost_usd: Optional[float],
         stop_reason: Optional[str],
@@ -215,8 +215,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         sdk_session_id: Optional[str],
         req: ChatRequest,
         answer: str,
-        messages: list[dict[str, Any]],
-        agent_activity: dict[str, Any],
+        messages: list[JsonObject],
+        agent_activity: JsonObject,
         usage: Any,
         total_cost_usd: Optional[float],
         stop_reason: Optional[str],
@@ -258,7 +258,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             return None
         return self.agent_version_store.current_version_id()
 
-    def profile_version_snapshot(self, profile_name: str) -> dict[str, Any] | None:
+    def profile_version_snapshot(self, profile_name: str) -> JsonObject | None:
         profile = self.profiles.get(profile_name)
         if profile is None:
             return None
@@ -269,7 +269,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if self.agent_version_store is not None and self.agent_version_store.is_maintenance_active():
             raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.")
 
-    def fetch_langfuse_trace(self, trace_id: str) -> Optional[dict[str, Any]]:
+    def fetch_langfuse_trace(self, trace_id: str) -> Optional[JsonObject]:
         return self.langfuse.fetch_trace(trace_id)
 
     def _main_observation_name(self) -> str:
@@ -320,7 +320,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             else self.settings.default_disallowed_tools
         )
 
-        kwargs: dict[str, Any] = {
+        kwargs: dict[str, object] = {
             "tools": self.settings.claude_tools,
             "cwd": profile.workspace_dir,
             "model": req.model or self.settings.agent_model,
@@ -438,9 +438,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         msg: Any,
         state: RuntimeQueryState,
         result_message_type: type,
-    ) -> tuple[str, str, dict[str, Any], bool, list[str]]:
+    ) -> tuple[str, str, JsonObject, bool, list[str]]:
         text = extract_text(msg)
-        plain = to_plain(msg)
+        plain_value = to_plain(msg)
+        plain: JsonObject = plain_value if isinstance(plain_value, dict) else {"value": plain_value}
         event = message_event_name(msg)
         plain["event"] = event
         state.messages.append(plain)
@@ -465,7 +466,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         req: ChatRequest,
         context: RuntimeRequestContext,
         state: RuntimeQueryState,
-    ) -> tuple[str, dict[str, Any], JsonObject]:
+    ) -> tuple[str, JsonObject, JsonObject]:
         answer = AgentJobRunner.dedupe_answer_parts(state.answer_parts)
         agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
         output = self._runtime_output_payload(
@@ -511,7 +512,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         context: RuntimeRequestContext,
         state: RuntimeQueryState,
         answer: str,
-        agent_activity: dict[str, Any],
+        agent_activity: JsonObject,
     ) -> None:
         if state.sdk_session_id:
             context.session.sdk_session_id = state.sdk_session_id
@@ -538,7 +539,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             langfuse_trace_url=context.langfuse_trace_url,
         )
 
-    def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: dict[str, Any]) -> ChatResponse:
+    def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: JsonObject) -> ChatResponse:
         return ChatResponse(
             run_id=context.run_id,
             agent_version_id=context.agent_version_id,
@@ -586,7 +587,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
 
-    async def stream(self, req: ChatRequest) -> AsyncIterator[dict[str, Any]]:
+    async def stream(self, req: ChatRequest) -> AsyncIterator[JsonObject]:
         from claude_agent_sdk import ResultMessage, query
 
         context = self._new_runtime_request_context(req)
@@ -633,7 +634,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                                     "alert_id": req.alert_id,
                                     "case_id": req.case_id,
                                     "agent_activity": agent_activity,
-                                    "usage": state.usage,
+                                    "usage": to_plain(state.usage),
                                     "total_cost_usd": state.total_cost_usd,
                                     "stop_reason": state.stop_reason,
                                     "errors": result_errors,

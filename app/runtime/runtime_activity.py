@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from .collection_utils import unique_strings
 from .message_utils import to_plain
+from .records.json_types import JsonObject
 from .schemas import ChatRequest
 from .settings import AppSettings
 
@@ -15,7 +16,7 @@ class RuntimeActivityExtractor:
     def __init__(self, settings: AppSettings) -> None:
         self.settings = settings
 
-    def agent_activity_payload(self, req: ChatRequest, messages: list[dict[str, Any]]) -> dict[str, Any]:
+    def agent_activity_payload(self, req: ChatRequest, messages: list[JsonObject]) -> JsonObject:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
         disallowed_tools = (
             req.disallowed_tools
@@ -23,8 +24,8 @@ class RuntimeActivityExtractor:
             else self.settings.default_disallowed_tools
         )
         requested_skills = req.skills if req.skills is not None else self.settings.default_skills
-        tool_calls: list[dict[str, Any]] = []
-        tool_results: list[dict[str, Any]] = []
+        tool_calls: list[JsonObject] = []
+        tool_results: list[JsonObject] = []
         seen_calls: set[str] = set()
         seen_results: set[str] = set()
 
@@ -78,8 +79,8 @@ class RuntimeActivityExtractor:
             return None
         return {"total_cost_usd": float(total_cost_usd)}
 
-    def _walk_records(self, value: Any) -> list[dict[str, Any]]:
-        records: list[dict[str, Any]] = []
+    def _walk_records(self, value: Any) -> list[JsonObject]:
+        records: list[JsonObject] = []
         if isinstance(value, dict):
             records.append(value)
             for item in value.values():
@@ -89,7 +90,7 @@ class RuntimeActivityExtractor:
                 records.extend(self._walk_records(item))
         return records
 
-    def _tool_call_from_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
+    def _tool_call_from_record(self, record: JsonObject) -> JsonObject | None:
         record_type = self._string_value(record.get("type")) or ""
         hook_event = self._hook_event(record) or ""
         name = self._tool_name(record)
@@ -99,7 +100,7 @@ class RuntimeActivityExtractor:
         if not name or not (is_tool_use or has_tool_use_shape or is_hook_tool_use):
             return None
 
-        entry: dict[str, Any] = {"name": name}
+        entry: JsonObject = {"name": name}
         self._copy_first(record, entry, ("id", "tool_use_id", "toolUseID"), "tool_use_id")
         self._copy_first(record, entry, ("input", "tool_input", "toolInput"), "input")
         self._copy_first(record, entry, ("agent_id", "agentId"), "agent_id")
@@ -109,7 +110,7 @@ class RuntimeActivityExtractor:
             entry["hook_event_name"] = hook_event
         return entry
 
-    def _tool_result_from_record(self, record: dict[str, Any]) -> dict[str, Any] | None:
+    def _tool_result_from_record(self, record: JsonObject) -> JsonObject | None:
         record_type = self._string_value(record.get("type")) or ""
         hook_event = self._hook_event(record) or ""
         is_tool_result = "tool_result" in record_type.lower()
@@ -118,7 +119,7 @@ class RuntimeActivityExtractor:
         if not (is_tool_result or has_tool_result_shape or is_hook_result):
             return None
 
-        entry: dict[str, Any] = {}
+        entry: JsonObject = {}
         self._copy_first(record, entry, ("tool_use_id", "toolUseID", "id"), "tool_use_id")
         self._copy_first(record, entry, ("tool_name", "toolName", "name"), "name")
         self._copy_first(record, entry, ("content", "tool_response", "toolResponse", "error"), "content")
@@ -132,7 +133,7 @@ class RuntimeActivityExtractor:
             entry["hook_event_name"] = hook_event
         return entry or None
 
-    def _skill_call_from_tool_call(self, call: dict[str, Any]) -> dict[str, Any] | None:
+    def _skill_call_from_tool_call(self, call: JsonObject) -> JsonObject | None:
         tool_name = self._string_value(call.get("name")) or ""
         if tool_name != "Skill" and not tool_name.startswith("Skill("):
             return None
@@ -159,7 +160,7 @@ class RuntimeActivityExtractor:
             entry["input"] = call["input"]
         return entry
 
-    def _tool_name(self, record: dict[str, Any]) -> str | None:
+    def _tool_name(self, record: JsonObject) -> str | None:
         direct = (
             self._string_value(record.get("name"))
             or self._string_value(record.get("tool_name"))
@@ -173,7 +174,7 @@ class RuntimeActivityExtractor:
             return hook_name.split(":", 1)[1] or None
         return None
 
-    def _hook_event(self, record: dict[str, Any]) -> str | None:
+    def _hook_event(self, record: JsonObject) -> str | None:
         direct = (
             self._string_value(record.get("hook_event_name"))
             or self._string_value(record.get("hook_event"))
@@ -188,8 +189,8 @@ class RuntimeActivityExtractor:
 
     @staticmethod
     def _copy_first(
-        source: dict[str, Any],
-        target: dict[str, Any],
+        source: JsonObject,
+        target: JsonObject,
         candidates: tuple[str, ...],
         target_key: str,
     ) -> None:
@@ -199,7 +200,7 @@ class RuntimeActivityExtractor:
                 return
 
     @staticmethod
-    def _append_unique(items: list[dict[str, Any]], entry: dict[str, Any], seen: set[str]) -> None:
+    def _append_unique(items: list[JsonObject], entry: JsonObject, seen: set[str]) -> None:
         key = json.dumps(entry, sort_keys=True, ensure_ascii=False, default=str)
         if key in seen:
             return

@@ -57,7 +57,7 @@ class FeedbackEvidenceStoreMixin:
                 raise RuntimeError("Feedback case disappeared during evidence package creation.")
         return manifest
 
-    def _collect_evidence_context(self, feedback_case: dict[str, Any]) -> JsonObject:
+    def _collect_evidence_context(self, feedback_case: JsonObject) -> JsonObject:
         signals_clean = [item for item in (self.find_signal(source_id) for source_id in feedback_case.get("signal_ids", [])) if item]
         events_clean = [item for item in (self.find_event(source_id) for source_id in feedback_case.get("event_ids", [])) if item]
         runs_clean = [item for item in (self.find_run(run_id=run_id) for run_id in feedback_case.get("run_ids", [])) if item]
@@ -148,7 +148,7 @@ class FeedbackEvidenceStoreMixin:
         *,
         evidence_id: str,
         feedback_case_id: str,
-        feedback_case: dict[str, Any],
+        feedback_case: JsonObject,
         context: JsonObject,
         main_agent_version: JsonObject,
         redaction_report: JsonObject,

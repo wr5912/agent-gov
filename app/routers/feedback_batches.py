@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.records.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_plan_response_schemas import FeedbackOptimizationPlanTaskResponse
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -29,7 +30,7 @@ from app.runtime.schemas import (
 from app.services.execution_application import ExecutionApplicationService
 
 
-def _batch_plan_task(batch: dict[str, Any] | None, plan_task_id: str) -> FeedbackOptimizationPlanTaskResponse | None:
+def _batch_plan_task(batch: JsonObject | None, plan_task_id: str) -> FeedbackOptimizationPlanTaskResponse | None:
     plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
     for item in (plan or {}).get("tasks") or []:
         if isinstance(item, dict) and str(item.get("plan_task_id") or "") == plan_task_id:

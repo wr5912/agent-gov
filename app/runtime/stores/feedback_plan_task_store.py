@@ -17,7 +17,7 @@ from ..runtime_db import FeedbackOptimizationBatchModel, utc_now
 class FeedbackPlanTaskStoreMixin:
     """Normalization helpers for batch optimization plan tasks and external task context."""
 
-    def _normalize_plan_task_collections(self, batch: dict[str, Any], plan: dict[str, Any]) -> JsonObject:
+    def _normalize_plan_task_collections(self, batch: JsonObject, plan: JsonObject) -> JsonObject:
         raw_tasks = [dict(item) for item in plan.get("tasks") or [] if isinstance(item, dict)]
         executable_tasks = [
             self._normalize_plan_task(batch, plan, item)
@@ -47,7 +47,7 @@ class FeedbackPlanTaskStoreMixin:
         }
         return FeedbackOptimizationPlanRecord.model_validate(normalized_plan).to_payload()
 
-    def _normalize_plan_task(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> JsonObject:
+    def _normalize_plan_task(self, batch: JsonObject, plan: JsonObject, item: JsonObject) -> JsonObject:
         target_type = self._string(item.get("target_type")) or self._string(plan.get("target_type")) or "not_actionable"
         execution_kind = self._string(item.get("execution_kind")) or "workspace_execution"
         target_path = self._string(item.get("target_path")) or None
@@ -90,7 +90,7 @@ class FeedbackPlanTaskStoreMixin:
         }
         return FeedbackOptimizationPlanTaskRecord.model_validate(normalized).to_payload()
 
-    def _normalize_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> JsonObject:
+    def _normalize_blocked_item(self, batch: JsonObject, plan: JsonObject, item: JsonObject) -> JsonObject:
         target_type = self._string(item.get("target_type")) or "not_actionable"
         evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
         rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
@@ -111,7 +111,7 @@ class FeedbackPlanTaskStoreMixin:
             }
         ).to_payload()
 
-    def _blocked_items_from_tasks(self, batch: dict[str, Any], plan: dict[str, Any], tasks: list[dict[str, Any]]) -> list[JsonObject]:
+    def _blocked_items_from_tasks(self, batch: JsonObject, plan: JsonObject, tasks: list[JsonObject]) -> list[JsonObject]:
         blocked: list[JsonObject] = []
         for item in tasks:
             if item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
@@ -119,7 +119,7 @@ class FeedbackPlanTaskStoreMixin:
             blocked.append(self._normalize_blocked_item(batch, plan, item))
         return blocked
 
-    def _legacy_plan_task_or_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any]) -> JsonObject:
+    def _legacy_plan_task_or_blocked_item(self, batch: JsonObject, plan: JsonObject) -> JsonObject:
         target_type = self._string(plan.get("target_type") or plan.get("optimization_object_type")) or "not_actionable"
         target_path = self._string(plan.get("target_path")) or None
         actionability = self._string(plan.get("actionability")) or "needs_human_analysis"
@@ -170,7 +170,7 @@ class FeedbackPlanTaskStoreMixin:
             ).to_payload()
         return FeedbackOptimizationPlanTaskRecord.model_validate(item).to_payload()
 
-    def _batch_plan_task(self, batch_id: str, plan_task_id: str) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    def _batch_plan_task(self, batch_id: str, plan_task_id: str) -> tuple[Optional[JsonObject], Optional[JsonObject], Optional[JsonObject]]:
         batch = self.find_optimization_batch(batch_id)
         plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
         if not batch or not plan:
@@ -178,7 +178,7 @@ class FeedbackPlanTaskStoreMixin:
         task = self._plan_task_from_batch(batch, plan_task_id)
         return batch, plan, task
 
-    def _plan_task_from_batch(self, batch: Optional[dict[str, Any]], plan_task_id: str) -> Optional[JsonObject]:
+    def _plan_task_from_batch(self, batch: Optional[JsonObject], plan_task_id: str) -> Optional[JsonObject]:
         plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
         for task in (plan or {}).get("tasks") or []:
             if isinstance(task, dict) and self._string(task.get("plan_task_id")) == plan_task_id:
@@ -189,10 +189,10 @@ class FeedbackPlanTaskStoreMixin:
         self,
         batch_id: str,
         plan_task_id: str,
-        updates: dict[str, Any],
+        updates: JsonObject,
         *,
         batch_status: Optional[str] = None,
-        top_level_fields: Optional[dict[str, Any]] = None,
+        top_level_fields: Optional[JsonObject] = None,
     ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._update_batch_plan_task_row(
@@ -211,10 +211,10 @@ class FeedbackPlanTaskStoreMixin:
         db: Any,
         batch_id: str,
         plan_task_id: str,
-        updates: dict[str, Any],
+        updates: JsonObject,
         *,
         batch_status: Optional[str] = None,
-        top_level_fields: Optional[dict[str, Any]] = None,
+        top_level_fields: Optional[JsonObject] = None,
     ) -> Optional[FeedbackOptimizationBatchModel]:
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
@@ -237,7 +237,7 @@ class FeedbackPlanTaskStoreMixin:
         fields = {"optimization_plan": next_plan, **(top_level_fields or {})}
         return self._update_batch_row(db, batch_id, status=batch_status or str(batch.get("status") or "pending_approval"), fields=fields)
 
-    def _plan_task_summary(self, tasks: list[dict[str, Any]]) -> JsonObject:
+    def _plan_task_summary(self, tasks: list[JsonObject]) -> JsonObject:
         summary: JsonObject = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0}
         for task in tasks:
             kind = self._string(task.get("execution_kind"))
@@ -247,7 +247,7 @@ class FeedbackPlanTaskStoreMixin:
         return summary
 
 
-    def _plan_task_title(self, target_type: str, execution_kind: str, index: int, task_context: Optional[dict[str, Any]] = None) -> str:
+    def _plan_task_title(self, target_type: str, execution_kind: str, index: int, task_context: Optional[JsonObject] = None) -> str:
         if execution_kind == "workspace_execution":
             label = {
                 "main_agent_claude_md": "优化 Agent 工作区指令",
@@ -275,7 +275,7 @@ class FeedbackPlanTaskStoreMixin:
         execution_kind: str,
         owner: str,
         target_path: Optional[str],
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> str:
         if execution_kind == "workspace_execution":
             return "根据反馈归因结果，调整受管 workspace 中的 Agent 配置、指令或用例，让 Agent 在同类场景中按当前证据和配置作答。"
@@ -287,7 +287,7 @@ class FeedbackPlanTaskStoreMixin:
             return f"将反馈暴露的问题整理为外部系统优化任务，派发给 {owner_label} 处理。"
         return "该项没有形成可执行 workspace 任务或明确的外部系统派发目标。"
 
-    def _plan_task_objective(self, target_type: str, execution_kind: str, task_context: Optional[dict[str, Any]] = None) -> str:
+    def _plan_task_objective(self, target_type: str, execution_kind: str, task_context: Optional[JsonObject] = None) -> str:
         if execution_kind == "workspace_execution":
             return "通过修改 workspace 受管配置或指令，降低同类反馈再次出现的概率。"
         if execution_kind == "external_webhook":
@@ -323,7 +323,7 @@ class FeedbackPlanTaskStoreMixin:
         self,
         execution_kind: str,
         target_path: Optional[str],
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> list[str]:
         if execution_kind == "workspace_execution":
             return [
@@ -348,7 +348,7 @@ class FeedbackPlanTaskStoreMixin:
         target_type: str,
         execution_kind: str,
         index: int,
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> str:
         title = self._string(value)
         generic_fragments = ("补齐 MCP 服务返回数据能力", "外部系统优化", "external_mcp_service", "对应外部系统")
@@ -363,7 +363,7 @@ class FeedbackPlanTaskStoreMixin:
         execution_kind: str,
         owner: str,
         target_path: Optional[str],
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> str:
         description = self._string(value)
         generic_fragments = ("对应外部系统", "外部系统优化任务", "external_mcp_service")
@@ -382,7 +382,7 @@ class FeedbackPlanTaskStoreMixin:
         value: Any,
         target_type: str,
         execution_kind: str,
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> str:
         objective = self._string(value)
         generic_fragments = ("对应外部系统", "external_mcp_service")
@@ -395,7 +395,7 @@ class FeedbackPlanTaskStoreMixin:
         value: Any,
         execution_kind: str,
         target_path: Optional[str],
-        task_context: Optional[dict[str, Any]] = None,
+        task_context: Optional[JsonObject] = None,
     ) -> list[str]:
         criteria = self._string_list(value)
         process_markers = ("Webhook", "2xx", "payload", "notification_failed", "execution-optimizer", "版本快照", "目标文件", "派发")
@@ -407,8 +407,8 @@ class FeedbackPlanTaskStoreMixin:
 
     def _task_context_from_attribution(
         self,
-        batch: dict[str, Any],
-        attribution: dict[str, Any],
+        batch: JsonObject,
+        attribution: JsonObject,
         evidence_refs: list[JsonObject],
         owner: str,
     ) -> JsonObject:
@@ -479,7 +479,7 @@ class FeedbackPlanTaskStoreMixin:
         attribution = {"rationale": rationale or "", "responsibility_boundary": {"owner": owner}}
         return self._task_context_from_attribution({}, attribution, [], owner)
 
-    def _task_context_specificity(self, context: dict[str, Any]) -> int:
+    def _task_context_specificity(self, context: JsonObject) -> int:
         categories = [
             bool(context.get("mcp_server")),
             bool(context.get("tool_name") or context.get("api_name") or context.get("api_path")),
@@ -489,11 +489,11 @@ class FeedbackPlanTaskStoreMixin:
         ]
         return sum(1 for item in categories if item)
 
-    def _task_context_is_actionable_external(self, context: dict[str, Any]) -> bool:
+    def _task_context_is_actionable_external(self, context: JsonObject) -> bool:
         has_interface = bool(context.get("tool_name") or context.get("api_name") or context.get("api_path"))
         return has_interface and self._task_context_specificity(context) >= 2
 
-    def _external_owner_from_context(self, owner: str, context: dict[str, Any]) -> str:
+    def _external_owner_from_context(self, owner: str, context: JsonObject) -> str:
         server = self._string(context.get("mcp_server"))
         generic_owners = {
             "",
@@ -579,7 +579,7 @@ class FeedbackPlanTaskStoreMixin:
         fields = f"字段 {', '.join(affected_fields)}" if affected_fields else "完整业务字段"
         return f"修复 {target}{query}的数据返回逻辑，确保返回 {fields} 且与查询上下文一致。"
 
-    def _external_task_title_from_context(self, context: dict[str, Any]) -> str:
+    def _external_task_title_from_context(self, context: JsonObject) -> str:
         server = self._string(context.get("mcp_server"))
         api_name = self._string(context.get("api_name")) or self._string(context.get("endpoint")) or self._string(context.get("tool_name"))
         if server and api_name:
@@ -588,7 +588,7 @@ class FeedbackPlanTaskStoreMixin:
             return f"修复 {server} 数据返回问题"
         return ""
 
-    def _external_task_description_from_context(self, context: dict[str, Any]) -> str:
+    def _external_task_description_from_context(self, context: JsonObject) -> str:
         server = self._string(context.get("mcp_server"))
         target = self._string(context.get("endpoint")) or self._string(context.get("api_name")) or self._string(context.get("tool_name"))
         observed_issue = self._string(context.get("observed_issue"))
@@ -600,7 +600,7 @@ class FeedbackPlanTaskStoreMixin:
         issue = f"具体表现为：{observed_issue}" if observed_issue else "存在数据不完整或与查询上下文不一致的问题。"
         return f"{server}{target_text}{query}返回的数据无法支撑 Agent 完成反馈场景回答。{issue}需要修复该接口或底层数据源，确保返回可被 Agent 稳定读取和使用的完整可靠数据。"
 
-    def _external_task_objective_from_context(self, context: dict[str, Any]) -> str:
+    def _external_task_objective_from_context(self, context: JsonObject) -> str:
         server = self._string(context.get("mcp_server"))
         target = self._string(context.get("endpoint")) or self._string(context.get("api_name")) or self._string(context.get("tool_name"))
         if not server:
@@ -608,7 +608,7 @@ class FeedbackPlanTaskStoreMixin:
         target_text = f" {target}" if target else ""
         return f"确保 {server}{target_text} 在同类查询中返回完整、可靠且与查询上下文匹配的数据，使 Agent 能基于返回结果完整回答反馈中指出的问题。"
 
-    def _external_acceptance_criteria_from_context(self, context: dict[str, Any]) -> list[str]:
+    def _external_acceptance_criteria_from_context(self, context: JsonObject) -> list[str]:
         server = self._string(context.get("mcp_server"))
         target = self._string(context.get("tool_name")) or self._string(context.get("endpoint")) or self._string(context.get("api_name"))
         query_ids = self._string_list(context.get("query_ids"))
@@ -642,7 +642,7 @@ class FeedbackPlanTaskStoreMixin:
             text = text.split(marker, 1)[0].rstrip()
         return text or self._plan_task_recommendation(target_type, execution_kind)
 
-    def _evidence_summary(self, evidence_refs: list[dict[str, Any]]) -> str:
+    def _evidence_summary(self, evidence_refs: list[JsonObject]) -> str:
         summaries: list[str] = []
         for ref in evidence_refs[:5]:
             ref_id = self._string(ref.get("id")) or self._string(ref.get("path")) or self._string(ref.get("type")) or "evidence"

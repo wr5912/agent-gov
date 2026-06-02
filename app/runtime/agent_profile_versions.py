@@ -4,12 +4,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from typing import Any
 
 from .agent_profiles import AgentRuntimeProfile
+from .records.json_types import JsonObject
 
 
-def profile_version_snapshot(profile: AgentRuntimeProfile, *, version_id: str | None = None) -> dict[str, Any]:
+def profile_version_snapshot(profile: AgentRuntimeProfile, *, version_id: str | None = None) -> JsonObject:
     """Return reproducibility metadata for attribution/proposal runtime profiles."""
     return {
         "profile_name": profile.name,
@@ -35,7 +35,7 @@ def _hash_file(path: Path) -> str | None:
 def _hash_tree(path: Path) -> str | None:
     if not path.exists():
         return None
-    entries: list[dict[str, Any]] = []
+    entries: list[JsonObject] = []
     for root, dirnames, filenames in os.walk(path, topdown=True, followlinks=False):
         dirnames[:] = sorted(name for name in dirnames if name not in {".git", "__pycache__"})
         for filename in sorted(filenames):

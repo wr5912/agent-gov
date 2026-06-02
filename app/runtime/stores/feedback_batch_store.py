@@ -29,7 +29,7 @@ class FeedbackBatchStoreMixin:
         feedback_cases: list[JsonObject] = []
         cases_to_create: list[JsonObject] = []
         refs_to_mark: list[dict[str, str]] = []
-        skipped: list[dict[str, Any]] = []
+        skipped: list[JsonObject] = []
         for ref in refs:
             feedback_case, should_create = self._prepare_feedback_case_for_source(ref, priority=priority)
             if not feedback_case:
@@ -98,18 +98,18 @@ class FeedbackBatchStoreMixin:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             return self._batch_to_dict(row) if row else None
 
-    def list_batch_eval_cases(self, batch_id: str) -> Optional[list[dict[str, Any]]]:
+    def list_batch_eval_cases(self, batch_id: str) -> Optional[list[JsonObject]]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
-        eval_cases: list[dict[str, Any]] = []
+        eval_cases: list[JsonObject] = []
         for eval_case_id in batch.get("eval_case_ids") or []:
             eval_case = self.find_eval_case(str(eval_case_id))
             if eval_case:
                 eval_cases.append(eval_case)
         return eval_cases
 
-    def create_batch_eval_case(self, batch_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def create_batch_eval_case(self, batch_id: str, fields: JsonObject) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
@@ -120,13 +120,13 @@ class FeedbackBatchStoreMixin:
             self._update_batch_eval_case_ids_row(db, row, append_id=eval_case["eval_case_id"])
         return self.find_eval_case(eval_case["eval_case_id"])
 
-    def update_batch_eval_case(self, batch_id: str, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def update_batch_eval_case(self, batch_id: str, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch or eval_case_id not in set(batch.get("eval_case_ids") or []):
             return None
         return self.update_eval_case(eval_case_id, fields)
 
-    def remove_batch_eval_case(self, batch_id: str, eval_case_id: str) -> Optional[dict[str, Any]]:
+    def remove_batch_eval_case(self, batch_id: str, eval_case_id: str) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
@@ -137,7 +137,7 @@ class FeedbackBatchStoreMixin:
             self._update_batch_eval_case_ids_row(db, row, remove_id=eval_case_id)
         return self.find_optimization_batch(batch_id)
 
-    def record_batch_attribution_jobs(self, batch_id: str, jobs: list[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    def record_batch_attribution_jobs(self, batch_id: str, jobs: list[JsonObject]) -> Optional[JsonObject]:
         job_ids = self._unique_strings([job.get("job_id") for job in jobs])
         completed = [job for job in jobs if job.get("status") == "completed"]
         failed = [job for job in jobs if job.get("status") in {"failed", "needs_human_review", "timeout"}]
@@ -166,7 +166,7 @@ class FeedbackBatchStoreMixin:
             },
         )
 
-    def reset_batch_attribution(self, batch_id: str) -> Optional[dict[str, Any]]:
+    def reset_batch_attribution(self, batch_id: str) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
@@ -212,11 +212,11 @@ class FeedbackBatchStoreMixin:
         self,
         batch_id: str,
         *,
-        execution_job: Optional[dict[str, Any]] = None,
-        optimization_task: Optional[dict[str, Any]] = None,
-        applied: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
-        fields: dict[str, Any] = {}
+        execution_job: Optional[JsonObject] = None,
+        optimization_task: Optional[JsonObject] = None,
+        applied: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
+        fields: JsonObject = {}
         status = "execution_planning"
         if execution_job:
             fields["execution_job_id"] = execution_job.get("execution_job_id")
@@ -240,12 +240,12 @@ class FeedbackBatchStoreMixin:
         batch_id: str,
         plan_task_id: str,
         *,
-        execution_job: Optional[dict[str, Any]] = None,
-        optimization_task: Optional[dict[str, Any]] = None,
-        applied: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
-        task_updates: dict[str, Any] = {}
-        top_level_fields: dict[str, Any] = {}
+        execution_job: Optional[JsonObject] = None,
+        optimization_task: Optional[JsonObject] = None,
+        applied: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
+        task_updates: JsonObject = {}
+        top_level_fields: JsonObject = {}
         status = "execution_planning"
         if execution_job:
             task_updates["execution_job_id"] = execution_job.get("execution_job_id")
@@ -268,7 +268,7 @@ class FeedbackBatchStoreMixin:
             task_updates["status"] = status
         return self._update_batch_plan_task(batch_id, plan_task_id, task_updates, batch_status=status, top_level_fields=top_level_fields)
 
-    def record_batch_regression_result(self, batch_id: str, eval_run: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def record_batch_regression_result(self, batch_id: str, eval_run: JsonObject) -> Optional[JsonObject]:
         result_status = str(eval_run.get("result_status") or eval_run.get("status") or "needs_human_review")
         status = {
             "blocked": "blocked",
@@ -286,7 +286,7 @@ class FeedbackBatchStoreMixin:
             },
         )
 
-    def _capture_batch_apply_result(self, task_updates: dict[str, Any], top_level_fields: dict[str, Any], applied: dict[str, Any]) -> None:
+    def _capture_batch_apply_result(self, task_updates: JsonObject, top_level_fields: JsonObject, applied: JsonObject) -> None:
         task_updates["execution_apply_result"] = applied
         top_level_fields["execution_apply_result"] = applied
         applied_job = applied.get("execution_job") if isinstance(applied.get("execution_job"), dict) else None
@@ -333,7 +333,7 @@ class FeedbackBatchStoreMixin:
                 return None
         return self.find_optimization_batch(batch_id)
 
-    def _update_batch_row(self, db: Any, batch_id: str, *, status: str, fields: dict[str, Any]) -> Optional[FeedbackOptimizationBatchModel]:
+    def _update_batch_row(self, db: Any, batch_id: str, *, status: str, fields: JsonObject) -> Optional[FeedbackOptimizationBatchModel]:
         now = utc_now()
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
@@ -395,7 +395,7 @@ class FeedbackBatchStoreMixin:
             ]
         return synced
 
-    def _batch_attribution_outputs(self, batch: dict[str, Any]) -> list[dict[str, Any]]:
+    def _batch_attribution_outputs(self, batch: JsonObject) -> list[JsonObject]:
         job_ids = self._unique_strings(batch.get("attribution_job_ids") or [])
         if not job_ids:
             for feedback_case_id in batch.get("feedback_case_ids") or []:
@@ -403,14 +403,14 @@ class FeedbackBatchStoreMixin:
                 job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))
                 if job_id:
                     job_ids.append(job_id)
-        outputs: list[dict[str, Any]] = []
+        outputs: list[JsonObject] = []
         for job_id in job_ids:
             output = self.get_job_output(job_id, "attribution")
             if output:
                 outputs.append({**output, "_job_id": job_id})
         return outputs
 
-    def _assert_batch_plan_can_regenerate(self, batch: dict[str, Any]) -> None:
+    def _assert_batch_plan_can_regenerate(self, batch: JsonObject) -> None:
         plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
         plan_status = self._string((plan or {}).get("status"))
         if (

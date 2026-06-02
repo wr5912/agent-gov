@@ -1,7 +1,9 @@
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic.types import JsonValue
 
+from app.runtime.records.json_types import JsonObject
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
@@ -26,7 +28,7 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
     permission_mode: Optional[str] = Field(default=None, description="Per-request permission mode override. Defaults to PERMISSION_MODE.")
     system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
     model_config = {
         "json_schema_extra": {
@@ -47,9 +49,9 @@ class ChatResponse(BaseModel):
     sdk_session_id: Optional[str] = None
     agent_version_id: Optional[str] = None
     answer: str
-    messages: list[dict[str, Any]] = Field(default_factory=list)
-    agent_activity: dict[str, Any] = Field(default_factory=dict)
-    usage: Optional[dict[str, Any]] = None
+    messages: list[JsonObject] = Field(default_factory=list)
+    agent_activity: JsonObject = Field(default_factory=dict)
+    usage: Optional[JsonObject] = None
     total_cost_usd: Optional[float] = None
     stop_reason: Optional[str] = None
     errors: list[str] = Field(default_factory=list)
@@ -62,7 +64,7 @@ class SessionInfo(BaseModel):
     updated_at: str
     title: Optional[str] = None
     turns: int = 0
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class SessionDeleteResponse(BaseModel):
@@ -166,7 +168,7 @@ class FeedbackSignalCreateRequest(BaseModel):
     confidence: Optional[Literal["low", "medium", "high"]] = None
     auto_captured: bool = False
     requires_review: bool = False
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class FeedbackSignalResponse(BaseModel):
@@ -184,7 +186,7 @@ class FeedbackSignalResponse(BaseModel):
     confidence: Optional[str] = None
     auto_captured: bool = False
     requires_review: bool = False
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class FeedbackProposalRegenerateRequest(BaseModel):
@@ -192,7 +194,7 @@ class FeedbackProposalRegenerateRequest(BaseModel):
 
     @field_validator("regeneration_instruction", mode="before")
     @classmethod
-    def _trim_instruction(cls, value: Any) -> Any:
+    def _trim_instruction(cls, value: object) -> object:
         if value is None or not isinstance(value, str):
             return value
         text = value.strip()
@@ -217,14 +219,14 @@ class SocEventIngestRequest(BaseModel):
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
     actor_id: Optional[str] = None
-    before: Optional[dict[str, Any]] = None
-    after: Optional[dict[str, Any]] = None
+    before: Optional[JsonObject] = None
+    after: Optional[JsonObject] = None
     entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[Literal["low", "medium", "high"]] = "medium"
     requires_review: bool = True
     comment: Optional[str] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class SocEventResponse(ExtensibleResponse):
@@ -239,14 +241,14 @@ class SocEventResponse(ExtensibleResponse):
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
     actor_id: Optional[str] = None
-    before: Optional[dict[str, Any]] = None
-    after: Optional[dict[str, Any]] = None
+    before: Optional[JsonObject] = None
+    after: Optional[JsonObject] = None
     entities: dict[str, list[str]] = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[str] = None
     requires_review: bool = True
     comment: Optional[str] = None
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class PendingCorrelationResponse(ExtensibleResponse):
@@ -291,7 +293,7 @@ class FeedbackSourceUpdateRequest(BaseModel):
     priority: Optional[Literal["high", "medium", "low"]] = None
     status: Optional[Literal["new", "triaged", "in_batch", "resolved", "archived"]] = None
     requires_review: Optional[bool] = None
-    metadata: Optional[dict[str, Any]] = None
+    metadata: Optional[JsonObject] = None
 
 
 class FeedbackSourceResponse(ExtensibleResponse):
@@ -307,7 +309,7 @@ class FeedbackSourceResponse(ExtensibleResponse):
     comment: Optional[str] = None
     priority: Optional[str] = None
     requires_review: bool = False
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
     run_id: Optional[str] = None
     session_id: Optional[str] = None
     alert_id: Optional[str] = None
@@ -316,7 +318,7 @@ class FeedbackSourceResponse(ExtensibleResponse):
     eval_case_id: Optional[str] = None
     latest_attribution_job_id: Optional[str] = None
     latest_attribution_status: Optional[str] = None
-    raw: dict[str, Any] = Field(default_factory=dict)
+    raw: JsonObject = Field(default_factory=dict)
 
 
 class FeedbackEvalCaseGenerateRequest(BaseModel):
@@ -339,7 +341,7 @@ class FeedbackOptimizationBatchPlanGenerateRequest(BaseModel):
 
     @field_validator("regeneration_instruction", mode="before")
     @classmethod
-    def _trim_instruction(cls, value: Any) -> Any:
+    def _trim_instruction(cls, value: object) -> object:
         if value is None or not isinstance(value, str):
             return value
         text = value.strip()
@@ -364,7 +366,7 @@ class AgentRunResponse(BaseModel):
     case_id: Optional[str] = None
     message: Optional[str] = None
     answer_summary: Optional[str] = None
-    agent_activity: dict[str, Any] = Field(default_factory=dict)
+    agent_activity: JsonObject = Field(default_factory=dict)
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
 
@@ -427,7 +429,7 @@ class FeedbackEvalDatasetSyncRequest(BaseModel):
 class FeedbackEvalCaseUpdateRequest(BaseModel):
     prompt: Optional[str] = None
     expected_behavior: Optional[str] = None
-    checks_json: Optional[dict[str, Any]] = None
+    checks_json: Optional[JsonObject] = None
     labels: Optional[list[str]] = None
     status: Optional[Literal["active", "draft", "archived"]] = None
     asset_layer: Optional[Literal["candidate", "batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
@@ -446,7 +448,7 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
 class FeedbackOptimizationBatchEvalCaseCreateRequest(BaseModel):
     prompt: str
     expected_behavior: Optional[str] = None
-    checks_json: dict[str, Any] = Field(default_factory=dict)
+    checks_json: JsonObject = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
     status: Literal["active", "draft", "archived"] = "active"
     asset_layer: Optional[Literal["batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = "batch_specific"
@@ -549,7 +551,7 @@ class EvalCaseResponse(ExtensibleResponse):
     prompt: str
     labels: list[str] = Field(default_factory=list)
     expected_behavior: Optional[str] = None
-    checks_json: dict[str, Any] = Field(default_factory=dict)
+    checks_json: JsonObject = Field(default_factory=dict)
     source_summary: Optional[EvalCaseSourceSummaryResponse] = None
     attribution_summary: Optional[EvalCaseAttributionSummaryResponse] = None
     proposal_summary: Optional[EvalCaseProposalSummaryResponse] = None
@@ -589,7 +591,7 @@ class EvalRunItemResponse(ExtensibleResponse):
     status: str
     score: Optional[float] = None
     check_results: list[EvalRunCheckResultResponse] = Field(default_factory=list)
-    eval_case_snapshot: dict[str, Any] = Field(default_factory=dict)
+    eval_case_snapshot: JsonObject = Field(default_factory=dict)
     answer_summary: Optional[str] = None
     error_json: Optional[FeedbackJobErrorResponse] = None
     created_at: Optional[str] = None
@@ -618,7 +620,7 @@ class EvalRunResponse(ExtensibleResponse):
     eval_case_ids: list[str] = Field(default_factory=list)
     item_ids: list[str] = Field(default_factory=list)
     summary: EvalRunSummaryResponse = Field(default_factory=EvalRunSummaryResponse)
-    gate_result: dict[str, Any] = Field(default_factory=dict)
+    gate_result: JsonObject = Field(default_factory=dict)
     items: list[EvalRunItemResponse] = Field(default_factory=list)
     error_json: Optional[FeedbackJobErrorResponse] = None
 
@@ -631,7 +633,7 @@ class EvalCaseRevisionResponse(ExtensibleResponse):
     created_by: str
     reason: Optional[str] = None
     content_hash: Optional[str] = None
-    snapshot: dict[str, Any] = Field(default_factory=dict)
+    snapshot: JsonObject = Field(default_factory=dict)
 
 
 class EvalCaseGovernanceEventResponse(ExtensibleResponse):
@@ -642,8 +644,8 @@ class EvalCaseGovernanceEventResponse(ExtensibleResponse):
     role: str
     reason: str
     created_at: str
-    before: dict[str, Any] = Field(default_factory=dict)
-    after: dict[str, Any] = Field(default_factory=dict)
+    before: JsonObject = Field(default_factory=dict)
+    after: JsonObject = Field(default_factory=dict)
 
 
 class RegressionPlanResponse(ExtensibleResponse):
@@ -655,9 +657,9 @@ class RegressionPlanResponse(ExtensibleResponse):
     applied_agent_version_id: Optional[str] = None
     selection_fingerprint: str
     eval_case_ids: list[str] = Field(default_factory=list)
-    selected_cases: list[dict[str, Any]] = Field(default_factory=list)
-    selection_summary: dict[str, Any] = Field(default_factory=dict)
-    change_summary: dict[str, Any] = Field(default_factory=dict)
+    selected_cases: list[JsonObject] = Field(default_factory=list)
+    selection_summary: JsonObject = Field(default_factory=dict)
+    change_summary: JsonObject = Field(default_factory=dict)
 
 
 class RegressionImpactAnalysisResponse(ExtensibleResponse):
@@ -669,8 +671,8 @@ class RegressionImpactAnalysisResponse(ExtensibleResponse):
     status: str
     job_id: Optional[str] = None
     result_status: Optional[str] = None
-    gate_result: dict[str, Any] = Field(default_factory=dict)
-    impacted_assets: list[dict[str, Any]] = Field(default_factory=list)
+    gate_result: JsonObject = Field(default_factory=dict)
+    impacted_assets: list[JsonObject] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
 
 
@@ -682,8 +684,8 @@ class RegressionGateOverrideResponse(ExtensibleResponse):
     reason: str
     expires_at: str
     created_at: str
-    before: dict[str, Any] = Field(default_factory=dict)
-    after: dict[str, Any] = Field(default_factory=dict)
+    before: JsonObject = Field(default_factory=dict)
+    after: JsonObject = Field(default_factory=dict)
 
 
 class ExternalGovernanceNotifyRequest(BaseModel):
@@ -742,7 +744,7 @@ class EvidencePackageFileResponse(BaseModel):
     evidence_package_id: str
     file_name: str
     sha256: Optional[str] = None
-    content: Any
+    content: JsonValue
 
 
 class AgentVersionSnapshotRequest(BaseModel):
@@ -765,7 +767,7 @@ class OpenAIChatCompletionRequest(BaseModel):
     messages: list[OpenAIChatMessage] = Field(..., description="OpenAI-compatible chat messages.")
     stream: bool = Field(default=False, description="Reserved for compatibility. This shim currently returns non-streaming responses.")
     max_turns: Optional[int] = Field(default=None, description="Claude Agent turn cap for this request.")
-    metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata: JsonObject = Field(default_factory=dict)
 
 
 class OpenAIChatCompletionChoice(BaseModel):
@@ -779,4 +781,4 @@ class OpenAIChatCompletionResponse(BaseModel):
     object: str = "chat.completion"
     model: Optional[str] = None
     choices: list[OpenAIChatCompletionChoice]
-    usage: Optional[dict[str, Any]] = None
+    usage: Optional[JsonObject] = None

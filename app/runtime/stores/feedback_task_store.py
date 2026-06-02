@@ -181,7 +181,7 @@ class FeedbackTaskStoreMixin:
                 return None
         return self.find_task(task_id)
 
-    def _update_task_payload_row(self, db: Any, task_id: str, *, status: str, fields: dict[str, Any]) -> Optional[OptimizationTaskModel]:
+    def _update_task_payload_row(self, db: Any, task_id: str, *, status: str, fields: JsonObject) -> Optional[OptimizationTaskModel]:
         row = db.get(OptimizationTaskModel, task_id)
         if not row:
             return None
@@ -229,7 +229,7 @@ class FeedbackTaskStoreMixin:
             fields=fields,
         )
 
-    def _attach_execution_job_to_task(self, task_id: str, job: dict[str, Any], *, status: str) -> Optional[dict[str, Any]]:
+    def _attach_execution_job_to_task(self, task_id: str, job: JsonObject, *, status: str) -> Optional[JsonObject]:
         task = self.find_task(task_id)
         if not task:
             return None
@@ -241,8 +241,8 @@ class FeedbackTaskStoreMixin:
     def _attach_execution_job_to_task_row(
         self,
         db: Any,
-        task: dict[str, Any],
-        job: dict[str, Any],
+        task: JsonObject,
+        job: JsonObject,
         *,
         status: str,
     ) -> Optional[OptimizationTaskModel]:
@@ -268,7 +268,7 @@ class FeedbackTaskStoreMixin:
         return self._update_task_payload_row(db, str(task["optimization_task_id"]), status=status, fields=fields)
 
 
-    def _attach_task_regression_run(self, task_id: str, eval_run: dict[str, Any], *, status: str) -> Optional[dict[str, Any]]:
+    def _attach_task_regression_run(self, task_id: str, eval_run: JsonObject, *, status: str) -> Optional[JsonObject]:
         task = self.find_task(task_id)
         if not task:
             return None

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional, cast
 
 import yaml
 
+from .records.json_types import JsonObject
 
-def _split_csv(value: Any) -> list[str] | None:
+
+def _split_csv(value: object) -> list[str] | None:
     if value is None:
         return None
     if isinstance(value, list):
@@ -17,7 +19,7 @@ def _split_csv(value: Any) -> list[str] | None:
     return None
 
 
-def parse_frontmatter_markdown(path: Path) -> tuple[dict[str, Any], str]:
+def parse_frontmatter_markdown(path: Path) -> tuple[JsonObject, str]:
     text = path.read_text(encoding="utf-8")
     if not text.startswith("---"):
         return {}, text
@@ -28,16 +30,16 @@ def parse_frontmatter_markdown(path: Path) -> tuple[dict[str, Any], str]:
     meta = yaml.safe_load(raw_meta) or {}
     if not isinstance(meta, dict):
         meta = {}
-    return meta, body.strip()
+    return cast(JsonObject, meta), body.strip()
 
 
-def discover_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[dict[str, Any]]:
+def discover_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[JsonObject]:
     roots = [workspace_dir / ".claude" / "agents"]
     if claude_home:
         roots.append(claude_home / "agents")
 
     seen: set[str] = set()
-    agents: list[dict[str, Any]] = []
+    agents: list[JsonObject] = []
     for root in roots:
         if not root.exists():
             continue
@@ -62,13 +64,13 @@ def discover_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> 
     return agents
 
 
-def discover_skills(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[dict[str, Any]]:
+def discover_skills(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[JsonObject]:
     roots = [workspace_dir / ".claude" / "skills"]
     if claude_home:
         roots.append(claude_home / "skills")
 
     seen: set[str] = set()
-    skills: list[dict[str, Any]] = []
+    skills: list[JsonObject] = []
     for root in roots:
         if not root.exists():
             continue
@@ -92,7 +94,7 @@ def discover_skills(workspace_dir: Path, claude_home: Optional[Path] = None) -> 
     return skills
 
 
-def load_programmatic_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> dict[str, Any]:
+def load_programmatic_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> dict[str, object]:
     """Load Markdown subagents into ClaudeAgentOptions.agents.
 
     The SDK can discover filesystem agents itself. This function additionally passes
@@ -102,12 +104,13 @@ def load_programmatic_agents(workspace_dir: Path, claude_home: Optional[Path] = 
 
     from claude_agent_sdk import AgentDefinition  # Imported lazily so API can boot in docs/tests.
 
-    loaded: dict[str, Any] = {}
+    loaded: dict[str, object] = {}
     for item in discover_agents(workspace_dir, claude_home):
-        meta = item["frontmatter"]
-        prompt = item["prompt"]
-        description = str(meta.get("description") or f"Subagent {item['name']}")
-        kwargs: dict[str, Any] = {
+        name = str(item["name"])
+        meta = item["frontmatter"] if isinstance(item["frontmatter"], dict) else {}
+        prompt = str(item["prompt"])
+        description = str(meta.get("description") or f"Subagent {name}")
+        kwargs: dict[str, object] = {
             "description": description,
             "prompt": prompt,
         }
@@ -130,5 +133,5 @@ def load_programmatic_agents(workspace_dir: Path, claude_home: Optional[Path] = 
             if key in {"tools", "disallowedTools", "skills", "mcpServers"}:
                 value = _split_csv(value)
             kwargs[key] = value
-        loaded[item["name"]] = AgentDefinition(**kwargs)
+        loaded[name] = AgentDefinition(**kwargs)
     return loaded

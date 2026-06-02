@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel
 
@@ -23,6 +23,7 @@ from .schema_versions import (
     PROPOSAL_OUTPUT_SCHEMA_VERSION,
     REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
+from .records.json_types import JsonObject
 from .settings import AppSettings
 
 
@@ -31,7 +32,7 @@ FormatterJobType = Literal["attribution", "proposal", "batch_plan", "execution",
 
 @dataclass(frozen=True)
 class OutputFormatterResult:
-    payload: dict[str, Any]
+    payload: JsonObject
     source: str
 
 
@@ -54,7 +55,7 @@ class DSPyOutputFormatter:
         *,
         job_type: FormatterJobType,
         raw_text: str,
-        job_input: dict[str, Any],
+        job_input: JsonObject,
         expected_schema_version: str,
     ) -> OutputFormatterResult:
         if not self.enabled():
@@ -80,9 +81,9 @@ class DSPyOutputFormatter:
         *,
         job_type: FormatterJobType,
         raw_text: str,
-        job_input: dict[str, Any],
-        candidates: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+        job_input: JsonObject,
+        candidates: list[JsonObject],
+    ) -> JsonObject:
         import dspy  # type: ignore[import-untyped]
 
         output_model: type[BaseModel]
@@ -133,7 +134,7 @@ class DSPyOutputFormatter:
             raise RuntimeError("DSPy formatter model is not configured")
         if "/" not in model and self.settings.provider_api_url and "anthropic" in self.settings.provider_api_url:
             model = f"anthropic/{model}"
-        kwargs: dict[str, Any] = {}
+        kwargs: dict[str, object] = {}
         if self.settings.provider_api_key:
             kwargs["api_key"] = self.settings.provider_api_key
         if self.settings.provider_api_url:
@@ -266,15 +267,15 @@ def _dspy_lm_context(dspy: Any, lm: Any) -> Any:
     return _NullContext()
 
 
-def _coerce_payload(value: Any, output_model: type[BaseModel]) -> dict[str, Any]:
+def _coerce_payload(value: Any, output_model: type[BaseModel]) -> JsonObject:
     if isinstance(value, output_model):
-        return value.model_dump(mode="json")
+        return cast(JsonObject, value.model_dump(mode="json"))
     if isinstance(value, BaseModel):
-        return output_model.model_validate(value.model_dump(mode="json")).model_dump(mode="json")
+        return cast(JsonObject, output_model.model_validate(value.model_dump(mode="json")).model_dump(mode="json"))
     if isinstance(value, dict):
-        return output_model.model_validate(value).model_dump(mode="json")
+        return cast(JsonObject, output_model.model_validate(value).model_dump(mode="json"))
     if isinstance(value, str):
-        return output_model.model_validate(json.loads(value)).model_dump(mode="json")
+        return cast(JsonObject, output_model.model_validate(json.loads(value)).model_dump(mode="json"))
     raise TypeError(f"Unsupported DSPy formatter output: {type(value).__name__}")
 
 

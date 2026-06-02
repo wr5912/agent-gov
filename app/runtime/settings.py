@@ -3,10 +3,12 @@ import json
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional
+from typing import Any, Literal, Mapping, Optional, cast
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from .records.json_types import JsonObject
 
 
 def _csv(value: str | None) -> list[str]:
@@ -15,20 +17,20 @@ def _csv(value: str | None) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
-def _json_object(value: str | None) -> dict[str, Any]:
+def _json_object(value: str | None) -> JsonObject:
     if not value:
         return {}
     loaded = json.loads(value)
     if not isinstance(loaded, dict):
         raise ValueError("Expected a JSON object")
-    return loaded
+    return cast(JsonObject, loaded)
 
 
-def _string_dict(value: dict[str, Any]) -> dict[str, str]:
+def _string_dict(value: JsonObject) -> dict[str, str]:
     return {str(key): str(val) for key, val in value.items()}
 
 
-def _optional_string_dict(value: dict[str, Any]) -> dict[str, str | None]:
+def _optional_string_dict(value: JsonObject) -> dict[str, str | None]:
     return {str(key): None if val is None else str(val) for key, val in value.items()}
 
 

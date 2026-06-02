@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from typing import Awaitable, Callable, Optional, cast
 
 from app.runtime.agent_profiles import (
     ATTRIBUTION_ANALYZER_PROFILE,
@@ -30,22 +30,22 @@ from app.runtime.response_schemas.feedback_workflow_response_schemas import Feed
 from app.runtime.stores.feedback_store import FeedbackStore
 
 RunProfileJson = Callable[..., Awaitable[JsonObject]]
-JobResult = dict[str, Any] | None
+JobResult = JsonObject | None
 
 
-def _job_input(job: dict[str, Any]) -> JsonObject:
-    return job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+def _job_input(job: JsonObject) -> JsonObject:
+    return cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
 
 
 def _agent_error_message(exc: Exception) -> str:
     return f"{exc.__class__.__name__}: {exc}"
 
 
-def _agent_job_response(payload: dict[str, Any] | None) -> AgentJobResponse | None:
+def _agent_job_response(payload: JsonObject | None) -> AgentJobResponse | None:
     return AgentJobResponse.model_validate(payload) if payload else None
 
 
-def _batch_response(payload: dict[str, Any] | None) -> FeedbackOptimizationBatchResponse | None:
+def _batch_response(payload: JsonObject | None) -> FeedbackOptimizationBatchResponse | None:
     return FeedbackOptimizationBatchResponse.model_validate(payload) if payload else None
 
 
@@ -114,7 +114,7 @@ class FeedbackJobOrchestrator:
                 profile_name=PROPOSAL_GENERATOR_PROFILE,
                 prompt=proposal_prompt(
                     job["input_path"],
-                    input_payload=job.get("input_json"),
+                    input_payload=_job_input(job),
                     attribution_output=attribution_output,
                 ),
                 expected_schema_version=PROPOSAL_OUTPUT_SCHEMA_VERSION,
@@ -200,8 +200,8 @@ class FeedbackJobOrchestrator:
         expected_schema_version: str,
         job_type: str,
         job_input: JsonObject,
-        complete: Callable[[JsonObject], Any],
-        fail: Callable[[str, str], Any],
+        complete: Callable[[JsonObject], object],
+        fail: Callable[[str, str], object],
         final_result: Callable[[], JobResult],
     ) -> JobResult:
         try:

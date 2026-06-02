@@ -170,11 +170,11 @@ class FeedbackExecutionStoreMixin:
         self,
         execution_job_id: str,
         *,
-        pre_execution_version: dict[str, Any],
-        applied_agent_version: dict[str, Any],
-        applied_diff: Optional[dict[str, Any]] = None,
+        pre_execution_version: JsonObject,
+        applied_agent_version: JsonObject,
+        applied_diff: Optional[JsonObject] = None,
         note: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         now = utc_now()
         with self.Session.begin() as db:
             job_row = db.get(AgentJobModel, execution_job_id, with_for_update=True)
@@ -277,7 +277,7 @@ class FeedbackExecutionStoreMixin:
         )
 
 
-    def deterministic_execution_plan_output(self, job: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def deterministic_execution_plan_output(self, job: JsonObject) -> Optional[JsonObject]:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         proposal = input_json.get("proposal") if isinstance(input_json.get("proposal"), dict) else {}
         target_paths = [str(path) for path in input_json.get("target_paths") or [] if isinstance(path, str)]
@@ -352,8 +352,8 @@ class FeedbackExecutionStoreMixin:
     def _sync_execution_job_to_task_and_batch_row(
         self,
         db: Any,
-        task: dict[str, Any],
-        job: dict[str, Any],
+        task: JsonObject,
+        job: JsonObject,
         *,
         status: str,
     ) -> None:
@@ -363,7 +363,7 @@ class FeedbackExecutionStoreMixin:
         updated_task = self._task_to_dict(task_row)
         self._sync_task_execution_to_source_batch_row(db, updated_task, job)
 
-    def _sync_task_execution_to_source_batch_row(self, db: Any, task: dict[str, Any], job: Optional[dict[str, Any]] = None) -> None:
+    def _sync_task_execution_to_source_batch_row(self, db: Any, task: JsonObject, job: Optional[JsonObject] = None) -> None:
         batch_id = self._string(task.get("source_batch_id"))
         if not batch_id:
             return
@@ -474,7 +474,7 @@ class FeedbackExecutionStoreMixin:
         return ExecutionApplicationRecord.from_row(row).to_payload()
 
 
-    def _sanitize_execution_plan(self, plan: dict[str, Any], job: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    def _sanitize_execution_plan(self, plan: JsonObject, job: JsonObject) -> tuple[Optional[JsonObject], Optional[str]]:
         sanitized = dict(plan)
         sanitized["execution_job_id"] = job["execution_job_id"]
         sanitized["optimization_task_id"] = job["optimization_task_id"]

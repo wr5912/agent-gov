@@ -3,10 +3,11 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
+from .records.json_types import JsonObject
 from .runtime_db import SessionRecordModel, make_session_factory, runtime_db_path_from_data_dir, utc_now
 
 
@@ -18,7 +19,7 @@ class LocalSession:
     updated_at: str = field(default_factory=utc_now)
     title: Optional[str] = None
     turns: int = 0
-    metadata: dict[str, Any] = field(default_factory=dict)
+    metadata: JsonObject = field(default_factory=dict)
 
 
 class LocalSessionStore:
@@ -32,12 +33,12 @@ class LocalSessionStore:
         self.db_path = runtime_db_path_from_data_dir(self.data_dir)
         self.Session = make_session_factory(self.db_path)
 
-    def create(self, metadata: Optional[dict[str, Any]] = None) -> LocalSession:
+    def create(self, metadata: Optional[JsonObject] = None) -> LocalSession:
         session = LocalSession(session_id=str(uuid.uuid4()), metadata=metadata or {})
         self.save(session)
         return session
 
-    def get_or_create(self, session_id: Optional[str], metadata: Optional[dict[str, Any]] = None) -> LocalSession:
+    def get_or_create(self, session_id: Optional[str], metadata: Optional[JsonObject] = None) -> LocalSession:
         if session_id:
             existing = self.get(session_id)
             if existing:

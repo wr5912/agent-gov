@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
@@ -94,7 +94,7 @@ class AgentJobQueueStoreMixin:
         self,
         *,
         feedback_case_id: Optional[str] = None,
-        source_refs: Optional[list[dict[str, Any]]] = None,
+        source_refs: Optional[list[JsonObject]] = None,
         batch_id: Optional[str] = None,
         limit: int = 100,
         force: bool = False,
@@ -232,7 +232,7 @@ class AgentJobQueueStoreMixin:
         self,
         *,
         feedback_case_id: Optional[str],
-        source_refs: Optional[list[dict[str, Any]]],
+        source_refs: Optional[list[JsonObject]],
         batch_id: Optional[str],
         limit: int,
         force: bool,
@@ -278,7 +278,7 @@ class AgentJobQueueStoreMixin:
             ],
         }
 
-    def _eval_case_generation_case_context(self, feedback_case: dict[str, Any]) -> JsonObject:
+    def _eval_case_generation_case_context(self, feedback_case: JsonObject) -> JsonObject:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
         proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
         source_refs = [{"source_kind": "signal", "source_id": source_id} for source_id in feedback_case.get("signal_ids") or []]
@@ -297,7 +297,7 @@ class AgentJobQueueStoreMixin:
             "proposal_output": self.get_job_output(str(proposal_job_id), "proposal") if proposal_job_id else None,
         }
 
-    def _attach_eval_case_generation_job_to_batch(self, batch_id: str, job: dict[str, Any]) -> None:
+    def _attach_eval_case_generation_job_to_batch(self, batch_id: str, job: JsonObject) -> None:
         with self.Session.begin() as db:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
@@ -309,7 +309,7 @@ class AgentJobQueueStoreMixin:
                 fields={"eval_case_generation_job_id": job["job_id"], "eval_case_generation_job": job},
             )
 
-    def _upsert_pending_regression_impact(self, eval_run_id: str, job: dict[str, Any]) -> None:
+    def _upsert_pending_regression_impact(self, eval_run_id: str, job: JsonObject) -> None:
         now = utc_now()
         with self.Session.begin() as db:
             row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()

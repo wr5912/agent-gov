@@ -16,14 +16,15 @@ def normalize_task_context_payload(value: Any) -> JsonObject:
         if item is None:
             continue
         if isinstance(item, list):
-            context[key] = [str(entry).strip() for entry in item if str(entry).strip()]
+            context[key] = [str(entry).strip() for entry in item if entry is not None and str(entry).strip()]
         elif isinstance(item, dict):
             context[key] = item
         else:
             text = str(item).strip()
             if text:
                 context[key] = [text] if key in list_keys else text
-    return NormalizedTaskContext.model_validate(context).to_payload()
+    normalized = NormalizedTaskContext.model_validate(context).to_payload()
+    return {key: item for key, item in normalized.items() if item not in ("", [], None)}
 
 
 def task_context_has_external_specificity(context: JsonObject) -> bool:

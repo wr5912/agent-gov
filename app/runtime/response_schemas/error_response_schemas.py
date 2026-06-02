@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+
+from app.runtime.records.json_types import JsonObject
 
 
 class FeedbackValidationErrorResponse(BaseModel):
@@ -11,8 +13,8 @@ class FeedbackValidationErrorResponse(BaseModel):
     type: Optional[str] = None
     loc: list[str | int] = Field(default_factory=list)
     msg: Optional[str] = None
-    input: Any = None
-    ctx: Optional[dict[str, Any]] = None
+    input: object | None = None
+    ctx: Optional[JsonObject] = None
     url: Optional[str] = None
 
 

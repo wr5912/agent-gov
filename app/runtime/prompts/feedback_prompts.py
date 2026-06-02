@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 from ..errors import AgentOutputParseError
+from ..records.json_types import JsonObject
 from ..schema_versions import (
     ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
     EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
@@ -51,7 +52,7 @@ def attribution_prompt(input_path: str) -> str:
     )
 
 
-def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None, attribution_output: dict[str, Any] | None = None) -> str:
+def proposal_prompt(input_path: str, *, input_payload: JsonObject | None = None, attribution_output: JsonObject | None = None) -> str:
     embedded_context = ""
     if input_payload is not None and attribution_output is not None:
         embedded_context = (
@@ -87,7 +88,7 @@ def proposal_prompt(input_path: str, *, input_payload: dict[str, Any] | None = N
     )
 
 
-def batch_optimization_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+def batch_optimization_plan_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
@@ -131,7 +132,7 @@ def batch_optimization_plan_prompt(input_path: str, *, input_payload: dict[str, 
     )
 
 
-def execution_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
@@ -159,7 +160,7 @@ def execution_plan_prompt(input_path: str, *, input_payload: dict[str, Any] | No
     )
 
 
-def eval_case_generation_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
@@ -181,7 +182,7 @@ def eval_case_generation_prompt(input_path: str, *, input_payload: dict[str, Any
     )
 
 
-def regression_impact_analysis_prompt(input_path: str, *, input_payload: dict[str, Any] | None = None) -> str:
+def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
@@ -202,7 +203,7 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: dict[st
     )
 
 
-def extract_json_object(text: str, *, expected_schema_version: str | None = None) -> dict[str, Any]:
+def extract_json_object(text: str, *, expected_schema_version: str | None = None) -> JsonObject:
     stripped = text.strip()
     if not stripped:
         raise AgentOutputParseError("empty agent output")
@@ -216,9 +217,9 @@ def extract_json_object(text: str, *, expected_schema_version: str | None = None
     raise AgentOutputParseError("agent output did not contain a JSON object")
 
 
-def extract_json_candidates(text: str) -> list[dict[str, Any]]:
+def extract_json_candidates(text: str) -> list[JsonObject]:
     decoder = json.JSONDecoder()
-    candidates: list[dict[str, Any]] = []
+    candidates: list[JsonObject] = []
     seen: set[str] = set()
     for index, char in enumerate(text):
         if char != "{":
@@ -228,13 +229,13 @@ def extract_json_candidates(text: str) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if isinstance(loaded, dict):
-            _append_json_candidate(candidates, seen, loaded)
+            _append_json_candidate(candidates, seen, cast(JsonObject, loaded))
     for loaded in _repair_json_candidates(text):
         _append_json_candidate(candidates, seen, loaded)
     return candidates
 
 
-def _append_json_candidate(candidates: list[dict[str, Any]], seen: set[str], loaded: dict[str, Any]) -> None:
+def _append_json_candidate(candidates: list[JsonObject], seen: set[str], loaded: JsonObject) -> None:
     key = json.dumps(loaded, ensure_ascii=False, sort_keys=True)
     if key in seen:
         return
@@ -242,13 +243,13 @@ def _append_json_candidate(candidates: list[dict[str, Any]], seen: set[str], loa
     candidates.append(loaded)
 
 
-def _repair_json_candidates(text: str) -> list[dict[str, Any]]:
+def _repair_json_candidates(text: str) -> list[JsonObject]:
     try:
         import json_repair  # type: ignore[import-untyped]
     except Exception:
         return []
 
-    repaired: list[dict[str, Any]] = []
+    repaired: list[JsonObject] = []
     blocks = re.findall(r"```(?:json)?\s*(.*?)```", text, flags=re.IGNORECASE | re.DOTALL)
     for block in blocks:
         try:
@@ -256,12 +257,12 @@ def _repair_json_candidates(text: str) -> list[dict[str, Any]]:
         except Exception:
             continue
         if isinstance(loaded, dict):
-            repaired.append(loaded)
+            repaired.append(cast(JsonObject, loaded))
     return repaired
 
 
-def read_json(path: str | Path) -> dict[str, Any]:
+def read_json(path: str | Path) -> JsonObject:
     loaded = json.loads(Path(path).read_text(encoding="utf-8"))
     if not isinstance(loaded, dict):
         raise AgentOutputParseError(f"Expected JSON object: {path}")
-    return loaded
+    return cast(JsonObject, loaded)

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, Field
 
 from app.runtime.response_schemas.agent_version_response_schemas import AgentVersionDiffResponse, AgentVersionSummaryResponse
+from app.runtime.records.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse
@@ -82,7 +83,7 @@ class ExecutionCompensationResponse(ExtensibleResponse):
     restore_status: str
     original_error: str
     restore_error: Optional[str] = None
-    manual_restore_result: dict[str, Any] = Field(default_factory=dict)
+    manual_restore_result: JsonObject = Field(default_factory=dict)
 
 
 class ExecutionApplicationResponse(ExtensibleResponse):
@@ -113,11 +114,11 @@ class OptimizationExecutionJobResponse(ExtensibleResponse):
     completed_at: Optional[str] = None
     baseline_agent_version_id: Optional[str] = None
     input_path: Optional[str] = None
-    input_json: Optional[dict[str, Any]] = None
-    raw_output_json: Optional[dict[str, Any]] = None
+    input_json: Optional[JsonObject] = None
+    raw_output_json: Optional[JsonObject] = None
     validated_output_json: Optional[OptimizationExecutionPlanOutputResponse] = None
     error_json: Optional[FeedbackJobErrorResponse] = None
-    profile_version: Optional[dict[str, Any]] = None
+    profile_version: Optional[JsonObject] = None
     compensations: list[ExecutionCompensationResponse] = Field(default_factory=list)
 
 
@@ -172,7 +173,7 @@ class ExternalGovernanceNotificationResponse(BaseModel):
     http_status: Optional[int] = None
     response_body: Optional[str] = None
     error: Optional[str] = None
-    request_json: dict[str, Any] = Field(default_factory=dict)
+    request_json: JsonObject = Field(default_factory=dict)
 
 
 class ExternalGovernanceItemResponse(ExtensibleResponse):
@@ -190,7 +191,7 @@ class ExternalGovernanceItemResponse(ExtensibleResponse):
     description: Optional[str] = None
     objective: Optional[str] = None
     target_summary: Optional[str] = None
-    task_context: dict[str, Any] = Field(default_factory=dict)
+    task_context: JsonObject = Field(default_factory=dict)
     recommendation: str
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
@@ -262,7 +263,7 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     latest_eval_run: Optional[EvalRunResponse] = None
     regression_plan_id: Optional[str] = None
     latest_regression_plan: Optional[RegressionPlanResponse] = None
-    latest_regression_gate: dict[str, Any] = Field(default_factory=dict)
+    latest_regression_gate: JsonObject = Field(default_factory=dict)
     execution_apply_result: Optional[OptimizationExecutionApplyResponse] = None
 
 

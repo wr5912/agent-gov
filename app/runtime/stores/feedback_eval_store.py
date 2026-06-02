@@ -33,7 +33,7 @@ class FeedbackEvalStoreMixin:
             "results": [],
         }
 
-    def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> JsonObject:
+    def _build_manual_batch_eval_case(self, batch: JsonObject, fields: JsonObject) -> JsonObject:
         prompt = (self._string(fields.get("prompt")) or "").strip()
         if not prompt:
             raise BusinessRuleViolation("Eval case prompt cannot be empty")
@@ -120,7 +120,7 @@ class FeedbackEvalStoreMixin:
         self,
         eval_run_id: str,
         *,
-        eval_case: dict[str, Any],
+        eval_case: JsonObject,
         agent_result: Optional[JsonObject],
         status: str,
         score: float,
@@ -256,7 +256,7 @@ class FeedbackEvalStoreMixin:
             row = db.get(EvalRunModel, eval_run_id)
             return self._eval_run_to_dict(row) if row else None
 
-    def _build_eval_case_from_source(self, ref: dict[str, str], feedback_case: dict[str, Any]) -> Optional[JsonObject]:
+    def _build_eval_case_from_source(self, ref: dict[str, str], feedback_case: JsonObject) -> Optional[JsonObject]:
         source = self.find_feedback_source(ref["source_kind"], ref["source_id"])
         if not source:
             return None
@@ -313,11 +313,11 @@ class FeedbackEvalStoreMixin:
             },
         }
 
-    def _replace_eval_case_payload(self, payload: dict[str, Any]) -> None:
+    def _replace_eval_case_payload(self, payload: JsonObject) -> None:
         with self.Session.begin() as db:
             self._update_eval_case_row(db, payload)
 
-    def _build_eval_case_from_feedback(self, feedback_case: dict[str, Any]) -> Optional[JsonObject]:
+    def _build_eval_case_from_feedback(self, feedback_case: JsonObject) -> Optional[JsonObject]:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
         proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
         if not attribution_job_id or not proposal_job_id:
@@ -404,9 +404,9 @@ class FeedbackEvalStoreMixin:
 
     def _eval_expected_behavior(
         self,
-        feedback_case: dict[str, Any],
-        attribution_output: dict[str, Any],
-        proposal: dict[str, Any],
+        feedback_case: JsonObject,
+        attribution_output: JsonObject,
+        proposal: JsonObject,
     ) -> str:
         validation = self._string(proposal.get("validation"))
         recommendation = self._string(proposal.get("recommendation"))
@@ -421,8 +421,8 @@ class FeedbackEvalStoreMixin:
     def _eval_checks(
         self,
         labels: list[str],
-        attribution_output: dict[str, Any],
-        proposal: dict[str, Any],
+        attribution_output: JsonObject,
+        proposal: JsonObject,
     ) -> JsonObject:
         label_set = set(labels)
         problem_type = self._string(attribution_output.get("problem_type"))

@@ -20,10 +20,11 @@ from ..records.external_governance_records import (
     ExternalGovernanceNotificationRecord,
     apply_external_governance_notification_record,
 )
+from ..records.json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, ExternalNotificationModel, utc_now
 
 
-ExternalWebhookSender = Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]
+ExternalWebhookSender = Callable[[JsonObject, JsonObject], JsonObject]
 
 
 class ExternalGovernanceService:
@@ -33,14 +34,14 @@ class ExternalGovernanceService:
         self.Session = session_factory
         self.webhooks_path = webhooks_path
 
-    def list_webhooks(self) -> list[dict[str, Any]]:
+    def list_webhooks(self) -> list[JsonObject]:
         if not self.webhooks_path.exists():
             return []
         loaded = self._load_webhook_config()
         webhooks = loaded.get("webhooks") or []
         if not isinstance(webhooks, list):
             raise ConfigurationError("External governance webhook config field webhooks must be a list")
-        normalized: list[dict[str, Any]] = []
+        normalized: list[JsonObject] = []
         for item in webhooks:
             if not isinstance(item, dict):
                 continue
@@ -65,7 +66,7 @@ class ExternalGovernanceService:
         proposal_job_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(ExternalGovernanceItemModel).order_by(ExternalGovernanceItemModel.created_at.desc()).limit(limit)
         if feedback_case_id:
             stmt = stmt.where(ExternalGovernanceItemModel.feedback_case_id == feedback_case_id)
@@ -78,7 +79,7 @@ class ExternalGovernanceService:
         with self.Session() as db:
             return [self.item_to_dict(row) for row in db.scalars(stmt).all()]
 
-    def find_item(self, external_item_id: str) -> Optional[dict[str, Any]]:
+    def find_item(self, external_item_id: str) -> Optional[JsonObject]:
         if not external_item_id:
             return None
         with self.Session() as db:
@@ -91,7 +92,7 @@ class ExternalGovernanceService:
         *,
         webhook_alias: str,
         sender: Optional[ExternalWebhookSender] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         item = self.find_item(external_item_id)
         if not item:
             return None
@@ -143,7 +144,7 @@ class ExternalGovernanceService:
                 apply_external_governance_record(row, record)
         return self.find_item(external_item_id)
 
-    def webhook_by_alias(self, alias: str) -> dict[str, Any]:
+    def webhook_by_alias(self, alias: str) -> JsonObject:
         requested = _string(alias)
         if not requested:
             raise BusinessRuleViolation("webhook_alias is required")
@@ -163,11 +164,11 @@ class ExternalGovernanceService:
                 }
         raise BusinessRuleViolation(f"Unknown external governance webhook alias: {requested}")
 
-    def notification_payload(self, item: dict[str, Any], webhook: dict[str, Any]) -> dict[str, Any]:
+    def notification_payload(self, item: JsonObject, webhook: JsonObject) -> JsonObject:
         record = ExternalGovernanceItemRecord.model_validate(item)
         return record.to_notification_payload(webhook_alias=webhook["alias"])
 
-    def send_webhook(self, webhook: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    def send_webhook(self, webhook: JsonObject, payload: JsonObject) -> JsonObject:
         headers = {"Content-Type": "application/json", "Accept": "application/json"}
         if webhook.get("token"):
             headers["Authorization"] = f"Bearer {webhook['token']}"
@@ -185,7 +186,7 @@ class ExternalGovernanceService:
             body = exc.read(4096).decode("utf-8", errors="replace")
             return {"http_status": exc.code, "response_body": body}
 
-    def item_to_dict(self, row: ExternalGovernanceItemModel) -> dict[str, Any]:
+    def item_to_dict(self, row: ExternalGovernanceItemModel) -> JsonObject:
         item = external_governance_record_from_row(row).to_payload()
         with self.Session() as db:
             if row.latest_notification_id:
@@ -224,7 +225,7 @@ class ExternalGovernanceService:
     ) -> None:
         apply_external_governance_notification_record(row, notification)
 
-    def _load_webhook_config(self) -> dict[str, Any]:
+    def _load_webhook_config(self) -> JsonObject:
         try:
             loaded = yaml.safe_load(self.webhooks_path.read_text(encoding="utf-8")) or {}
         except yaml.YAMLError as exc:

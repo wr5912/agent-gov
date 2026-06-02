@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import cast
 
 
-def filtered_mcp_servers(config_path: Path, allowed_names: tuple[str, ...]) -> dict[str, Any] | None:
+from .records.json_types import JsonObject
+
+
+def filtered_mcp_servers(config_path: Path, allowed_names: tuple[str, ...]) -> JsonObject | None:
     if not config_path.exists():
         return None
     loaded = json.loads(config_path.read_text(encoding="utf-8"))
@@ -17,4 +20,4 @@ def filtered_mcp_servers(config_path: Path, allowed_names: tuple[str, ...]) -> d
     allowed = set(allowed_names)
     if not allowed:
         return {}
-    return {name: config for name, config in servers.items() if name in allowed and isinstance(config, dict)}
+    return cast(JsonObject, {name: config for name, config in servers.items() if name in allowed and isinstance(config, dict)})

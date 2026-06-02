@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
+from app.runtime.records.json_types import JsonObject
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
@@ -28,8 +29,8 @@ class AgentJobResponse(BaseModel):
     output_schema_version: Optional[str] = None
     timeout_seconds: int = 300
     retry_count: int = 0
-    profile_version: Optional[dict[str, Any]] = None
-    input_json: Optional[dict[str, Any]] = None
-    raw_output_json: Optional[dict[str, Any]] = None
-    validated_output_json: Optional[dict[str, Any]] = None
+    profile_version: Optional[JsonObject] = None
+    input_json: Optional[JsonObject] = None
+    raw_output_json: Optional[JsonObject] = None
+    validated_output_json: Optional[JsonObject] = None
     error_json: Optional[FeedbackJobErrorResponse] = None

@@ -37,7 +37,7 @@ from ..runtime_db import (
 
 
 class FeedbackRegressionAssetStoreMixin:
-    def _add_eval_case_row(self, db: Any, payload: dict[str, Any]) -> None:
+    def _add_eval_case_row(self, db: Any, payload: JsonObject) -> None:
         record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
         db.add(
             EvalCaseModel(
@@ -76,7 +76,7 @@ class FeedbackRegressionAssetStoreMixin:
         scenario_pack: Optional[str] = None,
         flaky_status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(EvalCaseModel).order_by(EvalCaseModel.updated_at.desc()).limit(limit)
         for column, value in (
             (EvalCaseModel.status, status),
@@ -97,7 +97,7 @@ class FeedbackRegressionAssetStoreMixin:
         eval_case_id: Optional[str] = None,
         *,
         source_feedback_case_id: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self.Session() as db:
             row: EvalCaseModel | None = None
             if eval_case_id:
@@ -110,7 +110,7 @@ class FeedbackRegressionAssetStoreMixin:
                 ).first()
             return self._eval_case_to_dict(row) if row else None
 
-    def update_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def update_eval_case(self, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         updated_at = utc_now()
         operator = (self._string(fields.get("operator")) or "system").strip()
         reason = (self._string(fields.get("reason")) or "eval case updated").strip()
@@ -139,7 +139,7 @@ class FeedbackRegressionAssetStoreMixin:
             )
         return self.find_eval_case(eval_case_id)
 
-    def promote_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def promote_eval_case(self, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         asset_layer = self._string(fields.get("asset_layer")) or "core_regression"
         blocking_policy = self._string(fields.get("blocking_policy")) or (
             "blocking" if asset_layer in {"batch_specific", "smoke", "safety"} else "blocking_if_relevant"
@@ -156,19 +156,19 @@ class FeedbackRegressionAssetStoreMixin:
             },
         )
 
-    def archive_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def archive_eval_case(self, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         return self.update_eval_case(
             eval_case_id,
             {**fields, "action": "archive", "status": "archived", "promotion_status": "archived"},
         )
 
-    def mark_eval_case_flaky(self, eval_case_id: str, fields: dict[str, Any], *, flaky: bool) -> Optional[dict[str, Any]]:
+    def mark_eval_case_flaky(self, eval_case_id: str, fields: JsonObject, *, flaky: bool) -> Optional[JsonObject]:
         return self.update_eval_case(
             eval_case_id,
             {**fields, "action": "mark_flaky" if flaky else "unmark_flaky", "flaky_status": "flaky" if flaky else "stable"},
         )
 
-    def supersede_eval_case(self, eval_case_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def supersede_eval_case(self, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         target_id = self._string(fields.get("superseded_by_eval_case_id"))
         if not target_id:
             raise BusinessRuleViolation("superseded_by_eval_case_id is required")
@@ -185,7 +185,7 @@ class FeedbackRegressionAssetStoreMixin:
             },
         )
 
-    def list_eval_case_revisions(self, eval_case_id: str) -> list[dict[str, Any]]:
+    def list_eval_case_revisions(self, eval_case_id: str) -> list[JsonObject]:
         with self.Session() as db:
             rows = db.scalars(
                 select(EvalCaseRevisionModel)
@@ -194,7 +194,7 @@ class FeedbackRegressionAssetStoreMixin:
             ).all()
             return [self._eval_case_revision_to_dict(row) for row in rows]
 
-    def list_eval_case_governance_events(self, eval_case_id: str) -> list[dict[str, Any]]:
+    def list_eval_case_governance_events(self, eval_case_id: str) -> list[JsonObject]:
         with self.Session() as db:
             rows = db.scalars(
                 select(EvalCaseGovernanceEventModel)
@@ -203,7 +203,7 @@ class FeedbackRegressionAssetStoreMixin:
             ).all()
             return [self._eval_case_governance_event_to_dict(row) for row in rows]
 
-    def create_regression_plan(self, batch_id: str, *, force: bool = False) -> Optional[dict[str, Any]]:
+    def create_regression_plan(self, batch_id: str, *, force: bool = False) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
@@ -256,13 +256,13 @@ class FeedbackRegressionAssetStoreMixin:
                 )
         return self.get_regression_plan(plan_id)
 
-    def get_regression_plan(self, regression_plan_id: str) -> Optional[dict[str, Any]]:
+    def get_regression_plan(self, regression_plan_id: str) -> Optional[JsonObject]:
         if not regression_plan_id:
             return None
         with self.Session() as db:
             row = db.get(RegressionPlanModel, regression_plan_id)
             return self._regression_plan_to_dict(row) if row else None
-    def get_latest_regression_plan(self, batch_id: str) -> Optional[dict[str, Any]]:
+    def get_latest_regression_plan(self, batch_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
                 select(RegressionPlanModel)
@@ -270,18 +270,18 @@ class FeedbackRegressionAssetStoreMixin:
                 .order_by(RegressionPlanModel.created_at.desc())
             ).first()
             return self._regression_plan_to_dict(row) if row else None
-    def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+    def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
         job = self.queue_regression_impact_agent_job(eval_run_id)
         if not job:
             return None
         return self.get_regression_impact_analysis(eval_run_id)
-    def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+    def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
                 select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)
             ).first()
             return self._impact_analysis_to_dict(row) if row else None
-    def record_regression_gate_override(self, batch_id: str, eval_run_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def record_regression_gate_override(self, batch_id: str, eval_run_id: str, fields: JsonObject) -> Optional[JsonObject]:
         eval_run = self.get_eval_run(eval_run_id)
         if not eval_run:
             return None
@@ -338,7 +338,7 @@ class FeedbackRegressionAssetStoreMixin:
             row = db.get(RegressionGateOverrideModel, override_id)
             return self._gate_override_to_dict(row) if row else None
 
-    def _update_eval_case_row(self, db: Any, payload: dict[str, Any]) -> bool:
+    def _update_eval_case_row(self, db: Any, payload: JsonObject) -> bool:
         row = db.get(EvalCaseModel, payload["eval_case_id"])
         if not row:
             return False
@@ -352,7 +352,7 @@ class FeedbackRegressionAssetStoreMixin:
     def _eval_case_to_dict(self, row: EvalCaseModel) -> JsonObject:
         return EvalCaseRecord.from_row(row).to_payload()
 
-    def _eval_case_with_asset_defaults(self, payload: dict[str, Any]) -> JsonObject:
+    def _eval_case_with_asset_defaults(self, payload: JsonObject) -> JsonObject:
         normalized = dict(payload)
         labels = self._unique_strings([str(item).strip() for item in normalized.get("labels") or [] if str(item).strip()])
         normalized["labels"] = labels
@@ -389,7 +389,7 @@ class FeedbackRegressionAssetStoreMixin:
         normalized["content_hash"] = self._eval_case_content_hash(normalized)
         return normalized
 
-    def _apply_eval_case_update_fields(self, payload: dict[str, Any], fields: dict[str, Any]) -> None:
+    def _apply_eval_case_update_fields(self, payload: JsonObject, fields: JsonObject) -> None:
         if "prompt" in fields:
             prompt = (self._string(fields.get("prompt")) or "").strip()
             if not prompt:
@@ -426,7 +426,7 @@ class FeedbackRegressionAssetStoreMixin:
         if "superseded_by_eval_case_id" in fields:
             payload["superseded_by_eval_case_id"] = self._string(fields.get("superseded_by_eval_case_id")) or None
 
-    def _add_eval_case_revision_row(self, db: Any, payload: dict[str, Any], *, created_by: str, reason: str) -> None:
+    def _add_eval_case_revision_row(self, db: Any, payload: JsonObject, *, created_by: str, reason: str) -> None:
         eval_case_id = str(payload["eval_case_id"])
         latest = db.scalars(
             select(EvalCaseRevisionModel)
@@ -467,8 +467,8 @@ class FeedbackRegressionAssetStoreMixin:
         operator: str,
         role: str,
         reason: str,
-        before: dict[str, Any],
-        after: dict[str, Any],
+        before: JsonObject,
+        after: JsonObject,
     ) -> None:
         record = EvalCaseGovernanceEventRecord.model_validate(
             {
@@ -566,9 +566,9 @@ class FeedbackRegressionAssetStoreMixin:
             ).first()
             return self._regression_plan_to_dict(row) if row else None
 
-    def _selected_regression_cases_for_batch(self, batch: dict[str, Any]) -> list[dict[str, Any]]:
+    def _selected_regression_cases_for_batch(self, batch: JsonObject) -> list[JsonObject]:
         batch_case_ids = {str(item) for item in batch.get("eval_case_ids") or [] if item}
-        selected: list[dict[str, Any]] = []
+        selected: list[JsonObject] = []
         seen: set[str] = set()
         for eval_case_id in batch_case_ids:
             case = self.find_eval_case(eval_case_id)
@@ -584,7 +584,7 @@ class FeedbackRegressionAssetStoreMixin:
                 seen.add(case_id)
         return selected
 
-    def _eval_case_enters_regression_plan(self, eval_case: Optional[dict[str, Any]]) -> bool:
+    def _eval_case_enters_regression_plan(self, eval_case: Optional[JsonObject]) -> bool:
         return bool(
             eval_case
             and eval_case.get("status") == "active"
@@ -593,7 +593,7 @@ class FeedbackRegressionAssetStoreMixin:
             and eval_case.get("flaky_status") != "flaky"
         )
 
-    def _regression_plan_fingerprint(self, batch: dict[str, Any], selected_cases: list[dict[str, Any]]) -> str:
+    def _regression_plan_fingerprint(self, batch: JsonObject, selected_cases: list[JsonObject]) -> str:
         task = self.find_task(self._string(batch.get("optimization_task_id")) or "") if batch.get("optimization_task_id") else None
         stable = {
             "batch_id": batch.get("batch_id"),
@@ -614,7 +614,7 @@ class FeedbackRegressionAssetStoreMixin:
     def _forced_regression_plan_fingerprint(self, base_fingerprint: str) -> str:
         return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode("utf-8")).hexdigest()
 
-    def _regression_case_snapshot(self, case: dict[str, Any]) -> JsonObject:
+    def _regression_case_snapshot(self, case: JsonObject) -> JsonObject:
         return {
             "eval_case_id": case.get("eval_case_id"),
             "status": case.get("status"),
@@ -631,7 +631,7 @@ class FeedbackRegressionAssetStoreMixin:
             "checks_json": dict(case.get("checks_json") or {}),
         }
 
-    def _regression_selection_summary(self, selected_cases: list[dict[str, Any]]) -> JsonObject:
+    def _regression_selection_summary(self, selected_cases: list[JsonObject]) -> JsonObject:
         by_layer: dict[str, int] = {}
         by_policy: dict[str, int] = {}
         for case in selected_cases:
@@ -639,7 +639,7 @@ class FeedbackRegressionAssetStoreMixin:
             by_policy[str(case.get("blocking_policy") or "unknown")] = by_policy.get(str(case.get("blocking_policy") or "unknown"), 0) + 1
         return {"total": len(selected_cases), "by_asset_layer": by_layer, "by_blocking_policy": by_policy}
 
-    def _change_summary_for_batch(self, batch: dict[str, Any]) -> JsonObject:
+    def _change_summary_for_batch(self, batch: JsonObject) -> JsonObject:
         task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
         return {
             "batch_title": batch.get("title"),
@@ -658,8 +658,8 @@ class FeedbackRegressionAssetStoreMixin:
     def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> JsonObject:
         return RegressionImpactAnalysisRecord.from_row(row).to_payload()
 
-    def _impacted_assets_from_eval_run(self, eval_run: dict[str, Any]) -> list[dict[str, Any]]:
-        impacted: list[dict[str, Any]] = []
+    def _impacted_assets_from_eval_run(self, eval_run: JsonObject) -> list[JsonObject]:
+        impacted: list[JsonObject] = []
         for item in eval_run.get("items") or []:
             if not isinstance(item, dict) or item.get("status") == "passed":
                 continue
@@ -676,7 +676,7 @@ class FeedbackRegressionAssetStoreMixin:
             )
         return impacted
 
-    def _impact_recommendations(self, eval_run: dict[str, Any]) -> list[str]:
+    def _impact_recommendations(self, eval_run: JsonObject) -> list[str]:
         status = str(eval_run.get("result_status") or "")
         if status == "blocked":
             return ["阻断发布；先修复 blocking 回归失败，再重新生成回归计划并执行。"]
@@ -704,7 +704,7 @@ class FeedbackRegressionAssetStoreMixin:
             raise BusinessRuleViolation(f"Invalid eval case {field_name}: {text}")
         return text
 
-    def _eval_case_content_hash(self, payload: dict[str, Any]) -> str:
+    def _eval_case_content_hash(self, payload: JsonObject) -> str:
         stable = {
             "prompt": payload.get("prompt"),
             "expected_behavior": payload.get("expected_behavior"),

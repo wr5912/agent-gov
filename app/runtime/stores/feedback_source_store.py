@@ -39,7 +39,7 @@ from .store_projection_maps import (
 class FeedbackSourceStoreMixin:
     """Store operations for runs, feedback sources, annotations, and source eval cases."""
 
-    def record_run(self, record: dict[str, Any]) -> JsonObject:
+    def record_run(self, record: JsonObject) -> JsonObject:
         payload = record if self.enable_debug_evidence else self._scrub_record(record)
         run_id = self._string(payload.get("run_id")) or f"run-{uuid.uuid4()}"
         payload = {**payload, "run_id": run_id, "created_at": payload.get("created_at") or utc_now()}
@@ -93,7 +93,7 @@ class FeedbackSourceStoreMixin:
             row = db.get(AgentRunModel, run_id)
             return AgentRunRecord.from_row(row).to_payload() if row else None
 
-    def find_run_for_event(self, event: dict[str, Any]) -> Optional[JsonObject]:
+    def find_run_for_event(self, event: JsonObject) -> Optional[JsonObject]:
         exact = self.find_run(run_id=self._string(event.get("run_id")))
         if exact:
             return exact
@@ -404,7 +404,7 @@ class FeedbackSourceStoreMixin:
             feedback_case=feedback_case,
         )
 
-    def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: dict[str, Any]) -> Optional[JsonObject]:
+    def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: JsonObject) -> Optional[JsonObject]:
         kind = self._normalize_source_kind(source_kind)
         raw = self._find_source_record(kind, source_id)
         if not raw:
@@ -413,7 +413,7 @@ class FeedbackSourceStoreMixin:
             self._upsert_feedback_source_annotation(db, kind, source_id, fields)
         return self.find_feedback_source(kind, source_id)
 
-    def _upsert_feedback_source_annotation(self, db: Any, source_kind: str, source_id: str, fields: dict[str, Any]) -> JsonObject:
+    def _upsert_feedback_source_annotation(self, db: Any, source_kind: str, source_id: str, fields: JsonObject) -> JsonObject:
         kind = self._normalize_source_kind(source_kind)
         annotation_id = self._source_annotation_id(kind, source_id)
         now = utc_now()
@@ -444,7 +444,7 @@ class FeedbackSourceStoreMixin:
             )
         return record.to_payload()
 
-    def ensure_case_for_source(self, source_kind: str, source_id: str, *, priority: str = "medium") -> Optional[dict[str, Any]]:
+    def ensure_case_for_source(self, source_kind: str, source_id: str, *, priority: str = "medium") -> Optional[JsonObject]:
         feedback_case, should_create = self._prepare_feedback_case_for_source(
             {"source_kind": source_kind, "source_id": source_id},
             priority=priority,
@@ -455,7 +455,7 @@ class FeedbackSourceStoreMixin:
             db.add(self._case_model_from_dict(feedback_case))
         return feedback_case
 
-    def generate_eval_cases_for_sources(self, source_refs: list[dict[str, Any]], *, force: bool = False) -> JsonObject:
+    def generate_eval_cases_for_sources(self, source_refs: list[JsonObject], *, force: bool = False) -> JsonObject:
         return self.queue_feedback_eval_case_generation_agent_job(source_refs=source_refs, force=force) or {
             "created": 0,
             "reused": 0,
@@ -465,7 +465,7 @@ class FeedbackSourceStoreMixin:
             "results": [],
         }
 
-    def _prepare_feedback_case_for_source(self, ref: dict[str, str], *, priority: str) -> tuple[Optional[dict[str, Any]], bool]:
+    def _prepare_feedback_case_for_source(self, ref: dict[str, str], *, priority: str) -> tuple[Optional[JsonObject], bool]:
         kind = self._normalize_source_kind(ref["source_kind"])
         source_id = ref["source_id"]
         raw = self._find_source_record(kind, source_id)
@@ -482,14 +482,14 @@ class FeedbackSourceStoreMixin:
         self,
         source_kind: str,
         source_id: str,
-        raw: dict[str, Any],
-        source: dict[str, Any],
+        raw: JsonObject,
+        source: JsonObject,
         *,
         priority: str,
-    ) -> Optional[dict[str, Any]]:
-        signals: list[dict[str, Any]] = []
-        events: list[dict[str, Any]] = []
-        pending: list[dict[str, Any]] = []
+    ) -> Optional[JsonObject]:
+        signals: list[JsonObject] = []
+        events: list[JsonObject] = []
+        pending: list[JsonObject] = []
         if source_kind == "signal":
             signals.append(raw)
         elif source_kind == "soc_event":
@@ -525,7 +525,7 @@ class FeedbackSourceStoreMixin:
             raise BusinessRuleViolation(f"Unsupported feedback source kind: {source_kind}")
         return normalized
 
-    def _normalize_source_refs(self, source_refs: list[dict[str, Any]]) -> list[dict[str, str]]:
+    def _normalize_source_refs(self, source_refs: list[JsonObject]) -> list[dict[str, str]]:
         refs: list[dict[str, str]] = []
         seen: set[tuple[str, str]] = set()
         for item in source_refs:
@@ -574,7 +574,7 @@ class FeedbackSourceStoreMixin:
                     result[source_id] = feedback_case
         return result
 
-    def _find_case_for_source_id(self, source_id: str) -> Optional[dict[str, Any]]:
+    def _find_case_for_source_id(self, source_id: str) -> Optional[JsonObject]:
         if not source_id:
             return None
         for feedback_case in self.list_cases(limit=1000):
@@ -603,7 +603,7 @@ class FeedbackSourceStoreMixin:
         source_id: str,
         raw: JsonObject,
         annotation: Optional[JsonObject] = None,
-        feedback_case: Optional[dict[str, Any]] = None,
+        feedback_case: Optional[JsonObject] = None,
         eval_cases_by_case_id: Optional[EvalCasesByFeedbackCaseId] = None,
         attribution_jobs_by_id: Optional[AgentJobsById] = None,
     ) -> JsonObject:
@@ -673,7 +673,7 @@ class FeedbackSourceStoreMixin:
             return str(raw["source_type"])
         return self._normalize_source_kind(source_kind)
 
-    def _source_case_title(self, source: dict[str, Any]) -> str:
+    def _source_case_title(self, source: JsonObject) -> str:
         return (
             self._string(source.get("comment"))
             or self._string(source.get("label"))

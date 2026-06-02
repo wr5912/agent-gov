@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Awaitable, Callable, Iterable
 from pathlib import Path
-from typing import Any
 
 from claude_agent_sdk import HookMatcher, PermissionResultAllow, PermissionResultDeny
 
 from .agent_profiles import AgentRuntimeProfile
+from .records.json_types import JsonObject
 
 
 DANGEROUS_COMMAND_PATTERNS = [
@@ -38,6 +38,7 @@ WRITE_PATH_FIELDS: dict[str, tuple[str, ...]] = {
     "NotebookEdit": ("notebook_path",),
 }
 PATH_TOOL_NAMES = tuple(sorted(set(READ_PATH_FIELDS) | set(WRITE_PATH_FIELDS)))
+HookCallback = Callable[[JsonObject, str | None, JsonObject], Awaitable[JsonObject]]
 
 
 def _is_dangerous_bash(command: str) -> str | None:
@@ -60,7 +61,7 @@ def _is_under(path: Path, roots: Iterable[Path]) -> bool:
     return False
 
 
-def _tool_path(tool_input: dict[str, Any], fields: tuple[str, ...], cwd: Path) -> Path:
+def _tool_path(tool_input: JsonObject, fields: tuple[str, ...], cwd: Path) -> Path:
     for field in fields:
         raw = tool_input.get(field)
         if isinstance(raw, str) and raw.strip():
@@ -69,7 +70,7 @@ def _tool_path(tool_input: dict[str, Any], fields: tuple[str, ...], cwd: Path) -
     return cwd
 
 
-def _path_policy_denial(tool_name: str, tool_input: dict[str, Any], profile: AgentRuntimeProfile) -> str | None:
+def _path_policy_denial(tool_name: str, tool_input: JsonObject, profile: AgentRuntimeProfile) -> str | None:
     fields = READ_PATH_FIELDS.get(tool_name) or WRITE_PATH_FIELDS.get(tool_name)
     if not fields:
         return None
@@ -84,7 +85,7 @@ def _path_policy_denial(tool_name: str, tool_input: dict[str, Any], profile: Age
     return None
 
 
-async def guard_tool_use(tool_name: str, tool_input: dict[str, Any], context: Any) -> Any:
+async def guard_tool_use(tool_name: str, tool_input: JsonObject, context: object) -> object:
     """SDK can_use_tool callback.
 
     This is only invoked when a tool would otherwise ask for permission. Tools already
@@ -101,10 +102,11 @@ async def guard_tool_use(tool_name: str, tool_input: dict[str, Any], context: An
     return PermissionResultAllow()
 
 
-async def pre_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None, context: dict[str, Any]) -> dict[str, Any]:
+async def pre_tool_use_hook(input_data: JsonObject, tool_use_id: str | None, context: JsonObject) -> JsonObject:
     """PreToolUse hook used for deterministic runtime enforcement."""
     tool_name = input_data.get("tool_name")
-    tool_input = input_data.get("tool_input") or {}
+    tool_input_value = input_data.get("tool_input")
+    tool_input = tool_input_value if isinstance(tool_input_value, dict) else {}
     if tool_name == "Bash":
         command = str(tool_input.get("command") or "")
         matched = _is_dangerous_bash(command)
@@ -119,12 +121,12 @@ async def pre_tool_use_hook(input_data: dict[str, Any], tool_use_id: str | None,
     return {}
 
 
-def build_profile_pre_tool_use_hook(profile: AgentRuntimeProfile) -> Any:
+def build_profile_pre_tool_use_hook(profile: AgentRuntimeProfile) -> HookCallback:
     async def profile_pre_tool_use_hook(
-        input_data: dict[str, Any],
+        input_data: JsonObject,
         tool_use_id: str | None,
-        context: dict[str, Any],
-    ) -> dict[str, Any]:
+        context: JsonObject,
+    ) -> JsonObject:
         tool_name = input_data.get("tool_name")
         tool_input = input_data.get("tool_input") or {}
         if not isinstance(tool_name, str) or not isinstance(tool_input, dict):

@@ -1469,7 +1469,7 @@ export interface components {
             error_path: string;
             /** Input Json */
             input_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Input Path */
             input_path: string;
@@ -1483,11 +1483,11 @@ export interface components {
             profile_name: string;
             /** Profile Version */
             profile_version?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Raw Output Json */
             raw_output_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Raw Output Path */
             raw_output_path: string;
@@ -1515,7 +1515,7 @@ export interface components {
             timeout_seconds: number;
             /** Validated Output Json */
             validated_output_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Validated Output Path */
             validated_output_path: string;
@@ -1526,7 +1526,7 @@ export interface components {
         AgentRunResponse: {
             /** Agent Activity */
             agent_activity?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Agent Version Id */
             agent_version_id?: string | null;
@@ -1825,7 +1825,7 @@ export interface components {
             message: string;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
@@ -1862,7 +1862,7 @@ export interface components {
         ChatResponse: {
             /** Agent Activity */
             agent_activity?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Agent Version Id */
             agent_version_id?: string | null;
@@ -1872,7 +1872,7 @@ export interface components {
             errors?: string[];
             /** Messages */
             messages?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             }[];
             /** Run Id */
             run_id: string;
@@ -1886,7 +1886,7 @@ export interface components {
             total_cost_usd?: number | null;
             /** Usage */
             usage?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
         /** ConfigMappingItem */
@@ -1946,11 +1946,11 @@ export interface components {
             action: string;
             /** After */
             after?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Before */
             before?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Created At */
             created_at: string;
@@ -1993,7 +1993,7 @@ export interface components {
             blocking_policy?: string | null;
             /** Checks Json */
             checks_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Content Hash */
             content_hash?: string | null;
@@ -2066,7 +2066,7 @@ export interface components {
             revision_number: number;
             /** Snapshot */
             snapshot?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
         } & {
             [key: string]: unknown;
@@ -2124,7 +2124,7 @@ export interface components {
             eval_case_id: string;
             /** Eval Case Snapshot */
             eval_case_snapshot?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Eval Run Id */
             eval_run_id: string;
@@ -2154,7 +2154,7 @@ export interface components {
             eval_run_id: string;
             /** Gate Result */
             gate_result?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Item Ids */
             item_ids?: string[];
@@ -2271,8 +2271,7 @@ export interface components {
         };
         /** EvidencePackageFileResponse */
         EvidencePackageFileResponse: {
-            /** Content */
-            content: unknown;
+            content: components["schemas"]["JsonValue"];
             /** Evidence Package Id */
             evidence_package_id: string;
             /** File Name */
@@ -2387,7 +2386,7 @@ export interface components {
             execution_job_id: string;
             /** Manual Restore Result */
             manual_restore_result?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Optimization Task Id */
             optimization_task_id: string;
@@ -2492,7 +2491,7 @@ export interface components {
             target_type?: string | null;
             /** Task Context */
             task_context?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Title */
             title?: string | null;
@@ -2519,7 +2518,7 @@ export interface components {
             notification_id: string;
             /** Request Json */
             request_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Response Body */
             response_body?: string | null;
@@ -2655,7 +2654,7 @@ export interface components {
             blocking_policy?: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
             /** Checks Json */
             checks_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Expected Behavior */
             expected_behavior?: string | null;
@@ -2801,7 +2800,7 @@ export interface components {
             blocking_policy: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
             /** Checks Json */
             checks_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Expected Behavior */
             expected_behavior?: string | null;
@@ -2886,7 +2885,7 @@ export interface components {
             latest_eval_run?: components["schemas"]["EvalRunResponse"] | null;
             /** Latest Regression Gate */
             latest_regression_gate?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             latest_regression_plan?: components["schemas"]["RegressionPlanResponse"] | null;
             optimization_plan?: components["schemas"]["FeedbackOptimizationPlanResponse"] | null;
@@ -3205,7 +3204,7 @@ export interface components {
             labels?: string[];
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
@@ -3250,7 +3249,7 @@ export interface components {
             matched_run_id?: string | null;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
@@ -3304,13 +3303,13 @@ export interface components {
             latest_attribution_status?: string | null;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Priority */
             priority?: string | null;
             /** Raw */
             raw?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
@@ -3345,7 +3344,7 @@ export interface components {
             labels?: string[] | null;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Priority */
             priority?: ("low" | "medium" | "high") | null;
@@ -3358,10 +3357,10 @@ export interface components {
         FeedbackValidationErrorResponse: {
             /** Ctx */
             ctx?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Input */
-            input?: unknown;
+            input?: unknown | null;
             /** Loc */
             loc?: (string | number)[];
             /** Msg */
@@ -3378,6 +3377,7 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
+        JsonValue: unknown;
         /** OpenAIChatCompletionChoice */
         OpenAIChatCompletionChoice: {
             /**
@@ -3406,7 +3406,7 @@ export interface components {
             messages: components["schemas"]["OpenAIChatMessage"][];
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Model
@@ -3435,7 +3435,7 @@ export interface components {
             object: string;
             /** Usage */
             usage?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
         /** OpenAIChatMessage */
@@ -3487,7 +3487,7 @@ export interface components {
             feedback_case_id?: string | null;
             /** Input Json */
             input_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Input Path */
             input_path?: string | null;
@@ -3497,13 +3497,13 @@ export interface components {
             profile_name: string;
             /** Profile Version */
             profile_version?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Proposal Id */
             proposal_id?: string | null;
             /** Raw Output Json */
             raw_output_json?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Started At */
             started_at?: string | null;
@@ -3839,13 +3839,13 @@ export interface components {
         RegressionGateOverrideResponse: {
             /** After */
             after?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Batch Id */
             batch_id: string;
             /** Before */
             before?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Created At */
             created_at: string;
@@ -3872,13 +3872,13 @@ export interface components {
             eval_run_id: string;
             /** Gate Result */
             gate_result?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Impact Analysis Id */
             impact_analysis_id: string;
             /** Impacted Assets */
             impacted_assets?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             }[];
             /** Job Id */
             job_id?: string | null;
@@ -3909,7 +3909,7 @@ export interface components {
             batch_id: string;
             /** Change Summary */
             change_summary?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Created At */
             created_at: string;
@@ -3921,13 +3921,13 @@ export interface components {
             schema_version?: string | null;
             /** Selected Cases */
             selected_cases?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             }[];
             /** Selection Fingerprint */
             selection_fingerprint: string;
             /** Selection Summary */
             selection_summary?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Status */
             status: string;
@@ -4020,7 +4020,7 @@ export interface components {
             created_at: string;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /** Sdk Session Id */
             sdk_session_id?: string | null;
@@ -4051,7 +4051,7 @@ export interface components {
             actor_id?: string | null;
             /** After */
             after?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Alert Id */
             alert_id?: string | null;
@@ -4062,7 +4062,7 @@ export interface components {
             auto_captured: boolean;
             /** Before */
             before?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Case Id */
             case_id?: string | null;
@@ -4086,7 +4086,7 @@ export interface components {
             event_type: "case.verdict_changed" | "case.severity_changed" | "recommendation.accepted" | "recommendation.rejected" | "recommendation.modified" | "evidence.added" | "tool.manual_query_after_agent";
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review
@@ -4120,7 +4120,7 @@ export interface components {
             actor_id?: string | null;
             /** After */
             after?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Alert Id */
             alert_id?: string | null;
@@ -4131,7 +4131,7 @@ export interface components {
             auto_captured: boolean;
             /** Before */
             before?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             } | null;
             /** Case Id */
             case_id?: string | null;
@@ -4153,7 +4153,7 @@ export interface components {
             matched_run_id?: string | null;
             /** Metadata */
             metadata?: {
-                [key: string]: unknown;
+                [key: string]: components["schemas"]["JsonValue"];
             };
             /**
              * Requires Review

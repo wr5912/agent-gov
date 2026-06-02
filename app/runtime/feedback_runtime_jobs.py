@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from .agent_profiles import (
     ATTRIBUTION_ANALYZER_PROFILE,
@@ -11,6 +11,7 @@ from .agent_profiles import (
 )
 from .response_schemas.agent_job_response_schemas import AgentJobResponse
 from .response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
+from .records.json_types import JsonObject
 from .schemas import EvalRunResponse
 
 
@@ -117,7 +118,7 @@ class FeedbackRuntimeJobsMixin:
         self,
         *,
         feedback_case_id: Optional[str] = None,
-        source_refs: Optional[list[dict[str, Any]]] = None,
+        source_refs: Optional[list[JsonObject]] = None,
         batch_id: Optional[str] = None,
         limit: int = 100,
         force: bool = False,
@@ -147,7 +148,7 @@ class FeedbackRuntimeJobsMixin:
         )
 
     @staticmethod
-    def _agent_job_response(payload: dict[str, Any] | None) -> AgentJobResponse | None:
+    def _agent_job_response(payload: JsonObject | None) -> AgentJobResponse | None:
         return AgentJobResponse.model_validate(payload) if payload else None
 
     async def run_feedback_eval(

@@ -13,11 +13,12 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional, cast
 
 import yaml
 
 from app.runtime.errors import AgentVersionIntegrityError
+from app.runtime.records.json_types import JsonObject
 
 
 SNAPSHOT_POLICY_VERSION = "main-workspace-managed-config-v2"
@@ -67,16 +68,17 @@ class AgentVersionStore:
     def is_maintenance_active(self) -> bool:
         return self._maintenance
 
-    def ensure_bootstrap(self) -> dict[str, Any]:
+    def ensure_bootstrap(self) -> JsonObject:
         current = self.current_version()
         if current:
             return current
         return self.create_snapshot(reason="bootstrap", note="初始化 Agent 版本基线。")
 
     def current_version_id(self) -> Optional[str]:
-        return self.ensure_bootstrap().get("agent_version_id")
+        version_id = self.ensure_bootstrap().get("agent_version_id")
+        return str(version_id) if version_id else None
 
-    def current_version(self) -> Optional[dict[str, Any]]:
+    def current_version(self) -> Optional[JsonObject]:
         if not self.current_path.exists():
             return None
         try:
@@ -88,17 +90,17 @@ class AgentVersionStore:
         version_id = loaded.get("agent_version_id")
         return self.get_version(str(version_id)) if version_id else None
 
-    def list_versions(self, limit: int = 100) -> list[dict[str, Any]]:
+    def list_versions(self, limit: int = 100) -> list[JsonObject]:
         versions = self._read_jsonl(self.versions_path)
         return list(reversed(versions))[:limit]
 
-    def get_version(self, version_id: str) -> Optional[dict[str, Any]]:
+    def get_version(self, version_id: str) -> Optional[JsonObject]:
         for record in reversed(self._read_jsonl(self.versions_path)):
             if record.get("agent_version_id") == version_id:
                 return record
         return None
 
-    def get_manifest(self, version_id: str) -> Optional[dict[str, Any]]:
+    def get_manifest(self, version_id: str) -> Optional[JsonObject]:
         path = self.manifests_dir / f"{version_id}.json"
         if not path.exists():
             return None
@@ -106,7 +108,7 @@ class AgentVersionStore:
             loaded = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return None
-        return loaded if isinstance(loaded, dict) else None
+        return cast(JsonObject, loaded) if isinstance(loaded, dict) else None
 
     def create_snapshot(
         self,
@@ -116,7 +118,7 @@ class AgentVersionStore:
         note: Optional[str] = None,
         parent_version_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         with self._lock:
             self._ensure_dirs()
             current = self.current_version()
@@ -183,7 +185,7 @@ class AgentVersionStore:
             self._write_json(self.current_path, {"agent_version_id": version_id, "updated_at": utc_now()})
             return summary
 
-    def restore_version(self, version_id: str, *, note: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def restore_version(self, version_id: str, *, note: Optional[str] = None) -> Optional[JsonObject]:
         with self._lock:
             target = self.get_version(version_id)
             manifest = self.get_manifest(version_id)
@@ -221,17 +223,17 @@ class AgentVersionStore:
                 shutil.rmtree(extract_dir, ignore_errors=True)
                 self._maintenance = False
 
-    def diff_versions(self, from_version_id: str, to_version_id: str) -> Optional[dict[str, Any]]:
+    def diff_versions(self, from_version_id: str, to_version_id: str) -> Optional[JsonObject]:
         left = self.get_manifest(from_version_id)
         right = self.get_manifest(to_version_id)
         if not left or not right:
             return None
         left_files = {entry["path"]: entry for entry in left.get("files", []) if isinstance(entry, dict)}
         right_files = {entry["path"]: entry for entry in right.get("files", []) if isinstance(entry, dict)}
-        added: list[dict[str, Any]] = []
-        deleted: list[dict[str, Any]] = []
-        modified: list[dict[str, Any]] = []
-        unchanged: list[dict[str, Any]] = []
+        added: list[JsonObject] = []
+        deleted: list[JsonObject] = []
+        modified: list[JsonObject] = []
+        unchanged: list[JsonObject] = []
 
         for path in sorted(set(left_files) | set(right_files)):
             before = left_files.get(path)
@@ -254,7 +256,7 @@ class AgentVersionStore:
             "unchanged_count": len(unchanged),
         }
 
-    def diff_version_file(self, from_version_id: str, to_version_id: str, path: str) -> Optional[dict[str, Any]]:
+    def diff_version_file(self, from_version_id: str, to_version_id: str, path: str) -> Optional[JsonObject]:
         archive_path = self._archive_path_for_user_path(path)
         if not archive_path:
             return None
@@ -265,7 +267,7 @@ class AgentVersionStore:
         left_entry = self._manifest_entry(left, archive_path)
         right_entry = self._manifest_entry(right, archive_path)
         status = self._file_diff_status(left_entry, right_entry)
-        result: dict[str, Any] = {
+        result: JsonObject = {
             "from_version_id": from_version_id,
             "to_version_id": to_version_id,
             "path": path,
@@ -323,9 +325,9 @@ class AgentVersionStore:
         )
         return result
 
-    def _collect_entries(self) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        entries: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
+    def _collect_entries(self) -> tuple[list[JsonObject], list[JsonObject]]:
+        entries: list[JsonObject] = []
+        skipped: list[JsonObject] = []
         self._collect_workspace_entries(entries, skipped)
         entries.sort(key=lambda entry: str(entry.get("path") or ""))
         return entries, skipped
@@ -341,13 +343,13 @@ class AgentVersionStore:
             return raw
         return f"workspace/{raw}"
 
-    def _manifest_entry(self, manifest: dict[str, Any], archive_path: str) -> Optional[dict[str, Any]]:
+    def _manifest_entry(self, manifest: JsonObject, archive_path: str) -> Optional[JsonObject]:
         for entry in manifest.get("files", []) or []:
             if isinstance(entry, dict) and entry.get("path") == archive_path:
                 return entry
         return None
 
-    def _file_diff_status(self, before: Optional[dict[str, Any]], after: Optional[dict[str, Any]]) -> str:
+    def _file_diff_status(self, before: Optional[JsonObject], after: Optional[JsonObject]) -> str:
         if before is None and after is None:
             return "missing"
         if before is None:
@@ -358,7 +360,7 @@ class AgentVersionStore:
             return "unchanged"
         return "modified"
 
-    def _read_version_file_bytes(self, manifest: dict[str, Any], archive_path: str) -> Optional[bytes]:
+    def _read_version_file_bytes(self, manifest: JsonObject, archive_path: str) -> Optional[bytes]:
         bundle_path = Path(str(manifest.get("bundle_path") or self.bundles_dir / f"{manifest.get('agent_version_id')}.tar.gz"))
         expected_sha = str(manifest.get("bundle_sha256") or "")
         if not bundle_path.exists():
@@ -375,7 +377,7 @@ class AgentVersionStore:
         except (KeyError, OSError, tarfile.TarError):
             return None
 
-    def _collect_workspace_entries(self, entries: list[dict[str, Any]], skipped: list[dict[str, Any]]) -> None:
+    def _collect_workspace_entries(self, entries: list[JsonObject], skipped: list[JsonObject]) -> None:
         if not self.workspace_dir.exists():
             skipped.append({"path": "workspace", "reason": "missing"})
             return
@@ -402,7 +404,7 @@ class AgentVersionStore:
                     continue
                 self._append_entry(entries, root_path / filename, f"workspace/{rel.as_posix()}", skipped)
 
-    def _append_entry(self, entries: list[dict[str, Any]], source: Path, archive_path: str, skipped: list[dict[str, Any]]) -> None:
+    def _append_entry(self, entries: list[JsonObject], source: Path, archive_path: str, skipped: list[JsonObject]) -> None:
         try:
             stat = source.lstat()
         except OSError as exc:
@@ -439,7 +441,7 @@ class AgentVersionStore:
             }
         )
 
-    def _restore_manifest_files(self, manifest: dict[str, Any], extract_dir: Path) -> None:
+    def _restore_manifest_files(self, manifest: JsonObject, extract_dir: Path) -> None:
         target_entries = [entry for entry in manifest.get("files", []) if isinstance(entry, dict)]
         target_paths = {str(entry.get("path")) for entry in target_entries}
         current_entries, _ = self._collect_entries()
@@ -540,10 +542,10 @@ class AgentVersionStore:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         return f"agent-version-{stamp}-{uuid.uuid4().hex[:8]}"
 
-    def _entry_fingerprint(self, entry: dict[str, Any]) -> tuple[Any, ...]:
+    def _entry_fingerprint(self, entry: JsonObject) -> tuple[object, ...]:
         return (entry.get("type"), entry.get("sha256"), entry.get("size"), entry.get("link_target"))
 
-    def _public_entry(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _public_entry(self, entry: JsonObject) -> JsonObject:
         return {key: value for key, value in entry.items() if not key.startswith("_")}
 
     def _sha256_file(self, path: Path) -> str:
@@ -553,7 +555,7 @@ class AgentVersionStore:
                 digest.update(chunk)
         return digest.hexdigest()
 
-    def _string(self, record: Optional[dict[str, Any]], key: str) -> Optional[str]:
+    def _string(self, record: Optional[JsonObject], key: str) -> Optional[str]:
         if not record:
             return None
         value = record.get(key)
@@ -565,23 +567,23 @@ class AgentVersionStore:
         self.manifests_dir.mkdir(parents=True, exist_ok=True)
         self.tmp_dir.mkdir(parents=True, exist_ok=True)
 
-    def _write_json(self, path: Path, value: dict[str, Any]) -> None:
+    def _write_json(self, path: Path, value: JsonObject) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         tmp.replace(path)
 
-    def _append_jsonl(self, path: Path, record: dict[str, Any]) -> None:
+    def _append_jsonl(self, path: Path, record: JsonObject) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with self._file_lock(path):
             with path.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False, default=str))
                 fh.write("\n")
 
-    def _read_jsonl(self, path: Path) -> list[dict[str, Any]]:
+    def _read_jsonl(self, path: Path) -> list[JsonObject]:
         if not path.exists():
             return []
-        records: list[dict[str, Any]] = []
+        records: list[JsonObject] = []
         with self._file_lock(path):
             for line in path.read_text(encoding="utf-8").splitlines():
                 if not line.strip():
@@ -591,7 +593,7 @@ class AgentVersionStore:
                 except json.JSONDecodeError:
                     continue
                 if isinstance(loaded, dict):
-                    records.append(loaded)
+                    records.append(cast(JsonObject, loaded))
         return records
 
     @contextmanager

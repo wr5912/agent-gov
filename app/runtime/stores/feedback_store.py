@@ -86,12 +86,12 @@ class FeedbackStore(
         self.agent_version_provider = agent_version_provider
         self.runtime_version = runtime_version
         self.enable_debug_evidence = enable_debug_evidence
-        self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[dict[str, Any]]]] = None
+        self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[JsonObject]]] = None
         self.tmp_jobs_dir = data_dir / ".runtime-tmp" / "jobs"
         self.tmp_jobs_dir.mkdir(parents=True, exist_ok=True)
         self._job_create_lock = RLock()
 
-    def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[dict[str, Any]]]) -> None:
+    def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[JsonObject]]) -> None:
         # Trace details are intentionally not persisted in SQLite; keep the setter
         # for runtime wiring compatibility and possible live trace lookups.
         self.langfuse_trace_fetcher = fetcher
@@ -130,7 +130,7 @@ class FeedbackStore(
 
     def _scrub_record(self, value: Any) -> Any:
         if isinstance(value, dict):
-            clean: dict[str, Any] = {}
+            clean: JsonObject = {}
             for key, item in value.items():
                 lowered = str(key).lower()
                 if any(part in lowered for part in SENSITIVE_KEY_PARTS):
@@ -144,13 +144,13 @@ class FeedbackStore(
 
     def _filter_records(
         self,
-        records: list[dict[str, Any]],
-        filters: dict[str, Any],
+        records: list[JsonObject],
+        filters: JsonObject,
         limit: int,
         *,
         any_key_groups: Optional[list[tuple[str, ...]]] = None,
-    ) -> list[dict[str, Any]]:
-        result: list[dict[str, Any]] = []
+    ) -> list[JsonObject]:
+        result: list[JsonObject] = []
         any_key_groups = any_key_groups or []
         for record in records:
             if self._matches_filters(record, filters, any_key_groups):
@@ -159,7 +159,7 @@ class FeedbackStore(
                 break
         return result
 
-    def _matches_filters(self, record: dict[str, Any], filters: dict[str, Any], any_key_groups: list[tuple[str, ...]]) -> bool:
+    def _matches_filters(self, record: JsonObject, filters: JsonObject, any_key_groups: list[tuple[str, ...]]) -> bool:
         grouped_keys = {key for group in any_key_groups for key in group}
         for key, value in filters.items():
             if value in (None, "") or key in grouped_keys:
@@ -174,14 +174,14 @@ class FeedbackStore(
                 return False
         return True
 
-    def _discard_batch_draft_artifacts(self, batch: dict[str, Any]) -> None:
+    def _discard_batch_draft_artifacts(self, batch: JsonObject) -> None:
         cleanup_job_ids: list[str] = []
         with self.Session.begin() as db:
             self._discard_batch_draft_artifacts_row(db, batch, cleanup_job_ids)
         for job_id in cleanup_job_ids:
             self._cleanup_job_tmp(job_id)
 
-    def _discard_batch_draft_artifacts_row(self, db: Any, batch: dict[str, Any], cleanup_job_ids: list[str]) -> None:
+    def _discard_batch_draft_artifacts_row(self, db: Any, batch: JsonObject, cleanup_job_ids: list[str]) -> None:
         task_id = self._string(batch.get("optimization_task_id"))
         execution_job_id = self._string(batch.get("execution_job_id"))
         internal_proposal_id = self._string(batch.get("internal_proposal_id"))

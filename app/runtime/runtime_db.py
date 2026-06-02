@@ -5,12 +5,14 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import JSON, Float, ForeignKey, Index, String, create_engine, event
-from sqlalchemy.engine import Engine
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
+
+from .records.json_types import JsonObject
 
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -41,7 +43,7 @@ class SessionRecordModel(Base):
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     turns: Mapped[int] = mapped_column(default=0)
-    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class AgentRunModel(Base):
@@ -57,7 +59,7 @@ class AgentRunModel(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     langfuse_trace_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     langfuse_trace_url: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class FeedbackSignalModel(Base):
@@ -71,7 +73,7 @@ class FeedbackSignalModel(Base):
     alert_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     case_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class SocEventModel(Base):
@@ -86,7 +88,7 @@ class SocEventModel(Base):
     alert_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     case_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class PendingCorrelationModel(Base):
@@ -97,7 +99,7 @@ class PendingCorrelationModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class FeedbackSourceAnnotationModel(Base):
@@ -109,7 +111,7 @@ class FeedbackSourceAnnotationModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index("ix_feedback_source_annotations_source", FeedbackSourceAnnotationModel.source_kind, FeedbackSourceAnnotationModel.source_id, unique=True)
@@ -143,7 +145,7 @@ class EvidencePackageModel(Base):
     evidence_package_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     feedback_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_cases.feedback_case_id"), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    manifest_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    manifest_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class EvidenceFileModel(Base):
@@ -157,7 +159,7 @@ class EvidenceFileModel(Base):
     file_name: Mapped[str] = mapped_column(String(256), primary_key=True)
     file_type: Mapped[str] = mapped_column(String(128), index=True)
     sha256: Mapped[str] = mapped_column(String(64))
-    content_json: Mapped[Any] = mapped_column(JSON)
+    content_json: Mapped[object] = mapped_column(JSON)
 
 
 class AgentJobModel(Base):
@@ -181,11 +183,11 @@ class AgentJobModel(Base):
     output_schema_version: Mapped[str] = mapped_column(String(128))
     timeout_seconds: Mapped[int] = mapped_column(default=300)
     retry_count: Mapped[int] = mapped_column(default=0)
-    profile_version_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    input_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    raw_output_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    validated_output_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
-    error_json: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, nullable=True)
+    profile_version_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
+    input_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
+    raw_output_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
+    validated_output_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
+    error_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
 
 
 Index("ix_agent_jobs_type_status_created", AgentJobModel.job_type, AgentJobModel.status, AgentJobModel.created_at)
@@ -202,7 +204,7 @@ class OptimizationProposalModel(Base):
     actionability: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     target_path: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class ProposalReviewModel(Base):
@@ -213,7 +215,7 @@ class ProposalReviewModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     action: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class OptimizationTaskModel(Base):
@@ -224,7 +226,7 @@ class OptimizationTaskModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class FeedbackOptimizationBatchModel(Base):
@@ -235,7 +237,7 @@ class FeedbackOptimizationBatchModel(Base):
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     title: Mapped[str] = mapped_column(String(512))
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class ExecutionCompensationModel(Base):
@@ -250,7 +252,7 @@ class ExecutionCompensationModel(Base):
     execution_job_id: Mapped[str] = mapped_column(String(128), index=True)
     pre_execution_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     restore_status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class ExecutionApplicationModel(Base):
@@ -262,7 +264,7 @@ class ExecutionApplicationModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index("ix_execution_applications_job_created", ExecutionApplicationModel.execution_job_id, ExecutionApplicationModel.created_at)
@@ -281,7 +283,7 @@ class ExternalGovernanceItemModel(Base):
     owner: Mapped[str] = mapped_column(String(256), index=True)
     actionability: Mapped[str] = mapped_column(String(128), index=True)
     latest_notification_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class ExternalNotificationModel(Base):
@@ -294,7 +296,7 @@ class ExternalNotificationModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     webhook_alias: Mapped[str] = mapped_column(String(128), index=True)
     http_status: Mapped[Optional[int]] = mapped_column(nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class EvalCaseModel(Base):
@@ -319,7 +321,7 @@ class EvalCaseModel(Base):
     failure_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     superseded_by_eval_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     labels_json: Mapped[list[str]] = mapped_column(JSON, default=list)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index(
@@ -341,7 +343,7 @@ class EvalCaseRevisionModel(Base):
     created_by: Mapped[str] = mapped_column(String(128), index=True)
     reason: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
-    snapshot_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    snapshot_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index("ix_eval_case_revisions_case_number", EvalCaseRevisionModel.eval_case_id, EvalCaseRevisionModel.revision_number, unique=True)
@@ -357,8 +359,8 @@ class EvalCaseGovernanceEventModel(Base):
     role: Mapped[str] = mapped_column(String(128), default="developer", index=True)
     reason: Mapped[str] = mapped_column(String(2048))
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    before_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    after_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class EvalRunModel(Base):
@@ -372,7 +374,7 @@ class EvalRunModel(Base):
     optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
     regression_plan_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class EvalRunItemModel(Base):
@@ -384,7 +386,7 @@ class EvalRunItemModel(Base):
     agent_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class RegressionPlanModel(Base):
@@ -396,7 +398,7 @@ class RegressionPlanModel(Base):
     status: Mapped[str] = mapped_column(String(64), default="created", index=True)
     applied_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     selection_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index("ix_regression_plans_batch_fingerprint", RegressionPlanModel.batch_id, RegressionPlanModel.selection_fingerprint, unique=True)
@@ -411,7 +413,7 @@ class RegressionImpactAnalysisModel(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
     job_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    payload_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 Index("ix_regression_impact_analyses_eval_run", RegressionImpactAnalysisModel.eval_run_id, unique=True)
@@ -427,8 +429,8 @@ class RegressionGateOverrideModel(Base):
     reason: Mapped[str] = mapped_column(String(2048))
     expires_at: Mapped[str] = mapped_column(String(64), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    before_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
-    after_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    before_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    after_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
@@ -499,7 +501,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
                 session.add(SchemaMigration(version=version, applied_at=utc_now()))
 
 
-def _migrate_0002_regression_assets(connection: Any) -> None:
+def _migrate_0002_regression_assets(connection: Connection) -> None:
     connection.exec_driver_sql("DROP INDEX IF EXISTS ix_eval_cases_source_feedback_case_unique")
     columns = _table_columns(connection, "eval_cases")
     for column_name, ddl in {
@@ -567,7 +569,7 @@ def _migrate_0002_regression_assets(connection: Any) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_regression_plan_id ON eval_runs (regression_plan_id)")
 
 
-def _migrate_0003_agent_jobs(connection: Any) -> None:
+def _migrate_0003_agent_jobs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """
         CREATE TABLE IF NOT EXISTS agent_jobs (
@@ -611,7 +613,7 @@ def _migrate_0003_agent_jobs(connection: Any) -> None:
     )
 
 
-def _migrate_0004_unify_agent_jobs(connection: Any) -> None:
+def _migrate_0004_unify_agent_jobs(connection: Connection) -> None:
     connection.exec_driver_sql("DROP TABLE IF EXISTS feedback_jobs")
     connection.exec_driver_sql("DROP TABLE IF EXISTS optimization_executions")
     connection.exec_driver_sql(
@@ -639,11 +641,11 @@ def _migrate_0004_unify_agent_jobs(connection: Any) -> None:
     )
 
 
-def _table_columns(connection: Any, table_name: str) -> set[str]:
+def _table_columns(connection: Connection, table_name: str) -> set[str]:
     return {str(row[1]) for row in connection.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()}
 
 
-def _eval_case_content_hash(payload_json: Any, fallback: str) -> str:
+def _eval_case_content_hash(payload_json: object, fallback: str) -> str:
     try:
         payload = json.loads(payload_json) if isinstance(payload_json, str) else dict(payload_json or {})
     except (TypeError, ValueError):

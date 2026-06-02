@@ -20,7 +20,7 @@ from .store_projection_maps import ExternalGovernanceRowsBySourceIndex
 class FeedbackExternalGovernanceStoreMixin:
     """Facade and upsert helpers for external governance workflow items."""
 
-    def list_external_webhooks(self) -> list[dict[str, Any]]:
+    def list_external_webhooks(self) -> list[JsonObject]:
         return self.external_governance.list_webhooks()
 
     def list_external_governance_items(
@@ -30,7 +30,7 @@ class FeedbackExternalGovernanceStoreMixin:
         proposal_job_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         return self.external_governance.list_items(
             feedback_case_id=feedback_case_id,
             proposal_job_id=proposal_job_id,
@@ -38,7 +38,7 @@ class FeedbackExternalGovernanceStoreMixin:
             limit=limit,
         )
 
-    def find_external_governance_item(self, external_item_id: str) -> Optional[dict[str, Any]]:
+    def find_external_governance_item(self, external_item_id: str) -> Optional[JsonObject]:
         return self.external_governance.find_item(external_item_id)
 
     def notify_external_governance_item(
@@ -47,13 +47,13 @@ class FeedbackExternalGovernanceStoreMixin:
         *,
         webhook_alias: str,
         sender: Optional[ExternalWebhookSender] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         return self.external_governance.notify_item(external_item_id, webhook_alias=webhook_alias, sender=sender)
 
     def _upsert_external_governance_items(
         self,
-        normalized: dict[str, Any],
-        job: dict[str, Any],
+        normalized: JsonObject,
+        job: JsonObject,
     ) -> list[JsonObject]:
         guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
         if not guidance_items:
@@ -64,8 +64,8 @@ class FeedbackExternalGovernanceStoreMixin:
     def _upsert_external_governance_items_rows(
         self,
         db: Any,
-        normalized: dict[str, Any],
-        job: dict[str, Any],
+        normalized: JsonObject,
+        job: JsonObject,
     ) -> list[JsonObject]:
         guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
         if not guidance_items:
@@ -89,9 +89,9 @@ class FeedbackExternalGovernanceStoreMixin:
 
     def _upsert_external_governance_item_for_plan_task(
         self,
-        batch: dict[str, Any],
-        plan: dict[str, Any],
-        plan_task: dict[str, Any],
+        batch: JsonObject,
+        plan: JsonObject,
+        plan_task: JsonObject,
     ) -> JsonObject:
         existing_id = self._string(plan_task.get("external_item_id"))
         existing = self.find_external_governance_item(existing_id) if existing_id else None
@@ -143,9 +143,9 @@ class FeedbackExternalGovernanceStoreMixin:
         *,
         external_item_id: str,
         existing: Optional[JsonObject],
-        batch: dict[str, Any],
-        plan: dict[str, Any],
-        plan_task: dict[str, Any],
+        batch: JsonObject,
+        plan: JsonObject,
+        plan_task: JsonObject,
     ) -> JsonObject:
         now = utc_now()
         feedback_case_id = self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or ""
@@ -171,9 +171,9 @@ class FeedbackExternalGovernanceStoreMixin:
 
     def _plan_task_external_detail(
         self,
-        batch: dict[str, Any],
-        plan: dict[str, Any],
-        plan_task: dict[str, Any],
+        batch: JsonObject,
+        plan: JsonObject,
+        plan_task: JsonObject,
     ) -> JsonObject:
         return {
             "title": self._string(plan_task.get("title")) or "外部系统优化任务",

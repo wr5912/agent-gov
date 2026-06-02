@@ -6,7 +6,11 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..integrations.external_governance import ExternalWebhookSender
-from ..external_governance_mapping import apply_external_governance_record, external_governance_row_from_record
+from ..external_governance_mapping import (
+    apply_external_governance_record,
+    external_governance_record_from_row,
+    external_governance_row_from_record,
+)
 from ..records.external_governance_records import ExternalGovernanceItemRecord
 from ..runtime_db import ExternalGovernanceItemModel, utc_now
 
@@ -67,18 +71,15 @@ class FeedbackExternalGovernanceStoreMixin:
         existing_rows = db.scalars(
             select(ExternalGovernanceItemModel).where(ExternalGovernanceItemModel.proposal_job_id == job["job_id"])
         ).all()
-        existing_by_index = {
-            int((row.payload_json or {}).get("source_index")): row
-            for row in existing_rows
-            if isinstance((row.payload_json or {}).get("source_index"), int)
-        }
+        existing_by_index = self._external_governance_rows_by_source_index(existing_rows)
         result: list[dict[str, Any]] = []
         for index, guidance in enumerate(guidance_items):
-            payload = self._external_guidance_payload(index, guidance, job, existing_by_index.get(index))
             existing = existing_by_index.get(index)
+            existing_record = existing[1] if existing else None
+            payload = self._external_guidance_payload(index, guidance, job, existing_record)
             if existing:
-                record = ExternalGovernanceItemRecord.model_validate({**(existing.payload_json or {}), **payload})
-                apply_external_governance_record(existing, record)
+                row, record = existing
+                apply_external_governance_record(row, self._merge_external_governance_record(record, payload))
             else:
                 db.add(self._external_governance_row(payload))
             result.append({**guidance, **payload})
@@ -103,7 +104,10 @@ class FeedbackExternalGovernanceStoreMixin:
         with self.Session.begin() as db:
             row = db.get(ExternalGovernanceItemModel, external_item_id)
             if row:
-                record = ExternalGovernanceItemRecord.model_validate({**(row.payload_json or {}), **payload})
+                record = self._merge_external_governance_record(
+                    external_governance_record_from_row(row),
+                    payload,
+                )
                 apply_external_governance_record(row, record)
             else:
                 db.add(self._external_governance_row(payload))
@@ -114,7 +118,7 @@ class FeedbackExternalGovernanceStoreMixin:
         index: int,
         guidance: dict[str, Any],
         job: dict[str, Any],
-        existing: Optional[ExternalGovernanceItemModel],
+        existing: Optional[ExternalGovernanceItemRecord],
     ) -> dict[str, Any]:
         now = utc_now()
         return ExternalGovernanceItemRecord(
@@ -199,3 +203,20 @@ class FeedbackExternalGovernanceStoreMixin:
     def _external_governance_row(self, payload: dict[str, Any]) -> ExternalGovernanceItemModel:
         record = ExternalGovernanceItemRecord.model_validate(payload)
         return external_governance_row_from_record(record)
+
+    def _external_governance_rows_by_source_index(
+        self,
+        rows: list[ExternalGovernanceItemModel],
+    ) -> dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]]:
+        indexed: dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]] = {}
+        for row in rows:
+            record = external_governance_record_from_row(row)
+            indexed[record.source_index] = (row, record)
+        return indexed
+
+    def _merge_external_governance_record(
+        self,
+        record: ExternalGovernanceItemRecord,
+        payload: dict[str, Any],
+    ) -> ExternalGovernanceItemRecord:
+        return ExternalGovernanceItemRecord.model_validate({**record.to_payload(), **payload})

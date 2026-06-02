@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 from sqlalchemy import select
 
@@ -12,7 +12,11 @@ from ..external_governance_mapping import (
     external_governance_row_from_record,
 )
 from ..records.external_governance_records import ExternalGovernanceItemRecord
+from ..records.json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, utc_now
+
+
+ExternalGovernanceRowsBySourceIndex: TypeAlias = dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]]
 
 
 class FeedbackExternalGovernanceStoreMixin:
@@ -52,7 +56,7 @@ class FeedbackExternalGovernanceStoreMixin:
         self,
         normalized: dict[str, Any],
         job: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
         if not guidance_items:
             return []
@@ -64,7 +68,7 @@ class FeedbackExternalGovernanceStoreMixin:
         db: Any,
         normalized: dict[str, Any],
         job: dict[str, Any],
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
         if not guidance_items:
             return []
@@ -72,7 +76,7 @@ class FeedbackExternalGovernanceStoreMixin:
             select(ExternalGovernanceItemModel).where(ExternalGovernanceItemModel.proposal_job_id == job["job_id"])
         ).all()
         existing_by_index = self._external_governance_rows_by_source_index(existing_rows)
-        result: list[dict[str, Any]] = []
+        result: list[JsonObject] = []
         for index, guidance in enumerate(guidance_items):
             existing = existing_by_index.get(index)
             existing_record = existing[1] if existing else None
@@ -90,7 +94,7 @@ class FeedbackExternalGovernanceStoreMixin:
         batch: dict[str, Any],
         plan: dict[str, Any],
         plan_task: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         existing_id = self._string(plan_task.get("external_item_id"))
         existing = self.find_external_governance_item(existing_id) if existing_id else None
         external_item_id = existing_id or f"egi-{uuid.uuid4()}"
@@ -116,10 +120,10 @@ class FeedbackExternalGovernanceStoreMixin:
     def _external_guidance_payload(
         self,
         index: int,
-        guidance: dict[str, Any],
-        job: dict[str, Any],
+        guidance: JsonObject,
+        job: JsonObject,
         existing: Optional[ExternalGovernanceItemRecord],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         now = utc_now()
         return ExternalGovernanceItemRecord(
             external_item_id=existing.external_item_id if existing else f"egi-{uuid.uuid4()}",
@@ -140,11 +144,11 @@ class FeedbackExternalGovernanceStoreMixin:
         self,
         *,
         external_item_id: str,
-        existing: Optional[dict[str, Any]],
+        existing: Optional[JsonObject],
         batch: dict[str, Any],
         plan: dict[str, Any],
         plan_task: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         now = utc_now()
         feedback_case_id = self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or ""
         return ExternalGovernanceItemRecord(
@@ -172,7 +176,7 @@ class FeedbackExternalGovernanceStoreMixin:
         batch: dict[str, Any],
         plan: dict[str, Any],
         plan_task: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         return {
             "title": self._string(plan_task.get("title")) or "外部系统优化任务",
             "description": self._string(plan_task.get("description")) or "",
@@ -200,15 +204,15 @@ class FeedbackExternalGovernanceStoreMixin:
             "source_attribution_job_ids": plan_task.get("attribution_job_ids") or [],
         }
 
-    def _external_governance_row(self, payload: dict[str, Any]) -> ExternalGovernanceItemModel:
+    def _external_governance_row(self, payload: JsonObject) -> ExternalGovernanceItemModel:
         record = ExternalGovernanceItemRecord.model_validate(payload)
         return external_governance_row_from_record(record)
 
     def _external_governance_rows_by_source_index(
         self,
         rows: list[ExternalGovernanceItemModel],
-    ) -> dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]]:
-        indexed: dict[int, tuple[ExternalGovernanceItemModel, ExternalGovernanceItemRecord]] = {}
+    ) -> ExternalGovernanceRowsBySourceIndex:
+        indexed: ExternalGovernanceRowsBySourceIndex = {}
         for row in rows:
             record = external_governance_record_from_row(row)
             indexed[record.source_index] = (row, record)
@@ -217,6 +221,6 @@ class FeedbackExternalGovernanceStoreMixin:
     def _merge_external_governance_record(
         self,
         record: ExternalGovernanceItemRecord,
-        payload: dict[str, Any],
+        payload: JsonObject,
     ) -> ExternalGovernanceItemRecord:
         return ExternalGovernanceItemRecord.model_validate({**record.to_payload(), **payload})

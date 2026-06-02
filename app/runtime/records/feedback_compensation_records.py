@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.runtime_db import ExecutionCompensationModel
+
+from .json_types import JsonObject
 
 
 EXECUTION_COMPENSATION_SCHEMA_VERSION = "execution-compensation/v1"
@@ -37,7 +39,7 @@ class ExecutionCompensationRecord(BaseModel):
     restore_status: ExecutionRestoreStatus
     original_error: str
     restore_error: Optional[str] = None
-    manual_restore_result: dict[str, Any] = Field(default_factory=dict)
+    manual_restore_result: JsonObject = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_status_matches_restore_status(self) -> "ExecutionCompensationRecord":
@@ -78,7 +80,7 @@ class ExecutionCompensationRecord(BaseModel):
         self,
         *,
         updated_at: str,
-        restore_result: dict[str, Any] | None = None,
+        restore_result: JsonObject | None = None,
     ) -> "ExecutionCompensationRecord":
         payload = self.model_dump(mode="json")
         payload.update(
@@ -109,7 +111,7 @@ class ExecutionCompensationRecord(BaseModel):
         )
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

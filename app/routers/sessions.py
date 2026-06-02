@@ -4,7 +4,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends
 
-from app.runtime.schemas import SessionInfo
+from app.runtime.schemas import SessionDeleteResponse, SessionInfo
 from app.runtime.session_store import LocalSessionStore
 
 
@@ -21,10 +21,11 @@ def create_sessions_router(*, session_store: LocalSessionStore, require_api_key:
 
     @router.delete(
         "/sessions/{session_id}",
+        response_model=SessionDeleteResponse,
         summary="Delete one API session mapping",
     )
-    async def delete_session(session_id: str) -> dict[str, object]:
+    async def delete_session(session_id: str) -> SessionDeleteResponse:
         deleted = session_store.delete(session_id)
-        return {"deleted": deleted, "session_id": session_id}
+        return SessionDeleteResponse(deleted=deleted, session_id=session_id)
 
     return router

@@ -88,7 +88,7 @@ def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert seen["prompt_is_string"] is False
     assert seen["prompt_items"] == [
         {
@@ -121,7 +121,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     options = seen["options"]
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert options.setting_sources == ["user", "project", "local"]
     assert options.settings is None
     assert options.mcp_servers == {}
@@ -165,7 +165,7 @@ def test_main_runtime_profile_filters_mcp_servers(tmp_path, monkeypatch):
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert set(seen["options"].mcp_servers) == {"sec-ops-data", "security-kb"}
 
 
@@ -324,7 +324,7 @@ def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     options = seen["options"]
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert options.settings is None
     assert options.mcp_servers == {}
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
@@ -369,7 +369,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
     env = seen["options"].env
     expected_auth = base64.b64encode(b"pk-test:sk-test").decode()
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert env["CLAUDE_CODE_ENABLE_TELEMETRY"] == "1"
     assert env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] == "1"
     assert env["OTEL_TRACES_EXPORTER"] == "otlp"
@@ -404,8 +404,8 @@ def test_langfuse_requires_keys_when_enabled(tmp_path):
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
-    assert result["answer"] == ""
-    assert result["errors"] == [
+    assert result.answer == ""
+    assert result.errors == [
         "ValueError: LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
     ]
 
@@ -442,7 +442,7 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
     env = seen["options"].env
 
-    assert result["errors"] == []
+    assert result.errors == []
     assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://collector:4318"
     assert env["OTEL_LOG_USER_PROMPTS"] == "1"
     assert env["OTEL_LOG_TOOL_DETAILS"] == "1"
@@ -506,11 +506,11 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
 
     result = build_health_payload(settings=settings, app=main.app, agent_version_store=main.agent_version_store)
 
-    assert result["langfuse_enabled"] is True
-    assert result["langfuse_otel_endpoint_configured"] is True
-    assert result["langfuse_public_key_configured"] is True
-    assert result["langfuse_secret_key_configured"] is True
-    assert result["langfuse_otel_signals"] == ["traces", "logs"]
+    assert result.langfuse_enabled is True
+    assert result.langfuse_otel_endpoint_configured is True
+    assert result.langfuse_public_key_configured is True
+    assert result.langfuse_secret_key_configured is True
+    assert result.langfuse_otel_signals == ["traces", "logs"]
     serialized = str(result)
     assert "pk-test" not in serialized
     assert "sk-test" not in serialized
@@ -551,8 +551,8 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
-    assert result["answer"] == "bad model"
-    assert result["errors"] == ["Claude Code API error (404): bad model"]
+    assert result.answer == "bad model"
+    assert result.errors == ["Claude Code API error (404): bad model"]
 
 
 def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
@@ -636,16 +636,16 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
 
     result = asyncio.run(runtime.run(ChatRequest(message="hello", metadata={"api_key": "secret"})))
 
-    assert result["answer"] == "hello answer"
-    assert result["agent_activity"]["requested_skills"] == []
-    assert result["agent_activity"]["tool_names"] == [
+    assert result.answer == "hello answer"
+    assert result.agent_activity["requested_skills"] == []
+    assert result.agent_activity["tool_names"] == [
         "Skill",
         "Read",
         "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get",
     ]
-    assert result["agent_activity"]["skill_calls"][0]["name"] == "trace-debugger"
-    assert result["agent_activity"]["tool_results"][0]["tool_use_id"] == "toolu-read"
-    assert result["agent_activity"]["tool_results"][1]["name"] == (
+    assert result.agent_activity["skill_calls"][0]["name"] == "trace-debugger"
+    assert result.agent_activity["tool_results"][0]["tool_use_id"] == "toolu-read"
+    assert result.agent_activity["tool_results"][1]["name"] == (
         "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get"
     )
     assert fake_langfuse.flushed is True

@@ -7,6 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..records.case_records import FeedbackCaseRecord
+from ..records.json_types import JsonObject
 from ..runtime_db import FeedbackCaseModel, utc_now
 
 
@@ -19,14 +20,14 @@ class FeedbackCaseStoreMixin:
         source_ids: list[str],
         title: Optional[str] = None,
         priority: str = "medium",
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         unique_ids = self._unique_strings(source_ids)
         if not unique_ids:
             return None
 
-        signals: list[dict[str, Any]] = []
-        events: list[dict[str, Any]] = []
-        pending: list[dict[str, Any]] = []
+        signals: list[JsonObject] = []
+        events: list[JsonObject] = []
+        pending: list[JsonObject] = []
         unresolved: list[str] = []
 
         for source_id in unique_ids:
@@ -70,9 +71,9 @@ class FeedbackCaseStoreMixin:
         status: Optional[str] = None,
         q: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         query_text = q.lower() if q else None
-        result: list[dict[str, Any]] = []
+        result: list[JsonObject] = []
         with self.Session() as db:
             rows = db.scalars(select(FeedbackCaseModel).order_by(FeedbackCaseModel.updated_at.desc())).all()
             for row in rows:
@@ -86,7 +87,7 @@ class FeedbackCaseStoreMixin:
                     break
         return result
 
-    def find_case(self, feedback_case_id: str) -> Optional[dict[str, Any]]:
+    def find_case(self, feedback_case_id: str) -> Optional[JsonObject]:
         if not feedback_case_id:
             return None
         with self.Session() as db:
@@ -97,12 +98,12 @@ class FeedbackCaseStoreMixin:
         self,
         *,
         source_ids: list[str],
-        signals: list[dict[str, Any]],
-        events: list[dict[str, Any]],
-        pending: list[dict[str, Any]],
+        signals: list[JsonObject],
+        events: list[JsonObject],
+        pending: list[JsonObject],
         title: Optional[str],
         priority: str,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         records = [*signals, *events, *pending]
         now = utc_now()
         return self._scrub_record(
@@ -130,9 +131,9 @@ class FeedbackCaseStoreMixin:
     def _feedback_case_run_ids(
         self,
         *,
-        signals: list[dict[str, Any]],
-        events: list[dict[str, Any]],
-        pending: list[dict[str, Any]],
+        signals: list[JsonObject],
+        events: list[JsonObject],
+        pending: list[JsonObject],
     ) -> list[str]:
         return self._unique_strings(
             [
@@ -142,7 +143,7 @@ class FeedbackCaseStoreMixin:
             ]
         )
 
-    def _case_model_from_dict(self, feedback_case: dict[str, Any]) -> FeedbackCaseModel:
+    def _case_model_from_dict(self, feedback_case: JsonObject) -> FeedbackCaseModel:
         record = FeedbackCaseRecord.model_validate(feedback_case)
         return FeedbackCaseModel(
             feedback_case_id=record.feedback_case_id,
@@ -164,18 +165,18 @@ class FeedbackCaseStoreMixin:
             case_ids_json=record.case_ids,
         )
 
-    def _case_to_dict(self, row: FeedbackCaseModel) -> dict[str, Any]:
+    def _case_to_dict(self, row: FeedbackCaseModel) -> JsonObject:
         return FeedbackCaseRecord.from_row(row).to_payload()
 
     def _append_case_update(
         self,
-        feedback_case: dict[str, Any],
+        feedback_case: JsonObject,
         *,
         status: Optional[str] = None,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
         proposal_job_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         with self.Session.begin() as db:
             if not self._append_case_update_row(
                 db,

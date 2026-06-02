@@ -65,6 +65,11 @@ class SessionInfo(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class SessionDeleteResponse(BaseModel):
+    deleted: bool
+    session_id: str
+
+
 class AgentInfo(BaseModel):
     name: str
     path: str
@@ -99,6 +104,14 @@ class ConfigMappingResponse(BaseModel):
     claude_config_dir: Optional[str] = None
     setting_sources_effective: Optional[list[str]] = None
     mappings: list[ConfigMappingItem]
+
+
+class RuntimeRootResponse(BaseModel):
+    name: str
+    health: str
+    docs: Optional[str] = None
+    redoc: Optional[str] = None
+    openapi: Optional[str] = None
 
 
 class RuntimeDocsResponse(BaseModel):

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -51,7 +51,7 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         alert_id: str | None = None,
         case_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[AgentRunResponse]:
         return feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, limit=limit)
 
 
@@ -62,7 +62,7 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
         response_model=FeedbackSignalResponse,
         summary="Collect one feedback signal without attribution or proposal generation",
     )
-    async def create_feedback_signal(req: FeedbackSignalCreateRequest) -> dict[str, Any]:
+    async def create_feedback_signal(req: FeedbackSignalCreateRequest) -> FeedbackSignalResponse:
         return feedback_store.create_signal(req)
 
     @router.get(
@@ -77,7 +77,7 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
         case_id: str | None = None,
         source_type: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[FeedbackSignalResponse]:
         return feedback_store.list_signals(
             run_id=run_id,
             session_id=session_id,
@@ -92,7 +92,7 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
         response_model=FeedbackSignalResponse,
         summary="Get one feedback signal",
     )
-    async def get_feedback_signal(signal_id: str) -> dict[str, Any]:
+    async def get_feedback_signal(signal_id: str) -> FeedbackSignalResponse:
         signal = feedback_store.find_signal(signal_id)
         return ensure_found(signal, "Feedback signal not found")
 
@@ -119,7 +119,7 @@ def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore)
         case_id: str | None = None,
         event_type: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[SocEventResponse]:
         return feedback_store.list_events(
             run_id=run_id,
             session_id=session_id,
@@ -134,7 +134,7 @@ def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore)
         response_model=SocEventResponse,
         summary="Get one SOC event",
     )
-    async def get_soc_event(event_id: str) -> dict[str, Any]:
+    async def get_soc_event(event_id: str) -> SocEventResponse:
         event = feedback_store.find_event(event_id)
         return ensure_found(event, "SOC event not found")
 
@@ -149,7 +149,7 @@ def _register_pending_correlation_routes(router: APIRouter, feedback_store: Feed
     async def list_pending_correlations(
         status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[PendingCorrelationResponse]:
         return feedback_store.list_pending(status=status, limit=limit)
 
     @router.post(
@@ -157,7 +157,7 @@ def _register_pending_correlation_routes(router: APIRouter, feedback_store: Feed
         response_model=PendingCorrelationResponse,
         summary="Resolve one pending feedback correlation",
     )
-    async def resolve_pending_correlation(pending_id: str, req: PendingCorrelationResolveRequest) -> dict[str, Any]:
+    async def resolve_pending_correlation(pending_id: str, req: PendingCorrelationResolveRequest) -> PendingCorrelationResponse:
         resolved = feedback_store.resolve_pending(
             pending_id,
             run_id=req.run_id,
@@ -176,7 +176,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         response_model=list[FeedbackSourceResponse],
         summary="List unified feedback sources for the product workflow",
     )
-    async def list_feedback_sources(limit: int = Query(default=500, ge=1, le=1000)) -> list[dict[str, Any]]:
+    async def list_feedback_sources(limit: int = Query(default=500, ge=1, le=1000)) -> list[FeedbackSourceResponse]:
         return feedback_store.list_feedback_sources(limit=limit)
 
     @router.get(
@@ -184,7 +184,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         response_model=FeedbackSourceResponse,
         summary="Get one unified feedback source",
     )
-    async def get_feedback_source(source_kind: str, source_id: str) -> dict[str, Any]:
+    async def get_feedback_source(source_kind: str, source_id: str) -> FeedbackSourceResponse:
         source = feedback_store.find_feedback_source(source_kind, source_id)
         return ensure_found(source, "Feedback source not found")
 
@@ -197,7 +197,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         source_kind: str,
         source_id: str,
         req: FeedbackSourceUpdateRequest,
-    ) -> dict[str, Any]:
+    ) -> FeedbackSourceResponse:
         source = feedback_store.update_feedback_source_annotation(source_kind, source_id, req.model_dump(exclude_unset=True))
         return ensure_found(source, "Feedback source not found")
 
@@ -206,7 +206,7 @@ def _register_feedback_source_routes(router: APIRouter, feedback_store: Feedback
         response_model=AgentJobResponse,
         summary="Queue regression eval case generation for selected feedback sources",
     )
-    async def generate_feedback_source_eval_cases(req: FeedbackEvalCaseGenerateRequest) -> dict[str, Any]:
+    async def generate_feedback_source_eval_cases(req: FeedbackEvalCaseGenerateRequest) -> AgentJobResponse:
         require_request(bool(req.source_refs), "source_refs is required")
         job = runtime.queue_eval_case_generation_job(
             source_refs=[item.model_dump(mode="json") for item in req.source_refs],

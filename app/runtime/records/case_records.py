@@ -7,7 +7,7 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import FeedbackCaseModel
 from app.runtime.state_machines import CASE_STATES, validate_transition
 
-from .json_types import StrictRuntimeRecord
+from .json_types import JsonObject, StrictRuntimeRecord
 
 
 FeedbackCaseStatus = Literal[
@@ -96,7 +96,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
             payload["proposal_job_ids"] = [proposal_job_id]
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

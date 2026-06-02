@@ -6,6 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import ConflictError
+from ..records.json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import OptimizationTaskModel, utc_now
 
@@ -16,7 +17,7 @@ MANUAL_APPLY_TASK_STATES = {"pending_execution", "failed", "needs_human_review"}
 class FeedbackTaskStoreMixin:
     """Store operations for optimization task records and task state snapshots."""
 
-    def create_task(self, *, proposal_id: str, execution_mode: str = "manual_or_patch", comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def create_task(self, *, proposal_id: str, execution_mode: str = "manual_or_patch", comment: Optional[str] = None) -> Optional[JsonObject]:
         proposal = self.find_proposal(proposal_id)
         if not proposal or proposal.get("status") != "approved":
             return None
@@ -61,7 +62,7 @@ class FeedbackTaskStoreMixin:
             )
         return record.to_payload()
 
-    def _find_latest_task_for_proposal(self, proposal_id: str) -> Optional[dict[str, Any]]:
+    def _find_latest_task_for_proposal(self, proposal_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
                 select(OptimizationTaskModel)
@@ -70,7 +71,7 @@ class FeedbackTaskStoreMixin:
             ).first()
             return self._task_to_dict(row) if row else None
 
-    def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(OptimizationTaskModel).order_by(OptimizationTaskModel.created_at.desc()).limit(limit)
         if feedback_case_id:
             stmt = stmt.where(OptimizationTaskModel.feedback_case_id == feedback_case_id)
@@ -82,27 +83,48 @@ class FeedbackTaskStoreMixin:
     def target_allowed(self, target_path: str) -> bool:
         return self._target_allowed(target_path)
 
-    def find_task(self, task_id: str) -> Optional[dict[str, Any]]:
+    def find_task(self, task_id: str) -> Optional[JsonObject]:
+        record = self.find_task_record(task_id)
+        return record.to_payload() if record else None
+
+    def find_task_record(self, task_id: str) -> Optional[OptimizationTaskRecord]:
         if not task_id:
             return None
         with self.Session() as db:
             row = db.get(OptimizationTaskModel, task_id)
-            return self._task_to_dict(row) if row else None
-
+            return OptimizationTaskRecord.from_row(row) if row else None
 
     def mark_task_applied(
         self,
         task_id: str,
         *,
-        agent_version: dict[str, Any],
+        agent_version: JsonObject,
         note: Optional[str] = None,
-        pre_execution_version: Optional[dict[str, Any]] = None,
-        execution_job: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
-        task = self.find_task(task_id)
+        pre_execution_version: Optional[JsonObject] = None,
+        execution_job: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
+        record = self.mark_task_applied_record(
+            task_id,
+            agent_version=agent_version,
+            note=note,
+            pre_execution_version=pre_execution_version,
+            execution_job=execution_job,
+        )
+        return record.to_payload() if record else None
+
+    def mark_task_applied_record(
+        self,
+        task_id: str,
+        *,
+        agent_version: JsonObject,
+        note: Optional[str] = None,
+        pre_execution_version: Optional[JsonObject] = None,
+        execution_job: Optional[JsonObject] = None,
+    ) -> Optional[OptimizationTaskRecord]:
+        task = self.find_task_record(task_id)
         if not task:
             return None
-        if task.get("applied_agent_version_id"):
+        if task.applied_agent_version_id:
             return task
         if execution_job is None:
             self._assert_task_can_mark_applied_manually(task)
@@ -117,20 +139,24 @@ class FeedbackTaskStoreMixin:
             )
             if not row:
                 return None
-            updated_task = self._task_to_dict(row)
-            self._sync_task_execution_to_source_batch_row(db, updated_task, execution_job)
-        return self.find_task(task_id)
+            updated_task = OptimizationTaskRecord.from_row(row)
+            self._sync_task_execution_to_source_batch_row(db, updated_task.to_payload(), execution_job)
+        return self.find_task_record(task_id)
 
-    def ensure_task_can_mark_applied_manually(self, task_id: str) -> Optional[dict[str, Any]]:
-        task = self.find_task(task_id)
+    def ensure_task_can_mark_applied_manually(self, task_id: str) -> Optional[JsonObject]:
+        task = self.ensure_task_can_mark_applied_manually_record(task_id)
+        return task.to_payload() if task else None
+
+    def ensure_task_can_mark_applied_manually_record(self, task_id: str) -> Optional[OptimizationTaskRecord]:
+        task = self.find_task_record(task_id)
         if not task:
             return None
-        if not task.get("applied_agent_version_id"):
+        if not task.applied_agent_version_id:
             self._assert_task_can_mark_applied_manually(task)
         return task
 
-    def _assert_task_can_mark_applied_manually(self, task: dict[str, Any]) -> None:
-        if task.get("status") not in MANUAL_APPLY_TASK_STATES:
+    def _assert_task_can_mark_applied_manually(self, task: OptimizationTaskRecord) -> None:
+        if task.status not in MANUAL_APPLY_TASK_STATES:
             raise ConflictError("Task cannot be marked applied from current status")
 
     def update_task_status(
@@ -138,8 +164,8 @@ class FeedbackTaskStoreMixin:
         task_id: str,
         *,
         status: str,
-        fields: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        fields: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         return self._update_task_payload(task_id, status=status, fields=fields or {})
 
 
@@ -148,8 +174,8 @@ class FeedbackTaskStoreMixin:
         task_id: str,
         *,
         status: str,
-        fields: dict[str, Any],
-    ) -> Optional[dict[str, Any]]:
+        fields: JsonObject,
+    ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._update_task_payload_row(db, task_id, status=status, fields=fields):
                 return None
@@ -166,18 +192,18 @@ class FeedbackTaskStoreMixin:
         row.payload_json = record.to_payload()
         return row
 
-    def _task_to_dict(self, row: OptimizationTaskModel) -> dict[str, Any]:
+    def _task_to_dict(self, row: OptimizationTaskModel) -> JsonObject:
         return OptimizationTaskRecord.from_row(row).to_payload()
 
     def _mark_task_applied_row(
         self,
         db: Any,
-        task: dict[str, Any],
+        task: OptimizationTaskRecord,
         *,
-        agent_version: dict[str, Any],
+        agent_version: JsonObject,
         note: Optional[str] = None,
-        pre_execution_version: Optional[dict[str, Any]] = None,
-        execution_job: Optional[dict[str, Any]] = None,
+        pre_execution_version: Optional[JsonObject] = None,
+        execution_job: Optional[JsonObject] = None,
     ) -> Optional[OptimizationTaskModel]:
         fields = {
             "applied_at": utc_now(),
@@ -190,7 +216,7 @@ class FeedbackTaskStoreMixin:
             fields["pre_execution_agent_version"] = pre_execution_version
         if execution_job:
             job_id = self._string(execution_job.get("execution_job_id"))
-            job_ids = [str(item) for item in task.get("execution_job_ids") or [] if item]
+            job_ids = [str(item) for item in task.execution_job_ids if item]
             if job_id and job_id not in job_ids:
                 job_ids.append(job_id)
             fields["execution_job_ids"] = job_ids
@@ -198,7 +224,7 @@ class FeedbackTaskStoreMixin:
             fields["latest_execution_job"] = execution_job
         return self._update_task_payload_row(
             db,
-            str(task["optimization_task_id"]),
+            task.optimization_task_id,
             status="applied_pending_regression",
             fields=fields,
         )

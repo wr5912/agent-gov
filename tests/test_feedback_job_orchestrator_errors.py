@@ -57,8 +57,9 @@ def test_attribution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_f
 
     job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"], force=True))
 
-    assert job["status"] == "failed"
-    assert job["error_json"]["error_code"] == error_code
+    assert job.status == "failed"
+    assert job.error_json is not None
+    assert job.error_json.error_code == error_code
 
 
 @pytest.mark.parametrize(
@@ -75,8 +76,9 @@ def test_proposal_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fact
 
     job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"], force=True))
 
-    assert job["status"] == "failed"
-    assert job["error_json"]["error_code"] == error_code
+    assert job.status == "failed"
+    assert job.error_json is not None
+    assert job.error_json.error_code == error_code
 
 
 @pytest.mark.parametrize(
@@ -93,9 +95,11 @@ def test_batch_plan_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fa
 
     updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], force=True))
 
-    assert updated["status"] == "needs_human_review"
-    assert updated["optimization_plan_job"]["status"] == "failed"
-    assert updated["optimization_plan_job"]["error_json"]["error_code"] == error_code
+    assert updated.status == "needs_human_review"
+    assert updated.optimization_plan_job is not None
+    assert updated.optimization_plan_job.status == "failed"
+    assert updated.optimization_plan_job.error_json is not None
+    assert updated.optimization_plan_job.error_json.error_code == error_code
 
 
 @pytest.mark.parametrize(
@@ -112,5 +116,6 @@ def test_execution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fac
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"], force=True))
 
-    assert job["status"] == "failed"
-    assert job["error_json"]["error_code"] == error_code
+    assert job.status == "failed"
+    assert job.error_json is not None
+    assert job.error_json.error_code == error_code

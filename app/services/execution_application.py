@@ -6,9 +6,18 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Awaitable, Callable
 
+from pydantic import BaseModel
+
 from app.runtime.agent_version_store import AgentVersionStore
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
+from app.runtime.records.json_types import JsonObject
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
+from app.runtime.response_schemas.feedback_workflow_response_schemas import (
+    ExecutionCompensationResponse,
+    OptimizationExecutionApplyResponse,
+    OptimizationTaskResponse,
+)
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.settings import AppSettings
 
@@ -29,6 +38,12 @@ class ExecutionApplicationError(FeedbackStoreError):
             self.error_code = "CONFLICT"
         else:
             self.error_code = "EXECUTION_APPLICATION_ERROR"
+
+
+class ExecutionRunApplyResult(BaseModel):
+    execution_job: AgentJobResponse | None = None
+    apply_result: OptimizationExecutionApplyResponse | None = None
+    optimization_task: OptimizationTaskResponse | None = None
 
 
 class ExecutionApplicationService:
@@ -52,23 +67,25 @@ class ExecutionApplicationService:
         self,
         task_id: str,
         *,
-        run_execution_job: Callable[..., Awaitable[dict[str, Any] | None]],
+        run_execution_job: Callable[..., Awaitable[AgentJobResponse | dict[str, Any] | None]],
         force: bool,
         note: str,
-    ) -> dict[str, Any]:
+    ) -> ExecutionRunApplyResult:
         execution_job = await run_execution_job(task_id, force=force)
+        execution_job_payload = self._agent_job_payload(execution_job)
         apply_result = None
-        if execution_job and self._execution_plan_ready(execution_job):
+        if execution_job_payload and self._execution_plan_ready(execution_job_payload):
             apply_result = self.apply_ready_execution_job(
                 task_id,
-                str(execution_job.get("execution_job_id") or execution_job["job_id"]),
+                str(execution_job_payload.get("execution_job_id") or execution_job_payload["job_id"]),
                 note=note,
             )
-        return {
-            "execution_job": execution_job,
-            "apply_result": apply_result,
-            "optimization_task": self.feedback_store.find_task(task_id),
-        }
+        task = self.feedback_store.find_task(task_id)
+        return ExecutionRunApplyResult(
+            execution_job=AgentJobResponse.model_validate(execution_job_payload) if execution_job_payload else None,
+            apply_result=apply_result,
+            optimization_task=OptimizationTaskResponse.model_validate(task) if task else None,
+        )
 
     def apply_ready_execution_job(
         self,
@@ -76,26 +93,26 @@ class ExecutionApplicationService:
         execution_job_id: str,
         *,
         note: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> OptimizationExecutionApplyResponse:
         with self._apply_lock:
             return self._apply_ready_execution_job_locked(task_id, execution_job_id, note=note)
 
-    def mark_task_applied_manually(self, task_id: str, *, note: str | None = None) -> dict[str, Any]:
+    def mark_task_applied_manually(self, task_id: str, *, note: str | None = None) -> OptimizationTaskResponse:
         with self._apply_lock:
-            task = self.feedback_store.ensure_task_can_mark_applied_manually(task_id)
+            task = self.feedback_store.ensure_task_can_mark_applied_manually_record(task_id)
             if not task:
                 raise ExecutionApplicationError(404, "Optimization task not found")
-            if task.get("applied_agent_version_id"):
-                return task
+            if task.applied_agent_version_id:
+                return OptimizationTaskResponse.model_validate(task.to_payload())
             version = self.agent_version_store.create_snapshot(
                 reason="proposal_applied",
-                source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
+                source_proposal_ids=[str(item) for item in task.proposal_ids if item],
                 note=note or f"优化任务 {task_id} 已人工应用，创建主智能体版本快照。",
             )
-            updated = self.feedback_store.mark_task_applied(task_id, agent_version=version, note=note)
+            updated = self.feedback_store.mark_task_applied_record(task_id, agent_version=version, note=note)
             if not updated:
                 raise ExecutionApplicationError(404, "Optimization task not found")
-            return updated
+            return OptimizationTaskResponse.model_validate(updated.to_payload())
 
     def _apply_ready_execution_job_locked(
         self,
@@ -103,7 +120,7 @@ class ExecutionApplicationService:
         execution_job_id: str,
         *,
         note: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> OptimizationExecutionApplyResponse:
         task = self.feedback_store.find_task(task_id)
         if not task:
             raise ExecutionApplicationError(404, "Optimization task not found")
@@ -166,12 +183,16 @@ class ExecutionApplicationService:
                 error=exc,
             )
             raise ExecutionApplicationError(409, detail) from exc
-        return {
-            "execution_job": self.feedback_store.get_execution_job(execution_job_id),
-            "execution_application": execution_application,
-            "optimization_task": self.feedback_store.find_task(task_id),
-            "applied_diff": applied_diff,
-        }
+        execution_job = self.feedback_store.get_execution_job(execution_job_id)
+        optimization_task = self.feedback_store.find_task(task_id)
+        if not execution_job or not optimization_task:
+            raise ExecutionApplicationError(404, "Execution application result not found")
+        return OptimizationExecutionApplyResponse(
+            execution_job=execution_job,
+            execution_application=execution_application,
+            optimization_task=optimization_task,
+            applied_diff=applied_diff,
+        )
 
     def _compensate_post_write_failure(
         self,
@@ -235,13 +256,13 @@ class ExecutionApplicationService:
         plan = job.get("validated_output_json") if isinstance(job.get("validated_output_json"), dict) else {}
         return job.get("status") == "completed" and plan.get("status") == "ready"
 
-    def restore_execution_compensation(self, compensation_id: str) -> dict[str, Any]:
+    def restore_execution_compensation(self, compensation_id: str) -> ExecutionCompensationResponse:
         compensation = self.feedback_store.find_execution_compensation(compensation_id)
         if not compensation:
             raise ExecutionApplicationError(404, "Execution compensation not found")
         record = ExecutionCompensationRecord.model_validate(compensation)
         if record.status == "resolved":
-            return record.to_payload()
+            return ExecutionCompensationResponse.model_validate(record.to_payload())
         if record.status != "pending_manual_recovery":
             raise ExecutionApplicationError(409, "Execution compensation is not pending manual recovery")
         version_id = record.pre_execution_agent_version_id or ""
@@ -265,7 +286,7 @@ class ExecutionApplicationService:
         )
         if not updated:
             raise ExecutionApplicationError(404, "Execution compensation not found")
-        return updated
+        return ExecutionCompensationResponse.model_validate(updated)
 
     def apply_execution_operations(self, operations: list[Any]) -> None:
         if not operations:
@@ -333,6 +354,14 @@ class ExecutionApplicationService:
                     rollback_errors.append(f"{dest}: {rollback_exc}")
             suffix = f"; rollback errors: {'; '.join(rollback_errors)}" if rollback_errors else ""
             raise ExecutionApplicationError(409, f"Execution apply failed and was rolled back: {exc}{suffix}") from exc
+
+    @staticmethod
+    def _agent_job_payload(job: AgentJobResponse | JsonObject | None) -> JsonObject | None:
+        if job is None:
+            return None
+        if isinstance(job, AgentJobResponse):
+            return job.model_dump(mode="json")
+        return job
 
     def safe_workspace_target(self, target_path: str) -> Path:
         if not target_path:

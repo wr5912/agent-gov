@@ -115,7 +115,7 @@ class EvalCaseRecord(StrictRuntimeRecord):
         payload["promotion_status"] = promotion_status
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -194,7 +194,7 @@ class EvalCaseRevisionRecord(StrictRuntimeRecord):
             raise ValueError("revision_number must be positive")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -241,7 +241,7 @@ class EvalCaseGovernanceEventRecord(StrictRuntimeRecord):
                 raise ValueError(f"{key} cannot be empty")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

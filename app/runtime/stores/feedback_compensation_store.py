@@ -7,6 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..records.feedback_compensation_records import ExecutionCompensationRecord, apply_execution_compensation_record
+from ..records.json_types import JsonObject
 from ..runtime_db import ExecutionCompensationModel, utc_now
 
 
@@ -22,7 +23,7 @@ class FeedbackCompensationStoreMixin:
         restore_status: str,
         original_error: str,
         restore_error: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         now = utc_now()
         record = ExecutionCompensationRecord.post_write_failure(
             compensation_id=f"fco-{uuid.uuid4()}",
@@ -39,7 +40,7 @@ class FeedbackCompensationStoreMixin:
             db.add(row)
         return record.to_payload()
 
-    def find_execution_compensation(self, compensation_id: str) -> Optional[dict[str, Any]]:
+    def find_execution_compensation(self, compensation_id: str) -> Optional[JsonObject]:
         if not compensation_id:
             return None
         with self.Session() as db:
@@ -53,7 +54,7 @@ class FeedbackCompensationStoreMixin:
         optimization_task_id: Optional[str] = None,
         execution_job_id: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         safe_limit = max(1, min(int(limit or 100), 500))
         stmt = (
             select(ExecutionCompensationModel)
@@ -73,8 +74,8 @@ class FeedbackCompensationStoreMixin:
         self,
         compensation_id: str,
         *,
-        restore_result: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        restore_result: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         return self._update_execution_compensation(
             compensation_id,
             update_record=lambda record, now: record.mark_resolved(
@@ -87,7 +88,7 @@ class FeedbackCompensationStoreMixin:
         self,
         compensation_id: str,
         restore_error: str,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         return self._update_execution_compensation(
             compensation_id,
             update_record=lambda record, now: record.mark_restore_failed(
@@ -96,7 +97,7 @@ class FeedbackCompensationStoreMixin:
             ),
         )
 
-    def _execution_compensations_for_job(self, execution_job_id: str) -> list[dict[str, Any]]:
+    def _execution_compensations_for_job(self, execution_job_id: str) -> list[JsonObject]:
         if not execution_job_id:
             return []
         return self.list_execution_compensations(execution_job_id=execution_job_id, limit=20)
@@ -106,7 +107,7 @@ class FeedbackCompensationStoreMixin:
         compensation_id: str,
         *,
         update_record: Callable[[ExecutionCompensationRecord, str], ExecutionCompensationRecord],
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         now = utc_now()
         updated: ExecutionCompensationRecord | None = None
         with self.Session.begin() as db:
@@ -118,7 +119,7 @@ class FeedbackCompensationStoreMixin:
             self._apply_execution_compensation_record(row, updated)
         return updated.to_payload() if updated else None
 
-    def _execution_compensation_payload(self, row: ExecutionCompensationModel) -> dict[str, Any]:
+    def _execution_compensation_payload(self, row: ExecutionCompensationModel) -> JsonObject:
         return self._execution_compensation_record(row).to_payload()
 
     def _execution_compensation_record(self, row: ExecutionCompensationModel) -> ExecutionCompensationRecord:

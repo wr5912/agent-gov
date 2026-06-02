@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
+from ..records.json_types import JsonObject
 from ..runtime_db import (
     EvalRunItemModel,
     EvalRunModel,
@@ -22,7 +23,7 @@ class FeedbackEvalStoreMixin:
         *,
         feedback_case_id: Optional[str] = None,
         limit: int = 100,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         return self.queue_feedback_eval_case_generation_agent_job(feedback_case_id=feedback_case_id, limit=limit) or {
             "created": 0,
             "reused": 0,
@@ -32,7 +33,7 @@ class FeedbackEvalStoreMixin:
             "results": [],
         }
 
-    def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
+    def _build_manual_batch_eval_case(self, batch: dict[str, Any], fields: dict[str, Any]) -> JsonObject:
         prompt = (self._string(fields.get("prompt")) or "").strip()
         if not prompt:
             raise BusinessRuleViolation("Eval case prompt cannot be empty")
@@ -81,7 +82,7 @@ class FeedbackEvalStoreMixin:
         optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
         regression_plan_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         created_at = utc_now()
         payload = {
             "eval_run_id": f"evr-{uuid.uuid4()}",
@@ -120,12 +121,12 @@ class FeedbackEvalStoreMixin:
         eval_run_id: str,
         *,
         eval_case: dict[str, Any],
-        agent_result: Optional[dict[str, Any]],
+        agent_result: Optional[JsonObject],
         status: str,
         score: float,
-        check_results: list[dict[str, Any]],
-        error_json: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        check_results: list[JsonObject],
+        error_json: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         if not self.get_eval_run(eval_run_id):
             return None
         item_id = f"evi-{uuid.uuid4()}"
@@ -178,7 +179,7 @@ class FeedbackEvalStoreMixin:
                 run.payload_json = EvalRunRecord.model_validate(payload).to_payload()
         return item_record.to_payload()
 
-    def finish_eval_run(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+    def finish_eval_run(self, eval_run_id: str) -> Optional[JsonObject]:
         completed_at = utc_now()
         with self.Session.begin() as db:
             run = db.get(EvalRunModel, eval_run_id)
@@ -211,7 +212,7 @@ class FeedbackEvalStoreMixin:
             return self.get_eval_run(eval_run_id)
         return finished
 
-    def fail_eval_run(self, eval_run_id: str, *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+    def fail_eval_run(self, eval_run_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
         error_json = {"error_code": error_code, "message": message, "created_at": utc_now(), "eval_run_id": eval_run_id}
         with self.Session.begin() as db:
             run = db.get(EvalRunModel, eval_run_id)
@@ -237,7 +238,7 @@ class FeedbackEvalStoreMixin:
         agent_version_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(EvalRunModel).order_by(EvalRunModel.created_at.desc()).limit(limit)
         if optimization_task_id:
             stmt = stmt.where(EvalRunModel.optimization_task_id == optimization_task_id)
@@ -248,14 +249,14 @@ class FeedbackEvalStoreMixin:
         with self.Session() as db:
             return [self._eval_run_to_dict(row) for row in db.scalars(stmt).all()]
 
-    def get_eval_run(self, eval_run_id: str) -> Optional[dict[str, Any]]:
+    def get_eval_run(self, eval_run_id: str) -> Optional[JsonObject]:
         if not eval_run_id:
             return None
         with self.Session() as db:
             row = db.get(EvalRunModel, eval_run_id)
             return self._eval_run_to_dict(row) if row else None
 
-    def _build_eval_case_from_source(self, ref: dict[str, str], feedback_case: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _build_eval_case_from_source(self, ref: dict[str, str], feedback_case: dict[str, Any]) -> Optional[JsonObject]:
         source = self.find_feedback_source(ref["source_kind"], ref["source_id"])
         if not source:
             return None
@@ -316,7 +317,7 @@ class FeedbackEvalStoreMixin:
         with self.Session.begin() as db:
             self._update_eval_case_row(db, payload)
 
-    def _build_eval_case_from_feedback(self, feedback_case: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _build_eval_case_from_feedback(self, feedback_case: dict[str, Any]) -> Optional[JsonObject]:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
         proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
         if not attribution_job_id or not proposal_job_id:
@@ -392,7 +393,7 @@ class FeedbackEvalStoreMixin:
             },
         }
 
-    def _source_eval_checks(self, labels: list[str]) -> dict[str, Any]:
+    def _source_eval_checks(self, labels: list[str]) -> JsonObject:
         return {
             "requires_non_empty_answer": True,
             "requires_no_runtime_errors": True,
@@ -422,7 +423,7 @@ class FeedbackEvalStoreMixin:
         labels: list[str],
         attribution_output: dict[str, Any],
         proposal: dict[str, Any],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         label_set = set(labels)
         problem_type = self._string(attribution_output.get("problem_type"))
         target_type = self._string(proposal.get("target_type")) or self._string(attribution_output.get("optimization_object_type"))
@@ -445,7 +446,7 @@ class FeedbackEvalStoreMixin:
             "notes": "首版使用确定性运行信号评估；语义质量保留人工复核入口。",
         }
 
-    def _eval_run_to_dict(self, row: EvalRunModel) -> dict[str, Any]:
+    def _eval_run_to_dict(self, row: EvalRunModel) -> JsonObject:
         record = EvalRunRecord.from_row(row)
         with self.Session() as db:
             items = [
@@ -458,7 +459,7 @@ class FeedbackEvalStoreMixin:
             ]
         return record.to_response(items=items)
 
-    def _eval_run_summary(self, items: list[EvalRunItemModel]) -> dict[str, int]:
+    def _eval_run_summary(self, items: list[EvalRunItemModel]) -> JsonObject:
         return {
             "total": len(items),
             "passed": sum(1 for item in items if item.status == "passed"),

@@ -11,6 +11,7 @@ from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_execution_plan_output
 from ..records.execution_records import ExecutionApplicationRecord
+from ..records.json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
 from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION
@@ -23,9 +24,9 @@ class FeedbackExecutionStoreMixin:
         self,
         task_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         task = self.find_task(task_id)
         if not task or task.get("applied_agent_version_id"):
             return None
@@ -73,11 +74,11 @@ class FeedbackExecutionStoreMixin:
         *,
         job_id: str,
         task_id: str,
-        task: dict[str, Any],
-        proposal: dict[str, Any],
+        task: JsonObject,
+        proposal: JsonObject,
         target_paths: list[str],
         baseline_version_id: Optional[str],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         return {
             "schema_version": "execution-input/v1",
             "execution_job_id": job_id,
@@ -95,13 +96,13 @@ class FeedbackExecutionStoreMixin:
             "task": "generate_controlled_execution_plan",
         }
 
-    def start_execution_job(self, execution_job_id: str) -> Optional[dict[str, Any]]:
+    def start_execution_job(self, execution_job_id: str) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._append_agent_job_update_row(db, execution_job_id, status="running", started_at=utc_now()):
                 return None
         return self.get_execution_job(execution_job_id)
 
-    def complete_execution_job(self, execution_job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def complete_execution_job(self, execution_job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
         job = self.get_execution_job(execution_job_id)
         if not job:
             return None
@@ -138,14 +139,14 @@ class FeedbackExecutionStoreMixin:
                 )
         return self.get_execution_job(execution_job_id)
 
-    def _execution_output_with_job_context(self, raw_output: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    def _execution_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
         output = dict(raw_output)
         output["execution_job_id"] = self._string(output.get("execution_job_id")) or self._string(job.get("execution_job_id"))
         output["optimization_task_id"] = self._string(output.get("optimization_task_id")) or self._string(job.get("optimization_task_id"))
         output["baseline_agent_version_id"] = self._string(output.get("baseline_agent_version_id")) or self._string(job.get("baseline_agent_version_id"))
         return output
 
-    def fail_execution_job(self, execution_job_id: str, *, error_code: str, message: str) -> Optional[dict[str, Any]]:
+    def fail_execution_job(self, execution_job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
         error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "execution_job_id": execution_job_id}
         job = self.get_execution_job(execution_job_id)
         if not job:
@@ -186,8 +187,8 @@ class FeedbackExecutionStoreMixin:
             task_row = db.get(OptimizationTaskModel, str(job["optimization_task_id"]), with_for_update=True)
             if not task_row:
                 return None
-            task = OptimizationTaskRecord.from_row(task_row).to_payload()
-            if task_row.status != "execution_ready" or task.get("applied_agent_version_id"):
+            task = OptimizationTaskRecord.from_row(task_row)
+            if task_row.status != "execution_ready" or task.applied_agent_version_id:
                 raise ConflictError("Optimization task is not ready for execution application")
             payload = {
                 "schema_version": "execution-application/v1",
@@ -237,9 +238,9 @@ class FeedbackExecutionStoreMixin:
         *,
         optimization_task_id: str,
         message: str,
-        pre_execution_version: Optional[dict[str, Any]] = None,
+        pre_execution_version: Optional[JsonObject] = None,
         status: str = "failed",
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         now = utc_now()
         payload = {
             "schema_version": "execution-application/v1",
@@ -261,13 +262,13 @@ class FeedbackExecutionStoreMixin:
             self._complete_execution_application_row(db, row, status=status, fields={"completed_at": now})
             return self._execution_application_to_dict(row)
 
-    def get_execution_job(self, execution_job_id: str) -> Optional[dict[str, Any]]:
+    def get_execution_job(self, execution_job_id: str) -> Optional[JsonObject]:
         job = self.get_agent_job(execution_job_id)
         if not job or job.get("job_type") != "execution":
             return None
         return job
 
-    def list_execution_jobs(self, task_id: str, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_execution_jobs(self, task_id: str, *, limit: int = 100) -> list[JsonObject]:
         return self.list_agent_jobs(
             job_type="execution",
             scope_kind="optimization_task",
@@ -332,7 +333,7 @@ class FeedbackExecutionStoreMixin:
         }
 
 
-    def _latest_execution_job(self, task_id: str) -> Optional[dict[str, Any]]:
+    def _latest_execution_job(self, task_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
                 select(AgentJobModel)
@@ -345,7 +346,7 @@ class FeedbackExecutionStoreMixin:
             ).first()
             return self._execution_job_to_dict(row) if row else None
 
-    def _execution_job_to_dict(self, row: AgentJobModel) -> dict[str, Any]:
+    def _execution_job_to_dict(self, row: AgentJobModel) -> JsonObject:
         return self._agent_job_to_dict(row)
 
     def _sync_execution_job_to_task_and_batch_row(
@@ -419,14 +420,14 @@ class FeedbackExecutionStoreMixin:
                 db.delete(row)
         self._cleanup_job_tmp(execution_job_id)
 
-    def find_execution_application(self, application_id: str) -> Optional[dict[str, Any]]:
+    def find_execution_application(self, application_id: str) -> Optional[JsonObject]:
         if not application_id:
             return None
         with self.Session() as db:
             row = db.get(ExecutionApplicationModel, application_id)
             return self._execution_application_to_dict(row) if row else None
 
-    def latest_execution_application(self, execution_job_id: str) -> Optional[dict[str, Any]]:
+    def latest_execution_application(self, execution_job_id: str) -> Optional[JsonObject]:
         if not execution_job_id:
             return None
         with self.Session() as db:
@@ -437,7 +438,7 @@ class FeedbackExecutionStoreMixin:
             ).first()
             return self._execution_application_to_dict(row) if row else None
 
-    def _create_execution_application_row(self, db: Any, payload: dict[str, Any]) -> ExecutionApplicationModel:
+    def _create_execution_application_row(self, db: Any, payload: JsonObject) -> ExecutionApplicationModel:
         record = ExecutionApplicationRecord.model_validate(payload)
         row = ExecutionApplicationModel(
             application_id=record.application_id,
@@ -458,7 +459,7 @@ class FeedbackExecutionStoreMixin:
         row: ExecutionApplicationModel,
         *,
         status: str,
-        fields: dict[str, Any],
+        fields: JsonObject,
     ) -> ExecutionApplicationModel:
         updated = ExecutionApplicationRecord.from_row(row).transition_to(
             status,
@@ -469,7 +470,7 @@ class FeedbackExecutionStoreMixin:
         row.payload_json = updated.to_payload()
         return row
 
-    def _execution_application_to_dict(self, row: ExecutionApplicationModel) -> dict[str, Any]:
+    def _execution_application_to_dict(self, row: ExecutionApplicationModel) -> JsonObject:
         return ExecutionApplicationRecord.from_row(row).to_payload()
 
 

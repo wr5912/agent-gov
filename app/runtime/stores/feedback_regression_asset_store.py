@@ -20,6 +20,7 @@ from ..records.eval_case_records import (
     apply_eval_case_record,
 )
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
+from ..records.json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord
 from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
@@ -332,7 +333,7 @@ class FeedbackRegressionAssetStoreMixin:
             )
         self.record_batch_regression_result(batch_id, after)
         return self.get_regression_gate_override(override_id)
-    def get_regression_gate_override(self, override_id: str) -> Optional[dict[str, Any]]:
+    def get_regression_gate_override(self, override_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.get(RegressionGateOverrideModel, override_id)
             return self._gate_override_to_dict(row) if row else None
@@ -348,10 +349,10 @@ class FeedbackRegressionAssetStoreMixin:
         self._add_eval_case_revision_row(db, record.to_payload(), created_by="system", reason="sync")
         return True
 
-    def _eval_case_to_dict(self, row: EvalCaseModel) -> dict[str, Any]:
+    def _eval_case_to_dict(self, row: EvalCaseModel) -> JsonObject:
         return EvalCaseRecord.from_row(row).to_payload()
 
-    def _eval_case_with_asset_defaults(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _eval_case_with_asset_defaults(self, payload: dict[str, Any]) -> JsonObject:
         normalized = dict(payload)
         labels = self._unique_strings([str(item).strip() for item in normalized.get("labels") or [] if str(item).strip()])
         normalized["labels"] = labels
@@ -496,13 +497,13 @@ class FeedbackRegressionAssetStoreMixin:
             )
         )
 
-    def _eval_case_revision_to_dict(self, row: EvalCaseRevisionModel) -> dict[str, Any]:
+    def _eval_case_revision_to_dict(self, row: EvalCaseRevisionModel) -> JsonObject:
         return EvalCaseRevisionRecord.from_row(row).to_payload()
 
-    def _eval_case_governance_event_to_dict(self, row: EvalCaseGovernanceEventModel) -> dict[str, Any]:
+    def _eval_case_governance_event_to_dict(self, row: EvalCaseGovernanceEventModel) -> JsonObject:
         return EvalCaseGovernanceEventRecord.from_row(row).to_payload()
 
-    def _gate_result_for_items(self, items: list[EvalRunItemModel]) -> dict[str, Any]:
+    def _gate_result_for_items(self, items: list[EvalRunItemModel]) -> JsonObject:
         blocked: list[str] = []
         review: list[str] = []
         notes: list[str] = []
@@ -553,10 +554,10 @@ class FeedbackRegressionAssetStoreMixin:
             return "failed"
         return result_status or "needs_human_review"
 
-    def _regression_plan_to_dict(self, row: RegressionPlanModel) -> dict[str, Any]:
+    def _regression_plan_to_dict(self, row: RegressionPlanModel) -> JsonObject:
         return RegressionPlanRecord.from_row(row).to_payload()
 
-    def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[dict[str, Any]]:
+    def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
                 select(RegressionPlanModel)
@@ -613,7 +614,7 @@ class FeedbackRegressionAssetStoreMixin:
     def _forced_regression_plan_fingerprint(self, base_fingerprint: str) -> str:
         return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode("utf-8")).hexdigest()
 
-    def _regression_case_snapshot(self, case: dict[str, Any]) -> dict[str, Any]:
+    def _regression_case_snapshot(self, case: dict[str, Any]) -> JsonObject:
         return {
             "eval_case_id": case.get("eval_case_id"),
             "status": case.get("status"),
@@ -630,7 +631,7 @@ class FeedbackRegressionAssetStoreMixin:
             "checks_json": dict(case.get("checks_json") or {}),
         }
 
-    def _regression_selection_summary(self, selected_cases: list[dict[str, Any]]) -> dict[str, Any]:
+    def _regression_selection_summary(self, selected_cases: list[dict[str, Any]]) -> JsonObject:
         by_layer: dict[str, int] = {}
         by_policy: dict[str, int] = {}
         for case in selected_cases:
@@ -638,7 +639,7 @@ class FeedbackRegressionAssetStoreMixin:
             by_policy[str(case.get("blocking_policy") or "unknown")] = by_policy.get(str(case.get("blocking_policy") or "unknown"), 0) + 1
         return {"total": len(selected_cases), "by_asset_layer": by_layer, "by_blocking_policy": by_policy}
 
-    def _change_summary_for_batch(self, batch: dict[str, Any]) -> dict[str, Any]:
+    def _change_summary_for_batch(self, batch: dict[str, Any]) -> JsonObject:
         task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
         return {
             "batch_title": batch.get("title"),
@@ -654,7 +655,7 @@ class FeedbackRegressionAssetStoreMixin:
 
         return db.get(FeedbackOptimizationBatchModel, batch_id)
 
-    def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> dict[str, Any]:
+    def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> JsonObject:
         return RegressionImpactAnalysisRecord.from_row(row).to_payload()
 
     def _impacted_assets_from_eval_run(self, eval_run: dict[str, Any]) -> list[dict[str, Any]]:
@@ -685,7 +686,7 @@ class FeedbackRegressionAssetStoreMixin:
             return ["允许继续，但应跟踪 non_blocking 失败并决定是否提升资产层级。"]
         return ["门禁通过；保留本次运行记录作为长期回归资产趋势基线。"]
 
-    def _gate_override_to_dict(self, row: RegressionGateOverrideModel) -> dict[str, Any]:
+    def _gate_override_to_dict(self, row: RegressionGateOverrideModel) -> JsonObject:
         return RegressionGateOverrideRecord.from_row(row).to_payload()
 
     def _default_blocking_policy(self, asset_layer: str, promotion_status: str, status: str) -> str:

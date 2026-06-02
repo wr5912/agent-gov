@@ -337,9 +337,11 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     monkeypatch.setattr(runtime, "_run_profile_json", fake_run_profile_json)
 
     updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], regeneration_instruction="优先保持指令简洁"))
-    plan = updated["optimization_plan"]
-    plan_task = plan["tasks"][0]
-    job = store.get_job(updated["optimization_plan_job_id"])
+    assert updated is not None
+    plan = updated.optimization_plan
+    assert plan is not None
+    plan_task = plan.tasks[0]
+    job = store.get_job(updated.optimization_plan_job_id)
 
     assert seen["profile_name"] == "proposal-generator"
     assert seen["expected_schema_version"] == "feedback-optimization-plan-output/v1"
@@ -349,13 +351,13 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert job["job_type"] == "batch_plan"
     assert job["profile_name"] == "proposal-generator"
     assert job["status"] == "completed"
-    assert plan["generated_by"] == "proposal-generator"
-    assert plan["status"] == "pending_approval"
-    assert plan["source_output_schema_version"] == "feedback-optimization-plan-output/v1"
-    assert plan_task["title"] == "补充工作区配置核查指令"
-    assert plan_task["target_path"] == "CLAUDE.md"
-    assert plan_task["task_context"]["target_file"] == "CLAUDE.md"
-    assert plan_task["task_context"]["config_section"] == "workspace-capability-answering"
+    assert plan.generated_by == "proposal-generator"
+    assert plan.status == "pending_approval"
+    assert plan.source_output_schema_version == "feedback-optimization-plan-output/v1"
+    assert plan_task.title == "补充工作区配置核查指令"
+    assert plan_task.target_path == "CLAUDE.md"
+    assert plan_task.task_context.target_file == "CLAUDE.md"
+    assert plan_task.task_context.config_section == "workspace-capability-answering"
 
 
 def test_complete_batch_plan_job_rolls_back_when_batch_update_fails(tmp_path, monkeypatch):

@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable, Optional
 
+from app.runtime.records.json_types import JsonObject
 from app.runtime.stores.feedback_store import FeedbackStore
-from app.runtime.schemas import ChatRequest
+from app.runtime.schemas import ChatRequest, ChatResponse, EvalRunResponse
 
-RunChat = Callable[[ChatRequest], Awaitable[dict[str, Any]]]
+RunChat = Callable[[ChatRequest], Awaitable[ChatResponse]]
 
 
 class FeedbackEvalRunner:
@@ -31,7 +32,7 @@ class FeedbackEvalRunner:
         source: str = "manual_feedback_dataset",
         regression_plan_id: Optional[str] = None,
         existing_eval_run_id: Optional[str] = None,
-    ) -> dict[str, Any] | None:
+    ) -> EvalRunResponse | None:
         if regression_plan_id and not eval_case_ids:
             plan = self.feedback_store.get_regression_plan(regression_plan_id)
             eval_case_ids = [str(item) for item in (plan or {}).get("eval_case_ids") or [] if item]
@@ -51,11 +52,11 @@ class FeedbackEvalRunner:
             self.feedback_store.update_task_status(
                 optimization_task_id,
                 status="regression_running",
-                fields={"latest_regression_run_id": eval_run["eval_run_id"]},
+                fields={"latest_regression_run_id": eval_run.eval_run_id},
             )
         try:
             for eval_case in eval_cases:
-                result: dict[str, Any] | None = None
+                result: ChatResponse | None = None
                 try:
                     result = await asyncio.wait_for(
                         self.run_chat(self._eval_chat_request(eval_run, eval_case, optimization_task_id, regression_plan_id)),
@@ -63,29 +64,31 @@ class FeedbackEvalRunner:
                     )
                     status, score, check_results = self._evaluate_eval_case(eval_case, result)
                     self.feedback_store.append_eval_run_item(
-                        eval_run["eval_run_id"],
+                        eval_run.eval_run_id,
                         eval_case=eval_case,
-                        agent_result=result,
+                        agent_result=self._chat_result_payload(result),
                         status=status,
                         score=score,
                         check_results=check_results,
                     )
                 except Exception as exc:
                     self.feedback_store.append_eval_run_item(
-                        eval_run["eval_run_id"],
+                        eval_run.eval_run_id,
                         eval_case=eval_case,
-                        agent_result=result,
+                        agent_result=self._chat_result_payload(result),
                         status="failed",
                         score=0.0,
                         check_results=[],
                         error_json={"error_code": "EVAL_CASE_RUNTIME_ERROR", "message": f"{exc.__class__.__name__}: {exc}"},
                     )
-            return self.feedback_store.finish_eval_run(eval_run["eval_run_id"])
+            return self._eval_run_response(self.feedback_store.finish_eval_run(eval_run.eval_run_id))
         except Exception as exc:
-            return self.feedback_store.fail_eval_run(
-                eval_run["eval_run_id"],
-                error_code="EVAL_RUN_RUNTIME_ERROR",
-                message=f"{exc.__class__.__name__}: {exc}",
+            return self._eval_run_response(
+                self.feedback_store.fail_eval_run(
+                    eval_run.eval_run_id,
+                    error_code="EVAL_RUN_RUNTIME_ERROR",
+                    message=f"{exc.__class__.__name__}: {exc}",
+                )
             )
 
     def _create_or_get_eval_run(
@@ -96,31 +99,33 @@ class FeedbackEvalRunner:
         source: str,
         regression_plan_id: Optional[str],
         existing_eval_run_id: Optional[str],
-    ) -> dict[str, Any] | None:
+    ) -> EvalRunResponse | None:
         if existing_eval_run_id:
-            return self.feedback_store.get_eval_run(existing_eval_run_id)
-        return self.feedback_store.create_eval_run(
-            eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
-            agent_version_id=self.current_agent_version_id(),
-            optimization_task_id=optimization_task_id,
-            source=source,
-            regression_plan_id=regression_plan_id,
+            return self._eval_run_response(self.feedback_store.get_eval_run(existing_eval_run_id))
+        return self._eval_run_response(
+            self.feedback_store.create_eval_run(
+                eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
+                agent_version_id=self.current_agent_version_id(),
+                optimization_task_id=optimization_task_id,
+                source=source,
+                regression_plan_id=regression_plan_id,
+            )
         )
 
     def _eval_chat_request(
         self,
-        eval_run: dict[str, Any],
+        eval_run: EvalRunResponse,
         eval_case: dict[str, Any],
         optimization_task_id: Optional[str],
         regression_plan_id: Optional[str],
     ) -> ChatRequest:
         return ChatRequest(
             message=str(eval_case.get("prompt") or ""),
-            session_id=f"eval-{eval_run['eval_run_id']}-{eval_case['eval_case_id']}",
+            session_id=f"eval-{eval_run.eval_run_id}-{eval_case['eval_case_id']}",
             case_id=str(eval_case.get("source_feedback_case_id") or "") or None,
             metadata={
                 "source": "regression_eval",
-                "eval_run_id": eval_run["eval_run_id"],
+                "eval_run_id": eval_run.eval_run_id,
                 "eval_case_id": eval_case["eval_case_id"],
                 "optimization_task_id": optimization_task_id,
                 "regression_plan_id": regression_plan_id,
@@ -137,11 +142,11 @@ class FeedbackEvalRunner:
     def _eligible_eval_case(eval_case: Optional[dict[str, Any]]) -> bool:
         return bool(eval_case and eval_case.get("status") == "active" and eval_case.get("promotion_status") == "approved")
 
-    def _evaluate_eval_case(self, eval_case: dict[str, Any], result: dict[str, Any]) -> tuple[str, float, list[dict[str, Any]]]:
+    def _evaluate_eval_case(self, eval_case: dict[str, Any], result: ChatResponse) -> tuple[str, float, list[dict[str, Any]]]:
         checks = eval_case.get("checks_json") if isinstance(eval_case.get("checks_json"), dict) else {}
-        errors = result.get("errors") if isinstance(result.get("errors"), list) else []
-        answer = str(result.get("answer") or "").strip()
-        activity = result.get("agent_activity") if isinstance(result.get("agent_activity"), dict) else {}
+        errors = result.errors
+        answer = result.answer.strip()
+        activity = result.agent_activity
         tool_names = self._eval_tool_names(activity)
         check_results: list[dict[str, Any]] = []
 
@@ -179,3 +184,11 @@ class FeedbackEvalRunner:
             if isinstance(call, dict) and call.get("name"):
                 names.append(str(call["name"]))
         return sorted(set(names))
+
+    @staticmethod
+    def _chat_result_payload(result: ChatResponse | None) -> JsonObject | None:
+        return result.model_dump(mode="json") if result else None
+
+    @staticmethod
+    def _eval_run_response(payload: dict[str, Any] | None) -> EvalRunResponse | None:
+        return EvalRunResponse.model_validate(payload) if payload else None

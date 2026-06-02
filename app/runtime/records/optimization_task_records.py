@@ -102,7 +102,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
         payload["status"] = status
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

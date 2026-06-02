@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..errors import ConflictError
 from ..records.batch_records import FeedbackOptimizationBatchRecord
+from ..records.json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, utc_now
 from ..state_machines import JOB_IN_PROGRESS_STATES
@@ -17,16 +18,16 @@ class FeedbackBatchStoreMixin:
 
     def create_optimization_batch(
         self,
-        source_refs: list[dict[str, Any]],
+        source_refs: list[JsonObject],
         *,
         title: Optional[str] = None,
         priority: str = "medium",
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         refs = self._normalize_source_refs(source_refs)
         if not refs:
             return None
-        feedback_cases: list[dict[str, Any]] = []
-        cases_to_create: list[dict[str, Any]] = []
+        feedback_cases: list[JsonObject] = []
+        cases_to_create: list[JsonObject] = []
         refs_to_mark: list[dict[str, str]] = []
         skipped: list[dict[str, Any]] = []
         for ref in refs:
@@ -72,7 +73,7 @@ class FeedbackBatchStoreMixin:
         self.queue_feedback_eval_case_generation_agent_job(batch_id=batch_id)
         return self.find_optimization_batch(batch_id)
 
-    def _batch_model_from_payload(self, payload: dict[str, Any]) -> FeedbackOptimizationBatchModel:
+    def _batch_model_from_payload(self, payload: JsonObject) -> FeedbackOptimizationBatchModel:
         record = FeedbackOptimizationBatchRecord.model_validate(payload)
         return FeedbackOptimizationBatchModel(
             batch_id=record.batch_id,
@@ -83,14 +84,14 @@ class FeedbackBatchStoreMixin:
             payload_json=record.to_payload(),
         )
 
-    def list_optimization_batches(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_optimization_batches(self, *, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(FeedbackOptimizationBatchModel).order_by(FeedbackOptimizationBatchModel.updated_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(FeedbackOptimizationBatchModel.status == status)
         with self.Session() as db:
             return [self._batch_to_dict(row) for row in db.scalars(stmt).all()]
 
-    def find_optimization_batch(self, batch_id: str) -> Optional[dict[str, Any]]:
+    def find_optimization_batch(self, batch_id: str) -> Optional[JsonObject]:
         if not batch_id:
             return None
         with self.Session() as db:
@@ -301,7 +302,7 @@ class FeedbackBatchStoreMixin:
             task_updates["applied_agent_version_id"] = task.get("applied_agent_version_id")
             top_level_fields["optimization_task"] = task
 
-    def _batch_to_dict(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
+    def _batch_to_dict(self, row: FeedbackOptimizationBatchModel) -> JsonObject:
         payload = FeedbackOptimizationBatchRecord.from_row(row).to_payload()
         task_id = self._string(payload.get("optimization_task_id"))
         execution_job_id = self._string(payload.get("execution_job_id"))
@@ -326,7 +327,7 @@ class FeedbackBatchStoreMixin:
             payload["latest_eval_run"] = self.get_eval_run(eval_run_id)
         return payload
 
-    def _update_batch(self, batch_id: str, *, status: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def _update_batch(self, batch_id: str, *, status: str, fields: JsonObject) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._update_batch_row(db, batch_id, status=status, fields=fields):
                 return None
@@ -344,7 +345,7 @@ class FeedbackBatchStoreMixin:
         row.payload_json = record.to_payload()
         return row
 
-    def _batch_payload_snapshot(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
+    def _batch_payload_snapshot(self, row: FeedbackOptimizationBatchModel) -> JsonObject:
         return FeedbackOptimizationBatchRecord.from_row(row).to_payload()
 
     def _update_batch_eval_case_ids_row(
@@ -369,11 +370,11 @@ class FeedbackBatchStoreMixin:
 
     def _sync_plan_eval_case_ids(
         self,
-        plan: dict[str, Any],
+        plan: JsonObject,
         *,
         append_id: Optional[str] = None,
         remove_id: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         synced = dict(plan)
 
         def sync_values(values: Any) -> list[str]:

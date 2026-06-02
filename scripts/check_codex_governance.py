@@ -47,6 +47,7 @@ class Thresholds:
 class PythonMetrics:
     functions: dict[str, int] = field(default_factory=dict)
     classes: dict[str, int] = field(default_factory=dict)
+    unowned_dict_returns: set[str] = field(default_factory=set)
     route_count: int = 0
 
 
@@ -171,6 +172,56 @@ def _public_method_count(node: ast.ClassDef) -> int:
     )
 
 
+def _annotation_contains_dict(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Name):
+        return annotation.id in {"dict", "Dict"}
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr in {"dict", "Dict"}
+    if isinstance(annotation, ast.Subscript):
+        return _annotation_contains_dict(annotation.value) or _annotation_contains_dict(annotation.slice)
+    if isinstance(annotation, ast.Tuple):
+        return any(_annotation_contains_dict(item) for item in annotation.elts)
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _annotation_contains_dict(annotation.left) or _annotation_contains_dict(annotation.right)
+    return False
+
+
+def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
+    path = Path(rel_path)
+    if "normalizers" in path.parts:
+        return True
+    if "records" in path.parts and qualified_name.endswith(".to_payload"):
+        return True
+    boundary_names = {
+        "_coerce_payload",
+        "_json_object",
+        "extract_json_object",
+        "filtered_mcp_servers",
+        "load_programmatic_agents",
+        "parse_frontmatter_markdown",
+        "read_json",
+    }
+    if qualified_name.rsplit(".", 1)[-1] in boundary_names:
+        return True
+    boundary_suffixes = (
+        "_env",
+        "_extra_args",
+        "_payload",
+        "_schema_candidate",
+        "_version_snapshot",
+        ".build_env",
+        ".claude_env",
+        ".claude_extra_args",
+        ".file_context",
+        ".policy_json",
+        ".to_payload",
+        ".to_response",
+    )
+    return qualified_name.endswith(boundary_suffixes)
+
+
 class _PythonMetricVisitor(ast.NodeVisitor):
     def __init__(self, rel_path: str, route_path_parts: set[str]) -> None:
         self.rel_path = rel_path
@@ -178,6 +229,7 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.scope: list[str] = []
         self.functions: dict[str, int] = {}
         self.classes: dict[str, int] = {}
+        self.unowned_dict_returns: set[str] = set()
         self.route_count = 0
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -196,6 +248,8 @@ class _PythonMetricVisitor(ast.NodeVisitor):
     def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
         name = ".".join([*self.scope, node.name])
         self.functions[name] = _node_line_count(node)
+        if _annotation_contains_dict(node.returns) and not _is_owned_dict_return(self.rel_path, name):
+            self.unowned_dict_returns.add(name)
         if _is_route_path(self.rel_path, self.route_path_parts) and any(
             _is_route_decorator(decorator) for decorator in node.decorator_list
         ):
@@ -214,6 +268,7 @@ def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> Pyt
     return PythonMetrics(
         functions=visitor.functions,
         classes=visitor.classes,
+        unowned_dict_returns=visitor.unowned_dict_returns,
         route_count=visitor.route_count,
     )
 
@@ -423,6 +478,22 @@ def collect_state_machine_issues(current: Snapshot, base: Snapshot) -> list[Gove
     return issues
 
 
+def collect_dict_return_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
+    issues: list[GovernanceIssue] = []
+    for rel_path, metrics in sorted(current.python.items()):
+        base_metrics = base.python.get(rel_path, PythonMetrics())
+        new_returns = metrics.unowned_dict_returns - base_metrics.unowned_dict_returns
+        for name in sorted(new_returns):
+            issues.append(
+                GovernanceIssue(
+                    rel_path,
+                    f"new unowned dict return annotation: {name}",
+                    True,
+                )
+            )
+    return issues
+
+
 def collect_issues(
     current: Snapshot,
     base: Snapshot,
@@ -432,6 +503,7 @@ def collect_issues(
     issues.extend(collect_file_issues(current, base, thresholds))
     issues.extend(collect_python_issues(current, base, thresholds))
     issues.extend(collect_state_machine_issues(current, base))
+    issues.extend(collect_dict_return_issues(current, base))
     return sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
 
 

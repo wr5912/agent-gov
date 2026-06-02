@@ -10,6 +10,7 @@ from .message_utils import extract_text
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
+from .records.json_types import JsonObject
 from .settings import AppSettings
 
 
@@ -83,8 +84,8 @@ class AgentJobRunner:
         prompt: str,
         expected_schema_version: str,
         job_type: str,
-        job_input: dict[str, Any],
-    ) -> dict[str, Any]:
+        job_input: JsonObject,
+    ) -> JsonObject:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
@@ -92,7 +93,7 @@ class AgentJobRunner:
         errors: list[str] = []
         options = self.build_options(profile)
 
-        async def collect() -> dict[str, Any]:
+        async def collect() -> JsonObject:
             async for msg in query(prompt=self.single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 if text:
@@ -122,9 +123,9 @@ class AgentJobRunner:
         *,
         job_type: str,
         raw_text: str,
-        job_input: dict[str, Any],
+        job_input: JsonObject,
         expected_schema_version: str,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 self.output_formatter.format,
@@ -176,7 +177,7 @@ class AgentJobRunner:
         return "\n".join(unique).strip()
 
     @staticmethod
-    def direct_schema_candidate(raw_text: str, expected_schema_version: str) -> dict[str, Any] | None:
+    def direct_schema_candidate(raw_text: str, expected_schema_version: str) -> JsonObject | None:
         candidates = extract_json_candidates(raw_text)
         for candidate in reversed(candidates):
             if candidate.get("schema_version") == expected_schema_version:

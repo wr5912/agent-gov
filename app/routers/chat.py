@@ -20,8 +20,7 @@ def create_chat_router(*, runtime: ClaudeRuntime, require_api_key: Callable) -> 
         description="Runs one Claude Agent SDK query using defaults from docker/.env and optional per-request overrides.",
     )
     async def chat(req: ChatRequest) -> ChatResponse:
-        result = await runtime.run(req)
-        return ChatResponse(**result)
+        return await runtime.run(req)
 
     @router.post(
         "/chat/stream",

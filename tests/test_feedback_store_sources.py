@@ -248,8 +248,9 @@ def test_generate_eval_cases_projection_failure_fails_agent_job_without_eval_cas
     failed = asyncio.run(worker.run_once())
 
     source = store.find_feedback_source("signal", signal["signal_id"])
-    assert failed["status"] == "failed"
-    assert failed["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert failed.status == "failed"
+    assert failed.error_json is not None
+    assert failed.error_json.error_code == "AGENT_RUNTIME_ERROR"
     assert store.list_eval_cases() == []
     assert source["feedback_case_id"] == feedback_case["feedback_case_id"]
 

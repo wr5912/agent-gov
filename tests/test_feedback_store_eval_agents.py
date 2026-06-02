@@ -20,6 +20,7 @@ from feedback_store_test_utils import (
 )
 from app.runtime.errors import BusinessRuleViolation
 from app.runtime.runtime_db import EvalRunItemModel
+from app.runtime.schemas import ChatResponse
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
@@ -50,6 +51,16 @@ def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> d
     with store.Session.begin() as db:
         store._add_eval_case_row(db, payload)
     return payload
+
+
+def _chat_response(answer: str, *, errors: list[str] | None = None, agent_activity: dict[str, object] | None = None) -> ChatResponse:
+    return ChatResponse(
+        run_id="run-chat-test",
+        session_id="session-chat-test",
+        answer=answer,
+        errors=errors or [],
+        agent_activity=agent_activity or {},
+    )
 
 
 def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(tmp_path, monkeypatch):
@@ -167,7 +178,7 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
         )
     )
     updated_task = store.find_task(task["optimization_task_id"])
-    regression_run = store.get_eval_run(eval_run["eval_run_id"])
+    regression_run = store.get_eval_run(eval_run.eval_run_id)
     eval_agent_run = store.find_run(run_id=regression_run["items"][0]["agent_run_id"])
 
     assert sync_job["job_type"] == "eval_case_generation"
@@ -175,12 +186,12 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     assert "subagents 和 skills" in eval_case["prompt"]
     assert eval_case["checks_json"]["requires_tool_use"] is True
     assert "subagents 和 skills" in str(seen["prompt"])
-    assert eval_run["status"] == "completed"
-    assert eval_run["result_status"] == "failed"
+    assert eval_run.status == "completed"
+    assert eval_run.result_status == "failed"
     assert regression_run["items"][0]["status"] == "failed"
     assert regression_run["items"][0]["check_results"]
     assert updated_task["status"] == "failed"
-    assert updated_task["latest_regression_run_id"] == eval_run["eval_run_id"]
+    assert updated_task["latest_regression_run_id"] == eval_run.eval_run_id
     assert eval_agent_run["metadata"]["source"] == "regression_eval"
 
 
@@ -192,7 +203,7 @@ def test_feedback_eval_runner_records_failed_item_and_finishes_run(tmp_path):
     async def run_chat(req):
         if "异常" in req.message:
             raise RuntimeError("chat failed")
-        return {"answer": "ok", "errors": [], "agent_activity": {}}
+        return _chat_response("ok")
 
     runner = FeedbackEvalRunner(
         feedback_store=store,
@@ -207,12 +218,18 @@ def test_feedback_eval_runner_records_failed_item_and_finishes_run(tmp_path):
         )
     )
 
-    assert result["status"] == "completed"
-    assert result["result_status"] == "failed"
-    assert result["summary"] == {"total": 2, "passed": 1, "failed": 1, "needs_human_review": 0}
-    failed_item = next(item for item in result["items"] if item["eval_case_id"] == "evc-fail")
-    assert failed_item["status"] == "failed"
-    assert failed_item["error_json"]["error_code"] == "EVAL_CASE_RUNTIME_ERROR"
+    assert result.status == "completed"
+    assert result.result_status == "failed"
+    assert result.summary.model_dump(mode="json", exclude={"blocked", "review_required", "passed_with_notes"}) == {
+        "total": 2,
+        "passed": 1,
+        "failed": 1,
+        "needs_human_review": 0,
+    }
+    failed_item = next(item for item in result.items if item.eval_case_id == "evc-fail")
+    assert failed_item.status == "failed"
+    assert failed_item.error_json is not None
+    assert failed_item.error_json.error_code == "EVAL_CASE_RUNTIME_ERROR"
 
 
 def test_feedback_eval_runner_marks_run_failed_when_finish_fails(tmp_path, monkeypatch):
@@ -220,7 +237,7 @@ def test_feedback_eval_runner_marks_run_failed_when_finish_fails(tmp_path, monke
     eval_case = _insert_eval_case(store, "evc-overall-fail", "正常用例")
 
     async def run_chat(req):
-        return {"answer": "ok", "errors": [], "agent_activity": {}}
+        return _chat_response("ok")
 
     def fail_finish(eval_run_id):
         raise RuntimeError("finish failed")
@@ -239,10 +256,12 @@ def test_feedback_eval_runner_marks_run_failed_when_finish_fails(tmp_path, monke
         )
     )
 
-    assert result["status"] == "failed"
-    assert result["result_status"] == "failed"
-    assert result["error_json"]["error_code"] == "EVAL_RUN_RUNTIME_ERROR"
-    assert "finish failed" in result["error_json"]["message"]
+    assert result.status == "failed"
+    assert result.result_status == "failed"
+    assert result.error_json is not None
+    assert result.error_json.error_code == "EVAL_RUN_RUNTIME_ERROR"
+    assert result.error_json.message is not None
+    assert "finish failed" in result.error_json.message
 
 
 def test_feedback_eval_runner_scores_no_required_checks_as_full_pass(tmp_path):
@@ -255,11 +274,11 @@ def test_feedback_eval_runner_scores_no_required_checks_as_full_pass(tmp_path):
     }
     runner = FeedbackEvalRunner(
         feedback_store=store,
-        run_chat=lambda req: None,
+        run_chat=lambda req: _chat_response(""),
         current_agent_version_id=lambda: "main-v-test",
     )
 
-    status, score, check_results = runner._evaluate_eval_case(eval_case, {"answer": "", "errors": []})
+    status, score, check_results = runner._evaluate_eval_case(eval_case, _chat_response(""))
 
     assert status == "passed"
     assert score == 1.0
@@ -485,11 +504,13 @@ def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(t
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
 
-    assert attribution_job["profile_name"] == "attribution-analyzer"
-    assert attribution_job["status"] == "failed"
-    assert attribution_job["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
-    assert "formatter unavailable" in attribution_job["error_json"]["message"]
-    assert attribution_job["profile_name"] == "attribution-analyzer"
+    assert attribution_job.profile_name == "attribution-analyzer"
+    assert attribution_job.status == "failed"
+    assert attribution_job.error_json is not None
+    assert attribution_job.error_json.error_code == "AGENT_RUNTIME_ERROR"
+    assert attribution_job.error_json.message is not None
+    assert "formatter unavailable" in attribution_job.error_json.message
+    assert attribution_job.profile_name == "attribution-analyzer"
 
 
 def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(tmp_path, monkeypatch):
@@ -581,7 +602,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
-    output = store.get_job_output(attribution_job["job_id"], "attribution")
+    output = store.get_job_output(attribution_job.job_id, "attribution")
 
     assert evidence["completeness"]["has_runs"] is True
     assert evidence["completeness"]["has_tool_calls"] is False
@@ -589,7 +610,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert "归因分析智能体" in str(seen["prompt_text"])
     assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
     assert seen["max_turns"] == settings.max_turns
-    assert attribution_job["status"] == "completed"
+    assert attribution_job.status == "completed"
     assert output["schema_version"] == "attribution-output/v1"
     assert output["feedback_case_id"] == feedback_case["feedback_case_id"]
     assert output["problem_type"] == "tool_data_quality"
@@ -668,12 +689,13 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
     runtime.output_formatter = FakeFormatter()
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
-    output = store.get_job_output(attribution_job["job_id"], "attribution")
+    output = store.get_job_output(attribution_job.job_id, "attribution")
 
     assert seen["job_type"] == "attribution"
     assert "feedback.json" in str(seen["raw_text"])
-    assert attribution_job["status"] == "completed"
-    assert attribution_job["raw_output_json"]["_formatter"]["name"] == "fake-dspy"
+    assert attribution_job.status == "completed"
+    assert attribution_job.raw_output_json is not None
+    assert attribution_job.raw_output_json["_formatter"]["name"] == "fake-dspy"
     assert output["schema_version"] == "attribution-output/v1"
     assert output["recommended_next_step"] == "needs_human_review"
     assert store.find_case(feedback_case["feedback_case_id"])["status"] == "pending_proposal"
@@ -743,15 +765,16 @@ def test_proposal_agent_ignores_intermediate_permissions_json(tmp_path, monkeypa
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
-    output = store.get_job_output(proposal_job["job_id"], "proposal")
+    output = store.get_job_output(proposal_job.job_id, "proposal")
 
     assert "proposal_input_json" in str(seen["prompt_text"])
     assert "attribution_output_json" in str(seen["prompt_text"])
     assert seen["allowed_tools"] == []
     assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob"}
-    assert proposal_job["status"] == "completed"
+    assert proposal_job.status == "completed"
     assert output["schema_version"] == "proposal-output/v1"
-    assert proposal_job["raw_output_json"]["schema_version"] == "proposal-output/v1"
+    assert proposal_job.raw_output_json is not None
+    assert proposal_job.raw_output_json["schema_version"] == "proposal-output/v1"
 
 
 def test_sqlite_store_does_not_create_legacy_runtime_dirs(tmp_path):

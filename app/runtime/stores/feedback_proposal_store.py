@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 from sqlalchemy import select
 
 from ..external_governance_mapping import apply_external_governance_record, external_governance_record_from_row
+from ..records.json_types import JsonObject
 from ..records.proposal_records import OptimizationProposalRecord, ProposalReviewRecord
 from ..runtime_db import ExternalGovernanceItemModel, OptimizationProposalModel, ProposalReviewModel, utc_now
+
+
+ProposalReviewsByProposalId: TypeAlias = dict[str, ProposalReviewModel]
+ProposalSupersedeCounts: TypeAlias = dict[str, int]
 
 
 class FeedbackProposalStoreMixin:
     """Store operations for optimization proposal records and reviews."""
 
-    def _normalize_proposal_output(self, output: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_proposal_output(self, output: JsonObject, job: JsonObject) -> JsonObject:
         normalized = {**output, "proposals": [], "external_guidance": list(output.get("external_guidance") or [])}
         for item in output.get("proposals") or []:
             target_path = self._string(item.get("target_path"))
@@ -50,7 +55,7 @@ class FeedbackProposalStoreMixin:
         feedback_case_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(OptimizationProposalModel).order_by(OptimizationProposalModel.created_at.desc()).limit(limit)
         if feedback_case_id:
             stmt = stmt.where(OptimizationProposalModel.feedback_case_id == feedback_case_id)
@@ -63,7 +68,7 @@ class FeedbackProposalStoreMixin:
             latest_reviews = self._latest_reviews_by_proposal_ids(db, [row.proposal_id for row in rows])
             return [self._proposal_to_dict(row, latest_reviews.get(row.proposal_id)) for row in rows]
 
-    def find_proposal(self, proposal_id: str) -> Optional[dict[str, Any]]:
+    def find_proposal(self, proposal_id: str) -> Optional[JsonObject]:
         if not proposal_id:
             return None
         with self.Session() as db:
@@ -73,7 +78,7 @@ class FeedbackProposalStoreMixin:
             latest_review = self._latest_reviews_by_proposal_ids(db, [proposal_id]).get(proposal_id)
             return self._proposal_to_dict(row, latest_review)
 
-    def review_proposal(self, proposal_id: str, *, action: str, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def review_proposal(self, proposal_id: str, *, action: str, comment: Optional[str] = None) -> Optional[JsonObject]:
         proposal = self.find_proposal(proposal_id)
         if not proposal:
             return None
@@ -112,7 +117,7 @@ class FeedbackProposalStoreMixin:
         updated = self.find_proposal(proposal_id) or {**proposal, "status": next_status, "latest_review": review.to_payload()}
         return {"proposal": updated, "review": review.to_payload()}
 
-    def _proposal_model_from_dict(self, proposal: dict[str, Any]) -> OptimizationProposalModel:
+    def _proposal_model_from_dict(self, proposal: JsonObject) -> OptimizationProposalModel:
         record = OptimizationProposalRecord.model_validate(proposal)
         return OptimizationProposalModel(
             proposal_id=record.proposal_id,
@@ -125,12 +130,12 @@ class FeedbackProposalStoreMixin:
             payload_json=record.to_payload(),
         )
 
-    def _proposal_to_dict(self, row: OptimizationProposalModel, latest_review: ProposalReviewModel | None = None) -> dict[str, Any]:
+    def _proposal_to_dict(self, row: OptimizationProposalModel, latest_review: ProposalReviewModel | None = None) -> JsonObject:
         review = ProposalReviewRecord.from_row(latest_review) if latest_review else None
         return OptimizationProposalRecord.from_row(row, latest_review=review).to_payload()
 
     @staticmethod
-    def _latest_reviews_by_proposal_ids(db: Any, proposal_ids: list[str]) -> dict[str, ProposalReviewModel]:
+    def _latest_reviews_by_proposal_ids(db: Any, proposal_ids: list[str]) -> ProposalReviewsByProposalId:
         if not proposal_ids:
             return {}
         rows = db.scalars(
@@ -138,7 +143,7 @@ class FeedbackProposalStoreMixin:
             .where(ProposalReviewModel.proposal_id.in_(proposal_ids))
             .order_by(ProposalReviewModel.proposal_id, ProposalReviewModel.created_at.desc())
         ).all()
-        latest: dict[str, ProposalReviewModel] = {}
+        latest: ProposalReviewsByProposalId = {}
         for row in rows:
             latest.setdefault(row.proposal_id, row)
         return latest
@@ -149,7 +154,7 @@ class FeedbackProposalStoreMixin:
         *,
         reason: str,
         superseded_by_job_id: str,
-    ) -> dict[str, int]:
+    ) -> ProposalSupersedeCounts:
         superseded_at = utc_now()
         proposal_count = 0
         external_count = 0

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.runtime.runtime_db import ExternalNotificationModel
+
+from .json_types import JsonObject
 
 
 EXTERNAL_GOVERNANCE_ITEM_SCHEMA_VERSION = "external-governance-item/v1"
@@ -29,7 +31,7 @@ class ExternalGovernanceNotificationRecord(BaseModel):
     completed_at: Optional[str] = None
     status: ExternalNotificationStatus
     webhook_alias: str
-    request_json: dict[str, Any] = Field(default_factory=dict)
+    request_json: JsonObject = Field(default_factory=dict)
     http_status: Optional[int] = None
     response_body: Optional[str] = None
     error: Optional[str] = None
@@ -42,7 +44,7 @@ class ExternalGovernanceNotificationRecord(BaseModel):
         external_item_id: str,
         created_at: str,
         webhook_alias: str,
-        request_json: dict[str, Any],
+        request_json: JsonObject,
     ) -> "ExternalGovernanceNotificationRecord":
         return cls(
             notification_id=notification_id,
@@ -92,7 +94,7 @@ class ExternalGovernanceNotificationRecord(BaseModel):
         )
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -144,7 +146,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     description: Optional[str] = None
     objective: Optional[str] = None
     target_summary: Optional[str] = None
-    task_context: dict[str, Any] = Field(default_factory=dict)
+    task_context: JsonObject = Field(default_factory=dict)
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     expected_effect: Optional[str] = None
@@ -152,7 +154,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     risk: Optional[str] = None
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
-    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    evidence_refs: list[JsonObject] = Field(default_factory=list)
     source: Optional[str] = None
     batch_id: Optional[str] = None
     optimization_plan_id: Optional[str] = None
@@ -169,7 +171,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     superseded_reason: Optional[str] = None
     superseded_by_job_id: Optional[str] = None
 
-    def to_notification_payload(self, *, webhook_alias: str) -> dict[str, Any]:
+    def to_notification_payload(self, *, webhook_alias: str) -> JsonObject:
         payload = {
             "schema_version": "external-governance-notification/v1",
             "webhook_alias": webhook_alias,
@@ -249,5 +251,5 @@ class ExternalGovernanceItemRecord(BaseModel):
         )
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")

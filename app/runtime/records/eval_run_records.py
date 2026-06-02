@@ -87,10 +87,10 @@ class EvalRunRecord(StrictRuntimeRecord):
         payload["status"] = status
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
-    def to_response(self, *, items: list[JsonObject]) -> dict[str, object]:
+    def to_response(self, *, items: list[JsonObject]) -> JsonObject:
         payload = self.to_payload()
         payload["items"] = items
         return payload
@@ -143,7 +143,7 @@ class EvalRunItemRecord(StrictRuntimeRecord):
             raise ValueError("eval run item score must be between 0 and 1")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

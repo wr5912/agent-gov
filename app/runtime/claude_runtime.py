@@ -7,13 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from .agent_profiles import (
-    ATTRIBUTION_ANALYZER_PROFILE,
-    EVAL_CASE_GOVERNOR_PROFILE,
-    EXECUTION_OPTIMIZER_PROFILE,
     MAIN_AGENT_PROFILE,
     PROFILE_VERSION_IDS,
-    PROPOSAL_GENERATOR_PROFILE,
-    REGRESSION_IMPACT_ANALYZER_PROFILE,
     AgentRuntimeProfile,
     build_profiles,
 )
@@ -28,11 +23,13 @@ from .message_utils import extract_text, message_event_name, to_plain
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
+from .records.json_types import JsonObject
 from .runtime_activity import RuntimeActivityExtractor
 from .integrations.runtime_langfuse import RuntimeLangfuseClient, ensure_langfuse_otel_compat
-from .schemas import ChatRequest
+from .schemas import ChatRequest, ChatResponse
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
+from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 
@@ -44,7 +41,7 @@ class RuntimeRequestContext:
     agent_version_id: Optional[str]
     created_at: str
     prompt: str
-    telemetry_input: dict[str, Any]
+    telemetry_input: JsonObject
     langfuse_trace_id: Optional[str] = None
     langfuse_trace_url: Optional[str] = None
 
@@ -60,7 +57,7 @@ class RuntimeQueryState:
     errors: list[str] = field(default_factory=list)
 
 
-class ClaudeRuntime:
+class ClaudeRuntime(FeedbackRuntimeJobsMixin):
     """Thin runtime adapter around Claude Agent SDK.
 
     Design goals:
@@ -148,7 +145,7 @@ class ClaudeRuntime:
         session: LocalSession,
         run_id: str,
         agent_version_id: Optional[str],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
         disallowed_tools = (
             req.disallowed_tools
@@ -192,7 +189,7 @@ class ClaudeRuntime:
         total_cost_usd: Optional[float],
         stop_reason: Optional[str],
         errors: list[str],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -392,8 +389,8 @@ class ClaudeRuntime:
         prompt: str,
         expected_schema_version: str,
         job_type: str,
-        job_input: dict[str, Any],
-    ) -> dict[str, Any]:
+        job_input: JsonObject,
+    ) -> JsonObject:
         self.job_runner.output_formatter = self.output_formatter
         return await self.job_runner.run_profile_json(
             profile_name=profile_name,
@@ -401,144 +398,6 @@ class ClaudeRuntime:
             expected_schema_version=expected_schema_version,
             job_type=job_type,
             job_input=job_input,
-        )
-
-    async def run_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
-        if self.job_orchestrator is None:
-            return None
-        return await self.job_orchestrator.run_attribution_job(feedback_case_id, force=force)
-
-    def queue_attribution_job(self, feedback_case_id: str, *, force: bool = False) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_attribution_agent_job(
-            feedback_case_id,
-            profile_version=self.profile_version_snapshot(ATTRIBUTION_ANALYZER_PROFILE),
-            force=force,
-        )
-
-    async def run_proposal_job(
-        self,
-        feedback_case_id: str,
-        *,
-        force: bool = False,
-        regeneration_instruction: Optional[str] = None,
-    ) -> dict[str, Any] | None:
-        if self.job_orchestrator is None:
-            return None
-        return await self.job_orchestrator.run_proposal_job(
-            feedback_case_id,
-            force=force,
-            regeneration_instruction=regeneration_instruction,
-        )
-
-    def queue_proposal_job(
-        self,
-        feedback_case_id: str,
-        *,
-        force: bool = False,
-        regeneration_instruction: Optional[str] = None,
-    ) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_proposal_agent_job(
-            feedback_case_id,
-            profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
-            force=force,
-            regeneration_instruction=regeneration_instruction,
-        )
-
-    async def run_batch_optimization_plan(
-        self,
-        batch_id: str,
-        *,
-        regeneration_instruction: Optional[str] = None,
-        force: bool = True,
-    ) -> dict[str, Any] | None:
-        if self.job_orchestrator is None:
-            return None
-        return await self.job_orchestrator.run_batch_optimization_plan(
-            batch_id,
-            regeneration_instruction=regeneration_instruction,
-            force=force,
-        )
-
-    def queue_batch_optimization_plan(
-        self,
-        batch_id: str,
-        *,
-        regeneration_instruction: Optional[str] = None,
-        force: bool = True,
-    ) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_batch_plan_agent_job(
-            batch_id,
-            profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
-            force=force,
-            regeneration_instruction=regeneration_instruction,
-        )
-
-    async def run_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
-        if self.job_orchestrator is None:
-            return None
-        return await self.job_orchestrator.run_execution_job(optimization_task_id, force=force)
-
-    def queue_execution_job(self, optimization_task_id: str, *, force: bool = False) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_execution_agent_job(
-            optimization_task_id,
-            profile_version=self.profile_version_snapshot(EXECUTION_OPTIMIZER_PROFILE),
-            force=force,
-        )
-
-    def queue_eval_case_generation_job(
-        self,
-        *,
-        feedback_case_id: Optional[str] = None,
-        source_refs: Optional[list[dict[str, Any]]] = None,
-        batch_id: Optional[str] = None,
-        limit: int = 100,
-        force: bool = False,
-    ) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_feedback_eval_case_generation_agent_job(
-            feedback_case_id=feedback_case_id,
-            source_refs=source_refs,
-            batch_id=batch_id,
-            limit=limit,
-            force=force,
-            profile_version=self.profile_version_snapshot(EVAL_CASE_GOVERNOR_PROFILE),
-        )
-
-    def queue_regression_impact_analysis_job(self, eval_run_id: str, *, force: bool = False) -> dict[str, Any] | None:
-        if self.feedback_store is None:
-            return None
-        return self.feedback_store.queue_regression_impact_agent_job(
-            eval_run_id,
-            profile_version=self.profile_version_snapshot(REGRESSION_IMPACT_ANALYZER_PROFILE),
-            force=force,
-        )
-
-    async def run_feedback_eval(
-        self,
-        *,
-        eval_case_ids: Optional[list[str]] = None,
-        optimization_task_id: Optional[str] = None,
-        source: str = "manual_feedback_dataset",
-        regression_plan_id: Optional[str] = None,
-        existing_eval_run_id: Optional[str] = None,
-    ) -> dict[str, Any] | None:
-        if self.eval_runner is None:
-            return None
-        return await self.eval_runner.run_feedback_eval(
-            eval_case_ids=eval_case_ids,
-            optimization_task_id=optimization_task_id,
-            source=source,
-            regression_plan_id=regression_plan_id,
-            existing_eval_run_id=existing_eval_run_id,
         )
 
     def _new_runtime_request_context(self, req: ChatRequest) -> RuntimeRequestContext:
@@ -558,7 +417,7 @@ class ClaudeRuntime:
             telemetry_input=telemetry_input,
         )
 
-    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str) -> dict[str, Any]:
+    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str) -> JsonObject:
         return {
             "api_session_id": context.session.session_id,
             "run_id": context.run_id,
@@ -566,7 +425,7 @@ class ClaudeRuntime:
             "mode": mode,
         }
 
-    def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> dict[str, Any]:
+    def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
         return {
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
@@ -606,7 +465,7 @@ class ClaudeRuntime:
         req: ChatRequest,
         context: RuntimeRequestContext,
         state: RuntimeQueryState,
-    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    ) -> tuple[str, dict[str, Any], JsonObject]:
         answer = AgentJobRunner.dedupe_answer_parts(state.answer_parts)
         agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
         output = self._runtime_output_payload(
@@ -626,7 +485,7 @@ class ClaudeRuntime:
         )
         return answer, agent_activity, output
 
-    def _update_runtime_observations(self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: dict[str, Any]) -> None:
+    def _update_runtime_observations(self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: JsonObject) -> None:
         level = "ERROR" if state.errors else "DEFAULT"
         status_message = "\n".join(state.errors) if state.errors else None
         self.langfuse.update_observation(
@@ -679,22 +538,22 @@ class ClaudeRuntime:
             langfuse_trace_url=context.langfuse_trace_url,
         )
 
-    def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: dict[str, Any]) -> dict[str, Any]:
-        return {
-            "run_id": context.run_id,
-            "agent_version_id": context.agent_version_id,
-            "session_id": context.session.session_id,
-            "sdk_session_id": context.session.sdk_session_id,
-            "answer": answer,
-            "messages": state.messages,
-            "agent_activity": agent_activity,
-            "usage": state.usage,
-            "total_cost_usd": state.total_cost_usd,
-            "stop_reason": state.stop_reason,
-            "errors": state.errors,
-        }
+    def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: dict[str, Any]) -> ChatResponse:
+        return ChatResponse(
+            run_id=context.run_id,
+            agent_version_id=context.agent_version_id,
+            session_id=context.session.session_id,
+            sdk_session_id=context.session.sdk_session_id,
+            answer=answer,
+            messages=state.messages,
+            agent_activity=agent_activity,
+            usage=to_plain(state.usage),
+            total_cost_usd=state.total_cost_usd,
+            stop_reason=state.stop_reason,
+            errors=state.errors,
+        )
 
-    async def run(self, req: ChatRequest) -> dict[str, Any]:
+    async def run(self, req: ChatRequest) -> ChatResponse:
         from claude_agent_sdk import ResultMessage, query
 
         context = self._new_runtime_request_context(req)

@@ -187,10 +187,12 @@ def test_create_execution_job_endpoint_reports_agent_failure(monkeypatch, tmp_pa
     payload = response.json()
     failed = _run_one_agent_job(module)
     assert payload["status"] == "queued"
-    assert failed["job_id"] == payload["job_id"]
-    assert failed["status"] == "failed"
-    assert failed["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
-    assert "model unavailable" in failed["error_json"]["message"]
+    assert failed.job_id == payload["job_id"]
+    assert failed.status == "failed"
+    assert failed.error_json is not None
+    assert failed.error_json.error_code == "AGENT_RUNTIME_ERROR"
+    assert failed.error_json.message is not None
+    assert "model unavailable" in failed.error_json.message
 
 
 def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypatch, tmp_path):
@@ -750,11 +752,11 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert regression_response.status_code == 200
     assert impact_response.status_code == 200
     assert calls == ["eval_case_generation", "attribution", "batch_plan", "execution", "regression_impact_analysis"]
-    assert eval_generation_job["status"] == "completed"
-    assert attribution_job["status"] == "completed"
-    assert plan_job["status"] == "completed"
-    assert execution_job["status"] == "completed"
-    assert impact_job["status"] == "completed"
+    assert eval_generation_job.status == "completed"
+    assert attribution_job.status == "completed"
+    assert plan_job.status == "completed"
+    assert execution_job.status == "completed"
+    assert impact_job.status == "completed"
     assert plan["generated_by"] == "proposal-generator"
     assert plan["optimization_plan_job_id"]
     assert plan_task["schema_version"] == "feedback-optimization-plan-task/v2"

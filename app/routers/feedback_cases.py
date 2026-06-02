@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -41,7 +41,7 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
         status: str | None = None,
         q: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[FeedbackCaseResponse]:
         return feedback_store.list_cases(status=status, q=q, limit=limit)
 
     @router.get(
@@ -49,7 +49,7 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
         response_model=FeedbackCaseResponse,
         summary="Get one feedback disposition case",
     )
-    async def get_feedback_case(feedback_case_id: str) -> dict[str, Any]:
+    async def get_feedback_case(feedback_case_id: str) -> FeedbackCaseResponse:
         feedback_case = feedback_store.find_case(feedback_case_id)
         return ensure_found(feedback_case, "Feedback case not found")
 
@@ -58,7 +58,7 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
         response_model=FeedbackCaseResponse,
         summary="Create one feedback disposition case from feedback signals",
     )
-    async def create_feedback_case(req: FeedbackCaseCreateRequest) -> dict[str, Any]:
+    async def create_feedback_case(req: FeedbackCaseCreateRequest) -> FeedbackCaseResponse:
         require_request(bool(req.source_ids), "source_ids is required")
         feedback_case = feedback_store.create_case(source_ids=req.source_ids, title=req.title, priority=req.priority)
         return ensure_found(feedback_case, "Feedback source not found")
@@ -71,7 +71,7 @@ def _register_evidence_routes(router: APIRouter, feedback_store: FeedbackStore) 
         response_model=EvidencePackageResponse,
         summary="Create one immutable evidence package for a feedback case",
     )
-    async def create_evidence_package(feedback_case_id: str) -> dict[str, Any]:
+    async def create_evidence_package(feedback_case_id: str) -> EvidencePackageResponse:
         evidence_package = feedback_store.create_evidence_package(feedback_case_id)
         return ensure_found(evidence_package, "Feedback case not found")
 
@@ -80,7 +80,7 @@ def _register_evidence_routes(router: APIRouter, feedback_store: FeedbackStore) 
         response_model=EvidencePackageResponse,
         summary="Get one evidence package manifest",
     )
-    async def get_evidence_package(evidence_package_id: str) -> dict[str, Any]:
+    async def get_evidence_package(evidence_package_id: str) -> EvidencePackageResponse:
         evidence_package = feedback_store.get_evidence_package(evidence_package_id)
         return ensure_found(evidence_package, "Evidence package not found")
 
@@ -89,7 +89,7 @@ def _register_evidence_routes(router: APIRouter, feedback_store: FeedbackStore) 
         response_model=EvidencePackageFileResponse,
         summary="Get one evidence package JSON file",
     )
-    async def get_evidence_package_file(evidence_package_id: str, file_name: str) -> dict[str, Any]:
+    async def get_evidence_package_file(evidence_package_id: str, file_name: str) -> EvidencePackageFileResponse:
         evidence_file = feedback_store.get_evidence_package_file(evidence_package_id, file_name)
         return ensure_found(evidence_file, "Evidence package file not found")
 
@@ -101,7 +101,7 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
         response_model=AgentJobResponse,
         summary="Queue one attribution job for a feedback case",
     )
-    async def create_attribution_job(feedback_case_id: str) -> dict[str, Any]:
+    async def create_attribution_job(feedback_case_id: str) -> AgentJobResponse:
         job = runtime.queue_attribution_job(feedback_case_id)
         return ensure_found(job, "Feedback case not found or missing evidence")
 
@@ -110,7 +110,7 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
         response_model=AgentJobResponse,
         summary="Force queue one attribution job for a feedback case",
     )
-    async def regenerate_attribution_job(feedback_case_id: str) -> dict[str, Any]:
+    async def regenerate_attribution_job(feedback_case_id: str) -> AgentJobResponse:
         job = runtime.queue_attribution_job(feedback_case_id, force=True)
         return ensure_found(job, "Feedback case not found or missing evidence")
 
@@ -119,7 +119,7 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
         response_model=AgentJobResponse,
         summary="Queue one optimization proposal job for a feedback case",
     )
-    async def create_proposal_job(feedback_case_id: str) -> dict[str, Any]:
+    async def create_proposal_job(feedback_case_id: str) -> AgentJobResponse:
         job = runtime.queue_proposal_job(feedback_case_id)
         return ensure_found(job, "Feedback case not found or missing attribution")
 
@@ -128,7 +128,7 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
         response_model=AgentJobResponse,
         summary="Force queue one optimization proposal job and supersede unused existing proposals",
     )
-    async def regenerate_proposal_job(feedback_case_id: str, req: FeedbackProposalRegenerateRequest | None = None) -> dict[str, Any]:
+    async def regenerate_proposal_job(feedback_case_id: str, req: FeedbackProposalRegenerateRequest | None = None) -> AgentJobResponse:
         job = runtime.queue_proposal_job(
             feedback_case_id,
             force=True,

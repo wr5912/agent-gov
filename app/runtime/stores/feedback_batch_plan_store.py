@@ -8,13 +8,19 @@ from ..agent_profiles import PROPOSAL_GENERATOR_PROFILE
 from ..errors import BusinessRuleViolation, ConflictError
 from ..feedback_job_flags import no_actionable_attributions, with_reused_existing
 from ..feedback_schemas import validate_feedback_optimization_plan_output
+from ..records.batch_plan_records import (
+    FeedbackOptimizationBlockedItemRecord,
+    FeedbackOptimizationPlanRecord,
+    FeedbackOptimizationPlanTaskRecord,
+)
+from ..records.json_types import JsonObject
 from ..runtime_db import utc_now
 
 
 class FeedbackBatchPlanStoreMixin:
     """Store operations for batch optimization plan generation and approval."""
 
-    def generate_batch_optimization_plan(self, batch_id: str, *, regeneration_instruction: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def generate_batch_optimization_plan(self, batch_id: str, *, regeneration_instruction: Optional[str] = None) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
@@ -39,10 +45,10 @@ class FeedbackBatchPlanStoreMixin:
         self,
         batch_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = True,
         regeneration_instruction: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
@@ -113,7 +119,7 @@ class FeedbackBatchPlanStoreMixin:
             raise
         return self.get_job(job_id)
 
-    def complete_batch_plan_job(self, job_id: str, raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def complete_batch_plan_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
@@ -163,7 +169,7 @@ class FeedbackBatchPlanStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def approve_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def approve_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
         if not batch or not plan or plan.get("status") != "pending_approval":
@@ -235,7 +241,7 @@ class FeedbackBatchPlanStoreMixin:
         )
         return {"batch": updated_batch, "optimization_task": task}
 
-    def reject_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def reject_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
         if not batch or not plan:
@@ -249,7 +255,7 @@ class FeedbackBatchPlanStoreMixin:
         plan_task_id: str,
         *,
         comment: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         batch, plan, plan_task = self._batch_plan_task(batch_id, plan_task_id)
         if not batch or not plan or not plan_task:
             return None
@@ -329,7 +335,7 @@ class FeedbackBatchPlanStoreMixin:
         proposal_id: str,
         target_path: str,
         comment: Optional[str],
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         batch_id = str(batch["batch_id"])
         plan_task_id = str(plan_task["plan_task_id"])
         now = utc_now()
@@ -384,7 +390,7 @@ class FeedbackBatchPlanStoreMixin:
         *,
         webhook_alias: str,
         sender: Optional[Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         batch, plan, plan_task = self._batch_plan_task(batch_id, plan_task_id)
         if not batch or not plan or not plan_task:
             return None
@@ -408,7 +414,7 @@ class FeedbackBatchPlanStoreMixin:
         return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
 
 
-    def _non_actionable_plan(self, batch: dict[str, Any], reason: str, regeneration_instruction: Optional[str] = None) -> dict[str, Any]:
+    def _non_actionable_plan(self, batch: dict[str, Any], reason: str, regeneration_instruction: Optional[str] = None) -> JsonObject:
         blocked_items = [
             {
                 "schema_version": "feedback-optimization-blocked-item/v1",
@@ -452,9 +458,9 @@ class FeedbackBatchPlanStoreMixin:
         instruction = self._string(regeneration_instruction)
         if instruction:
             plan["regeneration_instruction"] = instruction
-        return plan
+        return FeedbackOptimizationPlanRecord.model_validate(plan).to_payload()
 
-    def _normalize_batch_plan_output(self, validated: dict[str, Any], job: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_batch_plan_output(self, validated: dict[str, Any], job: dict[str, Any]) -> JsonObject:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         batch_id = self._string(validated.get("batch_id")) or self._string(input_json.get("batch_id")) or ""
         batch = self.find_optimization_batch(batch_id) or {}
@@ -483,8 +489,8 @@ class FeedbackBatchPlanStoreMixin:
             plan["regeneration_instruction"] = input_json["regeneration_instruction"]
         return self._normalize_plan_task_collections(batch or plan, plan)
 
-    def _batch_plan_attribution_summaries(self, attributions: Any) -> list[dict[str, Any]]:
-        summaries: list[dict[str, Any]] = []
+    def _batch_plan_attribution_summaries(self, attributions: Any) -> list[JsonObject]:
+        summaries: list[JsonObject] = []
         for item in attributions or []:
             if not isinstance(item, dict):
                 continue
@@ -507,7 +513,7 @@ class FeedbackBatchPlanStoreMixin:
         attributions: list[dict[str, Any]],
         *,
         regeneration_instruction: Optional[str] = None,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         task_candidates = [self._build_batch_plan_task_or_blocked_item(batch, item, index) for index, item in enumerate(attributions)]
         tasks = [item for item in task_candidates if item.get("execution_kind") in {"workspace_execution", "external_webhook"}]
         blocked_items = [item for item in task_candidates if item.get("execution_kind") not in {"workspace_execution", "external_webhook"}]
@@ -571,9 +577,9 @@ class FeedbackBatchPlanStoreMixin:
         }
         if instruction:
             plan["regeneration_instruction"] = instruction
-        return plan
+        return FeedbackOptimizationPlanRecord.model_validate(plan).to_payload()
 
-    def _build_batch_plan_task_or_blocked_item(self, batch: dict[str, Any], attribution: dict[str, Any], index: int) -> dict[str, Any]:
+    def _build_batch_plan_task_or_blocked_item(self, batch: dict[str, Any], attribution: dict[str, Any], index: int) -> JsonObject:
         target_type = self._string(attribution.get("optimization_object_type")) or "not_actionable"
         actionability = self._string(attribution.get("actionability")) or "needs_human_analysis"
         target_path = self._plan_target_path(target_type)
@@ -641,11 +647,12 @@ class FeedbackBatchPlanStoreMixin:
             "created_at": utc_now(),
         }
         if execution_kind == "blocked":
-            item.update(
+            return FeedbackOptimizationBlockedItemRecord.model_validate(
                 {
+                    **item,
                     "schema_version": "feedback-optimization-blocked-item/v1",
                     "blocked_item_id": f"fobi-{uuid.uuid4()}",
                     "reason": reason or "归因结果未形成可执行 workspace 任务或外部 webhook 任务。",
                 }
-            )
-        return item
+            ).to_payload()
+        return FeedbackOptimizationPlanTaskRecord.model_validate(item).to_payload()

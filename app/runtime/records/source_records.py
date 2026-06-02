@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeAlias
 
 from pydantic import Field, field_validator, model_validator
 
@@ -31,6 +31,7 @@ SocEventType = Literal[
     "evidence.added",
     "tool.manual_query_after_agent",
 ]
+SocEventEntities: TypeAlias = dict[str, list[str]]
 
 
 class AgentRunRecord(StrictRuntimeRecord):
@@ -56,7 +57,7 @@ class AgentRunRecord(StrictRuntimeRecord):
             raise ValueError("created_at cannot be empty")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         payload = dict(self.payload)
         payload.update(
             {
@@ -146,7 +147,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
             raise ValueError("feedback signal requires run_id, session_id, alert_id, or case_id")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -183,7 +184,7 @@ class SocEventRecord(StrictRuntimeRecord):
     actor_id: Optional[str] = None
     before: Optional[JsonObject] = None
     after: Optional[JsonObject] = None
-    entities: dict[str, list[str]] = Field(default_factory=dict)
+    entities: SocEventEntities = Field(default_factory=dict)
     auto_captured: bool = True
     confidence: Optional[FeedbackConfidence] = "medium"
     requires_review: bool = True
@@ -192,7 +193,7 @@ class SocEventRecord(StrictRuntimeRecord):
 
     @field_validator("entities")
     @classmethod
-    def validate_entities(cls, value: dict[str, list[str]]) -> dict[str, list[str]]:
+    def validate_entities(cls, value: SocEventEntities) -> SocEventEntities:
         return {str(key): [str(item) for item in items if item] for key, items in value.items() if isinstance(items, list)}
 
     @model_validator(mode="after")
@@ -207,7 +208,7 @@ class SocEventRecord(StrictRuntimeRecord):
                 raise ValueError(f"{key} cannot be empty")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -293,7 +294,7 @@ class PendingCorrelationRecord(StrictRuntimeRecord):
         )
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -357,7 +358,7 @@ class FeedbackSourceAnnotationRecord(StrictRuntimeRecord):
                 payload[key] = fields[key]
         return type(self).model_validate(payload)
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

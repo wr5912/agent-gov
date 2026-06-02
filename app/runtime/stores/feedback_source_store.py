@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, TypeAlias
 
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
@@ -16,6 +16,7 @@ from ..records.source_records import (
     apply_feedback_source_annotation_record,
     apply_pending_correlation_record,
 )
+from ..records.json_types import JsonObject
 from ..runtime_db import (
     AgentRunModel,
     AgentJobModel,
@@ -26,13 +27,19 @@ from ..runtime_db import (
     SocEventModel,
     utc_now,
 )
+
+
+SourceAnnotationsByKey: TypeAlias = dict[tuple[str, str], JsonObject]
+FeedbackCasesBySourceId: TypeAlias = dict[str, JsonObject]
+EvalCasesByFeedbackCaseId: TypeAlias = dict[str, JsonObject]
+AgentJobsById: TypeAlias = dict[str, JsonObject]
 from ..schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 
 
 class FeedbackSourceStoreMixin:
     """Store operations for runs, feedback sources, annotations, and source eval cases."""
 
-    def record_run(self, record: dict[str, Any]) -> dict[str, Any]:
+    def record_run(self, record: dict[str, Any]) -> JsonObject:
         payload = record if self.enable_debug_evidence else self._scrub_record(record)
         run_id = self._string(payload.get("run_id")) or f"run-{uuid.uuid4()}"
         payload = {**payload, "run_id": run_id, "created_at": payload.get("created_at") or utc_now()}
@@ -66,7 +73,7 @@ class FeedbackSourceStoreMixin:
         alert_id: Optional[str] = None,
         case_id: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(AgentRunModel).order_by(AgentRunModel.created_at.desc()).limit(limit)
         if run_id:
             stmt = stmt.where(AgentRunModel.run_id == run_id)
@@ -79,14 +86,14 @@ class FeedbackSourceStoreMixin:
         with self.Session() as db:
             return [AgentRunRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
-    def find_run(self, *, run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    def find_run(self, *, run_id: Optional[str] = None) -> Optional[JsonObject]:
         if not run_id:
             return None
         with self.Session() as db:
             row = db.get(AgentRunModel, run_id)
             return AgentRunRecord.from_row(row).to_payload() if row else None
 
-    def find_run_for_event(self, event: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def find_run_for_event(self, event: dict[str, Any]) -> Optional[JsonObject]:
         exact = self.find_run(run_id=self._string(event.get("run_id")))
         if exact:
             return exact
@@ -103,7 +110,7 @@ class FeedbackSourceStoreMixin:
                 return run
         return None
 
-    def create_signal(self, req: FeedbackSignalCreateRequest) -> dict[str, Any]:
+    def create_signal(self, req: FeedbackSignalCreateRequest) -> JsonObject:
         payload = self._scrub_record(req.model_dump(mode="json"))
         if payload.get("source_type") == "implicit_feedback":
             payload["auto_captured"] = True
@@ -148,7 +155,7 @@ class FeedbackSourceStoreMixin:
         case_id: Optional[str] = None,
         source_type: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(FeedbackSignalModel).order_by(FeedbackSignalModel.created_at.desc()).limit(limit)
         if run_id:
             stmt = stmt.where(or_(FeedbackSignalModel.run_id == run_id, FeedbackSignalModel.matched_run_id == run_id))
@@ -163,14 +170,14 @@ class FeedbackSourceStoreMixin:
         with self.Session() as db:
             return [FeedbackSignalRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
-    def find_signal(self, signal_id: str) -> Optional[dict[str, Any]]:
+    def find_signal(self, signal_id: str) -> Optional[JsonObject]:
         if not signal_id:
             return None
         with self.Session() as db:
             record = db.get(FeedbackSignalModel, signal_id)
             return FeedbackSignalRecord.from_row(record).to_payload() if record else None
 
-    def ingest_soc_event(self, req: SocEventIngestRequest) -> dict[str, Any]:
+    def ingest_soc_event(self, req: SocEventIngestRequest) -> JsonObject:
         payload = self._scrub_record(req.model_dump(mode="json"))
         payload["auto_captured"] = True
         payload["requires_review"] = True if payload.get("requires_review") is None else payload.get("requires_review")
@@ -266,7 +273,7 @@ class FeedbackSourceStoreMixin:
         case_id: Optional[str] = None,
         event_type: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(SocEventModel).order_by(SocEventModel.created_at.desc()).limit(limit)
         if run_id:
             stmt = stmt.where(or_(SocEventModel.run_id == run_id, SocEventModel.matched_run_id == run_id))
@@ -281,21 +288,21 @@ class FeedbackSourceStoreMixin:
         with self.Session() as db:
             return [SocEventRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
-    def find_event(self, event_id: str) -> Optional[dict[str, Any]]:
+    def find_event(self, event_id: str) -> Optional[JsonObject]:
         if not event_id:
             return None
         with self.Session() as db:
             record = db.get(SocEventModel, event_id)
             return SocEventRecord.from_row(record).to_payload() if record else None
 
-    def list_pending(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
+    def list_pending(self, *, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(PendingCorrelationModel).order_by(PendingCorrelationModel.updated_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(PendingCorrelationModel.status == status)
         with self.Session() as db:
             return [PendingCorrelationRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
-    def find_pending(self, pending_id: str) -> Optional[dict[str, Any]]:
+    def find_pending(self, pending_id: str) -> Optional[JsonObject]:
         if not pending_id:
             return None
         with self.Session() as db:
@@ -313,7 +320,7 @@ class FeedbackSourceStoreMixin:
         alert_id: Optional[str] = None,
         case_id: Optional[str] = None,
         comment: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             record = db.get(PendingCorrelationModel, pending_id)
             if not record:
@@ -331,7 +338,7 @@ class FeedbackSourceStoreMixin:
             apply_pending_correlation_record(record, resolved)
         return resolved.to_payload()
 
-    def list_feedback_sources(self, *, limit: int = 500) -> list[dict[str, Any]]:
+    def list_feedback_sources(self, *, limit: int = 500) -> list[JsonObject]:
         annotations = self._source_annotations_by_key()
         cases_by_source_id = self._cases_by_source_id()
         feedback_case_ids = self._unique_strings(
@@ -342,7 +349,7 @@ class FeedbackSourceStoreMixin:
             [self._latest(item.get("attribution_job_ids")) or "" for item in cases_by_source_id.values()]
         )
         attribution_jobs_by_id = self._jobs_by_id(attribution_job_ids)
-        rows: list[dict[str, Any]] = []
+        rows: list[JsonObject] = []
         rows.extend(
             self._source_row(
                 source_kind="signal",
@@ -382,7 +389,7 @@ class FeedbackSourceStoreMixin:
         rows.sort(key=lambda item: str(item.get("created_at") or item.get("updated_at") or ""), reverse=True)
         return rows[:limit]
 
-    def find_feedback_source(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+    def find_feedback_source(self, source_kind: str, source_id: str) -> Optional[JsonObject]:
         kind = self._normalize_source_kind(source_kind)
         raw = self._find_source_record(kind, source_id)
         if not raw:
@@ -397,7 +404,7 @@ class FeedbackSourceStoreMixin:
             feedback_case=feedback_case,
         )
 
-    def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def update_feedback_source_annotation(self, source_kind: str, source_id: str, fields: dict[str, Any]) -> Optional[JsonObject]:
         kind = self._normalize_source_kind(source_kind)
         raw = self._find_source_record(kind, source_id)
         if not raw:
@@ -406,7 +413,7 @@ class FeedbackSourceStoreMixin:
             self._upsert_feedback_source_annotation(db, kind, source_id, fields)
         return self.find_feedback_source(kind, source_id)
 
-    def _upsert_feedback_source_annotation(self, db: Any, source_kind: str, source_id: str, fields: dict[str, Any]) -> dict[str, Any]:
+    def _upsert_feedback_source_annotation(self, db: Any, source_kind: str, source_id: str, fields: dict[str, Any]) -> JsonObject:
         kind = self._normalize_source_kind(source_kind)
         annotation_id = self._source_annotation_id(kind, source_id)
         now = utc_now()
@@ -448,7 +455,7 @@ class FeedbackSourceStoreMixin:
             db.add(self._case_model_from_dict(feedback_case))
         return feedback_case
 
-    def generate_eval_cases_for_sources(self, source_refs: list[dict[str, Any]], *, force: bool = False) -> dict[str, Any]:
+    def generate_eval_cases_for_sources(self, source_refs: list[dict[str, Any]], *, force: bool = False) -> JsonObject:
         return self.queue_feedback_eval_case_generation_agent_job(source_refs=source_refs, force=force) or {
             "created": 0,
             "reused": 0,
@@ -538,7 +545,7 @@ class FeedbackSourceStoreMixin:
             refs.append({"source_kind": kind, "source_id": source_id})
         return refs
 
-    def _find_source_record(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+    def _find_source_record(self, source_kind: str, source_id: str) -> Optional[JsonObject]:
         kind = self._normalize_source_kind(source_kind)
         if kind == "signal":
             return self.find_signal(source_id)
@@ -549,18 +556,18 @@ class FeedbackSourceStoreMixin:
     def _source_annotation_id(self, source_kind: str, source_id: str) -> str:
         return f"{self._normalize_source_kind(source_kind)}:{source_id}"
 
-    def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
+    def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.get(FeedbackSourceAnnotationModel, self._source_annotation_id(source_kind, source_id))
             return FeedbackSourceAnnotationRecord.from_row(row).to_payload() if row else None
 
-    def _source_annotations_by_key(self) -> dict[tuple[str, str], dict[str, Any]]:
+    def _source_annotations_by_key(self) -> SourceAnnotationsByKey:
         with self.Session() as db:
             rows = db.scalars(select(FeedbackSourceAnnotationModel)).all()
         return {(row.source_kind, row.source_id): FeedbackSourceAnnotationRecord.from_row(row).to_payload() for row in rows}
 
-    def _cases_by_source_id(self) -> dict[str, dict[str, Any]]:
-        result: dict[str, dict[str, Any]] = {}
+    def _cases_by_source_id(self) -> FeedbackCasesBySourceId:
+        result: FeedbackCasesBySourceId = {}
         for feedback_case in self.list_cases(limit=1000):
             for source_id in feedback_case.get("source_ids") or []:
                 if isinstance(source_id, str) and source_id and source_id not in result:
@@ -575,14 +582,14 @@ class FeedbackSourceStoreMixin:
                 return feedback_case
         return None
 
-    def _eval_cases_by_feedback_case_ids(self, feedback_case_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def _eval_cases_by_feedback_case_ids(self, feedback_case_ids: list[str]) -> EvalCasesByFeedbackCaseId:
         if not feedback_case_ids:
             return {}
         with self.Session() as db:
             rows = db.scalars(select(EvalCaseModel).where(EvalCaseModel.source_feedback_case_id.in_(feedback_case_ids))).all()
         return {str(row.source_feedback_case_id): self._eval_case_to_dict(row) for row in rows if row.source_feedback_case_id}
 
-    def _jobs_by_id(self, job_ids: list[str]) -> dict[str, dict[str, Any]]:
+    def _jobs_by_id(self, job_ids: list[str]) -> AgentJobsById:
         if not job_ids:
             return {}
         with self.Session() as db:
@@ -594,12 +601,12 @@ class FeedbackSourceStoreMixin:
         *,
         source_kind: str,
         source_id: str,
-        raw: dict[str, Any],
-        annotation: Optional[dict[str, Any]] = None,
+        raw: JsonObject,
+        annotation: Optional[JsonObject] = None,
         feedback_case: Optional[dict[str, Any]] = None,
-        eval_cases_by_case_id: Optional[dict[str, dict[str, Any]]] = None,
-        attribution_jobs_by_id: Optional[dict[str, dict[str, Any]]] = None,
-    ) -> dict[str, Any]:
+        eval_cases_by_case_id: Optional[EvalCasesByFeedbackCaseId] = None,
+        attribution_jobs_by_id: Optional[AgentJobsById] = None,
+    ) -> JsonObject:
         annotation = annotation or {}
         feedback_case_id = self._string((feedback_case or {}).get("feedback_case_id"))
         if eval_cases_by_case_id is not None:
@@ -647,7 +654,7 @@ class FeedbackSourceStoreMixin:
             "raw": raw,
         }
 
-    def _base_source_status(self, source_kind: str, raw: dict[str, Any]) -> str:
+    def _base_source_status(self, source_kind: str, raw: JsonObject) -> str:
         kind = self._normalize_source_kind(source_kind)
         if kind == "signal":
             return "needs_review" if raw.get("requires_review") else "collected"
@@ -655,7 +662,7 @@ class FeedbackSourceStoreMixin:
             return "matched" if raw.get("matched_run_id") or raw.get("run_id") else "pending_correlation"
         return self._string(raw.get("status")) or "pending"
 
-    def _source_label(self, source_kind: str, raw: dict[str, Any], labels: Any, comment: Optional[str]) -> str:
+    def _source_label(self, source_kind: str, raw: JsonObject, labels: Any, comment: Optional[str]) -> str:
         if comment:
             return comment[:120]
         if isinstance(labels, list) and labels:
@@ -673,5 +680,5 @@ class FeedbackSourceStoreMixin:
             or f"{source.get('source_kind') or 'feedback'} {source.get('source_id') or ''}"
         )[:120]
 
-    def _same_case_or_alert(self, run: dict[str, Any], alert_id: Optional[str], case_id: Optional[str]) -> bool:
+    def _same_case_or_alert(self, run: JsonObject, alert_id: Optional[str], case_id: Optional[str]) -> bool:
         return bool((alert_id and run.get("alert_id") == alert_id) or (case_id and run.get("case_id") == case_id))

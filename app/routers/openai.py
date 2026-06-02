@@ -41,14 +41,14 @@ def create_openai_router(
         )
         result = await runtime.run(chat_req)
         return OpenAIChatCompletionResponse(
-            id=result["session_id"],
+            id=result.session_id,
             model=req.model or settings.agent_model,
             choices=[
                 OpenAIChatCompletionChoice(
-                    message=OpenAIChatMessage(role="assistant", content=result.get("answer") or "")
+                    message=OpenAIChatMessage(role="assistant", content=result.answer or "")
                 )
             ],
-            usage=result.get("usage"),
+            usage=result.usage,
         )
 
     return router

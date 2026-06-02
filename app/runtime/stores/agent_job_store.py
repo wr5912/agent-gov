@@ -16,6 +16,7 @@ from ..runtime_db import (
     utc_now,
 )
 from ..records.agent_job_records import AgentJobRecord
+from ..records.json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..schema_versions import FEEDBACK_EVAL_CASE_SCHEMA_VERSION
 
@@ -34,12 +35,12 @@ class AgentJobStoreMixin:
         scope_kind: str,
         scope_id: str,
         profile_name: str,
-        input_payload: dict[str, Any],
+        input_payload: JsonObject,
         output_schema_version: str,
         input_path: Optional[str] = None,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         status: str = "queued",
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         input_path = input_path or self._write_agent_job_input(job_id, job_type, input_payload)
         now = utc_now()
         row = AgentJobModel(
@@ -71,7 +72,7 @@ class AgentJobStoreMixin:
             db.add(row)
         return self.get_agent_job(job_id) or self._agent_job_to_dict(row)
 
-    def get_agent_job(self, job_id: str) -> Optional[dict[str, Any]]:
+    def get_agent_job(self, job_id: str) -> Optional[JsonObject]:
         if not job_id:
             return None
         with self.Session() as db:
@@ -86,7 +87,7 @@ class AgentJobStoreMixin:
         scope_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    ) -> list[JsonObject]:
         stmt = select(AgentJobModel).order_by(AgentJobModel.created_at.desc()).limit(limit)
         if job_type:
             stmt = stmt.where(AgentJobModel.job_type == job_type)
@@ -99,7 +100,7 @@ class AgentJobStoreMixin:
         with self.Session() as db:
             return [self._agent_job_to_dict(row) for row in db.scalars(stmt).all()]
 
-    def claim_next_agent_job(self, *, job_types: Optional[list[str]] = None) -> Optional[dict[str, Any]]:
+    def claim_next_agent_job(self, *, job_types: Optional[list[str]] = None) -> Optional[JsonObject]:
         now = utc_now()
         with self.Session.begin() as db:
             stmt = select(AgentJobModel).where(AgentJobModel.status == "queued").order_by(AgentJobModel.created_at.asc()).limit(20)
@@ -119,7 +120,7 @@ class AgentJobStoreMixin:
                 return self._agent_job_to_dict(row) if row else None
         return None
 
-    def complete_projected_agent_job(self, job: dict[str, Any], raw_output: dict[str, Any]) -> Optional[dict[str, Any]]:
+    def complete_projected_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
         job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
         if job_type == "attribution":
@@ -263,12 +264,12 @@ class AgentJobStoreMixin:
             if jobs:
                 self.record_batch_attribution_jobs(str(batch["batch_id"]), jobs)
 
-    def _project_eval_case_generation(self, job: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    def _project_eval_case_generation(self, job: JsonObject, output: JsonObject) -> JsonObject:
         job_input = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         force = bool(job_input.get("force"))
         created = reused = updated = skipped = 0
-        eval_cases: list[dict[str, Any]] = []
-        results: list[dict[str, Any]] = []
+        eval_cases: list[JsonObject] = []
+        results: list[JsonObject] = []
         now = utc_now()
         with self.Session.begin() as db:
             for item in output.get("eval_cases") or []:
@@ -307,7 +308,7 @@ class AgentJobStoreMixin:
             "results": results,
         }
 
-    def _project_regression_impact(self, job: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    def _project_regression_impact(self, job: JsonObject, output: JsonObject) -> JsonObject:
         eval_run_id = str(output.get("eval_run_id") or job.get("scope_id") or "")
         created_at = self._string(output.get("created_at")) or utc_now()
         completed_at = utc_now()
@@ -360,7 +361,7 @@ class AgentJobStoreMixin:
             )
             apply_regression_impact_analysis_record(row, record)
 
-    def _eval_case_payload_from_agent(self, item: dict[str, Any], job_input: dict[str, Any], now: str) -> dict[str, Any]:
+    def _eval_case_payload_from_agent(self, item: JsonObject, job_input: JsonObject, now: str) -> JsonObject:
         payload = dict(item)
         payload["schema_version"] = payload.get("schema_version") or FEEDBACK_EVAL_CASE_SCHEMA_VERSION
         payload["eval_case_id"] = self._string(payload.get("eval_case_id")) or f"evc-{uuid.uuid4()}"
@@ -376,7 +377,7 @@ class AgentJobStoreMixin:
         payload["labels"] = self._unique_strings([*(payload.get("labels") or []), "feedback_optimization"])
         return self._eval_case_with_asset_defaults(payload)
 
-    def _eval_case_generation_result(self, payload: dict[str, Any], eval_case: dict[str, Any], status: str) -> dict[str, Any]:
+    def _eval_case_generation_result(self, payload: JsonObject, eval_case: JsonObject, status: str) -> JsonObject:
         return {
             "source_kind": payload.get("source_kind"),
             "source_id": payload.get("source_id"),
@@ -474,7 +475,7 @@ class AgentJobStoreMixin:
         row.completed_at = updated.completed_at
         return row
 
-    def _agent_job_to_dict(self, row: AgentJobModel) -> dict[str, Any]:
+    def _agent_job_to_dict(self, row: AgentJobModel) -> JsonObject:
         compensations = self._execution_compensations_for_job(row.job_id) if row.job_type == "execution" else None
         return AgentJobRecord.from_row(row, compensations=compensations).to_payload()
 

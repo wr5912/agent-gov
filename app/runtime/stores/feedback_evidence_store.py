@@ -6,13 +6,14 @@ from typing import Any, Iterable, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
+from ..records.json_types import JsonObject
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
 
 class FeedbackEvidenceStoreMixin:
     """Store operations for evidence package manifests, files, and job materialization."""
 
-    def create_evidence_package(self, feedback_case_id: str) -> Optional[dict[str, Any]]:
+    def create_evidence_package(self, feedback_case_id: str) -> Optional[JsonObject]:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
@@ -24,8 +25,8 @@ class FeedbackEvidenceStoreMixin:
 
         evidence_id = f"evp-{uuid.uuid4()}"
         context = self._collect_evidence_context(feedback_case)
-        main_agent_version = {"main_agent_version_id": self._current_agent_version_id(), "captured_at": utc_now()}
-        redaction_report = {
+        main_agent_version: JsonObject = {"main_agent_version_id": self._current_agent_version_id(), "captured_at": utc_now()}
+        redaction_report: JsonObject = {
             "enabled": not self.enable_debug_evidence,
             "policy": "debug-evidence-raw-v1" if self.enable_debug_evidence else "security-redaction-v1",
             "redacted_fields": list(SENSITIVE_KEY_PARTS),
@@ -56,7 +57,7 @@ class FeedbackEvidenceStoreMixin:
                 raise RuntimeError("Feedback case disappeared during evidence package creation.")
         return manifest
 
-    def _collect_evidence_context(self, feedback_case: dict[str, Any]) -> dict[str, Any]:
+    def _collect_evidence_context(self, feedback_case: dict[str, Any]) -> JsonObject:
         signals_clean = [item for item in (self.find_signal(source_id) for source_id in feedback_case.get("signal_ids", [])) if item]
         events_clean = [item for item in (self.find_event(source_id) for source_id in feedback_case.get("event_ids", [])) if item]
         runs_clean = [item for item in (self.find_run(run_id=run_id) for run_id in feedback_case.get("run_ids", [])) if item]
@@ -108,11 +109,11 @@ class FeedbackEvidenceStoreMixin:
 
     def _build_evidence_files(
         self,
-        context: dict[str, Any],
-        main_agent_version: dict[str, Any],
-        redaction_report: dict[str, Any],
-    ) -> dict[str, Any]:
-        files: dict[str, Any] = {
+        context: JsonObject,
+        main_agent_version: JsonObject,
+        redaction_report: JsonObject,
+    ) -> JsonObject:
+        files: JsonObject = {
             "feedback.json": context["signals_clean"],
             "runs.json": context["runs_clean"],
             "sessions.json": context["sessions"],
@@ -132,7 +133,7 @@ class FeedbackEvidenceStoreMixin:
             )
         return files
 
-    def _included_evidence_files(self, files: dict[str, Any]) -> list[dict[str, Any]]:
+    def _included_evidence_files(self, files: JsonObject) -> list[JsonObject]:
         return [
             EvidenceIncludedFileRecord(
                 path=name,
@@ -148,11 +149,11 @@ class FeedbackEvidenceStoreMixin:
         evidence_id: str,
         feedback_case_id: str,
         feedback_case: dict[str, Any],
-        context: dict[str, Any],
-        main_agent_version: dict[str, Any],
-        redaction_report: dict[str, Any],
-        included_files: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+        context: JsonObject,
+        main_agent_version: JsonObject,
+        redaction_report: JsonObject,
+        included_files: list[JsonObject],
+    ) -> JsonObject:
         trace_ids = self._unique_strings([item.get("trace_id") for item in context["langfuse_trace_refs"]])
         record = EvidencePackageRecord.model_validate(
             {
@@ -193,8 +194,8 @@ class FeedbackEvidenceStoreMixin:
         self,
         db: Any,
         *,
-        manifest: dict[str, Any],
-        files: dict[str, Any],
+        manifest: JsonObject,
+        files: JsonObject,
     ) -> None:
         record = EvidencePackageRecord.model_validate(manifest)
         db.add(
@@ -218,14 +219,14 @@ class FeedbackEvidenceStoreMixin:
                 )
             )
 
-    def get_evidence_package(self, evidence_package_id: str) -> Optional[dict[str, Any]]:
+    def get_evidence_package(self, evidence_package_id: str) -> Optional[JsonObject]:
         if not evidence_package_id:
             return None
         with self.Session() as db:
             record = db.get(EvidencePackageModel, evidence_package_id)
             return EvidencePackageRecord.from_row(record).to_payload() if record else None
 
-    def get_evidence_package_file(self, evidence_package_id: str, file_name: str) -> Optional[dict[str, Any]]:
+    def get_evidence_package_file(self, evidence_package_id: str, file_name: str) -> Optional[JsonObject]:
         if not file_name or Path(file_name).name != file_name or file_name == "manifest.json":
             return None
         with self.Session() as db:
@@ -239,8 +240,8 @@ class FeedbackEvidenceStoreMixin:
             return value
         return self._scrub_record(value)
 
-    def _langfuse_trace_refs(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        refs: list[dict[str, Any]] = []
+    def _langfuse_trace_refs(self, runs: list[JsonObject]) -> list[JsonObject]:
+        refs: list[JsonObject] = []
         for run in runs:
             trace_id = self._string(run.get("langfuse_trace_id"))
             trace_url = self._string(run.get("langfuse_trace_url"))

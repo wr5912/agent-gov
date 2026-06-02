@@ -692,16 +692,18 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
+    job_payload = job.model_dump(mode="json")
     updated_task = store.find_task(task["optimization_task_id"])
 
-    assert job["status"] == "completed"
-    assert job["validated_output_json"]["status"] == "ready"
-    assert seen["input_path"] == job["input_path"]
+    assert job.status == "completed"
+    assert job.validated_output_json is not None
+    assert job.validated_output_json["status"] == "ready"
+    assert seen["input_path"] == job.input_path
     assert str(seen["input_path"]).endswith("/execution/input.json")
     assert "execution-input.json" not in str(seen["input_path"])
     assert seen["allowed_tools"] == []
     assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob", "Bash", "Edit", "Write"}
-    assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
+    assert updated_task["latest_execution_job_id"] == job_payload["execution_job_id"]
     assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
 
 
@@ -753,15 +755,16 @@ def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path
     monkeypatch.setattr(claude_agent_sdk, "query", fail_query)
 
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
-    operation = job["validated_output_json"]["operations"][0]
+    assert job.validated_output_json is not None
+    operation = job.validated_output_json["operations"][0]
 
-    assert job["status"] == "completed"
-    assert job["validated_output_json"]["status"] == "ready"
+    assert job.status == "completed"
+    assert job.validated_output_json["status"] == "ready"
     assert operation["operation"] == "create_file"
     assert operation["path"] == "evals/alert-triage-false-positive.json"
     assert "feedback-eval-case/v1" in operation["content"]
     assert "创建告警误报评估用例" in operation["content"]
-    assert "手动运行回归验证" in job["validated_output_json"]["validation"]
+    assert "手动运行回归验证" in job.validated_output_json["validation"]
 
 
 def test_execution_plan_output_normalizes_agent_friendly_fields():

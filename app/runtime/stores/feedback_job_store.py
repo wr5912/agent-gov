@@ -13,6 +13,7 @@ from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE, PROPOSAL_GENERATOR_PR
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_attribution_output, validate_proposal_output
 from ..records.agent_job_records import AgentJobRecord
+from ..records.json_types import JsonObject
 from ..runtime_db import (
     AgentJobModel,
     ExternalGovernanceItemModel,
@@ -36,9 +37,9 @@ class FeedbackJobStoreMixin:
         feedback_case_id: str,
         *,
         evidence_package_id: Optional[str] = None,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self._job_create_lock:
             feedback_case = self.find_case(feedback_case_id)
             if not feedback_case:
@@ -109,10 +110,10 @@ class FeedbackJobStoreMixin:
         *,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
         regeneration_instruction: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         feedback_case = self.find_case(feedback_case_id)
         if not feedback_case:
             return None
@@ -310,7 +311,7 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def get_job(self, job_id: str) -> Optional[dict[str, Any]]:
+    def get_job(self, job_id: str) -> Optional[JsonObject]:
         job = self.get_agent_job(job_id)
         if not job:
             return None
@@ -319,7 +320,7 @@ class FeedbackJobStoreMixin:
             job[f"{job.get('job_type')}_agent_version"] = (job.get("profile_version") or {}).get("agent_version")
         return job
 
-    def get_job_output(self, job_id: str, job_type: str) -> Optional[dict[str, Any]]:
+    def get_job_output(self, job_id: str, job_type: str) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job or job.get("job_type") != job_type:
             return None
@@ -361,7 +362,7 @@ class FeedbackJobStoreMixin:
         return True
 
 
-    def _job_to_dict(self, row: AgentJobModel) -> dict[str, Any]:
+    def _job_to_dict(self, row: AgentJobModel) -> JsonObject:
         job = self._agent_job_to_dict(row)
         job["error_json"] = self._normalize_job_error_payload(job.get("error_json"))
         if job.get("profile_version"):
@@ -379,7 +380,7 @@ class FeedbackJobStoreMixin:
         status: str,
         started_at: Optional[str] = None,
         completed_at: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._append_job_update_row(
                 db,
@@ -458,8 +459,8 @@ class FeedbackJobStoreMixin:
             error_json=error_payload,
         )
 
-    def _job_error_payload(self, job: dict[str, Any], error_code: str, message: str) -> dict[str, Any]:
-        error_payload: dict[str, Any] = {"error_code": error_code, "message": message, "created_at": utc_now(), "job_id": job["job_id"]}
+    def _job_error_payload(self, job: JsonObject, error_code: str, message: str) -> JsonObject:
+        error_payload: JsonObject = {"error_code": error_code, "message": message, "created_at": utc_now(), "job_id": job["job_id"]}
         return self._normalize_job_error_payload(error_payload)
 
     def _normalize_job_error_payload(self, error_payload: Any) -> Any:
@@ -476,7 +477,7 @@ class FeedbackJobStoreMixin:
             return {**error_payload, "message": "分析 Agent 输出不符合 schema。", "validation_errors": parsed}
         return error_payload
 
-    def _latest_reusable_job(self, feedback_case_id: str, job_type: str) -> Optional[dict[str, Any]]:
+    def _latest_reusable_job(self, feedback_case_id: str, job_type: str) -> Optional[JsonObject]:
         if job_type == "attribution":
             feedback_case = self.find_case(feedback_case_id)
             current_job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))

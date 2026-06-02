@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -27,7 +27,7 @@ def create_agent_jobs_router(
         scope_id: str | None = None,
         status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[AgentJobResponse]:
         return feedback_store.list_agent_jobs(
             job_type=job_type,
             scope_kind=scope_kind,
@@ -41,7 +41,7 @@ def create_agent_jobs_router(
         response_model=AgentJobResponse,
         summary="Get one async feedback-loop Agent job",
     )
-    async def get_agent_job(job_id: str) -> dict[str, Any]:
+    async def get_agent_job(job_id: str) -> AgentJobResponse:
         return ensure_found(feedback_store.get_agent_job(job_id), "Agent job not found")
 
     return router

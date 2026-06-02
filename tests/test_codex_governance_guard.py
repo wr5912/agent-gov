@@ -246,6 +246,51 @@ def test_new_state_machine_missing_transition_fails(tmp_path: Path) -> None:
     assert "new state machine without transitions: batch" in result.stdout
 
 
+def test_existing_unowned_dict_return_is_allowed_when_unchanged(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "service.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("def legacy() -> dict[str, object]:\n    return {}\n", encoding="utf-8")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "unowned dict return" not in result.stdout
+
+
+def test_new_unowned_dict_return_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "service.py"
+    path.write_text("def new_contract() -> dict[str, object]:\n    return {}\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new unowned dict return annotation: new_contract" in result.stdout
+
+
+def test_new_owned_payload_dict_return_is_allowed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "records" / "record.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "class Record:\n"
+        "    def to_payload(self) -> dict[str, object]:\n"
+        "        return {}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "unowned dict return" not in result.stdout
+
+
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

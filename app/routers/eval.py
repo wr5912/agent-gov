@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -38,7 +38,7 @@ def _register_eval_dataset_routes(router: APIRouter, runtime: ClaudeRuntime) -> 
         response_model=AgentJobResponse,
         summary="Queue processed feedback cases into reusable eval cases",
     )
-    async def sync_feedback_eval_dataset(req: FeedbackEvalDatasetSyncRequest) -> dict[str, Any]:
+    async def sync_feedback_eval_dataset(req: FeedbackEvalDatasetSyncRequest) -> AgentJobResponse:
         job = runtime.queue_eval_case_generation_job(feedback_case_id=req.feedback_case_id, limit=req.limit)
         return ensure_found(job, "No feedback cases found for eval case generation")
 
@@ -57,7 +57,7 @@ def _register_eval_case_routes(router: APIRouter, feedback_store: FeedbackStore)
         blocking_policy: str | None = None,
         flaky_status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[EvalCaseResponse]:
         return feedback_store.list_eval_cases(
             status=status,
             source_feedback_case_id=source_feedback_case_id,
@@ -73,7 +73,7 @@ def _register_eval_case_routes(router: APIRouter, feedback_store: FeedbackStore)
         response_model=EvalCaseResponse,
         summary="Update one feedback-derived eval case",
     )
-    async def update_eval_case(eval_case_id: str, req: FeedbackEvalCaseUpdateRequest) -> dict[str, Any]:
+    async def update_eval_case(eval_case_id: str, req: FeedbackEvalCaseUpdateRequest) -> EvalCaseResponse:
         updated = feedback_store.update_eval_case(eval_case_id, req.model_dump(exclude_unset=True))
         return ensure_found(updated, "Eval case not found")
 
@@ -88,7 +88,7 @@ def _register_eval_run_routes(
         response_model=EvalRunResponse,
         summary="Run a manual feedback dataset evaluation against the current main Agent",
     )
-    async def create_eval_run(req: FeedbackEvalRunCreateRequest) -> dict[str, Any]:
+    async def create_eval_run(req: FeedbackEvalRunCreateRequest) -> EvalRunResponse:
         return await _run_manual_feedback_eval(feedback_store=feedback_store, runtime=runtime, req=req)
 
     @router.get(
@@ -101,7 +101,7 @@ def _register_eval_run_routes(
         agent_version_id: str | None = None,
         status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[dict[str, Any]]:
+    ) -> list[EvalRunResponse]:
         return feedback_store.list_eval_runs(
             optimization_task_id=optimization_task_id,
             agent_version_id=agent_version_id,
@@ -114,7 +114,7 @@ def _register_eval_run_routes(
         response_model=EvalRunResponse,
         summary="Get one feedback dataset eval run",
     )
-    async def get_eval_run(eval_run_id: str) -> dict[str, Any]:
+    async def get_eval_run(eval_run_id: str) -> EvalRunResponse:
         eval_run = feedback_store.get_eval_run(eval_run_id)
         return ensure_found(eval_run, "Eval run not found")
 
@@ -125,7 +125,7 @@ def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStor
         response_model=AgentJobResponse,
         summary="Queue regression impact analysis for one eval run",
     )
-    async def create_regression_impact_analysis(eval_run_id: str) -> dict[str, Any]:
+    async def create_regression_impact_analysis(eval_run_id: str) -> AgentJobResponse:
         analysis = runtime.queue_regression_impact_analysis_job(eval_run_id)
         return ensure_found(analysis, "Eval run not found")
 
@@ -134,7 +134,7 @@ def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStor
         response_model=RegressionImpactAnalysisResponse,
         summary="Get regression impact analysis for one eval run",
     )
-    async def get_regression_impact_analysis(eval_run_id: str) -> dict[str, Any]:
+    async def get_regression_impact_analysis(eval_run_id: str) -> RegressionImpactAnalysisResponse:
         analysis = feedback_store.get_regression_impact_analysis(eval_run_id)
         return ensure_found(analysis, "Regression impact analysis not found")
 
@@ -144,7 +144,7 @@ async def _run_manual_feedback_eval(
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
     req: FeedbackEvalRunCreateRequest,
-) -> dict[str, Any]:
+) -> EvalRunResponse:
     result = await runtime.run_feedback_eval(
         eval_case_ids=req.eval_case_ids or None,
         optimization_task_id=req.optimization_task_id,
@@ -152,4 +152,4 @@ async def _run_manual_feedback_eval(
     )
     if not result:
         raise_conflict("No active eval cases found")
-    return result
+    return EvalRunResponse.model_validate(result)

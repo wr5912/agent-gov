@@ -13,6 +13,7 @@ from ..collection_utils import unique_strings
 from ..integrations.external_governance import ExternalGovernanceService
 from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..records.json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import (
     OptimizationProposalModel,
@@ -103,13 +104,13 @@ class FeedbackStore(
         except Exception:
             return None
 
-    def _execution_target_policy(self) -> dict[str, Any]:
+    def _execution_target_policy(self) -> JsonObject:
         return self.execution_targets.policy_json()
 
-    def _execution_target_file_contexts(self, target_paths: list[str]) -> list[dict[str, Any]]:
+    def _execution_target_file_contexts(self, target_paths: list[str]) -> list[JsonObject]:
         return self.execution_targets.file_contexts(target_paths)
 
-    def _execution_target_file_context(self, target_path: str) -> dict[str, Any]:
+    def _execution_target_file_context(self, target_path: str) -> JsonObject:
         return self.execution_targets.file_context(target_path)
 
     def _target_allowed(self, target_path: str) -> bool:

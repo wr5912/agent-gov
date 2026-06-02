@@ -8,7 +8,7 @@ from pydantic.types import JsonValue
 
 from app.runtime.runtime_db import EvidenceFileModel, EvidencePackageModel
 
-from .json_types import StrictRuntimeRecord
+from .json_types import JsonObject, StrictRuntimeRecord
 
 
 EvidencePackageSchemaVersion = Literal["evidence-package/v1"]
@@ -61,7 +61,7 @@ class EvidenceIncludedFileRecord(StrictRuntimeRecord):
             raise ValueError("evidence file type cannot be empty")
         return value
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
 
@@ -121,7 +121,7 @@ class EvidencePackageRecord(StrictRuntimeRecord):
             raise ValueError("evidence package included_files cannot contain duplicate paths")
         return self
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod
@@ -152,7 +152,7 @@ class EvidencePackageFileRecord(StrictRuntimeRecord):
             raise ValueError(f"unsafe evidence file name: {value}")
         return value
 
-    def to_payload(self) -> dict[str, object]:
+    def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
 
     @classmethod

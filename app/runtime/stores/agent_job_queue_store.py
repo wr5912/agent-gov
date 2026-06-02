@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..agent_job_types import agent_job_spec
 from ..feedback_job_flags import has_no_actionable_attributions, reused_existing
+from ..records.json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..runtime_db import FeedbackOptimizationBatchModel, RegressionImpactAnalysisModel, utc_now
 
@@ -18,9 +19,9 @@ class AgentJobQueueStoreMixin:
         self,
         feedback_case_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         domain_job = self.create_attribution_job(feedback_case_id, profile_version=profile_version, force=force)
         if not domain_job:
             return None
@@ -35,10 +36,10 @@ class AgentJobQueueStoreMixin:
         self,
         feedback_case_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
         regeneration_instruction: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         domain_job = self.create_proposal_job(
             feedback_case_id,
             profile_version=profile_version,
@@ -58,10 +59,10 @@ class AgentJobQueueStoreMixin:
         self,
         batch_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = True,
         regeneration_instruction: Optional[str] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         domain_job = self.create_batch_plan_job(
             batch_id,
             profile_version=profile_version,
@@ -81,9 +82,9 @@ class AgentJobQueueStoreMixin:
         self,
         optimization_task_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         domain_job = self.create_execution_job(optimization_task_id, profile_version=profile_version, force=force)
         if not domain_job:
             return None
@@ -97,8 +98,8 @@ class AgentJobQueueStoreMixin:
         batch_id: Optional[str] = None,
         limit: int = 100,
         force: bool = False,
-        profile_version: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+        profile_version: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         context = self._eval_case_generation_input_context(
             feedback_case_id=feedback_case_id,
             source_refs=source_refs,
@@ -141,9 +142,9 @@ class AgentJobQueueStoreMixin:
         self,
         eval_run_id: str,
         *,
-        profile_version: Optional[dict[str, Any]] = None,
+        profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         eval_run = self.get_eval_run(eval_run_id)
         if not eval_run:
             return None
@@ -176,12 +177,12 @@ class AgentJobQueueStoreMixin:
 
     def _ensure_agent_job_for_domain_job(
         self,
-        domain_job: dict[str, Any],
+        domain_job: JsonObject,
         *,
         scope_kind: str,
         scope_id: str,
-        profile_version: Optional[dict[str, Any]],
-    ) -> dict[str, Any]:
+        profile_version: Optional[JsonObject],
+    ) -> JsonObject:
         job_id = str(domain_job["job_id"])
         existing = self.get_agent_job(job_id)
         if existing:
@@ -203,10 +204,10 @@ class AgentJobQueueStoreMixin:
 
     def _ensure_agent_job_for_execution_job(
         self,
-        domain_job: dict[str, Any],
+        domain_job: JsonObject,
         *,
-        profile_version: Optional[dict[str, Any]],
-    ) -> dict[str, Any]:
+        profile_version: Optional[JsonObject],
+    ) -> JsonObject:
         job_id = str(domain_job["execution_job_id"])
         existing = self.get_agent_job(job_id)
         if existing:
@@ -235,10 +236,10 @@ class AgentJobQueueStoreMixin:
         batch_id: Optional[str],
         limit: int,
         force: bool,
-    ) -> dict[str, Any]:
-        feedback_cases: list[dict[str, Any]] = []
-        prepared_source_refs: list[dict[str, Any]] = []
-        cases_to_create: list[dict[str, Any]] = []
+    ) -> JsonObject:
+        feedback_cases: list[JsonObject] = []
+        prepared_source_refs: list[JsonObject] = []
+        cases_to_create: list[JsonObject] = []
         if batch_id:
             batch = self.find_optimization_batch(batch_id)
             if not batch:
@@ -277,7 +278,7 @@ class AgentJobQueueStoreMixin:
             ],
         }
 
-    def _eval_case_generation_case_context(self, feedback_case: dict[str, Any]) -> dict[str, Any]:
+    def _eval_case_generation_case_context(self, feedback_case: dict[str, Any]) -> JsonObject:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
         proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
         source_refs = [{"source_kind": "signal", "source_id": source_id} for source_id in feedback_case.get("signal_ids") or []]

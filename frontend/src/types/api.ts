@@ -4007,6 +4007,13 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** SessionDeleteResponse */
+        SessionDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+            /** Session Id */
+            session_id: string;
+        };
         /** SessionInfo */
         SessionInfo: {
             /** Created At */
@@ -7066,9 +7073,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SessionDeleteResponse"];
                 };
             };
             /** @description Validation Error */

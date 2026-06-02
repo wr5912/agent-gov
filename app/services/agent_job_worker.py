@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
@@ -11,10 +11,12 @@ from app.runtime.prompts.feedback_prompts import (
     proposal_prompt,
     regression_impact_analysis_prompt,
 )
+from app.runtime.records.json_types import JsonObject
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 
 
-RunProfileJson = Callable[..., Awaitable[dict[str, Any]]]
+RunProfileJson = Callable[..., Awaitable[JsonObject]]
 
 
 def _agent_error_message(exc: Exception) -> str:
@@ -35,24 +37,28 @@ class AgentJobWorker:
         self.run_profile_json = run_profile_json
         self.poll_interval_seconds = poll_interval_seconds
 
-    async def run_once(self) -> Optional[dict[str, Any]]:
+    async def run_once(self) -> AgentJobResponse | None:
         job = self.feedback_store.claim_next_agent_job()
         if not job:
             return None
         try:
             raw = await self._run_job(job)
-            return self.feedback_store.complete_projected_agent_job(job, raw)
+            return self._job_response(self.feedback_store.complete_projected_agent_job(job, raw))
         except asyncio.TimeoutError as exc:
-            return self.feedback_store.fail_projected_agent_job(
-                job,
-                error_code="AGENT_TIMEOUT",
-                message=_agent_error_message(exc),
+            return self._job_response(
+                self.feedback_store.fail_projected_agent_job(
+                    job,
+                    error_code="AGENT_TIMEOUT",
+                    message=_agent_error_message(exc),
+                )
             )
         except Exception as exc:
-            return self.feedback_store.fail_projected_agent_job(
-                job,
-                error_code="AGENT_RUNTIME_ERROR",
-                message=_agent_error_message(exc),
+            return self._job_response(
+                self.feedback_store.fail_projected_agent_job(
+                    job,
+                    error_code="AGENT_RUNTIME_ERROR",
+                    message=_agent_error_message(exc),
+                )
             )
 
     async def run_forever(self) -> None:
@@ -61,7 +67,7 @@ class AgentJobWorker:
             if result is None:
                 await asyncio.sleep(self.poll_interval_seconds)
 
-    async def _run_job(self, job: dict[str, Any]) -> dict[str, Any]:
+    async def _run_job(self, job: dict[str, Any]) -> JsonObject:
         if job.get("job_type") == "execution":
             execution = self.feedback_store.get_execution_job(str(job["job_id"]))
             deterministic = self.feedback_store.deterministic_execution_plan_output(execution or {})
@@ -76,7 +82,7 @@ class AgentJobWorker:
             job_input=job_input,
         )
 
-    def _prompt(self, job: dict[str, Any], job_input: dict[str, Any]) -> str:
+    def _prompt(self, job: dict[str, Any], job_input: JsonObject) -> str:
         job_type = str(job.get("job_type") or "")
         input_path = str(job.get("input_path") or "")
         if job_type == "attribution":
@@ -94,3 +100,7 @@ class AgentJobWorker:
         if job_type == "regression_impact_analysis":
             return regression_impact_analysis_prompt(input_path, input_payload=job_input)
         raise RuntimeError(f"Unsupported agent job type: {job_type}")
+
+    @staticmethod
+    def _job_response(payload: dict[str, Any] | None) -> AgentJobResponse | None:
+        return AgentJobResponse.model_validate(payload) if payload else None

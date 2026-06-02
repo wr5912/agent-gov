@@ -4,13 +4,20 @@ import re
 import uuid
 from typing import Any, Optional
 
+from ..records.batch_plan_records import (
+    FeedbackOptimizationBlockedItemRecord,
+    FeedbackOptimizationPlanRecord,
+    FeedbackOptimizationPlanTaskRecord,
+    FeedbackOptimizationTaskContextRecord,
+)
+from ..records.json_types import JsonObject
 from ..runtime_db import FeedbackOptimizationBatchModel, utc_now
 
 
 class FeedbackPlanTaskStoreMixin:
     """Normalization helpers for batch optimization plan tasks and external task context."""
 
-    def _normalize_plan_task_collections(self, batch: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_plan_task_collections(self, batch: dict[str, Any], plan: dict[str, Any]) -> JsonObject:
         raw_tasks = [dict(item) for item in plan.get("tasks") or [] if isinstance(item, dict)]
         executable_tasks = [
             self._normalize_plan_task(batch, plan, item)
@@ -25,15 +32,22 @@ class FeedbackPlanTaskStoreMixin:
                 executable_tasks.append(self._normalize_plan_task(batch, plan, legacy_item))
             else:
                 blocked_items.append(self._normalize_blocked_item(batch, plan, legacy_item))
-        return {
+        normalized_plan = {
             **plan,
+            "schema_version": self._string(plan.get("schema_version")) or "feedback-optimization-plan/v1",
+            "optimization_plan_id": self._string(plan.get("optimization_plan_id")) or f"fop-legacy-{self._string(batch.get('batch_id')) or 'unknown'}",
+            "batch_id": plan.get("batch_id") or batch.get("batch_id"),
+            "created_at": plan.get("created_at") or batch.get("created_at"),
+            "status": self._string(plan.get("status")) or "needs_human_review",
+            "title": self._string(plan.get("title")) or "反馈批次优化方案",
             "tasks": executable_tasks,
             "blocked_items": blocked_items,
             "task_summary": self._plan_task_summary(executable_tasks),
             "blocked_summary": {"total": len(blocked_items)},
         }
+        return FeedbackOptimizationPlanRecord.model_validate(normalized_plan).to_payload()
 
-    def _normalize_plan_task(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_plan_task(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> JsonObject:
         target_type = self._string(item.get("target_type")) or self._string(plan.get("target_type")) or "not_actionable"
         execution_kind = self._string(item.get("execution_kind")) or "workspace_execution"
         target_path = self._string(item.get("target_path")) or None
@@ -74,13 +88,14 @@ class FeedbackPlanTaskStoreMixin:
             "eval_case_ids": self._string_list(item.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
             "attribution_job_ids": self._string_list(item.get("attribution_job_ids")) or self._string_list(plan.get("attribution_job_ids")),
         }
-        return normalized
+        return FeedbackOptimizationPlanTaskRecord.model_validate(normalized).to_payload()
 
-    def _normalize_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any], item: dict[str, Any]) -> JsonObject:
         target_type = self._string(item.get("target_type")) or "not_actionable"
         evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
         rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
-        return {
+        return FeedbackOptimizationBlockedItemRecord.model_validate(
+            {
             **item,
             "schema_version": "feedback-optimization-blocked-item/v1",
             "blocked_item_id": self._string(item.get("blocked_item_id")) or self._string(item.get("plan_task_id")) or f"fobi-{uuid.uuid4()}",
@@ -93,17 +108,18 @@ class FeedbackPlanTaskStoreMixin:
             "feedback_case_ids": self._string_list(item.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
             "eval_case_ids": self._string_list(item.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
             "attribution_job_ids": self._string_list(item.get("attribution_job_ids")) or self._string_list(plan.get("attribution_job_ids")),
-        }
+            }
+        ).to_payload()
 
-    def _blocked_items_from_tasks(self, batch: dict[str, Any], plan: dict[str, Any], tasks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        blocked: list[dict[str, Any]] = []
+    def _blocked_items_from_tasks(self, batch: dict[str, Any], plan: dict[str, Any], tasks: list[dict[str, Any]]) -> list[JsonObject]:
+        blocked: list[JsonObject] = []
         for item in tasks:
             if item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
                 continue
             blocked.append(self._normalize_blocked_item(batch, plan, item))
         return blocked
 
-    def _legacy_plan_task_or_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    def _legacy_plan_task_or_blocked_item(self, batch: dict[str, Any], plan: dict[str, Any]) -> JsonObject:
         target_type = self._string(plan.get("target_type") or plan.get("optimization_object_type")) or "not_actionable"
         target_path = self._string(plan.get("target_path")) or None
         actionability = self._string(plan.get("actionability")) or "needs_human_analysis"
@@ -144,14 +160,15 @@ class FeedbackPlanTaskStoreMixin:
             "created_at": plan.get("created_at") or batch.get("created_at"),
         }
         if execution_kind == "blocked":
-            item.update(
+            return FeedbackOptimizationBlockedItemRecord.model_validate(
                 {
+                    **item,
                     "schema_version": "feedback-optimization-blocked-item/v1",
                     "blocked_item_id": item_id,
                     "reason": reason or "历史方案未形成可执行任务。",
                 }
-            )
-        return item
+            ).to_payload()
+        return FeedbackOptimizationPlanTaskRecord.model_validate(item).to_payload()
 
     def _batch_plan_task(self, batch_id: str, plan_task_id: str) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]], Optional[dict[str, Any]]]:
         batch = self.find_optimization_batch(batch_id)
@@ -161,11 +178,11 @@ class FeedbackPlanTaskStoreMixin:
         task = self._plan_task_from_batch(batch, plan_task_id)
         return batch, plan, task
 
-    def _plan_task_from_batch(self, batch: Optional[dict[str, Any]], plan_task_id: str) -> Optional[dict[str, Any]]:
+    def _plan_task_from_batch(self, batch: Optional[dict[str, Any]], plan_task_id: str) -> Optional[JsonObject]:
         plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
         for task in (plan or {}).get("tasks") or []:
             if isinstance(task, dict) and self._string(task.get("plan_task_id")) == plan_task_id:
-                return dict(task)
+                return FeedbackOptimizationPlanTaskRecord.model_validate(dict(task)).to_payload()
         return None
 
     def _update_batch_plan_task(
@@ -176,7 +193,7 @@ class FeedbackPlanTaskStoreMixin:
         *,
         batch_status: Optional[str] = None,
         top_level_fields: Optional[dict[str, Any]] = None,
-    ) -> Optional[dict[str, Any]]:
+    ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
             if not self._update_batch_plan_task_row(
                 db,
@@ -220,8 +237,8 @@ class FeedbackPlanTaskStoreMixin:
         fields = {"optimization_plan": next_plan, **(top_level_fields or {})}
         return self._update_batch_row(db, batch_id, status=batch_status or str(batch.get("status") or "pending_approval"), fields=fields)
 
-    def _plan_task_summary(self, tasks: list[dict[str, Any]]) -> dict[str, Any]:
-        summary: dict[str, Any] = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0}
+    def _plan_task_summary(self, tasks: list[dict[str, Any]]) -> JsonObject:
+        summary: JsonObject = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0}
         for task in tasks:
             kind = self._string(task.get("execution_kind"))
             if kind not in {"workspace_execution", "external_webhook"}:
@@ -392,9 +409,9 @@ class FeedbackPlanTaskStoreMixin:
         self,
         batch: dict[str, Any],
         attribution: dict[str, Any],
-        evidence_refs: list[dict[str, Any]],
+        evidence_refs: list[JsonObject],
         owner: str,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         feedback_case_id = self._string(attribution.get("feedback_case_id"))
         feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
         text_parts = [
@@ -444,9 +461,11 @@ class FeedbackPlanTaskStoreMixin:
             "observed_issue": observed_issue,
             "expected_fix": self._expected_fix_from_context(mcp_server, api_info, query_ids, affected_fields, observed_issue),
         }
-        return {key: value for key, value in context.items() if value not in ("", [], None)}
+        return FeedbackOptimizationTaskContextRecord.model_validate(
+            {key: value for key, value in context.items() if value not in ("", [], None)}
+        ).to_payload()
 
-    def _normalize_task_context(self, value: Any, rationale: Optional[str], owner: str) -> dict[str, Any]:
+    def _normalize_task_context(self, value: Any, rationale: Optional[str], owner: str) -> JsonObject:
         if isinstance(value, dict) and value:
             cleaned = {key: item for key, item in value.items() if item not in ("", [], None)}
             if isinstance(cleaned.get("expected_fix"), str):
@@ -456,7 +475,7 @@ class FeedbackPlanTaskStoreMixin:
                     .replace("时 返回", "时返回")
                     .replace("时 时", "时")
                 )
-            return cleaned
+            return FeedbackOptimizationTaskContextRecord.model_validate(cleaned).to_payload()
         attribution = {"rationale": rationale or "", "responsibility_boundary": {"owner": owner}}
         return self._task_context_from_attribution({}, attribution, [], owner)
 
@@ -496,7 +515,7 @@ class FeedbackPlanTaskStoreMixin:
             return owner
         return ""
 
-    def _api_info_from_tool_operation(self, operation: str) -> dict[str, str]:
+    def _api_info_from_tool_operation(self, operation: str) -> JsonObject:
         if not operation:
             return {}
         api_name = operation.split("_api_", 1)[0] if "_api_" in operation else operation

@@ -21,7 +21,7 @@ from ..records.eval_case_records import (
 )
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..records.json_types import JsonObject
-from ..records.regression_impact_records import RegressionImpactAnalysisRecord
+from ..records.regression_impact_records import RegressionImpactAnalysisRecord, RegressionImpactedAssetRecord
 from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
     EvalCaseGovernanceEventModel,
@@ -665,14 +665,16 @@ class FeedbackRegressionAssetStoreMixin:
                 continue
             snapshot = item.get("eval_case_snapshot") if isinstance(item.get("eval_case_snapshot"), dict) else {}
             impacted.append(
-                {
-                    "eval_case_id": item.get("eval_case_id"),
-                    "status": item.get("status"),
-                    "asset_layer": snapshot.get("asset_layer"),
-                    "blocking_policy": snapshot.get("blocking_policy"),
-                    "labels": list(snapshot.get("labels") or []),
-                    "answer_summary": item.get("answer_summary"),
-                }
+                RegressionImpactedAssetRecord.model_validate(
+                    {
+                        "eval_case_id": item.get("eval_case_id"),
+                        "status": item.get("status"),
+                        "asset_layer": snapshot.get("asset_layer"),
+                        "blocking_policy": snapshot.get("blocking_policy"),
+                        "labels": list(snapshot.get("labels") or []),
+                        "answer_summary": item.get("answer_summary"),
+                    }
+                ).to_payload()
             )
         return impacted
 

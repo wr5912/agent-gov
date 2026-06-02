@@ -5,6 +5,7 @@ from feedback_store_test_utils import (
     _store,
 )
 from app.runtime.agent_job_types import agent_job_spec
+from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
 from app.runtime.runtime_db import AgentJobModel
 from app.runtime.schema_versions import REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION
 from pydantic import ValidationError
@@ -124,7 +125,13 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
             "status": "completed",
             "result_status": "passed",
             "gate_result": {"status": "passed"},
-            "impacted_assets": [],
+            "impacted_assets": [
+                {
+                    "asset_id": "eval-asset-1",
+                    "summary": "核心回归资产受影响。",
+                    "agent_note": {"source": "regression-impact-analyzer"},
+                }
+            ],
             "recommendations": ["继续保留当前回归资产。"],
             "summary": "未发现回归影响。",
             "risk_assessment": "low",
@@ -135,7 +142,24 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     impact = store.get_regression_impact_analysis(eval_run["eval_run_id"])
     assert completed["status"] == "completed"
     assert impact["job_id"] == "riaj-projection"
+    assert impact["impacted_assets"][0]["agent_note"] == {"source": "regression-impact-analyzer"}
     assert impact["recommendations"] == ["继续保留当前回归资产。"]
+
+
+def test_regression_impact_record_rejects_unidentified_impacted_asset():
+    with pytest.raises(ValidationError):
+        RegressionImpactAnalysisRecord.model_validate(
+            {
+                "schema_version": "regression-impact-analysis/v1",
+                "impact_analysis_id": "ria-invalid",
+                "eval_run_id": "erun-invalid",
+                "created_at": "2026-06-02T00:00:00+00:00",
+                "completed_at": "2026-06-02T00:00:01+00:00",
+                "status": "completed",
+                "impacted_assets": [{"agent_note": {"source": "bad-agent"}}],
+                "recommendations": ["复查输出。"],
+            }
+        )
 
 
 def test_regression_impact_projection_rejects_invalid_persisted_status(tmp_path):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.runtime_db import RegressionImpactAnalysisModel
 from app.runtime.state_machines import REGRESSION_IMPACT_ANALYSIS_STATES, validate_transition
@@ -17,6 +17,35 @@ RegressionImpactAnalysisSchemaVersion = Literal[
 ]
 
 
+class RegressionImpactedAssetRecord(StrictRuntimeRecord):
+    """One asset or eval case impacted by a regression run result."""
+
+    model_config = ConfigDict(extra="allow")
+
+    summary: Optional[str] = None
+    eval_case_id: Optional[str] = None
+    asset_id: Optional[str] = None
+    status: Optional[str] = None
+    asset_layer: Optional[str] = None
+    blocking_policy: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    answer_summary: Optional[str] = None
+
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, value: list[str]) -> list[str]:
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @model_validator(mode="after")
+    def validate_asset_shape(self) -> "RegressionImpactedAssetRecord":
+        if not any((self.summary, self.eval_case_id, self.asset_id)):
+            raise ValueError("impacted asset must include summary, eval_case_id, or asset_id")
+        return self
+
+    def to_payload(self) -> JsonObject:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
 class RegressionImpactAnalysisRecord(StrictRuntimeRecord):
     """Internal source of truth for regression impact analysis payload_json."""
 
@@ -29,7 +58,7 @@ class RegressionImpactAnalysisRecord(StrictRuntimeRecord):
     job_id: Optional[str] = None
     result_status: Optional[str] = None
     gate_result: JsonObject = Field(default_factory=dict)
-    impacted_assets: list[JsonObject] = Field(default_factory=list)
+    impacted_assets: list[RegressionImpactedAssetRecord] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     summary: Optional[str] = None
     risk_assessment: Optional[str] = None

@@ -115,7 +115,9 @@ class FeedbackProposalStoreMixin:
         return {"proposal": updated, "review": review.to_payload()}
 
     def _proposal_model_from_dict(self, proposal: JsonObject) -> OptimizationProposalModel:
-        record = OptimizationProposalRecord.model_validate(proposal)
+        record = OptimizationProposalRecord.model_validate(
+            {key: proposal[key] for key in OptimizationProposalRecord.model_fields if key in proposal}
+        )
         return OptimizationProposalModel(
             proposal_id=record.proposal_id,
             feedback_case_id=record.feedback_case_id,

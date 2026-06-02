@@ -13,6 +13,13 @@ from app.runtime.normalizers.feedback_output_task_context import (
     normalize_task_context_payload,
     task_context_has_external_specificity,
 )
+from app.runtime.feedback_schemas import (
+    validate_execution_plan_output,
+    validate_feedback_eval_case_generation_output,
+    validate_feedback_optimization_plan_output,
+    validate_proposal_output,
+    validate_regression_impact_analysis_output,
+)
 
 
 def test_normalize_task_context_payload_coerces_lists_and_drops_empty_values():
@@ -304,6 +311,109 @@ def test_normalize_regression_impact_analysis_output_uses_intermediate_asset_rec
     assert normalized["impacted_assets"][1]["asset_id"] == "eval-1"
     assert normalized["impacted_assets"][1]["agent_note"] == {"source": "regression-impact-analyzer"}
     assert normalized["recommendations"][0].startswith("{")
+
+
+def test_validated_feedback_outputs_preserve_agent_extra_fields():
+    proposal, error = validate_proposal_output(
+        {
+            "schema_version": "proposal-output/v1",
+            "feedback_case_id": "fbc-1",
+            "proposal_job_id": "fbp-1",
+            "status": "completed",
+            "proposals": [
+                {
+                    "target_path": "CLAUDE.md",
+                    "actionability": "direct_workspace_change",
+                    "recommendation": "补充约束。",
+                    "agent_note": {"source": "proposal-governor"},
+                }
+            ],
+            "external_guidance": [
+                {
+                    "owner": "knowledge-base",
+                    "actionability": "external_guidance",
+                    "recommendation": "补齐外部说明。",
+                    "agent_note": {"source": "proposal-governor"},
+                }
+            ],
+        }
+    )
+    plan, plan_error = validate_feedback_optimization_plan_output(
+        {
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": "fob-1",
+            "status": "ready",
+            "confidence": "high",
+            "actionability": "workspace_change",
+            "tasks": [
+                {
+                    "execution_kind": "workspace_execution",
+                    "title": "补充主智能体约束",
+                    "target_type": "main_agent_claude_md",
+                    "target_path": "CLAUDE.md",
+                    "recommendation": "补充读取配置前核查 workspace 的约束。",
+                    "task_context": {"target_file": "CLAUDE.md", "agent_note": {"source": "planner"}},
+                    "agent_note": {"source": "optimization-planner"},
+                }
+            ],
+        }
+    )
+
+    assert error is None
+    assert plan_error is None
+    assert proposal["proposals"][0]["agent_note"] == {"source": "proposal-governor"}
+    assert proposal["external_guidance"][0]["agent_note"] == {"source": "proposal-governor"}
+    assert plan["tasks"][0]["agent_note"] == {"source": "optimization-planner"}
+    assert plan["tasks"][0]["task_context"]["agent_note"] == {"source": "planner"}
+
+
+def test_validated_execution_eval_and_regression_outputs_preserve_agent_extra_fields():
+    execution, execution_error = validate_execution_plan_output(
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": "opt-1",
+            "execution_job_id": "job-1",
+            "status": "ready",
+            "summary": "执行补丁",
+            "operations": [
+                {
+                    "operation": "append_text",
+                    "path": "CLAUDE.md",
+                    "append_text": "\n补充说明。",
+                    "agent_note": {"source": "execution-optimizer"},
+                }
+            ],
+        }
+    )
+    eval_cases, eval_error = validate_feedback_eval_case_generation_output(
+        {
+            "schema_version": "feedback-eval-case-generation-output/v1",
+            "status": "completed",
+            "eval_cases": [
+                {
+                    "prompt": "复现问题",
+                    "expected_behavior": "应说明缺失数据。",
+                    "agent_note": {"source": "eval-case-governor"},
+                }
+            ],
+        }
+    )
+    impact, impact_error = validate_regression_impact_analysis_output(
+        {
+            "schema_version": "regression-impact-analysis-output/v1",
+            "eval_run_id": "erun-1",
+            "status": "completed",
+            "impacted_assets": [{"summary": "CLAUDE.md", "agent_note": {"source": "impact"}}],
+            "recommendations": ["补充回归验证。"],
+        }
+    )
+
+    assert execution_error is None
+    assert eval_error is None
+    assert impact_error is None
+    assert execution["operations"][0]["agent_note"] == {"source": "execution-optimizer"}
+    assert eval_cases["eval_cases"][0]["agent_note"] == {"source": "eval-case-governor"}
+    assert impact["impacted_assets"][0]["agent_note"] == {"source": "impact"}
 
 
 def test_normalized_output_record_preserves_extra_agent_fields():

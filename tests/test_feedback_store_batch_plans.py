@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from app.runtime.errors import ConflictError
+from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
 
 
 def test_batch_plan_regeneration_records_instruction_and_replaces_plan(tmp_path):
@@ -224,6 +225,37 @@ def test_feedback_optimization_plan_output_keeps_generic_blocked_external_item()
     assert validated["tasks"] == []
     assert len(validated["blocked_items"]) == 1
     assert validated["blocked_items"][0]["title"] == "确认外部数据缺失问题"
+
+
+def test_batch_plan_task_projection_normalizes_evidence_refs(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = {"batch_id": "fob-test", "feedback_case_ids": ["fbc-1"], "eval_case_ids": []}
+    plan = {"attribution_job_ids": ["fbaj-1"], "rationale": "回答未读取配置。"}
+
+    task = store._normalize_plan_task(
+        batch,
+        plan,
+        {
+            "execution_kind": "workspace_execution",
+            "title": "补充配置核查约束",
+            "target_type": "main_agent_claude_md",
+            "target_path": "CLAUDE.md",
+            "recommendation": "补充回答前读取配置的约束。",
+            "task_context": {"target_file": "CLAUDE.md"},
+            "evidence_refs": [
+                {"path": "messages.json", "description": "回答来自记忆。", "agent_note": {"source": "planner"}},
+                {"type": "evidence_file"},
+                "skip-me",
+            ],
+        },
+    )
+
+    record = FeedbackOptimizationPlanTaskRecord.model_validate(task)
+    assert record.task_context.target_file == "CLAUDE.md"
+    assert len(record.evidence_refs) == 1
+    assert record.evidence_refs[0].id == "messages.json"
+    assert record.evidence_refs[0].reason == "回答来自记忆。"
+    assert task["evidence_refs"][0]["agent_note"] == {"source": "planner"}
 
 
 def test_feedback_optimization_plan_output_normalizes_string_attribution_summaries():

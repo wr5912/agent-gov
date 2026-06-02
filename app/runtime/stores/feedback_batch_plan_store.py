@@ -530,8 +530,7 @@ class FeedbackBatchPlanStoreMixin:
         evidence_refs = [
             ref
             for item in attributions
-            for ref in (item.get("evidence_refs") or [])
-            if isinstance(ref, dict)
+            for ref in self._normalize_plan_evidence_refs(item.get("evidence_refs"))
         ][:20]
         eval_case_ids = batch.get("eval_case_ids") or []
         recommendation = (
@@ -588,7 +587,7 @@ class FeedbackBatchPlanStoreMixin:
         rationale = self._string(attribution.get("rationale"))
         attribution_job_id = self._string(attribution.get("_job_id") or attribution.get("attribution_job_id"))
         feedback_case_id = self._string(attribution.get("feedback_case_id"))
-        evidence_refs = [dict(ref) for ref in attribution.get("evidence_refs") or [] if isinstance(ref, dict)]
+        evidence_refs = self._normalize_plan_evidence_refs(attribution.get("evidence_refs"))
         task_context = self._task_context_from_attribution(batch, attribution, evidence_refs, owner)
         execution_kind = "blocked"
         status = "blocked"

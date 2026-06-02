@@ -38,6 +38,25 @@ class FeedbackOptimizationTaskContextRecord(ExtensiblePlanRecord):
         return self.model_dump(mode="json", exclude_none=True)
 
 
+class FeedbackOptimizationEvidenceRefRecord(ExtensiblePlanRecord):
+    """Evidence reference attached to a generated batch optimization plan."""
+
+    type: str = "evidence_file"
+    id: str
+    reason: str = ""
+
+    @model_validator(mode="after")
+    def validate_evidence_ref_shape(self) -> "FeedbackOptimizationEvidenceRefRecord":
+        if not self.id.strip():
+            raise ValueError("evidence ref id cannot be empty")
+        if not self.type.strip():
+            raise ValueError("evidence ref type cannot be empty")
+        return self
+
+    def to_payload(self) -> JsonObject:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
 class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     schema_version: str = "feedback-optimization-plan-task/v2"
     plan_task_id: str
@@ -54,7 +73,7 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     actionability: str = "needs_human_analysis"
     confidence: Optional[str] = None
     problem_type: Optional[str] = None
-    task_context: JsonObject = Field(default_factory=dict)
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     recommendation: str = ""
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
@@ -63,7 +82,7 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     risk: str = ""
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     rationale: Optional[str] = None
     reason: Optional[str] = None
     feedback_case_ids: list[str] = Field(default_factory=list)
@@ -112,13 +131,13 @@ class FeedbackOptimizationBlockedItemRecord(ExtensiblePlanRecord):
     problem_type: Optional[str] = None
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     recommendation: Optional[str] = None
     reason: str
     feedback_case_ids: list[str] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    task_context: JsonObject = Field(default_factory=dict)
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -160,7 +179,7 @@ class FeedbackOptimizationPlanRecord(ExtensiblePlanRecord):
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
     attribution_summaries: list[JsonObject] = Field(default_factory=list)
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     tasks: list[FeedbackOptimizationPlanTaskRecord] = Field(default_factory=list)
     task_summary: JsonObject = Field(default_factory=dict)
     blocked_items: list[FeedbackOptimizationBlockedItemRecord] = Field(default_factory=list)

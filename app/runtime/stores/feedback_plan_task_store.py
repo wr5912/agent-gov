@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from ..records.batch_plan_records import (
     FeedbackOptimizationBlockedItemRecord,
+    FeedbackOptimizationEvidenceRefRecord,
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
     FeedbackOptimizationTaskContextRecord,
@@ -50,11 +51,12 @@ class FeedbackPlanTaskStoreMixin:
     def _normalize_plan_task(self, batch: JsonObject, plan: JsonObject, item: JsonObject) -> JsonObject:
         target_type = self._string(item.get("target_type")) or self._string(plan.get("target_type")) or "not_actionable"
         execution_kind = self._string(item.get("execution_kind")) or "workspace_execution"
+        status = self._string(item.get("status")) or ("pending_notification" if execution_kind == "external_webhook" else "pending_execution")
         target_path = self._string(item.get("target_path")) or None
         owner = self._string(item.get("owner")) or self._external_owner_for_target(target_type) or target_type
         rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
         analysis_summary = self._string(item.get("analysis_summary")) or self._short_text(rationale, 420)
-        evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
+        evidence_refs = self._normalize_plan_evidence_refs(item.get("evidence_refs"))
         evidence_summary = self._string(item.get("evidence_summary")) or self._evidence_summary(evidence_refs)
         task_context = self._normalize_task_context(item.get("task_context"), rationale, owner)
         if execution_kind == "external_webhook":
@@ -72,6 +74,7 @@ class FeedbackPlanTaskStoreMixin:
             "schema_version": "feedback-optimization-plan-task/v2",
             "plan_task_id": self._string(item.get("plan_task_id")) or f"fopt-{uuid.uuid4()}",
             "execution_kind": execution_kind,
+            "status": status,
             "owner": owner,
             "title": self._clean_plan_task_title(item.get("title"), target_type, execution_kind, int(item.get("source_index") or 0), task_context),
             "description": self._clean_plan_task_description(item.get("description"), target_type, execution_kind, owner, target_path, task_context),
@@ -92,7 +95,7 @@ class FeedbackPlanTaskStoreMixin:
 
     def _normalize_blocked_item(self, batch: JsonObject, plan: JsonObject, item: JsonObject) -> JsonObject:
         target_type = self._string(item.get("target_type")) or "not_actionable"
-        evidence_refs = [dict(ref) for ref in item.get("evidence_refs") or [] if isinstance(ref, dict)]
+        evidence_refs = self._normalize_plan_evidence_refs(item.get("evidence_refs"))
         rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
         return FeedbackOptimizationBlockedItemRecord.model_validate(
             {
@@ -118,6 +121,21 @@ class FeedbackPlanTaskStoreMixin:
                 continue
             blocked.append(self._normalize_blocked_item(batch, plan, item))
         return blocked
+
+    def _normalize_plan_evidence_refs(self, value: Any) -> list[JsonObject]:
+        refs: list[JsonObject] = []
+        for item in value or []:
+            if not isinstance(item, dict):
+                continue
+            ref = dict(item)
+            ref_id = self._string(ref.get("id") or ref.get("path") or ref.get("file"))
+            if not ref_id:
+                continue
+            ref["type"] = self._string(ref.get("type")) or "evidence_file"
+            ref["id"] = ref_id
+            ref["reason"] = self._string(ref.get("reason") or ref.get("description")) or ""
+            refs.append(FeedbackOptimizationEvidenceRefRecord.model_validate(ref).to_payload())
+        return refs
 
     def _legacy_plan_task_or_blocked_item(self, batch: JsonObject, plan: JsonObject) -> JsonObject:
         target_type = self._string(plan.get("target_type") or plan.get("optimization_object_type")) or "not_actionable"

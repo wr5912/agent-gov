@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import Any
 
 from ..records.json_types import JsonObject
 from .feedback_output_records import NormalizedTaskContext
 
 
-def normalize_task_context_payload(value: Any) -> JsonObject:
+def normalize_task_context_payload(value: object) -> JsonObject:
     if not isinstance(value, dict):
         return {}
     list_keys = {"tool_names", "query_ids", "alert_ids", "case_ids", "asset_ids", "dates", "affected_fields"}
@@ -272,7 +271,7 @@ def _unique_strings(values: list[str]) -> list[str]:
     return result
 
 
-def _string_list(value: Any) -> list[str]:
+def _string_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     if value is None:

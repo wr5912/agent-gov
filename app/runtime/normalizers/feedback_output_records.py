@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Optional
 
 from pydantic import ConfigDict, Field
+from pydantic.types import JsonValue
 
 from app.runtime.records.json_types import JsonObject, StrictRuntimeRecord
 
@@ -13,19 +14,100 @@ class NormalizedOutputRecord(StrictRuntimeRecord):
     model_config = ConfigDict(extra="allow")
 
     def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json")
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class NormalizedEvidenceRef(NormalizedOutputRecord):
+    type: JsonValue = None
+    id: JsonValue = None
+    reason: JsonValue = None
+
+
+class NormalizedResponsibilityBoundary(NormalizedOutputRecord):
+    owner: JsonValue = None
+    reason: JsonValue = None
+
+
+class NormalizedProposalItem(NormalizedOutputRecord):
+    proposal_id: JsonValue = None
+    title: JsonValue = None
+    actionability: JsonValue = None
+    target_type: JsonValue = None
+    target_path: JsonValue = None
+    recommendation: JsonValue = None
+    expected_effect: JsonValue = None
+    validation: JsonValue = None
+    risk: JsonValue = None
+    requires_approval: JsonValue = None
+    base_agent_version_id: JsonValue = None
+
+
+class NormalizedExternalGuidanceItem(NormalizedOutputRecord):
+    owner: JsonValue = None
+    actionability: JsonValue = None
+    recommendation: JsonValue = None
+    reason: JsonValue = None
+
+
+class NormalizedExecutionOperation(NormalizedOutputRecord):
+    operation: JsonValue = None
+    path: JsonValue = None
+    expected_sha256: JsonValue = None
+    content: JsonValue = None
+    append_text: JsonValue = None
+    rationale: JsonValue = None
+
+
+class NormalizedAttributionSummary(NormalizedOutputRecord):
+    attribution_job_id: JsonValue = None
+    feedback_case_id: JsonValue = None
+    problem_type: JsonValue = None
+    optimization_object_type: JsonValue = None
+    actionability: JsonValue = None
+    confidence: JsonValue = None
+    rationale: JsonValue = None
+    summary: JsonValue = None
+
+
+class NormalizedGeneratedEvalCase(NormalizedOutputRecord):
+    schema_version: JsonValue = None
+    eval_case_id: JsonValue = None
+    status: JsonValue = None
+    source: JsonValue = None
+    source_feedback_case_id: JsonValue = None
+    source_run_id: JsonValue = None
+    source_kind: JsonValue = None
+    source_id: JsonValue = None
+    asset_layer: JsonValue = None
+    promotion_status: JsonValue = None
+    blocking_policy: JsonValue = None
+    scenario_pack: JsonValue = None
+    severity: JsonValue = None
+    flaky_status: JsonValue = None
+    variant_role: JsonValue = None
+    prompt: JsonValue = None
+    expected_behavior: JsonValue = None
+    checks_json: JsonObject = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)
+    source_summary: JsonValue = None
+    attribution_summary: JsonValue = None
+    proposal_summary: JsonValue = None
+
+
+class NormalizedSummaryItem(NormalizedOutputRecord):
+    summary: JsonValue = None
 
 
 class NormalizedAttributionOutput(NormalizedOutputRecord):
     schema_version: Optional[str] = None
-    evidence_refs: Any = Field(default_factory=list)
-    responsibility_boundary: Any = None
+    evidence_refs: list[NormalizedEvidenceRef] = Field(default_factory=list)
+    responsibility_boundary: NormalizedResponsibilityBoundary | None = None
 
 
 class NormalizedProposalOutput(NormalizedOutputRecord):
     schema_version: Optional[str] = None
-    proposals: list[Any] = Field(default_factory=list)
-    external_guidance: list[Any] = Field(default_factory=list)
+    proposals: list[NormalizedProposalItem] = Field(default_factory=list)
+    external_guidance: list[NormalizedExternalGuidanceItem] = Field(default_factory=list)
 
 
 class NormalizedTaskContext(NormalizedOutputRecord):
@@ -55,8 +137,8 @@ class NormalizedOptimizationPlanTask(NormalizedOutputRecord):
     execution_kind: str
     status: str
     target_type: str
-    task_context: JsonObject = Field(default_factory=dict)
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    task_context: NormalizedTaskContext = Field(default_factory=NormalizedTaskContext)
+    evidence_refs: list[NormalizedEvidenceRef] = Field(default_factory=list)
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
@@ -71,8 +153,8 @@ class NormalizedBlockedOptimizationItem(NormalizedOutputRecord):
     target_type: str = "not_actionable"
     actionability: str = "needs_human_analysis"
     reason: str
-    task_context: JsonObject = Field(default_factory=dict)
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    task_context: NormalizedTaskContext = Field(default_factory=NormalizedTaskContext)
+    evidence_refs: list[NormalizedEvidenceRef] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
@@ -83,31 +165,31 @@ class NormalizedFeedbackOptimizationPlanOutput(NormalizedOutputRecord):
     status: str
     confidence: str
     actionability: str
-    tasks: list[JsonObject] = Field(default_factory=list)
-    blocked_items: list[JsonObject] = Field(default_factory=list)
+    tasks: list[NormalizedOptimizationPlanTask] = Field(default_factory=list)
+    blocked_items: list[NormalizedBlockedOptimizationItem] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_summaries: list[JsonObject] = Field(default_factory=list)
+    attribution_summaries: list[NormalizedAttributionSummary] = Field(default_factory=list)
     problem_types: list[str] = Field(default_factory=list)
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[NormalizedEvidenceRef] = Field(default_factory=list)
 
 
 class NormalizedExecutionPlanOutput(NormalizedOutputRecord):
     status: str
-    operations: list[Any] = Field(default_factory=list)
+    operations: list[NormalizedExecutionOperation] = Field(default_factory=list)
 
 
 class NormalizedFeedbackEvalCaseGenerationOutput(NormalizedOutputRecord):
     schema_version: str
-    eval_cases: list[JsonObject] = Field(default_factory=list)
+    eval_cases: list[NormalizedGeneratedEvalCase] = Field(default_factory=list)
     status: str
 
 
 class NormalizedRegressionImpactAnalysisOutput(NormalizedOutputRecord):
     schema_version: str
     gate_result: JsonObject = Field(default_factory=dict)
-    impacted_assets: list[JsonObject] = Field(default_factory=list)
+    impacted_assets: list[NormalizedSummaryItem] = Field(default_factory=list)
     recommendations: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
     status: str

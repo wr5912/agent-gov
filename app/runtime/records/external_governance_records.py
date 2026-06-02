@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.runtime.runtime_db import ExternalNotificationModel
 
@@ -18,6 +18,62 @@ ExternalGovernanceItemStatus = Literal[
     "superseded",
 ]
 ExternalNotificationStatus = Literal["sending", "sent", "failed"]
+
+
+class ExternalGuidanceInputRecord(BaseModel):
+    """Normalized external guidance item consumed by store projection."""
+
+    model_config = ConfigDict(extra="allow")
+
+    owner: Optional[str] = None
+    actionability: Optional[str] = None
+    recommendation: Optional[str] = None
+    reason: Optional[str] = None
+
+    @field_validator("owner", "actionability", "recommendation", "reason", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value: object) -> Optional[str]:
+        if not isinstance(value, str):
+            return None
+        text = value.strip()
+        return text or None
+
+    def to_payload(self) -> JsonObject:
+        return self.model_dump(mode="json", exclude_none=True)
+
+
+class ExternalGovernancePlanTaskDetailRecord(BaseModel):
+    """External governance details projected from one batch plan task."""
+
+    model_config = ConfigDict(extra="allow")
+
+    title: str
+    description: str = ""
+    objective: str = ""
+    target_summary: str = ""
+    task_context: JsonObject = Field(default_factory=dict)
+    recommendation: str = ""
+    recommended_actions: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    expected_effect: str = ""
+    validation: str = ""
+    risk: str = ""
+    analysis_summary: str = ""
+    evidence_summary: str = ""
+    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    reason: Optional[str] = None
+    source: Literal["feedback_optimization_batch"] = "feedback_optimization_batch"
+    batch_id: Optional[str] = None
+    optimization_plan_id: Optional[str] = None
+    plan_task_id: Optional[str] = None
+    target_type: Optional[str] = None
+    target_path: Optional[str] = None
+    feedback_case_ids: list[str] = Field(default_factory=list)
+    eval_case_ids: list[str] = Field(default_factory=list)
+    source_attribution_job_ids: list[str] = Field(default_factory=list)
+
+    def to_payload(self) -> JsonObject:
+        return self.model_dump(mode="json", exclude_none=True)
 
 
 class ExternalGovernanceNotificationRecord(BaseModel):

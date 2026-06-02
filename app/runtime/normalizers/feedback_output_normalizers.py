@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from ..records.json_types import JsonObject
 from ..schema_versions import (
@@ -12,13 +11,20 @@ from ..schema_versions import (
 )
 from .feedback_output_records import (
     NormalizedAttributionOutput,
+    NormalizedAttributionSummary,
     NormalizedBlockedOptimizationItem,
+    NormalizedEvidenceRef,
     NormalizedExecutionPlanOutput,
+    NormalizedExecutionOperation,
+    NormalizedExternalGuidanceItem,
     NormalizedFeedbackEvalCaseGenerationOutput,
     NormalizedFeedbackOptimizationPlanOutput,
+    NormalizedGeneratedEvalCase,
     NormalizedOptimizationPlanTask,
+    NormalizedProposalItem,
     NormalizedProposalOutput,
     NormalizedRegressionImpactAnalysisOutput,
+    NormalizedSummaryItem,
 )
 from .feedback_output_task_context import (
     external_context_target as _external_context_target,
@@ -96,10 +102,9 @@ def normalize_attribution_output(payload: JsonObject) -> JsonObject:
 
 def normalize_proposal_output(payload: JsonObject) -> JsonObject:
     normalized: JsonObject = dict(payload)
-    proposals: list[Any] = []
+    proposals: list[NormalizedProposalItem] = []
     for item in normalized.get("proposals") or []:
         if not isinstance(item, dict):
-            proposals.append(item)
             continue
         proposal = dict(item)
         if not proposal.get("proposal_id") and proposal.get("id"):
@@ -114,20 +119,19 @@ def normalize_proposal_output(payload: JsonObject) -> JsonObject:
             proposal["validation"] = "复测原反馈场景，并检查反馈闭环中是否产生有效归因和建议结果。"
         if not proposal.get("risk"):
             proposal["risk"] = "可能增加回答前的工具调用成本或响应耗时。"
-        proposals.append(proposal)
-    normalized["proposals"] = proposals
-    external_guidance: list[Any] = []
+        proposals.append(NormalizedProposalItem.model_validate(proposal))
+    normalized["proposals"] = [proposal.to_payload() for proposal in proposals]
+    external_guidance: list[NormalizedExternalGuidanceItem] = []
     for item in normalized.get("external_guidance") or []:
         if not isinstance(item, dict):
-            external_guidance.append(item)
             continue
         guidance = dict(item)
         if not guidance.get("owner") and guidance.get("target"):
             guidance["owner"] = str(guidance["target"])
         if not guidance.get("reason") and guidance.get("rationale"):
             guidance["reason"] = str(guidance["rationale"])
-        external_guidance.append(guidance)
-    normalized["external_guidance"] = external_guidance
+        external_guidance.append(NormalizedExternalGuidanceItem.model_validate(guidance))
+    normalized["external_guidance"] = [guidance.to_payload() for guidance in external_guidance]
     return NormalizedProposalOutput.model_validate(normalized).to_payload()
 
 
@@ -166,27 +170,27 @@ def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObje
     normalized["confidence"] = _normalize_confidence(normalized.get("confidence"))
     normalized["actionability"] = _normalize_actionability(normalized.get("actionability"))
 
-    tasks: list[JsonObject] = []
-    blocked_items: list[JsonObject] = []
+    tasks: list[NormalizedOptimizationPlanTask] = []
+    blocked_items: list[NormalizedBlockedOptimizationItem] = []
     for index, item in enumerate(normalized.get("tasks") or []):
         if not isinstance(item, dict):
             continue
         task = _normalize_plan_task_output_item(item, index)
         if _plan_task_output_is_executable(task):
-            tasks.append(task)
+            tasks.append(NormalizedOptimizationPlanTask.model_validate(task))
         else:
-            blocked_items.append(_blocked_item_from_plan_task(task, index))
+            blocked_items.append(NormalizedBlockedOptimizationItem.model_validate(_blocked_item_from_plan_task(task, index)))
     for index, item in enumerate(normalized.get("blocked_items") or []):
         if not isinstance(item, dict):
             continue
         blocked = _normalize_blocked_output_item(item, index)
         promoted_task = _external_plan_task_from_blocked_item(blocked, index, normalized)
         if promoted_task is not None:
-            tasks.append(promoted_task)
+            tasks.append(NormalizedOptimizationPlanTask.model_validate(promoted_task))
         else:
-            blocked_items.append(blocked)
-    normalized["tasks"] = tasks
-    normalized["blocked_items"] = blocked_items
+            blocked_items.append(NormalizedBlockedOptimizationItem.model_validate(blocked))
+    normalized["tasks"] = [task.to_payload() for task in tasks]
+    normalized["blocked_items"] = [blocked.to_payload() for blocked in blocked_items]
 
     for key in ("title", "summary", "recommendation", "expected_effect", "validation", "risk", "rationale"):
         if normalized.get(key) is not None and not isinstance(normalized.get(key), str):
@@ -204,7 +208,7 @@ def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObje
     normalized["feedback_case_ids"] = _string_list(normalized.get("feedback_case_ids"))
     normalized["eval_case_ids"] = _string_list(normalized.get("eval_case_ids"))
     normalized["attribution_job_ids"] = _string_list(normalized.get("attribution_job_ids"))
-    normalized["attribution_summaries"] = _normalize_dict_list(normalized.get("attribution_summaries"), default_key="summary")
+    normalized["attribution_summaries"] = _normalize_attribution_summaries(normalized.get("attribution_summaries"))
     normalized["problem_types"] = _string_list(normalized.get("problem_types"))
     normalized["evidence_refs"] = _normalize_evidence_refs(normalized.get("evidence_refs"))
     return NormalizedFeedbackOptimizationPlanOutput.model_validate(normalized).to_payload()
@@ -367,7 +371,7 @@ def _external_plan_task_from_blocked_item(
     )
 
 
-def _normalize_plan_status(value: Any) -> str:
+def _normalize_plan_status(value: object) -> str:
     status_value = str(value or "").strip().lower()
     if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval"}:
         return "pending_approval"
@@ -375,13 +379,13 @@ def _normalize_plan_status(value: Any) -> str:
         return "needs_human_review"
     return "pending_approval"
 
-def _normalize_confidence(value: Any) -> str:
+def _normalize_confidence(value: object) -> str:
     confidence = str(value or "").strip().lower()
     if confidence in {"high", "medium", "low"}:
         return confidence
     return "medium"
 
-def _normalize_actionability(value: Any) -> str:
+def _normalize_actionability(value: object) -> str:
     actionability = str(value or "").strip()
     aliases = {
         "manual_review": "needs_human_analysis",
@@ -404,7 +408,7 @@ def _normalize_actionability(value: Any) -> str:
     }
     return actionability if actionability in allowed else "needs_human_analysis"
 
-def _normalize_problem_type(value: Any) -> str:
+def _normalize_problem_type(value: object) -> str:
     problem_type = str(value or "").strip()
     aliases = {
         "tool_usage_deficiency": "tool_data_quality",
@@ -429,33 +433,49 @@ def _normalize_problem_type(value: Any) -> str:
     }
     return problem_type if problem_type in allowed else "insufficient_information"
 
-def _normalize_evidence_refs(value: Any) -> list[JsonObject]:
-    refs: list[JsonObject] = []
+def _normalize_evidence_refs(value: object) -> list[JsonObject]:
+    refs: list[NormalizedEvidenceRef] = []
     for item in value or []:
         if isinstance(item, dict):
             ref_type = str(item.get("type") or "evidence_file").strip()
             ref_id = str(item.get("id") or item.get("path") or item.get("file") or "").strip()
             reason = str(item.get("reason") or item.get("description") or "优化方案生成智能体引用了该证据。").strip()
             if ref_id:
-                refs.append({"type": ref_type, "id": ref_id, "reason": reason})
+                refs.append(NormalizedEvidenceRef.model_validate({"type": ref_type, "id": ref_id, "reason": reason}))
         else:
-            refs.append({"type": "evidence_file", "id": str(item), "reason": "优化方案生成智能体引用了该证据。"})
-    return refs
+            refs.append(
+                NormalizedEvidenceRef.model_validate(
+                    {"type": "evidence_file", "id": str(item), "reason": "优化方案生成智能体引用了该证据。"}
+                )
+            )
+    return [ref.to_payload() for ref in refs]
 
 
-def _normalize_dict_list(value: Any, *, default_key: str) -> list[JsonObject]:
-    items: list[JsonObject] = []
+def _normalize_attribution_summaries(value: object) -> list[JsonObject]:
+    items: list[NormalizedAttributionSummary] = []
     for item in value or []:
         if isinstance(item, dict):
-            items.append(item)
+            items.append(NormalizedAttributionSummary.model_validate(item))
             continue
         text = str(item).strip()
         if text:
-            items.append({default_key: text})
-    return items
+            items.append(NormalizedAttributionSummary.model_validate({"summary": text}))
+    return [item.to_payload() for item in items]
 
 
-def _string_list(value: Any) -> list[str]:
+def _normalize_summary_items(value: object) -> list[JsonObject]:
+    items: list[NormalizedSummaryItem] = []
+    for item in value or []:
+        if isinstance(item, dict):
+            items.append(NormalizedSummaryItem.model_validate(item))
+            continue
+        text = str(item).strip()
+        if text:
+            items.append(NormalizedSummaryItem.model_validate({"summary": text}))
+    return [item.to_payload() for item in items]
+
+
+def _string_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [str(item).strip() for item in value if str(item).strip()]
     if value is None:
@@ -473,10 +493,9 @@ def normalize_execution_plan_output(payload: JsonObject) -> JsonObject:
             normalized["status"] = "ready"
         elif status_value in {"requires_human_review", "requires_review", "needs_review", "manual_review", "unsafe", "blocked"}:
             normalized["status"] = "needs_human_review"
-    operations: list[Any] = []
+    operations: list[NormalizedExecutionOperation] = []
     for item in normalized.get("operations") or normalized.get("patches") or []:
         if not isinstance(item, dict):
-            operations.append(item)
             continue
         operation = dict(item)
         if not operation.get("operation") and operation.get("op"):
@@ -489,8 +508,8 @@ def normalize_execution_plan_output(payload: JsonObject) -> JsonObject:
             operation["append_text"] = operation["content"]
         if operation.get("rationale") is not None and not isinstance(operation.get("rationale"), str):
             operation["rationale"] = _human_text(operation.get("rationale"))
-        operations.append(operation)
-    normalized["operations"] = operations
+        operations.append(NormalizedExecutionOperation.model_validate(operation))
+    normalized["operations"] = [operation.to_payload() for operation in operations]
     if not normalized.get("status"):
         normalized["status"] = "ready" if operations else "needs_human_review"
     if not normalized.get("summary"):
@@ -506,7 +525,7 @@ def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonO
     normalized.setdefault("schema_version", FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION)
     if "eval_cases" not in normalized and isinstance(normalized.get("eval_case"), dict):
         normalized["eval_cases"] = [normalized["eval_case"]]
-    cases: list[JsonObject] = []
+    cases: list[NormalizedGeneratedEvalCase] = []
     for item in normalized.get("eval_cases") or []:
         if not isinstance(item, dict):
             continue
@@ -526,8 +545,8 @@ def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonO
                 case[key] = _human_text(case.get(key))
         if not str(case.get("prompt") or "").strip():
             case["prompt"] = str(case.get("title") or case.get("source_summary") or "").strip()
-        cases.append(case)
-    normalized["eval_cases"] = cases
+        cases.append(NormalizedGeneratedEvalCase.model_validate(case))
+    normalized["eval_cases"] = [case.to_payload() for case in cases]
     if not cases and not normalized.get("no_action_reason"):
         normalized["no_action_reason"] = "eval-case-governor 未生成可用评估用例。"
     normalized["status"] = "completed" if cases and normalized.get("status") != "needs_human_review" else "needs_human_review"
@@ -538,7 +557,7 @@ def normalize_regression_impact_analysis_output(payload: JsonObject) -> JsonObje
     normalized: JsonObject = dict(payload)
     normalized.setdefault("schema_version", REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION)
     normalized["gate_result"] = normalized.get("gate_result") if isinstance(normalized.get("gate_result"), dict) else {}
-    normalized["impacted_assets"] = _normalize_dict_list(normalized.get("impacted_assets"), default_key="summary")
+    normalized["impacted_assets"] = _normalize_summary_items(normalized.get("impacted_assets"))
     normalized["recommendations"] = _string_list(normalized.get("recommendations"))
     normalized["next_steps"] = _string_list(normalized.get("next_steps"))
     status = str(normalized.get("status") or "").strip().lower()
@@ -551,7 +570,7 @@ def normalize_regression_impact_analysis_output(payload: JsonObject) -> JsonObje
     return NormalizedRegressionImpactAnalysisOutput.model_validate(normalized).to_payload()
 
 
-def _normalize_eval_case_status(value: Any) -> str:
+def _normalize_eval_case_status(value: object) -> str:
     status = str(value or "").strip().lower()
     if status in {"active", "draft", "archived"}:
         return status
@@ -560,7 +579,7 @@ def _normalize_eval_case_status(value: Any) -> str:
     return "draft"
 
 
-def _human_text(value: Any) -> str:
+def _human_text(value: object) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, (dict, list)):

@@ -11,7 +11,11 @@ from ..external_governance_mapping import (
     external_governance_record_from_row,
     external_governance_row_from_record,
 )
-from ..records.external_governance_records import ExternalGovernanceItemRecord
+from ..records.external_governance_records import (
+    ExternalGovernanceItemRecord,
+    ExternalGovernancePlanTaskDetailRecord,
+    ExternalGuidanceInputRecord,
+)
 from ..records.json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, utc_now
 from .store_projection_maps import ExternalGovernanceRowsBySourceIndex
@@ -55,7 +59,7 @@ class FeedbackExternalGovernanceStoreMixin:
         normalized: JsonObject,
         job: JsonObject,
     ) -> list[JsonObject]:
-        guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
+        guidance_items = self._external_guidance_records(normalized)
         if not guidance_items:
             return []
         with self.Session.begin() as db:
@@ -67,7 +71,7 @@ class FeedbackExternalGovernanceStoreMixin:
         normalized: JsonObject,
         job: JsonObject,
     ) -> list[JsonObject]:
-        guidance_items = [item for item in normalized.get("external_guidance") or [] if isinstance(item, dict)]
+        guidance_items = self._external_guidance_records(normalized)
         if not guidance_items:
             return []
         existing_rows = db.scalars(
@@ -84,7 +88,7 @@ class FeedbackExternalGovernanceStoreMixin:
                 apply_external_governance_record(row, self._merge_external_governance_record(record, payload))
             else:
                 db.add(self._external_governance_row(payload))
-            result.append({**guidance, **payload})
+            result.append({**guidance.to_payload(), **payload})
         return result
 
     def _upsert_external_governance_item_for_plan_task(
@@ -118,7 +122,7 @@ class FeedbackExternalGovernanceStoreMixin:
     def _external_guidance_payload(
         self,
         index: int,
-        guidance: JsonObject,
+        guidance: ExternalGuidanceInputRecord,
         job: JsonObject,
         existing: Optional[ExternalGovernanceItemRecord],
     ) -> JsonObject:
@@ -131,10 +135,10 @@ class FeedbackExternalGovernanceStoreMixin:
             feedback_case_id=job["feedback_case_id"],
             proposal_job_id=job["job_id"],
             source_index=index,
-            owner=self._string(guidance.get("owner")) or "needs_human_analysis",
-            actionability=self._string(guidance.get("actionability")) or "external_guidance",
-            recommendation=self._string(guidance.get("recommendation")) or "",
-            reason=self._string(guidance.get("reason")),
+            owner=guidance.owner or "needs_human_analysis",
+            actionability=guidance.actionability or "external_guidance",
+            recommendation=guidance.recommendation or "",
+            reason=guidance.reason,
             latest_notification_id=existing.latest_notification_id if existing else None,
         ).to_payload()
 
@@ -175,32 +179,39 @@ class FeedbackExternalGovernanceStoreMixin:
         plan: JsonObject,
         plan_task: JsonObject,
     ) -> JsonObject:
-        return {
-            "title": self._string(plan_task.get("title")) or "外部系统优化任务",
-            "description": self._string(plan_task.get("description")) or "",
-            "objective": self._string(plan_task.get("objective")) or "",
-            "target_summary": self._string(plan_task.get("target_summary")) or "",
-            "task_context": plan_task.get("task_context") if isinstance(plan_task.get("task_context"), dict) else {},
-            "recommendation": self._string(plan_task.get("recommendation")) or "",
-            "recommended_actions": self._string_list(plan_task.get("recommended_actions")),
-            "acceptance_criteria": self._string_list(plan_task.get("acceptance_criteria")),
-            "expected_effect": self._string(plan_task.get("expected_effect")) or "",
-            "validation": self._string(plan_task.get("validation")) or "",
-            "risk": self._string(plan_task.get("risk")) or "",
-            "analysis_summary": self._string(plan_task.get("analysis_summary")) or "",
-            "evidence_summary": self._string(plan_task.get("evidence_summary")) or "",
-            "evidence_refs": [dict(ref) for ref in plan_task.get("evidence_refs") or [] if isinstance(ref, dict)],
-            "reason": self._string(plan_task.get("reason")) or self._string(plan_task.get("rationale")),
-            "source": "feedback_optimization_batch",
-            "batch_id": batch.get("batch_id"),
-            "optimization_plan_id": plan.get("optimization_plan_id"),
-            "plan_task_id": plan_task.get("plan_task_id"),
-            "target_type": plan_task.get("target_type"),
-            "target_path": plan_task.get("target_path"),
-            "feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
-            "eval_case_ids": batch.get("eval_case_ids") or [],
-            "source_attribution_job_ids": plan_task.get("attribution_job_ids") or [],
-        }
+        return ExternalGovernancePlanTaskDetailRecord(
+            title=self._string(plan_task.get("title")) or "外部系统优化任务",
+            description=self._string(plan_task.get("description")) or "",
+            objective=self._string(plan_task.get("objective")) or "",
+            target_summary=self._string(plan_task.get("target_summary")) or "",
+            task_context=plan_task.get("task_context") if isinstance(plan_task.get("task_context"), dict) else {},
+            recommendation=self._string(plan_task.get("recommendation")) or "",
+            recommended_actions=self._string_list(plan_task.get("recommended_actions")),
+            acceptance_criteria=self._string_list(plan_task.get("acceptance_criteria")),
+            expected_effect=self._string(plan_task.get("expected_effect")) or "",
+            validation=self._string(plan_task.get("validation")) or "",
+            risk=self._string(plan_task.get("risk")) or "",
+            analysis_summary=self._string(plan_task.get("analysis_summary")) or "",
+            evidence_summary=self._string(plan_task.get("evidence_summary")) or "",
+            evidence_refs=[dict(ref) for ref in plan_task.get("evidence_refs") or [] if isinstance(ref, dict)],
+            reason=self._string(plan_task.get("reason")) or self._string(plan_task.get("rationale")),
+            batch_id=self._string(batch.get("batch_id")),
+            optimization_plan_id=self._string(plan.get("optimization_plan_id")),
+            plan_task_id=self._string(plan_task.get("plan_task_id")),
+            target_type=self._string(plan_task.get("target_type")),
+            target_path=self._string(plan_task.get("target_path")),
+            feedback_case_ids=self._string_list(plan_task.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
+            eval_case_ids=self._string_list(batch.get("eval_case_ids")),
+            source_attribution_job_ids=self._string_list(plan_task.get("attribution_job_ids")),
+        ).to_payload()
+
+    @staticmethod
+    def _external_guidance_records(normalized: JsonObject) -> list[ExternalGuidanceInputRecord]:
+        return [
+            ExternalGuidanceInputRecord.model_validate(item)
+            for item in normalized.get("external_guidance") or []
+            if isinstance(item, dict)
+        ]
 
     def _external_governance_row(self, payload: JsonObject) -> ExternalGovernanceItemModel:
         record = ExternalGovernanceItemRecord.model_validate(payload)

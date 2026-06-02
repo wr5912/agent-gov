@@ -7,6 +7,9 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..errors import BusinessRuleViolation
+from ..records.agent_job_records import AgentJobRecord
+from ..records.case_records import FeedbackCaseRecord
+from ..records.eval_case_records import EvalCaseRecord
 from ..records.source_records import (
     AgentRunRecord,
     FeedbackSourceAnnotationRecord,
@@ -342,11 +345,11 @@ class FeedbackSourceStoreMixin:
         annotations = self._source_annotations_by_key()
         cases_by_source_id = self._cases_by_source_id()
         feedback_case_ids = self._unique_strings(
-            [str(item.get("feedback_case_id") or "") for item in cases_by_source_id.values()]
+            [item.feedback_case_id for item in cases_by_source_id.values()]
         )
         eval_cases_by_case_id = self._eval_cases_by_feedback_case_ids(feedback_case_ids)
         attribution_job_ids = self._unique_strings(
-            [self._latest(item.get("attribution_job_ids")) or "" for item in cases_by_source_id.values()]
+            [self._latest(item.attribution_job_ids) or "" for item in cases_by_source_id.values()]
         )
         attribution_jobs_by_id = self._jobs_by_id(attribution_job_ids)
         rows: list[JsonObject] = []
@@ -473,7 +476,7 @@ class FeedbackSourceStoreMixin:
             return None, False
         existing = self._find_case_for_source_id(source_id)
         if existing:
-            return existing, False
+            return existing.to_payload(), False
         source = self.find_feedback_source(kind, source_id)
         feedback_case = self._new_feedback_case_for_source(kind, source_id, raw, source or {}, priority=priority)
         return (feedback_case, True) if feedback_case else (None, False)
@@ -556,29 +559,31 @@ class FeedbackSourceStoreMixin:
     def _source_annotation_id(self, source_kind: str, source_id: str) -> str:
         return f"{self._normalize_source_kind(source_kind)}:{source_id}"
 
-    def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[JsonObject]:
+    def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[FeedbackSourceAnnotationRecord]:
         with self.Session() as db:
             row = db.get(FeedbackSourceAnnotationModel, self._source_annotation_id(source_kind, source_id))
-            return FeedbackSourceAnnotationRecord.from_row(row).to_payload() if row else None
+            return FeedbackSourceAnnotationRecord.from_row(row) if row else None
 
     def _source_annotations_by_key(self) -> SourceAnnotationsByKey:
         with self.Session() as db:
             rows = db.scalars(select(FeedbackSourceAnnotationModel)).all()
-        return {(row.source_kind, row.source_id): FeedbackSourceAnnotationRecord.from_row(row).to_payload() for row in rows}
+        return {(row.source_kind, row.source_id): FeedbackSourceAnnotationRecord.from_row(row) for row in rows}
 
     def _cases_by_source_id(self) -> FeedbackCasesBySourceId:
         result: FeedbackCasesBySourceId = {}
-        for feedback_case in self.list_cases(limit=1000):
-            for source_id in feedback_case.get("source_ids") or []:
+        for feedback_case_payload in self.list_cases(limit=1000):
+            feedback_case = FeedbackCaseRecord.model_validate(feedback_case_payload)
+            for source_id in feedback_case.source_ids:
                 if isinstance(source_id, str) and source_id and source_id not in result:
                     result[source_id] = feedback_case
         return result
 
-    def _find_case_for_source_id(self, source_id: str) -> Optional[JsonObject]:
+    def _find_case_for_source_id(self, source_id: str) -> Optional[FeedbackCaseRecord]:
         if not source_id:
             return None
-        for feedback_case in self.list_cases(limit=1000):
-            if source_id in (feedback_case.get("source_ids") or []):
+        for feedback_case_payload in self.list_cases(limit=1000):
+            feedback_case = FeedbackCaseRecord.model_validate(feedback_case_payload)
+            if source_id in feedback_case.source_ids:
                 return feedback_case
         return None
 
@@ -587,14 +592,14 @@ class FeedbackSourceStoreMixin:
             return {}
         with self.Session() as db:
             rows = db.scalars(select(EvalCaseModel).where(EvalCaseModel.source_feedback_case_id.in_(feedback_case_ids))).all()
-        return {str(row.source_feedback_case_id): self._eval_case_to_dict(row) for row in rows if row.source_feedback_case_id}
+        return {str(row.source_feedback_case_id): EvalCaseRecord.from_row(row) for row in rows if row.source_feedback_case_id}
 
     def _jobs_by_id(self, job_ids: list[str]) -> AgentJobsById:
         if not job_ids:
             return {}
         with self.Session() as db:
             rows = db.scalars(select(AgentJobModel).where(AgentJobModel.job_id.in_(job_ids))).all()
-        return {row.job_id: self._job_to_dict(row) for row in rows}
+        return {row.job_id: AgentJobRecord.from_row(row) for row in rows}
 
     def _source_row(
         self,
@@ -602,20 +607,22 @@ class FeedbackSourceStoreMixin:
         source_kind: str,
         source_id: str,
         raw: JsonObject,
-        annotation: Optional[JsonObject] = None,
-        feedback_case: Optional[JsonObject] = None,
+        annotation: Optional[FeedbackSourceAnnotationRecord] = None,
+        feedback_case: Optional[FeedbackCaseRecord] = None,
         eval_cases_by_case_id: Optional[EvalCasesByFeedbackCaseId] = None,
         attribution_jobs_by_id: Optional[AgentJobsById] = None,
     ) -> JsonObject:
-        annotation = annotation or {}
-        feedback_case_id = self._string((feedback_case or {}).get("feedback_case_id"))
+        annotation_payload = annotation.to_payload() if annotation else {}
+        feedback_case_id = self._string(feedback_case.feedback_case_id if feedback_case else None)
         if eval_cases_by_case_id is not None:
-            eval_case = eval_cases_by_case_id.get(feedback_case_id)
+            eval_case_record = eval_cases_by_case_id.get(feedback_case_id)
+            eval_case = eval_case_record.to_payload() if eval_case_record else None
         else:
             eval_case = self.find_eval_case(source_feedback_case_id=feedback_case_id) if feedback_case_id else None
-        attribution_job_id = self._latest((feedback_case or {}).get("attribution_job_ids"))
+        attribution_job_id = self._latest(feedback_case.attribution_job_ids if feedback_case else [])
         if attribution_jobs_by_id is not None:
-            attribution_job = attribution_jobs_by_id.get(attribution_job_id or "")
+            attribution_job_record = attribution_jobs_by_id.get(attribution_job_id or "")
+            attribution_job = attribution_job_record.to_payload() if attribution_job_record else None
         else:
             attribution_job = self.get_job(attribution_job_id) if attribution_job_id else None
         run_id = (
@@ -623,12 +630,12 @@ class FeedbackSourceStoreMixin:
             or self._string(raw.get("matched_run_id"))
             or self._string(raw.get("resolved_run_id"))
         )
-        labels = annotation.get("labels") if isinstance(annotation.get("labels"), list) else raw.get("labels")
+        labels = annotation_payload.get("labels") if isinstance(annotation_payload.get("labels"), list) else raw.get("labels")
         if not isinstance(labels, list):
             labels = [raw.get("event_type")] if raw.get("event_type") else []
-        comment = self._string(annotation.get("comment")) or self._string(raw.get("comment"))
-        created_at = self._string(raw.get("created_at")) or self._string(raw.get("timestamp")) or self._string(annotation.get("created_at"))
-        updated_at = self._string(annotation.get("updated_at")) or self._string(raw.get("updated_at")) or created_at
+        comment = self._string(annotation_payload.get("comment")) or self._string(raw.get("comment"))
+        created_at = self._string(raw.get("created_at")) or self._string(raw.get("timestamp")) or self._string(annotation_payload.get("created_at"))
+        updated_at = self._string(annotation_payload.get("updated_at")) or self._string(raw.get("updated_at")) or created_at
         return {
             "schema_version": "feedback-source/v1",
             "source_kind": self._normalize_source_kind(source_kind),
@@ -636,13 +643,17 @@ class FeedbackSourceStoreMixin:
             "id": source_id,
             "created_at": created_at,
             "updated_at": updated_at,
-            "status": self._string(annotation.get("status")) or self._base_source_status(source_kind, raw),
+            "status": self._string(annotation_payload.get("status")) or self._base_source_status(source_kind, raw),
             "label": self._source_label(source_kind, raw, labels, comment),
             "labels": self._unique_strings([str(item) for item in labels or [] if str(item).strip()]),
             "comment": comment,
-            "priority": self._string(annotation.get("priority")) or "medium",
-            "requires_review": bool(annotation.get("requires_review") if "requires_review" in annotation else raw.get("requires_review")),
-            "metadata": annotation.get("metadata") if isinstance(annotation.get("metadata"), dict) else {},
+            "priority": self._string(annotation_payload.get("priority")) or "medium",
+            "requires_review": bool(
+                annotation_payload.get("requires_review")
+                if "requires_review" in annotation_payload
+                else raw.get("requires_review")
+            ),
+            "metadata": annotation_payload.get("metadata") if isinstance(annotation_payload.get("metadata"), dict) else {},
             "run_id": run_id,
             "session_id": self._string(raw.get("session_id")),
             "alert_id": self._string(raw.get("alert_id")),

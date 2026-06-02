@@ -4,6 +4,8 @@ from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.runtime.runtime_db import ExternalNotificationModel
+
 
 EXTERNAL_GOVERNANCE_ITEM_SCHEMA_VERSION = "external-governance-item/v1"
 
@@ -92,6 +94,33 @@ class ExternalGovernanceNotificationRecord(BaseModel):
 
     def to_payload(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
+
+    @classmethod
+    def from_row(cls, row: ExternalNotificationModel) -> "ExternalGovernanceNotificationRecord":
+        payload = dict(row.payload_json or {})
+        payload.update(
+            {
+                "notification_id": row.notification_id,
+                "external_item_id": row.external_item_id,
+                "created_at": row.created_at,
+                "completed_at": row.completed_at,
+                "status": row.status,
+                "webhook_alias": row.webhook_alias,
+                "http_status": row.http_status,
+            }
+        )
+        return cls.model_validate(payload)
+
+
+def apply_external_governance_notification_record(
+    row: ExternalNotificationModel,
+    notification: ExternalGovernanceNotificationRecord,
+) -> None:
+    row.completed_at = notification.completed_at
+    row.status = notification.status
+    row.webhook_alias = notification.webhook_alias
+    row.http_status = notification.http_status
+    row.payload_json = notification.to_payload()
 
 
 class ExternalGovernanceItemRecord(BaseModel):

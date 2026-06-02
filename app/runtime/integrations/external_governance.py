@@ -15,7 +15,11 @@ from ..external_governance_mapping import (
     apply_external_governance_record,
     external_governance_record_from_row,
 )
-from ..records.external_governance_records import ExternalGovernanceItemRecord, ExternalGovernanceNotificationRecord
+from ..records.external_governance_records import (
+    ExternalGovernanceItemRecord,
+    ExternalGovernanceNotificationRecord,
+    apply_external_governance_notification_record,
+)
 from ..runtime_db import ExternalGovernanceItemModel, ExternalNotificationModel, utc_now
 
 
@@ -194,9 +198,7 @@ class ExternalGovernanceService:
                     .limit(1)
                 )
         if notification:
-            item["latest_notification"] = ExternalGovernanceNotificationRecord.model_validate(
-                notification.payload_json or {}
-            ).to_payload()
+            item["latest_notification"] = ExternalGovernanceNotificationRecord.from_row(notification).to_payload()
         return item
 
     def _insert_notification(self, notification: ExternalGovernanceNotificationRecord) -> None:
@@ -220,11 +222,7 @@ class ExternalGovernanceService:
         row: ExternalNotificationModel,
         notification: ExternalGovernanceNotificationRecord,
     ) -> None:
-        row.completed_at = notification.completed_at
-        row.status = notification.status
-        row.webhook_alias = notification.webhook_alias
-        row.http_status = notification.http_status
-        row.payload_json = notification.to_payload()
+        apply_external_governance_notification_record(row, notification)
 
     def _load_webhook_config(self) -> dict[str, Any]:
         try:

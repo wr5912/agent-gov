@@ -13,6 +13,7 @@ from ..collection_utils import unique_strings
 from ..integrations.external_governance import ExternalGovernanceService
 from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import (
     OptimizationProposalModel,
     AgentJobModel,
@@ -196,7 +197,7 @@ class FeedbackStore(
                 db.delete(execution)
                 self._append_cleanup_job_id(cleanup_job_ids, execution.job_id)
             task = db.get(OptimizationTaskModel, task_id)
-            if task and not (task.payload_json or {}).get("applied_agent_version_id"):
+            if task and not OptimizationTaskRecord.from_row(task).applied_agent_version_id:
                 db.delete(task)
         if execution_job_id:
             db.execute(delete(ExecutionApplicationModel).where(ExecutionApplicationModel.execution_job_id == execution_job_id))

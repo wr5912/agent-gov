@@ -117,7 +117,7 @@ class FeedbackTaskStoreMixin:
             )
             if not row:
                 return None
-            updated_task = dict(row.payload_json or {})
+            updated_task = self._task_to_dict(row)
             self._sync_task_execution_to_source_batch_row(db, updated_task, execution_job)
         return self.find_task(task_id)
 

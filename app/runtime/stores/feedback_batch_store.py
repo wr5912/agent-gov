@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..errors import ConflictError
 from ..records.batch_records import FeedbackOptimizationBatchRecord
+from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, utc_now
 from ..state_machines import JOB_IN_PROGRESS_STATES
 
@@ -190,7 +191,7 @@ class FeedbackBatchStoreMixin:
             payload = self._batch_payload_snapshot(row)
             task_id = self._string(payload.get("optimization_task_id"))
             task = db.get(OptimizationTaskModel, task_id) if task_id else None
-            if task and (task.payload_json or {}).get("applied_agent_version_id"):
+            if task and OptimizationTaskRecord.from_row(task).applied_agent_version_id:
                 raise ConflictError("当前批次已应用并产生 Agent 版本，不能原地重新归因；请基于反馈信息创建新批次。")
             for feedback_case_id in payload.get("feedback_case_ids") or []:
                 self._discard_current_attribution_row(

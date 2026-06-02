@@ -11,6 +11,7 @@ from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_execution_plan_output
 from ..records.execution_records import ExecutionApplicationRecord
+from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
 from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION
 
@@ -185,7 +186,7 @@ class FeedbackExecutionStoreMixin:
             task_row = db.get(OptimizationTaskModel, str(job["optimization_task_id"]), with_for_update=True)
             if not task_row:
                 return None
-            task = dict(task_row.payload_json or {})
+            task = OptimizationTaskRecord.from_row(task_row).to_payload()
             if task_row.status != "execution_ready" or task.get("applied_agent_version_id"):
                 raise ConflictError("Optimization task is not ready for execution application")
             payload = {
@@ -216,11 +217,17 @@ class FeedbackExecutionStoreMixin:
                 execution_job=updated_job,
             )
             if updated_task_row:
-                task_payload = dict(updated_task_row.payload_json or {})
-                task_payload["latest_execution_application_id"] = application["application_id"]
-                task_payload["latest_execution_application"] = application
-                updated_task_row.payload_json = task_payload
-                updated_task = dict(updated_task_row.payload_json or {})
+                updated_task_row = self._update_task_payload_row(
+                    db,
+                    str(updated_task_row.optimization_task_id),
+                    status=updated_task_row.status,
+                    fields={
+                        "latest_execution_application_id": application["application_id"],
+                        "latest_execution_application": application,
+                    },
+                )
+            if updated_task_row:
+                updated_task = self._task_to_dict(updated_task_row)
                 self._sync_task_execution_to_source_batch_row(db, updated_task, updated_job)
             return application
 
@@ -352,7 +359,7 @@ class FeedbackExecutionStoreMixin:
         task_row = self._attach_execution_job_to_task_row(db, task, job, status=status)
         if not task_row:
             return
-        updated_task = dict(task_row.payload_json or {})
+        updated_task = self._task_to_dict(task_row)
         self._sync_task_execution_to_source_batch_row(db, updated_task, job)
 
     def _sync_task_execution_to_source_batch_row(self, db: Any, task: dict[str, Any], job: Optional[dict[str, Any]] = None) -> None:

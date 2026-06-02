@@ -1501,9 +1501,9 @@ export interface components {
             /** Schema Version */
             schema_version?: string | null;
             /** Scope Id */
-            scope_id: string;
+            scope_id?: string | null;
             /** Scope Kind */
-            scope_kind: string;
+            scope_kind?: string | null;
             /** Started At */
             started_at?: string | null;
             /** Status */
@@ -2832,7 +2832,7 @@ export interface components {
         FeedbackOptimizationBatchExecutionResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
-            execution_job?: components["schemas"]["AgentJobResponse"] | null;
+            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
         };
         /** FeedbackOptimizationBatchPlanGenerateRequest */
@@ -2876,7 +2876,7 @@ export interface components {
             /** Eval Run Id */
             eval_run_id?: string | null;
             execution_apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
-            execution_job?: components["schemas"]["AgentJobResponse"] | null;
+            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             /** Execution Job Id */
             execution_job_id?: string | null;
             /** Feedback Case Ids */
@@ -3044,7 +3044,7 @@ export interface components {
         FeedbackOptimizationPlanTaskExecuteResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
-            execution_job?: components["schemas"]["AgentJobResponse"] | null;
+            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             external_item?: components["schemas"]["ExternalGovernanceItemResponse"] | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
             plan_task?: components["schemas"]["FeedbackOptimizationPlanTaskResponse"] | null;
@@ -3459,7 +3459,7 @@ export interface components {
         OptimizationExecutionApplyResponse: {
             applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
             execution_application: components["schemas"]["ExecutionApplicationResponse"];
-            execution_job: components["schemas"]["AgentJobResponse"];
+            execution_job: components["schemas"]["OptimizationExecutionJobResponse"];
             optimization_task: components["schemas"]["OptimizationTaskResponse"];
         };
         /** OptimizationExecutionCreateRequest */
@@ -3469,6 +3469,93 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /** OptimizationExecutionJobResponse */
+        OptimizationExecutionJobResponse: {
+            /** Baseline Agent Version Id */
+            baseline_agent_version_id?: string | null;
+            /** Compensations */
+            compensations?: components["schemas"]["ExecutionCompensationResponse"][];
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            /** Execution Job Id */
+            execution_job_id: string;
+            /** Feedback Case Id */
+            feedback_case_id?: string | null;
+            /** Input Json */
+            input_json?: {
+                [key: string]: unknown;
+            } | null;
+            /** Input Path */
+            input_path?: string | null;
+            /** Optimization Task Id */
+            optimization_task_id: string;
+            /** Profile Name */
+            profile_name: string;
+            /** Profile Version */
+            profile_version?: {
+                [key: string]: unknown;
+            } | null;
+            /** Proposal Id */
+            proposal_id?: string | null;
+            /** Raw Output Json */
+            raw_output_json?: {
+                [key: string]: unknown;
+            } | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Status */
+            status: string;
+            validated_output_json?: components["schemas"]["OptimizationExecutionPlanOutputResponse"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OptimizationExecutionPlanOperationResponse */
+        OptimizationExecutionPlanOperationResponse: {
+            /** Append Text */
+            append_text?: string | null;
+            /** Content */
+            content?: string | null;
+            /** Expected Sha256 */
+            expected_sha256?: string | null;
+            /** Operation */
+            operation?: string | null;
+            /** Path */
+            path?: string | null;
+            /** Rationale */
+            rationale?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OptimizationExecutionPlanOutputResponse */
+        OptimizationExecutionPlanOutputResponse: {
+            /** Baseline Agent Version Id */
+            baseline_agent_version_id?: string | null;
+            /** Execution Job Id */
+            execution_job_id?: string | null;
+            /** Human Review Required */
+            human_review_required?: boolean | null;
+            /** No Action Reason */
+            no_action_reason?: string | null;
+            /** Operations */
+            operations?: components["schemas"]["OptimizationExecutionPlanOperationResponse"][];
+            /** Optimization Task Id */
+            optimization_task_id?: string | null;
+            /** Risk */
+            risk?: string | null;
+            /** Schema Version */
+            schema_version?: string | null;
+            /** Status */
+            status?: string | null;
+            /** Summary */
+            summary?: string | null;
+            /** Validation */
+            validation?: string | null;
+        } & {
+            [key: string]: unknown;
         };
         /** OptimizationProposalResponse */
         OptimizationProposalResponse: {
@@ -3615,7 +3702,7 @@ export interface components {
             execution_mode: string;
             /** Feedback Case Id */
             feedback_case_id?: string | null;
-            latest_execution_job?: components["schemas"]["AgentJobResponse"] | null;
+            latest_execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             /** Latest Execution Job Id */
             latest_execution_job_id?: string | null;
             latest_regression_run?: components["schemas"]["EvalRunResponse"] | null;

@@ -182,12 +182,26 @@
             "title": "Schema Version"
           },
           "scope_id": {
-            "title": "Scope Id",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Id"
           },
           "scope_kind": {
-            "title": "Scope Kind",
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scope Kind"
           },
           "started_at": {
             "anyOf": [
@@ -229,8 +243,6 @@
         "required": [
           "job_id",
           "job_type",
-          "scope_kind",
-          "scope_id",
           "status",
           "profile_name",
           "created_at",
@@ -4339,7 +4351,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AgentJobResponse"
+                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
               },
               {
                 "type": "null"
@@ -4539,7 +4551,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AgentJobResponse"
+                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
               },
               {
                 "type": "null"
@@ -5275,7 +5287,7 @@
           "execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AgentJobResponse"
+                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
               },
               {
                 "type": "null"
@@ -6809,7 +6821,7 @@
             "$ref": "#/components/schemas/ExecutionApplicationResponse"
           },
           "execution_job": {
-            "$ref": "#/components/schemas/AgentJobResponse"
+            "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
           },
           "optimization_task": {
             "$ref": "#/components/schemas/OptimizationTaskResponse"
@@ -6832,6 +6844,366 @@
           }
         },
         "title": "OptimizationExecutionCreateRequest",
+        "type": "object"
+      },
+      "OptimizationExecutionJobResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "baseline_agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Agent Version Id"
+          },
+          "compensations": {
+            "items": {
+              "$ref": "#/components/schemas/ExecutionCompensationResponse"
+            },
+            "title": "Compensations",
+            "type": "array"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_json": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackJobErrorResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "execution_job_id": {
+            "title": "Execution Job Id",
+            "type": "string"
+          },
+          "feedback_case_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Feedback Case Id"
+          },
+          "input_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Json"
+          },
+          "input_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Path"
+          },
+          "optimization_task_id": {
+            "title": "Optimization Task Id",
+            "type": "string"
+          },
+          "profile_name": {
+            "title": "Profile Name",
+            "type": "string"
+          },
+          "profile_version": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Profile Version"
+          },
+          "proposal_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposal Id"
+          },
+          "raw_output_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Raw Output Json"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "validated_output_json": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptimizationExecutionPlanOutputResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "execution_job_id",
+          "optimization_task_id",
+          "status",
+          "profile_name",
+          "created_at"
+        ],
+        "title": "OptimizationExecutionJobResponse",
+        "type": "object"
+      },
+      "OptimizationExecutionPlanOperationResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "append_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Append Text"
+          },
+          "content": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Content"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Sha256"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Operation"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          }
+        },
+        "title": "OptimizationExecutionPlanOperationResponse",
+        "type": "object"
+      },
+      "OptimizationExecutionPlanOutputResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "baseline_agent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Agent Version Id"
+          },
+          "execution_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Job Id"
+          },
+          "human_review_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Human Review Required"
+          },
+          "no_action_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "No Action Reason"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/OptimizationExecutionPlanOperationResponse"
+            },
+            "title": "Operations",
+            "type": "array"
+          },
+          "optimization_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimization Task Id"
+          },
+          "risk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Risk"
+          },
+          "schema_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Schema Version"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Summary"
+          },
+          "validation": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Validation"
+          }
+        },
+        "title": "OptimizationExecutionPlanOutputResponse",
         "type": "object"
       },
       "OptimizationProposalResponse": {
@@ -7442,7 +7814,7 @@
           "latest_execution_job": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/AgentJobResponse"
+                "$ref": "#/components/schemas/OptimizationExecutionJobResponse"
               },
               {
                 "type": "null"
@@ -8912,7 +9284,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.15"
+    "version": "0.2.17"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -19,6 +19,7 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
+from app.runtime.runtime_db import EvalRunItemModel
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
@@ -295,6 +296,26 @@ def test_eval_run_projection_rejects_invalid_persisted_item_status(tmp_path):
 
     with pytest.raises(ValidationError):
         store.get_eval_run(eval_run["eval_run_id"])
+
+
+def test_finish_eval_run_rejects_invalid_persisted_item_payload(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case = _insert_eval_case(store, "evc-invalid-item-payload", "异常 item payload")
+    eval_run = store.create_eval_run(eval_case_ids=[str(eval_case["eval_case_id"])], agent_version_id="main-v-test")
+    item = store.append_eval_run_item(
+        eval_run["eval_run_id"],
+        eval_case=eval_case,
+        agent_result={"answer": "failed", "errors": []},
+        status="failed",
+        score=0.0,
+        check_results=[],
+    )
+    with store.Session.begin() as db:
+        row = db.get(EvalRunItemModel, item["eval_run_item_id"])
+        row.payload_json = {**row.payload_json, "eval_case_snapshot": ["not", "an", "object"]}
+
+    with pytest.raises(ValidationError):
+        store.finish_eval_run(eval_run["eval_run_id"])
 
 
 def test_update_eval_case_directly_overwrites_content(tmp_path):

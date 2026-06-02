@@ -19,7 +19,7 @@ from ..records.eval_case_records import (
     EvalCaseRevisionRecord,
     apply_eval_case_record,
 )
-from ..records.eval_run_records import EvalRunRecord
+from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord
 from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
@@ -507,8 +507,8 @@ class FeedbackRegressionAssetStoreMixin:
         review: list[str] = []
         notes: list[str] = []
         for item in items:
-            payload = dict(item.payload_json or {})
-            snapshot = payload.get("eval_case_snapshot") if isinstance(payload.get("eval_case_snapshot"), dict) else {}
+            record = EvalRunItemRecord.from_row(item)
+            snapshot = record.eval_case_snapshot
             policy = str(snapshot.get("blocking_policy") or "non_blocking")
             case_id = str(item.eval_case_id)
             if item.status == "needs_human_review":

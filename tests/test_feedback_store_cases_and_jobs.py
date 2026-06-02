@@ -17,7 +17,7 @@ from feedback_store_test_utils import (
     _store,
     pytest,
 )
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.runtime.errors import BusinessRuleViolation, ConfigurationError
 from app.runtime.records.external_governance_records import ExternalGovernanceItemRecord
@@ -390,6 +390,21 @@ def test_list_cases_returns_latest_case_versions_only(tmp_path):
     assert cases_after_attribution[0]["status"] == "attribution_queued"
     assert cases_after_attribution[0]["evidence_package_ids"] == [evidence["evidence_package_id"]]
     assert cases_after_attribution[0]["attribution_job_ids"] == [attribution_job["job_id"]]
+
+
+def test_case_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_quality"]))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    with store.Session.begin() as db:
+        db.execute(
+            text("UPDATE feedback_cases SET status = 'unknown_status' WHERE feedback_case_id = :feedback_case_id"),
+            {"feedback_case_id": feedback_case["feedback_case_id"]},
+        )
+
+    with pytest.raises(ValidationError):
+        store.find_case(feedback_case["feedback_case_id"])
 
 
 def test_create_evidence_package_rolls_back_when_case_attach_fails(tmp_path, monkeypatch):

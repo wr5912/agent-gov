@@ -10,9 +10,9 @@ from ..agent_profiles import EXECUTION_OPTIMIZER_PROFILE
 from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_execution_plan_output
+from ..records.execution_records import ExecutionApplicationRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
 from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION
-from ..state_machines import validate_transition
 
 
 class FeedbackExecutionStoreMixin:
@@ -431,16 +431,15 @@ class FeedbackExecutionStoreMixin:
             return self._execution_application_to_dict(row) if row else None
 
     def _create_execution_application_row(self, db: Any, payload: dict[str, Any]) -> ExecutionApplicationModel:
-        status = "created"
-        validate_transition("execution_application", None, status)
+        record = ExecutionApplicationRecord.model_validate(payload)
         row = ExecutionApplicationModel(
-            application_id=str(payload["application_id"]),
-            execution_job_id=str(payload["execution_job_id"]),
-            optimization_task_id=str(payload["optimization_task_id"]),
-            created_at=str(payload["created_at"]),
+            application_id=record.application_id,
+            execution_job_id=record.execution_job_id,
+            optimization_task_id=record.optimization_task_id,
+            created_at=record.created_at,
             completed_at=None,
-            status=status,
-            payload_json=payload,
+            status=record.status,
+            payload_json=record.to_payload(),
         )
         db.add(row)
         db.flush()
@@ -454,28 +453,17 @@ class FeedbackExecutionStoreMixin:
         status: str,
         fields: dict[str, Any],
     ) -> ExecutionApplicationModel:
-        validate_transition("execution_application", row.status, status)
-        payload = dict(row.payload_json or {})
-        payload.update(fields)
-        payload["status"] = status
-        row.status = status
-        row.completed_at = self._string(fields.get("completed_at")) or row.completed_at
-        row.payload_json = payload
+        updated = ExecutionApplicationRecord.from_row(row).transition_to(
+            status,
+            fields=fields,
+        )
+        row.status = updated.status
+        row.completed_at = updated.completed_at
+        row.payload_json = updated.to_payload()
         return row
 
     def _execution_application_to_dict(self, row: ExecutionApplicationModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "application_id": row.application_id,
-                "execution_job_id": row.execution_job_id,
-                "optimization_task_id": row.optimization_task_id,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-                "status": row.status,
-            }
-        )
-        return payload
+        return ExecutionApplicationRecord.from_row(row).to_payload()
 
 
     def _sanitize_execution_plan(self, plan: dict[str, Any], job: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:

@@ -8,6 +8,19 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
+from ..records.eval_case_records import (
+    ACTIVE_ASSET_LAYERS,
+    ASSET_LAYERS,
+    BLOCKING_POLICIES,
+    FLAKY_STATUSES,
+    PROMOTION_STATUSES,
+    EvalCaseGovernanceEventRecord,
+    EvalCaseRecord,
+    EvalCaseRevisionRecord,
+    apply_eval_case_record,
+)
+from ..records.eval_run_records import EvalRunRecord
+from ..records.regression_impact_records import RegressionImpactAnalysisRecord
 from ..runtime_db import (
     EvalCaseGovernanceEventModel,
     EvalCaseModel,
@@ -19,43 +32,36 @@ from ..runtime_db import (
     RegressionPlanModel,
     utc_now,
 )
-from ..state_machines import validate_transition
 
-
-ACTIVE_ASSET_LAYERS = {"batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug"}
-ASSET_LAYERS = {"candidate", *ACTIVE_ASSET_LAYERS, "exploratory"}
-PROMOTION_STATUSES = {"candidate", "needs_review", "approved", "rejected", "superseded", "archived"}
-BLOCKING_POLICIES = {"blocking", "blocking_if_relevant", "non_blocking"}
-FLAKY_STATUSES = {"stable", "flaky"}
 
 class FeedbackRegressionAssetStoreMixin:
     def _add_eval_case_row(self, db: Any, payload: dict[str, Any]) -> None:
-        payload = self._eval_case_with_asset_defaults(payload)
+        record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
         db.add(
             EvalCaseModel(
-                eval_case_id=payload["eval_case_id"],
-                created_at=payload["created_at"],
-                updated_at=payload["updated_at"],
-                status=payload["status"],
-                source_feedback_case_id=self._string(payload.get("source_feedback_case_id")),
-                source_run_id=self._string(payload.get("source_run_id")),
-                asset_layer=payload["asset_layer"],
-                promotion_status=payload["promotion_status"],
-                blocking_policy=payload["blocking_policy"],
-                scenario_pack=self._string(payload.get("scenario_pack")),
-                severity=payload["severity"],
-                flaky_status=payload["flaky_status"],
-                variant_role=payload["variant_role"],
-                content_hash=payload["content_hash"],
-                last_run_at=self._string(payload.get("last_run_at")),
-                last_result_status=self._string(payload.get("last_result_status")),
-                failure_rate=payload.get("failure_rate"),
-                superseded_by_eval_case_id=self._string(payload.get("superseded_by_eval_case_id")),
-                labels_json=list(payload.get("labels") or []),
-                payload_json=payload,
+                eval_case_id=record.eval_case_id,
+                created_at=record.created_at,
+                updated_at=record.updated_at,
+                status=record.status,
+                source_feedback_case_id=record.source_feedback_case_id,
+                source_run_id=record.source_run_id,
+                asset_layer=record.asset_layer,
+                promotion_status=record.promotion_status,
+                blocking_policy=record.blocking_policy,
+                scenario_pack=record.scenario_pack,
+                severity=record.severity,
+                flaky_status=record.flaky_status,
+                variant_role=record.variant_role,
+                content_hash=record.content_hash,
+                last_run_at=record.last_run_at,
+                last_result_status=record.last_result_status,
+                failure_rate=record.failure_rate,
+                superseded_by_eval_case_id=record.superseded_by_eval_case_id,
+                labels_json=list(record.labels),
+                payload_json=record.to_payload(),
             )
         )
-        self._add_eval_case_revision_row(db, payload, created_by="system", reason="initial")
+        self._add_eval_case_revision_row(db, record.to_payload(), created_by="system", reason="initial")
 
     def list_eval_cases(
         self,
@@ -110,15 +116,15 @@ class FeedbackRegressionAssetStoreMixin:
             row = db.get(EvalCaseModel, eval_case_id)
             if not row:
                 return None
-            before = self._eval_case_row_payload(row)
+            before_record = EvalCaseRecord.from_row(row)
+            before = before_record.to_payload()
             payload = dict(before)
             self._apply_eval_case_update_fields(payload, fields)
             payload["updated_at"] = updated_at
-            payload = self._eval_case_with_asset_defaults(payload)
-            validate_transition("eval_case", row.status, payload["status"])
-            validate_transition("eval_case_promotion", row.promotion_status, payload["promotion_status"])
-            self._sync_eval_case_row(row, payload)
-            self._add_eval_case_revision_row(db, payload, created_by=operator, reason=reason)
+            record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
+            before_record.transition_to(status=record.status, promotion_status=record.promotion_status)
+            apply_eval_case_record(row, record)
+            self._add_eval_case_revision_row(db, record.to_payload(), created_by=operator, reason=reason)
             self._add_eval_case_governance_event_row(
                 db,
                 eval_case_id=eval_case_id,
@@ -127,7 +133,7 @@ class FeedbackRegressionAssetStoreMixin:
                 role=str(fields.get("role") or "developer"),
                 reason=reason,
                 before=before,
-                after=payload,
+                after=record.to_payload(),
             )
         return self.find_eval_case(eval_case_id)
 
@@ -295,7 +301,7 @@ class FeedbackRegressionAssetStoreMixin:
             run = db.get(EvalRunModel, eval_run_id)
             if not run:
                 return None
-            run.payload_json = after
+            run.payload_json = EvalRunRecord.from_payload(after).to_payload()
             db.add(
                 RegressionGateOverrideModel(
                     override_id=override_id,
@@ -320,16 +326,15 @@ class FeedbackRegressionAssetStoreMixin:
         row = db.get(EvalCaseModel, payload["eval_case_id"])
         if not row:
             return False
-        payload = self._eval_case_with_asset_defaults(payload)
-        validate_transition("eval_case", row.status, payload["status"])
-        validate_transition("eval_case_promotion", row.promotion_status, payload["promotion_status"])
-        self._sync_eval_case_row(row, payload)
-        self._add_eval_case_revision_row(db, payload, created_by="system", reason="sync")
+        before = EvalCaseRecord.from_row(row)
+        record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
+        before.transition_to(status=record.status, promotion_status=record.promotion_status)
+        apply_eval_case_record(row, record)
+        self._add_eval_case_revision_row(db, record.to_payload(), created_by="system", reason="sync")
         return True
 
     def _eval_case_to_dict(self, row: EvalCaseModel) -> dict[str, Any]:
-        payload = self._eval_case_row_payload(row)
-        return self._eval_case_with_asset_defaults(payload)
+        return EvalCaseRecord.from_row(row).to_payload()
 
     def _eval_case_with_asset_defaults(self, payload: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(payload)
@@ -405,53 +410,6 @@ class FeedbackRegressionAssetStoreMixin:
         if "superseded_by_eval_case_id" in fields:
             payload["superseded_by_eval_case_id"] = self._string(fields.get("superseded_by_eval_case_id")) or None
 
-    def _sync_eval_case_row(self, row: EvalCaseModel, payload: dict[str, Any]) -> None:
-        row.updated_at = payload["updated_at"]
-        row.status = payload["status"]
-        row.source_feedback_case_id = self._string(payload.get("source_feedback_case_id"))
-        row.source_run_id = self._string(payload.get("source_run_id"))
-        row.asset_layer = payload["asset_layer"]
-        row.promotion_status = payload["promotion_status"]
-        row.blocking_policy = payload["blocking_policy"]
-        row.scenario_pack = self._string(payload.get("scenario_pack"))
-        row.severity = payload["severity"]
-        row.flaky_status = payload["flaky_status"]
-        row.variant_role = payload["variant_role"]
-        row.content_hash = payload["content_hash"]
-        row.last_run_at = self._string(payload.get("last_run_at"))
-        row.last_result_status = self._string(payload.get("last_result_status"))
-        row.failure_rate = payload.get("failure_rate")
-        row.superseded_by_eval_case_id = self._string(payload.get("superseded_by_eval_case_id"))
-        row.labels_json = list(payload.get("labels") or [])
-        row.payload_json = payload
-
-    def _eval_case_row_payload(self, row: EvalCaseModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "eval_case_id": row.eval_case_id,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-                "status": row.status,
-                "source_feedback_case_id": row.source_feedback_case_id,
-                "source_run_id": row.source_run_id,
-                "asset_layer": row.asset_layer or payload.get("asset_layer"),
-                "promotion_status": row.promotion_status or payload.get("promotion_status"),
-                "blocking_policy": row.blocking_policy or payload.get("blocking_policy"),
-                "scenario_pack": row.scenario_pack,
-                "severity": row.severity or payload.get("severity"),
-                "flaky_status": row.flaky_status or payload.get("flaky_status"),
-                "variant_role": row.variant_role or payload.get("variant_role"),
-                "content_hash": row.content_hash or payload.get("content_hash"),
-                "last_run_at": row.last_run_at,
-                "last_result_status": row.last_result_status,
-                "failure_rate": row.failure_rate,
-                "superseded_by_eval_case_id": row.superseded_by_eval_case_id,
-                "labels": list(row.labels_json or payload.get("labels") or []),
-            }
-        )
-        return payload
-
     def _add_eval_case_revision_row(self, db: Any, payload: dict[str, Any], *, created_by: str, reason: str) -> None:
         eval_case_id = str(payload["eval_case_id"])
         latest = db.scalars(
@@ -459,16 +417,28 @@ class FeedbackRegressionAssetStoreMixin:
             .where(EvalCaseRevisionModel.eval_case_id == eval_case_id)
             .order_by(EvalCaseRevisionModel.revision_number.desc())
         ).first()
+        record = EvalCaseRevisionRecord.model_validate(
+            {
+                "revision_id": f"ecr-{uuid.uuid4()}",
+                "eval_case_id": eval_case_id,
+                "revision_number": (latest.revision_number if latest else 0) + 1,
+                "created_at": utc_now(),
+                "created_by": created_by,
+                "reason": reason,
+                "content_hash": payload.get("content_hash"),
+                "snapshot": dict(payload),
+            }
+        )
         db.add(
             EvalCaseRevisionModel(
-                revision_id=f"ecr-{uuid.uuid4()}",
-                eval_case_id=eval_case_id,
-                revision_number=(latest.revision_number if latest else 0) + 1,
-                created_at=utc_now(),
-                created_by=created_by,
-                reason=reason,
-                content_hash=payload.get("content_hash"),
-                snapshot_json=dict(payload),
+                revision_id=record.revision_id,
+                eval_case_id=record.eval_case_id,
+                revision_number=record.revision_number,
+                created_at=record.created_at,
+                created_by=record.created_by,
+                reason=record.reason,
+                content_hash=record.content_hash,
+                snapshot_json=record.snapshot,
             )
         )
 
@@ -484,44 +454,38 @@ class FeedbackRegressionAssetStoreMixin:
         before: dict[str, Any],
         after: dict[str, Any],
     ) -> None:
+        record = EvalCaseGovernanceEventRecord.model_validate(
+            {
+                "event_id": f"ecg-{uuid.uuid4()}",
+                "eval_case_id": eval_case_id,
+                "action": action,
+                "operator": operator,
+                "role": role,
+                "reason": reason,
+                "created_at": utc_now(),
+                "before": before,
+                "after": after,
+            }
+        )
         db.add(
             EvalCaseGovernanceEventModel(
-                event_id=f"ecg-{uuid.uuid4()}",
-                eval_case_id=eval_case_id,
-                action=action,
-                operator=operator,
-                role=role,
-                reason=reason,
-                created_at=utc_now(),
-                before_json=before,
-                after_json=after,
+                event_id=record.event_id,
+                eval_case_id=record.eval_case_id,
+                action=record.action,
+                operator=record.operator,
+                role=record.role,
+                reason=record.reason,
+                created_at=record.created_at,
+                before_json=record.before,
+                after_json=record.after,
             )
         )
 
     def _eval_case_revision_to_dict(self, row: EvalCaseRevisionModel) -> dict[str, Any]:
-        return {
-            "revision_id": row.revision_id,
-            "eval_case_id": row.eval_case_id,
-            "revision_number": row.revision_number,
-            "created_at": row.created_at,
-            "created_by": row.created_by,
-            "reason": row.reason,
-            "content_hash": row.content_hash,
-            "snapshot": dict(row.snapshot_json or {}),
-        }
+        return EvalCaseRevisionRecord.from_row(row).to_payload()
 
     def _eval_case_governance_event_to_dict(self, row: EvalCaseGovernanceEventModel) -> dict[str, Any]:
-        return {
-            "event_id": row.event_id,
-            "eval_case_id": row.eval_case_id,
-            "action": row.action,
-            "operator": row.operator,
-            "role": row.role,
-            "reason": row.reason,
-            "created_at": row.created_at,
-            "before": dict(row.before_json or {}),
-            "after": dict(row.after_json or {}),
-        }
+        return EvalCaseGovernanceEventRecord.from_row(row).to_payload()
 
     def _gate_result_for_items(self, items: list[EvalRunItemModel]) -> dict[str, Any]:
         blocked: list[str] = []
@@ -558,12 +522,12 @@ class FeedbackRegressionAssetStoreMixin:
             row = db.get(EvalCaseModel, eval_case_id)
             if not row:
                 continue
-            payload = self._eval_case_row_payload(row)
+            payload = EvalCaseRecord.from_row(row).to_payload()
             payload["last_run_at"] = completed_at
             payload["last_result_status"] = "failed" if "failed" in statuses else ("needs_human_review" if "needs_human_review" in statuses else "passed")
             payload["failure_rate"] = statuses.count("failed") / len(statuses)
-            payload = self._eval_case_with_asset_defaults(payload)
-            self._sync_eval_case_row(row, payload)
+            record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
+            apply_eval_case_record(row, record)
 
     def _task_status_for_eval_result(self, result_status: str) -> str:
         if result_status in {"passed", "passed_with_notes"}:
@@ -687,18 +651,7 @@ class FeedbackRegressionAssetStoreMixin:
         return db.get(FeedbackOptimizationBatchModel, batch_id)
 
     def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "impact_analysis_id": row.impact_analysis_id,
-                "eval_run_id": row.eval_run_id,
-                "created_at": row.created_at,
-                "completed_at": row.completed_at,
-                "status": row.status,
-                "job_id": row.job_id,
-            }
-        )
-        return payload
+        return RegressionImpactAnalysisRecord.from_row(row).to_payload()
 
     def _impacted_assets_from_eval_run(self, eval_run: dict[str, Any]) -> list[dict[str, Any]]:
         impacted: list[dict[str, Any]] = []

@@ -6,8 +6,8 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
+from ..records.case_records import FeedbackCaseRecord
 from ..runtime_db import FeedbackCaseModel, utc_now
-from ..state_machines import validate_transition
 
 
 class FeedbackCaseStoreMixin:
@@ -143,46 +143,29 @@ class FeedbackCaseStoreMixin:
         )
 
     def _case_model_from_dict(self, feedback_case: dict[str, Any]) -> FeedbackCaseModel:
+        record = FeedbackCaseRecord.model_validate(feedback_case)
         return FeedbackCaseModel(
-            feedback_case_id=feedback_case["feedback_case_id"],
-            created_at=feedback_case["created_at"],
-            updated_at=feedback_case["updated_at"],
-            status=feedback_case["status"],
-            title=feedback_case["title"],
-            priority=feedback_case["priority"],
-            current_evidence_package_id=self._latest(feedback_case.get("evidence_package_ids")),
-            current_attribution_job_id=self._latest(feedback_case.get("attribution_job_ids")),
-            current_proposal_job_id=self._latest(feedback_case.get("proposal_job_ids")),
-            source_ids_json=feedback_case.get("source_ids") or [],
-            signal_ids_json=feedback_case.get("signal_ids") or [],
-            event_ids_json=feedback_case.get("event_ids") or [],
-            pending_correlation_ids_json=feedback_case.get("pending_correlation_ids") or [],
-            run_ids_json=feedback_case.get("run_ids") or [],
-            session_ids_json=feedback_case.get("session_ids") or [],
-            alert_ids_json=feedback_case.get("alert_ids") or [],
-            case_ids_json=feedback_case.get("case_ids") or [],
+            feedback_case_id=record.feedback_case_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            status=record.status,
+            title=record.title,
+            priority=record.priority,
+            current_evidence_package_id=self._latest(record.evidence_package_ids),
+            current_attribution_job_id=self._latest(record.attribution_job_ids),
+            current_proposal_job_id=self._latest(record.proposal_job_ids),
+            source_ids_json=record.source_ids,
+            signal_ids_json=record.signal_ids,
+            event_ids_json=record.event_ids,
+            pending_correlation_ids_json=record.pending_correlation_ids,
+            run_ids_json=record.run_ids,
+            session_ids_json=record.session_ids,
+            alert_ids_json=record.alert_ids,
+            case_ids_json=record.case_ids,
         )
 
     def _case_to_dict(self, row: FeedbackCaseModel) -> dict[str, Any]:
-        return {
-            "feedback_case_id": row.feedback_case_id,
-            "created_at": row.created_at,
-            "updated_at": row.updated_at,
-            "status": row.status,
-            "title": row.title,
-            "priority": row.priority,
-            "source_ids": row.source_ids_json or [],
-            "signal_ids": row.signal_ids_json or [],
-            "event_ids": row.event_ids_json or [],
-            "pending_correlation_ids": row.pending_correlation_ids_json or [],
-            "run_ids": row.run_ids_json or [],
-            "session_ids": row.session_ids_json or [],
-            "alert_ids": row.alert_ids_json or [],
-            "case_ids": row.case_ids_json or [],
-            "evidence_package_ids": [row.current_evidence_package_id] if row.current_evidence_package_id else [],
-            "attribution_job_ids": [row.current_attribution_job_id] if row.current_attribution_job_id else [],
-            "proposal_job_ids": [row.current_proposal_job_id] if row.current_proposal_job_id else [],
-        }
+        return FeedbackCaseRecord.from_row(row).to_payload()
 
     def _append_case_update(
         self,
@@ -218,17 +201,33 @@ class FeedbackCaseStoreMixin:
         row = db.get(FeedbackCaseModel, feedback_case["feedback_case_id"])
         if not row:
             return False
-        row.updated_at = utc_now()
-        if status:
-            validate_transition("case", row.status, status)
-            row.status = status
-        if evidence_package_id:
-            row.current_evidence_package_id = evidence_package_id
-        if attribution_job_id:
-            row.current_attribution_job_id = attribution_job_id
-        if proposal_job_id:
-            row.current_proposal_job_id = proposal_job_id
+        record = FeedbackCaseRecord.from_row(row).update(
+            updated_at=utc_now(),
+            status=status,
+            evidence_package_id=evidence_package_id,
+            attribution_job_id=attribution_job_id,
+            proposal_job_id=proposal_job_id,
+        )
+        self._apply_case_record(row, record)
         return True
+
+    def _apply_case_record(self, row: FeedbackCaseModel, record: FeedbackCaseRecord) -> None:
+        row.created_at = record.created_at
+        row.updated_at = record.updated_at
+        row.status = record.status
+        row.title = record.title
+        row.priority = record.priority
+        row.current_evidence_package_id = self._latest(record.evidence_package_ids)
+        row.current_attribution_job_id = self._latest(record.attribution_job_ids)
+        row.current_proposal_job_id = self._latest(record.proposal_job_ids)
+        row.source_ids_json = record.source_ids
+        row.signal_ids_json = record.signal_ids
+        row.event_ids_json = record.event_ids
+        row.pending_correlation_ids_json = record.pending_correlation_ids
+        row.run_ids_json = record.run_ids
+        row.session_ids_json = record.session_ids
+        row.alert_ids_json = record.alert_ids
+        row.case_ids_json = record.case_ids
 
     def _case_title(self, records: list[dict[str, Any]]) -> str:
         for record in records:

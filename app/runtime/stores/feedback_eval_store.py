@@ -6,12 +6,12 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
+from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..runtime_db import (
     EvalRunItemModel,
     EvalRunModel,
     utc_now,
 )
-from ..state_machines import validate_transition
 
 
 class FeedbackEvalStoreMixin:
@@ -98,21 +98,22 @@ class FeedbackEvalStoreMixin:
             "summary": {"total": len(eval_case_ids), "passed": 0, "failed": 0, "needs_human_review": 0},
             "gate_result": {"status": "running", "blocked_case_ids": [], "review_case_ids": [], "note_case_ids": []},
         }
+        record = EvalRunRecord.model_validate(payload)
         with self.Session.begin() as db:
             db.add(
                 EvalRunModel(
-                    eval_run_id=payload["eval_run_id"],
+                    eval_run_id=record.eval_run_id,
                     created_at=created_at,
                     completed_at=None,
-                    status="running",
-                    agent_version_id=self._string(agent_version_id),
-                    optimization_task_id=self._string(optimization_task_id),
-                    source=source,
-                    regression_plan_id=self._string(regression_plan_id),
-                    payload_json=payload,
+                    status=record.status,
+                    agent_version_id=record.agent_version_id,
+                    optimization_task_id=record.optimization_task_id,
+                    source=record.source,
+                    regression_plan_id=record.regression_plan_id,
+                    payload_json=record.to_payload(),
                 )
             )
-        return payload
+        return record.to_payload()
 
     def append_eval_run_item(
         self,
@@ -156,24 +157,26 @@ class FeedbackEvalStoreMixin:
             "error_json": error_json,
             "created_at": utc_now(),
         }
+        item_record = EvalRunItemRecord.model_validate(payload)
         with self.Session.begin() as db:
             db.add(
                 EvalRunItemModel(
-                    eval_run_item_id=item_id,
-                    eval_run_id=eval_run_id,
-                    eval_case_id=eval_case["eval_case_id"],
-                    agent_run_id=self._string(payload.get("agent_run_id")),
-                    status=status,
-                    score=score,
-                    payload_json=payload,
+                    eval_run_item_id=item_record.eval_run_item_id,
+                    eval_run_id=item_record.eval_run_id,
+                    eval_case_id=item_record.eval_case_id,
+                    agent_run_id=item_record.agent_run_id,
+                    status=item_record.status,
+                    score=item_record.score,
+                    payload_json=item_record.to_payload(),
                 )
             )
             run = db.get(EvalRunModel, eval_run_id)
             if run:
-                current = dict(run.payload_json or {})
-                current["item_ids"] = [*list(current.get("item_ids") or []), item_id]
-                run.payload_json = current
-        return payload
+                run_record = EvalRunRecord.from_row(run)
+                payload = run_record.to_payload()
+                payload["item_ids"] = [*run_record.item_ids, item_id]
+                run.payload_json = EvalRunRecord.model_validate(payload).to_payload()
+        return item_record.to_payload()
 
     def finish_eval_run(self, eval_run_id: str) -> Optional[dict[str, Any]]:
         completed_at = utc_now()
@@ -183,23 +186,22 @@ class FeedbackEvalStoreMixin:
                 return None
             items = list(db.scalars(select(EvalRunItemModel).where(EvalRunItemModel.eval_run_id == eval_run_id)).all())
             summary = self._eval_run_summary(items)
-            payload = dict(run.payload_json or {})
             gate_result = self._gate_result_for_items(items)
-            gated = bool(payload.get("regression_plan_id") or payload.get("source") == "optimization_batch_regression")
+            record = EvalRunRecord.from_row(run)
+            gated = bool(record.regression_plan_id or record.source == "optimization_batch_regression")
             result_status = gate_result["status"] if gated else self._eval_result_status(summary)
-            validate_transition("eval_run", run.status, "completed")
-            payload.update(
-                {
+            record = record.transition_to(
+                "completed",
+                fields={
                     "completed_at": completed_at,
-                    "status": "completed",
                     "result_status": result_status,
                     "summary": summary,
                     "gate_result": gate_result,
-                }
+                },
             )
-            run.completed_at = completed_at
-            run.status = "completed"
-            run.payload_json = payload
+            run.completed_at = record.completed_at
+            run.status = record.status
+            run.payload_json = record.to_payload()
             self._update_eval_case_run_stats(db, items, completed_at)
         finished = self.get_eval_run(eval_run_id)
         task_id = self._string((finished or {}).get("optimization_task_id"))
@@ -215,12 +217,13 @@ class FeedbackEvalStoreMixin:
             run = db.get(EvalRunModel, eval_run_id)
             if not run:
                 return None
-            payload = dict(run.payload_json or {})
-            validate_transition("eval_run", run.status, "failed")
-            payload.update({"status": "failed", "result_status": "failed", "completed_at": utc_now(), "error_json": error_json})
-            run.status = "failed"
-            run.completed_at = payload["completed_at"]
-            run.payload_json = payload
+            record = EvalRunRecord.from_row(run).transition_to(
+                "failed",
+                fields={"result_status": "failed", "completed_at": utc_now(), "error_json": error_json},
+            )
+            run.status = record.status
+            run.completed_at = record.completed_at
+            run.payload_json = record.to_payload()
         failed = self.get_eval_run(eval_run_id)
         task_id = self._string((failed or {}).get("optimization_task_id"))
         if task_id and failed:
@@ -443,26 +446,17 @@ class FeedbackEvalStoreMixin:
         }
 
     def _eval_run_to_dict(self, row: EvalRunModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload["eval_run_id"] = row.eval_run_id
-        payload["created_at"] = row.created_at
-        payload["completed_at"] = row.completed_at
-        payload["status"] = row.status
-        payload["agent_version_id"] = row.agent_version_id
-        payload["optimization_task_id"] = row.optimization_task_id
-        payload["source"] = row.source
-        payload["regression_plan_id"] = row.regression_plan_id
+        record = EvalRunRecord.from_row(row)
         with self.Session() as db:
             items = [
-                item.payload_json
+                EvalRunItemRecord.from_row(item).to_payload()
                 for item in db.scalars(
                     select(EvalRunItemModel)
                     .where(EvalRunItemModel.eval_run_id == row.eval_run_id)
                     .order_by(EvalRunItemModel.eval_run_item_id.asc())
                 ).all()
             ]
-        payload["items"] = items
-        return payload
+        return record.to_response(items=items)
 
     def _eval_run_summary(self, items: list[EvalRunItemModel]) -> dict[str, int]:
         return {

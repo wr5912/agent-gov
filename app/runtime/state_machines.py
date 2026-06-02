@@ -136,6 +136,18 @@ EXECUTION_APPLICATION_STATES = {
     "compensated",
 }
 
+REGRESSION_IMPACT_ANALYSIS_STATES = {
+    "pending",
+    "completed",
+    "needs_human_review",
+    "failed",
+}
+
+PENDING_CORRELATION_STATES = {
+    "pending",
+    "resolved",
+}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "job": {
         "created": {"queued", "running", "failed"},
@@ -262,6 +274,16 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending_manual_recovery": {"compensated", "failed"},
         "compensated": set(),
     },
+    "regression_impact_analysis": {
+        "pending": {"completed", "needs_human_review", "failed"},
+        "completed": {"pending"},
+        "needs_human_review": {"pending"},
+        "failed": {"pending"},
+    },
+    "pending_correlation": {
+        "pending": {"resolved"},
+        "resolved": set(),
+    },
 }
 
 _KNOWN_STATES = {
@@ -277,6 +299,8 @@ _KNOWN_STATES = {
     "proposal": PROPOSAL_STATES,
     "external_governance_item": EXTERNAL_GOVERNANCE_ITEM_STATES,
     "execution_application": EXECUTION_APPLICATION_STATES,
+    "regression_impact_analysis": REGRESSION_IMPACT_ANALYSIS_STATES,
+    "pending_correlation": PENDING_CORRELATION_STATES,
 }
 
 

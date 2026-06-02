@@ -1,6 +1,9 @@
 from pathlib import Path
 import json
 
+from pydantic import ValidationError
+from sqlalchemy import text
+
 from feedback_store_test_utils import (
     ClaudeRuntime,
     FeedbackSignalCreateRequest,
@@ -262,6 +265,38 @@ def test_feedback_eval_runner_scores_no_required_checks_as_full_pass(tmp_path):
     assert check_results == []
 
 
+def test_eval_run_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test")
+    with store.Session.begin() as db:
+        db.execute(text("UPDATE eval_runs SET status = 'unknown_status' WHERE eval_run_id = :eval_run_id"), {"eval_run_id": eval_run["eval_run_id"]})
+
+    with pytest.raises(ValidationError):
+        store.get_eval_run(eval_run["eval_run_id"])
+
+
+def test_eval_run_projection_rejects_invalid_persisted_item_status(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case = _insert_eval_case(store, "evc-invalid-item-status", "异常 item 状态")
+    eval_run = store.create_eval_run(eval_case_ids=[str(eval_case["eval_case_id"])], agent_version_id="main-v-test")
+    item = store.append_eval_run_item(
+        eval_run["eval_run_id"],
+        eval_case=eval_case,
+        agent_result={"answer": "ok", "errors": []},
+        status="passed",
+        score=1.0,
+        check_results=[],
+    )
+    with store.Session.begin() as db:
+        db.execute(
+            text("UPDATE eval_run_items SET status = 'unknown_status' WHERE eval_run_item_id = :item_id"),
+            {"item_id": item["eval_run_item_id"]},
+        )
+
+    with pytest.raises(ValidationError):
+        store.get_eval_run(eval_run["eval_run_id"])
+
+
 def test_update_eval_case_directly_overwrites_content(tmp_path):
     store, _ = _store(tmp_path)
     eval_case, _ = _create_eval_case(store)
@@ -287,6 +322,36 @@ def test_update_eval_case_directly_overwrites_content(tmp_path):
     assert store.find_eval_case(eval_case["eval_case_id"])["prompt"] == updated["prompt"]
     assert store.list_eval_case_revisions(eval_case["eval_case_id"])[0]["reason"] == "eval case updated"
     assert store.list_eval_case_governance_events(eval_case["eval_case_id"])[0]["action"] == "update"
+
+
+def test_eval_case_revision_projection_rejects_invalid_persisted_revision_number(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case, _ = _create_eval_case(store)
+    store.update_eval_case(eval_case["eval_case_id"], {"prompt": "复测：确认更新 revision。"})
+
+    with store.Session.begin() as db:
+        db.execute(
+            text("UPDATE eval_case_revisions SET revision_number = 0 WHERE eval_case_id = :eval_case_id AND revision_number = 1"),
+            {"eval_case_id": eval_case["eval_case_id"]},
+        )
+
+    with pytest.raises(ValidationError):
+        store.list_eval_case_revisions(eval_case["eval_case_id"])
+
+
+def test_eval_case_governance_event_projection_rejects_invalid_persisted_action(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_case, _ = _create_eval_case(store)
+    store.update_eval_case(eval_case["eval_case_id"], {"prompt": "复测：确认治理事件。"})
+
+    with store.Session.begin() as db:
+        db.execute(
+            text("UPDATE eval_case_governance_events SET action = '' WHERE eval_case_id = :eval_case_id"),
+            {"eval_case_id": eval_case["eval_case_id"]},
+        )
+
+    with pytest.raises(ValidationError):
+        store.list_eval_case_governance_events(eval_case["eval_case_id"])
 
 
 def test_update_eval_case_rejects_empty_prompt(tmp_path):
@@ -316,6 +381,22 @@ def test_generated_feedback_eval_case_defaults_to_candidate_draft(tmp_path):
     assert eval_case["asset_layer"] == "candidate"
     assert eval_case["promotion_status"] == "candidate"
     assert eval_case["blocking_policy"] == "non_blocking"
+
+
+@pytest.mark.parametrize("column", ["status", "promotion_status"])
+def test_eval_case_projection_rejects_invalid_persisted_lifecycle_status(tmp_path, column):
+    store, _ = _store(tmp_path)
+    eval_case, _ = _create_eval_case(store)
+
+    with store.Session.begin() as db:
+        if column == "status":
+            statement = text("UPDATE eval_cases SET status = 'unknown_status' WHERE eval_case_id = :eval_case_id")
+        else:
+            statement = text("UPDATE eval_cases SET promotion_status = 'unknown_status' WHERE eval_case_id = :eval_case_id")
+        db.execute(statement, {"eval_case_id": eval_case["eval_case_id"]})
+
+    with pytest.raises(ValidationError):
+        store.find_eval_case(eval_case["eval_case_id"])
 
 
 def test_promoted_eval_case_enters_regression_plan_and_gate_blocks_failures(tmp_path):

@@ -6,8 +6,8 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..external_governance_mapping import apply_external_governance_record, external_governance_record_from_row
+from ..records.proposal_records import OptimizationProposalRecord, ProposalReviewRecord
 from ..runtime_db import ExternalGovernanceItemModel, OptimizationProposalModel, ProposalReviewModel, utc_now
-from ..state_machines import validate_transition
 
 
 class FeedbackProposalStoreMixin:
@@ -79,54 +79,55 @@ class FeedbackProposalStoreMixin:
             return None
         status_by_action = {"approve": "approved", "reject": "rejected", "request_more_analysis": "needs_more_analysis"}
         next_status = status_by_action[action]
-        review = self._scrub_record(
-            {
-                "review_id": f"opr-{uuid.uuid4()}",
-                "proposal_id": proposal_id,
-                "created_at": utc_now(),
-                "action": action,
-                "status": next_status,
-                "comment": comment,
-            }
+        review = ProposalReviewRecord.model_validate(
+            self._scrub_record(
+                {
+                    "review_id": f"opr-{uuid.uuid4()}",
+                    "proposal_id": proposal_id,
+                    "created_at": utc_now(),
+                    "action": action,
+                    "status": next_status,
+                    "comment": comment,
+                }
+            )
         )
         with self.Session.begin() as db:
             db.add(
                 ProposalReviewModel(
-                    review_id=review["review_id"],
-                    proposal_id=proposal_id,
-                    created_at=review["created_at"],
-                    action=action,
-                    status=next_status,
-                    payload_json=review,
+                    review_id=review.review_id,
+                    proposal_id=review.proposal_id,
+                    created_at=review.created_at,
+                    action=review.action,
+                    status=review.status,
+                    payload_json=review.to_payload(),
                 )
             )
             row = db.get(OptimizationProposalModel, proposal_id)
             if row:
-                validate_transition("proposal", row.status, next_status)
-                row.status = next_status
-                row.payload_json = {**row.payload_json, "status": next_status, "latest_review": review}
-        updated = self.find_proposal(proposal_id) or {**proposal, "status": next_status, "latest_review": review}
-        return {"proposal": updated, "review": review}
-
+                record = OptimizationProposalRecord.from_row(row).transition_to(
+                    next_status,
+                    fields={"latest_review": review.to_payload()},
+                )
+                self._apply_proposal_record(row, record)
+        updated = self.find_proposal(proposal_id) or {**proposal, "status": next_status, "latest_review": review.to_payload()}
+        return {"proposal": updated, "review": review.to_payload()}
 
     def _proposal_model_from_dict(self, proposal: dict[str, Any]) -> OptimizationProposalModel:
+        record = OptimizationProposalRecord.model_validate(proposal)
         return OptimizationProposalModel(
-            proposal_id=proposal["proposal_id"],
-            feedback_case_id=proposal["feedback_case_id"],
-            proposal_job_id=proposal["proposal_job_id"],
-            status=proposal["status"],
-            actionability=self._string(proposal.get("actionability")),
-            target_path=self._string(proposal.get("target_path")),
-            created_at=proposal["created_at"],
-            payload_json=proposal,
+            proposal_id=record.proposal_id,
+            feedback_case_id=record.feedback_case_id,
+            proposal_job_id=record.proposal_job_id,
+            status=record.status,
+            actionability=record.actionability,
+            target_path=record.target_path,
+            created_at=record.created_at,
+            payload_json=record.to_payload(),
         )
 
     def _proposal_to_dict(self, row: OptimizationProposalModel, latest_review: ProposalReviewModel | None = None) -> dict[str, Any]:
-        proposal = dict(row.payload_json or {})
-        proposal["status"] = row.status
-        if latest_review:
-            proposal["latest_review"] = latest_review.payload_json
-        return proposal
+        review = ProposalReviewRecord.from_row(latest_review) if latest_review else None
+        return OptimizationProposalRecord.from_row(row, latest_review=review).to_payload()
 
     @staticmethod
     def _latest_reviews_by_proposal_ids(db: Any, proposal_ids: list[str]) -> dict[str, ProposalReviewModel]:
@@ -160,16 +161,15 @@ class FeedbackProposalStoreMixin:
                 )
             ).all()
             for row in proposals:
-                payload = dict(row.payload_json or {})
-                validate_transition("proposal", row.status, "superseded")
-                row.status = "superseded"
-                row.payload_json = {
-                    **payload,
-                    "status": "superseded",
-                    "superseded_at": superseded_at,
-                    "superseded_reason": reason,
-                    "superseded_by_job_id": superseded_by_job_id,
-                }
+                record = OptimizationProposalRecord.from_row(row).transition_to(
+                    "superseded",
+                    fields={
+                        "superseded_at": superseded_at,
+                        "superseded_reason": reason,
+                        "superseded_by_job_id": superseded_by_job_id,
+                    },
+                )
+                self._apply_proposal_record(row, record)
                 proposal_count += 1
 
             external_items = db.scalars(
@@ -187,3 +187,10 @@ class FeedbackProposalStoreMixin:
                 apply_external_governance_record(row, record)
                 external_count += 1
         return {"proposals": proposal_count, "external_guidance_items": external_count}
+
+    @staticmethod
+    def _apply_proposal_record(row: OptimizationProposalModel, record: OptimizationProposalRecord) -> None:
+        row.status = record.status
+        row.actionability = record.actionability
+        row.target_path = record.target_path
+        row.payload_json = record.to_payload()

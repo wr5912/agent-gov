@@ -6,6 +6,8 @@ from feedback_store_test_utils import (
     _store,
     pytest,
 )
+from pydantic import ValidationError
+from sqlalchemy import text
 
 from app.runtime.errors import ConflictError
 
@@ -179,6 +181,29 @@ def test_workflow_list_filters_do_not_use_in_memory_filter(tmp_path, monkeypatch
     assert store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"], status="approved")[0]["proposal_id"] == proposal["proposal_id"]
     assert store.list_tasks(feedback_case_id=feedback_case["feedback_case_id"], status="pending_execution")[0]["optimization_task_id"] == task["optimization_task_id"]
     assert store.list_optimization_batches(status="draft")[0]["batch_id"] == batch["batch_id"]
+
+
+def test_proposal_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    _, feedback_case = _create_eval_case(store)
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    with store.Session.begin() as db:
+        db.execute(text("UPDATE optimization_proposals SET status = 'unknown_status' WHERE proposal_id = :proposal_id"), {"proposal_id": proposal["proposal_id"]})
+
+    with pytest.raises(ValidationError):
+        store.find_proposal(proposal["proposal_id"])
+
+
+def test_proposal_projection_rejects_invalid_persisted_review_status(tmp_path):
+    store, _ = _store(tmp_path)
+    _, feedback_case = _create_eval_case(store)
+    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    review = store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")["review"]
+    with store.Session.begin() as db:
+        db.execute(text("UPDATE proposal_reviews SET status = 'unknown_status' WHERE review_id = :review_id"), {"review_id": review["review_id"]})
+
+    with pytest.raises(ValidationError):
+        store.find_proposal(proposal["proposal_id"])
 
 
 def test_revalidate_proposal_job_raw_output_persists_legacy_suggestions(tmp_path):

@@ -7,6 +7,15 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..errors import BusinessRuleViolation
+from ..records.source_records import (
+    AgentRunRecord,
+    FeedbackSourceAnnotationRecord,
+    FeedbackSignalRecord,
+    PendingCorrelationRecord,
+    SocEventRecord,
+    apply_feedback_source_annotation_record,
+    apply_pending_correlation_record,
+)
 from ..runtime_db import (
     AgentRunModel,
     AgentJobModel,
@@ -27,26 +36,27 @@ class FeedbackSourceStoreMixin:
         payload = record if self.enable_debug_evidence else self._scrub_record(record)
         run_id = self._string(payload.get("run_id")) or f"run-{uuid.uuid4()}"
         payload = {**payload, "run_id": run_id, "created_at": payload.get("created_at") or utc_now()}
+        run_record = AgentRunRecord.from_payload(payload)
         with self.Session.begin() as db:
             existing = db.get(AgentRunModel, run_id)
             values = {
-                "session_id": self._string(payload.get("session_id")),
-                "sdk_session_id": self._string(payload.get("sdk_session_id")),
-                "agent_version_id": self._string(payload.get("agent_version_id")),
-                "alert_id": self._string(payload.get("alert_id")),
-                "case_id": self._string(payload.get("case_id")),
-                "created_at": str(payload.get("created_at")),
-                "completed_at": self._string(payload.get("completed_at")),
-                "langfuse_trace_id": self._string(payload.get("langfuse_trace_id")),
-                "langfuse_trace_url": self._string(payload.get("langfuse_trace_url")),
-                "payload_json": payload,
+                "session_id": run_record.session_id,
+                "sdk_session_id": run_record.sdk_session_id,
+                "agent_version_id": run_record.agent_version_id,
+                "alert_id": run_record.alert_id,
+                "case_id": run_record.case_id,
+                "created_at": run_record.created_at,
+                "completed_at": run_record.completed_at,
+                "langfuse_trace_id": run_record.langfuse_trace_id,
+                "langfuse_trace_url": run_record.langfuse_trace_url,
+                "payload_json": run_record.to_payload(),
             }
             if existing:
                 for key, value in values.items():
                     setattr(existing, key, value)
             else:
-                db.add(AgentRunModel(run_id=run_id, **values))
-        return payload
+                db.add(AgentRunModel(run_id=run_record.run_id, **values))
+        return run_record.to_payload()
 
     def list_runs(
         self,
@@ -67,21 +77,21 @@ class FeedbackSourceStoreMixin:
         if case_id:
             stmt = stmt.where(AgentRunModel.case_id == case_id)
         with self.Session() as db:
-            return [row.payload_json for row in db.scalars(stmt).all()]
+            return [AgentRunRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
     def find_run(self, *, run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         if not run_id:
             return None
         with self.Session() as db:
             row = db.get(AgentRunModel, run_id)
-            return row.payload_json if row else None
+            return AgentRunRecord.from_row(row).to_payload() if row else None
 
     def find_run_for_event(self, event: dict[str, Any]) -> Optional[dict[str, Any]]:
         exact = self.find_run(run_id=self._string(event.get("run_id")))
         if exact:
             return exact
         with self.Session() as db:
-            runs = [row.payload_json for row in db.scalars(select(AgentRunModel).order_by(AgentRunModel.created_at.desc())).all()]
+            runs = [AgentRunRecord.from_row(row).to_payload() for row in db.scalars(select(AgentRunModel).order_by(AgentRunModel.created_at.desc())).all()]
         session_id = self._string(event.get("session_id"))
         alert_id = self._string(event.get("alert_id"))
         case_id = self._string(event.get("case_id"))
@@ -112,21 +122,22 @@ class FeedbackSourceStoreMixin:
             "created_at": utc_now(),
             "matched_run_id": run.get("run_id") if run else None,
         }
+        record = FeedbackSignalRecord.model_validate(signal)
         with self.Session.begin() as db:
             db.merge(
                 FeedbackSignalModel(
-                    signal_id=signal["signal_id"],
-                    source_type=signal.get("source_type") or "explicit_feedback",
-                    run_id=self._string(signal.get("run_id")),
-                    matched_run_id=self._string(signal.get("matched_run_id")),
-                    session_id=self._string(signal.get("session_id")),
-                    alert_id=self._string(signal.get("alert_id")),
-                    case_id=self._string(signal.get("case_id")),
-                    created_at=signal["created_at"],
-                    payload_json=signal,
+                    signal_id=record.signal_id,
+                    source_type=record.source_type,
+                    run_id=record.run_id,
+                    matched_run_id=record.matched_run_id,
+                    session_id=record.session_id,
+                    alert_id=record.alert_id,
+                    case_id=record.case_id,
+                    created_at=record.created_at,
+                    payload_json=record.to_payload(),
                 )
             )
-        return signal
+        return record.to_payload()
 
     def list_signals(
         self,
@@ -150,14 +161,14 @@ class FeedbackSourceStoreMixin:
         if source_type:
             stmt = stmt.where(FeedbackSignalModel.source_type == source_type)
         with self.Session() as db:
-            return [row.payload_json for row in db.scalars(stmt).all()]
+            return [FeedbackSignalRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
     def find_signal(self, signal_id: str) -> Optional[dict[str, Any]]:
         if not signal_id:
             return None
         with self.Session() as db:
             record = db.get(FeedbackSignalModel, signal_id)
-            return record.payload_json if record else None
+            return FeedbackSignalRecord.from_row(record).to_payload() if record else None
 
     def ingest_soc_event(self, req: SocEventIngestRequest) -> dict[str, Any]:
         payload = self._scrub_record(req.model_dump(mode="json"))
@@ -169,6 +180,8 @@ class FeedbackSourceStoreMixin:
             **payload,
             "matched_run_id": run.get("run_id") if run else None,
         }
+        event_record = SocEventRecord.model_validate(event)
+        event = event_record.to_payload()
 
         pending = None
         status = "matched"
@@ -177,47 +190,26 @@ class FeedbackSourceStoreMixin:
             with self.Session.begin() as db:
                 existing = db.get(SocEventModel, req.event_id)
                 if existing:
-                    duplicate_event = existing.payload_json
+                    duplicate_event = SocEventRecord.from_row(existing).to_payload()
                 else:
                     db.add(
                         SocEventModel(
-                            event_id=event["event_id"],
-                            event_type=event["event_type"],
-                            source_system=event["source_system"],
-                            run_id=self._string(event.get("run_id")),
-                            matched_run_id=self._string(event.get("matched_run_id")),
-                            session_id=self._string(event.get("session_id")),
-                            alert_id=self._string(event.get("alert_id")),
-                            case_id=self._string(event.get("case_id")),
-                            created_at=event["created_at"],
+                            event_id=event_record.event_id,
+                            event_type=event_record.event_type,
+                            source_system=event_record.source_system,
+                            run_id=event_record.run_id,
+                            matched_run_id=event_record.matched_run_id,
+                            session_id=event_record.session_id,
+                            alert_id=event_record.alert_id,
+                            case_id=event_record.case_id,
+                            created_at=event_record.created_at,
                             payload_json=event,
                         )
                     )
                     if not run:
                         status = "pending_correlation"
-                        pending = {
-                            "pending_id": f"pc-{uuid.uuid4()}",
-                            "created_at": utc_now(),
-                            "updated_at": utc_now(),
-                            "status": "pending",
-                            "reason": "no_matching_run",
-                            "event_id": event["event_id"],
-                            "event_type": event["event_type"],
-                            "source_system": event["source_system"],
-                            "session_id": event.get("session_id"),
-                            "alert_id": event.get("alert_id"),
-                            "case_id": event.get("case_id"),
-                        }
-                        db.add(
-                            PendingCorrelationModel(
-                                pending_id=pending["pending_id"],
-                                event_id=pending["event_id"],
-                                status=pending["status"],
-                                created_at=pending["created_at"],
-                                updated_at=pending["updated_at"],
-                                payload_json=pending,
-                            )
-                        )
+                        pending_record = self._add_pending_correlation_row(db, event_record)
+                        pending = pending_record.to_payload()
         except IntegrityError:
             duplicate_event = self.find_event(req.event_id)
 
@@ -235,6 +227,35 @@ class FeedbackSourceStoreMixin:
             "matched_run_id": event.get("matched_run_id"),
             "pending_correlation": pending,
         }
+
+    @staticmethod
+    def _add_pending_correlation_row(db: Any, event: SocEventRecord) -> PendingCorrelationRecord:
+        pending = PendingCorrelationRecord.model_validate(
+            {
+                "pending_id": f"pc-{uuid.uuid4()}",
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+                "status": "pending",
+                "reason": "no_matching_run",
+                "event_id": event.event_id,
+                "event_type": event.event_type,
+                "source_system": event.source_system,
+                "session_id": event.session_id,
+                "alert_id": event.alert_id,
+                "case_id": event.case_id,
+            }
+        )
+        db.add(
+            PendingCorrelationModel(
+                pending_id=pending.pending_id,
+                event_id=pending.event_id,
+                status=pending.status,
+                created_at=pending.created_at,
+                updated_at=pending.updated_at,
+                payload_json=pending.to_payload(),
+            )
+        )
+        return pending
 
     def list_events(
         self,
@@ -258,21 +279,21 @@ class FeedbackSourceStoreMixin:
         if event_type:
             stmt = stmt.where(SocEventModel.event_type == event_type)
         with self.Session() as db:
-            return [row.payload_json for row in db.scalars(stmt).all()]
+            return [SocEventRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
     def find_event(self, event_id: str) -> Optional[dict[str, Any]]:
         if not event_id:
             return None
         with self.Session() as db:
             record = db.get(SocEventModel, event_id)
-            return record.payload_json if record else None
+            return SocEventRecord.from_row(record).to_payload() if record else None
 
     def list_pending(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         stmt = select(PendingCorrelationModel).order_by(PendingCorrelationModel.updated_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(PendingCorrelationModel.status == status)
         with self.Session() as db:
-            return [row.payload_json for row in db.scalars(stmt).all()]
+            return [PendingCorrelationRecord.from_row(row).to_payload() for row in db.scalars(stmt).all()]
 
     def find_pending(self, pending_id: str) -> Optional[dict[str, Any]]:
         if not pending_id:
@@ -281,7 +302,7 @@ class FeedbackSourceStoreMixin:
             record = db.get(PendingCorrelationModel, pending_id)
             if not record:
                 record = db.scalar(select(PendingCorrelationModel).where(PendingCorrelationModel.event_id == pending_id))
-            return record.payload_json if record else None
+            return PendingCorrelationRecord.from_row(record).to_payload() if record else None
 
     def resolve_pending(
         self,
@@ -299,22 +320,16 @@ class FeedbackSourceStoreMixin:
                 record = db.scalar(select(PendingCorrelationModel).where(PendingCorrelationModel.event_id == pending_id))
             if not record:
                 return None
-            pending = dict(record.payload_json or {})
-            resolved = {
-                **pending,
-                "pending_id": record.pending_id,
-                "updated_at": utc_now(),
-                "status": "resolved",
-                "resolved_run_id": run_id,
-                "session_id": session_id or pending.get("session_id"),
-                "alert_id": alert_id or pending.get("alert_id"),
-                "case_id": case_id or pending.get("case_id"),
-                "comment": comment,
-            }
-            record.status = "resolved"
-            record.updated_at = resolved["updated_at"]
-            record.payload_json = resolved
-        return resolved
+            resolved = PendingCorrelationRecord.from_row(record).resolve(
+                updated_at=utc_now(),
+                run_id=run_id,
+                session_id=session_id,
+                alert_id=alert_id,
+                case_id=case_id,
+                comment=comment,
+            )
+            apply_pending_correlation_record(record, resolved)
+        return resolved.to_payload()
 
     def list_feedback_sources(self, *, limit: int = 500) -> list[dict[str, Any]]:
         annotations = self._source_annotations_by_key()
@@ -396,44 +411,31 @@ class FeedbackSourceStoreMixin:
         annotation_id = self._source_annotation_id(kind, source_id)
         now = utc_now()
         row = db.get(FeedbackSourceAnnotationModel, annotation_id)
-        payload = dict(row.payload_json or {}) if row else {}
-        created_at = row.created_at if row else now
-        payload.update(
+        record = FeedbackSourceAnnotationRecord.from_row(row) if row else FeedbackSourceAnnotationRecord.model_validate(
             {
                 "annotation_id": annotation_id,
                 "source_kind": kind,
                 "source_id": source_id,
-                "created_at": created_at,
+                "created_at": now,
                 "updated_at": now,
             }
         )
-        for key in ("comment", "labels", "priority", "status", "requires_review", "metadata"):
-            if key in fields:
-                value = fields.get(key)
-                if key == "labels" and value is not None:
-                    payload[key] = self._unique_strings([str(item).strip() for item in value if str(item).strip()])
-                elif key == "metadata" and value is not None:
-                    payload[key] = dict(value)
-                else:
-                    payload[key] = value
-        payload["status"] = self._string(payload.get("status")) or "triaged"
+        record = record.update(fields=fields, updated_at=now)
         if row:
-            row.status = str(payload["status"])
-            row.updated_at = now
-            row.payload_json = payload
+            apply_feedback_source_annotation_record(row, record)
         else:
             db.add(
                 FeedbackSourceAnnotationModel(
                     annotation_id=annotation_id,
                     source_kind=kind,
                     source_id=source_id,
-                    status=str(payload["status"]),
-                    created_at=created_at,
-                    updated_at=now,
-                    payload_json=payload,
+                    status=record.status,
+                    created_at=record.created_at,
+                    updated_at=record.updated_at,
+                    payload_json=record.to_payload(),
                 )
             )
-        return payload
+        return record.to_payload()
 
     def ensure_case_for_source(self, source_kind: str, source_id: str, *, priority: str = "medium") -> Optional[dict[str, Any]]:
         feedback_case, should_create = self._prepare_feedback_case_for_source(
@@ -550,12 +552,12 @@ class FeedbackSourceStoreMixin:
     def _find_source_annotation(self, source_kind: str, source_id: str) -> Optional[dict[str, Any]]:
         with self.Session() as db:
             row = db.get(FeedbackSourceAnnotationModel, self._source_annotation_id(source_kind, source_id))
-            return dict(row.payload_json or {}) if row else None
+            return FeedbackSourceAnnotationRecord.from_row(row).to_payload() if row else None
 
     def _source_annotations_by_key(self) -> dict[tuple[str, str], dict[str, Any]]:
         with self.Session() as db:
             rows = db.scalars(select(FeedbackSourceAnnotationModel)).all()
-        return {(row.source_kind, row.source_id): dict(row.payload_json or {}) for row in rows}
+        return {(row.source_kind, row.source_id): FeedbackSourceAnnotationRecord.from_row(row).to_payload() for row in rows}
 
     def _cases_by_source_id(self) -> dict[str, dict[str, Any]]:
         result: dict[str, dict[str, Any]] = {}

@@ -202,7 +202,7 @@ class FeedbackPlanTaskStoreMixin:
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
             return None
-        batch = dict(row.payload_json or {})
+        batch = self._batch_payload_snapshot(row)
         plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
         if not plan:
             return None

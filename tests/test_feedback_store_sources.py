@@ -13,6 +13,13 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
+from app.runtime.runtime_db import (
+    AgentRunModel,
+    FeedbackSignalModel,
+    FeedbackSourceAnnotationModel,
+    PendingCorrelationModel,
+    SocEventModel,
+)
 from app.services.agent_job_worker import AgentJobWorker
 
 
@@ -120,6 +127,100 @@ def test_source_list_filters_do_not_use_in_memory_filter(tmp_path, monkeypatch):
     assert [item["signal_id"] for item in store.list_signals(run_id="run-1")]
     assert [item["event_id"] for item in store.list_events(run_id="run-1")] == ["event-1"]
     assert [item["event_id"] for item in store.list_pending(status="pending")] == ["event-2"]
+
+
+def test_pending_correlation_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    pending = store.ingest_soc_event(
+        SocEventIngestRequest(
+            event_id="event-invalid-pending",
+            source_system="soc",
+            event_type="tool.manual_query_after_agent",
+            timestamp="2026-05-20T00:03:00+00:00",
+            session_id="unmatched-session",
+        )
+    )["pending_correlation"]
+
+    with store.Session.begin() as db:
+        row = db.get(PendingCorrelationModel, pending["pending_id"])
+        payload = dict(row.payload_json or {})
+        payload["status"] = "unknown_status"
+        row.status = "unknown_status"
+        row.payload_json = payload
+
+    with pytest.raises(ValidationError):
+        store.find_pending(pending["pending_id"])
+
+
+def test_agent_run_projection_rejects_invalid_persisted_created_at(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+
+    with store.Session.begin() as db:
+        row = db.get(AgentRunModel, "run-1")
+        payload = dict(row.payload_json or {})
+        payload["created_at"] = ""
+        row.created_at = ""
+        row.payload_json = payload
+
+    with pytest.raises(ValidationError):
+        store.find_run(run_id="run-1")
+
+
+def test_feedback_signal_projection_rejects_invalid_persisted_source_type(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"]))
+
+    with store.Session.begin() as db:
+        row = db.get(FeedbackSignalModel, signal["signal_id"])
+        payload = dict(row.payload_json or {})
+        payload["source_type"] = "legacy_feedback"
+        row.source_type = "legacy_feedback"
+        row.payload_json = payload
+
+    with pytest.raises(ValidationError):
+        store.find_signal(signal["signal_id"])
+
+
+def test_feedback_source_annotation_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"]))
+    store.update_feedback_source_annotation("signal", signal["signal_id"], {"status": "triaged"})
+
+    with store.Session.begin() as db:
+        row = db.get(FeedbackSourceAnnotationModel, f"signal:{signal['signal_id']}")
+        payload = dict(row.payload_json or {})
+        payload["status"] = "legacy_status"
+        row.status = "legacy_status"
+        row.payload_json = payload
+
+    with pytest.raises(ValidationError):
+        store.find_feedback_source("signal", signal["signal_id"])
+
+
+def test_soc_event_projection_rejects_invalid_persisted_event_type(tmp_path):
+    store, _ = _store(tmp_path)
+    event = store.ingest_soc_event(
+        SocEventIngestRequest(
+            event_id="event-invalid-type",
+            source_system="soc",
+            event_type="tool.manual_query_after_agent",
+            timestamp="2026-05-20T00:03:00+00:00",
+            session_id="unmatched-session",
+        )
+    )["event"]
+
+    with store.Session.begin() as db:
+        row = db.get(SocEventModel, event["event_id"])
+        payload = dict(row.payload_json or {})
+        payload["event_type"] = "legacy.event"
+        row.event_type = "legacy.event"
+        row.payload_json = payload
+
+    with pytest.raises(ValidationError):
+        store.find_event(event["event_id"])
 
 
 def test_generate_eval_cases_projection_failure_fails_agent_job_without_eval_case(tmp_path, monkeypatch):

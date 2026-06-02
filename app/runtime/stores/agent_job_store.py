@@ -15,8 +15,9 @@ from ..runtime_db import (
     RegressionImpactAnalysisModel,
     utc_now,
 )
+from ..records.agent_job_records import AgentJobRecord
+from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..schema_versions import FEEDBACK_EVAL_CASE_SCHEMA_VERSION
-from ..state_machines import validate_transition
 
 
 _UNSET = object()
@@ -105,7 +106,7 @@ class AgentJobStoreMixin:
             if job_types:
                 stmt = stmt.where(AgentJobModel.job_type.in_(job_types))
             for candidate in db.scalars(stmt).all():
-                validate_transition("agent_job", candidate.status, "running")
+                AgentJobRecord.from_row(candidate).transition_to("running", started_at=now)
                 result = db.execute(
                     update(AgentJobModel)
                     .where(AgentJobModel.job_id == candidate.job_id, AgentJobModel.status == "queued")
@@ -322,21 +323,23 @@ class AgentJobStoreMixin:
                 "status": output.get("status") or "completed",
                 "job_id": job["job_id"],
             }
+            record = (
+                RegressionImpactAnalysisRecord.from_row(row).transition_to(str(payload["status"]), fields=payload)
+                if row
+                else RegressionImpactAnalysisRecord.model_validate(payload)
+            )
             if row:
-                row.completed_at = completed_at
-                row.status = str(payload["status"])
-                row.job_id = str(job["job_id"])
-                row.payload_json = payload
+                apply_regression_impact_analysis_record(row, record)
             else:
                 db.add(
                     RegressionImpactAnalysisModel(
-                        impact_analysis_id=impact_analysis_id,
-                        eval_run_id=eval_run_id,
-                        created_at=str(payload["created_at"]),
-                        completed_at=completed_at,
-                        status=str(payload["status"]),
-                        job_id=str(job["job_id"]),
-                        payload_json=payload,
+                        impact_analysis_id=record.impact_analysis_id,
+                        eval_run_id=record.eval_run_id,
+                        created_at=record.created_at,
+                        completed_at=record.completed_at,
+                        status=record.status,
+                        job_id=record.job_id,
+                        payload_json=record.to_payload(),
                     )
                 )
         return self.get_regression_impact_analysis(eval_run_id) or payload
@@ -347,18 +350,15 @@ class AgentJobStoreMixin:
             row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
             if not row:
                 return
-            payload = dict(row.payload_json or {})
-            payload.update(
-                {
-                    "status": "failed",
+            record = RegressionImpactAnalysisRecord.from_row(row).transition_to(
+                "failed",
+                fields={
                     "completed_at": utc_now(),
                     "job_id": job.get("job_id"),
                     "error_json": {"error_code": error_code, "message": message, "created_at": utc_now()},
-                }
+                },
             )
-            row.status = "failed"
-            row.completed_at = payload["completed_at"]
-            row.payload_json = payload
+            apply_regression_impact_analysis_record(row, record)
 
     def _eval_case_payload_from_agent(self, item: dict[str, Any], job_input: dict[str, Any], now: str) -> dict[str, Any]:
         payload = dict(item)
@@ -402,10 +402,13 @@ class AgentJobStoreMixin:
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
             return
-        payload = dict(row.payload_json or {})
+        payload = self._batch_payload_snapshot(row)
         eval_case_ids = self._unique_strings([*(payload.get("eval_case_ids") or []), *[case.get("eval_case_id") for case in eval_cases]])
-        payload.update(
-            {
+        self._update_batch_row(
+            db,
+            batch_id,
+            status=row.status,
+            fields={
                 "eval_case_ids": eval_case_ids,
                 "eval_case_generation_job_id": job.get("job_id"),
                 "eval_case_generation": {
@@ -416,9 +419,8 @@ class AgentJobStoreMixin:
                     "eval_cases": eval_cases,
                     "results": results,
                 },
-            }
+            },
         )
-        row.payload_json = payload
 
     def _set_agent_job_json_row(
         self,
@@ -452,58 +454,19 @@ class AgentJobStoreMixin:
         row = db.get(AgentJobModel, job_id)
         if not row:
             return None
-        validate_transition("agent_job", row.status, status)
+        updated = AgentJobRecord.from_row(row).transition_to(
+            status,
+            started_at=started_at,
+            completed_at=completed_at,
+        )
         row.status = status
-        if started_at is not None:
-            row.started_at = started_at
-        if completed_at is not None:
-            row.completed_at = completed_at
+        row.started_at = updated.started_at
+        row.completed_at = updated.completed_at
         return row
 
     def _agent_job_to_dict(self, row: AgentJobModel) -> dict[str, Any]:
-        payload = {
-            "job_id": row.job_id,
-            "job_type": row.job_type,
-            "scope_kind": row.scope_kind,
-            "scope_id": row.scope_id,
-            "status": row.status,
-            "profile_name": row.profile_name,
-            "created_at": row.created_at,
-            "started_at": row.started_at,
-            "completed_at": row.completed_at,
-            "input_path": row.input_path,
-            "raw_output_path": row.raw_output_path,
-            "validated_output_path": row.validated_output_path,
-            "error_path": row.error_path,
-            "runtime_version": row.runtime_version,
-            "schema_version": row.schema_version,
-            "output_schema_version": row.output_schema_version,
-            "timeout_seconds": row.timeout_seconds,
-            "retry_count": row.retry_count,
-            "profile_version": row.profile_version_json,
-            "input_json": row.input_json,
-            "raw_output_json": row.raw_output_json,
-            "validated_output_json": row.validated_output_json,
-            "error_json": row.error_json,
-        }
-        input_json = row.input_json if isinstance(row.input_json, dict) else {}
-        for key in (
-            "feedback_case_id",
-            "evidence_package_id",
-            "attribution_job_id",
-            "batch_id",
-            "optimization_task_id",
-            "execution_job_id",
-            "baseline_agent_version_id",
-            "eval_run_id",
-            "regression_plan_id",
-        ):
-            if input_json.get(key) is not None:
-                payload[key] = input_json.get(key)
-        if row.job_type == "execution":
-            payload["execution_job_id"] = payload.get("execution_job_id") or row.job_id
-            payload["compensations"] = self._execution_compensations_for_job(row.job_id)
-        return payload
+        compensations = self._execution_compensations_for_job(row.job_id) if row.job_type == "execution" else None
+        return AgentJobRecord.from_row(row, compensations=compensations).to_payload()
 
     def _write_agent_job_input(self, job_id: str, job_type: str, payload: dict[str, Any]) -> str:
         path = self.tmp_jobs_dir / job_id / job_type / "input.json"

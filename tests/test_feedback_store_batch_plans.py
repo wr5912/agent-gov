@@ -11,6 +11,9 @@ from feedback_store_test_utils import (
     pytest,
     validate_feedback_optimization_plan_output,
 )
+from pydantic import ValidationError
+from sqlalchemy import text
+
 from app.runtime.errors import ConflictError
 
 
@@ -34,6 +37,16 @@ def test_batch_plan_regeneration_records_instruction_and_replaces_plan(tmp_path)
     assert second_plan["regeneration_instruction"] == "避免改动无关 MCP 配置"
     assert "避免改动无关 MCP 配置" in second_plan["recommendation"]
     assert "避免改动无关 MCP 配置" in second_plan["rationale"]
+
+
+def test_batch_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    with store.Session.begin() as db:
+        db.execute(text("UPDATE feedback_optimization_batches SET status = 'unknown_status' WHERE batch_id = :batch_id"), {"batch_id": batch["batch_id"]})
+
+    with pytest.raises(ValidationError):
+        store.find_optimization_batch(batch["batch_id"])
 
 
 def test_feedback_optimization_plan_output_requires_actionable_external_context():

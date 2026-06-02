@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
 
@@ -43,10 +44,7 @@ class FeedbackEvidenceStoreMixin:
         with self.Session.begin() as db:
             self._store_evidence_package_rows(
                 db,
-                evidence_id=evidence_id,
-                feedback_case_id=feedback_case_id,
                 manifest=manifest,
-                included_files=included_files,
                 files=files,
             )
             if not self._append_case_update_row(
@@ -136,11 +134,11 @@ class FeedbackEvidenceStoreMixin:
 
     def _included_evidence_files(self, files: dict[str, Any]) -> list[dict[str, Any]]:
         return [
-            {
-                "path": name,
-                "sha256": self._sha256_json(self._evidence_payload(payload)),
-                "type": name.removesuffix(".json"),
-            }
+            EvidenceIncludedFileRecord(
+                path=name,
+                sha256=self._sha256_json(self._evidence_payload(payload)),
+                type=name.removesuffix(".json"),
+            ).to_payload()
             for name, payload in files.items()
         ]
 
@@ -156,77 +154,66 @@ class FeedbackEvidenceStoreMixin:
         included_files: list[dict[str, Any]],
     ) -> dict[str, Any]:
         trace_ids = self._unique_strings([item.get("trace_id") for item in context["langfuse_trace_refs"]])
-        return {
-            "schema_version": "evidence-package/v1",
-            "evidence_package_id": evidence_id,
-            "feedback_case_id": feedback_case_id,
-            "created_at": utc_now(),
-            "created_by": "system",
-            "main_agent_version_id": main_agent_version["main_agent_version_id"],
-            "source_refs": {
-                "feedback_ids": feedback_case.get("signal_ids", []),
-                "signal_ids": feedback_case.get("signal_ids", []),
-                "run_ids": feedback_case.get("run_ids", []),
-                "session_ids": feedback_case.get("session_ids", []),
-                "trace_ids": trace_ids,
-                "alert_ids": feedback_case.get("alert_ids", []),
-                "case_ids": feedback_case.get("case_ids", []),
-                "event_ids": feedback_case.get("event_ids", []),
-            },
-            "included_files": included_files,
-            "redaction": redaction_report,
-            "completeness": {
-                "has_feedback": bool(context["signals_clean"]),
-                "has_runs": bool(context["runs_clean"]),
-                "has_tool_calls": bool(context["tool_calls"]),
-                "has_trace_summary": bool(context["trace_summary"]),
-                "has_main_agent_version": bool(main_agent_version["main_agent_version_id"]),
-                "has_messages": bool(context["messages"] and any(item.get("messages") for item in context["messages"])),
-                "has_agent_activity": bool(context["agent_activity"] and any(item.get("agent_activity") for item in context["agent_activity"])),
-                "has_langfuse_trace_refs": bool(context["langfuse_trace_refs"]),
-                "has_langfuse_trace_details": False,
-            },
-        }
-
-    def _store_evidence_package(
-        self,
-        *,
-        evidence_id: str,
-        feedback_case_id: str,
-        manifest: dict[str, Any],
-        included_files: list[dict[str, Any]],
-        files: dict[str, Any],
-    ) -> None:
-        with self.Session.begin() as db:
-            self._store_evidence_package_rows(
-                db,
-                evidence_id=evidence_id,
-                feedback_case_id=feedback_case_id,
-                manifest=manifest,
-                included_files=included_files,
-                files=files,
-            )
+        record = EvidencePackageRecord.model_validate(
+            {
+                "schema_version": "evidence-package/v1",
+                "evidence_package_id": evidence_id,
+                "feedback_case_id": feedback_case_id,
+                "created_at": utc_now(),
+                "created_by": "system",
+                "main_agent_version_id": main_agent_version["main_agent_version_id"],
+                "source_refs": {
+                    "feedback_ids": feedback_case.get("signal_ids", []),
+                    "signal_ids": feedback_case.get("signal_ids", []),
+                    "run_ids": feedback_case.get("run_ids", []),
+                    "session_ids": feedback_case.get("session_ids", []),
+                    "trace_ids": trace_ids,
+                    "alert_ids": feedback_case.get("alert_ids", []),
+                    "case_ids": feedback_case.get("case_ids", []),
+                    "event_ids": feedback_case.get("event_ids", []),
+                },
+                "included_files": included_files,
+                "redaction": redaction_report,
+                "completeness": {
+                    "has_feedback": bool(context["signals_clean"]),
+                    "has_runs": bool(context["runs_clean"]),
+                    "has_tool_calls": bool(context["tool_calls"]),
+                    "has_trace_summary": bool(context["trace_summary"]),
+                    "has_main_agent_version": bool(main_agent_version["main_agent_version_id"]),
+                    "has_messages": bool(context["messages"] and any(item.get("messages") for item in context["messages"])),
+                    "has_agent_activity": bool(context["agent_activity"] and any(item.get("agent_activity") for item in context["agent_activity"])),
+                    "has_langfuse_trace_refs": bool(context["langfuse_trace_refs"]),
+                    "has_langfuse_trace_details": False,
+                },
+            }
+        )
+        return record.to_payload()
 
     def _store_evidence_package_rows(
         self,
         db: Any,
         *,
-        evidence_id: str,
-        feedback_case_id: str,
         manifest: dict[str, Any],
-        included_files: list[dict[str, Any]],
         files: dict[str, Any],
     ) -> None:
-        db.add(EvidencePackageModel(evidence_package_id=evidence_id, feedback_case_id=feedback_case_id, created_at=manifest["created_at"], manifest_json=manifest))
+        record = EvidencePackageRecord.model_validate(manifest)
+        db.add(
+            EvidencePackageModel(
+                evidence_package_id=record.evidence_package_id,
+                feedback_case_id=record.feedback_case_id,
+                created_at=record.created_at,
+                manifest_json=record.to_payload(),
+            )
+        )
         db.flush()
-        for item in included_files:
-            content = self._evidence_payload(files[item["path"]])
+        for item in record.included_files:
+            content = self._evidence_payload(files[item.path])
             db.add(
                 EvidenceFileModel(
-                    evidence_package_id=evidence_id,
-                    file_name=item["path"],
-                    file_type=item["type"],
-                    sha256=item["sha256"],
+                    evidence_package_id=record.evidence_package_id,
+                    file_name=item.path,
+                    file_type=item.type,
+                    sha256=item.sha256,
                     content_json=content,
                 )
             )
@@ -236,7 +223,7 @@ class FeedbackEvidenceStoreMixin:
             return None
         with self.Session() as db:
             record = db.get(EvidencePackageModel, evidence_package_id)
-            return record.manifest_json if record else None
+            return EvidencePackageRecord.from_row(record).to_payload() if record else None
 
     def get_evidence_package_file(self, evidence_package_id: str, file_name: str) -> Optional[dict[str, Any]]:
         if not file_name or Path(file_name).name != file_name or file_name == "manifest.json":
@@ -245,12 +232,7 @@ class FeedbackEvidenceStoreMixin:
             record = db.get(EvidenceFileModel, {"evidence_package_id": evidence_package_id, "file_name": file_name})
             if not record:
                 return None
-            return {
-                "evidence_package_id": evidence_package_id,
-                "file_name": file_name,
-                "sha256": record.sha256,
-                "content": record.content_json,
-            }
+            return EvidencePackageFileRecord.from_row(record).to_payload()
 
     def _evidence_payload(self, value: Any) -> Any:
         if self.enable_debug_evidence:

@@ -93,6 +93,19 @@ def test_eval_run_state_machine_rejects_completed_to_failed():
         validate_transition("eval_run", "completed", "failed")
 
 
+def test_regression_impact_analysis_state_machine_allows_rerun_only_to_pending():
+    validate_transition("regression_impact_analysis", "pending", "completed")
+    validate_transition("regression_impact_analysis", "completed", "pending")
+    with pytest.raises(StateTransitionError, match="completed -> failed"):
+        validate_transition("regression_impact_analysis", "completed", "failed")
+
+
+def test_pending_correlation_state_machine_rejects_resolved_to_pending():
+    validate_transition("pending_correlation", "pending", "resolved")
+    with pytest.raises(StateTransitionError, match="resolved -> pending"):
+        validate_transition("pending_correlation", "resolved", "pending")
+
+
 def test_eval_case_state_machine_allows_governed_lifecycle():
     validate_transition("eval_case", "draft", "active")
     validate_transition("eval_case", "active", "archived")

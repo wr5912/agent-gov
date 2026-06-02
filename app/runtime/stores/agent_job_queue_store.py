@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from ..agent_job_types import agent_job_spec
 from ..feedback_job_flags import has_no_actionable_attributions, reused_existing
+from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..runtime_db import FeedbackOptimizationBatchModel, RegressionImpactAnalysisModel, utc_now
 
 
@@ -300,10 +301,12 @@ class AgentJobQueueStoreMixin:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
                 return
-            payload = dict(row.payload_json or {})
-            payload["eval_case_generation_job_id"] = job["job_id"]
-            payload["eval_case_generation_job"] = job
-            row.payload_json = payload
+            self._update_batch_row(
+                db,
+                batch_id,
+                status=row.status,
+                fields={"eval_case_generation_job_id": job["job_id"], "eval_case_generation_job": job},
+            )
 
     def _upsert_pending_regression_impact(self, eval_run_id: str, job: dict[str, Any]) -> None:
         now = utc_now()
@@ -318,20 +321,22 @@ class AgentJobQueueStoreMixin:
                 "status": "pending",
                 "job_id": job["job_id"],
             }
+            record = (
+                RegressionImpactAnalysisRecord.from_row(row).transition_to("pending", fields=payload)
+                if row
+                else RegressionImpactAnalysisRecord.model_validate(payload)
+            )
             if row:
-                row.status = "pending"
-                row.completed_at = None
-                row.job_id = str(job["job_id"])
-                row.payload_json = payload
+                apply_regression_impact_analysis_record(row, record)
                 return
             db.add(
                 RegressionImpactAnalysisModel(
-                    impact_analysis_id=payload["impact_analysis_id"],
-                    eval_run_id=eval_run_id,
-                    created_at=now,
+                    impact_analysis_id=record.impact_analysis_id,
+                    eval_run_id=record.eval_run_id,
+                    created_at=record.created_at,
                     completed_at=None,
-                    status="pending",
-                    job_id=str(job["job_id"]),
-                    payload_json=payload,
+                    status=record.status,
+                    job_id=record.job_id,
+                    payload_json=record.to_payload(),
                 )
             )

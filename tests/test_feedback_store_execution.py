@@ -14,8 +14,10 @@ from feedback_store_test_utils import (
     pytest,
     validate_execution_plan_output,
 )
-from sqlalchemy import select
+from pydantic import ValidationError
+from sqlalchemy import select, text
 
+from app.runtime.records.execution_records import ExecutionApplicationRecord
 from app.runtime.runtime_db import AgentJobModel
 
 
@@ -168,6 +170,16 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     assert updated_task["status"] == "execution_ready"
     assert updated_task["latest_execution_job_id"] == job["execution_job_id"]
     assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
+
+
+def test_task_projection_rejects_invalid_persisted_status(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    with store.Session.begin() as db:
+        db.execute(text("UPDATE optimization_tasks SET status = 'unknown_status' WHERE optimization_task_id = :task_id"), {"task_id": task["optimization_task_id"]})
+
+    with pytest.raises(ValidationError):
+        store.find_task(task["optimization_task_id"])
 
 
 def test_complete_execution_job_rolls_back_when_task_update_fails(tmp_path, monkeypatch):
@@ -377,6 +389,7 @@ def test_execution_application_syncs_batch_plan_task(tmp_path):
     updated_batch = store.find_optimization_batch(batch["batch_id"])
     updated_plan_task = next(item for item in updated_batch["optimization_plan"]["tasks"] if item["plan_task_id"] == plan_task["plan_task_id"])
     assert applied["status"] == "applied"
+    assert ExecutionApplicationRecord.model_validate(applied).status == "applied"
     assert applied["applied_agent_version_id"] == "main-v-after"
     assert updated_task["status"] == "applied_pending_regression"
     assert updated_batch["status"] == "applied_pending_regression"

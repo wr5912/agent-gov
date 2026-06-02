@@ -6,8 +6,9 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import ConflictError
+from ..records.batch_records import FeedbackOptimizationBatchRecord
 from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, utc_now
-from ..state_machines import JOB_IN_PROGRESS_STATES, validate_transition
+from ..state_machines import JOB_IN_PROGRESS_STATES
 
 
 class FeedbackBatchStoreMixin:
@@ -71,13 +72,14 @@ class FeedbackBatchStoreMixin:
         return self.find_optimization_batch(batch_id)
 
     def _batch_model_from_payload(self, payload: dict[str, Any]) -> FeedbackOptimizationBatchModel:
+        record = FeedbackOptimizationBatchRecord.model_validate(payload)
         return FeedbackOptimizationBatchModel(
-            batch_id=payload["batch_id"],
-            created_at=payload["created_at"],
-            updated_at=payload["updated_at"],
-            status=payload["status"],
-            title=payload["title"],
-            payload_json=payload,
+            batch_id=record.batch_id,
+            created_at=record.created_at,
+            updated_at=record.updated_at,
+            status=record.status,
+            title=record.title,
+            payload_json=record.to_payload(),
         )
 
     def list_optimization_batches(self, *, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
@@ -127,7 +129,7 @@ class FeedbackBatchStoreMixin:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
                 return None
-            eval_case_ids = self._string_list((row.payload_json or {}).get("eval_case_ids"))
+            eval_case_ids = self._string_list(self._batch_payload_snapshot(row).get("eval_case_ids"))
             if eval_case_id not in eval_case_ids:
                 return None
             self._update_batch_eval_case_ids_row(db, row, remove_id=eval_case_id)
@@ -185,7 +187,7 @@ class FeedbackBatchStoreMixin:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
             if not row:
                 return None
-            payload = dict(row.payload_json or {})
+            payload = self._batch_payload_snapshot(row)
             task_id = self._string(payload.get("optimization_task_id"))
             task = db.get(OptimizationTaskModel, task_id) if task_id else None
             if task and (task.payload_json or {}).get("applied_agent_version_id"):
@@ -299,16 +301,7 @@ class FeedbackBatchStoreMixin:
             top_level_fields["optimization_task"] = task
 
     def _batch_to_dict(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update(
-            {
-                "batch_id": row.batch_id,
-                "created_at": row.created_at,
-                "updated_at": row.updated_at,
-                "status": row.status,
-                "title": row.title,
-            }
-        )
+        payload = FeedbackOptimizationBatchRecord.from_row(row).to_payload()
         task_id = self._string(payload.get("optimization_task_id"))
         execution_job_id = self._string(payload.get("execution_job_id"))
         eval_run_id = self._string(payload.get("eval_run_id"))
@@ -343,21 +336,15 @@ class FeedbackBatchStoreMixin:
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
             return None
-        validate_transition("batch", row.status, status)
-        payload = dict(row.payload_json or {})
-        payload.update(fields)
-        payload["status"] = status
-        payload["updated_at"] = now
-        row.status = status
-        row.updated_at = now
-        row.title = self._string(payload.get("title")) or row.title
-        row.payload_json = payload
+        record = FeedbackOptimizationBatchRecord.from_row(row).transition_to(status, fields={**fields, "updated_at": now})
+        row.status = record.status
+        row.updated_at = record.updated_at
+        row.title = self._string(record.title) or row.title
+        row.payload_json = record.to_payload()
         return row
 
     def _batch_payload_snapshot(self, row: FeedbackOptimizationBatchModel) -> dict[str, Any]:
-        payload = dict(row.payload_json or {})
-        payload.update({"batch_id": row.batch_id, "status": row.status, "title": row.title})
-        return payload
+        return FeedbackOptimizationBatchRecord.from_row(row).to_payload()
 
     def _update_batch_eval_case_ids_row(
         self,
@@ -367,7 +354,7 @@ class FeedbackBatchStoreMixin:
         append_id: Optional[str] = None,
         remove_id: Optional[str] = None,
     ) -> None:
-        payload = dict(row.payload_json or {})
+        payload = self._batch_payload_snapshot(row)
         eval_case_ids = self._unique_strings(payload.get("eval_case_ids") or [])
         if append_id:
             eval_case_ids = self._unique_strings([*eval_case_ids, append_id])

@@ -6,8 +6,8 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import ConflictError
+from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import OptimizationTaskModel, utc_now
-from ..state_machines import validate_transition
 
 
 MANUAL_APPLY_TASK_STATES = {"pending_execution", "failed", "needs_human_review"}
@@ -47,18 +47,19 @@ class FeedbackTaskStoreMixin:
                 "latest_execution_job": None,
             }
         )
+        record = OptimizationTaskRecord.model_validate(task)
         with self.Session.begin() as db:
             db.add(
                 OptimizationTaskModel(
-                    optimization_task_id=task["optimization_task_id"],
-                    created_at=task["created_at"],
-                    status=task["status"],
-                    proposal_id=proposal_id,
-                    feedback_case_id=self._string(task.get("feedback_case_id")),
-                    payload_json=task,
+                    optimization_task_id=record.optimization_task_id,
+                    created_at=record.created_at,
+                    status=record.status,
+                    proposal_id=record.proposal_id,
+                    feedback_case_id=record.feedback_case_id,
+                    payload_json=record.to_payload(),
                 )
             )
-        return task
+        return record.to_payload()
 
     def _find_latest_task_for_proposal(self, proposal_id: str) -> Optional[dict[str, Any]]:
         with self.Session() as db:
@@ -67,7 +68,7 @@ class FeedbackTaskStoreMixin:
                 .where(OptimizationTaskModel.proposal_id == proposal_id)
                 .order_by(OptimizationTaskModel.created_at.desc())
             ).first()
-            return row.payload_json if row else None
+            return self._task_to_dict(row) if row else None
 
     def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
         stmt = select(OptimizationTaskModel).order_by(OptimizationTaskModel.created_at.desc()).limit(limit)
@@ -76,7 +77,7 @@ class FeedbackTaskStoreMixin:
         if status:
             stmt = stmt.where(OptimizationTaskModel.status == status)
         with self.Session() as db:
-            return [row.payload_json for row in db.scalars(stmt).all()]
+            return [self._task_to_dict(row) for row in db.scalars(stmt).all()]
 
     def target_allowed(self, target_path: str) -> bool:
         return self._target_allowed(target_path)
@@ -86,7 +87,7 @@ class FeedbackTaskStoreMixin:
             return None
         with self.Session() as db:
             row = db.get(OptimizationTaskModel, task_id)
-            return row.payload_json if row else None
+            return self._task_to_dict(row) if row else None
 
 
     def mark_task_applied(
@@ -158,13 +159,15 @@ class FeedbackTaskStoreMixin:
         row = db.get(OptimizationTaskModel, task_id)
         if not row:
             return None
-        validate_transition("task", row.status, status)
-        payload = dict(row.payload_json or {})
-        payload.update(fields)
-        payload["status"] = status
-        row.status = status
-        row.payload_json = payload
+        record = OptimizationTaskRecord.from_row(row).transition_to(status, fields=fields)
+        row.status = record.status
+        row.proposal_id = record.proposal_id
+        row.feedback_case_id = record.feedback_case_id
+        row.payload_json = record.to_payload()
         return row
+
+    def _task_to_dict(self, row: OptimizationTaskModel) -> dict[str, Any]:
+        return OptimizationTaskRecord.from_row(row).to_payload()
 
     def _mark_task_applied_row(
         self,

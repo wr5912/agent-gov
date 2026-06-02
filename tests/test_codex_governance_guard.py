@@ -3,7 +3,10 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+
+import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -50,6 +53,71 @@ def _run_guard(root: Path, mode: str = "fail", *extra: str) -> subprocess.Comple
 
 def _dict_return_source(name: str) -> str:
     return f"def {name}() -> " "dict[str, object]:\n    return {}\n"
+
+
+def _dict_any_arg_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}(payload: " "dict[str, Any]) -> None:\n    return None\n"
+
+
+def _typing_dict_any_arg_source(name: str) -> str:
+    return "import typing\n\n" f"def {name}(payload: " "typing.Dict[str, typing.Any]) -> None:\n    return None\n"
+
+
+def _dict_any_key_arg_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}(payload: " "dict[Any, str]) -> None:\n    return None\n"
+
+
+def _nested_dict_any_arg_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}(payload: " "list[dict[str, Any]]) -> None:\n    return None\n"
+
+
+def _quoted_dict_any_arg_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}(payload: " '"dict[str, Any]"' ") -> None:\n    return None\n"
+
+
+def _dict_optional_any_arg_source(name: str) -> str:
+    return (
+        "from typing import Any, Optional\n\n"
+        f"def {name}(payload: "
+        "dict[str, Optional[Any]]) -> None:\n    return None\n"
+    )
+
+
+def _mapping_any_arg_source(name: str) -> str:
+    return (
+        "from collections.abc import Mapping\n"
+        "from typing import Any\n\n"
+        f"def {name}(payload: "
+        "Mapping[str, Any]) -> None:\n    return None\n"
+    )
+
+
+def _mutable_mapping_any_arg_source(name: str) -> str:
+    return (
+        "from typing import Any, MutableMapping\n\n"
+        f"def {name}(payload: "
+        "MutableMapping[str, Any]) -> None:\n    return None\n"
+    )
+
+
+def _dict_any_return_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}() -> " "dict[str, Any]:\n    return {}\n"
+
+
+def _dict_any_union_return_source(name: str) -> str:
+    return "from typing import Any\n\n" f"def {name}() -> " "dict[str, Any | None]:\n    return {}\n"
+
+
+def _dict_any_field_source(_name: str) -> str:
+    return "from typing import Any\n\n" "class Response:\n" "    payload: " "dict[str, Any]\n"
+
+
+def _dict_any_alias_source(_name: str) -> str:
+    return "from typing import Any\n\n" "Payload = " "dict[str, Any]\n"
+
+
+def _defaultdict_any_alias_source(_name: str) -> str:
+    return "from typing import Any, DefaultDict\n\n" "Payload = " "DefaultDict[str, Any]\n"
 
 
 def _payload_dict_return_source() -> str:
@@ -292,6 +360,67 @@ def test_new_owned_payload_dict_return_is_allowed(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "unowned dict return" not in result.stdout
+
+
+def test_existing_dict_any_annotation_is_allowed_when_unchanged(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    path = tmp_path / "app" / "legacy.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_dict_any_arg_source("legacy"), encoding="utf-8")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "broad map[Any]" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("source_factory", "expected_message"),
+    [
+        (_dict_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_typing_dict_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_dict_any_key_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_quoted_dict_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_nested_dict_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_dict_optional_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_mapping_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_mutable_mapping_any_arg_source, "new broad map[Any] type boundary: new_contract:arg:payload"),
+        (_dict_any_return_source, "new broad map[Any] type boundary: new_contract:return"),
+        (_dict_any_union_return_source, "new broad map[Any] type boundary: new_contract:return"),
+        (_dict_any_field_source, "new broad map[Any] type boundary: Response.payload:annotation"),
+        (_dict_any_alias_source, "new broad map[Any] type boundary: Payload:annotation"),
+        (_defaultdict_any_alias_source, "new broad map[Any] type boundary: Payload:annotation"),
+    ],
+)
+def test_new_map_any_type_boundary_fails(
+    tmp_path: Path,
+    source_factory: Callable[[str], str],
+    expected_message: str,
+) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "schema.py"
+    path.write_text(source_factory("new_contract"), encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert expected_message in result.stdout
+
+
+def test_dict_object_annotation_is_allowed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "schema.py"
+    path.write_text("class Response:\n    payload: dict[str, object]\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "broad map[Any]" not in result.stdout
 
 
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:

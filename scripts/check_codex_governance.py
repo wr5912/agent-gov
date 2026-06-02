@@ -48,6 +48,7 @@ class PythonMetrics:
     functions: dict[str, int] = field(default_factory=dict)
     classes: dict[str, int] = field(default_factory=dict)
     unowned_dict_returns: set[str] = field(default_factory=set)
+    map_any_boundaries: set[str] = field(default_factory=set)
     route_count: int = 0
 
 
@@ -188,6 +189,95 @@ def _annotation_contains_dict(annotation: ast.expr | None) -> bool:
     return False
 
 
+def _is_map_name(annotation: ast.expr) -> bool:
+    if isinstance(annotation, ast.Name):
+        return annotation.id in {"dict", "Dict", "Mapping", "MutableMapping", "DefaultDict"}
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr in {"dict", "Dict", "Mapping", "MutableMapping", "DefaultDict"}
+    return False
+
+
+def _is_any_name(annotation: ast.expr) -> bool:
+    if isinstance(annotation, ast.Name):
+        return annotation.id == "Any"
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr == "Any"
+    return False
+
+
+def _annotation_contains_any(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            parsed_annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return False
+        return _annotation_contains_any(parsed_annotation)
+    if _is_any_name(annotation):
+        return True
+    if isinstance(annotation, ast.Subscript):
+        return _annotation_contains_any(annotation.value) or _annotation_contains_any(annotation.slice)
+    if isinstance(annotation, ast.Tuple):
+        return any(_annotation_contains_any(item) for item in annotation.elts)
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _annotation_contains_any(annotation.left) or _annotation_contains_any(annotation.right)
+    return False
+
+
+def _annotation_slice_items(annotation: ast.expr) -> list[ast.expr]:
+    if isinstance(annotation, ast.Tuple):
+        return list(annotation.elts)
+    return [annotation]
+
+
+def _annotation_contains_map_any(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+        try:
+            parsed_annotation = ast.parse(annotation.value, mode="eval").body
+        except SyntaxError:
+            return False
+        return _annotation_contains_map_any(parsed_annotation)
+    if isinstance(annotation, ast.Subscript):
+        items = _annotation_slice_items(annotation.slice)
+        if (
+            _is_map_name(annotation.value)
+            and len(items) == 2
+            and any(_annotation_contains_any(item) for item in items)
+        ):
+            return True
+        return _annotation_contains_map_any(annotation.value) or any(
+            _annotation_contains_map_any(item) for item in items
+        )
+    if isinstance(annotation, ast.Tuple):
+        return any(_annotation_contains_map_any(item) for item in annotation.elts)
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _annotation_contains_map_any(annotation.left) or _annotation_contains_map_any(annotation.right)
+    return False
+
+
+def _annotation_target_name(target: ast.expr) -> str:
+    if isinstance(target, ast.Name):
+        return target.id
+    if isinstance(target, ast.Attribute):
+        owner = _annotation_target_name(target.value)
+        return f"{owner}.{target.attr}" if owner else target.attr
+    if isinstance(target, ast.Subscript):
+        return _annotation_target_name(target.value)
+    return "<unknown>"
+
+
+def _function_arguments(node: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.arg]:
+    args = [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+    if node.args.vararg is not None:
+        args.append(node.args.vararg)
+    if node.args.kwarg is not None:
+        args.append(node.args.kwarg)
+    return args
+
+
 def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
     path = Path(rel_path)
     if "normalizers" in path.parts:
@@ -230,6 +320,7 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.functions: dict[str, int] = {}
         self.classes: dict[str, int] = {}
         self.unowned_dict_returns: set[str] = set()
+        self.map_any_boundaries: set[str] = set()
         self.route_count = 0
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
@@ -250,6 +341,11 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.functions[name] = _node_line_count(node)
         if _annotation_contains_dict(node.returns) and not _is_owned_dict_return(self.rel_path, name):
             self.unowned_dict_returns.add(name)
+        if _annotation_contains_map_any(node.returns):
+            self.map_any_boundaries.add(f"{name}:return")
+        for arg in _function_arguments(node):
+            if _annotation_contains_map_any(arg.annotation):
+                self.map_any_boundaries.add(f"{name}:arg:{arg.arg}")
         if _is_route_path(self.rel_path, self.route_path_parts) and any(
             _is_route_decorator(decorator) for decorator in node.decorator_list
         ):
@@ -257,6 +353,21 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.scope.append(node.name)
         self.generic_visit(node)
         self.scope.pop()
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        if _annotation_contains_map_any(node.annotation) or _annotation_contains_map_any(node.value):
+            target_name = _annotation_target_name(node.target)
+            qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
+            self.map_any_boundaries.add(f"{qualified_name}:annotation")
+        self.generic_visit(node)
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        if _annotation_contains_map_any(node.value):
+            for target in node.targets:
+                target_name = _annotation_target_name(target)
+                qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
+                self.map_any_boundaries.add(f"{qualified_name}:annotation")
+        self.generic_visit(node)
 
 
 def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> PythonMetrics:
@@ -269,6 +380,7 @@ def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> Pyt
         functions=visitor.functions,
         classes=visitor.classes,
         unowned_dict_returns=visitor.unowned_dict_returns,
+        map_any_boundaries=visitor.map_any_boundaries,
         route_count=visitor.route_count,
     )
 
@@ -494,6 +606,22 @@ def collect_dict_return_issues(current: Snapshot, base: Snapshot) -> list[Govern
     return issues
 
 
+def collect_map_any_boundary_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
+    issues: list[GovernanceIssue] = []
+    for rel_path, metrics in sorted(current.python.items()):
+        base_metrics = base.python.get(rel_path, PythonMetrics())
+        new_boundaries = metrics.map_any_boundaries - base_metrics.map_any_boundaries
+        for name in sorted(new_boundaries):
+            issues.append(
+                GovernanceIssue(
+                    rel_path,
+                    f"new broad map[Any] type boundary: {name}",
+                    True,
+                )
+            )
+    return issues
+
+
 def collect_issues(
     current: Snapshot,
     base: Snapshot,
@@ -504,6 +632,7 @@ def collect_issues(
     issues.extend(collect_python_issues(current, base, thresholds))
     issues.extend(collect_state_machine_issues(current, base))
     issues.extend(collect_dict_return_issues(current, base))
+    issues.extend(collect_map_any_boundary_issues(current, base))
     return sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
 
 

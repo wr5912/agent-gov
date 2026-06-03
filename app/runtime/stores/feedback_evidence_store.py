@@ -6,7 +6,7 @@ from typing import Any, Iterable, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
 

@@ -6,7 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..external_governance_mapping import apply_external_governance_record, external_governance_record_from_row
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.proposal_records import OptimizationProposalRecord, ProposalReviewRecord
 from ..runtime_db import ExternalGovernanceItemModel, OptimizationProposalModel, ProposalReviewModel, utc_now
 from .store_projection_maps import ProposalReviewsByProposalId, ProposalSupersedeCounts

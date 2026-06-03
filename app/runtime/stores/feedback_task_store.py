@@ -6,7 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import ConflictError
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import OptimizationTaskModel, utc_now
 

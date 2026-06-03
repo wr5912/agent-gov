@@ -8,7 +8,7 @@ from typing import Any, Literal, Mapping, Optional, cast
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 def _csv(value: str | None) -> list[str]:

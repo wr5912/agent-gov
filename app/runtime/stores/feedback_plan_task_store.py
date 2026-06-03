@@ -11,7 +11,7 @@ from ..records.batch_plan_records import (
     FeedbackOptimizationPlanTaskRecord,
     FeedbackOptimizationTaskContextRecord,
 )
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import FeedbackOptimizationBatchModel, utc_now
 
 

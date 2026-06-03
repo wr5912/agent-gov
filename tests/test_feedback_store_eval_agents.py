@@ -19,7 +19,7 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import EvalRunItemModel
 from app.runtime.schemas import ChatResponse
 from app.services.feedback_eval_runner import FeedbackEvalRunner

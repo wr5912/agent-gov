@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import (
     EvalRunItemModel,
     EvalRunModel,

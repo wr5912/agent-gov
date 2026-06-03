@@ -10,7 +10,7 @@ from .message_utils import extract_text
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .settings import AppSettings
 
 

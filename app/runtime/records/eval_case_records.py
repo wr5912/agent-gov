@@ -7,7 +7,9 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import EvalCaseGovernanceEventModel, EvalCaseModel, EvalCaseRevisionModel
 from app.runtime.state_machines import EVAL_CASE_PROMOTION_STATES, EVAL_CASE_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
+from .common_records import EvalCaseSourceRefRecord
 
 
 ACTIVE_ASSET_LAYERS = {"batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug"}
@@ -45,7 +47,7 @@ class EvalCaseRecord(StrictRuntimeRecord):
     source_run_id: Optional[str] = None
     source_kind: Optional[str] = None
     source_id: Optional[str] = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
+    source_refs: list[EvalCaseSourceRefRecord] = Field(default_factory=list)
     asset_layer: EvalCaseAssetLayer
     promotion_status: EvalCasePromotionStatus
     blocking_policy: EvalCaseBlockingPolicy

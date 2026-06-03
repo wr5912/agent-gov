@@ -23,7 +23,7 @@ from .schema_versions import (
     PROPOSAL_OUTPUT_SCHEMA_VERSION,
     REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .settings import AppSettings
 
 

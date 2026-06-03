@@ -6,7 +6,7 @@ from typing import Optional, cast
 
 import yaml
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 def _split_csv(value: object) -> list[str] | None:

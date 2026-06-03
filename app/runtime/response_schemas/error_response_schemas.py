@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 
 
 class FeedbackValidationErrorResponse(BaseModel):

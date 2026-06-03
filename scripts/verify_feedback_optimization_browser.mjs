@@ -98,28 +98,61 @@ async function main() {
   const seeded = await seedBatch();
   const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-  await page.addInitScript(
-    ({ apiBaseValue, apiKeyValue }) => {
-      window.localStorage.setItem(
-        "runtime-client-config",
-        JSON.stringify({ apiBase: apiBaseValue, apiKey: apiKeyValue }),
+  const consoleIssues = [];
+  const failedRequests = [];
+  const badResponses = [];
+  try {
+    page.on("console", (message) => {
+      if (message.type() === "error") {
+        consoleIssues.push(message.text());
+      }
+    });
+    page.on("requestfailed", (request) => {
+      failedRequests.push(`${request.method()} ${request.url()} :: ${request.failure()?.errorText || "failed"}`);
+    });
+    page.on("response", (response) => {
+      const url = response.url();
+      if ((url.includes("/api/") || url.endsWith("/health")) && response.status() >= 400) {
+        badResponses.push(`${response.status()} ${url}`);
+      }
+    });
+    await page.addInitScript(
+      ({ apiBaseValue, apiKeyValue }) => {
+        window.localStorage.setItem(
+          "runtime-client-config",
+          JSON.stringify({ apiBase: apiBaseValue, apiKey: apiKeyValue }),
+        );
+      },
+      { apiBaseValue: apiBase, apiKeyValue: apiKey },
+    );
+    await page.goto(uiBase, { waitUntil: "networkidle" });
+    await page.getByRole("button", { name: "打开反馈优化工作台" }).click();
+    await page.getByRole("button", { name: "优化批次", exact: true }).click();
+    await page.getByPlaceholder("搜索 ID、标签、Case").fill(seeded.title);
+    await page.getByText(seeded.title).first().waitFor({ timeout: 15000 });
+    await page.getByText(seeded.title).first().click();
+    await page.getByRole("tab", { name: /反馈信息/ }).click();
+    await page.getByText("反馈原始数据").waitFor({ timeout: 15000 });
+    await page.getByRole("tab", { name: /优化方案/ }).click();
+    await page.getByText("尚未生成优化方案").waitFor({ timeout: 15000 });
+    await mkdir("artifacts", { recursive: true });
+    await page.screenshot({ path: "artifacts/feedback-optimization-browser-e2e.png", fullPage: true });
+    if (consoleIssues.length || failedRequests.length || badResponses.length) {
+      throw new Error(
+        JSON.stringify(
+          {
+            console_issues: consoleIssues.slice(0, 10),
+            failed_requests: failedRequests.slice(0, 10),
+            bad_responses: badResponses.slice(0, 10),
+          },
+          null,
+          2,
+        ),
       );
-    },
-    { apiBaseValue: apiBase, apiKeyValue: apiKey },
-  );
-  await page.goto(uiBase, { waitUntil: "networkidle" });
-  await page.getByRole("button", { name: "打开反馈优化工作台" }).click();
-  await page.getByRole("button", { name: "优化批次", exact: true }).click();
-  await page.getByPlaceholder("搜索 ID、标签、Case").fill(seeded.title);
-  await page.getByText(seeded.title).first().waitFor({ timeout: 15000 });
-  await page.getByText(seeded.title).first().click();
-  await page.getByRole("tab", { name: /反馈信息/ }).click();
-  await page.getByText("反馈原始数据").waitFor({ timeout: 15000 });
-  await page.getByRole("tab", { name: /优化方案/ }).click();
-  await page.getByText("尚未生成优化方案").waitFor({ timeout: 15000 });
-  await mkdir("artifacts", { recursive: true });
-  await page.screenshot({ path: "artifacts/feedback-optimization-browser-e2e.png", fullPage: true });
-  await browser.close();
+    }
+  } finally {
+    await browser.close();
+  }
   console.log(
     JSON.stringify(
       {
@@ -128,6 +161,9 @@ async function main() {
         api_base: apiBase,
         batch_id: seeded.batch.batch_id,
         signal_id: seeded.signal.signal_id,
+        console_issue_count: consoleIssues.length,
+        failed_request_count: failedRequests.length,
+        bad_response_count: badResponses.length,
         screenshot: "artifacts/feedback-optimization-browser-e2e.png",
       },
       null,

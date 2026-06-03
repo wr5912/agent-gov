@@ -33,7 +33,7 @@ from .normalizers.feedback_output_records import (
     NormalizedSummaryItem,
     NormalizedTaskContext,
 )
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .schema_versions import (
     ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
     EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,

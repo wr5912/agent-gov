@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 from pydantic.types import JsonValue
 
-from app.runtime.records.json_types import JsonObject, StrictRuntimeRecord
+from app.runtime.json_types import JsonObject
+from app.runtime.records.base import StrictRuntimeRecord
 
 
 class NormalizedOutputRecord(StrictRuntimeRecord):
@@ -96,6 +97,90 @@ class NormalizedGeneratedEvalCase(NormalizedOutputRecord):
 
 class NormalizedSummaryItem(NormalizedOutputRecord):
     summary: JsonValue = None
+
+
+class NormalizedPlanStatusValue(StrictRuntimeRecord):
+    value: str = "pending_approval"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_value(cls, value: object) -> str:
+        status_value = str(value or "").strip().lower()
+        if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval"}:
+            return "pending_approval"
+        if status_value in {"needs_review", "manual_review", "blocked", "failed", "needs_human_review"}:
+            return "needs_human_review"
+        return "pending_approval"
+
+
+class NormalizedConfidenceValue(StrictRuntimeRecord):
+    value: str = "medium"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_value(cls, value: object) -> str:
+        confidence = str(value or "").strip().lower()
+        return confidence if confidence in {"high", "medium", "low"} else "medium"
+
+
+class NormalizedActionabilityValue(StrictRuntimeRecord):
+    value: str = "needs_human_analysis"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_value(cls, value: object) -> str:
+        actionability = str(value or "").strip()
+        aliases = {
+            "manual_review": "needs_human_analysis",
+            "human_review": "needs_human_analysis",
+            "agent_behavior": "direct_workspace_change",
+            "workspace_change": "direct_workspace_change",
+            "external": "external_guidance",
+            "external_task": "external_guidance",
+            "not_applicable": "not_actionable",
+        }
+        actionability = aliases.get(actionability, actionability)
+        allowed = {
+            "direct_workspace_change",
+            "workspace_config_change",
+            "eval_only",
+            "external_guidance",
+            "runtime_fix",
+            "needs_human_analysis",
+            "not_actionable",
+        }
+        return actionability if actionability in allowed else "needs_human_analysis"
+
+
+class NormalizedProblemTypeValue(StrictRuntimeRecord):
+    value: str = "insufficient_information"
+
+    @field_validator("value", mode="before")
+    @classmethod
+    def normalize_value(cls, value: object) -> str:
+        problem_type = str(value or "").strip()
+        aliases = {
+            "tool_usage_deficiency": "tool_data_quality",
+            "tool_usage_gap": "tool_data_quality",
+            "tool_call_gap": "tool_data_quality",
+            "agent_behavior": "instruction_gap",
+        }
+        problem_type = aliases.get(problem_type, problem_type)
+        allowed = {
+            "evidence_gap",
+            "tool_misuse",
+            "tool_unavailable",
+            "tool_data_quality",
+            "output_style_issue",
+            "instruction_gap",
+            "skill_gap",
+            "mcp_description_gap",
+            "runtime_error",
+            "external_soc_process_issue",
+            "user_misunderstanding",
+            "insufficient_information",
+        }
+        return problem_type if problem_type in allowed else "insufficient_information"
 
 
 class NormalizedAttributionOutput(NormalizedOutputRecord):

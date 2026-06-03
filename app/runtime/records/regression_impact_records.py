@@ -7,7 +7,8 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 from app.runtime.runtime_db import RegressionImpactAnalysisModel
 from app.runtime.state_machines import REGRESSION_IMPACT_ANALYSIS_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 RegressionImpactAnalysisStatus = Literal["pending", "completed", "needs_human_review", "failed"]

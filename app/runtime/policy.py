@@ -7,7 +7,7 @@ from pathlib import Path
 from claude_agent_sdk import HookMatcher, PermissionResultAllow, PermissionResultDeny
 
 from .agent_profiles import AgentRuntimeProfile
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 DANGEROUS_COMMAND_PATTERNS = [

@@ -4,7 +4,7 @@ from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 

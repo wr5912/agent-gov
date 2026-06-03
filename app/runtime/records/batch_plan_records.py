@@ -4,57 +4,24 @@ from typing import Literal, Optional
 
 from pydantic import ConfigDict, Field, model_validator
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from .agent_job_records import AgentJobProjectionRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
+from .common_records import (
+    FeedbackOptimizationAttributionSummaryRecord,
+    FeedbackOptimizationBlockedSummaryRecord,
+    FeedbackOptimizationEvidenceRefRecord,
+    FeedbackOptimizationPlanTaskSummaryRecord,
+    FeedbackOptimizationTaskContextRecord,
+    FeedbackSourceRefRecord,
+)
+from .external_governance_records import ExternalGovernanceNotificationRecord
 
 
 class ExtensiblePlanRecord(StrictRuntimeRecord):
     """Base for persisted plan payloads that may carry forward agent extras."""
 
     model_config = ConfigDict(extra="allow")
-
-
-class FeedbackOptimizationTaskContextRecord(ExtensiblePlanRecord):
-    external_system: Optional[str] = None
-    mcp_server: Optional[str] = None
-    tool_name: Optional[str] = None
-    tool_names: list[str] = Field(default_factory=list)
-    api_name: Optional[str] = None
-    api_path: Optional[str] = None
-    api_method: Optional[str] = None
-    endpoint: Optional[str] = None
-    query_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
-    asset_ids: list[str] = Field(default_factory=list)
-    dates: list[str] = Field(default_factory=list)
-    affected_fields: list[str] = Field(default_factory=list)
-    observed_issue: Optional[str] = None
-    expected_fix: Optional[str] = None
-    target_file: Optional[str] = None
-    config_section: Optional[str] = None
-    symbol: Optional[str] = None
-
-    def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json", exclude_none=True)
-
-
-class FeedbackOptimizationEvidenceRefRecord(ExtensiblePlanRecord):
-    """Evidence reference attached to a generated batch optimization plan."""
-
-    type: str = "evidence_file"
-    id: str
-    reason: str = ""
-
-    @model_validator(mode="after")
-    def validate_evidence_ref_shape(self) -> "FeedbackOptimizationEvidenceRefRecord":
-        if not self.id.strip():
-            raise ValueError("evidence ref id cannot be empty")
-        if not self.type.strip():
-            raise ValueError("evidence ref type cannot be empty")
-        return self
-
-    def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json", exclude_none=True)
 
 
 class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
@@ -91,10 +58,10 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     internal_proposal_id: Optional[str] = None
     optimization_task_id: Optional[str] = None
     execution_job_id: Optional[str] = None
-    latest_execution_job: Optional[JsonObject] = None
+    latest_execution_job: Optional[AgentJobProjectionRecord] = None
     external_item_id: Optional[str] = None
     latest_webhook_alias: Optional[str] = None
-    latest_notification: Optional[JsonObject] = None
+    latest_notification: Optional[ExternalGovernanceNotificationRecord] = None
     applied_agent_version_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -174,16 +141,16 @@ class FeedbackOptimizationPlanRecord(ExtensiblePlanRecord):
     risk: Optional[str] = None
     rationale: Optional[str] = None
     regeneration_instruction: Optional[str] = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
+    source_refs: list[FeedbackSourceRefRecord] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_summaries: list[JsonObject] = Field(default_factory=list)
+    attribution_summaries: list[FeedbackOptimizationAttributionSummaryRecord] = Field(default_factory=list)
     evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     tasks: list[FeedbackOptimizationPlanTaskRecord] = Field(default_factory=list)
-    task_summary: JsonObject = Field(default_factory=dict)
+    task_summary: FeedbackOptimizationPlanTaskSummaryRecord = Field(default_factory=FeedbackOptimizationPlanTaskSummaryRecord)
     blocked_items: list[FeedbackOptimizationBlockedItemRecord] = Field(default_factory=list)
-    blocked_summary: JsonObject = Field(default_factory=dict)
+    blocked_summary: FeedbackOptimizationBlockedSummaryRecord = Field(default_factory=FeedbackOptimizationBlockedSummaryRecord)
     source_output_schema_version: Optional[str] = None
     optimization_plan_job_id: Optional[str] = None
     generated_by: Optional[str] = None

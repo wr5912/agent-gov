@@ -3,7 +3,7 @@ PYTHON ?= $(VENV)/bin/python
 UV ?= uv
 COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 
-.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
+.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
 
 setup: langfuse-dirs
 	cp -n docker/.env.example docker/.env || true
@@ -55,6 +55,13 @@ ui-smoke:
 	done; \
 	echo "Frontend failed: $$frontend_url" >&2; \
 	exit 1
+
+ui-feedback-smoke:
+	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	ui_base=$${RUNTIME_UI_BASE:-http://localhost:$${frontend_port:-55173}}; \
+	api_base=$${RUNTIME_API_BASE:-http://localhost:$${host_port:-58080}}; \
+	RUNTIME_UI_BASE="$$ui_base" RUNTIME_API_BASE="$$api_base" pnpm --dir frontend verify:feedback-browser
 
 langfuse-dirs:
 	mkdir -p docker/volume/langfuse/postgres docker/volume/langfuse/clickhouse/data docker/volume/langfuse/clickhouse/logs

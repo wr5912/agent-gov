@@ -24,7 +24,7 @@ from app.runtime.prompts.feedback_prompts import (
     proposal_prompt,
 )
 from app.runtime.feedback_job_flags import has_no_actionable_attributions, reused_existing
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
 from app.runtime.stores.feedback_store import FeedbackStore

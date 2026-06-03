@@ -7,7 +7,7 @@ from typing import Optional
 
 from sqlalchemy import select
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .runtime_db import SessionRecordModel, make_session_factory, runtime_db_path_from_data_dir, utc_now
 
 

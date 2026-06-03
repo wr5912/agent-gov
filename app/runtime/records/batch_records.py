@@ -7,7 +7,19 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import FeedbackOptimizationBatchModel
 from app.runtime.state_machines import BATCH_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .agent_job_records import AgentJobProjectionRecord
+from .base import StrictRuntimeRecord
+from .batch_plan_records import FeedbackOptimizationPlanRecord
+from .common_records import (
+    FeedbackBatchAttributionSummaryRecord,
+    FeedbackBatchEvalCaseGenerationRecord,
+    FeedbackSourceRefRecord,
+    SkippedFeedbackSourceRefRecord,
+)
+from .eval_run_records import EvalRunProjectionRecord
+from .optimization_task_records import OptimizationTaskRecord
+from .regression_plan_records import RegressionPlanRecord
 
 
 FeedbackOptimizationBatchStatus = Literal[
@@ -46,31 +58,31 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
     status: FeedbackOptimizationBatchStatus
     title: str
     priority: Optional[str] = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
+    source_refs: list[FeedbackSourceRefRecord] = Field(default_factory=list)
     feedback_case_ids: list[str] = Field(default_factory=list)
-    skipped_source_refs: list[JsonObject] = Field(default_factory=list)
+    skipped_source_refs: list[SkippedFeedbackSourceRefRecord] = Field(default_factory=list)
     eval_case_ids: list[str] = Field(default_factory=list)
-    eval_case_generation: JsonObject = Field(default_factory=dict)
+    eval_case_generation: FeedbackBatchEvalCaseGenerationRecord = Field(default_factory=FeedbackBatchEvalCaseGenerationRecord)
     eval_case_generation_job_id: Optional[str] = None
-    eval_case_generation_job: Optional[JsonObject] = None
+    eval_case_generation_job: Optional[AgentJobProjectionRecord] = None
     attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_jobs: list[JsonObject] = Field(default_factory=list)
-    attribution_summary: JsonObject = Field(default_factory=dict)
-    optimization_plan: Optional[JsonObject] = None
+    attribution_jobs: list[AgentJobProjectionRecord] = Field(default_factory=list)
+    attribution_summary: FeedbackBatchAttributionSummaryRecord = Field(default_factory=FeedbackBatchAttributionSummaryRecord)
+    optimization_plan: Optional[FeedbackOptimizationPlanRecord] = None
     optimization_plan_job_id: Optional[str] = None
-    optimization_plan_job: Optional[JsonObject] = None
+    optimization_plan_job: Optional[AgentJobProjectionRecord] = None
     optimization_plan_error: Optional[JsonObject] = None
     internal_proposal_id: Optional[str] = None
     optimization_task_id: Optional[str] = None
     optimization_task_ids: list[str] = Field(default_factory=list)
-    optimization_task: Optional[JsonObject] = None
+    optimization_task: Optional[OptimizationTaskRecord] = None
     execution_job_id: Optional[str] = None
-    execution_job: Optional[JsonObject] = None
+    execution_job: Optional[AgentJobProjectionRecord] = None
     execution_apply_result: Optional[JsonObject] = None
     eval_run_id: Optional[str] = None
-    latest_eval_run: Optional[JsonObject] = None
+    latest_eval_run: Optional[EvalRunProjectionRecord] = None
     regression_plan_id: Optional[str] = None
-    latest_regression_plan: Optional[JsonObject] = None
+    latest_regression_plan: Optional[RegressionPlanRecord] = None
     latest_regression_gate: JsonObject = Field(default_factory=dict)
     applied_agent_version_id: Optional[str] = None
 

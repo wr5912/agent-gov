@@ -20,7 +20,7 @@ from ..records.external_governance_records import (
     ExternalGovernanceNotificationRecord,
     apply_external_governance_notification_record,
 )
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, ExternalNotificationModel, utc_now
 
 

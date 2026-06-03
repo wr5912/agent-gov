@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_plan_response_schemas import FeedbackOptimizationPlanTaskResponse
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -282,6 +282,7 @@ def _register_batch_plan_task_routes(
             return {"batch": batch, "optimization_task": task, "plan_task": _batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
 
         queued_job = runtime.queue_execution_job(task["optimization_task_id"], force=req.force)
+        task = feedback_store.find_task(task["optimization_task_id"]) or task
         execution_job = feedback_store.get_execution_job(queued_job.job_id) if queued_job else None
         if not execution_job:
             batch = feedback_store.record_batch_plan_task_execution_result(

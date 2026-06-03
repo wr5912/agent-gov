@@ -6,7 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.runtime.runtime_db import ExternalNotificationModel
 
-from .json_types import JsonObject
+from ..json_types import JsonObject
+from .common_records import FeedbackOptimizationEvidenceRefRecord, FeedbackOptimizationTaskContextRecord
 
 
 EXTERNAL_GOVERNANCE_ITEM_SCHEMA_VERSION = "external-governance-item/v1"
@@ -51,7 +52,7 @@ class ExternalGovernancePlanTaskDetailRecord(BaseModel):
     description: str = ""
     objective: str = ""
     target_summary: str = ""
-    task_context: JsonObject = Field(default_factory=dict)
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     recommendation: str = ""
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
@@ -60,7 +61,7 @@ class ExternalGovernancePlanTaskDetailRecord(BaseModel):
     risk: str = ""
     analysis_summary: str = ""
     evidence_summary: str = ""
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     reason: Optional[str] = None
     source: Literal["feedback_optimization_batch"] = "feedback_optimization_batch"
     batch_id: Optional[str] = None
@@ -73,7 +74,9 @@ class ExternalGovernancePlanTaskDetailRecord(BaseModel):
     source_attribution_job_ids: list[str] = Field(default_factory=list)
 
     def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json", exclude_none=True)
+        payload = self.model_dump(mode="json", exclude_none=True)
+        payload["task_context"] = self.task_context.to_payload()
+        return payload
 
 
 class ExternalGovernanceNotificationRecord(BaseModel):
@@ -202,7 +205,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     description: Optional[str] = None
     objective: Optional[str] = None
     target_summary: Optional[str] = None
-    task_context: JsonObject = Field(default_factory=dict)
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     expected_effect: Optional[str] = None
@@ -210,7 +213,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     risk: Optional[str] = None
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     source: Optional[str] = None
     batch_id: Optional[str] = None
     optimization_plan_id: Optional[str] = None
@@ -228,6 +231,7 @@ class ExternalGovernanceItemRecord(BaseModel):
     superseded_by_job_id: Optional[str] = None
 
     def to_notification_payload(self, *, webhook_alias: str) -> JsonObject:
+        item_payload = self.to_payload()
         payload = {
             "schema_version": "external-governance-notification/v1",
             "webhook_alias": webhook_alias,
@@ -248,7 +252,7 @@ class ExternalGovernanceItemRecord(BaseModel):
             "risk": self.risk,
             "analysis_summary": self.analysis_summary,
             "evidence_summary": self.evidence_summary,
-            "evidence_refs": self.evidence_refs,
+            "evidence_refs": item_payload.get("evidence_refs") or [],
             "reason": self.reason,
             "created_at": self.created_at,
         }
@@ -264,7 +268,6 @@ class ExternalGovernanceItemRecord(BaseModel):
             "eval_case_ids",
             "source_attribution_job_ids",
         )
-        item_payload = self.to_payload()
         for key in optional_fields:
             if item_payload.get(key) is not None:
                 payload[key] = item_payload[key]
@@ -308,4 +311,6 @@ class ExternalGovernanceItemRecord(BaseModel):
         return type(self).model_validate(payload)
 
     def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json")
+        payload = self.model_dump(mode="json")
+        payload["task_context"] = self.task_context.to_payload()
+        return payload

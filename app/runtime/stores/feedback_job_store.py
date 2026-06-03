@@ -13,7 +13,7 @@ from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE, PROPOSAL_GENERATOR_PR
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_attribution_output, validate_proposal_output
 from ..records.agent_job_records import AgentJobRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import (
     AgentJobModel,
     ExternalGovernanceItemModel,

@@ -7,7 +7,9 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import OptimizationProposalModel, ProposalReviewModel
 from app.runtime.state_machines import PROPOSAL_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
+from .common_records import FeedbackOptimizationEvidenceRefRecord, FeedbackOptimizationTaskContextRecord, FeedbackSourceRefRecord
 
 
 ProposalStatus = Literal[
@@ -82,7 +84,7 @@ class OptimizationProposalRecord(StrictRuntimeRecord):
     description: Optional[str] = None
     objective: Optional[str] = None
     target_summary: Optional[str] = None
-    task_context: JsonObject = Field(default_factory=dict)
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     recommendation: Optional[str] = None
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
@@ -91,14 +93,14 @@ class OptimizationProposalRecord(StrictRuntimeRecord):
     risk: Optional[str] = None
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
-    evidence_refs: list[JsonObject] = Field(default_factory=list)
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     regeneration_instruction: Optional[str] = None
     requires_approval: Optional[bool] = None
     base_agent_version_id: Optional[str] = None
     source_batch_id: Optional[str] = None
     source_plan_task_id: Optional[str] = None
     source_feedback_case_ids: list[str] = Field(default_factory=list)
-    source_refs: list[JsonObject] = Field(default_factory=list)
+    source_refs: list[FeedbackSourceRefRecord] = Field(default_factory=list)
     superseded_at: Optional[str] = None
     superseded_reason: Optional[str] = None
     superseded_by_job_id: Optional[str] = None

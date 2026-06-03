@@ -16,7 +16,7 @@ from ..runtime_db import (
     utc_now,
 )
 from ..records.agent_job_records import AgentJobRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..schema_versions import FEEDBACK_EVAL_CASE_SCHEMA_VERSION
 

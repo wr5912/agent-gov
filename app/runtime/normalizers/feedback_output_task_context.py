@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from .feedback_output_records import NormalizedTaskContext
 
 

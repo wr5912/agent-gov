@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.runtime_db import EvalRunItemModel, EvalRunModel
 from app.runtime.state_machines import EVAL_RUN_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 EvalRunStatus = Literal["running", "completed", "failed"]
@@ -24,6 +25,32 @@ EvalRunResultStatus = Literal[
 EvalRunItemStatus = Literal["passed", "failed", "needs_human_review"]
 
 
+class EvalRunSummaryRecord(StrictRuntimeRecord):
+    total: int = Field(default=0, ge=0)
+    passed: int = Field(default=0, ge=0)
+    failed: int = Field(default=0, ge=0)
+    needs_human_review: int = Field(default=0, ge=0)
+    blocked: int = Field(default=0, ge=0)
+    review_required: int = Field(default=0, ge=0)
+    passed_with_notes: int = Field(default=0, ge=0)
+
+
+class EvalRunGateResultRecord(StrictRuntimeRecord):
+    status: str
+    blocked_case_ids: list[str] = Field(default_factory=list)
+    review_case_ids: list[str] = Field(default_factory=list)
+    note_case_ids: list[str] = Field(default_factory=list)
+    override_id: Optional[str] = None
+    override_reason: Optional[str] = None
+
+
+class EvalRunCheckResultRecord(StrictRuntimeRecord):
+    name: str
+    passed: bool
+    required: bool = False
+    detail: str = ""
+
+
 class EvalRunRecord(StrictRuntimeRecord):
     """Internal source of truth for persisted eval run payload_json."""
 
@@ -38,8 +65,15 @@ class EvalRunRecord(StrictRuntimeRecord):
     regression_plan_id: Optional[str] = None
     eval_case_ids: list[str] = Field(default_factory=list)
     item_ids: list[str] = Field(default_factory=list)
-    summary: JsonObject = Field(default_factory=dict)
-    gate_result: JsonObject = Field(default_factory=dict)
+    summary: EvalRunSummaryRecord = Field(default_factory=EvalRunSummaryRecord)
+    gate_result: EvalRunGateResultRecord = Field(
+        default_factory=lambda: EvalRunGateResultRecord(
+            status="running",
+            blocked_case_ids=[],
+            review_case_ids=[],
+            note_case_ids=[],
+        )
+    )
     error_json: Optional[JsonObject] = None
     gate_overridden_at: Optional[str] = None
     gate_override_id: Optional[str] = None
@@ -131,7 +165,7 @@ class EvalRunItemRecord(StrictRuntimeRecord):
     agent_version_id: Optional[str] = None
     status: EvalRunItemStatus
     score: Optional[float] = None
-    check_results: list[JsonObject] = Field(default_factory=list)
+    check_results: list[EvalRunCheckResultRecord] = Field(default_factory=list)
     eval_case_snapshot: JsonObject = Field(default_factory=dict)
     answer_summary: Optional[str] = None
     error_json: Optional[JsonObject] = None
@@ -160,3 +194,11 @@ class EvalRunItemRecord(StrictRuntimeRecord):
             }
         )
         return cls.model_validate(payload)
+
+
+class EvalRunProjectionRecord(EvalRunRecord):
+    """Eval run snapshot after store projection attaches item payloads."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[EvalRunItemRecord] = Field(default_factory=list)

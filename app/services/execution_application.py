@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from app.runtime.agent_version_store import AgentVersionStore
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     ExecutionCompensationResponse,

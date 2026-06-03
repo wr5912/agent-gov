@@ -18,7 +18,7 @@ from typing import Optional, cast
 import yaml
 
 from app.runtime.errors import AgentVersionIntegrityError
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 
 
 SNAPSHOT_POLICY_VERSION = "main-workspace-managed-config-v2"

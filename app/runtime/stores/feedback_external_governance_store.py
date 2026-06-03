@@ -16,7 +16,7 @@ from ..records.external_governance_records import (
     ExternalGovernancePlanTaskDetailRecord,
     ExternalGuidanceInputRecord,
 )
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, utc_now
 from .store_projection_maps import ExternalGovernanceRowsBySourceIndex
 

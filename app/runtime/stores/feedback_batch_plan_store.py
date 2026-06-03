@@ -13,7 +13,7 @@ from ..records.batch_plan_records import (
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
 )
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import utc_now
 
 

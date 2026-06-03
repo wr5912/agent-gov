@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import cast
 
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 def filtered_mcp_servers(config_path: Path, allowed_names: tuple[str, ...]) -> JsonObject | None:

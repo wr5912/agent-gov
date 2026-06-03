@@ -11,7 +11,7 @@ from app.runtime.prompts.feedback_prompts import (
     proposal_prompt,
     regression_impact_analysis_prompt,
 )
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 

@@ -13,7 +13,8 @@ from app.runtime.runtime_db import (
 )
 from app.runtime.state_machines import PENDING_CORRELATION_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 PendingCorrelationStatus = Literal["pending", "resolved"]

@@ -105,6 +105,16 @@ class FeedbackOptimizationBlockedItemResponse(ExtensibleResponse):
     updated_at: Optional[str] = None
 
 
+class FeedbackOptimizationPlanTaskSummaryResponse(ExtensibleResponse):
+    total: int = 0
+    workspace_execution: int = 0
+    external_webhook: int = 0
+
+
+class FeedbackOptimizationBlockedSummaryResponse(ExtensibleResponse):
+    total: int = 0
+
+
 class FeedbackOptimizationPlanResponse(ExtensibleResponse):
     schema_version: Optional[str] = None
     optimization_plan_id: Optional[str] = None
@@ -132,6 +142,6 @@ class FeedbackOptimizationPlanResponse(ExtensibleResponse):
     attribution_summaries: list[FeedbackOptimizationAttributionSummaryResponse] = Field(default_factory=list)
     evidence_refs: list[EvidenceRefResponse] = Field(default_factory=list)
     tasks: list[FeedbackOptimizationPlanTaskResponse] = Field(default_factory=list)
-    task_summary: dict[str, int] = Field(default_factory=dict)
+    task_summary: FeedbackOptimizationPlanTaskSummaryResponse = Field(default_factory=FeedbackOptimizationPlanTaskSummaryResponse)
     blocked_items: list[FeedbackOptimizationBlockedItemResponse] = Field(default_factory=list)
-    blocked_summary: dict[str, int] = Field(default_factory=dict)
+    blocked_summary: FeedbackOptimizationBlockedSummaryResponse = Field(default_factory=FeedbackOptimizationBlockedSummaryResponse)

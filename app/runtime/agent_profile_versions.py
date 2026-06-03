@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 
 from .agent_profiles import AgentRuntimeProfile
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 def profile_version_snapshot(profile: AgentRuntimeProfile, *, version_id: str | None = None) -> JsonObject:

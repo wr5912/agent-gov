@@ -2962,6 +2962,16 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** FeedbackOptimizationBlockedSummaryResponse */
+        FeedbackOptimizationBlockedSummaryResponse: {
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+        } & {
+            [key: string]: unknown;
+        };
         /** FeedbackOptimizationPlanResponse */
         FeedbackOptimizationPlanResponse: {
             /** Actionability */
@@ -2974,10 +2984,7 @@ export interface components {
             batch_id?: string | null;
             /** Blocked Items */
             blocked_items?: components["schemas"]["FeedbackOptimizationBlockedItemResponse"][];
-            /** Blocked Summary */
-            blocked_summary?: {
-                [key: string]: number;
-            };
+            blocked_summary?: components["schemas"]["FeedbackOptimizationBlockedSummaryResponse"];
             /** Confidence */
             confidence?: string | null;
             /** Created At */
@@ -3016,10 +3023,7 @@ export interface components {
             target_path?: string | null;
             /** Target Type */
             target_type?: string | null;
-            /** Task Summary */
-            task_summary?: {
-                [key: string]: number;
-            };
+            task_summary?: components["schemas"]["FeedbackOptimizationPlanTaskSummaryResponse"];
             /** Tasks */
             tasks?: components["schemas"]["FeedbackOptimizationPlanTaskResponse"][];
             /** Title */
@@ -3123,6 +3127,26 @@ export interface components {
             updated_at?: string | null;
             /** Validation */
             validation?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** FeedbackOptimizationPlanTaskSummaryResponse */
+        FeedbackOptimizationPlanTaskSummaryResponse: {
+            /**
+             * External Webhook
+             * @default 0
+             */
+            external_webhook: number;
+            /**
+             * Total
+             * @default 0
+             */
+            total: number;
+            /**
+             * Workspace Execution
+             * @default 0
+             */
+            workspace_execution: number;
         } & {
             [key: string]: unknown;
         };

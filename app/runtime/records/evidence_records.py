@@ -8,7 +8,8 @@ from pydantic.types import JsonValue
 
 from app.runtime.runtime_db import EvidenceFileModel, EvidencePackageModel
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 EvidencePackageSchemaVersion = Literal["evidence-package/v1"]

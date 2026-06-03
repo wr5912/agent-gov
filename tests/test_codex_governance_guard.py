@@ -423,6 +423,78 @@ def test_dict_object_annotation_is_allowed(tmp_path: Path) -> None:
     assert "broad map[Any]" not in result.stdout
 
 
+def test_new_legacy_json_types_import_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "records" / "record.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("from .json_types import JsonObject\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new legacy JsonObject import from records boundary" in result.stdout
+
+
+def test_new_record_non_boundary_jsonobject_field_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "records" / "record.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from app.runtime.json_types import JsonObject\n\n"
+        "class Record:\n"
+        "    stable_entity: JsonObject\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new non-boundary JsonObject record field: Record.stable_entity" in result.stdout
+
+
+def test_new_record_boundary_jsonobject_field_is_allowed(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "records" / "record.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from app.runtime.json_types import JsonObject\n\n"
+        "class Record:\n"
+        "    raw_output_json: JsonObject\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "non-boundary JsonObject" not in result.stdout
+
+
+def test_new_store_public_jsonobject_return_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "stores" / "store.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "from app.runtime.json_types import JsonObject\n\n"
+        "class Store:\n"
+        "    def get_entity(self) -> JsonObject:\n"
+        "        return {}\n",
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new store public method returning JsonObject: Store.get_entity" in result.stdout
+
+
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

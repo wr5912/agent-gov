@@ -11,7 +11,7 @@ from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
 from ..feedback_schemas import validate_execution_plan_output
 from ..records.execution_records import ExecutionApplicationRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
 from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (

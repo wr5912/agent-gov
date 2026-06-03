@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Awaitable, Callable, Optional, cast
 
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import ChatRequest, ChatResponse, EvalRunResponse
 

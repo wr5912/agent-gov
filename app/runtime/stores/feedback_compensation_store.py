@@ -7,7 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..records.feedback_compensation_records import ExecutionCompensationRecord, apply_execution_compensation_record
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import ExecutionCompensationModel, utc_now
 
 

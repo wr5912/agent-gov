@@ -7,7 +7,8 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import FeedbackCaseModel
 from app.runtime.state_machines import CASE_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 FeedbackCaseStatus = Literal[

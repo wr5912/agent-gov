@@ -20,7 +20,7 @@ from ..records.eval_case_records import (
     apply_eval_case_record,
 )
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, RegressionImpactedAssetRecord
 from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (

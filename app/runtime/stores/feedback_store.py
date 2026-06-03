@@ -13,7 +13,7 @@ from ..collection_utils import unique_strings
 from ..integrations.external_governance import ExternalGovernanceService
 from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import (
     OptimizationProposalModel,

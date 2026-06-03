@@ -11,7 +11,7 @@ from .agent_profiles import (
 )
 from .response_schemas.agent_job_response_schemas import AgentJobResponse
 from .response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .schemas import EvalRunResponse
 
 

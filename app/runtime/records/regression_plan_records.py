@@ -6,10 +6,43 @@ from pydantic import Field, field_validator, model_validator
 
 from app.runtime.runtime_db import RegressionGateOverrideModel, RegressionPlanModel
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
+from .common_records import FeedbackSourceRefRecord
 
 
 RegressionPlanStatus = Literal["created"]
+
+
+class RegressionSelectedCaseRecord(StrictRuntimeRecord):
+    eval_case_id: str
+    status: str
+    asset_layer: str
+    promotion_status: str
+    blocking_policy: str
+    severity: str
+    flaky_status: str
+    variant_role: str
+    content_hash: Optional[str] = None
+    labels: list[str] = Field(default_factory=list)
+    prompt: str
+    expected_behavior: Optional[str] = None
+    checks_json: JsonObject = Field(default_factory=dict)
+
+
+class RegressionSelectionSummaryRecord(StrictRuntimeRecord):
+    total: int = Field(default=0, ge=0)
+    by_asset_layer: dict[str, int] = Field(default_factory=dict)
+    by_blocking_policy: dict[str, int] = Field(default_factory=dict)
+
+
+class RegressionChangeSummaryRecord(StrictRuntimeRecord):
+    batch_title: Optional[str] = None
+    batch_status: Optional[str] = None
+    feedback_case_ids: list[str] = Field(default_factory=list)
+    source_refs: list[FeedbackSourceRefRecord] = Field(default_factory=list)
+    optimization_task_id: Optional[str] = None
+    target_paths: list[str] = Field(default_factory=list)
 
 
 class RegressionPlanRecord(StrictRuntimeRecord):
@@ -24,9 +57,9 @@ class RegressionPlanRecord(StrictRuntimeRecord):
     selection_fingerprint: str
     base_selection_fingerprint: str
     eval_case_ids: list[str] = Field(default_factory=list)
-    selected_cases: list[JsonObject] = Field(default_factory=list)
-    selection_summary: JsonObject = Field(default_factory=dict)
-    change_summary: JsonObject = Field(default_factory=dict)
+    selected_cases: list[RegressionSelectedCaseRecord] = Field(default_factory=list)
+    selection_summary: RegressionSelectionSummaryRecord = Field(default_factory=RegressionSelectionSummaryRecord)
+    change_summary: RegressionChangeSummaryRecord = Field(default_factory=RegressionChangeSummaryRecord)
 
     @field_validator("eval_case_ids")
     @classmethod

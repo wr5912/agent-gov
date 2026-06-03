@@ -235,6 +235,12 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert plan_schema["properties"]["attribution_summaries"]["items"] == {
         "$ref": "#/components/schemas/FeedbackOptimizationAttributionSummaryResponse"
     }
+    assert plan_schema["properties"]["task_summary"] == {
+        "$ref": "#/components/schemas/FeedbackOptimizationPlanTaskSummaryResponse"
+    }
+    assert plan_schema["properties"]["blocked_summary"] == {
+        "$ref": "#/components/schemas/FeedbackOptimizationBlockedSummaryResponse"
+    }
     plan_task_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanTaskResponse"]
     assert plan_task_schema["properties"]["task_context"] == {
         "$ref": "#/components/schemas/FeedbackOptimizationTaskContextResponse"

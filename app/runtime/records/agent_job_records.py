@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.agent_job_types import AgentJobType
 from app.runtime.runtime_db import AgentJobModel
 from app.runtime.state_machines import AGENT_JOB_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .base import StrictRuntimeRecord
 
 
 AgentJobStatus = Literal[
@@ -146,3 +147,74 @@ class AgentJobRecord(StrictRuntimeRecord):
             payload["execution_job_id"] = payload.get("execution_job_id") or row.job_id
             payload["compensations"] = compensations or []
         return cls.model_validate(payload)
+
+
+class AgentJobValidationErrorRecord(StrictRuntimeRecord):
+    """Validation error snapshot embedded in an agent job projection."""
+
+    model_config = ConfigDict(extra="allow")
+
+    type: Optional[str] = None
+    loc: list[str | int] = Field(default_factory=list)
+    msg: Optional[str] = None
+    input: object | None = None
+    ctx: object | None = None
+    url: Optional[str] = None
+
+
+class AgentJobErrorRecord(StrictRuntimeRecord):
+    """Agent job error snapshot embedded in projected records."""
+
+    model_config = ConfigDict(extra="allow")
+
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    created_at: Optional[str] = None
+    job_id: Optional[str] = None
+    validation_errors: list[AgentJobValidationErrorRecord] = Field(default_factory=list)
+
+
+class AgentJobProjectionRecord(StrictRuntimeRecord):
+    """Embedded agent job snapshot used by batch/task projections.
+
+    Persisted agent job rows are validated by AgentJobRecord. Embedded snapshots
+    can be historical, partial, or decorated with display fields, so they keep a
+    narrower contract and do not inherit row lifecycle invariants.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    job_id: str
+    job_type: str
+    scope_kind: Optional[str] = None
+    scope_id: Optional[str] = None
+    status: str
+    profile_name: str
+    created_at: str
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    input_path: str = ""
+    raw_output_path: str = ""
+    validated_output_path: str = ""
+    error_path: str = ""
+    runtime_version: Optional[str] = None
+    schema_version: Optional[str] = None
+    output_schema_version: Optional[str] = None
+    timeout_seconds: int = 300
+    retry_count: int = 0
+    profile_version: Optional[JsonObject] = None
+    input_json: Optional[JsonObject] = None
+    raw_output_json: Optional[JsonObject] = None
+    validated_output_json: Optional[JsonObject] = None
+    error_json: Optional[AgentJobErrorRecord] = None
+
+    feedback_case_id: Optional[str] = None
+    evidence_package_id: Optional[str] = None
+    attribution_job_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    optimization_task_id: Optional[str] = None
+    execution_job_id: Optional[str] = None
+    baseline_agent_version_id: Optional[str] = None
+    eval_run_id: Optional[str] = None
+    regression_plan_id: Optional[str] = None
+    compensations: list[JsonObject] = Field(default_factory=list)

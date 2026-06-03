@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..schema_versions import (
     FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
@@ -12,7 +12,9 @@ from ..schema_versions import (
 from .feedback_output_records import (
     NormalizedAttributionOutput,
     NormalizedAttributionSummary,
+    NormalizedActionabilityValue,
     NormalizedBlockedOptimizationItem,
+    NormalizedConfidenceValue,
     NormalizedEvidenceRef,
     NormalizedExecutionPlanOutput,
     NormalizedExecutionOperation,
@@ -21,6 +23,8 @@ from .feedback_output_records import (
     NormalizedFeedbackOptimizationPlanOutput,
     NormalizedGeneratedEvalCase,
     NormalizedOptimizationPlanTask,
+    NormalizedPlanStatusValue,
+    NormalizedProblemTypeValue,
     NormalizedProposalItem,
     NormalizedProposalOutput,
     NormalizedRegressionImpactAnalysisOutput,
@@ -372,66 +376,16 @@ def _external_plan_task_from_blocked_item(
 
 
 def _normalize_plan_status(value: object) -> str:
-    status_value = str(value or "").strip().lower()
-    if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval"}:
-        return "pending_approval"
-    if status_value in {"needs_review", "manual_review", "blocked", "failed", "needs_human_review"}:
-        return "needs_human_review"
-    return "pending_approval"
+    return NormalizedPlanStatusValue.model_validate({"value": value}).value
 
 def _normalize_confidence(value: object) -> str:
-    confidence = str(value or "").strip().lower()
-    if confidence in {"high", "medium", "low"}:
-        return confidence
-    return "medium"
+    return NormalizedConfidenceValue.model_validate({"value": value}).value
 
 def _normalize_actionability(value: object) -> str:
-    actionability = str(value or "").strip()
-    aliases = {
-        "manual_review": "needs_human_analysis",
-        "human_review": "needs_human_analysis",
-        "agent_behavior": "direct_workspace_change",
-        "workspace_change": "direct_workspace_change",
-        "external": "external_guidance",
-        "external_task": "external_guidance",
-        "not_applicable": "not_actionable",
-    }
-    actionability = aliases.get(actionability, actionability)
-    allowed = {
-        "direct_workspace_change",
-        "workspace_config_change",
-        "eval_only",
-        "external_guidance",
-        "runtime_fix",
-        "needs_human_analysis",
-        "not_actionable",
-    }
-    return actionability if actionability in allowed else "needs_human_analysis"
+    return NormalizedActionabilityValue.model_validate({"value": value}).value
 
 def _normalize_problem_type(value: object) -> str:
-    problem_type = str(value or "").strip()
-    aliases = {
-        "tool_usage_deficiency": "tool_data_quality",
-        "tool_usage_gap": "tool_data_quality",
-        "tool_call_gap": "tool_data_quality",
-        "agent_behavior": "instruction_gap",
-    }
-    problem_type = aliases.get(problem_type, problem_type)
-    allowed = {
-        "evidence_gap",
-        "tool_misuse",
-        "tool_unavailable",
-        "tool_data_quality",
-        "output_style_issue",
-        "instruction_gap",
-        "skill_gap",
-        "mcp_description_gap",
-        "runtime_error",
-        "external_soc_process_issue",
-        "user_misunderstanding",
-        "insufficient_information",
-    }
-    return problem_type if problem_type in allowed else "insufficient_information"
+    return NormalizedProblemTypeValue.model_validate({"value": value}).value
 
 def _normalize_evidence_refs(value: object) -> list[JsonObject]:
     refs: list[NormalizedEvidenceRef] = []

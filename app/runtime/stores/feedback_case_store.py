@@ -7,7 +7,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..records.case_records import FeedbackCaseRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import FeedbackCaseModel, utc_now
 
 

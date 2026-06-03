@@ -23,7 +23,7 @@ from .message_utils import extract_text, message_event_name, to_plain
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .runtime_activity import RuntimeActivityExtractor
 from .integrations.runtime_langfuse import RuntimeLangfuseClient, ensure_langfuse_otel_compat
 from .schemas import ChatRequest, ChatResponse

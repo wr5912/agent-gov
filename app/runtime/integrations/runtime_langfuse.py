@@ -5,7 +5,7 @@ from contextlib import nullcontext
 from typing import Any, Optional
 
 from ..message_utils import to_plain
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..settings import AppSettings
 
 

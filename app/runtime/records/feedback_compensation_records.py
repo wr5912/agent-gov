@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.runtime_db import ExecutionCompensationModel
 
-from .json_types import JsonObject
+from ..json_types import JsonObject
 
 
 EXECUTION_COMPENSATION_SCHEMA_VERSION = "execution-compensation/v1"

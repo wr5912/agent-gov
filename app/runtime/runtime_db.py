@@ -12,7 +12,7 @@ from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 _ENGINE_CACHE: dict[Path, Engine] = {}

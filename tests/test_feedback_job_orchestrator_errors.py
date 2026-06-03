@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.session_store import LocalSessionStore

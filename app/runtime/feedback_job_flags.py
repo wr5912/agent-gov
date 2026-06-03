@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 
 
 REUSED_EXISTING_FLAG = "_reused_existing"

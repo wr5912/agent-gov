@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..errors import ConflictError
 from ..records.batch_records import FeedbackOptimizationBatchRecord
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, utc_now
 from ..state_machines import JOB_IN_PROGRESS_STATES
@@ -338,7 +338,12 @@ class FeedbackBatchStoreMixin:
         row = db.get(FeedbackOptimizationBatchModel, batch_id)
         if not row:
             return None
-        record = FeedbackOptimizationBatchRecord.from_row(row).transition_to(status, fields={**fields, "updated_at": now})
+        current = FeedbackOptimizationBatchRecord.from_row(row)
+        next_fields = {**fields, "updated_at": now}
+        plan = next_fields.get("optimization_plan")
+        if isinstance(plan, dict):
+            next_fields["optimization_plan"] = self._normalize_plan_task_collections(current.to_payload(), plan)
+        record = current.transition_to(status, fields=next_fields)
         row.status = record.status
         row.updated_at = record.updated_at
         row.title = self._string(record.title) or row.title

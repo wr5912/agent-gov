@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..agent_job_types import agent_job_spec
 from ..feedback_job_flags import has_no_actionable_attributions, reused_existing
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
 from ..runtime_db import FeedbackOptimizationBatchModel, RegressionImpactAnalysisModel, utc_now
 

@@ -9,6 +9,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from codex_governance_json import (
+    annotation_contains_name,
+    is_allowed_jsonobject_field,
+    is_legacy_json_type_import,
+    is_records_path,
+    is_store_path,
+    jsonobject_boundary_issue_specs,
+    legacy_json_type_import_issue_specs,
+)
+
 
 DEFAULT_SOURCE_ROOTS = ("src", "app", "backend", "server", "frontend/src", "packages", "scripts")
 PYTHON_SUFFIXES = {".py"}
@@ -49,6 +59,9 @@ class PythonMetrics:
     classes: dict[str, int] = field(default_factory=dict)
     unowned_dict_returns: set[str] = field(default_factory=set)
     map_any_boundaries: set[str] = field(default_factory=set)
+    legacy_json_type_imports: set[str] = field(default_factory=set)
+    disallowed_jsonobject_fields: set[str] = field(default_factory=set)
+    store_jsonobject_returns: set[str] = field(default_factory=set)
     route_count: int = 0
 
 
@@ -321,7 +334,16 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.classes: dict[str, int] = {}
         self.unowned_dict_returns: set[str] = set()
         self.map_any_boundaries: set[str] = set()
+        self.legacy_json_type_imports: set[str] = set()
+        self.disallowed_jsonobject_fields: set[str] = set()
+        self.store_jsonobject_returns: set[str] = set()
         self.route_count = 0
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        if is_legacy_json_type_import(self.rel_path, node.module, node.level):
+            names = ", ".join(alias.name for alias in node.names)
+            self.legacy_json_type_imports.add(f"{node.lineno}:{names}")
+        self.generic_visit(node)
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
         name = ".".join([*self.scope, node.name])
@@ -341,6 +363,8 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.functions[name] = _node_line_count(node)
         if _annotation_contains_dict(node.returns) and not _is_owned_dict_return(self.rel_path, name):
             self.unowned_dict_returns.add(name)
+        if is_store_path(self.rel_path) and not node.name.startswith("_") and annotation_contains_name(node.returns, "JsonObject"):
+            self.store_jsonobject_returns.add(name)
         if _annotation_contains_map_any(node.returns):
             self.map_any_boundaries.add(f"{name}:return")
         for arg in _function_arguments(node):
@@ -355,8 +379,16 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.scope.pop()
 
     def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        target_name = _annotation_target_name(node.target)
+        if (
+            is_records_path(self.rel_path)
+            and self.scope
+            and annotation_contains_name(node.annotation, "JsonObject")
+            and not is_allowed_jsonobject_field(target_name)
+        ):
+            qualified_name = ".".join([*self.scope, target_name])
+            self.disallowed_jsonobject_fields.add(qualified_name)
         if _annotation_contains_map_any(node.annotation) or _annotation_contains_map_any(node.value):
-            target_name = _annotation_target_name(node.target)
             qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
             self.map_any_boundaries.add(f"{qualified_name}:annotation")
         self.generic_visit(node)
@@ -381,6 +413,9 @@ def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> Pyt
         classes=visitor.classes,
         unowned_dict_returns=visitor.unowned_dict_returns,
         map_any_boundaries=visitor.map_any_boundaries,
+        legacy_json_type_imports=visitor.legacy_json_type_imports,
+        disallowed_jsonobject_fields=visitor.disallowed_jsonobject_fields,
+        store_jsonobject_returns=visitor.store_jsonobject_returns,
         route_count=visitor.route_count,
     )
 
@@ -622,6 +657,28 @@ def collect_map_any_boundary_issues(current: Snapshot, base: Snapshot) -> list[G
     return issues
 
 
+def collect_legacy_json_type_import_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
+    return [
+        GovernanceIssue(path, message, blocking)
+        for path, message, blocking in legacy_json_type_import_issue_specs(
+            current.python,
+            base.python,
+            PythonMetrics(),
+        )
+    ]
+
+
+def collect_jsonobject_boundary_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
+    return [
+        GovernanceIssue(path, message, blocking)
+        for path, message, blocking in jsonobject_boundary_issue_specs(
+            current.python,
+            base.python,
+            PythonMetrics(),
+        )
+    ]
+
+
 def collect_issues(
     current: Snapshot,
     base: Snapshot,
@@ -633,6 +690,8 @@ def collect_issues(
     issues.extend(collect_state_machine_issues(current, base))
     issues.extend(collect_dict_return_issues(current, base))
     issues.extend(collect_map_any_boundary_issues(current, base))
+    issues.extend(collect_legacy_json_type_import_issues(current, base))
+    issues.extend(collect_jsonobject_boundary_issues(current, base))
     return sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
 
 

@@ -7,7 +7,12 @@ from pydantic import Field, field_validator, model_validator
 from app.runtime.runtime_db import OptimizationTaskModel
 from app.runtime.state_machines import TASK_STATES, validate_transition
 
-from .json_types import JsonObject, StrictRuntimeRecord
+from ..json_types import JsonObject
+from .agent_job_records import AgentJobProjectionRecord
+from .base import StrictRuntimeRecord
+from .eval_run_records import EvalRunProjectionRecord
+from .execution_records import ExecutionApplicationRecord
+from .proposal_records import OptimizationProposalRecord
 
 
 OptimizationTaskStatus = Literal[
@@ -38,11 +43,11 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
     source: str = "feedback_workbench"
     comment: Optional[str] = None
     target_paths: list[str] = Field(default_factory=list)
-    proposal: Optional[JsonObject] = None
+    proposal: Optional[OptimizationProposalRecord] = None
     baseline_agent_version_id: Optional[str] = None
     execution_job_ids: list[str] = Field(default_factory=list)
     latest_execution_job_id: Optional[str] = None
-    latest_execution_job: Optional[JsonObject] = None
+    latest_execution_job: Optional[AgentJobProjectionRecord] = None
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[JsonObject] = None
     applied_at: Optional[str] = None
@@ -50,10 +55,10 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
     applied_agent_version: Optional[JsonObject] = None
     application_note: Optional[str] = None
     latest_execution_application_id: Optional[str] = None
-    latest_execution_application: Optional[JsonObject] = None
+    latest_execution_application: Optional[ExecutionApplicationRecord] = None
     regression_run_ids: list[str] = Field(default_factory=list)
     latest_regression_run_id: Optional[str] = None
-    latest_regression_run: Optional[JsonObject] = None
+    latest_regression_run: Optional[EvalRunProjectionRecord] = None
     regression_completed_at: Optional[str] = None
     source_batch_id: Optional[str] = None
     source_plan_task_id: Optional[str] = None

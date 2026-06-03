@@ -5,7 +5,7 @@ from typing import Optional
 from pydantic import BaseModel, Field
 
 from app.runtime.response_schemas.agent_version_response_schemas import AgentVersionDiffResponse, AgentVersionSummaryResponse
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse

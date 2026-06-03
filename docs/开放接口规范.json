@@ -5004,6 +5004,18 @@
         "title": "FeedbackOptimizationBlockedItemResponse",
         "type": "object"
       },
+      "FeedbackOptimizationBlockedSummaryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "title": "FeedbackOptimizationBlockedSummaryResponse",
+        "type": "object"
+      },
       "FeedbackOptimizationPlanResponse": {
         "additionalProperties": true,
         "properties": {
@@ -5051,11 +5063,7 @@
             "type": "array"
           },
           "blocked_summary": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "title": "Blocked Summary",
-            "type": "object"
+            "$ref": "#/components/schemas/FeedbackOptimizationBlockedSummaryResponse"
           },
           "confidence": {
             "anyOf": [
@@ -5240,11 +5248,7 @@
             "title": "Target Type"
           },
           "task_summary": {
-            "additionalProperties": {
-              "type": "integer"
-            },
-            "title": "Task Summary",
-            "type": "object"
+            "$ref": "#/components/schemas/FeedbackOptimizationPlanTaskSummaryResponse"
           },
           "tasks": {
             "items": {
@@ -5762,6 +5766,28 @@
           "status"
         ],
         "title": "FeedbackOptimizationPlanTaskResponse",
+        "type": "object"
+      },
+      "FeedbackOptimizationPlanTaskSummaryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "external_webhook": {
+            "default": 0,
+            "title": "External Webhook",
+            "type": "integer"
+          },
+          "total": {
+            "default": 0,
+            "title": "Total",
+            "type": "integer"
+          },
+          "workspace_execution": {
+            "default": 0,
+            "title": "Workspace Execution",
+            "type": "integer"
+          }
+        },
+        "title": "FeedbackOptimizationPlanTaskSummaryResponse",
         "type": "object"
       },
       "FeedbackOptimizationSkippedSourceRefResponse": {
@@ -9401,7 +9427,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.21"
+    "version": "0.2.22"
   },
   "openapi": "3.1.0",
   "paths": {

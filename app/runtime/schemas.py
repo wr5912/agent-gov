@@ -3,7 +3,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic.types import JsonValue
 
-from app.runtime.records.json_types import JsonObject
+from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 

@@ -19,7 +19,7 @@ from ..records.source_records import (
     apply_feedback_source_annotation_record,
     apply_pending_correlation_record,
 )
-from ..records.json_types import JsonObject
+from ..json_types import JsonObject
 from ..runtime_db import (
     AgentRunModel,
     AgentJobModel,

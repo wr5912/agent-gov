@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from .collection_utils import unique_strings
 from .message_utils import to_plain
-from .records.json_types import JsonObject
+from .json_types import JsonObject
 from .schemas import ChatRequest
 from .settings import AppSettings
 

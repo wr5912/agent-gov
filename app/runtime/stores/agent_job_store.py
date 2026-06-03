@@ -354,8 +354,9 @@ class AgentJobStoreMixin:
         with self.Session.begin() as db:
             row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
             impact_analysis_id = self._string(output.get("impact_analysis_id")) or (row.impact_analysis_id if row else f"ria-{uuid.uuid4()}")
+            record_fields = set(RegressionImpactAnalysisRecord.model_fields)
             payload = {
-                **output,
+                **{key: value for key, value in output.items() if key in record_fields},
                 "impact_analysis_id": impact_analysis_id,
                 "eval_run_id": eval_run_id,
                 "created_at": row.created_at if row else created_at,

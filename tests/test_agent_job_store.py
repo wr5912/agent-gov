@@ -234,12 +234,16 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
             "summary": "未发现回归影响。",
             "risk_assessment": "low",
             "next_steps": [],
+            "_formatter": {"name": "dspy", "source": "fallback", "candidate_count": 0},
         },
     )
 
     impact = store.get_regression_impact_analysis(eval_run["eval_run_id"])
+    completed_job = store.get_agent_job("riaj-projection")
     assert completed["status"] == "completed"
+    assert completed_job["raw_output_json"]["_formatter"]["name"] == "dspy"
     assert impact["job_id"] == "riaj-projection"
+    assert "_formatter" not in impact
     assert impact["impacted_assets"][0]["agent_note"] == {"source": "regression-impact-analyzer"}
     assert impact["recommendations"] == ["继续保留当前回归资产。"]
 

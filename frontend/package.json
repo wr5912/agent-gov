@@ -1,7 +1,7 @@
 {
   "name": "claude-agent-playground-ui",
   "private": true,
-  "version": "0.2.27",
+  "version": "0.2.28",
   "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {

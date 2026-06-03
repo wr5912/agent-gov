@@ -22,10 +22,11 @@ from sqlalchemy import select, text
 from app.runtime.errors import BusinessRuleViolation, ConfigurationError
 from app.runtime.records.external_governance_records import ExternalGovernanceItemRecord
 from app.runtime.runtime_db import (
+    AgentJobModel,
     EvidenceFileModel,
     EvidencePackageModel,
     ExternalNotificationModel,
-    AgentJobModel,
+    FeedbackOptimizationBatchModel,
     OptimizationProposalModel,
 )
 
@@ -727,6 +728,58 @@ def test_batch_attribution_status_requires_all_current_jobs_completed(tmp_path):
     assert running_batch["attribution_summary"]["running"] == 1
     assert failed_batch["status"] == "needs_human_review"
     assert failed_batch["attribution_summary"]["needs_review_or_failed"] == 1
+
+
+def test_batch_projection_refreshes_failed_attribution_job_snapshot(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="归因失败")
+    )
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    assert attribution_job is not None
+    store.record_batch_attribution_jobs(batch["batch_id"], [attribution_job])
+
+    store.fail_job(attribution_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
+    refreshed = store.find_optimization_batch(batch["batch_id"])
+
+    assert refreshed is not None
+    assert refreshed["status"] == "needs_human_review"
+    assert refreshed["attribution_jobs"][0]["status"] == "failed"
+    assert refreshed["attribution_jobs"][0]["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert refreshed["attribution_summary"]["running"] == 0
+    assert refreshed["attribution_summary"]["needs_review_or_failed"] == 1
+
+
+def test_failed_projected_attribution_syncs_batch_snapshot(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="归因失败")
+    )
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    assert attribution_job is not None
+    store.record_batch_attribution_jobs(batch["batch_id"], [attribution_job])
+
+    failed = store.fail_projected_agent_job(
+        attribution_job,
+        error_code="AGENT_RUNTIME_ERROR",
+        message="failed",
+    )
+
+    with store.Session() as db:
+        row = db.get(FeedbackOptimizationBatchModel, batch["batch_id"])
+        assert row is not None
+        row_status = row.status
+        payload = row.payload_json
+
+    assert failed is not None
+    assert failed["status"] == "failed"
+    assert row_status == "needs_human_review"
+    assert payload["attribution_jobs"][0]["status"] == "failed"
+    assert payload["attribution_summary"]["needs_review_or_failed"] == 1
 
 
 def test_batch_detail_refreshes_latest_task_execution_job(tmp_path):

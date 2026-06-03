@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Awaitable, Callable, cast
 
 from app.runtime.prompts.feedback_prompts import (
@@ -17,6 +18,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 
 
 RunProfileJson = Callable[..., Awaitable[JsonObject]]
+logger = logging.getLogger(__name__)
 
 
 def _agent_error_message(exc: Exception) -> str:
@@ -38,28 +40,64 @@ class AgentJobWorker:
         self.poll_interval_seconds = poll_interval_seconds
 
     async def run_once(self) -> AgentJobResponse | None:
+        for timed_out in self.feedback_store._timeout_stale_agent_jobs():
+            logger.warning(
+                "agent job timed out job_id=%s job_type=%s profile_name=%s status=%s",
+                timed_out.get("job_id"),
+                timed_out.get("job_type"),
+                timed_out.get("profile_name"),
+                timed_out.get("status"),
+            )
         job = self.feedback_store.claim_next_agent_job()
         if not job:
             return None
+        logger.info(
+            "agent job claimed job_id=%s job_type=%s profile_name=%s",
+            job.get("job_id"),
+            job.get("job_type"),
+            job.get("profile_name"),
+        )
         try:
             raw = await self._run_job(job)
-            return self._job_response(self.feedback_store.complete_projected_agent_job(job, raw))
+            completed = self.feedback_store.complete_projected_agent_job(job, raw)
+            logger.info(
+                "agent job completed job_id=%s job_type=%s profile_name=%s status=%s",
+                job.get("job_id"),
+                job.get("job_type"),
+                job.get("profile_name"),
+                (completed or {}).get("status"),
+            )
+            return self._job_response(completed)
         except asyncio.TimeoutError as exc:
-            return self._job_response(
-                self.feedback_store.fail_projected_agent_job(
-                    job,
-                    error_code="AGENT_TIMEOUT",
-                    message=_agent_error_message(exc),
-                )
+            failed = self.feedback_store.fail_projected_agent_job(
+                job,
+                error_code="AGENT_TIMEOUT",
+                message=_agent_error_message(exc),
             )
+            logger.warning(
+                "agent job timeout job_id=%s job_type=%s profile_name=%s status=%s error_code=%s",
+                job.get("job_id"),
+                job.get("job_type"),
+                job.get("profile_name"),
+                (failed or {}).get("status"),
+                "AGENT_TIMEOUT",
+            )
+            return self._job_response(failed)
         except Exception as exc:
-            return self._job_response(
-                self.feedback_store.fail_projected_agent_job(
-                    job,
-                    error_code="AGENT_RUNTIME_ERROR",
-                    message=_agent_error_message(exc),
-                )
+            failed = self.feedback_store.fail_projected_agent_job(
+                job,
+                error_code="AGENT_RUNTIME_ERROR",
+                message=_agent_error_message(exc),
             )
+            logger.exception(
+                "agent job failed job_id=%s job_type=%s profile_name=%s status=%s error_code=%s",
+                job.get("job_id"),
+                job.get("job_type"),
+                job.get("profile_name"),
+                (failed or {}).get("status"),
+                "AGENT_RUNTIME_ERROR",
+            )
+            return self._job_response(failed)
 
     async def run_forever(self) -> None:
         while True:

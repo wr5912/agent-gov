@@ -74,7 +74,7 @@ def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
         claude_root=settings.main_claude_root,
         claude_config_dir=settings.main_claude_root / ".claude",
         data_dir=settings.data_dir,
-        mcp_config_path=settings.main_workspace_dir / ".mcp.json",
+        mcp_config_path=settings.claude_mcp_config_path or settings.main_workspace_dir / ".mcp.json",
         project_settings_path=settings.main_workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name="runtime.main_agent",
         readable_paths=(settings.main_workspace_dir, settings.data_dir),

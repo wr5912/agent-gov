@@ -143,8 +143,8 @@ export function useFeedbackWorkspaceActions({
         source_refs: refs,
         priority: refs.length >= 5 ? "high" : "medium",
       });
-      const evalJob = await waitForAgentJob(batch.eval_case_generation_job_id);
-      setToast(`已创建优化批次 ${shortId(batch.batch_id)}${evalJob ? ` · 回归用例 ${evalJob.status}` : ""}`);
+      const evalJobId = batch.eval_case_generation_job_id;
+      setToast(`已创建优化批次 ${shortId(batch.batch_id)}${evalJobId ? ` · 回归用例后台生成中 ${shortId(evalJobId)}` : ""}`);
       setSelectedSourceIds([]);
       setSelectedBatchId(batch.batch_id);
       setActiveMenu("batches");

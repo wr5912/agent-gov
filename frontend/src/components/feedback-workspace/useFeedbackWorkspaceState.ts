@@ -43,6 +43,9 @@ const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
   optimization_batches: [],
 };
 
+const EVAL_CASE_GENERATION_TERMINAL_STATUSES = new Set(["completed", "failed", "needs_human_review", "timeout"]);
+const BATCH_BACKGROUND_REFRESH_INTERVAL_MS = 2500;
+
 export function useFeedbackWorkspaceState({
   clientConfig,
   refreshToken,
@@ -83,6 +86,19 @@ export function useFeedbackWorkspaceState({
   useEffect(() => {
     refreshWorkbench();
   }, [refreshWorkbench, refreshToken]);
+
+  useEffect(() => {
+    if (activeMenu !== "batches" || !hasActiveBatchEvalCaseGenerationJob(data)) return undefined;
+    let refreshing = false;
+    const intervalId = window.setInterval(() => {
+      if (refreshing) return;
+      refreshing = true;
+      refreshWorkbench().finally(() => {
+        refreshing = false;
+      });
+    }, BATCH_BACKGROUND_REFRESH_INTERVAL_MS);
+    return () => window.clearInterval(intervalId);
+  }, [activeMenu, data, refreshWorkbench]);
 
   const sourceRows = useMemo(() => buildSourceRows(data), [data]);
   const visibleSources = useMemo(() => filterSourceRows(sourceRows, query), [sourceRows, query]);
@@ -161,4 +177,13 @@ export function useFeedbackWorkspaceState({
     selectedBatch,
     visibleRegressionAssets,
   };
+}
+
+function hasActiveBatchEvalCaseGenerationJob(data: FeedbackWorkbenchData): boolean {
+  return data.optimization_batches.some((batch) => {
+    const jobId = batch.eval_case_generation_job?.job_id || batch.eval_case_generation_job_id;
+    if (!jobId) return false;
+    const status = String(batch.eval_case_generation_job?.status || "");
+    return !EVAL_CASE_GENERATION_TERMINAL_STATUSES.has(status);
+  });
 }

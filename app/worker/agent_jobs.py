@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 
 from app.runtime.agent_version_store import AgentVersionStore
@@ -10,6 +11,16 @@ from app.runtime.settings import get_settings
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_job_worker import AgentJobWorker
 from app.version import APP_VERSION
+
+logger = logging.getLogger(__name__)
+
+
+def configure_logging() -> None:
+    level_name = os.getenv("AGENT_JOB_WORKER_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, level_name, logging.INFO),
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
 
 
 def build_worker() -> AgentJobWorker:
@@ -31,6 +42,11 @@ def build_worker() -> AgentJobWorker:
     runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
     feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
     poll_interval = float(os.getenv("AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS", "2"))
+    logger.info(
+        "agent job worker configured data_dir=%s poll_interval_seconds=%s",
+        settings.data_dir,
+        poll_interval,
+    )
     return AgentJobWorker(
         feedback_store=feedback_store,
         run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
@@ -39,6 +55,8 @@ def build_worker() -> AgentJobWorker:
 
 
 async def main() -> None:
+    configure_logging()
+    logger.info("agent job worker starting")
     await build_worker().run_forever()
 
 

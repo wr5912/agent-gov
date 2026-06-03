@@ -51,8 +51,8 @@ export function MessageBubble({ message, onCreateFeedback }: Props) {
             {detailEvents.length > 0 ? (
               <button className="message-detail-button" type="button" onClick={() => setDetailOpen(true)}>
                 <ListTree size={14} />
-                展示全部细节
-                <span>{detailEvents.length}</span>
+                SDK 事件
+                <span>{detailEvents.length} 个</span>
               </button>
             ) : null}
             {canSubmitFeedback ? (
@@ -267,13 +267,16 @@ function ResponseDetailModal({ message, events, onClose }: { message: ChatMessag
   }, [events]);
   const activity = useMemo(() => extractAgentActivity(events), [events]);
   const eventRows = useMemo(() => events.map((event) => {
+    const eventName = detailEventName(event);
     const summary = describeEvent(event);
     const json = safeJson(event.data);
     return {
       event,
+      eventName,
+      eventTone: detailEventTone(eventName),
       summary,
       json,
-      searchText: `${event.event}\n${summary || ""}\n${json}`.toLowerCase(),
+      searchText: `${event.event}\n${eventName}\n${summary || ""}\n${json}`.toLowerCase(),
     };
   }), [events]);
   const visibleRows = normalizedQuery
@@ -286,7 +289,7 @@ function ResponseDetailModal({ message, events, onClose }: { message: ChatMessag
         <header className="modal-head">
           <div>
             <h3>回复细节</h3>
-            <p>{events.length} 个流式事件，创建于 {formatFullTime(message.createdAt)}</p>
+            <p>{events.length} 个 SDK/流式事件，创建于 {formatFullTime(message.createdAt)}</p>
           </div>
           <button className="icon-button" type="button" onClick={onClose} aria-label="关闭">
             <X size={18} />
@@ -312,13 +315,13 @@ function ResponseDetailModal({ message, events, onClose }: { message: ChatMessag
         </label>
 
         <div className="detail-timeline">
-          {visibleRows.length ? visibleRows.map(({ event, summary, json }) => {
+          {visibleRows.length ? visibleRows.map(({ event, eventName, eventTone, summary, json }) => {
             return (
-              <article className="detail-event" key={event.id}>
+              <article className={`detail-event ${eventTone}`} key={event.id}>
                 <div className="detail-event-marker" aria-hidden="true" />
                 <div className="detail-event-body">
                   <div className="detail-event-head">
-                    <strong><HighlightedText text={event.event} query={query} /></strong>
+                    <strong className="detail-event-name"><HighlightedText text={eventName} query={query} /></strong>
                     <time>{formatFullTime(event.createdAt)}</time>
                   </div>
                   {summary ? <p className="detail-event-summary"><HighlightedText text={summary} query={query} /></p> : null}
@@ -608,6 +611,30 @@ function formatFullTime(value: string) {
   } catch {
     return "";
   }
+}
+
+function detailEventName(event: StreamLogEvent): string {
+  if (!isRecord(event.data)) return event.event;
+  const dataEvent = stringValue(event.data.event);
+  if (dataEvent) return dataEvent;
+  const raw = event.data.raw;
+  if (isRecord(raw)) {
+    const rawEvent = stringValue(raw.event);
+    if (rawEvent) return rawEvent;
+  }
+  return event.event;
+}
+
+function detailEventTone(eventName: string): string {
+  const normalized = eventName.toLowerCase();
+  if (normalized.includes("error") || normalized.includes("denied") || normalized.includes("permission")) return "detail-event-error";
+  if (normalized.includes("user")) return "detail-event-user";
+  if (normalized.includes("assistant")) return "detail-event-assistant";
+  if (normalized.includes("tool") || normalized.includes("hook")) return "detail-event-tool";
+  if (normalized.includes("task")) return "detail-event-task";
+  if (normalized.includes("result") || normalized === "done") return "detail-event-result";
+  if (normalized.includes("system") || normalized === "session" || normalized.includes("init")) return "detail-event-system";
+  return "detail-event-other";
 }
 
 function describeEvent(event: StreamLogEvent): string | undefined {

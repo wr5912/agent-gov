@@ -398,6 +398,7 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
   priority?: "high" | "medium" | "low" | string;
   source_refs?: FeedbackSourceRef[];
   eval_case_generation_job_id?: string | null;
+  eval_case_generation_job?: AgentJobRecord | null;
   eval_case_generation?: FeedbackEvalCaseGenerateResponse;
   attribution_jobs?: FeedbackAnalysisJobRecord[];
   optimization_plan?: FeedbackOptimizationPlanRecord | null;

@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CheckCircle2, ChevronRight, FileText, FolderKanban, Loader2, MessageSquare, PlayCircle, ShieldCheck, XCircle } from "lucide-react";
+import {
+  BatchEvalCaseGenerationIcon,
+  batchEvalCaseGenerationState,
+  type EvalCaseGenerationState,
+} from "./BatchEvalCaseGenerationStatus";
 import { BatchFeedbackSourcesDetails } from "./BatchFeedbackDetails";
 import { BatchRegressionDetails } from "./BatchRegressionDetails";
 import {
@@ -115,24 +120,28 @@ export function BatchesPanel({
           <span className="fw-muted">{batches.length} 个</span>
         </div>
         <div className="fw-case-list">
-          {batches.map((batch) => (
-            <button
-              className={`fw-case-card ${selectedBatch?.batch_id === batch.batch_id ? "is-active" : ""}`}
-              key={batch.batch_id}
-              onClick={() => onSelectBatch(batch)}
-              type="button"
-            >
-              <span className="fw-case-main">
-                <span className="fw-case-title"><strong>{shortId(batch.batch_id)}</strong>{batch.title}</span>
-                <span className="fw-case-tags">
-                  <Pill tone={batchStatusTone(batch.status)}>{batch.status}</Pill>
-                  <Pill tone="blue">反馈 {batch.feedback_case_ids?.length || 0}</Pill>
-                  <Pill tone="green">用例 {batch.eval_case_ids?.length || 0}</Pill>
+          {batches.map((batch) => {
+            const evalCaseGeneration = batchEvalCaseGenerationState(batch);
+            return (
+              <button
+                className={`fw-case-card ${selectedBatch?.batch_id === batch.batch_id ? "is-active" : ""}`}
+                key={batch.batch_id}
+                onClick={() => onSelectBatch(batch)}
+                type="button"
+              >
+                <span className="fw-case-main">
+                  <span className="fw-case-title"><strong>{shortId(batch.batch_id)}</strong>{batch.title}</span>
+                  <span className="fw-case-tags">
+                    <Pill tone={batchStatusTone(batch.status)}>{batch.status}</Pill>
+                    <Pill tone="blue">反馈 {batch.feedback_case_ids?.length || 0}</Pill>
+                    <Pill tone="green">用例 {batch.eval_case_ids?.length || 0}</Pill>
+                    {evalCaseGeneration ? <Pill tone={evalCaseGeneration.tone}>生成 {evalCaseGeneration.label}</Pill> : null}
+                  </span>
+                  <span className="fw-case-cause">更新：{formatDate(batch.updated_at)}</span>
                 </span>
-                <span className="fw-case-cause">更新：{formatDate(batch.updated_at)}</span>
-              </span>
-            </button>
-          ))}
+              </button>
+            );
+          })}
           {!batches.length ? <div className="fw-empty-inline">暂无优化批次。先在反馈信息中选择反馈并创建批次。</div> : null}
         </div>
       </section>
@@ -258,6 +267,18 @@ function BatchResultNav({
   onChange: (view: BatchDetailView) => void;
 }) {
   const attributionTotal = Math.max(attributionJobs.length, batch.attribution_job_ids?.length || 0);
+  const evalCaseGeneration = batchEvalCaseGenerationState(batch);
+  const regressionRunStatus = batch.latest_eval_run?.result_status || batch.latest_eval_run?.status;
+  const regressionTone = regressionRunStatus ? evalStatusTone(regressionRunStatus) : evalCaseGeneration?.tone || "gray";
+  const regressionValue = regressionRunStatus
+    ? batchRegressionStatusText(batch)
+    : evalCaseGeneration
+      ? batchEvalCaseGenerationTabValue(evalCaseGeneration)
+      : batchRegressionStatusText(batch);
+  const regressionHint = evalCaseGeneration
+    ? `${evalCaseGeneration.title} · ${evalCaseGeneration.detail}`
+    : "查看和管理本批次关联的回归用例";
+  const regressionIcon = evalCaseGeneration && !regressionRunStatus ? <BatchEvalCaseGenerationIcon state={evalCaseGeneration} /> : <PlayCircle size={17} />;
   const items: Array<{
     key: BatchDetailView;
     title: string;
@@ -293,10 +314,10 @@ function BatchResultNav({
     {
       key: "regression",
       title: "回归测试",
-      value: batchRegressionStatusText(batch),
-      hint: batch.latest_eval_run ? "查看用例、执行过程、检查结果和错误信息" : "查看和管理本批次关联的回归用例",
-      tone: batch.latest_eval_run ? evalStatusTone(batch.latest_eval_run.result_status || batch.latest_eval_run.status) : "gray",
-      icon: <PlayCircle size={17} />,
+      value: regressionValue,
+      hint: batch.latest_eval_run ? "查看用例、执行过程、检查结果和错误信息" : regressionHint,
+      tone: regressionTone,
+      icon: regressionIcon,
     },
   ];
 
@@ -322,6 +343,13 @@ function BatchResultNav({
       ))}
     </div>
   );
+}
+
+function batchEvalCaseGenerationTabValue(state: EvalCaseGenerationState): string {
+  if (state.status === "completed" && state.generatedCount) return `用例${state.generatedCount}个`;
+  if (state.status === "failed") return "生成失败";
+  if (state.status === "timeout") return "生成超时";
+  return state.label;
 }
 
 function BatchAttributionDetails({

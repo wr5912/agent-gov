@@ -81,11 +81,11 @@ export function ChatPanel({
         </label>
         <label className="wide-control">
           <span>Allowed Tools</span>
-          <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="Read,Grep,Glob,mcp__sec-ops-data__*" />
+          <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="留空使用后端默认：Read,Grep,Glob,Skill,mcp__sec-ops-data__*" />
         </label>
         <label className="wide-control">
           <span>Disallowed Tools</span>
-          <input value={disallowedTools} onChange={(e) => onDisallowedToolsChange(e.target.value)} placeholder="Bash,WebFetch,WebSearch" />
+          <input value={disallowedTools} onChange={(e) => onDisallowedToolsChange(e.target.value)} placeholder="留空使用后端默认：Bash,WebFetch,WebSearch" />
         </label>
       </div>
 

@@ -130,6 +130,8 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
+    assert options.env["DATA_DIR"] == str(settings.data_dir)
+    assert options.env["CLAUDE_HOOK_AUDIT_LOG"] == str(settings.data_dir / "transcripts" / "claude-hook-audit.jsonl")
     assert options.env["AGENT_PROFILE"] == "main-agent"
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
@@ -286,7 +288,7 @@ def test_feedback_proposal_job_options_allow_global_max_turn_override(tmp_path):
     assert options.max_turns == 20
 
 
-def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_path, monkeypatch):
+def test_explicit_main_mcp_config_override_is_used_by_main_profile(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -304,7 +306,17 @@ def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_
     mcp_path = tmp_path / "mcp.override.json"
     config_dir = tmp_path / "claude-config"
     settings_path.write_text("{}", encoding="utf-8")
-    mcp_path.write_text('{"mcpServers": {}}', encoding="utf-8")
+    mcp_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {"url": "http://127.0.0.1:1/mcp", "transport": "http"},
+                    "forbidden": {"url": "http://127.0.0.1:2/mcp", "transport": "http"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
 
     base = _settings(tmp_path)
     settings = AppSettings(
@@ -326,8 +338,49 @@ def test_explicit_config_overrides_do_not_replace_runtime_profile_isolation(tmp_
 
     assert result.errors == []
     assert options.settings is None
-    assert options.mcp_servers == {}
+    assert set(options.mcp_servers) == {"sec-ops-data"}
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
+
+
+def test_main_mcp_override_does_not_replace_feedback_job_profile_mcp(tmp_path):
+    base = _settings(tmp_path)
+    main_mcp_path = tmp_path / "main.mcp.override.json"
+    main_mcp_path.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {"url": "http://127.0.0.1:1/mcp", "transport": "http"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        CLAUDE_MCP_CONFIG_PATH=main_mcp_path,
+        ENABLE_POLICY_HOOKS=True,
+    )
+    settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
+    (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "feedback-evidence": {"url": "http://127.0.0.1:2/mcp", "transport": "http"},
+                    "sec-ops-data": {"url": "http://127.0.0.1:3/mcp", "transport": "http"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+
+    assert set(options.mcp_servers) == {"feedback-evidence"}
 
 
 def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):

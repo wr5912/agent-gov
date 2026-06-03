@@ -7,7 +7,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 payload = json.load(sys.stdin)
-log_path = Path(os.getenv("CLAUDE_HOOK_AUDIT_LOG", "/data/transcripts/claude-hook-audit.jsonl"))
+data_dir = Path(os.getenv("DATA_DIR", "/data"))
+log_path = Path(os.getenv("CLAUDE_HOOK_AUDIT_LOG", str(data_dir / "transcripts" / "claude-hook-audit.jsonl")))
 log_path.parent.mkdir(parents=True, exist_ok=True)
 
 record = {

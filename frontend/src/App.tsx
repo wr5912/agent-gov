@@ -22,6 +22,11 @@ function parseCsv(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
 
+function parseOptionalCsv(value: string): string[] | undefined {
+  const items = parseCsv(value);
+  return items.length ? items : undefined;
+}
+
 function makeApiDocsUrl(apiBase: string): string {
   const base = apiBase.trim().replace(/\/$/, "");
   if (!base) return "/docs";
@@ -60,8 +65,8 @@ export default function App() {
   const [agentVersions, setAgentVersions] = useState<AgentVersionSummary[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [allowedTools, setAllowedTools] = useState("Read,Grep,Glob,mcp__sec-ops-data__*");
-  const [disallowedTools, setDisallowedTools] = useState("Bash,WebFetch,WebSearch");
+  const [allowedTools, setAllowedTools] = useState("");
+  const [disallowedTools, setDisallowedTools] = useState("");
   const [skillsMode, setSkillsMode] = useState<"all" | "default" | "none">("default");
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
@@ -291,8 +296,8 @@ export default function App() {
           agent: selectedAgent || undefined,
           skills: selectedSkills.length ? selectedSkills : undefined,
           skills_mode: skillsMode,
-          allowed_tools: parseCsv(allowedTools),
-          disallowed_tools: parseCsv(disallowedTools),
+          allowed_tools: parseOptionalCsv(allowedTools),
+          disallowed_tools: parseOptionalCsv(disallowedTools),
           max_turns: maxTurns,
           metadata: {
             client: "claude-agent-playground-ui",

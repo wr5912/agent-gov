@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select, update
@@ -120,6 +121,41 @@ class AgentJobStoreMixin:
                 return self._agent_job_to_dict(row) if row else None
         return None
 
+    def _timeout_stale_agent_jobs(self, *, limit: int = 100) -> list[JsonObject]:
+        now = utc_now()
+        now_dt = datetime.now(timezone.utc)
+        timed_out_ids: list[str] = []
+        with self.Session.begin() as db:
+            stmt = (
+                select(AgentJobModel)
+                .where(AgentJobModel.status.in_(("running", "evidence_packaging", "schema_validating")))
+                .order_by(AgentJobModel.started_at.asc(), AgentJobModel.created_at.asc())
+                .limit(limit)
+            )
+            for row in db.scalars(stmt).all():
+                base = self._parse_datetime(row.started_at or row.created_at)
+                if not base:
+                    continue
+                timeout_seconds = int(row.timeout_seconds or 300)
+                if now_dt < base + timedelta(seconds=timeout_seconds):
+                    continue
+                error_payload = {
+                    "error_code": "AGENT_TIMEOUT",
+                    "message": f"Agent job exceeded timeout_seconds={timeout_seconds}",
+                    "created_at": now,
+                    "job_id": row.job_id,
+                }
+                if not self._set_agent_job_json_row(db, row.job_id, error_json=error_payload):
+                    continue
+                if not self._append_agent_job_update_row(db, row.job_id, status="timeout", completed_at=now):
+                    continue
+                timed_out_ids.append(row.job_id)
+        timed_out = [job for job in (self.get_agent_job(job_id) for job_id in timed_out_ids) if job]
+        for job in timed_out:
+            if job.get("job_type") == "attribution":
+                self._sync_attribution_agent_job_to_batches(job, job)
+        return timed_out
+
     def complete_projected_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
         job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
@@ -143,7 +179,10 @@ class AgentJobStoreMixin:
         job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
         if job_type in {"attribution", "proposal", "batch_plan"}:
-            return self.fail_job(job_id, error_code=error_code, message=message)
+            failed = self.fail_job(job_id, error_code=error_code, message=message)
+            if job_type == "attribution":
+                self._sync_attribution_agent_job_to_batches(job, failed)
+            return failed
         elif job_type == "execution":
             return self.fail_execution_job(job_id, error_code=error_code, message=message)
         elif job_type == "regression_impact_analysis":

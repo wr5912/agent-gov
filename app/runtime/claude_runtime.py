@@ -34,6 +34,9 @@ from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
+_MISSING_SDK_SESSION_MARKER = "No conversation found with session ID"
+
+
 @dataclass
 class RuntimeRequestContext:
     session: LocalSession
@@ -137,6 +140,24 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if not errors:
             return False
         return isinstance(exc, ClaudeCodeResultError)
+
+    def _should_retry_without_sdk_resume(
+        self,
+        exc: Exception,
+        context: RuntimeRequestContext,
+        state: RuntimeQueryState,
+    ) -> bool:
+        return (
+            self.settings.enable_sdk_session_resume
+            and context.session.sdk_session_id is not None
+            and not state.messages
+            and not state.errors
+            and _MISSING_SDK_SESSION_MARKER in str(exc)
+        )
+
+    def _clear_stale_sdk_session(self, context: RuntimeRequestContext) -> None:
+        context.session.sdk_session_id = None
+        self.session_store.save(context.session)
 
     def _request_telemetry_input(
         self,
@@ -287,9 +308,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
     def _profile_env(self, profile: AgentRuntimeProfile) -> dict[str, str]:
         env = dict(os.environ)
         env.update(self.langfuse.build_env())
-        env.update(self.settings.claude_env)
+        claude_env = self.settings.claude_env
+        env.update(claude_env)
         env["HOME"] = str(profile.claude_root)
         env["CLAUDE_CONFIG_DIR"] = str(profile.claude_config_dir)
+        env["DATA_DIR"] = str(profile.data_dir)
+        if "CLAUDE_HOOK_AUDIT_LOG" not in claude_env:
+            env["CLAUDE_HOOK_AUDIT_LOG"] = str(profile.data_dir / "transcripts" / "claude-hook-audit.jsonl")
         env["AGENT_PROFILE"] = profile.name
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = f"secops-runtime/{profile.name}"
         profile.claude_root.mkdir(parents=True, exist_ok=True)
@@ -573,10 +598,20 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
-                    options = self._build_options(req, context.session)
-                    stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                    async for msg in query(prompt=stream, options=options):
-                        self._track_query_message(msg, state, ResultMessage)
+                    async def execute_query() -> None:
+                        options = self._build_options(req, context.session)
+                        prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                        async for msg in query(prompt=prompt_stream, options=options):
+                            self._track_query_message(msg, state, ResultMessage)
+
+                    try:
+                        await execute_query()
+                    except Exception as exc:
+                        if not self._should_retry_without_sdk_resume(exc, context, state):
+                            raise
+                        self._clear_stale_sdk_session(context)
+                        state = RuntimeQueryState(sdk_session_id=None)
+                        await execute_query()
                 except Exception as exc:
                     if not self._should_suppress_exception(exc, state.errors):
                         state.errors.append(f"{exc.__class__.__name__}: {exc}")
@@ -617,29 +652,41 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
-                    options = self._build_options(req, context.session)
-                    stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                    async for msg in query(prompt=stream, options=options):
-                        event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
-                        yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
-                        if is_result:
-                            agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
-                            yield {
-                                "event": "result",
-                                "data": {
-                                    "session_id": context.session.session_id,
-                                    "sdk_session_id": state.sdk_session_id,
-                                    "run_id": context.run_id,
-                                    "agent_version_id": context.agent_version_id,
-                                    "alert_id": req.alert_id,
-                                    "case_id": req.case_id,
-                                    "agent_activity": agent_activity,
-                                    "usage": to_plain(state.usage),
-                                    "total_cost_usd": state.total_cost_usd,
-                                    "stop_reason": state.stop_reason,
-                                    "errors": result_errors,
-                                },
-                            }
+                    async def emit_query_events() -> AsyncIterator[JsonObject]:
+                        options = self._build_options(req, context.session)
+                        prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                        async for msg in query(prompt=prompt_stream, options=options):
+                            event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
+                            yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
+                            if is_result:
+                                agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
+                                yield {
+                                    "event": "result",
+                                    "data": {
+                                        "session_id": context.session.session_id,
+                                        "sdk_session_id": state.sdk_session_id,
+                                        "run_id": context.run_id,
+                                        "agent_version_id": context.agent_version_id,
+                                        "alert_id": req.alert_id,
+                                        "case_id": req.case_id,
+                                        "agent_activity": agent_activity,
+                                        "usage": to_plain(state.usage),
+                                        "total_cost_usd": state.total_cost_usd,
+                                        "stop_reason": state.stop_reason,
+                                        "errors": result_errors,
+                                    },
+                                }
+
+                    try:
+                        async for item in emit_query_events():
+                            yield item
+                    except Exception as exc:
+                        if not self._should_retry_without_sdk_resume(exc, context, state):
+                            raise
+                        self._clear_stale_sdk_session(context)
+                        state = RuntimeQueryState(sdk_session_id=None)
+                        async for item in emit_query_events():
+                            yield item
                 except Exception as exc:
                     if not self._should_suppress_exception(exc, state.errors):
                         state.errors.append(f"{exc.__class__.__name__}: {exc}")

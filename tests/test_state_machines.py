@@ -25,6 +25,8 @@ def test_job_state_machine_rejects_completed_reopen():
 def test_agent_job_state_machine_rejects_completed_reopen():
     validate_transition("agent_job", "queued", "running")
     validate_transition("agent_job", "running", "schema_validating")
+    validate_transition("agent_job", "schema_validating", "timeout")
+    validate_transition("agent_job", "evidence_packaging", "timeout")
     validate_transition("agent_job", "schema_validating", "completed")
     with pytest.raises(StateTransitionError, match="completed -> running"):
         validate_transition("agent_job", "completed", "running")

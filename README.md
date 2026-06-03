@@ -144,7 +144,7 @@ http://localhost:55173
 
 这个 UI 不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。聊天、反馈闭环、评估和版本管理都通过后端 Runtime API 完成。
 
-每条 Claude Agent 回复的“回复细节”会保留完整流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。
+每条 Claude Agent 回复的“回复细节”会保留完整 SDK/流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。
 
 ## 反馈优化闭环
 
@@ -512,6 +512,8 @@ cp docker/.env.local.example docker/.env.local
 ```
 
 编辑 `docker/.env.local`，把 `PROJECT_ROOT` 改为当前仓库绝对路径即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向 `docker/volume/`，其他 profile workspace/root 会由后端自动推导。
+
+本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `docker/volume/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置，并通过 `docker/.env.local` 的 `CLAUDE_MCP_CONFIG_PATH` 指向它。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免 `localhost`、宿主机 IP 或 `host.docker.internal` 请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
 
 如果刚从 Docker API/worker 切换到 PyCharm 本机调试，先修复后端共享 volume 的宿主机权限。该脚本只处理 API/worker 共享的 workspace、data 和 `claude-roots/*`，不处理 Langfuse 数据卷：
 

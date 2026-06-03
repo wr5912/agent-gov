@@ -139,30 +139,15 @@ class FeedbackBatchStoreMixin:
 
     def record_batch_attribution_jobs(self, batch_id: str, jobs: list[JsonObject]) -> Optional[JsonObject]:
         job_ids = self._unique_strings([job.get("job_id") for job in jobs])
-        completed = [job for job in jobs if job.get("status") == "completed"]
-        failed = [job for job in jobs if job.get("status") in {"failed", "needs_human_review", "timeout"}]
-        running = [job for job in jobs if job.get("status") in JOB_IN_PROGRESS_STATES]
         batch = self.find_optimization_batch(batch_id)
-        expected_total = len((batch or {}).get("feedback_case_ids") or [])
-        total = max(expected_total, len(jobs))
-        if total and len(completed) == total:
-            status = "attribution_completed"
-        elif failed:
-            status = "needs_human_review"
-        else:
-            status = "attribution_running"
+        status = self._batch_attribution_status(batch or {}, jobs)
         return self._update_batch(
             batch_id,
             status=status,
             fields={
                 "attribution_job_ids": job_ids,
                 "attribution_jobs": jobs,
-                "attribution_summary": {
-                    "total": total,
-                    "completed": len(completed),
-                    "running": len(running),
-                    "needs_review_or_failed": len(failed),
-                },
+                "attribution_summary": self._batch_attribution_summary(batch or {}, jobs),
             },
         )
 
@@ -306,10 +291,16 @@ class FeedbackBatchStoreMixin:
         payload = FeedbackOptimizationBatchRecord.from_row(row).to_payload()
         task_id = self._string(payload.get("optimization_task_id"))
         execution_job_id = self._string(payload.get("execution_job_id"))
+        eval_case_generation_job_id = self._string(payload.get("eval_case_generation_job_id"))
         eval_run_id = self._string(payload.get("eval_run_id"))
         plan = payload.get("optimization_plan") if isinstance(payload.get("optimization_plan"), dict) else None
         if plan is not None:
             payload["optimization_plan"] = self._normalize_plan_task_collections(payload, plan)
+        if eval_case_generation_job_id:
+            eval_case_generation_job = self.get_agent_job(eval_case_generation_job_id)
+            if eval_case_generation_job:
+                payload["eval_case_generation_job"] = eval_case_generation_job
+        payload = self._refresh_batch_attribution_jobs(payload)
         task = self.find_task(task_id) if task_id else None
         if task:
             payload["optimization_task"] = task
@@ -326,6 +317,56 @@ class FeedbackBatchStoreMixin:
         if eval_run_id and not isinstance(payload.get("latest_eval_run"), dict):
             payload["latest_eval_run"] = self.get_eval_run(eval_run_id)
         return payload
+
+    def _refresh_batch_attribution_jobs(self, payload: JsonObject) -> JsonObject:
+        job_ids = self._unique_strings(payload.get("attribution_job_ids") or [])
+        if not job_ids:
+            return payload
+        jobs = [job for job in (self.get_job(job_id) for job_id in job_ids) if job]
+        if not jobs:
+            return payload
+        refreshed = dict(payload)
+        refreshed["attribution_jobs"] = jobs
+        refreshed["attribution_summary"] = self._batch_attribution_summary(refreshed, jobs)
+        if self._batch_can_project_attribution_status(refreshed):
+            refreshed["status"] = self._batch_attribution_status(refreshed, jobs)
+        return refreshed
+
+    def _batch_attribution_summary(self, batch: JsonObject, jobs: list[JsonObject]) -> JsonObject:
+        completed = [job for job in jobs if job.get("status") == "completed"]
+        failed = [job for job in jobs if job.get("status") in {"failed", "needs_human_review", "timeout"}]
+        running = [job for job in jobs if job.get("status") in JOB_IN_PROGRESS_STATES]
+        expected_total = len(batch.get("feedback_case_ids") or [])
+        total = max(expected_total, len(jobs))
+        return {
+            "total": total,
+            "completed": len(completed),
+            "running": len(running),
+            "needs_review_or_failed": len(failed),
+        }
+
+    def _batch_attribution_status(self, batch: JsonObject, jobs: list[JsonObject]) -> str:
+        summary = self._batch_attribution_summary(batch, jobs)
+        if summary["total"] and summary["completed"] == summary["total"]:
+            return "attribution_completed"
+        if summary["needs_review_or_failed"]:
+            return "needs_human_review"
+        return "attribution_running"
+
+    def _batch_can_project_attribution_status(self, payload: JsonObject) -> bool:
+        if payload.get("optimization_plan") or payload.get("optimization_plan_job_id"):
+            return False
+        if payload.get("optimization_task_id") or payload.get("execution_job_id") or payload.get("eval_run_id"):
+            return False
+        if payload.get("optimization_task") or payload.get("execution_job") or payload.get("latest_eval_run"):
+            return False
+        return self._string(payload.get("status")) in {
+            "draft",
+            "attribution_running",
+            "attribution_completed",
+            "attribution_failed",
+            "needs_human_review",
+        }
 
     def _update_batch(self, batch_id: str, *, status: str, fields: JsonObject) -> Optional[JsonObject]:
         with self.Session.begin() as db:

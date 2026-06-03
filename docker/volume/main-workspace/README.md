@@ -76,6 +76,8 @@ export RESPONSE_EXECUTION_ENABLED=false
 
 不要把 `.env`、`CLAUDE.local.md`、`.claude/settings.local.json`、密钥或 Claude 全局状态提交到仓库。
 
+本机后端调试可使用 `.mcp.local.json` 覆盖默认 MCP 地址，并由 runtime 的 `CLAUDE_MCP_CONFIG_PATH` 指向该文件。该文件属于本地私有配置，不应提交；生产环境应由部署配置重新注入 MCP 服务地址。
+
 ## 内置 MCP 服务
 
 `.mcp.json` 默认配置为网络安全运营模拟数据 HTTP MCP 服务：

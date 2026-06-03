@@ -363,6 +363,7 @@ class AgentJobStoreMixin:
                 "completed_at": completed_at,
                 "status": output.get("status") or "completed",
                 "job_id": job["job_id"],
+                "error_json": None,
             }
             record = (
                 RegressionImpactAnalysisRecord.from_row(row).transition_to(str(payload["status"]), fields=payload)

@@ -321,6 +321,7 @@ class AgentJobQueueStoreMixin:
                 "completed_at": None,
                 "status": "pending",
                 "job_id": job["job_id"],
+                "error_json": None,
             }
             record = (
                 RegressionImpactAnalysisRecord.from_row(row).transition_to("pending", fields=payload)

@@ -248,6 +248,46 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     assert impact["recommendations"] == ["继续保留当前回归资产。"]
 
 
+def test_regression_impact_force_rerun_clears_previous_error_json(tmp_path):
+    store, _ = _store(tmp_path)
+    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="manual_feedback_dataset")
+    failed_job = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
+
+    store.complete_projected_agent_job(
+        failed_job,
+        {
+            "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+            "eval_run_id": eval_run["eval_run_id"],
+            "status": "completed",
+            "impacted_assets": [],
+        },
+    )
+    failed = store.get_regression_impact_analysis(eval_run["eval_run_id"])
+
+    rerun_job = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
+    pending = store.get_regression_impact_analysis(eval_run["eval_run_id"])
+    store.complete_projected_agent_job(
+        rerun_job,
+        {
+            "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
+            "eval_run_id": eval_run["eval_run_id"],
+            "status": "completed",
+            "result_status": "passed",
+            "gate_result": {"status": "passed"},
+            "impacted_assets": [],
+            "recommendations": ["重跑通过。"],
+        },
+    )
+    completed = store.get_regression_impact_analysis(eval_run["eval_run_id"])
+
+    assert failed["status"] == "failed"
+    assert failed["error_json"]
+    assert pending["status"] == "pending"
+    assert pending["error_json"] is None
+    assert completed["status"] == "completed"
+    assert completed["error_json"] is None
+
+
 def test_regression_impact_record_rejects_unidentified_impacted_asset():
     with pytest.raises(ValidationError):
         RegressionImpactAnalysisRecord.model_validate(

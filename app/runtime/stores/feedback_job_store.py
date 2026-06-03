@@ -141,7 +141,7 @@ class FeedbackJobStoreMixin:
                 "attribution_job_id": attribution_job_id,
                 "attribution_output_path": attribution_output_path,
                 "main_agent_version_id": self._current_agent_version_id(),
-                "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
+                **self._agent_git_paths_context(),
                 "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
                 "target_policy": self._execution_target_policy(),
                 "task": "generate_optimization_proposals",

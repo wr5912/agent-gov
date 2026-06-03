@@ -15,15 +15,17 @@ from app.runtime.schemas import (
     RegressionPlanResponse,
 )
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_governance import AgentGovernanceService
 
 
 def register_batch_regression_routes(
     router: APIRouter,
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
+    agent_governance: AgentGovernanceService,
 ) -> None:
     _register_batch_regression_plan_routes(router, feedback_store)
-    _register_batch_regression_run_routes(router, feedback_store, runtime)
+    _register_batch_regression_run_routes(router, feedback_store, runtime, agent_governance)
     _register_batch_regression_gate_routes(router, feedback_store, runtime)
 
 
@@ -55,6 +57,7 @@ def _register_batch_regression_run_routes(
     router: APIRouter,
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
+    agent_governance: AgentGovernanceService,
 ) -> None:
     @router.post(
         "/feedback-optimization-batches/{batch_id}/regression-runs",
@@ -69,23 +72,29 @@ def _register_batch_regression_run_routes(
         batch = ensure_found(batch, "Feedback optimization batch not found")
         task_id = str(batch.get("optimization_task_id") or "")
         task = feedback_store.find_task(task_id)
-        if not task or not task.get("applied_agent_version_id"):
-            raise_conflict("Batch optimization must be applied before regression validation")
+        change_set = (task or {}).get("latest_change_set") if isinstance((task or {}).get("latest_change_set"), dict) else None
+        if not task or not change_set or not change_set.get("candidate_commit_sha"):
+            raise_conflict("Batch optimization must have a candidate Agent change set before regression validation")
         plan = feedback_store.get_regression_plan(req.regression_plan_id)
         if not plan or plan.get("batch_id") != batch_id:
             raise_conflict("Regression plan does not belong to this batch")
         eval_case_ids = [str(item) for item in plan.get("eval_case_ids") or [] if item]
         if not eval_case_ids:
             raise_conflict("No approved active eval cases found for this regression plan")
+        agent_governance.mark_regression_running(str(change_set["change_set_id"]), eval_run_id="pending")
         result = await runtime.run_feedback_eval(
             eval_case_ids=eval_case_ids,
             optimization_task_id=task_id,
             source="optimization_batch_regression",
             regression_plan_id=req.regression_plan_id,
+            change_set_id=str(change_set["change_set_id"]),
+            candidate_commit_sha=str(change_set["candidate_commit_sha"]),
+            candidate_worktree_path=str(change_set["worktree_path"]),
         )
         if not result:
             raise_conflict("Regression run could not be started")
         eval_run = EvalRunResponse.model_validate(result)
+        agent_governance.complete_regression(str(change_set["change_set_id"]), eval_run=eval_run.model_dump(mode="json"))
         impact_job = runtime.queue_regression_impact_analysis_job(eval_run.eval_run_id)
         impact = feedback_store.get_regression_impact_analysis(eval_run.eval_run_id)
         batch = feedback_store.record_batch_regression_result(batch_id, eval_run.model_dump(mode="json"))

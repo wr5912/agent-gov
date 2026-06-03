@@ -68,7 +68,7 @@ def proposal_prompt(input_path: str, *, input_payload: JsonObject | None = None,
         f"输入文件：{input_path}\n\n"
         "执行方式：如果提示词提供了 proposal_input_json 和 attribution_output_json，则直接使用这些内容，"
         "不要调用工具。否则先读取输入文件，再读取其中的 attribution_output_path；如需确认当前版本，最多再读取 "
-        "main_agent_manifest_path。不要继续探索 workspace，不要读取未在输入文件列出的路径。\n\n"
+        "main_agent_repository_path 对应的 Git 仓库当前提交。不要继续探索 workspace，不要读取未在输入文件列出的路径。\n\n"
         f"{NATURAL_LANGUAGE_CHINESE_RULE}"
         "其中 proposals[].title/recommendation/expected_effect/validation/risk、"
         "external_guidance[].recommendation/reason、no_action_reason 必须使用简体中文。\n\n"

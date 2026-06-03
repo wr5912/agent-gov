@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.runtime.errors import AgentVersionIntegrityError, BusinessRuleViolation
+from app.runtime.errors import BusinessRuleViolation
 from test_api_execution_optimizer import _load_app
 
 
@@ -69,34 +69,29 @@ def test_feedback_workbench_preserves_domain_error_code(monkeypatch, tmp_path):
     }
 
 
-def test_agent_version_route_not_found_returns_structured_error(monkeypatch, tmp_path):
+def test_agent_change_set_route_not_found_returns_structured_error(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
 
     with TestClient(module.app) as client:
-        response = client.get("/api/agent-versions/main/agent-version-missing")
+        response = client.get("/api/agent-change-sets/agc-missing")
 
     assert response.status_code == 404
     assert response.json() == {
-        "detail": "Agent version not found",
+        "detail": "Agent change set not found",
         "error_code": "NOT_FOUND",
     }
 
 
-def test_agent_version_route_conflict_returns_structured_error(monkeypatch, tmp_path):
+def test_agent_change_set_publish_conflict_returns_structured_error(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
 
-    def fail_restore(version_id, *, note=None):
-        raise AgentVersionIntegrityError("Agent version bundle hash mismatch")
-
-    monkeypatch.setattr(module.agent_version_store, "restore_version", fail_restore)
-
     with TestClient(module.app) as client:
-        response = client.post("/api/agent-versions/main/agent-version-bad/rollback", json={})
+        response = client.post("/api/agent-change-sets/agc-missing/publish", json={})
 
-    assert response.status_code == 409
+    assert response.status_code == 404
     assert response.json() == {
-        "detail": "Agent version bundle hash mismatch",
-        "error_code": "AGENT_VERSION_INTEGRITY_ERROR",
+        "detail": "Agent change set not found",
+        "error_code": "NOT_FOUND",
     }
 
 

@@ -17,7 +17,7 @@
 
 - 公开 API / OpenAPI / 前端生成类型是否保留、改名、删除或迁移。
 - 配置、环境变量、Docker 路径和 `config/*` 是否保留、改名、删除或迁移。
-- 持久化数据、SQLite schema、`docker/volume/` 历史路径和迁移脚本如何处理。
+- 持久化数据、SQLite schema、`${HOME}/volume-agent-runtime` 默认路径、`docker/volume/` 历史路径和迁移脚本如何处理。
 - README、docs、测试和治理硬门如何验证新契约。
 - 内部兼容 facade、shim、旧工作流分支、不可达 UI 和一次性调试脚本是否删除；如保留，必须写明明确期限或后续清理条件。
 
@@ -47,7 +47,7 @@
 ## 本仓库产品与环境不变量
 
 - 离线模式是产品不变量但始终会提供本地化LLM模型；必需工作流不得依赖远程服务。
-- Docker 持久化路径统一在 `docker/volume/` 下。
+- Docker 持久化默认宿主机根目录统一为 `${HOME}/volume-agent-runtime`；`docker/volume/` 只作为迁移来源或显式兼容路径。
 - 环境变量放在 `docker/.env`；应用配置放在 `config/*.yaml` 或 `config/*.json`。
 - 不得将 API key、MCP header、数据库凭据或本机私有路径写入仓库。
 

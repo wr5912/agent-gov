@@ -1,18 +1,28 @@
 import type { components } from "./api";
 
 type OpenApiAgentInfo = components["schemas"]["AgentInfo"];
+type OpenApiAgentChangeSetActionRequest = components["schemas"]["AgentChangeSetActionRequest"];
+type OpenApiAgentChangeSetCreateRequest = components["schemas"]["AgentChangeSetCreateRequest"];
+type OpenApiAgentChangeSetEventResponse = components["schemas"]["AgentChangeSetEventResponse"];
+type OpenApiAgentChangeSetPublishRequest = components["schemas"]["AgentChangeSetPublishRequest"];
+type OpenApiAgentChangeSetRegressionRunRequest = components["schemas"]["AgentChangeSetRegressionRunRequest"];
+type OpenApiAgentChangeSetResponse = components["schemas"]["AgentChangeSetResponse"];
+type OpenApiAgentGitDiffEntryResponse = components["schemas"]["AgentGitDiffEntryResponse"];
+type OpenApiAgentGitDiffResponse = components["schemas"]["AgentGitDiffResponse"];
+type OpenApiAgentGitFileDiffResponse = components["schemas"]["AgentGitFileDiffResponse"];
+type OpenApiAgentGitFileEntryResponse = components["schemas"]["AgentGitFileEntryResponse"];
+type OpenApiAgentGitRefResponse = components["schemas"]["AgentGitRefResponse"];
+type OpenApiAgentReleaseResponse = components["schemas"]["AgentReleaseResponse"];
+type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRollbackRequest"];
+type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentRepositoryStatusResponse"];
 type OpenApiAgentVersionDiffEntryResponse = components["schemas"]["AgentVersionDiffEntryResponse"];
 type OpenApiAgentVersionDiffResponse = components["schemas"]["AgentVersionDiffResponse"];
-type OpenApiAgentVersionFileDiffResponse = components["schemas"]["AgentVersionFileDiffResponse"];
 type OpenApiAgentVersionFileEntryResponse = components["schemas"]["AgentVersionFileEntryResponse"];
-type OpenApiAgentVersionManifestResponse = components["schemas"]["AgentVersionManifestResponse"];
-type OpenApiAgentVersionRestoreRequest = components["schemas"]["AgentVersionRestoreRequest"];
-type OpenApiAgentVersionRestoreResponse = components["schemas"]["AgentVersionRestoreResponse"];
-type OpenApiAgentVersionSnapshotRequest = components["schemas"]["AgentVersionSnapshotRequest"];
 type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
 type OpenApiChatRequest = components["schemas"]["ChatRequest"];
 type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
 type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
+type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiRuntimeHealth = components["schemas"]["RuntimeHealthResponse"];
 type OpenApiSessionInfo = components["schemas"]["SessionInfo"];
 type OpenApiSkillInfo = components["schemas"]["SkillInfo"];
@@ -23,6 +33,38 @@ export type SkillInfo = OpenApiSkillInfo;
 export type SessionInfo = OpenApiSessionInfo;
 export type ConfigMappingItem = OpenApiConfigMappingItem;
 export type ConfigMappingResponse = OpenApiConfigMappingResponse;
+export type EvalRunResponse = OpenApiEvalRunResponse;
+export type AgentRepositoryStatus = OpenApiAgentRepositoryStatusResponse;
+export type AgentGitRef = OpenApiAgentGitRefResponse;
+export type AgentGitFileEntry = OpenApiAgentGitFileEntryResponse;
+export type AgentGitDiffEntry = OpenApiAgentGitDiffEntryResponse;
+export type AgentGitDiff = Omit<OpenApiAgentGitDiffResponse, "added" | "modified" | "deleted" | "unchanged_count"> & {
+  added: AgentGitFileEntry[];
+  modified: AgentGitDiffEntry[];
+  deleted: AgentGitFileEntry[];
+  unchanged_count: number;
+};
+export type AgentGitFileDiff = Omit<OpenApiAgentGitFileDiffResponse, "status" | "before" | "after"> & {
+  from_version_id: string;
+  to_version_id: string;
+  path: string;
+  archive_path: string;
+  status: "added" | "modified" | "deleted" | "unchanged" | "missing" | "binary_or_too_large" | string;
+  before?: AgentGitFileEntry | null;
+  after?: AgentGitFileEntry | null;
+  unified_diff: string;
+  is_text: boolean;
+  truncated: boolean;
+  reason?: string | null;
+};
+export type AgentChangeSet = OpenApiAgentChangeSetResponse;
+export type AgentChangeSetEvent = OpenApiAgentChangeSetEventResponse;
+export type AgentRelease = OpenApiAgentReleaseResponse;
+export type AgentChangeSetCreateRequest = OpenApiAgentChangeSetCreateRequest;
+export type AgentChangeSetActionRequest = OpenApiAgentChangeSetActionRequest;
+export type AgentChangeSetRegressionRunRequest = OpenApiAgentChangeSetRegressionRunRequest;
+export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
+export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 
 export type ChatRequest = OpenApiChatRequest;
 
@@ -77,35 +119,9 @@ export interface RuntimeClientConfig {
 export type AgentVersionSummary = OpenApiAgentVersionSummaryResponse;
 export type AgentVersionFileEntry = OpenApiAgentVersionFileEntryResponse;
 export type AgentVersionDiffEntry = OpenApiAgentVersionDiffEntryResponse;
-export type AgentVersionManifest = Omit<OpenApiAgentVersionManifestResponse, "files"> & {
-  files?: AgentVersionFileEntry[];
-};
-export type AgentVersionSnapshotRequest = OpenApiAgentVersionSnapshotRequest;
-export type AgentVersionRestoreRequest = OpenApiAgentVersionRestoreRequest;
-export type AgentVersionRestoreResponse = Omit<
-  OpenApiAgentVersionRestoreResponse,
-  "restored_from_version" | "pre_restore_version" | "current_version"
-> & {
-  restored_from_version: AgentVersionSummary;
-  pre_restore_version: AgentVersionSummary;
-  current_version: AgentVersionSummary;
-};
 export type AgentVersionDiff = Omit<OpenApiAgentVersionDiffResponse, "added" | "modified" | "deleted" | "unchanged_count"> & {
   added: AgentVersionFileEntry[];
   modified: AgentVersionDiffEntry[];
   deleted: AgentVersionFileEntry[];
   unchanged_count: number;
-};
-export type AgentVersionFileDiff = Omit<OpenApiAgentVersionFileDiffResponse, "status" | "before" | "after"> & {
-  from_version_id: string;
-  to_version_id: string;
-  path: string;
-  archive_path: string;
-  status: "added" | "modified" | "deleted" | "unchanged" | "missing" | "binary_or_too_large" | string;
-  before?: AgentVersionFileEntry | null;
-  after?: AgentVersionFileEntry | null;
-  unified_diff: string;
-  is_text: boolean;
-  truncated: boolean;
-  reason?: string | null;
 };

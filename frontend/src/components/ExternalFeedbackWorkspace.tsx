@@ -22,8 +22,10 @@ export function ExternalFeedbackWorkspace({
   clientConfig,
   runtimeContext,
   monitoringConfig,
-  currentAgentVersion,
-  agentVersions = [],
+  agentRepository,
+  currentAgentRef,
+  agentChangeSets = [],
+  agentReleases = [],
   versionLoading = false,
   versionError,
   onRefreshVersions,
@@ -96,7 +98,7 @@ export function ExternalFeedbackWorkspace({
         {visibleMenuItems.map((item) => (
           <button className={activeMenu === item.key ? "active" : ""} key={item.key} onClick={() => setActiveMenu(item.key)} type="button">
             {item.label}
-            {item.key === "versions" && agentVersions.length > 0 ? <span className="fw-menu-badge">{agentVersions.length}</span> : null}
+            {item.key === "versions" && agentChangeSets.length > 0 ? <span className="fw-menu-badge">{agentChangeSets.length}</span> : null}
           </button>
         ))}
       </aside>
@@ -182,8 +184,10 @@ export function ExternalFeedbackWorkspace({
         {activeMenu === "versions" ? (
           <AgentVersionsWorkspace
             clientConfig={clientConfig}
-            currentVersion={currentAgentVersion || null}
-            versions={agentVersions}
+            repository={agentRepository || null}
+            currentRef={currentAgentRef || null}
+            changeSets={agentChangeSets}
+            releases={agentReleases}
             loading={versionLoading}
             lastError={versionError}
             onRefresh={onRefreshVersions || (() => undefined)}

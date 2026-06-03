@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Awaitable, Callable, Optional, cast
 
 from app.runtime.json_types import JsonObject
@@ -8,6 +9,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import ChatRequest, ChatResponse, EvalRunResponse
 
 RunChat = Callable[[ChatRequest], Awaitable[ChatResponse]]
+RunCandidateChat = Callable[[ChatRequest, Path, str, str], Awaitable[ChatResponse]]
 
 
 class FeedbackEvalRunner:
@@ -19,10 +21,12 @@ class FeedbackEvalRunner:
         feedback_store: FeedbackStore,
         run_chat: RunChat,
         current_agent_version_id: Callable[[], Optional[str]],
+        run_candidate_chat: RunCandidateChat | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.run_chat = run_chat
         self.current_agent_version_id = current_agent_version_id
+        self.run_candidate_chat = run_candidate_chat
 
     async def run_feedback_eval(
         self,
@@ -32,6 +36,9 @@ class FeedbackEvalRunner:
         source: str = "manual_feedback_dataset",
         regression_plan_id: Optional[str] = None,
         existing_eval_run_id: Optional[str] = None,
+        change_set_id: Optional[str] = None,
+        candidate_commit_sha: Optional[str] = None,
+        candidate_worktree_path: Optional[str] = None,
     ) -> EvalRunResponse | None:
         if regression_plan_id and not eval_case_ids:
             plan = self.feedback_store.get_regression_plan(regression_plan_id)
@@ -45,6 +52,9 @@ class FeedbackEvalRunner:
             source=source,
             regression_plan_id=regression_plan_id,
             existing_eval_run_id=existing_eval_run_id,
+            change_set_id=change_set_id,
+            candidate_commit_sha=candidate_commit_sha,
+            candidate_worktree_path=candidate_worktree_path,
         )
         if not eval_run:
             return None
@@ -58,10 +68,8 @@ class FeedbackEvalRunner:
             for eval_case in eval_cases:
                 result: ChatResponse | None = None
                 try:
-                    result = await asyncio.wait_for(
-                        self.run_chat(self._eval_chat_request(eval_run, eval_case, optimization_task_id, regression_plan_id)),
-                        timeout=300,
-                    )
+                    request = self._eval_chat_request(eval_run, eval_case, optimization_task_id, regression_plan_id)
+                    result = await asyncio.wait_for(self._run_eval_chat(request, change_set_id, candidate_commit_sha, candidate_worktree_path), timeout=300)
                     status, score, check_results = self._evaluate_eval_case(eval_case, result)
                     self.feedback_store.append_eval_run_item(
                         eval_run.eval_run_id,
@@ -99,16 +107,22 @@ class FeedbackEvalRunner:
         source: str,
         regression_plan_id: Optional[str],
         existing_eval_run_id: Optional[str],
+        change_set_id: Optional[str],
+        candidate_commit_sha: Optional[str],
+        candidate_worktree_path: Optional[str],
     ) -> EvalRunResponse | None:
         if existing_eval_run_id:
             return self._eval_run_response(self.feedback_store.get_eval_run(existing_eval_run_id))
         return self._eval_run_response(
             self.feedback_store.create_eval_run(
                 eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
-                agent_version_id=self.current_agent_version_id(),
+                agent_version_id=candidate_commit_sha or self.current_agent_version_id(),
                 optimization_task_id=optimization_task_id,
                 source=source,
                 regression_plan_id=regression_plan_id,
+                change_set_id=change_set_id,
+                candidate_commit_sha=candidate_commit_sha,
+                candidate_worktree_path=candidate_worktree_path,
             )
         )
 
@@ -129,8 +143,22 @@ class FeedbackEvalRunner:
                 "eval_case_id": eval_case["eval_case_id"],
                 "optimization_task_id": optimization_task_id,
                 "regression_plan_id": regression_plan_id,
+                "change_set_id": eval_run.change_set_id,
+                "candidate_commit_sha": eval_run.candidate_commit_sha,
+                "candidate_worktree_path": eval_run.candidate_worktree_path,
             },
         )
+
+    async def _run_eval_chat(
+        self,
+        request: ChatRequest,
+        change_set_id: Optional[str],
+        candidate_commit_sha: Optional[str],
+        candidate_worktree_path: Optional[str],
+    ) -> ChatResponse:
+        if change_set_id and candidate_commit_sha and candidate_worktree_path and self.run_candidate_chat:
+            return await self.run_candidate_chat(request, Path(candidate_worktree_path), candidate_commit_sha, change_set_id)
+        return await self.run_chat(request)
 
     def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[JsonObject]:
         if eval_case_ids:

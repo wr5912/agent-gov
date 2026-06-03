@@ -4,6 +4,7 @@ import os
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Optional
 
 from .agent_profiles import (
@@ -11,11 +12,12 @@ from .agent_profiles import (
     PROFILE_VERSION_IDS,
     AgentRuntimeProfile,
     build_profiles,
+    candidate_main_profile,
 )
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_loader import load_programmatic_agents
 from .agent_profile_versions import profile_version_snapshot
-from .agent_version_store import AgentVersionStore
+from .agent_git_store import AgentVersionProvider
 from .errors import RuntimeUnavailableError
 from .runtime_db import utc_now
 from .stores.feedback_store import FeedbackStore
@@ -75,7 +77,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         settings: AppSettings,
         session_store: LocalSessionStore,
         feedback_store: FeedbackStore | None = None,
-        agent_version_store: AgentVersionStore | None = None,
+        agent_version_store: AgentVersionProvider | None = None,
     ) -> None:
         self.settings = settings
         self.session_store = session_store
@@ -105,6 +107,12 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 feedback_store=feedback_store,
                 run_chat=self.run,
                 current_agent_version_id=self._current_agent_version_id,
+                run_candidate_chat=lambda req, worktree, commit, change_set: self.run_candidate(
+                    req,
+                    worktree_path=worktree,
+                    candidate_commit_sha=commit,
+                    change_set_id=change_set,
+                ),
             )
             if feedback_store is not None
             else None
@@ -321,10 +329,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
         return env
 
-    def _build_options(self, req: ChatRequest, session: LocalSession) -> Any:
+    def _build_options(self, req: ChatRequest, session: LocalSession, *, profile: AgentRuntimeProfile | None = None) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
-        profile = self.profiles[MAIN_AGENT_PROFILE]
+        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         env = self._profile_env(profile)
         if self.settings.provider_api_key:
             env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
@@ -425,11 +433,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             job_input=job_input,
         )
 
-    def _new_runtime_request_context(self, req: ChatRequest) -> RuntimeRequestContext:
+    def _new_runtime_request_context(self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None) -> RuntimeRequestContext:
         self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
-        agent_version_id = self._current_agent_version_id()
+        agent_version_id = agent_version_id_override if agent_version_id_override is not None else self._current_agent_version_id()
         created_at = utc_now()
         prompt = self._build_prompt(req)
         telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
@@ -442,12 +450,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             telemetry_input=telemetry_input,
         )
 
-    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str) -> JsonObject:
+    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str, *, profile: AgentRuntimeProfile | None = None) -> JsonObject:
         return {
             "api_session_id": context.session.session_id,
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
             "mode": mode,
+            "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
         }
 
     def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
@@ -579,27 +588,34 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             errors=state.errors,
         )
 
-    async def run(self, req: ChatRequest) -> ChatResponse:
+    async def run(
+        self,
+        req: ChatRequest,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+        agent_version_id_override: Optional[str] = None,
+    ) -> ChatResponse:
         from claude_agent_sdk import ResultMessage, query
 
-        context = self._new_runtime_request_context(req)
+        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
+        context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override)
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         with self.langfuse.start_observation(
             as_type="span",
-            name=self._main_observation_name(),
+            name=profile.langfuse_observation_name,
             input=context.telemetry_input,
-            metadata=self._runtime_observation_metadata(context, "non_stream"),
+            metadata=self._runtime_observation_metadata(context, "non_stream", profile=profile),
         ) as root_span:
             context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
             with self.langfuse.start_observation(
                 as_type="generation",
-                name=f"{self._main_observation_name()}.claude_sdk_query",
+                name=f"{profile.langfuse_observation_name}.claude_sdk_query",
                 input=self._generation_input(req, context),
                 model=req.model or self.settings.agent_model,
             ) as generation:
                 try:
                     async def execute_query() -> None:
-                        options = self._build_options(req, context.session)
+                        options = self._build_options(req, context.session, profile=profile)
                         prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                         async for msg in query(prompt=prompt_stream, options=options):
                             self._track_query_message(msg, state, ResultMessage)
@@ -621,6 +637,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self._flush_langfuse()
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
+
+    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str) -> ChatResponse:
+        profile = candidate_main_profile(self.settings, workspace_dir=worktree_path, candidate_id=change_set_id)
+        return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
     async def stream(self, req: ChatRequest) -> AsyncIterator[JsonObject]:
         from claude_agent_sdk import ResultMessage, query

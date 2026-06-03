@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { CheckCircle2, ChevronRight, GitBranch, Loader2, PlayCircle, RotateCcw, ShieldCheck } from "lucide-react";
-import { diffAgentVersionFile } from "../../api/runtime";
+import { diffAgentChangeSetFile } from "../../api/runtime";
 import type {
   EvalRunRecord,
   ExecutionCompensationRecord,
@@ -10,7 +10,7 @@ import type {
   OptimizationExecutionJobRecord,
   OptimizationTaskRecord,
 } from "../../types/feedback";
-import type { AgentVersionFileDiff, RuntimeClientConfig } from "../../types/runtime";
+import type { AgentGitFileDiff, RuntimeClientConfig } from "../../types/runtime";
 import { DetailMetricGrid, DetailRecordList, FormattedText, FormattedTextFields, Pill } from "./common";
 import {
   changedPathsFromDiff,
@@ -95,12 +95,12 @@ export function TaskDetailCard({
   const targetPaths = task.target_paths || [];
   const latestRegression = task.latest_regression_run || null;
   const latestExecution = task.latest_execution_job || null;
-  const diffFromVersion = task.pre_execution_agent_version_id || rawString(task.applied_agent_version, "parent_version_id");
-  const diffToVersion = task.applied_agent_version_id || "";
+  const changeSetId = task.latest_change_set_id || rawString(task.latest_change_set, "change_set_id") || rawString(task.latest_execution_application, "change_set_id");
+  const candidateCommitSha = task.candidate_commit_sha || rawString(task.latest_change_set, "candidate_commit_sha");
   const canManualMarkApplied = !task.applied_agent_version_id && ["pending_execution", "failed", "needs_human_review"].includes(task.status);
   const canCreateExecution = !task.applied_agent_version_id && ["pending_execution", "execution_failed", "execution_ready", "failed", "needs_human_review"].includes(task.status);
   const canApplyExecution = !task.applied_agent_version_id && executionPlanReady(latestExecution);
-  const canRunRegression = Boolean(task.applied_agent_version_id) && task.status !== "regression_running";
+  const canRunRegression = Boolean(changeSetId && candidateCommitSha) && task.status !== "regression_running";
   const showManualFallback = Boolean(onMarkApplied && canManualMarkApplied);
   const regressionButtonLabel = latestRegression ? "重新运行回归验证" : "运行回归验证";
   return (
@@ -147,7 +147,7 @@ export function TaskDetailCard({
         <TaskExecutionPlanSection actionId={actionId} task={task} execution={latestExecution} onRestoreCompensation={onRestoreCompensation} />
       ) : null}
       <TaskRegressionSection task={task} latestRegression={latestRegression} canRunRegression={canRunRegression} />
-      <TaskVersionDiffSection clientConfig={clientConfig} task={task} targetPaths={targetPaths} fromVersionId={diffFromVersion} toVersionId={diffToVersion} />
+      <TaskVersionDiffSection clientConfig={clientConfig} task={task} targetPaths={targetPaths} changeSetId={changeSetId} />
       <p className="fw-note-box fw-task-status-note">{taskStatusDescription(task.status)}</p>
       {onCreateExecutionJob || onApplyExecutionJob || onRunRegression ? (
         <div className="fw-detail-action-row">
@@ -483,16 +483,14 @@ function TaskRegressionSection({
 
 function TaskVersionDiffSection({
   clientConfig,
+  changeSetId,
   task,
   targetPaths,
-  fromVersionId,
-  toVersionId,
 }: {
   clientConfig?: RuntimeClientConfig;
+  changeSetId?: string | null;
   task: OptimizationTaskRecord;
   targetPaths: string[];
-  fromVersionId?: string | null;
-  toVersionId?: string | null;
 }) {
   const appliedDiff = task.latest_execution_application?.applied_diff || null;
   const targetRows = targetPaths.map((path) => ({ path, status: fileStatusFromDiff(appliedDiff, path) }));
@@ -500,34 +498,33 @@ function TaskVersionDiffSection({
   if (!task.applied_agent_version_id) {
     return (
       <section className="fw-task-source">
-        <h4>已生效差异</h4>
-        <p className="fw-note-box">任务尚未应用，暂无真实生效差异；上方“计划变更 / 待应用”展示预计写入内容。</p>
+        <h4>候选差异</h4>
+        <p className="fw-note-box">任务尚未生成候选提交；上方“计划变更 / 待应用”展示预计写入内容。</p>
       </section>
     );
   }
-  if (!fromVersionId || !toVersionId) {
+  if (!changeSetId) {
     return (
       <section className="fw-task-source">
-        <h4>已生效差异</h4>
-        <p className="fw-note-box">缺少基线版本，无法展示前后对比。</p>
+        <h4>候选差异</h4>
+        <p className="fw-note-box">缺少 change set，无法展示候选对比。</p>
       </section>
     );
   }
   if (!clientConfig) {
     return (
       <section className="fw-task-source">
-        <h4>已生效差异</h4>
+        <h4>候选差异</h4>
         <p className="fw-note-box">当前视图缺少 API 配置，无法加载文件级对比。</p>
       </section>
     );
   }
   return (
     <section className="fw-task-source">
-      <h4>已生效差异</h4>
+      <h4>候选差异</h4>
       <DetailMetricGrid
         items={[
-          ["修改前", shortId(fromVersionId)],
-          ["修改后", shortId(toVersionId)],
+          ["Change set", shortId(changeSetId)],
           ["新增", appliedDiff?.added?.length ?? "-"],
           ["修改", appliedDiff?.modified?.length ?? "-"],
           ["删除", appliedDiff?.deleted?.length ?? "-"],
@@ -537,11 +534,10 @@ function TaskVersionDiffSection({
         {targetRows.map((row) => (
           <TaskFileDiffRow
             clientConfig={clientConfig}
-            fromVersionId={fromVersionId}
+            changeSetId={changeSetId}
             key={row.path}
             path={row.path}
             statusText={row.status}
-            toVersionId={toVersionId}
           />
         ))}
       </div>
@@ -552,11 +548,10 @@ function TaskVersionDiffSection({
             {nonTargetRows.map((path) => (
               <TaskFileDiffRow
                 clientConfig={clientConfig}
-                fromVersionId={fromVersionId}
+                changeSetId={changeSetId}
                 key={path}
                 path={path}
                 statusText={fileStatusFromDiff(appliedDiff, path)}
-                toVersionId={toVersionId}
               />
             ))}
           </div>
@@ -574,20 +569,18 @@ function isEvalCaseExecutionPlan(task: OptimizationTaskRecord, execution: Optimi
 }
 
 function TaskFileDiffRow({
+  changeSetId,
   clientConfig,
-  fromVersionId,
   path,
   statusText,
-  toVersionId,
 }: {
+  changeSetId: string;
   clientConfig: RuntimeClientConfig;
-  fromVersionId: string;
   path: string;
   statusText: string;
-  toVersionId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
-  const [diff, setDiff] = useState<AgentVersionFileDiff | null>(null);
+  const [diff, setDiff] = useState<AgentGitFileDiff | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -598,7 +591,7 @@ function TaskFileDiffRow({
     setLoading(true);
     setError(null);
     try {
-      setDiff(await diffAgentVersionFile(clientConfig, fromVersionId, toVersionId, path));
+      setDiff(await diffAgentChangeSetFile(clientConfig, changeSetId, path));
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载文件对比失败");
     } finally {

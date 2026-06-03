@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, FastAPI
 
-from app.runtime.agent_version_store import AgentVersionStore
+from app.runtime.agent_git_store import AgentVersionProvider
 from app.runtime.schemas import RuntimeHealthResponse, RuntimeRootResponse
 from app.runtime.settings import AppSettings
 
@@ -11,7 +11,7 @@ def create_core_router(
     *,
     settings: AppSettings,
     app: FastAPI,
-    agent_version_store: AgentVersionStore,
+    agent_version_store: AgentVersionProvider,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -41,8 +41,13 @@ def build_health_payload(
     *,
     settings: AppSettings,
     app: FastAPI,
-    agent_version_store: AgentVersionStore,
+    agent_version_store: AgentVersionProvider,
 ) -> RuntimeHealthResponse:
+    repository_status = (
+        agent_version_store.repository_status()
+        if hasattr(agent_version_store, "repository_status")
+        else {}
+    )
     return RuntimeHealthResponse(
         status="ok",
         api_host=settings.api_host,
@@ -67,6 +72,7 @@ def build_health_payload(
         programmatic_agents=settings.enable_programmatic_agents,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),
+        agent_repository_status=repository_status,
         langfuse_enabled=settings.langfuse_enabled,
         langfuse_base_url=settings.langfuse_base_url,
         langfuse_otel_endpoint_configured=bool(settings.langfuse_otel_endpoint),

@@ -6,7 +6,7 @@
 
 - Pydantic 化、`JsonObject` / `dict[...]` 边界治理。
 - store 投影、response schema、OpenAPI 或前端生成类型收口。
-- 涉及 `docker/volume` 历史数据、SQLite payload、agent job 快照或旧 API 契约。
+- 涉及 `${HOME}/volume-agent-runtime` 默认数据、`docker/volume` 历史数据、SQLite payload、agent job 快照或旧 API 契约。
 - 用户要求“继续收口直到完全做完”“完成以上所有建议”“提高代码质量”。
 
 ## Phase SPEC 必填
@@ -14,7 +14,7 @@
 - [ ] 写明本阶段要删除、迁移或统一的旧设计。
 - [ ] 写明不做什么，避免阶段膨胀。
 - [ ] 写明公开契约是否允许变化：API path、OpenAPI schema、前端生成类型、配置/env、Docker 路径、持久化数据。
-- [ ] 写明真实数据样本来源，尤其是 `docker/volume/data` 与历史 SQLite。
+- [ ] 写明真实数据样本来源，尤其是 `${HOME}/volume-agent-runtime/data`、迁移前 `docker/volume/data` 与历史 SQLite。
 - [ ] 写明本阶段要新增或收紧哪些治理硬门。
 
 ## Phase PLAN 必填
@@ -45,7 +45,7 @@
 | 前端类型 | `pnpm --dir frontend generate:api-types` |
 | 前端构建 | `pnpm --dir frontend build` |
 | 浏览器 smoke | `RUNTIME_UI_BASE=... RUNTIME_API_BASE=... pnpm --dir frontend verify:feedback-browser` |
-| 真实历史数据 | 使用 `docker/volume/data` 中现有数据访问列表、详情和关键投影 |
+| 真实历史数据 | 使用 `${HOME}/volume-agent-runtime/data` 或迁移前 `docker/volume/data` 中现有数据访问列表、详情和关键投影 |
 
 如果某项没有运行，阶段总结必须写明原因、剩余风险和下次恢复路径。不能用“应该没问题”替代。
 

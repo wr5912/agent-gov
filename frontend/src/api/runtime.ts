@@ -4,15 +4,20 @@ export * from "./feedback";
 export * from "./regressionAssets";
 import type {
   AgentInfo,
-  AgentVersionDiff,
-  AgentVersionFileDiff,
-  AgentVersionManifest,
-  AgentVersionRestoreRequest,
-  AgentVersionRestoreResponse,
-  AgentVersionSnapshotRequest,
-  AgentVersionSummary,
+  AgentChangeSet,
+  AgentChangeSetActionRequest,
+  AgentChangeSetCreateRequest,
+  AgentChangeSetEvent,
+  AgentChangeSetPublishRequest,
+  AgentGitDiff,
+  AgentGitFileDiff,
+  AgentGitRef,
+  AgentRelease,
+  AgentReleaseRollbackRequest,
+  AgentRepositoryStatus,
   ChatRequest,
   ConfigMappingResponse,
+  EvalRunResponse,
   RuntimeClientConfig,
   RuntimeHealth,
   SessionInfo,
@@ -58,30 +63,47 @@ export function getConfigMapping(config: RuntimeClientConfig) {
   return requestJson<ConfigMappingResponse>(config, "/api/config");
 }
 
-export function getCurrentAgentVersion(config: RuntimeClientConfig) {
-  return requestJson<AgentVersionSummary>(config, "/api/agent-versions/main/current");
+export function getAgentRepositoryStatus(config: RuntimeClientConfig) {
+  return requestJson<AgentRepositoryStatus>(config, "/api/agent-repository");
 }
 
-export function getAgentVersions(config: RuntimeClientConfig) {
-  return requestJson<AgentVersionSummary[]>(config, "/api/agent-versions/main");
+export function getCurrentAgentRef(config: RuntimeClientConfig) {
+  return requestJson<AgentGitRef>(config, "/api/agent-repository/current");
 }
 
-export function getAgentVersion(config: RuntimeClientConfig, versionId: string) {
-  return requestJson<AgentVersionManifest>(config, `/api/agent-versions/main/${encodeURIComponent(versionId)}`);
+export function getAgentChangeSets(config: RuntimeClientConfig) {
+  return requestJson<AgentChangeSet[]>(config, "/api/agent-change-sets");
 }
 
-export function createAgentVersionSnapshot(config: RuntimeClientConfig, payload: AgentVersionSnapshotRequest) {
-  return requestJson<AgentVersionSummary>(config, "/api/agent-versions/main/snapshots", {
+export function createAgentChangeSet(config: RuntimeClientConfig, payload: AgentChangeSetCreateRequest) {
+  return requestJson<AgentChangeSet>(config, "/api/agent-change-sets", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
 }
 
-export function restoreAgentVersion(config: RuntimeClientConfig, versionId: string, payload: AgentVersionRestoreRequest) {
-  return requestJson<AgentVersionRestoreResponse>(
+export function getAgentChangeSet(config: RuntimeClientConfig, changeSetId: string) {
+  return requestJson<AgentChangeSet>(config, `/api/agent-change-sets/${encodeURIComponent(changeSetId)}`);
+}
+
+export function getAgentChangeSetEvents(config: RuntimeClientConfig, changeSetId: string) {
+  return requestJson<AgentChangeSetEvent[]>(config, `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/events`);
+}
+
+export function diffAgentChangeSet(config: RuntimeClientConfig, changeSetId: string) {
+  return requestJson<AgentGitDiff>(config, `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/diff`);
+}
+
+export function diffAgentChangeSetFile(config: RuntimeClientConfig, changeSetId: string, path: string) {
+  const params = new URLSearchParams({ path });
+  return requestJson<AgentGitFileDiff>(config, `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/file-diff?${params.toString()}`);
+}
+
+export function approveAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetActionRequest = { operator: "ui" }) {
+  return requestJson<AgentChangeSet>(
     config,
-    `/api/agent-versions/main/${encodeURIComponent(versionId)}/rollback`,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/approve`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -90,14 +112,56 @@ export function restoreAgentVersion(config: RuntimeClientConfig, versionId: stri
   );
 }
 
-export function diffAgentVersions(config: RuntimeClientConfig, fromVersionId: string, toVersionId: string) {
-  const params = new URLSearchParams({ from_version_id: fromVersionId, to_version_id: toVersionId });
-  return requestJson<AgentVersionDiff>(config, `/api/agent-versions/main/diff?${params.toString()}`);
+export function rejectAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetActionRequest = { operator: "ui" }) {
+  return requestJson<AgentChangeSet>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/reject`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
-export function diffAgentVersionFile(config: RuntimeClientConfig, fromVersionId: string, toVersionId: string, path: string) {
-  const params = new URLSearchParams({ from_version_id: fromVersionId, to_version_id: toVersionId, path });
-  return requestJson<AgentVersionFileDiff>(config, `/api/agent-versions/main/file-diff?${params.toString()}`);
+export function runAgentChangeSetRegression(config: RuntimeClientConfig, changeSetId: string, evalCaseIds?: string[]) {
+  return requestJson<EvalRunResponse>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eval_case_ids: evalCaseIds }),
+    },
+  );
+}
+
+export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetPublishRequest = { operator: "ui" }) {
+  return requestJson<AgentRelease>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/publish`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function getAgentReleases(config: RuntimeClientConfig) {
+  return requestJson<AgentRelease[]>(config, "/api/agent-releases");
+}
+
+export function rollbackAgentRelease(config: RuntimeClientConfig, releaseId: string, payload: AgentReleaseRollbackRequest = { operator: "ui" }) {
+  return requestJson<AgentRelease>(
+    config,
+    `/api/agent-releases/${encodeURIComponent(releaseId)}/rollback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export interface StreamChatHandlers {

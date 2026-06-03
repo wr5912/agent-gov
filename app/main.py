@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.routers.agent_versions import create_agent_versions_router
+from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
@@ -21,8 +21,9 @@ from app.routers.openai import create_openai_router
 from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
 from app.routers.sessions import create_sessions_router
+from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
-from app.runtime.agent_version_store import AgentVersionStore
+from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.session_store import LocalSessionStore
@@ -31,10 +32,16 @@ from app.version import APP_VERSION
 
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
-agent_version_store = AgentVersionStore(
-    versions_dir=settings.agent_versions_dir,
-    workspace_dir=settings.main_workspace_dir,
-    claude_root=settings.main_claude_root,
+agent_version_store = GitAgentVersionStore(
+    repository_dir=settings.agent_git_repository_dir,
+    worktrees_dir=settings.agent_git_worktrees_dir,
+    releases_dir=settings.agent_release_archives_dir,
+    service_provider=settings.agent_git_service_provider,
+    service_url=settings.agent_git_service_url,
+    service_public_url=settings.agent_git_service_public_url,
+    repository_name=settings.agent_git_repository_name,
+    git_user_name=settings.agent_git_user_name,
+    git_user_email=settings.agent_git_user_email,
 )
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
@@ -45,10 +52,15 @@ feedback_store = FeedbackStore(
 )
 runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
+agent_governance = AgentGovernanceService(
+    feedback_store=feedback_store,
+    agent_version_store=agent_version_store,
+)
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
     agent_version_store=agent_version_store,
+    agent_governance=agent_governance,
 )
 bearer_auth = HTTPBearer(auto_error=False)
 
@@ -103,7 +115,14 @@ app.include_router(create_config_router(settings=settings, require_api_key=requi
 app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_openai_router(settings=settings, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, require_api_key=require_api_key))
-app.include_router(create_agent_versions_router(agent_version_store=agent_version_store, require_api_key=require_api_key))
+app.include_router(
+    create_agent_governance_router(
+        agent_governance=agent_governance,
+        feedback_store=feedback_store,
+        runtime=runtime,
+        require_api_key=require_api_key,
+    )
+)
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))
@@ -113,6 +132,7 @@ app.include_router(
         feedback_store=feedback_store,
         runtime=runtime,
         execution_application=execution_application,
+        agent_governance=agent_governance,
         require_api_key=require_api_key,
     )
 )
@@ -128,6 +148,7 @@ app.include_router(
         feedback_store=feedback_store,
         runtime=runtime,
         execution_application=execution_application,
+        agent_governance=agent_governance,
         require_api_key=require_api_key,
     )
 )

@@ -617,6 +617,9 @@ class EvalRunResponse(ExtensibleResponse):
     optimization_task_id: Optional[str] = None
     source: str
     regression_plan_id: Optional[str] = None
+    change_set_id: Optional[str] = None
+    candidate_commit_sha: Optional[str] = None
+    candidate_worktree_path: Optional[str] = None
     eval_case_ids: list[str] = Field(default_factory=list)
     item_ids: list[str] = Field(default_factory=list)
     summary: EvalRunSummaryResponse = Field(default_factory=EvalRunSummaryResponse)
@@ -745,16 +748,6 @@ class EvidencePackageFileResponse(BaseModel):
     file_name: str
     sha256: Optional[str] = None
     content: JsonValue
-
-
-class AgentVersionSnapshotRequest(BaseModel):
-    reason: Optional[str] = None
-    source_proposal_ids: list[str] = Field(default_factory=list)
-    note: Optional[str] = None
-
-
-class AgentVersionRestoreRequest(BaseModel):
-    note: Optional[str] = None
 
 
 class OpenAIChatMessage(BaseModel):

@@ -86,7 +86,7 @@ class FeedbackBatchPlanStoreMixin:
             "attribution_outputs": attributions,
             "eval_cases": [case for case in (self.find_eval_case(str(eval_case_id)) for eval_case_id in batch.get("eval_case_ids") or []) if case],
             "main_agent_version_id": self._current_agent_version_id(),
-            "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
+            **self._agent_git_paths_context(),
             "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
             "target_policy": self._execution_target_policy(),
             "task": "generate_feedback_optimization_plan",

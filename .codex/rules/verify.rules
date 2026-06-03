@@ -8,7 +8,7 @@
 # - Python 运行使用仓库本地 `.venv/bin/python`。
 # - 后端变更默认运行相关 `pytest`；跨模块变更运行 `make test` 或等价命令。
 # - 前端变更默认运行 `pnpm build`，必要时补充浏览器验证。
-# - Docker 持久化相关变更必须检查 `docker/volume/` 路径。
+# - Docker 持久化相关变更必须检查默认 `${HOME}/volume-agent-runtime` 路径，以及历史 `docker/volume/` 迁移/兼容路径。
 #
 # ## 架构验证
 #

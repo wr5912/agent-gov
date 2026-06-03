@@ -8,6 +8,7 @@ from app.runtime.runtime_db import OptimizationTaskModel
 from app.runtime.state_machines import TASK_STATES, validate_transition
 
 from ..json_types import JsonObject
+from .agent_governance_records import AgentChangeSetProjectionRecord
 from .agent_job_records import AgentJobProjectionRecord
 from .base import StrictRuntimeRecord
 from .eval_run_records import EvalRunProjectionRecord
@@ -50,6 +51,9 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
     latest_execution_job: Optional[AgentJobProjectionRecord] = None
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[JsonObject] = None
+    latest_change_set_id: Optional[str] = None
+    latest_change_set: Optional[AgentChangeSetProjectionRecord] = None
+    candidate_commit_sha: Optional[str] = None
     applied_at: Optional[str] = None
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[JsonObject] = None

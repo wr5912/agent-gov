@@ -1,6 +1,580 @@
 {
   "components": {
     "schemas": {
+      "AgentChangeSetActionRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "operator": {
+            "default": "runtime",
+            "title": "Operator",
+            "type": "string"
+          }
+        },
+        "title": "AgentChangeSetActionRequest",
+        "type": "object"
+      },
+      "AgentChangeSetCreateRequest": {
+        "properties": {
+          "base_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Commit Sha"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "optimization_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimization Task Id"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          }
+        },
+        "title": "AgentChangeSetCreateRequest",
+        "type": "object"
+      },
+      "AgentChangeSetEventResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "after": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "After",
+            "type": "object"
+          },
+          "before": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Before",
+            "type": "object"
+          },
+          "change_set_id": {
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "event_id": {
+            "title": "Event Id",
+            "type": "string"
+          },
+          "operator": {
+            "title": "Operator",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event_id",
+          "change_set_id",
+          "action",
+          "operator",
+          "created_at"
+        ],
+        "title": "AgentChangeSetEventResponse",
+        "type": "object"
+      },
+      "AgentChangeSetPublishRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "operator": {
+            "default": "runtime",
+            "title": "Operator",
+            "type": "string"
+          },
+          "tag_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tag Name"
+          }
+        },
+        "title": "AgentChangeSetPublishRequest",
+        "type": "object"
+      },
+      "AgentChangeSetRegressionRunRequest": {
+        "properties": {
+          "eval_case_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Eval Case Ids"
+          }
+        },
+        "title": "AgentChangeSetRegressionRunRequest",
+        "type": "object"
+      },
+      "AgentChangeSetResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "base_commit_sha": {
+            "title": "Base Commit Sha",
+            "type": "string"
+          },
+          "branch_name": {
+            "title": "Branch Name",
+            "type": "string"
+          },
+          "candidate_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Commit Sha"
+          },
+          "change_set_id": {
+            "title": "Change Set Id",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "diff_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Diff Summary",
+            "type": "object"
+          },
+          "execution_job_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Execution Job Id"
+          },
+          "latest_eval_run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Eval Run Id"
+          },
+          "latest_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Release Id"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "optimization_task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Optimization Task Id"
+          },
+          "schema_version": {
+            "default": "agent-change-set/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Title"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "worktree_path": {
+            "title": "Worktree Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "change_set_id",
+          "created_at",
+          "updated_at",
+          "status",
+          "base_commit_sha",
+          "branch_name",
+          "worktree_path"
+        ],
+        "title": "AgentChangeSetResponse",
+        "type": "object"
+      },
+      "AgentGitDiffEntryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "AgentGitDiffEntryResponse",
+        "type": "object"
+      },
+      "AgentGitDiffResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "added": {
+            "items": {
+              "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+            },
+            "title": "Added",
+            "type": "array"
+          },
+          "deleted": {
+            "items": {
+              "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+            },
+            "title": "Deleted",
+            "type": "array"
+          },
+          "from_version_id": {
+            "title": "From Version Id",
+            "type": "string"
+          },
+          "modified": {
+            "items": {
+              "$ref": "#/components/schemas/AgentGitDiffEntryResponse"
+            },
+            "title": "Modified",
+            "type": "array"
+          },
+          "to_version_id": {
+            "title": "To Version Id",
+            "type": "string"
+          },
+          "unchanged_count": {
+            "default": 0,
+            "title": "Unchanged Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "from_version_id",
+          "to_version_id"
+        ],
+        "title": "AgentGitDiffResponse",
+        "type": "object"
+      },
+      "AgentGitFileDiffResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "after": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "archive_path": {
+            "title": "Archive Path",
+            "type": "string"
+          },
+          "before": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentGitFileEntryResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "from_version_id": {
+            "title": "From Version Id",
+            "type": "string"
+          },
+          "is_text": {
+            "default": false,
+            "title": "Is Text",
+            "type": "boolean"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "to_version_id": {
+            "title": "To Version Id",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unified_diff": {
+            "default": "",
+            "title": "Unified Diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_version_id",
+          "to_version_id",
+          "path",
+          "archive_path",
+          "status"
+        ],
+        "title": "AgentGitFileDiffResponse",
+        "type": "object"
+      },
+      "AgentGitFileEntryResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sha256"
+          },
+          "size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "type"
+        ],
+        "title": "AgentGitFileEntryResponse",
+        "type": "object"
+      },
+      "AgentGitRefResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "agent_version_id": {
+            "title": "Agent Version Id",
+            "type": "string"
+          },
+          "commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Commit Sha"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "file_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Count"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "parent_version_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Version Id"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "agent_version_id",
+          "created_at",
+          "reason"
+        ],
+        "title": "AgentGitRefResponse",
+        "type": "object"
+      },
       "AgentInfo": {
         "properties": {
           "description": {
@@ -262,6 +836,236 @@
         "title": "AgentJobResponse",
         "type": "object"
       },
+      "AgentReleaseResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "archive_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Path"
+          },
+          "archive_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Archive Sha256"
+          },
+          "change_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Set Id"
+          },
+          "commit_sha": {
+            "title": "Commit Sha",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "release_id": {
+            "title": "Release Id",
+            "type": "string"
+          },
+          "rollback_of_release_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rollback Of Release Id"
+          },
+          "schema_version": {
+            "default": "agent-release/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tag_name": {
+            "title": "Tag Name",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "release_id",
+          "created_at",
+          "updated_at",
+          "status",
+          "tag_name",
+          "commit_sha"
+        ],
+        "title": "AgentReleaseResponse",
+        "type": "object"
+      },
+      "AgentReleaseRollbackRequest": {
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "operator": {
+            "default": "runtime",
+            "title": "Operator",
+            "type": "string"
+          }
+        },
+        "title": "AgentReleaseRollbackRequest",
+        "type": "object"
+      },
+      "AgentRepositoryStatusResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "current_branch": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Branch"
+          },
+          "current_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Commit Sha"
+          },
+          "degraded_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Degraded Reason"
+          },
+          "dirty": {
+            "default": false,
+            "title": "Dirty",
+            "type": "boolean"
+          },
+          "maintenance_active": {
+            "default": false,
+            "title": "Maintenance Active",
+            "type": "boolean"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "releases_dir": {
+            "title": "Releases Dir",
+            "type": "string"
+          },
+          "repository_dir": {
+            "title": "Repository Dir",
+            "type": "string"
+          },
+          "repository_name": {
+            "title": "Repository Name",
+            "type": "string"
+          },
+          "schema_version": {
+            "default": "agent-repository-status/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "service_public_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Public Url"
+          },
+          "service_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Service Url"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "worktrees_dir": {
+            "title": "Worktrees Dir",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "repository_name",
+          "repository_dir",
+          "worktrees_dir",
+          "releases_dir",
+          "status"
+        ],
+        "title": "AgentRepositoryStatusResponse",
+        "type": "object"
+      },
       "AgentRunResponse": {
         "properties": {
           "agent_activity": {
@@ -460,105 +1264,6 @@
         "title": "AgentVersionDiffResponse",
         "type": "object"
       },
-      "AgentVersionExcludedPathResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "reason"
-        ],
-        "title": "AgentVersionExcludedPathResponse",
-        "type": "object"
-      },
-      "AgentVersionFileDiffResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "after": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentVersionFileEntryResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "archive_path": {
-            "title": "Archive Path",
-            "type": "string"
-          },
-          "before": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/AgentVersionFileEntryResponse"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "from_version_id": {
-            "title": "From Version Id",
-            "type": "string"
-          },
-          "is_text": {
-            "default": false,
-            "title": "Is Text",
-            "type": "boolean"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
-          },
-          "to_version_id": {
-            "title": "To Version Id",
-            "type": "string"
-          },
-          "truncated": {
-            "default": false,
-            "title": "Truncated",
-            "type": "boolean"
-          },
-          "unified_diff": {
-            "default": "",
-            "title": "Unified Diff",
-            "type": "string"
-          }
-        },
-        "required": [
-          "from_version_id",
-          "to_version_id",
-          "path",
-          "archive_path",
-          "status"
-        ],
-        "title": "AgentVersionFileDiffResponse",
-        "type": "object"
-      },
       "AgentVersionFileEntryResponse": {
         "additionalProperties": true,
         "properties": {
@@ -631,339 +1336,6 @@
           "type"
         ],
         "title": "AgentVersionFileEntryResponse",
-        "type": "object"
-      },
-      "AgentVersionIncludedRootResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "mode": {
-            "title": "Mode",
-            "type": "string"
-          },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "path": {
-            "title": "Path",
-            "type": "string"
-          }
-        },
-        "required": [
-          "name",
-          "path",
-          "mode"
-        ],
-        "title": "AgentVersionIncludedRootResponse",
-        "type": "object"
-      },
-      "AgentVersionManifestResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "agent_version_id": {
-            "title": "Agent Version Id",
-            "type": "string"
-          },
-          "agent_yaml_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Agent Yaml Version"
-          },
-          "bundle_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bundle Path"
-          },
-          "bundle_sha256": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Bundle Sha256"
-          },
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
-          "entry_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Entry Count"
-          },
-          "excluded_paths": {
-            "items": {
-              "$ref": "#/components/schemas/AgentVersionExcludedPathResponse"
-            },
-            "title": "Excluded Paths",
-            "type": "array"
-          },
-          "file_count": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "File Count"
-          },
-          "files": {
-            "items": {
-              "$ref": "#/components/schemas/AgentVersionFileEntryResponse"
-            },
-            "title": "Files",
-            "type": "array"
-          },
-          "included_roots": {
-            "items": {
-              "$ref": "#/components/schemas/AgentVersionIncludedRootResponse"
-            },
-            "title": "Included Roots",
-            "type": "array"
-          },
-          "manifest_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Manifest Path"
-          },
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "parent_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Version Id"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          },
-          "related_data": {
-            "$ref": "#/components/schemas/AgentVersionRelatedDataResponse"
-          },
-          "rollback_of_version_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rollback Of Version Id"
-          },
-          "skipped_paths": {
-            "items": {
-              "$ref": "#/components/schemas/AgentVersionSkippedPathResponse"
-            },
-            "title": "Skipped Paths",
-            "type": "array"
-          },
-          "snapshot_policy_version": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Snapshot Policy Version"
-          },
-          "source_proposal_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Source Proposal Ids",
-            "type": "array"
-          },
-          "total_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Total Bytes"
-          }
-        },
-        "required": [
-          "agent_version_id",
-          "created_at",
-          "reason"
-        ],
-        "title": "AgentVersionManifestResponse",
-        "type": "object"
-      },
-      "AgentVersionRelatedDataResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "data_dir": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Data Dir"
-          },
-          "runtime_db_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runtime Db Path"
-          }
-        },
-        "title": "AgentVersionRelatedDataResponse",
-        "type": "object"
-      },
-      "AgentVersionRestoreRequest": {
-        "properties": {
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          }
-        },
-        "title": "AgentVersionRestoreRequest",
-        "type": "object"
-      },
-      "AgentVersionRestoreResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "current_version": {
-            "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-          },
-          "pre_restore_version": {
-            "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-          },
-          "requires_runtime_restart": {
-            "default": true,
-            "title": "Requires Runtime Restart",
-            "type": "boolean"
-          },
-          "restored_from_version": {
-            "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-          }
-        },
-        "required": [
-          "restored_from_version",
-          "pre_restore_version",
-          "current_version"
-        ],
-        "title": "AgentVersionRestoreResponse",
-        "type": "object"
-      },
-      "AgentVersionSkippedPathResponse": {
-        "additionalProperties": true,
-        "properties": {
-          "path": {
-            "title": "Path",
-            "type": "string"
-          },
-          "reason": {
-            "title": "Reason",
-            "type": "string"
-          }
-        },
-        "required": [
-          "path",
-          "reason"
-        ],
-        "title": "AgentVersionSkippedPathResponse",
-        "type": "object"
-      },
-      "AgentVersionSnapshotRequest": {
-        "properties": {
-          "note": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Note"
-          },
-          "reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Reason"
-          },
-          "source_proposal_ids": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Source Proposal Ids",
-            "type": "array"
-          }
-        },
-        "title": "AgentVersionSnapshotRequest",
         "type": "object"
       },
       "AgentVersionSummaryResponse": {
@@ -2323,6 +2695,39 @@
             ],
             "title": "Agent Version Id"
           },
+          "candidate_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Commit Sha"
+          },
+          "candidate_worktree_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Worktree Path"
+          },
+          "change_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Set Id"
+          },
           "completed_at": {
             "anyOf": [
               {
@@ -2788,6 +3193,42 @@
                 "type": "null"
               }
             ]
+          },
+          "candidate_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Commit Sha"
+          },
+          "change_set": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Set"
+          },
+          "change_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Change Set Id"
           },
           "completed_at": {
             "anyOf": [
@@ -8019,6 +8460,17 @@
             ],
             "title": "Baseline Agent Version Id"
           },
+          "candidate_commit_sha": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Candidate Commit Sha"
+          },
           "comment": {
             "anyOf": [
               {
@@ -8055,6 +8507,31 @@
               }
             ],
             "title": "Feedback Case Id"
+          },
+          "latest_change_set": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Change Set"
+          },
+          "latest_change_set_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latest Change Set Id"
           },
           "latest_execution_job": {
             "anyOf": [
@@ -9575,10 +10052,626 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.25"
+    "version": "0.2.26"
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/agent-change-sets": {
+      "get": {
+        "operationId": "list_agent_change_sets_api_agent_change_sets_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "optimization_task_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Optimization Task Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentChangeSetResponse"
+                  },
+                  "title": "Response List Agent Change Sets Api Agent Change Sets Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List Agent change sets",
+        "tags": [
+          "feedback"
+        ]
+      },
+      "post": {
+        "operationId": "create_agent_change_set_api_agent_change_sets_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentChangeSetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create an Agent change set worktree",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}": {
+      "get": {
+        "operationId": "get_agent_change_set_api_agent_change_sets__change_set_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentChangeSetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/abandon": {
+      "post": {
+        "operationId": "abandon_agent_change_set_api_agent_change_sets__change_set_id__abandon_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentChangeSetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Abandon an Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/approve": {
+      "post": {
+        "operationId": "approve_agent_change_set_api_agent_change_sets__change_set_id__approve_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentChangeSetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Approve an Agent change set for release",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/diff": {
+      "get": {
+        "operationId": "diff_agent_change_set_api_agent_change_sets__change_set_id__diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentGitDiffResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Diff an Agent change set against its base commit",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/events": {
+      "get": {
+        "operationId": "list_agent_change_set_events_api_agent_change_sets__change_set_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentChangeSetEventResponse"
+                  },
+                  "title": "Response List Agent Change Set Events Api Agent Change Sets  Change Set Id  Events Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List lifecycle events for one Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/file-diff": {
+      "get": {
+        "operationId": "diff_agent_change_set_file_api_agent_change_sets__change_set_id__file_diff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "path",
+            "required": true,
+            "schema": {
+              "title": "Path",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentGitFileDiffResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Diff one file in an Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/publish": {
+      "post": {
+        "operationId": "publish_agent_change_set_api_agent_change_sets__change_set_id__publish_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetPublishRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Publish an approved Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/regression-runs": {
+      "post": {
+        "operationId": "run_agent_change_set_regression_api_agent_change_sets__change_set_id__regression_runs_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetRegressionRunRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Run regression against an Agent change set candidate worktree",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-change-sets/{change_set_id}/reject": {
+      "post": {
+        "operationId": "reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "change_set_id",
+            "required": true,
+            "schema": {
+              "title": "Change Set Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentChangeSetActionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentChangeSetResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Reject an Agent change set",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
     "/api/agent-jobs": {
       "get": {
         "operationId": "list_agent_jobs_api_agent_jobs_get",
@@ -9744,6 +10837,232 @@
         ]
       }
     },
+    "/api/agent-releases": {
+      "get": {
+        "operationId": "list_agent_releases_api_agent_releases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AgentReleaseResponse"
+                  },
+                  "title": "Response List Agent Releases Api Agent Releases Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "List published Agent releases",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-releases/{release_id}": {
+      "get": {
+        "operationId": "get_agent_release_api_agent_releases__release_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get one Agent release",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-releases/{release_id}/rollback": {
+      "post": {
+        "operationId": "rollback_agent_release_api_agent_releases__release_id__rollback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "release_id",
+            "required": true,
+            "schema": {
+              "title": "Release Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentReleaseRollbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentReleaseResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Rollback the main Agent workspace to one release",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-repository": {
+      "get": {
+        "operationId": "get_agent_repository_status_api_agent_repository_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentRepositoryStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Git-backed Agent repository status",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
+    "/api/agent-repository/current": {
+      "get": {
+        "operationId": "get_current_agent_ref_api_agent_repository_current_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentGitRefResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get current published Agent Git ref",
+        "tags": [
+          "feedback"
+        ]
+      }
+    },
     "/api/agent-runs": {
       "get": {
         "operationId": "list_agent_runs_api_agent_runs_get",
@@ -9857,357 +11176,6 @@
           }
         ],
         "summary": "List Agent run records used by feedback evidence packages",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main": {
-      "get": {
-        "operationId": "list_agent_versions_api_agent_versions_main_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "maximum": 500,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-                  },
-                  "title": "Response List Agent Versions Api Agent Versions Main Get",
-                  "type": "array"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "List Agent managed configuration versions",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/current": {
-      "get": {
-        "operationId": "current_agent_version_api_agent_versions_main_current_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get current Agent managed configuration version",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/diff": {
-      "get": {
-        "operationId": "diff_agent_versions_api_agent_versions_main_diff_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "from_version_id",
-            "required": true,
-            "schema": {
-              "title": "From Version Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "to_version_id",
-            "required": true,
-            "schema": {
-              "title": "To Version Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionDiffResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Diff two Agent managed configuration versions",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/file-diff": {
-      "get": {
-        "operationId": "diff_agent_version_file_api_agent_versions_main_file_diff_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "from_version_id",
-            "required": true,
-            "schema": {
-              "title": "From Version Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "to_version_id",
-            "required": true,
-            "schema": {
-              "title": "To Version Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "query",
-            "name": "path",
-            "required": true,
-            "schema": {
-              "title": "Path",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionFileDiffResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Diff one file between two Agent managed configuration versions",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/snapshots": {
-      "post": {
-        "operationId": "create_agent_version_snapshot_api_agent_versions_main_snapshots_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentVersionSnapshotRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Create one Agent managed configuration snapshot",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/{version_id}": {
-      "get": {
-        "operationId": "get_agent_version_api_agent_versions_main__version_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "version_id",
-            "required": true,
-            "schema": {
-              "title": "Version Id",
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionManifestResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Get one Agent version manifest",
-        "tags": [
-          "feedback"
-        ]
-      }
-    },
-    "/api/agent-versions/main/{version_id}/rollback": {
-      "post": {
-        "operationId": "restore_agent_version_api_agent_versions_main__version_id__rollback_post",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "version_id",
-            "required": true,
-            "schema": {
-              "title": "Version Id",
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/AgentVersionRestoreRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AgentVersionRestoreResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "security": [
-          {
-            "HTTPBearer": []
-          }
-        ],
-        "summary": "Restore one Agent managed configuration version",
         "tags": [
           "feedback"
         ]

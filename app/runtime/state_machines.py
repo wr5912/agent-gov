@@ -148,6 +148,28 @@ PENDING_CORRELATION_STATES = {
     "resolved",
 }
 
+AGENT_CHANGE_SET_STATES = {
+    "draft",
+    "execution_ready",
+    "candidate_committed",
+    "pending_approval",
+    "approved",
+    "rejected",
+    "regression_running",
+    "regression_passed",
+    "regression_failed",
+    "published",
+    "abandoned",
+    "failed",
+}
+
+AGENT_RELEASE_STATES = {
+    "published",
+    "archived",
+    "rolled_back",
+    "rollback_failed",
+}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "job": {
         "created": {"queued", "running", "failed"},
@@ -284,6 +306,26 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending": {"resolved"},
         "resolved": set(),
     },
+    "agent_change_set": {
+        "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
+        "execution_ready": {"candidate_committed", "abandoned", "failed"},
+        "candidate_committed": {"pending_approval", "regression_running", "approved", "rejected", "abandoned", "failed"},
+        "pending_approval": {"approved", "rejected", "regression_running", "abandoned", "failed"},
+        "approved": {"regression_running", "regression_passed", "published", "rejected", "abandoned", "failed"},
+        "rejected": {"abandoned"},
+        "regression_running": {"regression_passed", "regression_failed", "failed"},
+        "regression_passed": {"approved", "published", "regression_running", "abandoned"},
+        "regression_failed": {"regression_running", "rejected", "abandoned", "failed"},
+        "published": set(),
+        "abandoned": set(),
+        "failed": {"draft", "abandoned"},
+    },
+    "agent_release": {
+        "published": {"archived", "rolled_back", "rollback_failed"},
+        "archived": {"rolled_back", "rollback_failed"},
+        "rolled_back": set(),
+        "rollback_failed": {"rolled_back"},
+    },
 }
 
 _KNOWN_STATES = {
@@ -301,6 +343,8 @@ _KNOWN_STATES = {
     "execution_application": EXECUTION_APPLICATION_STATES,
     "regression_impact_analysis": REGRESSION_IMPACT_ANALYSIS_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
+    "agent_change_set": AGENT_CHANGE_SET_STATES,
+    "agent_release": AGENT_RELEASE_STATES,
 }
 
 

@@ -20,7 +20,7 @@
 
 ## Real-Data Verification Lens
 
-**Diagnoses:** 临时测试数据通过，但真实 `docker/volume/data` 中的历史数据、旧 job 快照或旧 payload 触发 API 500 或前端请求失败。
+**Diagnoses:** 临时测试数据通过，但真实 `${HOME}/volume-agent-runtime/data` 或迁移前 `docker/volume/data` 中的历史数据、旧 job 快照或旧 payload 触发 API 500 或前端请求失败。
 
 **Recommends:** 涉及持久化投影或历史 schema 的阶段，必须用真实数据验证列表、详情和 UI。浏览器 smoke 要记录 console error、failed request 和 4xx/5xx API 响应计数。
 

@@ -82,6 +82,9 @@ class FeedbackEvalStoreMixin:
         optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
         regression_plan_id: Optional[str] = None,
+        change_set_id: Optional[str] = None,
+        candidate_commit_sha: Optional[str] = None,
+        candidate_worktree_path: Optional[str] = None,
     ) -> JsonObject:
         created_at = utc_now()
         payload = {
@@ -94,6 +97,9 @@ class FeedbackEvalStoreMixin:
             "optimization_task_id": optimization_task_id,
             "source": source,
             "regression_plan_id": regression_plan_id,
+            "change_set_id": change_set_id,
+            "candidate_commit_sha": candidate_commit_sha,
+            "candidate_worktree_path": candidate_worktree_path,
             "eval_case_ids": eval_case_ids,
             "item_ids": [],
             "summary": {"total": len(eval_case_ids), "passed": 0, "failed": 0, "needs_human_review": 0},

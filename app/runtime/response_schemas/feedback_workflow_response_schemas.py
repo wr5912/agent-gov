@@ -124,6 +124,9 @@ class ExecutionApplicationResponse(ExtensibleResponse):
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[AgentVersionSummaryResponse] = None
     applied_diff: Optional[AgentVersionDiffResponse] = None
+    change_set_id: Optional[str] = None
+    change_set: Optional[JsonObject] = None
+    candidate_commit_sha: Optional[str] = None
     error_json: Optional[FeedbackJobErrorResponse] = None
 
 
@@ -165,6 +168,9 @@ class OptimizationTaskResponse(ExtensibleResponse):
     latest_execution_job: Optional[OptimizationExecutionJobResponse] = None
     pre_execution_agent_version_id: Optional[str] = None
     pre_execution_agent_version: Optional[AgentVersionSummaryResponse] = None
+    latest_change_set_id: Optional[str] = None
+    latest_change_set: Optional[JsonObject] = None
+    candidate_commit_sha: Optional[str] = None
     applied_at: Optional[str] = None
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[AgentVersionSummaryResponse] = None

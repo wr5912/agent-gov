@@ -66,6 +66,32 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     }
 
 
+def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candidate_id: str) -> AgentRuntimeProfile:
+    profile = _main_profile(settings)
+    claude_root = settings.data_dir / "agent-governance" / "candidate-claude-roots" / candidate_id
+    return AgentRuntimeProfile(
+        name=f"{MAIN_AGENT_PROFILE}-candidate",
+        role=MAIN_AGENT_PROFILE,
+        workspace_dir=workspace_dir,
+        claude_root=claude_root,
+        claude_config_dir=claude_root / ".claude",
+        data_dir=settings.data_dir,
+        mcp_config_path=workspace_dir / ".mcp.json",
+        project_settings_path=workspace_dir / ".claude" / "settings.json",
+        langfuse_observation_name="runtime.main_agent_candidate",
+        readable_paths=(workspace_dir, settings.data_dir),
+        writable_paths=profile.writable_paths,
+        denied_paths=profile.denied_paths,
+        allowed_mcp_servers=profile.allowed_mcp_servers,
+        permission_mode=profile.permission_mode,
+        allowed_tools=profile.allowed_tools,
+        disallowed_tools=profile.disallowed_tools,
+        max_turns=profile.max_turns,
+        max_runtime_seconds=profile.max_runtime_seconds,
+        max_output_bytes=profile.max_output_bytes,
+    )
+
+
 def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
     return AgentRuntimeProfile(
         name=MAIN_AGENT_PROFILE,

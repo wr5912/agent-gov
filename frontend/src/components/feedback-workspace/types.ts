@@ -1,4 +1,4 @@
-import type { AgentVersionSummary, RuntimeClientConfig } from "../../types/runtime";
+import type { AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, RuntimeClientConfig } from "../../types/runtime";
 
 export interface RuntimeIntegrationContext {
   runId?: string;
@@ -21,8 +21,10 @@ export interface ExternalFeedbackWorkspaceProps {
   clientConfig: RuntimeClientConfig;
   runtimeContext?: RuntimeIntegrationContext;
   monitoringConfig?: MonitoringIntegrationConfig;
-  currentAgentVersion?: AgentVersionSummary | null;
-  agentVersions?: AgentVersionSummary[];
+  agentRepository?: AgentRepositoryStatus | null;
+  currentAgentRef?: AgentGitRef | null;
+  agentChangeSets?: AgentChangeSet[];
+  agentReleases?: AgentRelease[];
   versionLoading?: boolean;
   versionError?: string;
   onRefreshVersions?: () => void | Promise<void>;

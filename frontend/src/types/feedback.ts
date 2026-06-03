@@ -1,5 +1,5 @@
 import type { components } from "./api";
-import type { AgentVersionDiff, AgentVersionSummary } from "./runtime";
+import type { AgentChangeSet, AgentVersionDiff, AgentVersionSummary } from "./runtime";
 
 type OpenApiAgentJobResponse = components["schemas"]["AgentJobResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
@@ -289,6 +289,9 @@ export type OptimizationTaskRecord = OpenApiOptimizationTaskResponse & {
   proposal?: OptimizationProposalRecord;
   latest_execution_job?: OptimizationExecutionJobRecord | null;
   latest_execution_application?: ExecutionApplicationRecord | null;
+  latest_change_set_id?: string | null;
+  latest_change_set?: AgentChangeSet | null;
+  candidate_commit_sha?: string | null;
   pre_execution_agent_version?: AgentVersionSummary | null;
   applied_agent_version?: AgentVersionSummary | null;
   latest_regression_run?: EvalRunRecord | null;
@@ -304,6 +307,9 @@ export type OptimizationExecutionJobRecord = AgentJobRecord & {
 export type ExecutionApplicationRecord = OpenApiExecutionApplicationResponse & {
   status: "created" | "applied" | "failed" | "pending_manual_recovery" | "compensated" | string;
   applied_diff?: AgentVersionDiff | null;
+  change_set_id?: string | null;
+  change_set?: AgentChangeSet | null;
+  candidate_commit_sha?: string | null;
 };
 
 export type ExecutionCompensationRecord = OpenApiExecutionCompensationResponse & {

@@ -52,13 +52,21 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "get",
         "EvidencePackageFileResponse",
     )
-    assert_schema_ref(schema, "/api/agent-versions/main/current", "get", "AgentVersionSummaryResponse")
-    assert_schema_ref(schema, "/api/agent-versions/main", "get", "AgentVersionSummaryResponse", array=True)
-    assert_schema_ref(schema, "/api/agent-versions/main/snapshots", "post", "AgentVersionSummaryResponse")
-    assert_schema_ref(schema, "/api/agent-versions/main/{version_id}", "get", "AgentVersionManifestResponse")
-    assert_schema_ref(schema, "/api/agent-versions/main/diff", "get", "AgentVersionDiffResponse")
-    assert_schema_ref(schema, "/api/agent-versions/main/file-diff", "get", "AgentVersionFileDiffResponse")
-    assert_schema_ref(schema, "/api/agent-versions/main/{version_id}/rollback", "post", "AgentVersionRestoreResponse")
+    assert "/api/agent-versions/main/current" not in schema["paths"]
+    assert_schema_ref(schema, "/api/agent-repository", "get", "AgentRepositoryStatusResponse")
+    assert_schema_ref(schema, "/api/agent-repository/current", "get", "AgentGitRefResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets", "get", "AgentChangeSetResponse", array=True)
+    assert_schema_ref(schema, "/api/agent-change-sets", "post", "AgentChangeSetResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}", "get", "AgentChangeSetResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/events", "get", "AgentChangeSetEventResponse", array=True)
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/diff", "get", "AgentGitDiffResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/file-diff", "get", "AgentGitFileDiffResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/approve", "post", "AgentChangeSetResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/reject", "post", "AgentChangeSetResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/regression-runs", "post", "EvalRunResponse")
+    assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/publish", "post", "AgentReleaseResponse")
+    assert_schema_ref(schema, "/api/agent-releases", "get", "AgentReleaseResponse", array=True)
+    assert_schema_ref(schema, "/api/agent-releases/{release_id}/rollback", "post", "AgentReleaseResponse")
     assert_schema_ref(schema, "/api/soc-events", "get", "SocEventResponse", array=True)
     assert_schema_ref(schema, "/api/pending-correlations", "get", "PendingCorrelationResponse", array=True)
     assert_schema_ref(schema, "/api/feedback-sources", "get", "FeedbackSourceResponse", array=True)
@@ -296,23 +304,12 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(agent_job_schema, "error_json", "FeedbackJobErrorResponse")
     assert "profile_version" in agent_job_schema["properties"]
     assert "output_schema_version" in agent_job_schema["properties"]
-    restore_schema = schema["components"]["schemas"]["AgentVersionRestoreResponse"]
-    assert restore_schema["properties"]["current_version"] == {
-        "$ref": "#/components/schemas/AgentVersionSummaryResponse"
-    }
-    manifest_schema = schema["components"]["schemas"]["AgentVersionManifestResponse"]
-    assert manifest_schema["properties"]["included_roots"]["items"] == {
-        "$ref": "#/components/schemas/AgentVersionIncludedRootResponse"
-    }
-    assert manifest_schema["properties"]["excluded_paths"]["items"] == {
-        "$ref": "#/components/schemas/AgentVersionExcludedPathResponse"
-    }
-    assert manifest_schema["properties"]["skipped_paths"]["items"] == {
-        "$ref": "#/components/schemas/AgentVersionSkippedPathResponse"
-    }
-    assert manifest_schema["properties"]["related_data"] == {
-        "$ref": "#/components/schemas/AgentVersionRelatedDataResponse"
-    }
+    assert "AgentVersionRestoreResponse" not in schema["components"]["schemas"]
+    assert "AgentVersionManifestResponse" not in schema["components"]["schemas"]
+    assert "AgentVersionIncludedRootResponse" not in schema["components"]["schemas"]
+    assert "AgentVersionExcludedPathResponse" not in schema["components"]["schemas"]
+    assert "AgentVersionSkippedPathResponse" not in schema["components"]["schemas"]
+    assert "AgentVersionRelatedDataResponse" not in schema["components"]["schemas"]
     review_schema = schema["components"]["schemas"]["OptimizationProposalReviewResponse"]
     assert review_schema["properties"]["proposal"] == {
         "$ref": "#/components/schemas/OptimizationProposalResponse"

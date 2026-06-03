@@ -27,6 +27,7 @@ from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanReviewRequest,
     FeedbackOptimizationPlanTaskExecuteRequest,
 )
+from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
 
 
@@ -43,6 +44,7 @@ def create_feedback_batches_router(
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
     execution_application: ExecutionApplicationService,
+    agent_governance: AgentGovernanceService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
@@ -51,7 +53,7 @@ def create_feedback_batches_router(
     _register_batch_analysis_routes(router, feedback_store, runtime)
     _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
     _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
-    register_batch_regression_routes(router, feedback_store, runtime)
+    register_batch_regression_routes(router, feedback_store, runtime, agent_governance)
     return router
 
 

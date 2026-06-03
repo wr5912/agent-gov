@@ -65,13 +65,20 @@ services:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8080}
       HOST_PORT: ${HOST_PORT:-58080}
-      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}
-      HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-./volume/data}
-      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}
-      HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT: ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-./volume/eval-case-governor-workspace}
-      HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT: ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-./volume/regression-impact-analyzer-workspace}
-      HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT: ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/eval-case-governor}
-      HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT: ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/regression-impact-analyzer}
+      HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}
+      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/main-workspace}
+      HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/data}
+      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/main}
+      HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT: ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/eval-case-governor-workspace}
+      HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT: ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/regression-impact-analyzer-workspace}
+      HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT: ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/eval-case-governor}
+      HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT: ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/regression-impact-analyzer}
+      AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
+      AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
+      AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
+      AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
+      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
+      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
       MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
       ATTRIBUTION_ANALYZER_WORKSPACE_DIR: ${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
@@ -95,19 +102,19 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
-      - ${HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT:-./volume/attribution-analyzer-workspace}:${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
-      - ${HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT:-./volume/proposal-generator-workspace}:${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
-      - ${HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT:-./volume/execution-optimizer-workspace}:${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
-      - ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-./volume/eval-case-governor-workspace}:${EVAL_CASE_GOVERNOR_WORKSPACE_DIR:-/eval-case-governor-workspace}
-      - ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-./volume/regression-impact-analyzer-workspace}:${REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR:-/regression-impact-analyzer-workspace}
-      - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
-      - ${HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/attribution-analyzer}:${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
-      - ${HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/proposal-generator}:${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
-      - ${HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/execution-optimizer}:${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
-      - ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/eval-case-governor}:${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
-      - ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/regression-impact-analyzer}:${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
+      - ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
+      - ${HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/attribution-analyzer-workspace}:${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
+      - ${HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/proposal-generator-workspace}:${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
+      - ${HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/execution-optimizer-workspace}:${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
+      - ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/eval-case-governor-workspace}:${EVAL_CASE_GOVERNOR_WORKSPACE_DIR:-/eval-case-governor-workspace}
+      - ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/regression-impact-analyzer-workspace}:${REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR:-/regression-impact-analyzer-workspace}
+      - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/data}:${DATA_DIR:-/data}
+      - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
+      - ${HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/attribution-analyzer}:${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
+      - ${HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/proposal-generator}:${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
+      - ${HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/execution-optimizer}:${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
+      - ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/eval-case-governor}:${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
+      - ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/regression-impact-analyzer}:${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
     restart: unless-stopped
 
   claude-agent-worker:
@@ -122,9 +129,16 @@ services:
     env_file:
       - .env
     environment:
-      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}
-      HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-./volume/data}
-      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}
+      HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}
+      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/main-workspace}
+      HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/data}
+      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/main}
+      AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
+      AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
+      AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
+      AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
+      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
+      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
       WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
       MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
       ATTRIBUTION_ANALYZER_WORKSPACE_DIR: ${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
@@ -149,19 +163,19 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - ${HOST_WORKSPACE_MOUNT:-./volume/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
-      - ${HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT:-./volume/attribution-analyzer-workspace}:${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
-      - ${HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT:-./volume/proposal-generator-workspace}:${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
-      - ${HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT:-./volume/execution-optimizer-workspace}:${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
-      - ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-./volume/eval-case-governor-workspace}:${EVAL_CASE_GOVERNOR_WORKSPACE_DIR:-/eval-case-governor-workspace}
-      - ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-./volume/regression-impact-analyzer-workspace}:${REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR:-/regression-impact-analyzer-workspace}
-      - ${HOST_DATA_MOUNT:-./volume/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
-      - ${HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/attribution-analyzer}:${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
-      - ${HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/proposal-generator}:${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
-      - ${HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/execution-optimizer}:${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
-      - ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/eval-case-governor}:${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
-      - ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-./volume/claude-roots/regression-impact-analyzer}:${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
+      - ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
+      - ${HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/attribution-analyzer-workspace}:${ATTRIBUTION_ANALYZER_WORKSPACE_DIR:-/attribution-analyzer-workspace}
+      - ${HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/proposal-generator-workspace}:${PROPOSAL_GENERATOR_WORKSPACE_DIR:-/proposal-generator-workspace}
+      - ${HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/execution-optimizer-workspace}:${EXECUTION_OPTIMIZER_WORKSPACE_DIR:-/execution-optimizer-workspace}
+      - ${HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/eval-case-governor-workspace}:${EVAL_CASE_GOVERNOR_WORKSPACE_DIR:-/eval-case-governor-workspace}
+      - ${HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/regression-impact-analyzer-workspace}:${REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR:-/regression-impact-analyzer-workspace}
+      - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/data}:${DATA_DIR:-/data}
+      - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
+      - ${HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/attribution-analyzer}:${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}
+      - ${HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/proposal-generator}:${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}
+      - ${HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/execution-optimizer}:${EXECUTION_OPTIMIZER_CLAUDE_ROOT:-/claude-roots/execution-optimizer}
+      - ${HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/eval-case-governor}:${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
+      - ${HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/regression-impact-analyzer}:${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
     depends_on:
       - claude-agent-api
     restart: unless-stopped

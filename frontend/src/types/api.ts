@@ -4,6 +4,177 @@
  */
 
 export interface paths {
+    "/api/agent-change-sets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Agent change sets */
+        get: operations["list_agent_change_sets_api_agent_change_sets_get"];
+        put?: never;
+        /** Create an Agent change set worktree */
+        post: operations["create_agent_change_set_api_agent_change_sets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one Agent change set */
+        get: operations["get_agent_change_set_api_agent_change_sets__change_set_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/abandon": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Abandon an Agent change set */
+        post: operations["abandon_agent_change_set_api_agent_change_sets__change_set_id__abandon_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Approve an Agent change set for release */
+        post: operations["approve_agent_change_set_api_agent_change_sets__change_set_id__approve_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Diff an Agent change set against its base commit */
+        get: operations["diff_agent_change_set_api_agent_change_sets__change_set_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List lifecycle events for one Agent change set */
+        get: operations["list_agent_change_set_events_api_agent_change_sets__change_set_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/file-diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Diff one file in an Agent change set */
+        get: operations["diff_agent_change_set_file_api_agent_change_sets__change_set_id__file_diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Publish an approved Agent change set */
+        post: operations["publish_agent_change_set_api_agent_change_sets__change_set_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/regression-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Run regression against an Agent change set candidate worktree */
+        post: operations["run_agent_change_set_regression_api_agent_change_sets__change_set_id__regression_runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reject an Agent change set */
+        post: operations["reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-jobs": {
         parameters: {
             query?: never;
@@ -38,6 +209,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List published Agent releases */
+        get: operations["list_agent_releases_api_agent_releases_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-releases/{release_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one Agent release */
+        get: operations["get_agent_release_api_agent_releases__release_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-releases/{release_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback the main Agent workspace to one release */
+        post: operations["rollback_agent_release_api_agent_releases__release_id__rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-repository": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Git-backed Agent repository status */
+        get: operations["get_agent_repository_status_api_agent_repository_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-repository/current": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current published Agent Git ref */
+        get: operations["get_current_agent_ref_api_agent_repository_current_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs": {
         parameters: {
             query?: never;
@@ -49,125 +305,6 @@ export interface paths {
         get: operations["list_agent_runs_api_agent_runs_get"];
         put?: never;
         post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Agent managed configuration versions */
-        get: operations["list_agent_versions_api_agent_versions_main_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/current": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get current Agent managed configuration version */
-        get: operations["current_agent_version_api_agent_versions_main_current_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Diff two Agent managed configuration versions */
-        get: operations["diff_agent_versions_api_agent_versions_main_diff_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/file-diff": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Diff one file between two Agent managed configuration versions */
-        get: operations["diff_agent_version_file_api_agent_versions_main_file_diff_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/snapshots": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create one Agent managed configuration snapshot */
-        post: operations["create_agent_version_snapshot_api_agent_versions_main_snapshots_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/{version_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one Agent version manifest */
-        get: operations["get_agent_version_api_agent_versions_main__version_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/agent-versions/main/{version_id}/rollback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Restore one Agent managed configuration version */
-        post: operations["restore_agent_version_api_agent_versions_main__version_id__rollback_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1443,6 +1580,204 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AgentChangeSetActionRequest */
+        AgentChangeSetActionRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Operator
+             * @default runtime
+             */
+            operator: string;
+        };
+        /** AgentChangeSetCreateRequest */
+        AgentChangeSetCreateRequest: {
+            /** Base Commit Sha */
+            base_commit_sha?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Optimization Task Id */
+            optimization_task_id?: string | null;
+            /** Title */
+            title?: string | null;
+        };
+        /** AgentChangeSetEventResponse */
+        AgentChangeSetEventResponse: {
+            /** Action */
+            action: string;
+            /** After */
+            after?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Before */
+            before?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Change Set Id */
+            change_set_id: string;
+            /** Created At */
+            created_at: string;
+            /** Event Id */
+            event_id: string;
+            /** Operator */
+            operator: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentChangeSetPublishRequest */
+        AgentChangeSetPublishRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Operator
+             * @default runtime
+             */
+            operator: string;
+            /** Tag Name */
+            tag_name?: string | null;
+        };
+        /** AgentChangeSetRegressionRunRequest */
+        AgentChangeSetRegressionRunRequest: {
+            /** Eval Case Ids */
+            eval_case_ids?: string[] | null;
+        };
+        /** AgentChangeSetResponse */
+        AgentChangeSetResponse: {
+            /** Base Commit Sha */
+            base_commit_sha: string;
+            /** Branch Name */
+            branch_name: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha?: string | null;
+            /** Change Set Id */
+            change_set_id: string;
+            /** Created At */
+            created_at: string;
+            /** Diff Summary */
+            diff_summary?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Execution Job Id */
+            execution_job_id?: string | null;
+            /** Latest Eval Run Id */
+            latest_eval_run_id?: string | null;
+            /** Latest Release Id */
+            latest_release_id?: string | null;
+            /** Note */
+            note?: string | null;
+            /** Optimization Task Id */
+            optimization_task_id?: string | null;
+            /**
+             * Schema Version
+             * @default agent-change-set/v1
+             */
+            schema_version: string;
+            /** Status */
+            status: string;
+            /** Title */
+            title?: string | null;
+            /** Updated At */
+            updated_at: string;
+            /** Worktree Path */
+            worktree_path: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGitDiffEntryResponse */
+        AgentGitDiffEntryResponse: {
+            after?: components["schemas"]["AgentGitFileEntryResponse"] | null;
+            before?: components["schemas"]["AgentGitFileEntryResponse"] | null;
+            /** Path */
+            path: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGitDiffResponse */
+        AgentGitDiffResponse: {
+            /** Added */
+            added?: components["schemas"]["AgentGitFileEntryResponse"][];
+            /** Deleted */
+            deleted?: components["schemas"]["AgentGitFileEntryResponse"][];
+            /** From Version Id */
+            from_version_id: string;
+            /** Modified */
+            modified?: components["schemas"]["AgentGitDiffEntryResponse"][];
+            /** To Version Id */
+            to_version_id: string;
+            /**
+             * Unchanged Count
+             * @default 0
+             */
+            unchanged_count: number;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGitFileDiffResponse */
+        AgentGitFileDiffResponse: {
+            after?: components["schemas"]["AgentGitFileEntryResponse"] | null;
+            /** Archive Path */
+            archive_path: string;
+            before?: components["schemas"]["AgentGitFileEntryResponse"] | null;
+            /** From Version Id */
+            from_version_id: string;
+            /**
+             * Is Text
+             * @default false
+             */
+            is_text: boolean;
+            /** Path */
+            path: string;
+            /** Reason */
+            reason?: string | null;
+            /** Status */
+            status: string;
+            /** To Version Id */
+            to_version_id: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /**
+             * Unified Diff
+             * @default
+             */
+            unified_diff: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGitFileEntryResponse */
+        AgentGitFileEntryResponse: {
+            /** Path */
+            path: string;
+            /** Sha256 */
+            sha256?: string | null;
+            /** Size */
+            size?: number | null;
+            /** Type */
+            type: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGitRefResponse */
+        AgentGitRefResponse: {
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Commit Sha */
+            commit_sha?: string | null;
+            /** Created At */
+            created_at: string;
+            /** File Count */
+            file_count?: number | null;
+            /** Note */
+            note?: string | null;
+            /** Parent Version Id */
+            parent_version_id?: string | null;
+            /** Reason */
+            reason: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** AgentInfo */
         AgentInfo: {
             /** Description */
@@ -1522,6 +1857,90 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** AgentReleaseResponse */
+        AgentReleaseResponse: {
+            /** Archive Path */
+            archive_path?: string | null;
+            /** Archive Sha256 */
+            archive_sha256?: string | null;
+            /** Change Set Id */
+            change_set_id?: string | null;
+            /** Commit Sha */
+            commit_sha: string;
+            /** Created At */
+            created_at: string;
+            /** Note */
+            note?: string | null;
+            /** Release Id */
+            release_id: string;
+            /** Rollback Of Release Id */
+            rollback_of_release_id?: string | null;
+            /**
+             * Schema Version
+             * @default agent-release/v1
+             */
+            schema_version: string;
+            /** Status */
+            status: string;
+            /** Tag Name */
+            tag_name: string;
+            /** Updated At */
+            updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentReleaseRollbackRequest */
+        AgentReleaseRollbackRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Operator
+             * @default runtime
+             */
+            operator: string;
+        };
+        /** AgentRepositoryStatusResponse */
+        AgentRepositoryStatusResponse: {
+            /** Current Branch */
+            current_branch?: string | null;
+            /** Current Commit Sha */
+            current_commit_sha?: string | null;
+            /** Degraded Reason */
+            degraded_reason?: string | null;
+            /**
+             * Dirty
+             * @default false
+             */
+            dirty: boolean;
+            /**
+             * Maintenance Active
+             * @default false
+             */
+            maintenance_active: boolean;
+            /** Provider */
+            provider: string;
+            /** Releases Dir */
+            releases_dir: string;
+            /** Repository Dir */
+            repository_dir: string;
+            /** Repository Name */
+            repository_name: string;
+            /**
+             * Schema Version
+             * @default agent-repository-status/v1
+             */
+            schema_version: string;
+            /** Service Public Url */
+            service_public_url?: string | null;
+            /** Service Url */
+            service_url?: string | null;
+            /** Status */
+            status: string;
+            /** Worktrees Dir */
+            worktrees_dir: string;
+        } & {
+            [key: string]: unknown;
+        };
         /** AgentRunResponse */
         AgentRunResponse: {
             /** Agent Activity */
@@ -1578,49 +1997,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** AgentVersionExcludedPathResponse */
-        AgentVersionExcludedPathResponse: {
-            /** Path */
-            path: string;
-            /** Reason */
-            reason: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionFileDiffResponse */
-        AgentVersionFileDiffResponse: {
-            after?: components["schemas"]["AgentVersionFileEntryResponse"] | null;
-            /** Archive Path */
-            archive_path: string;
-            before?: components["schemas"]["AgentVersionFileEntryResponse"] | null;
-            /** From Version Id */
-            from_version_id: string;
-            /**
-             * Is Text
-             * @default false
-             */
-            is_text: boolean;
-            /** Path */
-            path: string;
-            /** Reason */
-            reason?: string | null;
-            /** Status */
-            status: string;
-            /** To Version Id */
-            to_version_id: string;
-            /**
-             * Truncated
-             * @default false
-             */
-            truncated: boolean;
-            /**
-             * Unified Diff
-             * @default
-             */
-            unified_diff: string;
-        } & {
-            [key: string]: unknown;
-        };
         /** AgentVersionFileEntryResponse */
         AgentVersionFileEntryResponse: {
             /** Link Target */
@@ -1639,106 +2015,6 @@ export interface components {
             type: string;
         } & {
             [key: string]: unknown;
-        };
-        /** AgentVersionIncludedRootResponse */
-        AgentVersionIncludedRootResponse: {
-            /** Mode */
-            mode: string;
-            /** Name */
-            name: string;
-            /** Path */
-            path: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionManifestResponse */
-        AgentVersionManifestResponse: {
-            /** Agent Version Id */
-            agent_version_id: string;
-            /** Agent Yaml Version */
-            agent_yaml_version?: string | null;
-            /** Bundle Path */
-            bundle_path?: string | null;
-            /** Bundle Sha256 */
-            bundle_sha256?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Entry Count */
-            entry_count?: number | null;
-            /** Excluded Paths */
-            excluded_paths?: components["schemas"]["AgentVersionExcludedPathResponse"][];
-            /** File Count */
-            file_count?: number | null;
-            /** Files */
-            files?: components["schemas"]["AgentVersionFileEntryResponse"][];
-            /** Included Roots */
-            included_roots?: components["schemas"]["AgentVersionIncludedRootResponse"][];
-            /** Manifest Path */
-            manifest_path?: string | null;
-            /** Note */
-            note?: string | null;
-            /** Parent Version Id */
-            parent_version_id?: string | null;
-            /** Reason */
-            reason: string;
-            related_data?: components["schemas"]["AgentVersionRelatedDataResponse"];
-            /** Rollback Of Version Id */
-            rollback_of_version_id?: string | null;
-            /** Skipped Paths */
-            skipped_paths?: components["schemas"]["AgentVersionSkippedPathResponse"][];
-            /** Snapshot Policy Version */
-            snapshot_policy_version?: string | null;
-            /** Source Proposal Ids */
-            source_proposal_ids?: string[];
-            /** Total Bytes */
-            total_bytes?: number | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionRelatedDataResponse */
-        AgentVersionRelatedDataResponse: {
-            /** Data Dir */
-            data_dir?: string | null;
-            /** Runtime Db Path */
-            runtime_db_path?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionRestoreRequest */
-        AgentVersionRestoreRequest: {
-            /** Note */
-            note?: string | null;
-        };
-        /** AgentVersionRestoreResponse */
-        AgentVersionRestoreResponse: {
-            current_version: components["schemas"]["AgentVersionSummaryResponse"];
-            pre_restore_version: components["schemas"]["AgentVersionSummaryResponse"];
-            /**
-             * Requires Runtime Restart
-             * @default true
-             */
-            requires_runtime_restart: boolean;
-            restored_from_version: components["schemas"]["AgentVersionSummaryResponse"];
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionSkippedPathResponse */
-        AgentVersionSkippedPathResponse: {
-            /** Path */
-            path: string;
-            /** Reason */
-            reason: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** AgentVersionSnapshotRequest */
-        AgentVersionSnapshotRequest: {
-            /** Note */
-            note?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Source Proposal Ids */
-            source_proposal_ids?: string[];
         };
         /** AgentVersionSummaryResponse */
         AgentVersionSummaryResponse: {
@@ -2143,6 +2419,12 @@ export interface components {
         EvalRunResponse: {
             /** Agent Version Id */
             agent_version_id?: string | null;
+            /** Candidate Commit Sha */
+            candidate_commit_sha?: string | null;
+            /** Candidate Worktree Path */
+            candidate_worktree_path?: string | null;
+            /** Change Set Id */
+            change_set_id?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Created At */
@@ -2352,6 +2634,14 @@ export interface components {
             /** Applied Agent Version Id */
             applied_agent_version_id?: string | null;
             applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
+            /** Candidate Commit Sha */
+            candidate_commit_sha?: string | null;
+            /** Change Set */
+            change_set?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Change Set Id */
+            change_set_id?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /** Created At */
@@ -3790,6 +4080,8 @@ export interface components {
             applied_at?: string | null;
             /** Baseline Agent Version Id */
             baseline_agent_version_id?: string | null;
+            /** Candidate Commit Sha */
+            candidate_commit_sha?: string | null;
             /** Comment */
             comment?: string | null;
             /** Created At */
@@ -3800,6 +4092,12 @@ export interface components {
             execution_mode: string;
             /** Feedback Case Id */
             feedback_case_id?: string | null;
+            /** Latest Change Set */
+            latest_change_set?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Latest Change Set Id */
+            latest_change_set_id?: string | null;
             latest_execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             /** Latest Execution Job Id */
             latest_execution_job_id?: string | null;
@@ -4287,6 +4585,373 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_agent_change_sets_api_agent_change_sets_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                optimization_task_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_agent_change_set_api_agent_change_sets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_change_set_api_agent_change_sets__change_set_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    abandon_agent_change_set_api_agent_change_sets__change_set_id__abandon_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    approve_agent_change_set_api_agent_change_sets__change_set_id__approve_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    diff_agent_change_set_api_agent_change_sets__change_set_id__diff_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentGitDiffResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agent_change_set_events_api_agent_change_sets__change_set_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetEventResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    diff_agent_change_set_file_api_agent_change_sets__change_set_id__file_diff_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentGitFileDiffResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_agent_change_set_api_agent_change_sets__change_set_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetPublishRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_agent_change_set_regression_api_agent_change_sets__change_set_id__regression_runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetRegressionRunRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
@@ -4353,6 +5018,144 @@ export interface operations {
             };
         };
     };
+    list_agent_releases_api_agent_releases_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReleaseResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_release_api_agent_releases__release_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_agent_release_api_agent_releases__release_id__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReleaseRollbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_repository_status_api_agent_repository_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRepositoryStatusResponse"];
+                };
+            };
+        };
+    };
+    get_current_agent_ref_api_agent_repository_current_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentGitRefResponse"];
+                };
+            };
+        };
+    };
     list_agent_runs_api_agent_runs_get: {
         parameters: {
             query?: {
@@ -4375,221 +5178,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentRunResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_agent_versions_api_agent_versions_main_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionSummaryResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    current_agent_version_api_agent_versions_main_current_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionSummaryResponse"];
-                };
-            };
-        };
-    };
-    diff_agent_versions_api_agent_versions_main_diff_get: {
-        parameters: {
-            query: {
-                from_version_id: string;
-                to_version_id: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionDiffResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    diff_agent_version_file_api_agent_versions_main_file_diff_get: {
-        parameters: {
-            query: {
-                from_version_id: string;
-                to_version_id: string;
-                path: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionFileDiffResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_agent_version_snapshot_api_agent_versions_main_snapshots_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentVersionSnapshotRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionSummaryResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_agent_version_api_agent_versions_main__version_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionManifestResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    restore_agent_version_api_agent_versions_main__version_id__rollback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                version_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AgentVersionRestoreRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentVersionRestoreResponse"];
                 };
             };
             /** @description Validation Error */

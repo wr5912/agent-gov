@@ -98,7 +98,7 @@ class FeedbackExecutionStoreMixin:
             "target_file_contexts": self._execution_target_file_contexts(target_paths),
             "baseline_agent_version_id": baseline_version_id,
             "current_agent_version_id": self._current_agent_version_id(),
-            "main_agent_manifest_path": str(self.data_dir / "agent-versions" / "main" / "current.json"),
+            **self._agent_git_paths_context(),
             "task": "generate_controlled_execution_plan",
         }
 
@@ -179,6 +179,8 @@ class FeedbackExecutionStoreMixin:
         pre_execution_version: JsonObject,
         applied_agent_version: JsonObject,
         applied_diff: Optional[JsonObject] = None,
+        change_set: Optional[JsonObject] = None,
+        candidate_commit_sha: Optional[str] = None,
         note: Optional[str] = None,
     ) -> Optional[JsonObject]:
         now = utc_now()
@@ -194,7 +196,7 @@ class FeedbackExecutionStoreMixin:
             if not task_row:
                 return None
             task = OptimizationTaskRecord.from_row(task_row)
-            if task_row.status != "execution_ready" or task.applied_agent_version_id:
+            if task_row.status not in {"execution_ready", "applied_pending_regression"} or task.applied_agent_version_id:
                 raise ConflictError("Optimization task is not ready for execution application")
             payload = {
                 "schema_version": "execution-application/v1",
@@ -209,6 +211,9 @@ class FeedbackExecutionStoreMixin:
                 "applied_agent_version_id": self._string(applied_agent_version.get("agent_version_id")),
                 "applied_agent_version": applied_agent_version,
                 "applied_diff": applied_diff or {},
+                "change_set_id": self._string((change_set or {}).get("change_set_id")),
+                "change_set": change_set,
+                "candidate_commit_sha": candidate_commit_sha,
                 "error_json": None,
             }
             application_row = self._create_execution_application_row(db, payload)
@@ -224,14 +229,19 @@ class FeedbackExecutionStoreMixin:
                 execution_job=updated_job,
             )
             if updated_task_row:
+                task_fields = {
+                    "latest_execution_application_id": application["application_id"],
+                    "latest_execution_application": application,
+                }
+                if change_set:
+                    task_fields["latest_change_set_id"] = change_set.get("change_set_id")
+                    task_fields["latest_change_set"] = change_set
+                    task_fields["candidate_commit_sha"] = candidate_commit_sha or change_set.get("candidate_commit_sha")
                 updated_task_row = self._update_task_payload_row(
                     db,
                     str(updated_task_row.optimization_task_id),
                     status=updated_task_row.status,
-                    fields={
-                        "latest_execution_application_id": application["application_id"],
-                        "latest_execution_application": application,
-                    },
+                    fields=task_fields,
                 )
             if updated_task_row:
                 updated_task = self._task_to_dict(updated_task_row)

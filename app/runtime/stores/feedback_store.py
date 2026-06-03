@@ -104,6 +104,14 @@ class FeedbackStore(
         except Exception:
             return None
 
+    def _agent_git_paths_context(self) -> JsonObject:
+        return {
+            "main_agent_repository_path": str(self.main_workspace_dir),
+            "agent_change_set_worktrees_path": str(self.data_dir / "agent-governance" / "worktrees"),
+            "agent_release_archives_path": str(self.data_dir / "agent-governance" / "releases"),
+            "agent_version_source": "git",
+        }
+
     def _execution_target_policy(self) -> JsonObject:
         return self.execution_targets.policy_json()
 

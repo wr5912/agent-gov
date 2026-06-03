@@ -30,6 +30,7 @@ from app.runtime.schemas import (
     OptimizationTaskCreateRequest,
     OptimizationTaskMarkAppliedRequest,
 )
+from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
 
 
@@ -38,6 +39,7 @@ def create_optimization_router(
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
     execution_application: ExecutionApplicationService,
+    agent_governance: AgentGovernanceService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
@@ -47,7 +49,7 @@ def create_optimization_router(
     _register_execution_job_routes(router, runtime)
     _register_compensation_routes(router, feedback_store)
     _register_execution_application_routes(router, execution_application)
-    _register_task_regression_routes(router, feedback_store, runtime)
+    _register_task_regression_routes(router, feedback_store, runtime, agent_governance)
     _register_task_creation_routes(router, feedback_store)
     return router
 
@@ -284,6 +286,7 @@ def _register_task_regression_routes(
     router: APIRouter,
     feedback_store: FeedbackStore,
     runtime: ClaudeRuntime,
+    agent_governance: AgentGovernanceService,
 ) -> None:
 
     @router.post(
@@ -297,18 +300,24 @@ def _register_task_regression_routes(
     ) -> EvalRunResponse:
         task = feedback_store.find_task(task_id)
         task = ensure_found(task, "Optimization task not found")
-        if not task.get("applied_agent_version_id"):
-            raise_conflict("Task must be marked applied before regression validation")
+        change_set = task.get("latest_change_set") if isinstance(task.get("latest_change_set"), dict) else None
+        if not change_set or not change_set.get("candidate_commit_sha"):
+            raise_conflict("Task must have a candidate Agent change set before regression validation")
         eval_case_ids = _task_regression_eval_case_ids(feedback_store, task, req.eval_case_ids)
         if not eval_case_ids:
             raise_conflict("No active eval cases found for this task")
+        agent_governance.mark_regression_running(str(change_set["change_set_id"]), eval_run_id="pending")
         result = await runtime.run_feedback_eval(
             eval_case_ids=eval_case_ids,
             optimization_task_id=task_id,
             source="manual_task_regression",
+            change_set_id=str(change_set["change_set_id"]),
+            candidate_commit_sha=str(change_set["candidate_commit_sha"]),
+            candidate_worktree_path=str(change_set["worktree_path"]),
         )
         if not result:
             raise_conflict("Regression run could not be started")
+        agent_governance.complete_regression(str(change_set["change_set_id"]), eval_run=result.model_dump(mode="json"))
         return EvalRunResponse.model_validate(result)
 
     @router.get(

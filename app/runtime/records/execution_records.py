@@ -8,6 +8,7 @@ from app.runtime.runtime_db import ExecutionApplicationModel
 from app.runtime.state_machines import EXECUTION_APPLICATION_STATES, validate_transition
 
 from ..json_types import JsonObject
+from .agent_governance_records import AgentChangeSetProjectionRecord
 from .base import StrictRuntimeRecord
 
 
@@ -35,6 +36,9 @@ class ExecutionApplicationRecord(StrictRuntimeRecord):
     applied_agent_version_id: Optional[str] = None
     applied_agent_version: Optional[JsonObject] = None
     applied_diff: JsonObject = Field(default_factory=dict)
+    change_set_id: Optional[str] = None
+    change_set: Optional[AgentChangeSetProjectionRecord] = None
+    candidate_commit_sha: Optional[str] = None
     error_json: Optional[JsonObject] = None
 
     @field_validator("status")

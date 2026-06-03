@@ -159,6 +159,9 @@ class FeedbackRuntimeJobsMixin:
         source: str = "manual_feedback_dataset",
         regression_plan_id: Optional[str] = None,
         existing_eval_run_id: Optional[str] = None,
+        change_set_id: Optional[str] = None,
+        candidate_commit_sha: Optional[str] = None,
+        candidate_worktree_path: Optional[str] = None,
     ) -> EvalRunResponse | None:
         if self.eval_runner is None:
             return None
@@ -168,4 +171,7 @@ class FeedbackRuntimeJobsMixin:
             source=source,
             regression_plan_id=regression_plan_id,
             existing_eval_run_id=existing_eval_run_id,
+            change_set_id=change_set_id,
+            candidate_commit_sha=candidate_commit_sha,
+            candidate_worktree_path=candidate_worktree_path,
         )

@@ -3,7 +3,6 @@ import { CheckCircle2, GitBranch, Loader2, RotateCcw, X } from "lucide-react";
 import type { OptimizationTaskRecord } from "../../types/feedback";
 import { DetailMetricGrid, FormattedText } from "./common";
 import { shortId } from "./selectors";
-import type { ExternalFeedbackWorkspaceProps } from "./types";
 
 export function InstructionModal({
   ariaLabel,
@@ -172,7 +171,7 @@ export function ManualApplyConfirmModal({
   task,
 }: {
   busy: boolean;
-  currentVersion?: ExternalFeedbackWorkspaceProps["currentAgentVersion"];
+  currentVersion?: { agent_version_id?: string | null } | null;
   onCancel: () => void;
   onConfirm: () => void;
   task: OptimizationTaskRecord;

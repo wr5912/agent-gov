@@ -8,7 +8,7 @@ from typing import Awaitable, Callable, cast
 
 from pydantic import BaseModel
 
-from app.runtime.agent_version_store import AgentVersionStore
+from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
 from app.runtime.json_types import JsonObject
@@ -18,8 +18,10 @@ from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     OptimizationExecutionApplyResponse,
     OptimizationTaskResponse,
 )
+from app.runtime.runtime_db import utc_now
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.settings import AppSettings
+from app.services.agent_governance import AgentGovernanceService
 
 
 logger = logging.getLogger(__name__)
@@ -54,12 +56,14 @@ class ExecutionApplicationService:
         *,
         settings: AppSettings,
         feedback_store: FeedbackStore,
-        agent_version_store: AgentVersionStore,
+        agent_version_store: GitAgentVersionStore,
+        agent_governance: AgentGovernanceService,
         max_write_bytes: int = 500_000,
     ) -> None:
         self.settings = settings
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
+        self.agent_governance = agent_governance
         self.max_write_bytes = max_write_bytes
         self._apply_lock = Lock()
 
@@ -104,15 +108,31 @@ class ExecutionApplicationService:
                 raise ExecutionApplicationError(404, "Optimization task not found")
             if task.applied_agent_version_id:
                 return OptimizationTaskResponse.model_validate(task.to_payload())
-            version = self.agent_version_store.create_snapshot(
-                reason="proposal_applied",
-                source_proposal_ids=[str(item) for item in task.proposal_ids if item],
-                note=note or f"优化任务 {task_id} 已人工应用，创建主智能体版本快照。",
+            change_set = self.agent_governance.create_change_set(
+                optimization_task_id=task_id,
+                title=f"Manual application for {task_id}",
+                note=note or f"优化任务 {task_id} 已人工确认，等待候选提交。",
             )
-            updated = self.feedback_store.mark_task_applied_record(task_id, agent_version=version, note=note)
+            version = self.agent_version_store.version_summary(
+                str(change_set["base_commit_sha"]),
+                reason="manual_candidate_pending",
+                note=note,
+            )
+            updated = self.feedback_store.update_task_status(
+                task_id,
+                status="applied_pending_regression",
+                fields={
+                    "applied_at": utc_now(),
+                    "applied_agent_version_id": version.get("agent_version_id"),
+                    "applied_agent_version": version,
+                    "application_note": note,
+                    "latest_change_set_id": change_set.get("change_set_id"),
+                    "latest_change_set": change_set,
+                },
+            )
             if not updated:
                 raise ExecutionApplicationError(404, "Optimization task not found")
-            return OptimizationTaskResponse.model_validate(updated.to_payload())
+            return OptimizationTaskResponse.model_validate(updated)
 
     def _apply_ready_execution_job_locked(
         self,
@@ -121,6 +141,44 @@ class ExecutionApplicationService:
         *,
         note: str | None = None,
     ) -> OptimizationExecutionApplyResponse:
+        _task, _job, plan, baseline_version_id = self._ready_execution_context(task_id, execution_job_id)
+        change_set, pre_version, worktree_path = self._prepare_candidate_change_set(
+            task_id=task_id,
+            execution_job_id=execution_job_id,
+            baseline_version_id=baseline_version_id,
+            note=note,
+        )
+        self._apply_operations_to_candidate(
+            execution_job_id=execution_job_id,
+            task_id=task_id,
+            plan=plan,
+            worktree_path=worktree_path,
+            pre_version=pre_version,
+        )
+        application, applied_diff = self._commit_candidate_and_record_application(
+            task_id=task_id,
+            execution_job_id=execution_job_id,
+            change_set=change_set,
+            worktree_path=worktree_path,
+            pre_version=pre_version,
+            note=note,
+        )
+        execution_job = self.feedback_store.get_execution_job(execution_job_id)
+        optimization_task = self.feedback_store.find_task(task_id)
+        if not execution_job or not optimization_task:
+            raise ExecutionApplicationError(404, "Execution application result not found")
+        return OptimizationExecutionApplyResponse(
+            execution_job=execution_job,
+            execution_application=application,
+            optimization_task=optimization_task,
+            applied_diff=applied_diff,
+        )
+
+    def _ready_execution_context(
+        self,
+        task_id: str,
+        execution_job_id: str,
+    ) -> tuple[JsonObject, JsonObject, JsonObject, str]:
         task = self.feedback_store.find_task(task_id)
         if not task:
             raise ExecutionApplicationError(404, "Optimization task not found")
@@ -135,17 +193,50 @@ class ExecutionApplicationService:
         if not isinstance(plan, dict):
             raise ExecutionApplicationError(409, "Execution job has no validated plan")
         baseline_version_id = str(job.get("baseline_agent_version_id") or task.get("baseline_agent_version_id") or "")
+        return task, job, plan, baseline_version_id
+
+    def _prepare_candidate_change_set(
+        self,
+        *,
+        task_id: str,
+        execution_job_id: str,
+        baseline_version_id: str,
+        note: str | None,
+    ) -> tuple[JsonObject, JsonObject, Path]:
+        repository_status = self.agent_version_store.repository_status()
+        if repository_status.get("dirty"):
+            raise ExecutionApplicationError(409, "Main Agent workspace has uncommitted changes")
         current_version_id = self.agent_version_store.current_version_id()
         if baseline_version_id and current_version_id != baseline_version_id:
             raise ExecutionApplicationError(409, "Current Agent version differs from execution baseline")
-
-        pre_version = self.agent_version_store.create_snapshot(
-            reason="pre_execution",
-            source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
-            note=note or f"执行优化任务 {task_id} 前快照。",
+        change_set = self.agent_governance.create_change_set(
+            optimization_task_id=task_id,
+            execution_job_id=execution_job_id,
+            base_commit_sha=baseline_version_id or None,
+            title=f"Execution application for {task_id}",
+            note=note,
         )
+        if baseline_version_id and str(change_set.get("base_commit_sha")) != baseline_version_id:
+            raise ExecutionApplicationError(409, "Agent change set base differs from execution baseline")
+        pre_version = self.agent_version_store.version_summary(
+            str(change_set["base_commit_sha"]),
+            reason="change_set_base",
+            note=note or f"执行优化任务 {task_id} 的候选基线。",
+        )
+        worktree_path = self.agent_governance.change_set_worktree_path(change_set)
+        return change_set, pre_version, worktree_path
+
+    def _apply_operations_to_candidate(
+        self,
+        *,
+        execution_job_id: str,
+        task_id: str,
+        plan: JsonObject,
+        worktree_path: Path,
+        pre_version: JsonObject,
+    ) -> None:
         try:
-            self.apply_execution_operations(plan.get("operations") or [])
+            self.apply_execution_operations(plan.get("operations") or [], workspace_dir=worktree_path)
         except ExecutionApplicationError as exc:
             self.feedback_store.record_execution_application_failed(
                 execution_job_id,
@@ -155,22 +246,43 @@ class ExecutionApplicationService:
             )
             raise
 
+    def _commit_candidate_and_record_application(
+        self,
+        *,
+        task_id: str,
+        execution_job_id: str,
+        change_set: JsonObject,
+        worktree_path: Path,
+        pre_version: JsonObject,
+        note: str | None,
+    ) -> tuple[JsonObject, JsonObject | None]:
         try:
-            applied_version = self.agent_version_store.create_snapshot(
-                reason="execution_optimizer_applied",
-                source_proposal_ids=[str(item) for item in task.get("proposal_ids") or [] if item],
-                note=note or f"execution-optimizer 应用任务 {task_id}。",
-                parent_version_id=str(pre_version.get("agent_version_id")),
+            candidate_commit = self.agent_version_store.commit_worktree(
+                worktree_path,
+                message=note or f"Apply execution plan {execution_job_id} for {task_id}",
+            )
+            applied_version = self.agent_version_store.version_summary(
+                candidate_commit,
+                reason="candidate_change_set",
+                note=note or f"execution-optimizer 生成任务 {task_id} 的候选提交。",
             )
             applied_diff = self.agent_version_store.diff_versions(
                 str(pre_version["agent_version_id"]),
                 str(applied_version["agent_version_id"]),
+            )
+            change_set = self.agent_governance.mark_candidate_committed(
+                str(change_set["change_set_id"]),
+                candidate_commit_sha=candidate_commit,
+                execution_job_id=execution_job_id,
+                note=note,
             )
             execution_application = self.feedback_store.record_execution_application_applied(
                 execution_job_id,
                 pre_execution_version=pre_version,
                 applied_agent_version=applied_version,
                 applied_diff=applied_diff,
+                change_set=change_set,
+                candidate_commit_sha=candidate_commit,
                 note=note,
             )
             if not execution_application:
@@ -183,16 +295,7 @@ class ExecutionApplicationService:
                 error=exc,
             )
             raise ExecutionApplicationError(409, detail) from exc
-        execution_job = self.feedback_store.get_execution_job(execution_job_id)
-        optimization_task = self.feedback_store.find_task(task_id)
-        if not execution_job or not optimization_task:
-            raise ExecutionApplicationError(404, "Execution application result not found")
-        return OptimizationExecutionApplyResponse(
-            execution_job=execution_job,
-            execution_application=execution_application,
-            optimization_task=optimization_task,
-            applied_diff=applied_diff,
-        )
+        return execution_application, applied_diff
 
     def _compensate_post_write_failure(
         self,
@@ -288,7 +391,7 @@ class ExecutionApplicationService:
             raise ExecutionApplicationError(404, "Execution compensation not found")
         return ExecutionCompensationResponse.model_validate(updated)
 
-    def apply_execution_operations(self, operations: list[object]) -> None:
+    def apply_execution_operations(self, operations: list[object], *, workspace_dir: Path | None = None) -> None:
         if not operations:
             raise ExecutionApplicationError(409, "Execution plan has no operations")
         originals: dict[Path, bytes | None] = {}
@@ -298,7 +401,7 @@ class ExecutionApplicationService:
                 raise ExecutionApplicationError(409, "Execution operation must be an object")
             op = str(item.get("operation") or "")
             target_path = str(item.get("path") or "")
-            dest = self.safe_workspace_target(target_path)
+            dest = self.safe_workspace_target(target_path, workspace_dir=workspace_dir)
             if not self.feedback_store.target_allowed(target_path):
                 raise ExecutionApplicationError(409, f"Target path is not allowed: {target_path}")
             if op == "noop":
@@ -363,14 +466,14 @@ class ExecutionApplicationService:
             return cast(JsonObject, job.model_dump(mode="json"))
         return job
 
-    def safe_workspace_target(self, target_path: str) -> Path:
+    def safe_workspace_target(self, target_path: str, *, workspace_dir: Path | None = None) -> Path:
         if not target_path:
             raise ExecutionApplicationError(409, "Target path is required")
         rel = Path(target_path)
         if rel.is_absolute() or ".." in rel.parts:
             raise ExecutionApplicationError(409, f"Unsafe target path: {target_path}")
         try:
-            base = self.settings.main_workspace_dir.resolve(strict=True)
+            base = (workspace_dir or self.settings.main_workspace_dir).resolve(strict=True)
             dest = (base / rel).resolve(strict=False)
             dest.relative_to(base)
         except (OSError, RuntimeError, ValueError) as exc:

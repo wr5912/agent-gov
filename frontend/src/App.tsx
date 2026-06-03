@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentVersions, getConfigMapping, getCurrentAgentVersion, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
+import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { Inspector } from "./components/Inspector";
@@ -9,7 +9,7 @@ import { Topbar } from "./components/Topbar";
 import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "./types/feedback";
-import type { AgentActivity, AgentInfo, AgentVersionSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
 
@@ -61,8 +61,10 @@ export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [configMapping, setConfigMapping] = useState<ConfigMappingResponse | null>(null);
-  const [currentAgentVersion, setCurrentAgentVersion] = useState<AgentVersionSummary | null>(null);
-  const [agentVersions, setAgentVersions] = useState<AgentVersionSummary[]>([]);
+  const [agentRepository, setAgentRepository] = useState<AgentRepositoryStatus | null>(null);
+  const [currentAgentRef, setCurrentAgentRef] = useState<AgentGitRef | null>(null);
+  const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
+  const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [allowedTools, setAllowedTools] = useState("");
@@ -123,15 +125,15 @@ export default function App() {
         };
       }
     }
-    if (!activeSessionId && !alertId.trim() && !caseId.trim() && !currentAgentVersion?.agent_version_id) return undefined;
+    if (!activeSessionId && !alertId.trim() && !caseId.trim() && !currentAgentRef?.agent_version_id) return undefined;
     return {
       sessionId: activeSessionId,
       alertId: alertId.trim() || undefined,
       caseId: caseId.trim() || undefined,
-      agentVersionId: currentAgentVersion?.agent_version_id,
+      agentVersionId: currentAgentRef?.agent_version_id,
       sourceSystem: "agent-playground",
     };
-  }, [activeMessages, activeSessionId, alertId, caseId, currentAgentVersion]);
+  }, [activeMessages, activeSessionId, alertId, caseId, currentAgentRef]);
 
   const mergedSessions = useMemo(() => {
     const localOnly = Object.keys(messagesBySession)
@@ -166,12 +168,16 @@ export default function App() {
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
-      const [currentVersionRes, versionsRes] = await Promise.all([
-        getCurrentAgentVersion(effectiveClientConfig),
-        getAgentVersions(effectiveClientConfig),
+      const [repositoryRes, currentRefRes, changeSetsRes, releasesRes] = await Promise.all([
+        getAgentRepositoryStatus(effectiveClientConfig),
+        getCurrentAgentRef(effectiveClientConfig),
+        getAgentChangeSets(effectiveClientConfig),
+        getAgentReleases(effectiveClientConfig),
       ]);
-      setCurrentAgentVersion(currentVersionRes);
-      setAgentVersions(versionsRes);
+      setAgentRepository(repositoryRes);
+      setCurrentAgentRef(currentRefRes);
+      setAgentChangeSets(changeSetsRes);
+      setAgentReleases(releasesRes);
     } catch (error) {
       setLastError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -187,12 +193,16 @@ export default function App() {
   const refreshVersions = useCallback(async () => {
     setVersionLoading(true);
     try {
-      const [currentVersionRes, versionsRes] = await Promise.all([
-        getCurrentAgentVersion(effectiveClientConfig),
-        getAgentVersions(effectiveClientConfig),
+      const [repositoryRes, currentRefRes, changeSetsRes, releasesRes] = await Promise.all([
+        getAgentRepositoryStatus(effectiveClientConfig),
+        getCurrentAgentRef(effectiveClientConfig),
+        getAgentChangeSets(effectiveClientConfig),
+        getAgentReleases(effectiveClientConfig),
       ]);
-      setCurrentAgentVersion(currentVersionRes);
-      setAgentVersions(versionsRes);
+      setAgentRepository(repositoryRes);
+      setCurrentAgentRef(currentRefRes);
+      setAgentChangeSets(changeSetsRes);
+      setAgentReleases(releasesRes);
     } finally {
       setVersionLoading(false);
     }
@@ -441,8 +451,10 @@ export default function App() {
           clientConfig={effectiveClientConfig}
           runtimeContext={feedbackRuntimeContext}
           monitoringConfig={{ langfuseUrl }}
-          currentAgentVersion={currentAgentVersion}
-          agentVersions={agentVersions}
+          agentRepository={agentRepository}
+          currentAgentRef={currentAgentRef}
+          agentChangeSets={agentChangeSets}
+          agentReleases={agentReleases}
           versionLoading={versionLoading}
           versionError={lastError}
           onRefreshVersions={() => refreshVersions().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}

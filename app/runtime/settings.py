@@ -97,13 +97,14 @@ class AppSettings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     host_port: int = Field(default=58080, alias="HOST_PORT")
-    host_workspace_mount: str = Field(default="./docker/volume/main-workspace", alias="HOST_WORKSPACE_MOUNT")
-    host_data_mount: str = Field(default="./docker/volume/data", alias="HOST_DATA_MOUNT")
-    host_claude_root_mount: str = Field(default="./docker/volume/claude-roots/main", alias="HOST_CLAUDE_ROOT_MOUNT")
-    host_eval_case_governor_workspace_mount: str = Field(default="./docker/volume/eval-case-governor-workspace", alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT")
-    host_regression_impact_analyzer_workspace_mount: str = Field(default="./docker/volume/regression-impact-analyzer-workspace", alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT")
-    host_eval_case_governor_claude_root_mount: str = Field(default="./docker/volume/claude-roots/eval-case-governor", alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT")
-    host_regression_impact_analyzer_claude_root_mount: str = Field(default="./docker/volume/claude-roots/regression-impact-analyzer", alias="HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT")
+    host_runtime_volume_root: str = Field(default=str(Path.home() / "volume-agent-runtime"), alias="HOST_RUNTIME_VOLUME_ROOT")
+    host_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
+    host_data_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "data"), alias="HOST_DATA_MOUNT")
+    host_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "main"), alias="HOST_CLAUDE_ROOT_MOUNT")
+    host_eval_case_governor_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "eval-case-governor-workspace"), alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT")
+    host_regression_impact_analyzer_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "regression-impact-analyzer-workspace"), alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT")
+    host_eval_case_governor_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"), alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT")
+    host_regression_impact_analyzer_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"), alias="HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT")
 
     workspace_dir: Path = Field(default=Path("/main-workspace"), alias="WORKSPACE_DIR")
     main_workspace_dir: Path = Field(default=Path("/main-workspace"), alias="MAIN_WORKSPACE_DIR")
@@ -172,6 +173,16 @@ class AppSettings(BaseSettings):
 
     claude_env_json: Optional[str] = Field(default=None, alias="CLAUDE_ENV_JSON")
     claude_extra_args_json: Optional[str] = Field(default=None, alias="CLAUDE_EXTRA_ARGS_JSON")
+
+    agent_git_service_provider: Literal["local", "gitea"] = Field(default="local", alias="AGENT_GIT_SERVICE_PROVIDER")
+    agent_git_service_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_URL")
+    agent_git_service_public_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_PUBLIC_URL")
+    agent_git_repository_name: str = Field(default="main-agent-config", alias="AGENT_GIT_REPOSITORY_NAME")
+    agent_git_repository_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_REPOSITORY_DIR")
+    agent_git_worktrees_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_WORKTREES_DIR")
+    agent_release_archives_dir_override: Optional[Path] = Field(default=None, alias="AGENT_RELEASE_ARCHIVES_DIR")
+    agent_git_user_name: str = Field(default="Claude Agent Runtime", alias="AGENT_GIT_USER_NAME")
+    agent_git_user_email: str = Field(default="agent-runtime@example.local", alias="AGENT_GIT_USER_EMAIL")
 
     langfuse_enabled: bool = Field(default=False, alias="LANGFUSE_ENABLED")
     langfuse_public_key: Optional[str] = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
@@ -281,8 +292,16 @@ class AppSettings(BaseSettings):
         return self.data_dir / "sessions"
 
     @property
-    def agent_versions_dir(self) -> Path:
-        return self.data_dir / "agent-versions" / "main"
+    def agent_git_repository_dir(self) -> Path:
+        return self.agent_git_repository_dir_override or self.main_workspace_dir
+
+    @property
+    def agent_git_worktrees_dir(self) -> Path:
+        return self.agent_git_worktrees_dir_override or self.data_dir / "agent-governance" / "worktrees"
+
+    @property
+    def agent_release_archives_dir(self) -> Path:
+        return self.agent_release_archives_dir_override or self.data_dir / "agent-governance" / "releases"
 
     @property
     def runtime_db_path(self) -> Path:
@@ -309,5 +328,7 @@ def get_settings() -> AppSettings:
     settings.claude_home.mkdir(parents=True, exist_ok=True)
     if settings.resolved_claude_config_dir:
         settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)
-    settings.agent_versions_dir.mkdir(parents=True, exist_ok=True)
+    settings.agent_git_repository_dir.mkdir(parents=True, exist_ok=True)
+    settings.agent_git_worktrees_dir.mkdir(parents=True, exist_ok=True)
+    settings.agent_release_archives_dir.mkdir(parents=True, exist_ok=True)
     return settings

@@ -94,9 +94,39 @@ def _project_mapping_items(
 
 
 def _runtime_mapping_items(settings: AppSettings) -> list[ConfigMappingItem]:
+    items = [
+        _item(
+            settings,
+            scope="runtime",
+            kind="agent-git-repository",
+            path=settings.agent_git_repository_dir,
+            loaded_by_default=True,
+            git_policy="tracked",
+            notes="Git-backed source of truth for published main Agent configuration.",
+        ),
+        _item(
+            settings,
+            scope="runtime",
+            kind="agent-change-set-worktrees",
+            path=settings.agent_git_worktrees_dir,
+            loaded_by_default=True,
+            git_policy="ignored",
+            notes="Candidate worktrees for reviewed Agent change sets.",
+        ),
+        _item(
+            settings,
+            scope="runtime",
+            kind="agent-release-archives",
+            path=settings.agent_release_archives_dir,
+            loaded_by_default=True,
+            git_policy="ignored",
+            notes="Immutable release archives created during Agent publish.",
+        ),
+    ]
     if not settings.resolved_claude_config_dir:
-        return []
+        return items
     return [
+        *items,
         _item(
             settings,
             scope="runtime",

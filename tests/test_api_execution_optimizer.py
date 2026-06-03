@@ -198,6 +198,7 @@ def test_create_execution_job_endpoint_reports_agent_failure(monkeypatch, tmp_pa
 def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
     workspace = module.settings.main_workspace_dir
+    original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
     with TestClient(module.app) as client:
         task = _approved_task(module)
         job = _ready_execution_job(module, task)
@@ -206,18 +207,19 @@ def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypat
             json={"confirm": True},
         )
         updated_task = response.json()["optimization_task"]
+        change_set = updated_task["latest_change_set"]
         diff_response = client.get(
-            "/api/agent-versions/main/file-diff",
-            params={
-                "from_version_id": updated_task["pre_execution_agent_version_id"],
-                "to_version_id": updated_task["applied_agent_version_id"],
-                "path": "CLAUDE.md",
-            },
+            f"/api/agent-change-sets/{change_set['change_set_id']}/file-diff",
+            params={"path": "CLAUDE.md"},
         )
 
     assert response.status_code == 200
-    assert "回答配置类问题前必须读取" in workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
+    assert "回答配置类问题前必须读取" in Path(change_set["worktree_path"]).joinpath("CLAUDE.md").read_text(encoding="utf-8")
     assert updated_task["status"] == "applied_pending_regression"
+    assert updated_task["latest_change_set_id"] == change_set["change_set_id"]
+    assert change_set["status"] == "candidate_committed"
+    assert change_set["candidate_commit_sha"]
     assert updated_task["pre_execution_agent_version_id"]
     assert updated_task["applied_agent_version_id"]
     assert diff_response.status_code == 200
@@ -230,6 +232,7 @@ def test_apply_execution_job_rejects_baseline_conflict(monkeypatch, tmp_path):
     with TestClient(module.app) as client:
         task = _approved_task(module)
         job = _ready_execution_job(module, task)
+        module.settings.main_workspace_dir.joinpath("CLAUDE.md").write_text("制造 baseline 冲突\n", encoding="utf-8")
         module.agent_version_store.create_snapshot(reason="manual_snapshot", note="制造 baseline 冲突。")
         response = client.post(
             f"/api/optimization-tasks/{task['optimization_task_id']}/execution-jobs/{job['execution_job_id']}/apply",
@@ -262,7 +265,7 @@ def test_mark_task_applied_rejects_invalid_status_without_snapshot(monkeypatch, 
     with TestClient(module.app) as client:
         task = _approved_task(module)
         module.feedback_store.update_task_status(task["optimization_task_id"], status="execution_planning")
-        version_count = len(module.agent_version_store.list_versions())
+        change_set_count = len(module.agent_governance.list_change_sets())
         response = client.post(
             f"/api/optimization-tasks/{task['optimization_task_id']}/mark-applied",
             json={"note": "不应创建版本"},
@@ -270,7 +273,7 @@ def test_mark_task_applied_rejects_invalid_status_without_snapshot(monkeypatch, 
 
     assert response.status_code == 409
     assert response.json()["error_code"] == "CONFLICT"
-    assert len(module.agent_version_store.list_versions()) == version_count
+    assert len(module.agent_governance.list_change_sets()) == change_set_count
 
 
 def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path):
@@ -289,10 +292,9 @@ def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path)
 
     assert response.status_code == 409
     assert response.json()["error_code"] == "CONFLICT"
-    assert "changed before apply" in response.json()["detail"]
+    assert "uncommitted changes" in response.json()["detail"]
     assert failed_job["status"] == "completed"
-    assert application["status"] == "failed"
-    assert application["error_json"]["error_code"] == "EXECUTION_APPLY_FAILED"
+    assert application is None
 
 
 def test_apply_execution_job_restores_workspace_when_state_sync_fails(monkeypatch, tmp_path):
@@ -335,14 +337,11 @@ def test_apply_execution_job_restores_workspace_when_applied_snapshot_fails(monk
     module = _load_app(monkeypatch, tmp_path)
     workspace = module.settings.main_workspace_dir
     original_text = workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
-    create_snapshot = module.agent_version_store.create_snapshot
 
-    def fail_applied_snapshot(*args, **kwargs):
-        if kwargs.get("reason") == "execution_optimizer_applied":
-            raise RuntimeError("snapshot failed")
-        return create_snapshot(*args, **kwargs)
+    def fail_candidate_commit(*args, **kwargs):
+        raise RuntimeError("candidate commit failed")
 
-    monkeypatch.setattr(module.agent_version_store, "create_snapshot", fail_applied_snapshot)
+    monkeypatch.setattr(module.agent_version_store, "commit_worktree", fail_candidate_commit)
 
     with TestClient(module.app) as client:
         task = _approved_task(module)
@@ -429,7 +428,7 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
 
     assert response.status_code == 409
     assert "automatic restore also failed" in response.json()["detail"]
-    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") != original_text
+    assert workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8") == original_text
     assert failed_job["status"] == "completed"
     assert application["status"] == "pending_manual_recovery"
     compensations = module.feedback_store.list_execution_compensations(status="pending_manual_recovery")
@@ -737,8 +736,14 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs",
             json={"regression_plan_id": regression_plan["regression_plan_id"]},
         )
+        assert regression_response.status_code == 200, regression_response.json()
         impact_job = _run_one_agent_job(module)
         impact_response = client.get(f"/api/eval-runs/{regression_response.json()['eval_run']['eval_run_id']}/impact-analysis")
+        change_set = apply_response.json()["optimization_task"]["latest_change_set"]
+        publish_response = client.post(
+            f"/api/agent-change-sets/{change_set['change_set_id']}/publish",
+            json={"operator": "tester"},
+        )
         final_batch = regression_response.json()["batch"]
 
     assert signal_response.status_code == 200
@@ -751,6 +756,7 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert regression_plan_response.status_code == 200
     assert regression_response.status_code == 200
     assert impact_response.status_code == 200
+    assert publish_response.status_code == 200, publish_response.json()
     assert calls == ["eval_case_generation", "attribution", "batch_plan", "execution", "regression_impact_analysis"]
     assert eval_generation_job.status == "completed"
     assert attribution_job.status == "completed"
@@ -763,7 +769,9 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert plan_task["task_context"]["target_file"] == "CLAUDE.md"
     assert execute_response.json()["execution_job"]["status"] == "queued"
     assert apply_response.json()["optimization_task"]["applied_agent_version_id"]
+    assert "回答 workspace 配置类问题前必须读取当前配置文件" in Path(change_set["worktree_path"]).joinpath("CLAUDE.md").read_text(encoding="utf-8")
     assert "回答 workspace 配置类问题前必须读取当前配置文件" in workspace.joinpath("CLAUDE.md").read_text(encoding="utf-8")
+    assert publish_response.json()["commit_sha"] == change_set["candidate_commit_sha"]
     assert regression_response.json()["eval_run"]["result_status"] == "passed"
     assert regression_response.json()["regression_plan"]["eval_case_ids"]
     assert regression_response.json()["impact_analysis"]["status"] == "pending"

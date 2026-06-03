@@ -35,35 +35,6 @@ class AgentVersionFileEntryResponse(ExtensibleResponse):
     link_target: Optional[str] = None
 
 
-class AgentVersionIncludedRootResponse(ExtensibleResponse):
-    name: str
-    path: str
-    mode: str
-
-
-class AgentVersionExcludedPathResponse(ExtensibleResponse):
-    path: str
-    reason: str
-
-
-class AgentVersionSkippedPathResponse(ExtensibleResponse):
-    path: str
-    reason: str
-
-
-class AgentVersionRelatedDataResponse(ExtensibleResponse):
-    data_dir: Optional[str] = None
-    runtime_db_path: Optional[str] = None
-
-
-class AgentVersionManifestResponse(AgentVersionSummaryResponse):
-    included_roots: list[AgentVersionIncludedRootResponse] = Field(default_factory=list)
-    excluded_paths: list[AgentVersionExcludedPathResponse] = Field(default_factory=list)
-    skipped_paths: list[AgentVersionSkippedPathResponse] = Field(default_factory=list)
-    files: list[AgentVersionFileEntryResponse] = Field(default_factory=list)
-    related_data: AgentVersionRelatedDataResponse = Field(default_factory=AgentVersionRelatedDataResponse)
-
-
 class AgentVersionDiffEntryResponse(ExtensibleResponse):
     path: str
     before: Optional[AgentVersionFileEntryResponse] = None
@@ -91,10 +62,3 @@ class AgentVersionFileDiffResponse(ExtensibleResponse):
     is_text: bool = False
     truncated: bool = False
     reason: Optional[str] = None
-
-
-class AgentVersionRestoreResponse(ExtensibleResponse):
-    restored_from_version: AgentVersionSummaryResponse
-    pre_restore_version: AgentVersionSummaryResponse
-    current_version: AgentVersionSummaryResponse
-    requires_runtime_restart: bool = True

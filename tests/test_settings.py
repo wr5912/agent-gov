@@ -113,7 +113,9 @@ def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):
         settings.eval_case_governor_claude_root,
         settings.regression_impact_analyzer_claude_root,
         settings.claude_home,
-        settings.agent_versions_dir,
+        settings.agent_git_repository_dir,
+        settings.agent_git_worktrees_dir,
+        settings.agent_release_archives_dir,
     )
     assert all(path.is_dir() for path in expected_dirs)
 

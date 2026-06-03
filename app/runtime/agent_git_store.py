@@ -396,8 +396,16 @@ class GitAgentVersionStore:
         return proc.stdout
 
     def _configure_repo(self, cwd: Path) -> None:
+        self._ensure_safe_directory(cwd)
         self._git(["config", "user.name", self.git_user_name], cwd=cwd)
         self._git(["config", "user.email", self.git_user_email], cwd=cwd)
+
+    def _ensure_safe_directory(self, cwd: Path) -> None:
+        safe_path = str(cwd.resolve())
+        existing = self._git(["config", "--global", "--get-all", "safe.directory"], cwd=cwd, check=False)
+        if safe_path in existing.splitlines() or "*" in existing.splitlines():
+            return
+        self._git(["config", "--global", "--add", "safe.directory", safe_path], cwd=cwd, check=False)
 
     def _write_info_exclude(self, cwd: Path) -> None:
         git_dir = self._git(["rev-parse", "--git-dir"], cwd=cwd).strip()

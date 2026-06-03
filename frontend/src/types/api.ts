@@ -3568,6 +3568,7 @@ export interface components {
             operations?: components["schemas"]["OptimizationExecutionPlanOperationResponse"][];
             /** Optimization Task Id */
             optimization_task_id?: string | null;
+            planned_diff?: components["schemas"]["OptimizationExecutionPlannedDiffResponse"] | null;
             /** Risk */
             risk?: string | null;
             /** Schema Version */
@@ -3578,6 +3579,79 @@ export interface components {
             summary?: string | null;
             /** Validation */
             validation?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OptimizationExecutionPlannedDiffFileResponse */
+        OptimizationExecutionPlannedDiffFileResponse: {
+            /** After Sha256 */
+            after_sha256?: string | null;
+            /** Before Sha256 */
+            before_sha256?: string | null;
+            /** Expected Sha256 */
+            expected_sha256?: string | null;
+            /**
+             * Is Text
+             * @default true
+             */
+            is_text: boolean;
+            /** Operation */
+            operation: string;
+            /** Path */
+            path: string;
+            /** Rationale */
+            rationale?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Status */
+            status: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+            /**
+             * Unified Diff
+             * @default
+             */
+            unified_diff: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** OptimizationExecutionPlannedDiffResponse */
+        OptimizationExecutionPlannedDiffResponse: {
+            /**
+             * Added
+             * @default 0
+             */
+            added: number;
+            /**
+             * Deleted
+             * @default 0
+             */
+            deleted: number;
+            /** Files */
+            files?: components["schemas"]["OptimizationExecutionPlannedDiffFileResponse"][];
+            /**
+             * Modified
+             * @default 0
+             */
+            modified: number;
+            /**
+             * Noop
+             * @default 0
+             */
+            noop: number;
+            /**
+             * Schema Version
+             * @default execution-planned-diff/v1
+             */
+            schema_version: string;
+            /**
+             * Unchanged
+             * @default 0
+             */
+            unchanged: number;
         } & {
             [key: string]: unknown;
         };

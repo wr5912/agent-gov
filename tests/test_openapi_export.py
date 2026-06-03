@@ -282,6 +282,12 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(plan_task_execution_schema, "optimization_task", "OptimizationTaskResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
+    execution_plan_schema = schema["components"]["schemas"]["OptimizationExecutionPlanOutputResponse"]
+    assert_nullable_schema_ref(execution_plan_schema, "planned_diff", "OptimizationExecutionPlannedDiffResponse")
+    planned_diff_schema = schema["components"]["schemas"]["OptimizationExecutionPlannedDiffResponse"]
+    assert planned_diff_schema["properties"]["files"]["items"] == {
+        "$ref": "#/components/schemas/OptimizationExecutionPlannedDiffFileResponse"
+    }
     execution_job_schema = schema["components"]["schemas"]["OptimizationExecutionJobResponse"]
     assert_nullable_schema_ref(execution_job_schema, "error_json", "FeedbackJobErrorResponse")
     assert "execution_job_id" in execution_job_schema["properties"]

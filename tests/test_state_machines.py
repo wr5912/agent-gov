@@ -45,6 +45,7 @@ def test_job_in_progress_states_are_known_job_states():
 
 def test_batch_state_machine_allows_main_lifecycle():
     validate_transition("batch", "draft", "attribution_running")
+    validate_transition("batch", "attribution_running", "draft")
     validate_transition("batch", "attribution_running", "attribution_completed")
     validate_transition("batch", "attribution_completed", "optimization_plan_queued")
     validate_transition("batch", "optimization_plan_queued", "pending_approval")

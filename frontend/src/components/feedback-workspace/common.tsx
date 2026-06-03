@@ -72,9 +72,19 @@ export function DetailTabs<T extends string>({
   );
 }
 
-export function DetailRecordList({ children, emptyText, hasItems }: { children: ReactNode; emptyText: string; hasItems: boolean }) {
+export function DetailRecordList({
+  children,
+  className,
+  emptyText,
+  hasItems,
+}: {
+  children: ReactNode;
+  className?: string;
+  emptyText: string;
+  hasItems: boolean;
+}) {
   return (
-    <div className="fw-detail-record-list">
+    <div className={`fw-detail-record-list ${className || ""}`.trim()}>
       {hasItems ? children : <div className="fw-empty-inline">{emptyText}</div>}
     </div>
   );

@@ -190,7 +190,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     },
     "batch": {
         "draft": {"attribution_running", "attribution_completed", "optimization_plan_queued", "pending_approval", "needs_human_review"},
-        "attribution_running": {"attribution_running", "attribution_completed", "attribution_failed", "needs_human_review"},
+        "attribution_running": {"draft", "attribution_running", "attribution_completed", "attribution_failed", "needs_human_review"},
         "attribution_completed": {"optimization_plan_queued", "pending_approval", "needs_human_review"},
         "attribution_failed": {"attribution_running", "needs_human_review"},
         "optimization_plan_queued": {"pending_approval", "needs_human_review", "failed"},

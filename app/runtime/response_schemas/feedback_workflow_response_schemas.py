@@ -56,6 +56,30 @@ class OptimizationExecutionPlanOperationResponse(ExtensibleResponse):
     rationale: Optional[str] = None
 
 
+class OptimizationExecutionPlannedDiffFileResponse(ExtensibleResponse):
+    path: str
+    operation: str
+    status: str
+    expected_sha256: Optional[str] = None
+    before_sha256: Optional[str] = None
+    after_sha256: Optional[str] = None
+    unified_diff: str = ""
+    is_text: bool = True
+    truncated: bool = False
+    reason: Optional[str] = None
+    rationale: Optional[str] = None
+
+
+class OptimizationExecutionPlannedDiffResponse(ExtensibleResponse):
+    schema_version: str = "execution-planned-diff/v1"
+    files: list[OptimizationExecutionPlannedDiffFileResponse] = Field(default_factory=list)
+    added: int = 0
+    modified: int = 0
+    deleted: int = 0
+    unchanged: int = 0
+    noop: int = 0
+
+
 class OptimizationExecutionPlanOutputResponse(ExtensibleResponse):
     schema_version: Optional[str] = None
     optimization_task_id: Optional[str] = None
@@ -64,6 +88,7 @@ class OptimizationExecutionPlanOutputResponse(ExtensibleResponse):
     baseline_agent_version_id: Optional[str] = None
     summary: Optional[str] = None
     operations: list[OptimizationExecutionPlanOperationResponse] = Field(default_factory=list)
+    planned_diff: Optional[OptimizationExecutionPlannedDiffResponse] = None
     validation: Optional[str] = None
     risk: Optional[str] = None
     human_review_required: Optional[bool] = None

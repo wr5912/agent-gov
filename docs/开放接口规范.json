@@ -7244,6 +7244,16 @@
             ],
             "title": "Optimization Task Id"
           },
+          "planned_diff": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OptimizationExecutionPlannedDiffResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "risk": {
             "anyOf": [
               {
@@ -7301,6 +7311,144 @@
           }
         },
         "title": "OptimizationExecutionPlanOutputResponse",
+        "type": "object"
+      },
+      "OptimizationExecutionPlannedDiffFileResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "after_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After Sha256"
+          },
+          "before_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before Sha256"
+          },
+          "expected_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Sha256"
+          },
+          "is_text": {
+            "default": true,
+            "title": "Is Text",
+            "type": "boolean"
+          },
+          "operation": {
+            "title": "Operation",
+            "type": "string"
+          },
+          "path": {
+            "title": "Path",
+            "type": "string"
+          },
+          "rationale": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rationale"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "unified_diff": {
+            "default": "",
+            "title": "Unified Diff",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "operation",
+          "status"
+        ],
+        "title": "OptimizationExecutionPlannedDiffFileResponse",
+        "type": "object"
+      },
+      "OptimizationExecutionPlannedDiffResponse": {
+        "additionalProperties": true,
+        "properties": {
+          "added": {
+            "default": 0,
+            "title": "Added",
+            "type": "integer"
+          },
+          "deleted": {
+            "default": 0,
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "files": {
+            "items": {
+              "$ref": "#/components/schemas/OptimizationExecutionPlannedDiffFileResponse"
+            },
+            "title": "Files",
+            "type": "array"
+          },
+          "modified": {
+            "default": 0,
+            "title": "Modified",
+            "type": "integer"
+          },
+          "noop": {
+            "default": 0,
+            "title": "Noop",
+            "type": "integer"
+          },
+          "schema_version": {
+            "default": "execution-planned-diff/v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "unchanged": {
+            "default": 0,
+            "title": "Unchanged",
+            "type": "integer"
+          }
+        },
+        "title": "OptimizationExecutionPlannedDiffResponse",
         "type": "object"
       },
       "OptimizationProposalResponse": {
@@ -9427,7 +9575,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.24"
+    "version": "0.2.25"
   },
   "openapi": "3.1.0",
   "paths": {

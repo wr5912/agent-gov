@@ -106,6 +106,7 @@ def _attribution_profile(settings: AppSettings) -> AgentRuntimeProfile:
         writable_paths=(settings.data_dir / ".runtime-tmp" / "jobs",),
         denied_paths=(settings.main_workspace_dir, settings.main_claude_root),
         allowed_mcp_servers=("feedback-evidence", "readonly-trace"),
+        max_turns=16,
     )
 
 

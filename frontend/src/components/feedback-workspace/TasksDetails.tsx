@@ -4,6 +4,8 @@ import { diffAgentVersionFile } from "../../api/runtime";
 import type {
   EvalRunRecord,
   ExecutionCompensationRecord,
+  ExecutionPlannedDiff,
+  ExecutionPlannedDiffFile,
   ExecutionPlanOperation,
   OptimizationExecutionJobRecord,
   OptimizationTaskRecord,
@@ -29,6 +31,7 @@ export function TasksDetails({
   clientConfig,
   tasks,
   actionId,
+  variant = "default",
   onMarkApplied,
   onCreateExecutionJob,
   onApplyExecutionJob,
@@ -38,6 +41,7 @@ export function TasksDetails({
   clientConfig?: RuntimeClientConfig;
   tasks: OptimizationTaskRecord[];
   actionId?: string | null;
+  variant?: "default" | "batch-plan";
   onMarkApplied?: (task: OptimizationTaskRecord) => void;
   onCreateExecutionJob?: (task: OptimizationTaskRecord, force?: boolean) => void;
   onApplyExecutionJob?: (task: OptimizationTaskRecord) => void;
@@ -45,7 +49,11 @@ export function TasksDetails({
   onRunRegression?: (task: OptimizationTaskRecord) => void;
 }) {
   return (
-    <DetailRecordList hasItems={tasks.length > 0} emptyText="暂无优化任务">
+    <DetailRecordList
+      className={variant === "batch-plan" ? "fw-detail-record-list-batch-plan" : undefined}
+      hasItems={tasks.length > 0}
+      emptyText="暂无优化任务"
+    >
       {tasks.map((task) => (
         <TaskDetailCard
           key={task.optimization_task_id}
@@ -162,7 +170,7 @@ export function TaskDetailCard({
               onClick={() => onApplyExecutionJob(task)}
             >
               {actionId === `execution-apply:${task.optimization_task_id}` ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
-              应用执行方案
+              应用执行方案并创建 Agent 版本
             </button>
           ) : null}
           {onRunRegression ? (
@@ -212,14 +220,25 @@ function TaskExecutionPlanSection({
 }) {
   const output = execution.validated_output_json;
   const operations = output?.operations || [];
+  const plannedDiff = output?.planned_diff || null;
+  const planFiles = plannedDiff?.files?.length || operations.length;
+  const applied = Boolean(task.applied_agent_version_id);
+  const ready = executionPlanReady(execution);
   const createsEvalCase = isEvalCaseExecutionPlan(task, execution);
   const compensations = execution.compensations || [];
-  const title = createsEvalCase ? "执行方案：创建评估用例文件" : "执行方案";
+  const title = createsEvalCase ? "计划变更：创建评估用例文件" : applied ? "执行方案记录" : "计划变更 / 待应用";
+  const description = createsEvalCase
+    ? "这里展示的是待写入文件内容，不是回归验证结果。"
+    : applied
+      ? "这里展示已执行过的受控执行方案；真实生效差异见下方“已生效差异”。"
+      : ready
+        ? "执行方案已生成，尚未写入 main-agent；点击应用后才会产生 Agent 版本。"
+        : "这里展示执行智能体生成的方案状态、操作和人工复核信息。";
   return (
     <section className={`fw-task-source fw-task-execution-section ${createsEvalCase ? "fw-task-execution-section-eval" : ""}`.trim()}>
       <div className="fw-task-section-head">
         <h4>{title}</h4>
-        <small>{createsEvalCase ? "这里展示的是待写入文件内容，不是回归验证结果。" : "这里展示将要修改什么文件以及如何修改。"}</small>
+        <small>{description}</small>
       </div>
       <DetailMetricGrid
         items={[
@@ -227,8 +246,10 @@ function TaskExecutionPlanSection({
           ["状态", execution.status],
           ["基线版本", shortId(execution.baseline_agent_version_id)],
           ["操作数", operations.length],
+          ["计划文件", planFiles],
         ]}
       />
+      {!applied && ready ? <p className="fw-note-box fw-execution-pending-note">待应用：这些变更尚未写入 main-agent，也尚未生效。</p> : null}
       {output?.summary ? <FormattedText value={output.summary} /> : null}
       {output?.validation || output?.risk || output?.no_action_reason ? (
         <FormattedTextFields
@@ -243,6 +264,7 @@ function TaskExecutionPlanSection({
       {compensations.length ? (
         <ExecutionCompensationList actionId={actionId} items={compensations} onRestoreCompensation={onRestoreCompensation} />
       ) : null}
+      <PlannedDiffPreview plannedDiff={plannedDiff} />
       {operations.length ? (
         <div className="fw-execution-operation-list">
           {operations.map((operation, index) => (
@@ -321,17 +343,90 @@ function compensationStatusTone(item: ExecutionCompensationRecord): "green" | "o
   return "gray";
 }
 
+function PlannedDiffPreview({ plannedDiff }: { plannedDiff?: ExecutionPlannedDiff | null }) {
+  const files = plannedDiff?.files || [];
+  if (!files.length) return null;
+  return (
+    <div className="fw-planned-diff-list">
+      <div className="fw-task-section-head">
+        <h4>计划差异预览</h4>
+        <small>这是应用前的预计写入结果；应用后以下方真实版本差异为准。</small>
+      </div>
+      <DetailMetricGrid
+        items={[
+          ["新增", plannedDiff?.added ?? 0],
+          ["修改", plannedDiff?.modified ?? 0],
+          ["未变", plannedDiff?.unchanged ?? 0],
+          ["noop", plannedDiff?.noop ?? 0],
+        ]}
+      />
+      {files.map((file, index) => (
+        <PlannedDiffFileRow file={file} key={`${file.path || "planned"}:${index}`} />
+      ))}
+    </div>
+  );
+}
+
+function PlannedDiffFileRow({ file }: { file: ExecutionPlannedDiffFile }) {
+  return (
+    <details className="fw-planned-diff-row">
+      <summary>
+        <span>{file.path || "-"}</span>
+        <Pill tone={plannedDiffStatusTone(file.status)}>{plannedDiffStatusText(file.status)}</Pill>
+      </summary>
+      <DetailMetricGrid
+        items={[
+          ["操作", file.operation || "-"],
+          ["expected_sha", shortId(file.expected_sha256)],
+          ["before", shortId(file.before_sha256)],
+          ["after", shortId(file.after_sha256)],
+        ]}
+      />
+      {file.rationale ? <small>{file.rationale}</small> : null}
+      {file.unified_diff ? (
+        <pre>{file.unified_diff}</pre>
+      ) : (
+        <p className="fw-muted">{file.reason || "该计划变更没有内容级 diff。"}</p>
+      )}
+      {file.truncated && file.reason ? <p className="fw-warning-text">{file.reason}</p> : null}
+    </details>
+  );
+}
+
+function plannedDiffStatusText(status?: string | null): string {
+  if (status === "added") return "新增";
+  if (status === "modified") return "修改";
+  if (status === "deleted") return "删除";
+  if (status === "unchanged") return "未变";
+  if (status === "noop") return "noop";
+  return status || "unknown";
+}
+
+function plannedDiffStatusTone(status?: string | null): "blue" | "green" | "orange" | "red" | "gray" {
+  if (status === "added") return "green";
+  if (status === "modified") return "orange";
+  if (status === "deleted") return "red";
+  if (status === "unchanged" || status === "noop") return "gray";
+  return "blue";
+}
+
 function ExecutionOperationCard({ createsEvalCase, operation }: { createsEvalCase: boolean; operation: ExecutionPlanOperation }) {
   const content = operation.content || operation.append_text || "";
+  const contentTitle = createsEvalCase
+    ? "查看将创建的评估用例草案"
+    : operation.operation === "append_text"
+      ? "查看计划追加内容"
+      : operation.operation === "replace_file"
+        ? "查看计划替换内容"
+        : "查看计划写入内容";
   return (
     <div className="fw-execution-operation">
       <span>{operation.operation || "operation"}</span>
       <code>{operation.path || "-"}</code>
       {operation.rationale ? <small>{operation.rationale}</small> : null}
-      {createsEvalCase && content ? (
+      {content ? (
         <details className="fw-execution-operation-content">
-          <summary>查看将创建的评估用例草案</summary>
-          <p>这是执行方案准备写入的 JSON 文件内容；真正的回归验证结果会在“回归验证”区域展示。</p>
+          <summary>{contentTitle}</summary>
           <pre>{content}</pre>
         </details>
       ) : null}
@@ -405,15 +500,15 @@ function TaskVersionDiffSection({
   if (!task.applied_agent_version_id) {
     return (
       <section className="fw-task-source">
-        <h4>变更对比</h4>
-        <p className="fw-note-box">任务尚未应用，暂无修改后版本。生成执行方案后可先查看计划操作，应用后再查看真实文件差异。</p>
+        <h4>已生效差异</h4>
+        <p className="fw-note-box">任务尚未应用，暂无真实生效差异；上方“计划变更 / 待应用”展示预计写入内容。</p>
       </section>
     );
   }
   if (!fromVersionId || !toVersionId) {
     return (
       <section className="fw-task-source">
-        <h4>变更对比</h4>
+        <h4>已生效差异</h4>
         <p className="fw-note-box">缺少基线版本，无法展示前后对比。</p>
       </section>
     );
@@ -421,14 +516,14 @@ function TaskVersionDiffSection({
   if (!clientConfig) {
     return (
       <section className="fw-task-source">
-        <h4>变更对比</h4>
+        <h4>已生效差异</h4>
         <p className="fw-note-box">当前视图缺少 API 配置，无法加载文件级对比。</p>
       </section>
     );
   }
   return (
     <section className="fw-task-source">
-      <h4>变更对比</h4>
+      <h4>已生效差异</h4>
       <DetailMetricGrid
         items={[
           ["修改前", shortId(fromVersionId)],

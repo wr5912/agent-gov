@@ -311,6 +311,32 @@ export type ExecutionCompensationRecord = OpenApiExecutionCompensationResponse &
   restore_status: "restored" | "restore_failed" | string;
 };
 
+export type ExecutionPlannedDiffFile = {
+  path: string;
+  operation: string;
+  status: "added" | "modified" | "deleted" | "unchanged" | "noop" | string;
+  expected_sha256?: string | null;
+  before_sha256?: string | null;
+  after_sha256?: string | null;
+  unified_diff?: string | null;
+  is_text?: boolean | null;
+  truncated?: boolean | null;
+  reason?: string | null;
+  rationale?: string | null;
+  [key: string]: unknown;
+};
+
+export type ExecutionPlannedDiff = {
+  schema_version?: string | null;
+  files?: ExecutionPlannedDiffFile[];
+  added?: number;
+  modified?: number;
+  deleted?: number;
+  unchanged?: number;
+  noop?: number;
+  [key: string]: unknown;
+};
+
 export type ExecutionPlanOutput = {
   schema_version?: string | null;
   optimization_task_id?: string | null;
@@ -319,6 +345,7 @@ export type ExecutionPlanOutput = {
   baseline_agent_version_id?: string | null;
   summary?: string | null;
   operations?: ExecutionPlanOperation[];
+  planned_diff?: ExecutionPlannedDiff | null;
   validation?: string | null;
   risk?: string | null;
   human_review_required?: boolean | null;

@@ -610,7 +610,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "tool_calls.json")["content"] == []
     assert "归因分析智能体" in str(seen["prompt_text"])
     assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
-    assert seen["max_turns"] == settings.max_turns
+    assert seen["max_turns"] == 16
     assert attribution_job.status == "completed"
     assert output["schema_version"] == "attribution-output/v1"
     assert output["feedback_case_id"] == feedback_case["feedback_case_id"]

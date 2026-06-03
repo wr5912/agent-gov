@@ -656,6 +656,26 @@ def test_batch_attribution_uses_current_jobs_and_resets_downstream_plan(tmp_path
     assert not (store.tmp_jobs_dir / attribution_job["job_id"]).exists()
 
 
+def test_reset_batch_attribution_allows_stale_running_batch_with_failed_job(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="归因失败"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    feedback_case_id = batch["feedback_case_ids"][0]
+    attribution_job = store.create_attribution_job(feedback_case_id)
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [attribution_job])
+
+    failed = store.fail_job(attribution_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
+    reset = store.reset_batch_attribution(batch["batch_id"])
+
+    assert batch["status"] == "attribution_running"
+    assert failed["status"] == "failed"
+    assert reset["status"] == "draft"
+    assert reset["attribution_job_ids"] == []
+    assert reset["attribution_jobs"] == []
+    assert store.get_job(attribution_job["job_id"]) is None
+
+
 def test_reset_batch_attribution_rolls_back_db_and_keeps_tmp_when_batch_update_fails(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     _record_run(store)

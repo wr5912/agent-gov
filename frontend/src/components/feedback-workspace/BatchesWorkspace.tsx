@@ -14,6 +14,7 @@ import {
   FormattedTextFields,
   FormattedTextSection,
   Pill,
+  type PillTone,
 } from "./common";
 import {
   attributionOutputFromJob,
@@ -733,31 +734,37 @@ function BatchExecutionSummary({ batch }: { batch: FeedbackOptimizationBatchReco
   if (!task && !execution) return null;
   const output = execution?.validated_output_json || null;
   const operations = output?.operations || [];
+  const plannedDiff = output?.planned_diff || null;
+  const plannedFileCount = plannedDiff?.files?.length || operations.length;
   const appliedVersion = task?.applied_agent_version_id || null;
   const noActionReason = output?.no_action_reason || execution?.error_json?.message || null;
+  const ready = executionPlanReady(execution);
+  const stateLabel = appliedVersion ? "已应用" : ready ? "待应用" : execution ? execution.status : task?.status || "pending";
+  const stateTone: PillTone = appliedVersion ? "green" : ready ? "orange" : execution ? jobStatusTone(execution.status) : "gray";
   const nextStep = appliedVersion
     ? "优化已应用并产生 Agent 版本，可以运行回归测试。"
-    : executionPlanReady(execution)
-      ? "执行方案已 ready，请先应用执行方案以产生 Agent 版本。"
+    : ready
+      ? "执行方案已生成，尚未写入 main-agent；应用后才会产生 Agent 版本。"
       : execution
         ? "执行方案尚未可应用，请查看未执行原因或重新生成执行方案。"
         : "优化任务已创建，等待生成执行方案。";
   return (
     <section className="fw-task-source fw-batch-execution-summary">
-      <div className="fw-task-section-head">
-        <h4>执行状态</h4>
-        <Pill tone={appliedVersion ? "green" : executionPlanReady(execution) ? "blue" : execution ? jobStatusTone(execution.status) : "gray"}>
-          {appliedVersion ? "applied" : execution?.status || task?.status || "pending"}
-        </Pill>
+      <div className="fw-batch-execution-strip">
+        <div className="fw-batch-execution-state">
+          <h4>执行状态</h4>
+          <Pill tone={stateTone}>{stateLabel}</Pill>
+        </div>
+        <DetailMetricGrid
+          items={[
+            ["优化任务", shortId(task?.optimization_task_id)],
+            ["执行方案", shortId(execution?.execution_job_id)],
+            ["计划文件", plannedFileCount],
+            ["操作数", operations.length],
+            ["应用版本", shortId(appliedVersion)],
+          ]}
+        />
       </div>
-      <DetailMetricGrid
-        items={[
-          ["优化任务", shortId(task?.optimization_task_id)],
-          ["执行方案", shortId(execution?.execution_job_id)],
-          ["操作数", operations.length],
-          ["应用版本", shortId(appliedVersion)],
-        ]}
-      />
       <p className="fw-note-box">{nextStep}</p>
       {noActionReason ? <FormattedTextSection title="未执行原因" value={String(noActionReason)} compact /> : null}
     </section>

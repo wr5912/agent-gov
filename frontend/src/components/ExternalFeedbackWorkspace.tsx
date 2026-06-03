@@ -160,6 +160,7 @@ export function ExternalFeedbackWorkspace({
                 clientConfig={clientConfig}
                 tasks={tasks}
                 actionId={actionId}
+                variant="batch-plan"
                 onCreateExecutionJob={createExecutionJob}
                 onApplyExecutionJob={applyExecutionJob}
                 onRestoreCompensation={restoreCompensation}

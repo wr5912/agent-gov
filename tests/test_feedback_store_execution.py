@@ -172,6 +172,75 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
 
 
+@pytest.mark.parametrize(
+    ("target_path", "operation", "expected_status", "expected_diff_line"),
+    [
+        (
+            "CLAUDE.md",
+            {"operation": "append_text", "append_text": "\n允许读取配置。\n"},
+            "modified",
+            "+允许读取配置。",
+        ),
+        (
+            "CLAUDE.md",
+            {"operation": "replace_file", "content": "# Replaced Agent\n"},
+            "modified",
+            "+# Replaced Agent",
+        ),
+        (
+            "notes/new-policy.md",
+            {"operation": "create_file", "content": "# New Policy\n"},
+            "added",
+            "+# New Policy",
+        ),
+    ],
+)
+def test_execution_plan_stores_planned_diff_without_writing_workspace(
+    tmp_path,
+    target_path,
+    operation,
+    expected_status,
+    expected_diff_line,
+):
+    store, settings = _store(tmp_path)
+    target = settings.main_workspace_dir / target_path
+    if target_path != "CLAUDE.md":
+        target.parent.mkdir(parents=True, exist_ok=True)
+    before = target.read_text(encoding="utf-8") if target.exists() else None
+    task = _create_approved_task_for_target(store, target_path)
+    job = store.create_execution_job(task["optimization_task_id"])
+    store.start_execution_job(job["execution_job_id"])
+
+    completed = store.complete_execution_job(
+        job["execution_job_id"],
+        {
+            "schema_version": "execution-plan-output/v1",
+            "optimization_task_id": task["optimization_task_id"],
+            "execution_job_id": job["execution_job_id"],
+            "status": "ready",
+            "baseline_agent_version_id": task["baseline_agent_version_id"],
+            "summary": f"计划修改 {target_path}。",
+            "operations": [{**operation, "path": target_path, "rationale": "测试 planned diff。"}],
+            "validation": "检查 planned diff。",
+            "risk": "测试风险。",
+            "human_review_required": True,
+        },
+    )
+
+    after = target.read_text(encoding="utf-8") if target.exists() else None
+    planned_diff = completed["validated_output_json"]["planned_diff"]
+    planned_file = planned_diff["files"][0]
+
+    assert after == before
+    assert planned_diff["files"]
+    assert planned_diff[expected_status] == 1
+    assert planned_file["path"] == target_path
+    assert planned_file["operation"] == operation["operation"]
+    assert planned_file["status"] == expected_status
+    assert planned_file["after_sha256"]
+    assert expected_diff_line in planned_file["unified_diff"]
+
+
 def test_task_projection_rejects_invalid_persisted_status(tmp_path):
     store, _ = _store(tmp_path)
     task = _create_approved_task_for_target(store, "CLAUDE.md")

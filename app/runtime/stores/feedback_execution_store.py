@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import difflib
+import hashlib
 import json
 import uuid
 from typing import Any, Optional
@@ -15,6 +17,10 @@ from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
 from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION
+
+
+MAX_PLANNED_DIFF_INPUT_CHARS = 120_000
+MAX_PLANNED_DIFF_OUTPUT_CHARS = 80_000
 
 
 class FeedbackExecutionStoreMixin:
@@ -522,6 +528,99 @@ class FeedbackExecutionStoreMixin:
                 return None, f"create_file target already exists: {path}"
             operations.append(operation)
         sanitized["operations"] = operations
+        sanitized["planned_diff"] = self._build_execution_planned_diff(operations, target_contexts)
         if sanitized.get("status") == "ready" and not operations:
             return None, "ready execution plan has no operations"
         return sanitized, None
+
+    def _build_execution_planned_diff(
+        self,
+        operations: list[JsonObject],
+        target_contexts: dict[str, JsonObject],
+    ) -> JsonObject:
+        files: list[JsonObject] = []
+        counts = {
+            "added": 0,
+            "modified": 0,
+            "deleted": 0,
+            "unchanged": 0,
+            "noop": 0,
+        }
+        for operation in operations:
+            entry = self._build_execution_planned_diff_entry(operation, target_contexts)
+            files.append(entry)
+            status = self._string(entry.get("status"))
+            if status in counts:
+                counts[status] += 1
+        return {
+            "schema_version": "execution-planned-diff/v1",
+            "files": files,
+            **counts,
+        }
+
+    def _build_execution_planned_diff_entry(
+        self,
+        operation: JsonObject,
+        target_contexts: dict[str, JsonObject],
+    ) -> JsonObject:
+        op = self._string(operation.get("operation")) or "operation"
+        path = self._string(operation.get("path")) or "-"
+        context = target_contexts.get(path) or self._execution_target_file_context(path)
+        before_text = context.get("content_text") if isinstance(context.get("content_text"), str) else ""
+        before_bytes = before_text.encode("utf-8")
+        after_text = before_text
+        status = "noop"
+        reason = self._string(context.get("skipped_reason"))
+        if op == "append_text":
+            after_text = before_text + str(operation.get("append_text") or "")
+            status = "modified" if after_text != before_text else "unchanged"
+            reason = None
+        elif op == "replace_file":
+            after_text = str(operation.get("content") or "")
+            status = "modified" if after_text != before_text else "unchanged"
+            reason = None
+        elif op == "create_file":
+            before_text = ""
+            before_bytes = b""
+            after_text = str(operation.get("content") or "")
+            status = "added" if after_text else "unchanged"
+            reason = None
+        elif op == "noop":
+            status = "noop"
+            reason = self._string(operation.get("rationale")) or reason or "noop operation"
+        after_bytes = after_text.encode("utf-8")
+        unified_diff = ""
+        truncated = False
+        if op != "noop":
+            unified_diff, truncated, truncate_reason = self._planned_unified_diff(path, before_text, after_text)
+            reason = truncate_reason or reason
+        return {
+            "path": path,
+            "operation": op,
+            "status": status,
+            "expected_sha256": self._string(operation.get("expected_sha256")),
+            "before_sha256": hashlib.sha256(before_bytes).hexdigest() if before_bytes or context.get("exists") else None,
+            "after_sha256": hashlib.sha256(after_bytes).hexdigest(),
+            "unified_diff": unified_diff,
+            "is_text": True,
+            "truncated": truncated,
+            "reason": reason,
+            "rationale": self._string(operation.get("rationale")),
+        }
+
+    def _planned_unified_diff(self, path: str, before_text: str, after_text: str) -> tuple[str, bool, Optional[str]]:
+        if len(before_text) + len(after_text) > MAX_PLANNED_DIFF_INPUT_CHARS:
+            return "", True, f"计划变更内容超过 {MAX_PLANNED_DIFF_INPUT_CHARS} 字符，未展开 diff。"
+        diff = "".join(
+            difflib.unified_diff(
+                before_text.splitlines(keepends=True),
+                after_text.splitlines(keepends=True),
+                fromfile=f"before:{path}",
+                tofile=f"after:{path}",
+                lineterm="\n",
+            )
+        )
+        if len(diff) <= MAX_PLANNED_DIFF_OUTPUT_CHARS:
+            return diff, False, None
+        truncated = diff[:MAX_PLANNED_DIFF_OUTPUT_CHARS].rstrip() + "\n... planned diff truncated ...\n"
+        return truncated, True, f"计划 diff 超过 {MAX_PLANNED_DIFF_OUTPUT_CHARS} 字符，已截断展示。"

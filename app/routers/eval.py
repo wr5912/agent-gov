@@ -125,8 +125,8 @@ def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStor
         response_model=AgentJobResponse,
         summary="Queue regression impact analysis for one eval run",
     )
-    async def create_regression_impact_analysis(eval_run_id: str) -> AgentJobResponse:
-        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id)
+    async def create_regression_impact_analysis(eval_run_id: str, force: bool = Query(default=False)) -> AgentJobResponse:
+        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id, force=force)
         return ensure_found(analysis, "Eval run not found")
 
     @router.get(

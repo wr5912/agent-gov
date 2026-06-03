@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.routers.error_helpers import ensure_found, raise_conflict
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -107,9 +107,13 @@ def _register_batch_regression_gate_routes(router: APIRouter, feedback_store: Fe
         response_model=AgentJobResponse,
         summary="Queue impact analysis for a batch regression run",
     )
-    async def create_batch_regression_impact_analysis(batch_id: str, eval_run_id: str) -> AgentJobResponse:
+    async def create_batch_regression_impact_analysis(
+        batch_id: str,
+        eval_run_id: str,
+        force: bool = Query(default=False),
+    ) -> AgentJobResponse:
         ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
-        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id)
+        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id, force=force)
         return ensure_found(analysis, "Eval run not found")
 
     @router.post(

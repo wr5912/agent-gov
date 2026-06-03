@@ -195,6 +195,53 @@ def test_create_execution_job_endpoint_reports_agent_failure(monkeypatch, tmp_pa
     assert "model unavailable" in failed.error_json.message
 
 
+def test_regression_impact_analysis_endpoints_can_force_requeue(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    store = module.feedback_store
+    store.record_run(
+        {
+            "run_id": "run-impact-force",
+            "session_id": "sess-impact-force",
+            "message": "复测回归影响分析",
+            "answer_summary": "通过",
+        }
+    )
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(
+            run_id="run-impact-force",
+            labels=["tool_data_incomplete"],
+            comment="验证 impact analysis force requeue",
+        )
+    )
+    batch = store.create_optimization_batch(
+        [{"source_kind": "signal", "source_id": signal["signal_id"]}],
+        title="impact force 批次",
+    )
+    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="optimization_batch_regression")
+    existing = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
+
+    with TestClient(module.app) as client:
+        reused_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs/{eval_run['eval_run_id']}/impact-analysis"
+        )
+        batch_forced_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs/{eval_run['eval_run_id']}/impact-analysis",
+            params={"force": True},
+        )
+        eval_forced_response = client.post(
+            f"/api/eval-runs/{eval_run['eval_run_id']}/impact-analysis",
+            params={"force": True},
+        )
+
+    assert reused_response.status_code == 200
+    assert batch_forced_response.status_code == 200
+    assert eval_forced_response.status_code == 200
+    assert reused_response.json()["job_id"] == existing["job_id"]
+    assert batch_forced_response.json()["job_id"] != existing["job_id"]
+    assert eval_forced_response.json()["job_id"] != batch_forced_response.json()["job_id"]
+    assert store.get_regression_impact_analysis(eval_run["eval_run_id"])["job_id"] == eval_forced_response.json()["job_id"]
+
+
 def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
     workspace = module.settings.main_workspace_dir

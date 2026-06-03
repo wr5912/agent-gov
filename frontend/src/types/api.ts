@@ -5533,7 +5533,9 @@ export interface operations {
     };
     create_regression_impact_analysis_api_eval_runs__eval_run_id__impact_analysis_post: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 eval_run_id: string;
@@ -6611,7 +6613,9 @@ export interface operations {
     };
     create_batch_regression_impact_analysis_api_feedback_optimization_batches__batch_id__regression_runs__eval_run_id__impact_analysis_post: {
         parameters: {
-            query?: never;
+            query?: {
+                force?: boolean;
+            };
             header?: never;
             path: {
                 batch_id: string;

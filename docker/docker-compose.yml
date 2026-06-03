@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.28
+    image: claude-agent-runtime-api:0.2.29
     container_name: claude-agent-runtime-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
@@ -121,7 +121,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.28
+    image: claude-agent-runtime-api:0.2.29
     container_name: claude-agent-runtime-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
@@ -184,7 +184,7 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: claude-agent-runtime-ui:0.2.28
+    image: claude-agent-runtime-ui:0.2.29
     container_name: claude-agent-runtime-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"

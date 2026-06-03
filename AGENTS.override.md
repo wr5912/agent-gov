@@ -5,6 +5,9 @@
 ## 必读项目文档
 
 - `docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`：解释本仓库治理硬门的来源、失效点和落地目标。
+- `docs/engineering/长程重构质量闭环.md`：沉淀长程整改的边界定义、验证矩阵和治理硬门复用方法。
+- `docs/engineering/GSD长程重构阶段清单.md`：GSD 阶段规划、执行、验证和发布前的质量清单。
+- `.planning/METHODOLOGY.md`：GSD discuss/plan 阶段应读取的项目级方法论 lenses。
 
 ## 本仓库代码质量优先策略
 

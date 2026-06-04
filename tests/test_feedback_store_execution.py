@@ -21,118 +21,44 @@ from app.runtime.records.execution_records import ExecutionApplicationRecord
 from app.runtime.runtime_db import AgentJobModel
 
 
-def test_proposal_target_policy_and_task_requires_approval(tmp_path):
+def test_plan_task_target_policy_and_task_deduplicates(tmp_path):
     store, _ = _store(tmp_path)
-    _record_run(store)
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["skill_gap"]))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
-    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(
-        attribution_job["job_id"],
-        {
-            "schema_version": "attribution-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "attribution_job_id": attribution_job["job_id"],
-            "status": "completed",
-            "problem_type": "skill_gap",
-            "optimization_object_type": "skill",
-            "actionability": "direct_workspace_change",
-            "confidence": "medium",
-            "human_review_required": True,
-            "evidence_refs": [{"type": "run", "id": "run-1", "reason": "缺少证据链"}],
-            "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "skill 说明不足"},
-            "rationale": "需要补强技能",
-            "recommended_next_step": "generate_proposal",
-        },
+    task = _create_approved_task_for_target(
+        store,
+        ".claude/skills/alert-triage/SKILL.md",
+        target_type="skill",
+        title="补强证据链要求",
+        recommendation="增加 evidence_refs 输出要求。",
     )
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
-                {
-                    "title": "补强证据链要求",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "skill",
-                    "target_path": ".claude/skills/alert-triage/SKILL.md",
-                    "recommendation": "增加 evidence_refs 输出要求。",
-                    "expected_effect": "提高可核查性。",
-                    "validation": "新增回归样例。",
-                    "risk": "回答略变长。",
-                    "requires_approval": True,
-                },
-                {
-                    "title": "排除目标",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "secret",
-                    "target_path": "node_modules/pkg/index.js",
-                    "recommendation": "不应进入 task。",
-                    "expected_effect": "无",
-                    "validation": "无",
-                    "risk": "高",
-                    "requires_approval": True,
-                },
-            ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
-    )
+    batch = store.list_optimization_batches(limit=1)[0]
+    plan = batch["optimization_plan"]
+    plan_task = plan["tasks"][0]
 
-    proposals = store.list_proposals()
-    assert len(proposals) == 1
-    assert proposals[0]["target_path"] == ".claude/skills/alert-triage/SKILL.md"
-    assert store.create_task(proposal_id=proposals[0]["proposal_id"]) is None
-
-    store.review_proposal(proposals[0]["proposal_id"], action="approve", comment="确认")
-    task = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="执行")
     assert task["optimization_task_id"].startswith("opt-")
+    assert task["proposal_id"] is None
+    assert task["source_batch_id"] == batch["batch_id"]
+    assert task["source_plan_task_id"] == plan_task["plan_task_id"]
     assert task["target_paths"] == [".claude/skills/alert-triage/SKILL.md"]
-    task_again = store.create_task(proposal_id=proposals[0]["proposal_id"], comment="重复点击")
-    assert task_again["optimization_task_id"] == task["optimization_task_id"]
-    tasks = [item for item in store.list_tasks() if item["proposal_id"] == proposals[0]["proposal_id"]]
+    assert store.create_task_from_optimization_plan(
+        batch=batch,
+        plan=plan,
+        plan_task={**plan_task, "plan_task_id": "fopt-denied", "target_path": "node_modules/pkg/index.js"},
+    ) is None
+    task_again = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])
+    assert task_again["optimization_task"]["optimization_task_id"] == task["optimization_task_id"]
+    tasks = [item for item in store.list_tasks() if item["source_plan_task_id"] == plan_task["plan_task_id"]]
     assert len(tasks) == 1
 
 
 def test_execution_job_lifecycle_updates_task(tmp_path):
     store, _ = _store(tmp_path)
-    _record_run(store)
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
-    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
-                {
-                    "proposal_id": "prop-exec",
-                    "title": "追加配置读取要求",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "main_agent_claude_md",
-                    "target_path": "CLAUDE.md",
-                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
-                    "expected_effect": "提高回答完整性。",
-                    "validation": "复测反馈场景。",
-                    "risk": "响应略变慢。",
-                    "requires_approval": True,
-                }
-            ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
+    task = _create_approved_task_for_target(
+        store,
+        "CLAUDE.md",
+        target_type="main_agent_claude_md",
+        title="追加配置读取要求",
+        recommendation="在 CLAUDE.md 增加配置读取要求。",
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    task = store.create_task(proposal_id=proposal["proposal_id"])
 
     job = store.create_execution_job(task["optimization_task_id"])
     assert job["input_path"].endswith("/execution/input.json")
@@ -607,7 +533,7 @@ def test_create_execution_job_cleans_record_and_tmp_when_task_attach_fails(tmp_p
 
     with store.Session() as db:
         assert db.scalars(select(AgentJobModel).where(AgentJobModel.job_type == "execution")).all() == []
-    assert list((settings.data_dir / ".runtime-tmp" / "jobs").iterdir()) == []
+    assert [path for path in (settings.data_dir / ".runtime-tmp" / "jobs").iterdir() if path.name.startswith("fbe-")] == []
     assert store.find_task(task_id).get("latest_execution_job_id") is None
 
 
@@ -679,40 +605,13 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     import claude_agent_sdk
 
     store, settings = _store(tmp_path)
-    _record_run(store)
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
-    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
-                {
-                    "proposal_id": "prop-exec-runtime",
-                    "title": "补充配置读取要求",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "main_agent_claude_md",
-                    "target_path": "CLAUDE.md",
-                    "recommendation": "在 CLAUDE.md 增加配置读取要求。",
-                    "expected_effect": "回答更完整。",
-                    "validation": "复测配置类问题。",
-                    "risk": "响应耗时可能增加。",
-                    "requires_approval": True,
-                }
-            ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
+    task = _create_approved_task_for_target(
+        store,
+        "CLAUDE.md",
+        target_type="main_agent_claude_md",
+        title="补充配置读取要求",
+        recommendation="在 CLAUDE.md 增加配置读取要求。",
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    task = store.create_task(proposal_id=proposal["proposal_id"])
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
     seen: dict[str, object] = {}
 
@@ -742,6 +641,7 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
             "risk": "用例格式需人工确认。",
             "human_review_required": True,
         }
+        seen["formatted_payload"] = output
         text = json.dumps(output, ensure_ascii=False)
         seen["prompt_text"] = prompt_text
         seen["input_path"] = input_path
@@ -760,10 +660,21 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
+    class FakeFormatter:
+        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+            seen["formatter_job_type"] = job_type
+            seen["formatter_raw_text"] = raw_text
+            return OutputFormatterResult(payload=seen["formatted_payload"])
+
+    from app.runtime.output_formatter import OutputFormatterResult
+
+    runtime.output_formatter = FakeFormatter()
     job = asyncio.run(runtime.run_execution_job(task["optimization_task_id"]))
     job_payload = job.model_dump(mode="json")
     updated_task = store.find_task(task["optimization_task_id"])
 
+    assert seen["formatter_job_type"] == "execution"
+    assert "execution-plan-output/v1" in str(seen["formatter_raw_text"])
     assert job.status == "completed"
     assert job.validated_output_json is not None
     assert job.validated_output_json["status"] == "ready"
@@ -780,40 +691,13 @@ def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path
     import claude_agent_sdk
 
     store, settings = _store(tmp_path)
-    _record_run(store)
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
-    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
-    store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
-                {
-                    "proposal_id": "prop-exec-eval",
-                    "title": "增加告警误报评估用例",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "eval_case",
-                    "target_path": "evals/alert-triage-false-positive.json",
-                    "recommendation": "创建告警误报评估用例。",
-                    "expected_effect": "覆盖误报回归场景。",
-                    "validation": "运行评估套件。",
-                    "risk": "用例格式需人工确认。",
-                    "requires_approval": True,
-                }
-            ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
+    task = _create_approved_task_for_target(
+        store,
+        "evals/alert-triage-false-positive.json",
+        target_type="eval_case",
+        title="增加告警误报评估用例",
+        recommendation="创建告警误报评估用例。",
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    task = store.create_task(proposal_id=proposal["proposal_id"])
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
 
     async def fail_query(*, prompt, options, transport=None):

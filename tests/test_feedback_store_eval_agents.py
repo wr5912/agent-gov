@@ -10,6 +10,7 @@ from feedback_store_test_utils import (
     FeedbackStore,
     LocalSessionStore,
     _attribution_output,
+    _batch_plan_output,
     _complete_eval_case_generation_job,
     _create_eval_case,
     _record_run,
@@ -114,35 +115,48 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
             "recommended_next_step": "generate_proposal",
         },
     )
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    completed_plan_job = store.complete_batch_plan_job(
+        plan_job["job_id"],
+        _batch_plan_output(
+            plan_job,
+            status="pending_approval",
+            actionability="direct_workspace_change",
+            target_type="main_agent_claude_md",
+            target_path="CLAUDE.md",
+            recommendation="在 CLAUDE.md 增加 Read/Grep/Glob 核查配置的要求。",
+            expected_effect="回答更完整。",
+            validation="复测数据不全BBB 原始输入，并确认产生工具调用。",
+            risk="响应耗时增加。",
+            tasks=[
                 {
-                    "proposal_id": "prop-bbb",
+                    "execution_kind": "workspace_execution",
+                    "status": "pending_execution",
                     "title": "要求回答 workspace 能力清单前读取配置",
-                    "actionability": "direct_workspace_change",
+                    "description": "在 CLAUDE.md 增加 Read/Grep/Glob 核查配置的要求。",
+                    "objective": "回答 workspace 能力清单前读取当前配置。",
                     "target_type": "main_agent_claude_md",
                     "target_path": "CLAUDE.md",
+                    "owner": "main_agent_workspace",
+                    "actionability": "direct_workspace_change",
                     "recommendation": "在 CLAUDE.md 增加 Read/Grep/Glob 核查配置的要求。",
+                    "recommended_actions": ["补充配置核查要求。"],
+                    "acceptance_criteria": ["复测数据不全BBB 原始输入，并确认产生工具调用。"],
                     "expected_effect": "回答更完整。",
                     "validation": "复测数据不全BBB 原始输入，并确认产生工具调用。",
                     "risk": "响应耗时增加。",
-                    "requires_approval": True,
+                    "feedback_case_ids": [feedback_case["feedback_case_id"]],
+                    "eval_case_ids": [],
+                    "attribution_job_ids": [attribution_job["job_id"]],
+                    "task_context": {"target_file": "CLAUDE.md"},
                 }
             ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
+            blocked_items=[],
+        ),
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    task = store.create_task(proposal_id=proposal["proposal_id"])
+    plan_task = completed_plan_job["validated_output_json"]["tasks"][0]
+    task = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])["optimization_task"]
     task = store.mark_task_applied(task["optimization_task_id"], agent_version={"agent_version_id": "main-v-after"})
     sync_job = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
     eval_case = _complete_eval_case_generation_job(store, sync_job, feedback_case=feedback_case)
@@ -584,6 +598,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
             "rationale": "该 run 有 messages 和 trace summary，但 tool_calls.json 为空；归因为工具证据链不足。",
             "recommended_next_step": "Human reviewer should examine whether the agent should have used tools before answering capability queries.",
         }
+        seen["formatted_payload"] = output
         seen["prompt_text"] = prompt_text
         seen["input_path"] = input_path
         seen["cwd"] = options.cwd
@@ -602,6 +617,15 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
+    class FakeFormatter:
+        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+            seen["formatter_job_type"] = job_type
+            seen["formatter_raw_text"] = raw_text
+            return OutputFormatterResult(payload=seen["formatted_payload"])
+
+    from app.runtime.output_formatter import OutputFormatterResult
+
+    runtime.output_formatter = FakeFormatter()
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
     output = store.get_job_output(attribution_job.job_id, "attribution")
 
@@ -611,6 +635,8 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert "归因分析智能体" in str(seen["prompt_text"])
     assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
     assert seen["max_turns"] == 16
+    assert seen["formatter_job_type"] == "attribution"
+    assert "tool_usage_deficiency" in str(seen["formatter_raw_text"])
     assert attribution_job.status == "completed"
     assert output["schema_version"] == "attribution-output/v1"
     assert output["feedback_case_id"] == feedback_case["feedback_case_id"]
@@ -682,9 +708,8 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
                 "responsibility_boundary": {"owner": "needs_human_analysis", "reason": "原始输出只有证据片段，需要人工确认真实责任边界。"},
                 "rationale": "归因分析智能体只输出了证据片段，格式化器保守转为需人工复核。",
                 "recommended_next_step": "needs_human_review",
-                "_formatter": {"name": "fake-dspy"},
             }
-            return OutputFormatterResult(payload=payload, source="fake")
+            return OutputFormatterResult(payload=payload)
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     runtime.output_formatter = FakeFormatter()
@@ -696,13 +721,14 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
     assert "feedback.json" in str(seen["raw_text"])
     assert attribution_job.status == "completed"
     assert attribution_job.raw_output_json is not None
-    assert attribution_job.raw_output_json["_formatter"]["name"] == "fake-dspy"
+    assert attribution_job.raw_output_json["schema_version"] == "attribution-output/v1"
+    assert "_formatter" not in attribution_job.raw_output_json
     assert output["schema_version"] == "attribution-output/v1"
     assert output["recommended_next_step"] == "needs_human_review"
     assert store.find_case(feedback_case["feedback_case_id"])["status"] == "pending_proposal"
 
 
-def test_proposal_agent_ignores_intermediate_permissions_json(tmp_path, monkeypatch):
+def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
 
@@ -738,16 +764,41 @@ def test_proposal_agent_ignores_intermediate_permissions_json(tmp_path, monkeypa
         async for item in prompt:
             prompt_items.append(item)
         prompt_text = prompt_items[0]["message"]["content"]
-        input_payload = json.loads(prompt_text.split("proposal_input_json:\n", 1)[1].split("\n\nattribution_output_json:", 1)[0])
+        input_payload = json.loads(prompt_text.split("optimization_plan_input_json:\n", 1)[1])
         output = {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": input_payload["feedback_case_id"],
-            "proposal_job_id": input_payload["job_id"],
-            "status": "completed",
-            "proposals": [],
-            "external_guidance": [],
-            "no_action_reason": "当前归因需要先由人确认具体缺失项。",
+            "schema_version": "feedback-optimization-plan-output/v1",
+            "batch_id": input_payload["batch_id"],
+            "status": "needs_human_review",
+            "title": "不能生成可执行优化方案",
+            "summary": "当前归因需要先由人确认具体缺失项。",
+            "confidence": "medium",
+            "actionability": "needs_human_analysis",
+            "target_type": "not_actionable",
+            "target_path": None,
+            "recommendation": "当前归因需要先由人确认具体缺失项。",
+            "expected_effect": "避免生成错误优化任务。",
+            "validation": "人工补充归因后重新生成。",
+            "risk": "暂不执行变更。",
+            "source_refs": input_payload["source_refs"],
+            "feedback_case_ids": input_payload["feedback_case_ids"],
+            "eval_case_ids": input_payload["eval_case_ids"],
+            "attribution_job_ids": input_payload["attribution_job_ids"],
+            "attribution_summaries": [],
+            "tasks": [],
+            "blocked_items": [
+                {
+                    "title": "需要人工确认具体缺失项",
+                    "target_type": "not_actionable",
+                    "actionability": "needs_human_analysis",
+                    "reason": "当前归因需要先由人确认具体缺失项。",
+                    "recommendation": "人工补充归因后重新生成。",
+                    "feedback_case_ids": input_payload["feedback_case_ids"],
+                    "eval_case_ids": input_payload["eval_case_ids"],
+                    "attribution_job_ids": input_payload["attribution_job_ids"],
+                }
+            ],
         }
+        seen["formatted_payload"] = output
         text = '{"permissions":{"allow":["Bash(npm *)"]}}\n' + json.dumps(output, ensure_ascii=False)
         seen["prompt_text"] = prompt_text
         seen["allowed_tools"] = options.allowed_tools
@@ -765,17 +816,28 @@ def test_proposal_agent_ignores_intermediate_permissions_json(tmp_path, monkeypa
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
-    proposal_job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"]))
-    output = store.get_job_output(proposal_job.job_id, "proposal")
+    class FakeFormatter:
+        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+            seen["formatter_job_type"] = job_type
+            seen["formatter_raw_text"] = raw_text
+            return OutputFormatterResult(payload=seen["formatted_payload"])
 
-    assert "proposal_input_json" in str(seen["prompt_text"])
-    assert "attribution_output_json" in str(seen["prompt_text"])
+    from app.runtime.output_formatter import OutputFormatterResult
+
+    runtime.output_formatter = FakeFormatter()
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"]))
+    output = store.get_job_output(updated.optimization_plan_job_id, "batch_plan")
+
+    assert "optimization_plan_input_json" in str(seen["prompt_text"])
     assert seen["allowed_tools"] == []
     assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob"}
-    assert proposal_job.status == "completed"
-    assert output["schema_version"] == "proposal-output/v1"
-    assert proposal_job.raw_output_json is not None
-    assert proposal_job.raw_output_json["schema_version"] == "proposal-output/v1"
+    assert seen["formatter_job_type"] == "batch_plan"
+    assert '"permissions"' in str(seen["formatter_raw_text"])
+    assert updated.optimization_plan_job.status == "completed"
+    assert output["schema_version"] == "feedback-optimization-plan/v1"
+    assert updated.optimization_plan_job.raw_output_json is not None
+    assert updated.optimization_plan_job.raw_output_json["schema_version"] == "feedback-optimization-plan-output/v1"
 
 
 def test_sqlite_store_does_not_create_legacy_runtime_dirs(tmp_path):

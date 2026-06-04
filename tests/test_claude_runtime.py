@@ -1,9 +1,13 @@
 import asyncio
 import base64
 import json
+import os
+import sys
+import types
 from contextlib import nullcontext
 
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.policy import build_profile_pre_tool_use_hook
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
@@ -277,7 +281,7 @@ def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
     assert "outside allowed paths for profile execution-optimizer" in output["permissionDecisionReason"]
 
 
-def test_feedback_proposal_job_options_use_profile_minimum_max_turns(tmp_path):
+def test_feedback_batch_plan_job_options_use_proposal_generator_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
@@ -288,7 +292,7 @@ def test_feedback_proposal_job_options_use_profile_minimum_max_turns(tmp_path):
     assert set(options.disallowed_tools) >= {"Read", "Grep", "Glob"}
 
 
-def test_feedback_proposal_job_options_allow_global_max_turn_override(tmp_path):
+def test_feedback_batch_plan_job_options_allow_global_max_turn_override(tmp_path):
     settings = _settings(tmp_path)
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
@@ -450,6 +454,79 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
     assert env["OTEL_LOG_TOOL_DETAILS"] == "1"
     assert env["OTEL_LOG_TOOL_CONTENT"] == "1"
     assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
+
+
+def test_langfuse_dspy_instrumentation_uses_current_process_otel_env(tmp_path, monkeypatch):
+    from app.runtime.integrations import runtime_langfuse
+
+    calls = []
+
+    class FakeDSPyInstrumentor:
+        def instrument(self):
+            calls.append("instrument")
+
+    openinference_module = types.ModuleType("openinference")
+    instrumentation_module = types.ModuleType("openinference.instrumentation")
+    dspy_module = types.ModuleType("openinference.instrumentation.dspy")
+    dspy_module.DSPyInstrumentor = FakeDSPyInstrumentor
+    monkeypatch.setitem(sys.modules, "openinference", openinference_module)
+    monkeypatch.setitem(sys.modules, "openinference.instrumentation", instrumentation_module)
+    monkeypatch.setitem(sys.modules, "openinference.instrumentation.dspy", dspy_module)
+    monkeypatch.setattr(runtime_langfuse, "_DSPY_INSTRUMENTED", False)
+
+    for key in (
+        "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "OTEL_EXPORTER_OTLP_HEADERS",
+        "OTEL_SERVICE_NAME",
+        "OTEL_RESOURCE_ATTRIBUTES",
+        "OTEL_TRACES_EXPORTER",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=True,
+        LANGFUSE_PUBLIC_KEY="pk-test",
+        LANGFUSE_SECRET_KEY="sk-test",
+        LANGFUSE_BASE_URL="https://us.cloud.langfuse.com",
+        LANGFUSE_OTEL_SIGNALS="traces",
+        LANGFUSE_SERVICE_NAME="runtime-test",
+        LANGFUSE_DEPLOYMENT_ENVIRONMENT="test",
+    )
+
+    client = RuntimeLangfuseClient(settings)
+
+    assert client.instrument_dspy() is True
+    assert client.instrument_dspy() is True
+    assert calls == ["instrument"]
+    assert os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
+    assert os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://us.cloud.langfuse.com/api/public/otel"
+    assert os.environ["OTEL_SERVICE_NAME"] == "runtime-test"
+    assert os.environ["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=test"
+    assert os.environ["OTEL_TRACES_EXPORTER"] == "otlp"
+
+
+def test_langfuse_dspy_instrumentation_skips_when_disabled(tmp_path, monkeypatch):
+    from app.runtime.integrations import runtime_langfuse
+
+    monkeypatch.setattr(runtime_langfuse, "_DSPY_INSTRUMENTED", False)
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        LANGFUSE_ENABLED=False,
+    )
+
+    assert RuntimeLangfuseClient(settings).instrument_dspy() is False
 
 
 def test_langfuse_requires_keys_when_enabled(tmp_path):

@@ -714,7 +714,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/feedback-cases/{feedback_case_id}/proposal-jobs": {
+    "/api/feedback-cases/{feedback_case_id}/optimization-plan": {
         parameters: {
             query?: never;
             header?: never;
@@ -723,25 +723,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Queue one optimization proposal job for a feedback case */
-        post: operations["create_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Force queue one optimization proposal job and supersede unused existing proposals */
-        post: operations["regenerate_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_regenerate_post"];
+        /** Queue one optimization plan job for a single feedback case */
+        post: operations["generate_feedback_case_optimization_plan_api_feedback_cases__feedback_case_id__optimization_plan_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1058,108 +1041,6 @@ export interface paths {
         head?: never;
         /** Update developer annotations for one feedback source */
         patch: operations["update_feedback_source_api_feedback_sources__source_kind___source_id__patch"];
-        trace?: never;
-    };
-    "/api/optimization-proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List pending feedback-driven optimization proposals */
-        get: operations["list_optimization_proposals_api_optimization_proposals_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/optimization-proposals/{proposal_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one feedback-driven optimization proposal */
-        get: operations["get_optimization_proposal_api_optimization_proposals__proposal_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/optimization-proposals/{proposal_id}/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Approve one feedback-driven optimization proposal */
-        post: operations["approve_optimization_proposal_api_optimization_proposals__proposal_id__approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/optimization-proposals/{proposal_id}/reject": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reject one feedback-driven optimization proposal */
-        post: operations["reject_optimization_proposal_api_optimization_proposals__proposal_id__reject_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/optimization-proposals/{proposal_id}/request-more-analysis": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Request more analysis for one feedback-driven optimization proposal */
-        post: operations["request_more_analysis_for_proposal_api_optimization_proposals__proposal_id__request_more_analysis_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/optimization-proposals/{proposal_id}/tasks": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Create one feedback-driven optimization task */
-        post: operations["create_optimization_task_api_optimization_proposals__proposal_id__tasks_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
         trace?: never;
     };
     "/api/optimization-tasks": {
@@ -3494,11 +3375,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /** FeedbackProposalRegenerateRequest */
-        FeedbackProposalRegenerateRequest: {
-            /** Regeneration Instruction */
-            regeneration_instruction?: string | null;
-        };
         /** FeedbackSignalCreateRequest */
         FeedbackSignalCreateRequest: {
             /** Alert Id */
@@ -3944,84 +3820,6 @@ export interface components {
             unchanged: number;
         } & {
             [key: string]: unknown;
-        };
-        /** OptimizationProposalResponse */
-        OptimizationProposalResponse: {
-            /** Actionability */
-            actionability?: string | null;
-            /** Base Agent Version Id */
-            base_agent_version_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
-            /** Expected Effect */
-            expected_effect?: string | null;
-            /** Feedback Case Id */
-            feedback_case_id: string;
-            latest_review?: components["schemas"]["OptimizationProposalReviewRecordResponse"] | null;
-            /** Proposal Id */
-            proposal_id: string;
-            /** Proposal Job Id */
-            proposal_job_id: string;
-            /** Recommendation */
-            recommendation?: string | null;
-            /** Requires Approval */
-            requires_approval?: boolean | null;
-            /** Risk */
-            risk?: string | null;
-            /** Status */
-            status: string;
-            /** Target Path */
-            target_path?: string | null;
-            /** Target Type */
-            target_type?: string | null;
-            /** Title */
-            title?: string | null;
-            /** Validation */
-            validation?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** OptimizationProposalReviewRecordResponse */
-        OptimizationProposalReviewRecordResponse: {
-            /** Action */
-            action: string;
-            /** Comment */
-            comment?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Proposal Id */
-            proposal_id: string;
-            /** Review Id */
-            review_id: string;
-            /** Status */
-            status: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** OptimizationProposalReviewRequest */
-        OptimizationProposalReviewRequest: {
-            /** Action */
-            action?: ("approve" | "reject" | "request_more_analysis") | null;
-            /** Comment */
-            comment?: string | null;
-        };
-        /** OptimizationProposalReviewResponse */
-        OptimizationProposalReviewResponse: {
-            proposal: components["schemas"]["OptimizationProposalResponse"];
-            review: components["schemas"]["OptimizationProposalReviewRecordResponse"];
-        };
-        /** OptimizationTaskCreateRequest */
-        OptimizationTaskCreateRequest: {
-            /** Comment */
-            comment?: string | null;
-            /**
-             * Execution Mode
-             * @default manual_or_patch
-             * @constant
-             */
-            execution_mode: "manual_or_patch";
-            /** Proposal Id */
-            proposal_id?: string | null;
         };
         /** OptimizationTaskMarkAppliedRequest */
         OptimizationTaskMarkAppliedRequest: {
@@ -6018,38 +5816,7 @@ export interface operations {
             };
         };
     };
-    create_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                feedback_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentJobResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    regenerate_proposal_job_api_feedback_cases__feedback_case_id__proposal_jobs_regenerate_post: {
+    generate_feedback_case_optimization_plan_api_feedback_cases__feedback_case_id__optimization_plan_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -6060,7 +5827,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["FeedbackProposalRegenerateRequest"] | null;
+                "application/json": components["schemas"]["FeedbackOptimizationBatchPlanGenerateRequest"] | null;
             };
         };
         responses: {
@@ -6880,210 +6647,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedbackSourceResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_optimization_proposals_api_optimization_proposals_get: {
-        parameters: {
-            query?: {
-                feedback_case_id?: string | null;
-                status?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationProposalResponse"][];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_optimization_proposal_api_optimization_proposals__proposal_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationProposalResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    approve_optimization_proposal_api_optimization_proposals__proposal_id__approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OptimizationProposalReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationProposalReviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_optimization_proposal_api_optimization_proposals__proposal_id__reject_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OptimizationProposalReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationProposalReviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    request_more_analysis_for_proposal_api_optimization_proposals__proposal_id__request_more_analysis_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OptimizationProposalReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationProposalReviewResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    create_optimization_task_api_optimization_proposals__proposal_id__tasks_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["OptimizationTaskCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["OptimizationTaskResponse"];
                 };
             };
             /** @description Validation Error */

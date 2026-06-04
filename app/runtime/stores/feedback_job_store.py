@@ -9,9 +9,9 @@ from typing import Any, Optional
 from sqlalchemy import delete, select
 
 from ..agent_job_types import agent_job_spec
-from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE, PROPOSAL_GENERATOR_PROFILE
+from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE
 from ..feedback_job_flags import with_reused_existing
-from ..feedback_schemas import validate_attribution_output, validate_proposal_output
+from ..feedback_schemas import validate_attribution_output
 from ..records.agent_job_records import AgentJobRecord
 from ..json_types import JsonObject
 from ..runtime_db import (
@@ -109,113 +109,6 @@ class FeedbackJobStoreMixin:
                 raise
             return self.get_job(job_id)
 
-    def create_proposal_job(
-        self,
-        feedback_case_id: str,
-        *,
-        evidence_package_id: Optional[str] = None,
-        attribution_job_id: Optional[str] = None,
-        profile_version: Optional[JsonObject] = None,
-        force: bool = False,
-        regeneration_instruction: Optional[str] = None,
-    ) -> Optional[JsonObject]:
-        feedback_case = self.find_case(feedback_case_id)
-        if not feedback_case:
-            return None
-        regeneration_instruction = regeneration_instruction.strip() if isinstance(regeneration_instruction, str) else None
-        regeneration_instruction = regeneration_instruction or None
-        existing = None if force or regeneration_instruction else self._latest_reusable_job(feedback_case_id, "proposal")
-        if existing:
-            return with_reused_existing(existing)
-        evidence_package_id = evidence_package_id or self._latest(feedback_case.get("evidence_package_ids"))
-        attribution_job_id = attribution_job_id or self._latest(feedback_case.get("attribution_job_ids"))
-        if not evidence_package_id or not attribution_job_id:
-            return None
-        attribution_output = self.get_job_output(attribution_job_id, "attribution")
-        if not attribution_output:
-            return None
-
-        job_id = f"fbp-{uuid.uuid4()}"
-        try:
-            attribution_output_path = self._materialize_extra_json(job_id, "proposal", "attribution_validated_output.json", attribution_output)
-            input_payload = {
-                "schema_version": "proposal-input/v1",
-                "job_id": job_id,
-                "feedback_case_id": feedback_case_id,
-                "evidence_package_id": evidence_package_id,
-                "attribution_job_id": attribution_job_id,
-                "attribution_output_path": attribution_output_path,
-                "main_agent_version_id": self._current_agent_version_id(),
-                **self._agent_git_paths_context(),
-                "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
-                "target_policy": self._execution_target_policy(),
-                "task": "generate_optimization_proposals",
-            }
-            if regeneration_instruction:
-                input_payload["regeneration_instruction"] = regeneration_instruction
-            spec = agent_job_spec("proposal")
-            self.create_agent_job(
-                job_id=job_id,
-                job_type=spec.job_type,
-                scope_kind="feedback_case",
-                scope_id=feedback_case_id,
-                profile_name=PROPOSAL_GENERATOR_PROFILE,
-                input_payload=input_payload,
-                output_schema_version=spec.output_schema_version,
-                profile_version=profile_version,
-            )
-            if force:
-                self._supersede_case_proposals(
-                    feedback_case_id,
-                    reason="proposal_regenerated",
-                    superseded_by_job_id=job_id,
-                )
-            self._append_case_update(feedback_case, proposal_job_id=job_id, status="proposal_queued")
-        except Exception:
-            self._discard_job(job_id)
-            raise
-        return self.get_job(job_id)
-
-    def revalidate_proposal_job(self, job_id: str) -> Optional[JsonObject]:
-        job = self.get_job(job_id)
-        if not job or job.get("job_type") != "proposal":
-            return None
-        raw_output = job.get("raw_output_json")
-        if not isinstance(raw_output, dict):
-            return None
-        validated, error = validate_proposal_output(raw_output)
-        feedback_case = self.find_case(str(job["feedback_case_id"]))
-        if not validated:
-            error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid proposal output")
-            with self.Session.begin() as db:
-                if not self._set_job_json_row(db, job_id, error_json=error_payload):
-                    return None
-                self._append_job_update_row(db, job_id, status="schema_validating")
-                self._append_job_update_row(db, job_id, status="needs_human_review", completed_at=utc_now())
-                if feedback_case:
-                    self._append_case_update_row(db, feedback_case, status="needs_human_review")
-            self._cleanup_job_tmp(job_id)
-            return self.get_job(job_id)
-
-        normalized = self._normalize_proposal_output(validated, job)
-        with self.Session.begin() as db:
-            if not self._set_job_json_row(db, job_id):
-                return None
-            normalized["external_guidance"] = self._upsert_external_governance_items_rows(db, normalized, job)
-            self._set_job_json_row(db, job_id, validated_output_json=normalized, error_json=None)
-            self._append_job_update_row(db, job_id, status="schema_validating")
-            self._append_job_update_row(db, job_id, status="completed", completed_at=utc_now())
-            for proposal in normalized.get("proposals", []):
-                db.merge(self._proposal_model_from_dict(proposal))
-            if feedback_case:
-                self._append_case_update_row(
-                    db,
-                    feedback_case,
-                    status="pending_review" if normalized.get("proposals") else "needs_human_review",
-                )
-        self._cleanup_job_tmp(job_id)
-        return self.get_job(job_id)
-
     def start_job(self, job_id: str) -> Optional[JsonObject]:
         return self._append_job_update(job_id, status="running", started_at=utc_now())
 
@@ -246,44 +139,14 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def complete_proposal_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
-        job = self.get_job(job_id)
-        if not job:
-            return None
-        validated, error = validate_proposal_output(raw_output)
-        feedback_case = self.find_case(str(job["feedback_case_id"]))
-        if not validated:
-            error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid proposal output")
-            with self.Session.begin() as db:
-                if not self._set_job_json_row(db, job_id, raw_output_json=raw_output, error_json=error_payload):
-                    return None
-                self._append_job_update_row(db, job_id, status="schema_validating")
-                self._append_job_update_row(db, job_id, status="needs_human_review", completed_at=utc_now())
-                if feedback_case:
-                    self._append_case_update_row(db, feedback_case, status="needs_human_review")
-            self._cleanup_job_tmp(job_id)
-            return self.get_job(job_id)
-
-        normalized = self._normalize_proposal_output(validated, job)
-        with self.Session.begin() as db:
-            if not self._set_job_json_row(db, job_id, raw_output_json=raw_output):
-                return None
-            normalized["external_guidance"] = self._upsert_external_governance_items_rows(db, normalized, job)
-            self._set_job_json_row(db, job_id, validated_output_json=normalized, error_json=None)
-            self._append_job_update_row(db, job_id, status="schema_validating")
-            self._append_job_update_row(db, job_id, status="completed", completed_at=utc_now())
-            for proposal in normalized.get("proposals", []):
-                db.merge(self._proposal_model_from_dict(proposal))
-            if feedback_case:
-                self._append_case_update_row(
-                    db,
-                    feedback_case,
-                    status="pending_review" if normalized.get("proposals") else "needs_human_review",
-                )
-        self._cleanup_job_tmp(job_id)
-        return self.get_job(job_id)
-
-    def fail_job(self, job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
+    def fail_job(
+        self,
+        job_id: str,
+        *,
+        error_code: str,
+        message: str,
+        raw_output_json: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
@@ -291,15 +154,18 @@ class FeedbackJobStoreMixin:
         feedback_case_id = self._string(job.get("feedback_case_id"))
         feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
         with self.Session.begin() as db:
-            if not self._set_job_json_row(db, job_id, error_json=error_payload):
+            if not self._set_job_json_row(
+                db,
+                job_id,
+                raw_output_json=raw_output_json if raw_output_json is not None else _UNSET,
+                error_json=error_payload,
+            ):
                 return None
             failed_row = self._append_job_update_row(db, job_id, status="failed", completed_at=utc_now())
             failed = self._job_to_dict(failed_row) if failed_row else None
             if feedback_case:
                 if job.get("job_type") == "attribution":
                     self._append_case_update_row(db, feedback_case, status="pending_attribution")
-                elif job.get("job_type") == "proposal":
-                    self._append_case_update_row(db, feedback_case, status="pending_proposal")
             if job.get("job_type") == "batch_plan":
                 batch_id = self._job_batch_id(job)
                 if batch_id:

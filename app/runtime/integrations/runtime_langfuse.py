@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import warnings
 from collections.abc import Mapping
 from contextlib import nullcontext
@@ -20,6 +21,9 @@ def ensure_langfuse_otel_compat() -> None:
         # google-adk 2.0.0 pins OpenTelemetry <=1.41.1, while Langfuse 4.6.1
         # imports this newer constant. The constant value is only the env name.
         otel_env.OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED = "OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED"
+
+
+_DSPY_INSTRUMENTED = False
 
 
 class RuntimeLangfuseClient:
@@ -156,6 +160,24 @@ class RuntimeLangfuseClient:
             print(f"[WARN] failed to flush Langfuse runtime enrichment: {exc}", flush=True)
 
     def build_env(self) -> dict[str, str]:
+        env = self.build_otel_env()
+        if not env:
+            return {}
+        signals = set(self.settings.langfuse_otel_signals)
+        env.update(
+            {
+                "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
+                "OTEL_LOG_USER_PROMPTS": "1",
+                "OTEL_LOG_TOOL_DETAILS": "1",
+                "OTEL_LOG_TOOL_CONTENT": "1",
+                "OTEL_LOG_RAW_API_BODIES": "1",
+            }
+        )
+        if "traces" in signals:
+            env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
+        return env
+
+    def build_otel_env(self) -> dict[str, str]:
         if not self.settings.langfuse_enabled:
             return {}
         if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
@@ -166,7 +188,6 @@ class RuntimeLangfuseClient:
             raise ValueError("LANGFUSE_OTEL_SIGNALS must include at least one of: traces, metrics, logs")
 
         env = {
-            "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
             "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
             "OTEL_EXPORTER_OTLP_ENDPOINT": self.settings.langfuse_effective_otel_endpoint,
             "OTEL_EXPORTER_OTLP_HEADERS": self.settings.langfuse_otel_headers,
@@ -175,16 +196,36 @@ class RuntimeLangfuseClient:
             "OTEL_METRIC_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
             "OTEL_LOGS_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
             "OTEL_TRACES_EXPORT_INTERVAL": str(self.settings.langfuse_export_interval_ms),
-            "OTEL_LOG_USER_PROMPTS": "1",
-            "OTEL_LOG_TOOL_DETAILS": "1",
-            "OTEL_LOG_TOOL_CONTENT": "1",
-            "OTEL_LOG_RAW_API_BODIES": "1",
         }
         if "traces" in signals:
-            env["CLAUDE_CODE_ENHANCED_TELEMETRY_BETA"] = "1"
             env["OTEL_TRACES_EXPORTER"] = "otlp"
         if "metrics" in signals:
             env["OTEL_METRICS_EXPORTER"] = "otlp"
         if "logs" in signals:
             env["OTEL_LOGS_EXPORTER"] = "otlp"
         return env
+
+    def apply_otel_env(self) -> dict[str, str]:
+        env = self.build_otel_env()
+        os.environ.update(env)
+        return env
+
+    def instrument_dspy(self) -> bool:
+        global _DSPY_INSTRUMENTED
+        if not self.settings.langfuse_enabled:
+            return False
+        if not self.settings.langfuse_public_key or not self.settings.langfuse_secret_key:
+            return False
+        if _DSPY_INSTRUMENTED:
+            return True
+        try:
+            ensure_langfuse_otel_compat()
+            self.apply_otel_env()
+            from openinference.instrumentation.dspy import DSPyInstrumentor
+
+            DSPyInstrumentor().instrument()
+            _DSPY_INSTRUMENTED = True
+            return True
+        except Exception as exc:
+            print(f"[WARN] failed to instrument DSPy with Langfuse: {exc}", flush=True)
+            return False

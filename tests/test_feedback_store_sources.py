@@ -1,6 +1,5 @@
 from feedback_store_test_utils import (
     FeedbackOptimizationBatchPlanGenerateRequest,
-    FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     SocEventIngestRequest,
     ValidationError,
@@ -41,14 +40,6 @@ def test_feedback_signal_only_writes_signal_pool(tmp_path):
     assert signal["session_id"] == "session-1"
     assert store.list_proposals() == []
     assert store.get_job("missing-job") is None
-
-
-def test_proposal_regenerate_request_trims_optional_instruction():
-    assert FeedbackProposalRegenerateRequest().regeneration_instruction is None
-    assert FeedbackProposalRegenerateRequest(regeneration_instruction="   ").regeneration_instruction is None
-    assert FeedbackProposalRegenerateRequest(regeneration_instruction="  优先修改 skill  ").regeneration_instruction == "优先修改 skill"
-    with pytest.raises(ValidationError):
-        FeedbackProposalRegenerateRequest(regeneration_instruction="x" * 2001)
 
 
 def test_batch_plan_generate_request_trims_optional_instruction():
@@ -324,7 +315,9 @@ def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
     assert approved["optimization_task"]["source"] == "feedback_optimization_batch"
     assert approved["optimization_task"]["source_batch_id"] == batch["batch_id"]
     assert approved["optimization_task"]["eval_case_ids"] == batch["eval_case_ids"]
-    assert store.find_proposal(approved["batch"]["internal_proposal_id"])["status"] == "approved"
+    assert approved["batch"]["internal_proposal_id"] is None
+    assert approved["optimization_task"]["proposal_id"] is None
+    assert store.list_proposals(feedback_case_id=feedback_case_id) == []
 
 
 def test_batch_eval_case_create_update_archive_and_remove_are_scoped_to_batch(tmp_path):

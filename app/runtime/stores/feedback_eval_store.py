@@ -325,14 +325,15 @@ class FeedbackEvalStoreMixin:
 
     def _build_eval_case_from_feedback(self, feedback_case: JsonObject) -> Optional[JsonObject]:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
-        proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
-        if not attribution_job_id or not proposal_job_id:
+        if not attribution_job_id:
             return None
 
         attribution_output = self.get_job_output(attribution_job_id, "attribution") or {}
-        proposal_output = self.get_job_output(proposal_job_id, "proposal") or {}
-        if not attribution_output or not proposal_output:
+        if not attribution_output:
             return None
+        optimization_plan = self._latest_optimization_plan_for_feedback_case(str(feedback_case.get("feedback_case_id") or "")) or {}
+        plan_tasks = [item for item in optimization_plan.get("tasks") or [] if isinstance(item, dict)]
+        primary_plan_item = plan_tasks[0] if plan_tasks else optimization_plan
 
         source_run_id = self._latest(feedback_case.get("run_ids"))
         source_run = self.find_run(run_id=source_run_id) if source_run_id else None
@@ -348,10 +349,8 @@ class FeedbackEvalStoreMixin:
                 self._string(attribution_output.get("optimization_object_type")) or "",
             ]
         )
-        proposals = [item for item in proposal_output.get("proposals") or [] if isinstance(item, dict)]
-        primary_proposal = proposals[0] if proposals else {}
-        expected_behavior = self._eval_expected_behavior(feedback_case, attribution_output, primary_proposal)
-        checks_json = self._eval_checks(labels, attribution_output, primary_proposal)
+        expected_behavior = self._eval_expected_behavior(feedback_case, attribution_output, primary_plan_item)
+        checks_json = self._eval_checks(labels, attribution_output, primary_plan_item)
         created_at = utc_now()
         return {
             "schema_version": "feedback-eval-case/v1",
@@ -371,7 +370,6 @@ class FeedbackEvalStoreMixin:
             "source_signal_ids": feedback_case.get("signal_ids") or [],
             "source_evidence_package_id": self._latest(feedback_case.get("evidence_package_ids")),
             "source_attribution_job_id": attribution_job_id,
-            "source_proposal_job_id": proposal_job_id,
             "prompt": prompt,
             "labels": labels,
             "expected_behavior": expected_behavior,
@@ -390,12 +388,13 @@ class FeedbackEvalStoreMixin:
                 "rationale": attribution_output.get("rationale"),
             },
             "proposal_summary": {
-                "proposal_id": primary_proposal.get("proposal_id"),
-                "title": primary_proposal.get("title"),
-                "target_type": primary_proposal.get("target_type"),
-                "target_path": primary_proposal.get("target_path"),
-                "validation": primary_proposal.get("validation"),
-                "expected_effect": primary_proposal.get("expected_effect"),
+                "optimization_plan_id": optimization_plan.get("optimization_plan_id"),
+                "plan_task_id": primary_plan_item.get("plan_task_id"),
+                "title": primary_plan_item.get("title") or optimization_plan.get("title"),
+                "target_type": primary_plan_item.get("target_type") or optimization_plan.get("target_type"),
+                "target_path": primary_plan_item.get("target_path") or optimization_plan.get("target_path"),
+                "validation": primary_plan_item.get("validation") or optimization_plan.get("validation"),
+                "expected_effect": primary_plan_item.get("expected_effect") or optimization_plan.get("expected_effect"),
             },
         }
 

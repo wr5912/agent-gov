@@ -102,7 +102,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor(settings)
         self.langfuse = RuntimeLangfuseClient(settings)
-        self.output_formatter = DSPyOutputFormatter(settings)
+        self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse)
         self.job_runner = AgentJobRunner(
             settings=settings,
             profiles=self.profiles,

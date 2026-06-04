@@ -13,6 +13,9 @@ from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, 
 from ..state_machines import JOB_IN_PROGRESS_STATES
 
 
+FeedbackOptimizationBatchPayload = JsonObject
+
+
 class FeedbackBatchStoreMixin:
     """Store operations for optimization batch lifecycle and execution state snapshots."""
 
@@ -72,6 +75,75 @@ class FeedbackBatchStoreMixin:
             db.add(self._batch_model_from_payload(payload))
         self.queue_feedback_eval_case_generation_agent_job(batch_id=batch_id)
         return self.find_optimization_batch(batch_id)
+
+    def ensure_single_case_optimization_batch(self, feedback_case_id: str) -> Optional[FeedbackOptimizationBatchPayload]:
+        feedback_case = self.find_case(feedback_case_id)
+        if not feedback_case:
+            return None
+        existing = self._find_reusable_single_case_batch(feedback_case_id)
+        if existing:
+            return existing
+        refs = self._source_refs_for_feedback_case(feedback_case)
+        if not refs:
+            return None
+        now = utc_now()
+        batch_id = f"fob-{uuid.uuid4()}"
+        payload = {
+            "schema_version": "feedback-optimization-batch/v1",
+            "batch_id": batch_id,
+            "created_at": now,
+            "updated_at": now,
+            "status": "draft",
+            "title": f"反馈优化批次 1 条反馈",
+            "priority": feedback_case.get("priority") or "medium",
+            "source_refs": refs,
+            "feedback_case_ids": [feedback_case_id],
+            "skipped_source_refs": [],
+            "eval_case_ids": [],
+            "eval_case_generation": {"created": 0, "reused": 0, "updated": 0, "skipped": 0, "eval_cases": [], "results": []},
+            "eval_case_generation_job_id": None,
+            "attribution_job_ids": [],
+            "optimization_plan": None,
+            "optimization_task_id": None,
+            "execution_job_id": None,
+            "eval_run_id": None,
+        }
+        with self.Session.begin() as db:
+            for ref in refs:
+                self._upsert_feedback_source_annotation(
+                    db,
+                    str(ref["source_kind"]),
+                    str(ref["source_id"]),
+                    {"status": "in_batch", "priority": feedback_case.get("priority") or "medium"},
+                )
+            db.add(self._batch_model_from_payload(payload))
+        self.queue_feedback_eval_case_generation_agent_job(batch_id=batch_id)
+        return self.find_optimization_batch(batch_id)
+
+    def _find_reusable_single_case_batch(self, feedback_case_id: str) -> Optional[JsonObject]:
+        for batch in self.list_optimization_batches(limit=1000):
+            case_ids = [str(item) for item in batch.get("feedback_case_ids") or [] if item]
+            if case_ids == [feedback_case_id] and self._batch_reusable_for_single_case_plan(batch):
+                return batch
+        return None
+
+    def _batch_reusable_for_single_case_plan(self, batch: JsonObject) -> bool:
+        if batch.get("applied_agent_version_id") or batch.get("execution_apply_result"):
+            return False
+        task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
+        if task and task.get("applied_agent_version_id"):
+            return False
+        return True
+
+    def _source_refs_for_feedback_case(self, feedback_case: JsonObject) -> list[JsonObject]:
+        refs: list[JsonObject] = []
+        refs.extend({"source_kind": "signal", "source_id": source_id} for source_id in feedback_case.get("signal_ids") or [])
+        refs.extend({"source_kind": "soc_event", "source_id": source_id} for source_id in feedback_case.get("event_ids") or [])
+        refs.extend(
+            {"source_kind": "pending_correlation", "source_id": source_id}
+            for source_id in feedback_case.get("pending_correlation_ids") or []
+        )
+        return self._normalize_source_refs(refs)
 
     def _batch_model_from_payload(self, payload: JsonObject) -> FeedbackOptimizationBatchModel:
         record = FeedbackOptimizationBatchRecord.model_validate(payload)

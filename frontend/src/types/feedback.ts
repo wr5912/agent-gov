@@ -40,9 +40,6 @@ type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCor
 type OpenApiExecutionCompensationResponse = components["schemas"]["ExecutionCompensationResponse"];
 type OpenApiExecutionApplicationResponse = components["schemas"]["ExecutionApplicationResponse"];
 type OpenApiOptimizationExecutionApplyResponse = components["schemas"]["OptimizationExecutionApplyResponse"];
-type OpenApiOptimizationProposalResponse = components["schemas"]["OptimizationProposalResponse"];
-type OpenApiOptimizationProposalReviewRecordResponse = components["schemas"]["OptimizationProposalReviewRecordResponse"];
-type OpenApiOptimizationProposalReviewResponse = components["schemas"]["OptimizationProposalReviewResponse"];
 type OpenApiOptimizationTaskResponse = components["schemas"]["OptimizationTaskResponse"];
 type OpenApiRegressionAssetGovernanceActionRequest = components["schemas"]["RegressionAssetGovernanceActionRequest"];
 type OpenApiRegressionAssetFlakyRequest = components["schemas"]["RegressionAssetFlakyRequest"];
@@ -66,7 +63,7 @@ export type SocEventType =
   | "recommendation.modified"
   | "evidence.added"
   | "tool.manual_query_after_agent";
-export type JobType = "attribution" | "proposal" | "batch_plan" | "execution" | "eval_case_generation" | "regression_impact_analysis";
+export type JobType = "attribution" | "batch_plan" | "execution" | "eval_case_generation" | "regression_impact_analysis";
 export type JobStatus =
   | "created"
   | "evidence_packaging"
@@ -77,7 +74,6 @@ export type JobStatus =
   | "failed"
   | "timeout"
   | "needs_human_review";
-export type OptimizationProposalReviewAction = "approve" | "reject" | "request_more_analysis";
 
 export interface FeedbackFilters {
   run_id?: string;
@@ -197,12 +193,8 @@ export type FeedbackAnalysisJobRecord = AgentJobRecord & {
   runtime_version?: string | null;
   profile_version?: Record<string, unknown> | null;
   attribution_job_id?: string;
-  validated_output_json?: Record<string, unknown> | AttributionOutput | ProposalOutput | FeedbackOptimizationPlanRecord | null;
+  validated_output_json?: Record<string, unknown> | AttributionOutput | FeedbackOptimizationPlanRecord | null;
 };
-
-export interface FeedbackProposalRegenerateRequest {
-  regeneration_instruction?: string | null;
-}
 
 export type AttributionOutput = {
   schema_version: "attribution-output/v1";
@@ -220,16 +212,6 @@ export type AttributionOutput = {
   [key: string]: unknown;
 };
 
-export type ExternalGuidanceRecord = {
-  external_item_id?: string;
-  source_index?: number;
-  status?: string;
-  latest_notification_id?: string | null;
-  latest_webhook_alias?: string | null;
-  latest_notification?: ExternalGovernanceNotificationRecord | null;
-  [key: string]: unknown;
-};
-
 export type ExternalGovernanceWebhookRecord = OpenApiExternalGovernanceWebhookResponse;
 
 export type ExternalGovernanceNotificationRecord = OpenApiExternalGovernanceNotificationResponse & {
@@ -242,36 +224,29 @@ export type ExternalGovernanceItemRecord = OpenApiExternalGovernanceItemResponse
   [key: string]: unknown;
 };
 
-export type OptimizationProposalReviewRecord = OpenApiOptimizationProposalReviewRecordResponse;
-
-export type OptimizationProposalRecord = OpenApiOptimizationProposalResponse & {
-  status: "pending_review" | "approved" | "rejected" | "needs_more_analysis" | string;
-  latest_review?: OptimizationProposalReviewRecord | null;
-};
-
-export type ProposalOutput = {
-  schema_version: "proposal-output/v1";
-  status: "completed" | "needs_human_review";
-  proposals: OptimizationProposalRecord[];
-  external_guidance: ExternalGuidanceRecord[];
+export type OptimizationTaskPlanSnapshot = {
+  optimization_plan_id?: string | null;
+  batch_id?: string | null;
+  plan_task_id?: string | null;
+  status?: string | null;
+  actionability?: string | null;
+  target_type?: string | null;
+  target_path?: string | null;
+  title?: string | null;
+  description?: string | null;
+  objective?: string | null;
+  target_summary?: string | null;
+  recommendation?: string | null;
+  recommended_actions?: string[];
+  acceptance_criteria?: string[];
+  expected_effect?: string | null;
+  validation?: string | null;
+  risk?: string | null;
+  source_batch_id?: string | null;
+  source_plan_task_id?: string | null;
+  source_feedback_case_ids?: string[];
   [key: string]: unknown;
 };
-
-export interface OptimizationProposalReviewRequest {
-  action?: OptimizationProposalReviewAction;
-  comment?: string;
-}
-
-export type OptimizationProposalReviewResponse = OpenApiOptimizationProposalReviewResponse & {
-  proposal: OptimizationProposalRecord;
-  review: OptimizationProposalReviewRecord;
-};
-
-export interface OptimizationTaskCreateRequest {
-  proposal_id?: string;
-  execution_mode?: "manual_or_patch";
-  comment?: string;
-}
 
 export type OptimizationTaskRecord = OpenApiOptimizationTaskResponse & {
   status:
@@ -286,7 +261,7 @@ export type OptimizationTaskRecord = OpenApiOptimizationTaskResponse & {
     | "needs_human_review"
     | "closed"
     | string;
-  proposal?: OptimizationProposalRecord;
+  proposal?: OptimizationTaskPlanSnapshot | null;
   latest_execution_job?: OptimizationExecutionJobRecord | null;
   latest_execution_application?: ExecutionApplicationRecord | null;
   latest_change_set_id?: string | null;
@@ -470,7 +445,6 @@ export interface FeedbackWorkbenchData {
   events: SocEventRecord[];
   pending_correlations: PendingCorrelationRecord[];
   cases: FeedbackCaseRecord[];
-  proposals: OptimizationProposalRecord[];
   tasks: OptimizationTaskRecord[];
   external_governance_items: ExternalGovernanceItemRecord[];
   external_webhooks: ExternalGovernanceWebhookRecord[];

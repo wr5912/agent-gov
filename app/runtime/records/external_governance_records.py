@@ -24,7 +24,7 @@ ExternalNotificationStatus = Literal["sending", "sent", "failed"]
 class ExternalGuidanceInputRecord(BaseModel):
     """Normalized external guidance item consumed by store projection."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
 
     owner: Optional[str] = None
     actionability: Optional[str] = None

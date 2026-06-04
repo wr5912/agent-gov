@@ -16,18 +16,12 @@ from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     OptimizationExecutionApplyResponse,
     OptimizationTaskResponse,
 )
-from app.runtime.response_schemas.optimization_response_schemas import (
-    OptimizationProposalResponse,
-    OptimizationProposalReviewResponse,
-)
 from app.runtime.schemas import (
     EvalRunResponse,
     ExternalGovernanceNotifyRequest,
     FeedbackEvalRunCreateRequest,
     OptimizationExecutionApplyRequest,
     OptimizationExecutionCreateRequest,
-    OptimizationProposalReviewRequest,
-    OptimizationTaskCreateRequest,
     OptimizationTaskMarkAppliedRequest,
 )
 from app.services.agent_governance import AgentGovernanceService
@@ -43,75 +37,13 @@ def create_optimization_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
-    _register_proposal_routes(router, feedback_store)
     _register_task_read_routes(router, feedback_store)
     _register_external_governance_routes(router, feedback_store)
     _register_execution_job_routes(router, runtime)
     _register_compensation_routes(router, feedback_store)
     _register_execution_application_routes(router, execution_application)
     _register_task_regression_routes(router, feedback_store, runtime, agent_governance)
-    _register_task_creation_routes(router, feedback_store)
     return router
-
-
-def _register_proposal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
-
-    @router.get(
-        "/optimization-proposals",
-        response_model=list[OptimizationProposalResponse],
-        summary="List pending feedback-driven optimization proposals",
-    )
-    async def list_optimization_proposals(
-        feedback_case_id: str | None = None,
-        status: str | None = None,
-        limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[OptimizationProposalResponse]:
-        return feedback_store.list_proposals(feedback_case_id=feedback_case_id, status=status, limit=limit)
-
-    @router.get(
-        "/optimization-proposals/{proposal_id}",
-        response_model=OptimizationProposalResponse,
-        summary="Get one feedback-driven optimization proposal",
-    )
-    async def get_optimization_proposal(proposal_id: str) -> OptimizationProposalResponse:
-        proposal = feedback_store.find_proposal(proposal_id)
-        return ensure_found(proposal, "Proposal not found")
-
-    @router.post(
-        "/optimization-proposals/{proposal_id}/approve",
-        response_model=OptimizationProposalReviewResponse,
-        summary="Approve one feedback-driven optimization proposal",
-    )
-    async def approve_optimization_proposal(
-        proposal_id: str,
-        req: OptimizationProposalReviewRequest,
-    ) -> OptimizationProposalReviewResponse:
-        result = feedback_store.review_proposal(proposal_id, action="approve", comment=req.comment)
-        return OptimizationProposalReviewResponse(**ensure_found(result, "Proposal not found"))
-
-    @router.post(
-        "/optimization-proposals/{proposal_id}/reject",
-        response_model=OptimizationProposalReviewResponse,
-        summary="Reject one feedback-driven optimization proposal",
-    )
-    async def reject_optimization_proposal(
-        proposal_id: str,
-        req: OptimizationProposalReviewRequest,
-    ) -> OptimizationProposalReviewResponse:
-        result = feedback_store.review_proposal(proposal_id, action="reject", comment=req.comment)
-        return OptimizationProposalReviewResponse(**ensure_found(result, "Proposal not found"))
-
-    @router.post(
-        "/optimization-proposals/{proposal_id}/request-more-analysis",
-        response_model=OptimizationProposalReviewResponse,
-        summary="Request more analysis for one feedback-driven optimization proposal",
-    )
-    async def request_more_analysis_for_proposal(
-        proposal_id: str,
-        req: OptimizationProposalReviewRequest,
-    ) -> OptimizationProposalReviewResponse:
-        result = feedback_store.review_proposal(proposal_id, action="request_more_analysis", comment=req.comment)
-        return OptimizationProposalReviewResponse(**ensure_found(result, "Proposal not found"))
 
 
 def _register_task_read_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
@@ -330,22 +262,3 @@ def _register_task_regression_routes(
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[EvalRunResponse]:
         return feedback_store.list_eval_runs(optimization_task_id=task_id, limit=limit)
-
-
-def _register_task_creation_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
-
-    @router.post(
-        "/optimization-proposals/{proposal_id}/tasks",
-        response_model=OptimizationTaskResponse,
-        summary="Create one feedback-driven optimization task",
-    )
-    async def create_optimization_task(proposal_id: str, req: OptimizationTaskCreateRequest) -> OptimizationTaskResponse:
-        require_request(not req.proposal_id or req.proposal_id == proposal_id, "proposal_id path/body mismatch")
-        task = feedback_store.create_task(
-            proposal_id=proposal_id,
-            execution_mode=req.execution_mode,
-            comment=req.comment,
-        )
-        if not task:
-            raise_conflict("Proposal is missing, not approved, or not actionable")
-        return task

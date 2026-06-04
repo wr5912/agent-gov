@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.runtime_db import OptimizationTaskModel
 from app.runtime.state_machines import TASK_STATES, validate_transition
@@ -13,7 +13,6 @@ from .agent_job_records import AgentJobProjectionRecord
 from .base import StrictRuntimeRecord
 from .eval_run_records import EvalRunProjectionRecord
 from .execution_records import ExecutionApplicationRecord
-from .proposal_records import OptimizationProposalRecord
 
 
 OptimizationTaskStatus = Literal[
@@ -31,6 +30,34 @@ OptimizationTaskStatus = Literal[
 ]
 
 
+class OptimizationTaskPlanSnapshotRecord(StrictRuntimeRecord):
+    """Compatibility snapshot for a task created from an optimization plan."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    optimization_plan_id: Optional[str] = None
+    batch_id: Optional[str] = None
+    plan_task_id: Optional[str] = None
+    status: Optional[str] = None
+    actionability: Optional[str] = None
+    target_type: Optional[str] = None
+    target_path: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    objective: Optional[str] = None
+    target_summary: Optional[str] = None
+    recommendation: Optional[str] = None
+    recommended_actions: list[str] = Field(default_factory=list)
+    acceptance_criteria: list[str] = Field(default_factory=list)
+    expected_effect: Optional[str] = None
+    validation: Optional[str] = None
+    risk: Optional[str] = None
+    source_batch_id: Optional[str] = None
+    source_plan_task_id: Optional[str] = None
+    source_feedback_case_ids: list[str] = Field(default_factory=list)
+    regeneration_instruction: Optional[str] = None
+
+
 class OptimizationTaskRecord(StrictRuntimeRecord):
     """Internal source of truth for optimization task payload_json."""
 
@@ -44,7 +71,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
     source: str = "feedback_workbench"
     comment: Optional[str] = None
     target_paths: list[str] = Field(default_factory=list)
-    proposal: Optional[OptimizationProposalRecord] = None
+    proposal: Optional[OptimizationTaskPlanSnapshotRecord] = None
     baseline_agent_version_id: Optional[str] = None
     execution_job_ids: list[str] = Field(default_factory=list)
     latest_execution_job_id: Optional[str] = None
@@ -83,8 +110,8 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
 
     @model_validator(mode="after")
     def validate_task_shape(self) -> "OptimizationTaskRecord":
-        if not self.proposal_id and not self.proposal_ids:
-            raise ValueError("optimization task must reference at least one proposal")
+        if not self.proposal_id and not self.proposal_ids and not self.source_batch_id:
+            raise ValueError("optimization task must reference a proposal or optimization batch")
         if not self.target_paths:
             raise ValueError("optimization task must include target_paths")
         if self.applied_agent_version_id and not self.applied_at:

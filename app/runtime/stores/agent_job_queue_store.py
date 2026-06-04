@@ -12,6 +12,9 @@ from ..records.regression_impact_records import RegressionImpactAnalysisRecord, 
 from ..runtime_db import FeedbackOptimizationBatchModel, RegressionImpactAnalysisModel, utc_now
 
 
+AgentJobPayload = JsonObject
+
+
 class AgentJobQueueStoreMixin:
     """Domain-specific factories for queued generic Agent jobs."""
 
@@ -21,7 +24,7 @@ class AgentJobQueueStoreMixin:
         *,
         profile_version: Optional[JsonObject] = None,
         force: bool = False,
-    ) -> Optional[JsonObject]:
+    ) -> Optional[AgentJobPayload]:
         domain_job = self.create_attribution_job(feedback_case_id, profile_version=profile_version, force=force)
         if not domain_job:
             return None
@@ -32,27 +35,22 @@ class AgentJobQueueStoreMixin:
             profile_version=profile_version,
         )
 
-    def queue_proposal_agent_job(
+    def queue_feedback_case_optimization_plan_agent_job(
         self,
         feedback_case_id: str,
         *,
         profile_version: Optional[JsonObject] = None,
-        force: bool = False,
+        force: bool = True,
         regeneration_instruction: Optional[str] = None,
-    ) -> Optional[JsonObject]:
-        domain_job = self.create_proposal_job(
-            feedback_case_id,
+    ) -> Optional[AgentJobPayload]:
+        batch = self.ensure_single_case_optimization_batch(feedback_case_id)
+        if not batch:
+            return None
+        return self.queue_batch_plan_agent_job(
+            str(batch["batch_id"]),
             profile_version=profile_version,
             force=force,
             regeneration_instruction=regeneration_instruction,
-        )
-        if not domain_job:
-            return None
-        return self._ensure_agent_job_for_domain_job(
-            domain_job,
-            scope_kind="feedback_case",
-            scope_id=feedback_case_id,
-            profile_version=profile_version,
         )
 
     def queue_batch_plan_agent_job(
@@ -280,7 +278,7 @@ class AgentJobQueueStoreMixin:
 
     def _eval_case_generation_case_context(self, feedback_case: JsonObject) -> JsonObject:
         attribution_job_id = self._latest(feedback_case.get("attribution_job_ids"))
-        proposal_job_id = self._latest(feedback_case.get("proposal_job_ids"))
+        optimization_plan = self._latest_optimization_plan_for_feedback_case(str(feedback_case.get("feedback_case_id") or ""))
         source_refs = [{"source_kind": "signal", "source_id": source_id} for source_id in feedback_case.get("signal_ids") or []]
         source_refs.extend({"source_kind": "soc_event", "source_id": source_id} for source_id in feedback_case.get("event_ids") or [])
         source_refs.extend(
@@ -294,8 +292,19 @@ class AgentJobQueueStoreMixin:
             "source_records": [self.find_feedback_source(ref["source_kind"], ref["source_id"]) for ref in source_refs],
             "source_run": self.find_run(run_id=run_id) if run_id else None,
             "attribution_output": self.get_job_output(str(attribution_job_id), "attribution") if attribution_job_id else None,
-            "proposal_output": self.get_job_output(str(proposal_job_id), "proposal") if proposal_job_id else None,
+            "optimization_plan": optimization_plan,
         }
+
+    def _latest_optimization_plan_for_feedback_case(self, feedback_case_id: str) -> Optional[JsonObject]:
+        if not feedback_case_id:
+            return None
+        for batch in self.list_optimization_batches(limit=1000):
+            if feedback_case_id not in set(batch.get("feedback_case_ids") or []):
+                continue
+            plan = batch.get("optimization_plan")
+            if isinstance(plan, dict):
+                return plan
+        return None
 
     def _attach_eval_case_generation_job_to_batch(self, batch_id: str, job: JsonObject) -> None:
         with self.Session.begin() as db:

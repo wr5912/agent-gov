@@ -5,7 +5,6 @@ from collections.abc import AsyncIterator
 from typing import Any, Callable
 
 from .agent_profiles import AgentRuntimeProfile
-from .prompts.feedback_prompts import extract_json_candidates
 from .message_utils import extract_text
 from .mcp_config import filtered_mcp_servers
 from .output_formatter import DSPyOutputFormatter
@@ -106,9 +105,6 @@ class AgentJobRunner:
             answer = self.dedupe_answer_parts(answer_parts)
             if errors and not answer:
                 raise ClaudeCodeResultError("; ".join(errors))
-            direct = self.direct_schema_candidate(answer, expected_schema_version)
-            if direct:
-                return direct
             return await self.format_agent_text(
                 job_type=job_type,
                 raw_text=answer,
@@ -175,11 +171,3 @@ class AgentJobRunner:
             seen.add(text)
             unique.append(text)
         return "\n".join(unique).strip()
-
-    @staticmethod
-    def direct_schema_candidate(raw_text: str, expected_schema_version: str) -> JsonObject | None:
-        candidates = extract_json_candidates(raw_text)
-        for candidate in reversed(candidates):
-            if candidate.get("schema_version") == expected_schema_version:
-                return candidate
-        return None

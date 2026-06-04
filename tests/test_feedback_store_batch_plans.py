@@ -40,6 +40,89 @@ def test_batch_plan_regeneration_records_instruction_and_replaces_plan(tmp_path)
     assert "避免改动无关 MCP 配置" in second_plan["rationale"]
 
 
+def test_batch_plan_running_job_is_reused_and_failed_job_is_replaced_on_retry(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+
+    first = store.create_batch_plan_job(batch["batch_id"], force=True)
+    repeated = store.create_batch_plan_job(batch["batch_id"], force=True)
+    store.start_job(first["job_id"])
+    running_repeated = store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重复点击")
+    store.fail_job(first["job_id"], error_code="AGENT_RUNTIME_ERROR", message="formatter failed")
+    retry = store.create_batch_plan_job(batch["batch_id"], force=True)
+
+    assert repeated["job_id"] == first["job_id"]
+    assert running_repeated["job_id"] == first["job_id"]
+    assert retry["job_id"] != first["job_id"]
+    assert store.get_job(first["job_id"]) is None
+    assert [job["job_id"] for job in store.list_agent_jobs(job_type="batch_plan", scope_kind="optimization_batch", scope_id=batch["batch_id"])] == [retry["job_id"]]
+
+
+def test_batch_plan_failure_preserves_raw_output_diagnostics(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    raw_output = {
+        "_formatter": {
+            "name": "dspy",
+            "status": "failed",
+            "candidate_count": 0,
+        },
+        "raw_text": "优化方案生成智能体输出了自然语言方案。",
+    }
+
+    failed = store.fail_job(
+        job["job_id"],
+        error_code="AGENT_RUNTIME_ERROR",
+        message="OutputFormatterError: formatter failed",
+        raw_output_json=raw_output,
+    )
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert failed["raw_output_json"] == raw_output
+    assert updated["optimization_plan"] is None
+    assert updated["optimization_plan_error"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert updated["optimization_plan_job"]["raw_output_json"] == raw_output
+
+
+def test_complete_batch_plan_job_sanitizes_attribution_summary_extras(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    raw_output = _batch_plan_output(
+        job,
+        attribution_summaries=[
+            {
+                "job_id": "fba-attribution-1",
+                "owner": "mcp_config",
+                "feedback_case_id": batch["feedback_case_ids"][0],
+                "problem_type": "tool_data_quality",
+                "optimization_object_type": "mcp_description",
+                "actionability": "external_guidance",
+                "confidence": "high",
+                "rationale": "外部 MCP 数据源返回不完整。",
+                "summary": "归因指向外部 MCP 数据源。",
+            }
+        ],
+    )
+
+    completed = store.complete_batch_plan_job(job["job_id"], raw_output)
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert completed["status"] == "completed"
+    summary = updated["optimization_plan"]["attribution_summaries"][0]
+    assert summary == {
+        "attribution_job_id": "fba-attribution-1",
+        "feedback_case_id": batch["feedback_case_ids"][0],
+        "problem_type": "tool_data_quality",
+        "optimization_object_type": "mcp_description",
+        "actionability": "external_guidance",
+        "confidence": "high",
+        "rationale": "外部 MCP 数据源返回不完整。",
+        "summary": "归因指向外部 MCP 数据源。",
+    }
+
+
 def test_batch_projection_rejects_invalid_persisted_status(tmp_path):
     store, _ = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)
@@ -255,7 +338,7 @@ def test_batch_plan_task_projection_normalizes_evidence_refs(tmp_path):
     assert len(record.evidence_refs) == 1
     assert record.evidence_refs[0].id == "messages.json"
     assert record.evidence_refs[0].reason == "回答来自记忆。"
-    assert task["evidence_refs"][0]["agent_note"] == {"source": "planner"}
+    assert "agent_note" not in task["evidence_refs"][0]
 
 
 def test_feedback_optimization_plan_output_normalizes_string_attribution_summaries():
@@ -378,7 +461,7 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert seen["profile_name"] == "proposal-generator"
     assert seen["expected_schema_version"] == "feedback-optimization-plan-output/v1"
     assert seen["job_type"] == "batch_plan"
-    assert "batch_plan_input_json" in seen["prompt"]
+    assert "optimization_plan_input_json" in seen["prompt"]
     assert seen["job_input"]["regeneration_instruction"] == "优先保持指令简洁"
     assert job["job_type"] == "batch_plan"
     assert job["profile_name"] == "proposal-generator"
@@ -654,8 +737,8 @@ def test_batch_plan_regeneration_rejects_approved_plan(tmp_path):
     batch = _create_batch_with_completed_attribution(store)
     batch = store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="优先保留现有技能入口")
     approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="同意执行")
-    proposal = store.find_proposal(approved["batch"]["internal_proposal_id"])
-
-    assert proposal["regeneration_instruction"] == "优先保留现有技能入口"
+    assert approved["batch"].get("internal_proposal_id") is None
+    task = approved["optimization_task"]
+    assert task["proposal"]["regeneration_instruction"] == "优先保留现有技能入口"
     with pytest.raises(ConflictError, match="已执行或进入执行链路"):
         store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="重新改写目标")

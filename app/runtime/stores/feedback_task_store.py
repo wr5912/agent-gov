@@ -14,6 +14,9 @@ from ..runtime_db import OptimizationTaskModel, utc_now
 MANUAL_APPLY_TASK_STATES = {"pending_execution", "failed", "needs_human_review"}
 
 
+OptimizationTaskPayload = JsonObject
+
+
 class FeedbackTaskStoreMixin:
     """Store operations for optimization task records and task state snapshots."""
 
@@ -62,6 +65,73 @@ class FeedbackTaskStoreMixin:
             )
         return record.to_payload()
 
+    def create_task_from_optimization_plan(
+        self,
+        *,
+        batch: JsonObject,
+        plan: JsonObject,
+        plan_task: Optional[JsonObject] = None,
+        execution_mode: str = "manual_or_patch",
+        comment: Optional[str] = None,
+    ) -> Optional[OptimizationTaskPayload]:
+        source = plan_task if isinstance(plan_task, dict) else plan
+        target_path = self._string(source.get("target_path")) or self._string(plan.get("target_path"))
+        if not target_path or not self._target_allowed(target_path):
+            return None
+        batch_id = self._string(batch.get("batch_id"))
+        if not batch_id:
+            return None
+        plan_task_id = self._string(source.get("plan_task_id")) if plan_task else None
+        existing_task = self._find_latest_task_for_plan_source(batch_id, plan_task_id)
+        if existing_task:
+            return existing_task
+        feedback_case_ids = self._unique_strings(source.get("feedback_case_ids") or batch.get("feedback_case_ids") or [])
+        eval_case_ids = self._unique_strings(source.get("eval_case_ids") or batch.get("eval_case_ids") or [])
+        feedback_case_id = self._latest(feedback_case_ids) or self._latest(batch.get("feedback_case_ids"))
+        snapshot = self._optimization_task_plan_snapshot(
+            batch=batch,
+            plan=plan,
+            source=source,
+            target_path=target_path,
+            plan_task_id=plan_task_id,
+        )
+        task = self._scrub_record(
+            {
+                "optimization_task_id": f"opt-{uuid.uuid4()}",
+                "created_at": utc_now(),
+                "status": "pending_execution",
+                "proposal_id": None,
+                "proposal_ids": [],
+                "feedback_case_id": feedback_case_id,
+                "execution_mode": execution_mode,
+                "source": "feedback_optimization_batch",
+                "comment": comment,
+                "target_paths": [target_path],
+                "proposal": snapshot,
+                "baseline_agent_version_id": source.get("base_agent_version_id") or self._current_agent_version_id(),
+                "execution_job_ids": [],
+                "latest_execution_job_id": None,
+                "latest_execution_job": None,
+                "source_batch_id": batch_id,
+                "source_plan_task_id": plan_task_id,
+                "feedback_case_ids": feedback_case_ids,
+                "eval_case_ids": eval_case_ids,
+            }
+        )
+        record = OptimizationTaskRecord.model_validate(task)
+        with self.Session.begin() as db:
+            db.add(
+                OptimizationTaskModel(
+                    optimization_task_id=record.optimization_task_id,
+                    created_at=record.created_at,
+                    status=record.status,
+                    proposal_id=record.proposal_id,
+                    feedback_case_id=record.feedback_case_id,
+                    payload_json=record.to_payload(),
+                )
+            )
+        return record.to_payload()
+
     def _find_latest_task_for_proposal(self, proposal_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
@@ -70,6 +140,66 @@ class FeedbackTaskStoreMixin:
                 .order_by(OptimizationTaskModel.created_at.desc())
             ).first()
             return self._task_to_dict(row) if row else None
+
+    def _find_latest_task_for_plan_source(self, batch_id: str, plan_task_id: Optional[str]) -> Optional[JsonObject]:
+        with self.Session() as db:
+            rows = db.scalars(
+                select(OptimizationTaskModel)
+                .order_by(OptimizationTaskModel.created_at.desc())
+                .limit(1000)
+            ).all()
+            for row in rows:
+                task = self._task_to_dict(row)
+                if task.get("source_batch_id") != batch_id:
+                    continue
+                if plan_task_id:
+                    if task.get("source_plan_task_id") == plan_task_id:
+                        return task
+                elif not task.get("source_plan_task_id"):
+                    return task
+        return None
+
+    def _optimization_task_plan_snapshot(
+        self,
+        *,
+        batch: JsonObject,
+        plan: JsonObject,
+        source: JsonObject,
+        target_path: str,
+        plan_task_id: Optional[str],
+    ) -> JsonObject:
+        return self._scrub_record(
+            {
+                "optimization_plan_id": plan.get("optimization_plan_id"),
+                "batch_id": batch.get("batch_id"),
+                "plan_task_id": plan_task_id,
+                "status": "approved",
+                "actionability": source.get("actionability") or plan.get("actionability") or "direct_workspace_change",
+                "target_type": source.get("target_type") or plan.get("target_type") or plan.get("optimization_object_type"),
+                "target_path": target_path,
+                "title": source.get("title") or plan.get("title") or "反馈优化任务",
+                "description": source.get("description") or "",
+                "objective": source.get("objective") or "",
+                "target_summary": source.get("target_summary") or "",
+                "task_context": source.get("task_context") if isinstance(source.get("task_context"), dict) else {},
+                "recommendation": source.get("recommendation") or plan.get("recommendation") or "",
+                "recommended_actions": source.get("recommended_actions") or [],
+                "acceptance_criteria": source.get("acceptance_criteria") or [],
+                "expected_effect": source.get("expected_effect") or plan.get("expected_effect") or "",
+                "validation": source.get("validation") or plan.get("validation") or "",
+                "risk": source.get("risk") or plan.get("risk") or "",
+                "regeneration_instruction": plan.get("regeneration_instruction"),
+                "analysis_summary": source.get("analysis_summary") or "",
+                "evidence_summary": source.get("evidence_summary") or "",
+                "evidence_refs": source.get("evidence_refs") or plan.get("evidence_refs") or [],
+                "requires_approval": True,
+                "base_agent_version_id": self._current_agent_version_id(),
+                "source_batch_id": batch.get("batch_id"),
+                "source_plan_task_id": plan_task_id,
+                "source_feedback_case_ids": source.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
+                "source_refs": batch.get("source_refs") or [],
+            }
+        )
 
     def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(OptimizationTaskModel).order_by(OptimizationTaskModel.created_at.desc()).limit(limit)

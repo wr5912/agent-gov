@@ -4,7 +4,7 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
-from app.routers.error_helpers import ensure_found, require_request
+from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -13,7 +13,7 @@ from app.runtime.schemas import (
     EvidencePackageResponse,
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
-    FeedbackProposalRegenerateRequest,
+    FeedbackOptimizationBatchPlanGenerateRequest,
 )
 
 
@@ -115,23 +115,21 @@ def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRun
         return ensure_found(job, "Feedback case not found or missing evidence")
 
     @router.post(
-        "/feedback-cases/{feedback_case_id}/proposal-jobs",
+        "/feedback-cases/{feedback_case_id}/optimization-plan",
         response_model=AgentJobResponse,
-        summary="Queue one optimization proposal job for a feedback case",
+        summary="Queue one optimization plan job for a single feedback case",
     )
-    async def create_proposal_job(feedback_case_id: str) -> AgentJobResponse:
-        job = runtime.queue_proposal_job(feedback_case_id)
-        return ensure_found(job, "Feedback case not found or missing attribution")
-
-    @router.post(
-        "/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate",
-        response_model=AgentJobResponse,
-        summary="Force queue one optimization proposal job and supersede unused existing proposals",
-    )
-    async def regenerate_proposal_job(feedback_case_id: str, req: FeedbackProposalRegenerateRequest | None = None) -> AgentJobResponse:
-        job = runtime.queue_proposal_job(
-            feedback_case_id,
+    async def generate_feedback_case_optimization_plan(
+        feedback_case_id: str,
+        req: FeedbackOptimizationBatchPlanGenerateRequest | None = None,
+    ) -> AgentJobResponse:
+        batch = runtime.feedback_store.ensure_single_case_optimization_batch(feedback_case_id) if runtime.feedback_store else None
+        batch = ensure_found(batch, "Feedback case not found or has no valid feedback source")
+        job = runtime.queue_batch_optimization_plan(
+            str(batch["batch_id"]),
             force=True,
-            regeneration_instruction=req.regeneration_instruction if req else None,
+            regeneration_instruction=(req or FeedbackOptimizationBatchPlanGenerateRequest()).regeneration_instruction,
         )
-        return ensure_found(job, "Feedback case not found or missing attribution")
+        if not job:
+            raise_conflict("Feedback case cannot queue an optimization plan without actionable attributions")
+        return job

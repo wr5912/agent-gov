@@ -20,10 +20,10 @@ import {
   fileStatusTone,
   formatDate,
   jobStatusTone,
-  proposalStatusText,
+  planSnapshotStatusText,
   rawString,
   shortId,
-  taskProposalId,
+  taskSourceId,
   taskStatusDescription,
 } from "./selectors";
 
@@ -90,8 +90,8 @@ export function TaskDetailCard({
   onRestoreCompensation?: (compensation: ExecutionCompensationRecord) => void;
   onRunRegression?: (task: OptimizationTaskRecord) => void;
 }) {
-  const proposal = task.proposal;
-  const proposalId = taskProposalId(task);
+  const planSnapshot = task.proposal;
+  const sourceId = taskSourceId(task);
   const targetPaths = task.target_paths || [];
   const latestRegression = task.latest_regression_run || null;
   const latestExecution = task.latest_execution_job || null;
@@ -108,7 +108,7 @@ export function TaskDetailCard({
       <div className="fw-detail-record-head">
         <div>
           <h4>{shortId(task.optimization_task_id)} · optimization-task</h4>
-          <small>反馈单 {shortId(task.feedback_case_id)} · 建议 {shortId(proposalId)}</small>
+          <small>反馈单 {shortId(task.feedback_case_id)} · 方案任务 {shortId(sourceId)}</small>
         </div>
         <Pill tone={jobStatusTone(task.status)}>{task.status}</Pill>
       </div>
@@ -129,16 +129,16 @@ export function TaskDetailCard({
           {targetPaths.length ? targetPaths.map((path) => <span key={path}>{path}</span>) : <span>-</span>}
         </div>
       </div>
-      {proposal ? (
+      {planSnapshot ? (
         <section className="fw-task-source">
-          <h4>{proposal.title || "来源优化方案"}</h4>
-          <FormattedText value={proposal.recommendation || "-"} />
-          <DetailMetricGrid items={[["审批状态", proposalStatusText[proposal.status] || proposal.status]]} />
+          <h4>{planSnapshot.title || "来源优化方案"}</h4>
+          <FormattedText value={planSnapshot.recommendation || "-"} />
+          <DetailMetricGrid items={[["方案状态", planSnapshotStatusText[planSnapshot.status || ""] || planSnapshot.status || "-"]]} />
           <FormattedTextFields
             fields={[
-              ["预期效果", proposal.expected_effect || "-"],
-              ["验证方式", proposal.validation || "-"],
-              ["风险", proposal.risk || "-"],
+              ["预期效果", planSnapshot.expected_effect || "-"],
+              ["验证方式", planSnapshot.validation || "-"],
+              ["风险", planSnapshot.risk || "-"],
             ]}
           />
         </section>

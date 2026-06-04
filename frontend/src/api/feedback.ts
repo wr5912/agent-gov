@@ -21,7 +21,6 @@ import type {
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationPlanTaskExecuteRequest,
   FeedbackOptimizationPlanTaskExecuteResponse,
-  FeedbackProposalRegenerateRequest,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
@@ -29,11 +28,6 @@ import type {
   FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
   OptimizationExecutionApplyResponse,
-  OptimizationProposalRecord,
-  OptimizationProposalReviewAction,
-  OptimizationProposalReviewRequest,
-  OptimizationProposalReviewResponse,
-  OptimizationTaskCreateRequest,
   OptimizationTaskRecord,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
@@ -351,67 +345,19 @@ export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCa
   );
 }
 
-export function createProposalJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs`,
-    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
-  );
-}
-
-export function regenerateProposalJob(
+export function generateFeedbackCaseOptimizationPlan(
   config: RuntimeClientConfig,
   feedbackCaseId: string,
-  payload: FeedbackProposalRegenerateRequest = {},
+  payload: { regeneration_instruction?: string | null } = {},
 ) {
   return requestJson<AgentJobRecord>(
     config,
-    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/proposal-jobs/regenerate`,
+    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/optimization-plan`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
-    },
-  );
-}
-
-export function getOptimizationProposals(config: RuntimeClientConfig, filters?: FeedbackFilters) {
-  return requestJson<OptimizationProposalRecord[]>(
-    config,
-    `/api/optimization-proposals${feedbackQueryString(filters)}`,
-  );
-}
-
-export function getOptimizationProposal(config: RuntimeClientConfig, proposalId: string) {
-  return requestJson<OptimizationProposalRecord>(
-    config,
-    `/api/optimization-proposals/${encodeURIComponent(proposalId)}`,
-  );
-}
-
-export function reviewOptimizationProposal(
-  config: RuntimeClientConfig,
-  proposalId: string,
-  payload: OptimizationProposalReviewRequest,
-) {
-  const action = payload.action || "approve";
-  const routeByAction: Record<OptimizationProposalReviewAction, string> = {
-    approve: "approve",
-    reject: "reject",
-    request_more_analysis: "request-more-analysis",
-  };
-  const route = routeByAction[action];
-  if (!route) {
-    throw new Error(`Unsupported proposal review action: ${action}`);
-  }
-  return requestJson<OptimizationProposalReviewResponse>(
-    config,
-    `/api/optimization-proposals/${encodeURIComponent(proposalId)}/${route}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comment: payload.comment }),
     },
   );
 }
@@ -444,17 +390,6 @@ export function notifyExternalGovernanceItem(config: RuntimeClientConfig, extern
       body: JSON.stringify({ webhook_alias: webhookAlias }),
     },
   );
-}
-
-export function createOptimizationTask(config: RuntimeClientConfig, payload: OptimizationTaskCreateRequest) {
-  if (!payload.proposal_id) {
-    throw new Error("proposal_id is required");
-  }
-  return requestJson<OptimizationTaskRecord>(config, `/api/optimization-proposals/${encodeURIComponent(payload.proposal_id)}/tasks`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
 }
 
 export function markOptimizationTaskApplied(config: RuntimeClientConfig, taskId: string, note?: string) {
@@ -591,7 +526,6 @@ export async function getFeedbackWorkbenchData(
     events,
     pendingCorrelations,
     cases,
-    proposals,
     tasks,
     externalItems,
     externalWebhooks,
@@ -605,7 +539,6 @@ export async function getFeedbackWorkbenchData(
     optionalList(getSocEvents(config, { limit })),
     optionalList(getPendingCorrelations(config, { limit })),
     optionalList(getFeedbackCases(config, { limit })),
-    optionalList(getOptimizationProposals(config, { limit })),
     optionalList(getOptimizationTasks(config, { limit })),
     optionalList(getExternalGovernanceItems(config, { limit })),
     optionalList(getExternalGovernanceWebhooks(config)),
@@ -620,7 +553,6 @@ export async function getFeedbackWorkbenchData(
     events,
     pending_correlations: pendingCorrelations,
     cases,
-    proposals,
     tasks,
     external_governance_items: externalItems,
     external_webhooks: externalWebhooks,

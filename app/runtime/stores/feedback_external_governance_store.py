@@ -153,6 +153,11 @@ class FeedbackExternalGovernanceStoreMixin:
     ) -> JsonObject:
         now = utc_now()
         feedback_case_id = self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or ""
+        owner = (
+            self._string(plan_task.get("owner"))
+            or self._string(plan_task.get("target_type"))
+            or "external_system"
+        ).strip() or "external_system"
         return ExternalGovernanceItemRecord(
             external_item_id=external_item_id,
             created_at=existing.get("created_at") if existing else now,
@@ -161,11 +166,7 @@ class FeedbackExternalGovernanceStoreMixin:
             feedback_case_id=feedback_case_id,
             proposal_job_id=f"batch-plan-task-{batch['batch_id']}-{plan_task['plan_task_id']}",
             source_index=int(plan_task.get("source_index") or 0),
-            owner=(
-                self._string(plan_task.get("owner"))
-                or self._string(plan_task.get("target_type"))
-                or "external_system"
-            ),
+            owner=owner,
             actionability=self._string(plan_task.get("actionability")) or "external_guidance",
             latest_notification_id=existing.get("latest_notification_id") if existing else None,
             latest_webhook_alias=existing.get("latest_webhook_alias") if existing else None,

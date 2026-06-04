@@ -406,15 +406,37 @@ def _normalize_evidence_refs(value: object) -> list[JsonObject]:
 
 
 def _normalize_attribution_summaries(value: object) -> list[JsonObject]:
-    items: list[NormalizedAttributionSummary] = []
+    items: list[JsonObject] = []
     for item in value or []:
         if isinstance(item, dict):
-            items.append(NormalizedAttributionSummary.model_validate(item))
+            normalized = NormalizedAttributionSummary.model_validate(
+                {
+                    **item,
+                    "attribution_job_id": item.get("attribution_job_id") or item.get("job_id") or item.get("_job_id"),
+                }
+            )
+            payload = normalized.to_payload()
+            items.append(
+                {
+                    key: payload[key]
+                    for key in (
+                        "attribution_job_id",
+                        "feedback_case_id",
+                        "problem_type",
+                        "optimization_object_type",
+                        "actionability",
+                        "confidence",
+                        "rationale",
+                        "summary",
+                    )
+                    if key in payload
+                }
+            )
             continue
         text = str(item).strip()
         if text:
-            items.append(NormalizedAttributionSummary.model_validate({"summary": text}))
-    return [item.to_payload() for item in items]
+            items.append(NormalizedAttributionSummary.model_validate({"summary": text}).to_payload())
+    return items
 
 
 def _normalize_summary_items(value: object) -> list[JsonObject]:

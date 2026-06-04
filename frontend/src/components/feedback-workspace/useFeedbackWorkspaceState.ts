@@ -34,7 +34,6 @@ const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
   events: [],
   pending_correlations: [],
   cases: [],
-  proposals: [],
   tasks: [],
   external_governance_items: [],
   external_webhooks: [],

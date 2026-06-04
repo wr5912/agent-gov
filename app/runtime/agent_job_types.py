@@ -15,14 +15,12 @@ from .schema_versions import (
     EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    PROPOSAL_OUTPUT_SCHEMA_VERSION,
     REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
 
 
 AgentJobType = Literal[
     "attribution",
-    "proposal",
     "batch_plan",
     "execution",
     "eval_case_generation",
@@ -42,11 +40,6 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         job_type="attribution",
         profile_name=ATTRIBUTION_ANALYZER_PROFILE,
         output_schema_version=ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
-    ),
-    "proposal": AgentJobSpec(
-        job_type="proposal",
-        profile_name=PROPOSAL_GENERATOR_PROFILE,
-        output_schema_version=PROPOSAL_OUTPUT_SCHEMA_VERSION,
     ),
     "batch_plan": AgentJobSpec(
         job_type="batch_plan",

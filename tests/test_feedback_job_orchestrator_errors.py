@@ -70,16 +70,19 @@ def test_attribution_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_f
         (lambda: RuntimeError("agent crashed"), "AGENT_RUNTIME_ERROR"),
     ],
 )
-def test_proposal_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_factory: Callable[[], Exception], error_code: str):
+def test_single_feedback_plan_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_factory: Callable[[], Exception], error_code: str):
     store, runtime = _store(tmp_path)
     feedback_case = _feedback_case_with_attribution(store)
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
     monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(exc_factory(), **kwargs))
 
-    job = asyncio.run(runtime.run_proposal_job(feedback_case["feedback_case_id"], force=True))
+    updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], force=True))
 
-    assert job.status == "failed"
-    assert job.error_json is not None
-    assert job.error_json.error_code == error_code
+    assert updated.status == "needs_human_review"
+    assert updated.optimization_plan_job is not None
+    assert updated.optimization_plan_job.status == "failed"
+    assert updated.optimization_plan_job.error_json is not None
+    assert updated.optimization_plan_job.error_json.error_code == error_code
 
 
 @pytest.mark.parametrize(
@@ -101,6 +104,28 @@ def test_batch_plan_orchestrator_maps_agent_errors(tmp_path, monkeypatch, exc_fa
     assert updated.optimization_plan_job.status == "failed"
     assert updated.optimization_plan_job.error_json is not None
     assert updated.optimization_plan_job.error_json.error_code == error_code
+
+
+def test_batch_plan_orchestrator_preserves_formatter_raw_output(tmp_path, monkeypatch):
+    store, runtime = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    raw_output = {
+        "_formatter": {"name": "dspy", "status": "failed", "candidate_count": 0},
+        "raw_text": "proposal-generator 输出了自然语言方案。",
+    }
+
+    class FormatterFailure(RuntimeError):
+        raw_output_json = raw_output
+
+    monkeypatch.setattr(runtime, "_run_profile_json", lambda **kwargs: _raise(FormatterFailure("formatter failed"), **kwargs))
+
+    updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"], force=True))
+
+    assert updated.optimization_plan_job is not None
+    assert updated.optimization_plan_job.status == "failed"
+    assert updated.optimization_plan_job.raw_output_json == raw_output
+    assert updated.optimization_plan_error is not None
+    assert updated.optimization_plan_error.error_code == "AGENT_RUNTIME_ERROR"
 
 
 @pytest.mark.parametrize(

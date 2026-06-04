@@ -14,8 +14,6 @@ import type {
   FeedbackSourceKind,
   FeedbackSourceRecord,
   FeedbackWorkbenchData,
-  OptimizationProposalRecord,
-  OptimizationProposalReviewAction,
   OptimizationExecutionJobRecord,
   OptimizationTaskRecord,
   PendingCorrelationRecord,
@@ -27,7 +25,7 @@ export { formatDate, shortId };
 
 export type BatchDetailView = "feedback" | "attribution" | "plan" | "regression";
 
-export const proposalStatusText: Record<string, string> = {
+export const planSnapshotStatusText: Record<string, string> = {
   pending_review: "待审批",
   approved: "已批准",
   rejected: "已拒绝",
@@ -198,9 +196,21 @@ export function defaultBatchDetail(batch: FeedbackOptimizationBatchRecord | null
   if (!batch) return "feedback";
   if (batch.latest_eval_run) return "regression";
   if (batch.eval_case_ids?.length) return "regression";
-  if (batch.optimization_plan || batch.optimization_task || batch.execution_job) return "plan";
+  if (batch.optimization_plan || batch.optimization_plan_error || batch.optimization_plan_job?.error_json || batch.optimization_task || batch.execution_job) return "plan";
   if (batch.attribution_jobs?.length || batch.attribution_job_ids?.length) return "attribution";
   return "feedback";
+}
+
+export function batchPlanDisplayTitle(batch: FeedbackOptimizationBatchRecord): string {
+  const plan = batch.optimization_plan;
+  if (!plan) return "统筹归因结果生成优化方案";
+  const rawTitle = typeof plan.title === "string" ? plan.title : "";
+  const technicalType = String(plan.target_type || plan.optimization_object_type || "");
+  if (rawTitle && (!technicalType || !rawTitle.includes(technicalType))) {
+    return rawTitle;
+  }
+  const count = plan.feedback_case_ids?.length || batch.feedback_case_ids?.length || 0;
+  return count ? `统筹 ${count} 条反馈生成优化方案` : "统筹归因结果生成优化方案";
 }
 
 export function attributionStatusText(jobs: FeedbackAnalysisJobRecord[], total: number): string {
@@ -338,17 +348,6 @@ export function isRetryableJobStatus(status?: string | null): boolean {
   return status === "failed";
 }
 
-export function analysisActionLabel(kind: "attribution" | "proposal", status: string | null | undefined, count: number): string {
-  const noun = kind === "attribution" ? "归因" : "建议";
-  if (status === "failed") return `重试${noun}`;
-  if (status === "needs_human_review") return `${noun}需复核`;
-  if (status === "queued" || status === "running" || status === "schema_validating") {
-    return kind === "attribution" ? "归因执行中" : "建议生成中";
-  }
-  if (count > 0) return kind === "attribution" ? "归因已启动" : "建议已生成";
-  return kind === "attribution" ? "启动归因" : "生成建议";
-}
-
 export function evidenceFileName(item: Record<string, unknown>): string | null {
   return typeof item.path === "string" ? item.path : null;
 }
@@ -470,14 +469,6 @@ export function fileStatusText(status?: string | null): string {
   return status || "未知";
 }
 
-export function proposalStatusTone(status?: string | null): Tone {
-  if (status === "approved") return "green";
-  if (status === "rejected") return "red";
-  if (status === "needs_more_analysis") return "purple";
-  if (status === "pending_review") return "orange";
-  return "gray";
-}
-
 export function externalGovernanceTone(status?: string | null): Tone {
   if (status === "notified") return "green";
   if (status === "notification_failed") return "red";
@@ -507,19 +498,21 @@ export function findExternalGovernanceItem(
   return items.find((item) => item.proposal_job_id === proposalJobId && item.source_index === sourceIndex);
 }
 
-export function buildTaskByProposalId(tasks: OptimizationTaskRecord[]): Map<string, OptimizationTaskRecord> {
-  const tasksByProposalId = new Map<string, OptimizationTaskRecord>();
-  for (const task of tasks) {
-    const proposalId = taskProposalId(task);
-    if (proposalId && !tasksByProposalId.has(proposalId)) {
-      tasksByProposalId.set(proposalId, task);
-    }
-  }
-  return tasksByProposalId;
-}
-
-export function taskProposalId(task: OptimizationTaskRecord): string | null {
-  return task.proposal_id || task.proposal_ids?.[0] || task.proposal?.proposal_id || null;
+export function taskSourceId(task: OptimizationTaskRecord): string | null {
+  const proposal = task.proposal && typeof task.proposal === "object" ? task.proposal : null;
+  const sourcePlanTaskId = typeof task.source_plan_task_id === "string" ? task.source_plan_task_id : "";
+  const sourceBatchId = typeof task.source_batch_id === "string" ? task.source_batch_id : "";
+  const proposalId = typeof task.proposal_id === "string" ? task.proposal_id : "";
+  const firstProposalId = Array.isArray(task.proposal_ids) && typeof task.proposal_ids[0] === "string" ? task.proposal_ids[0] : "";
+  return (
+    sourcePlanTaskId
+    || rawString(proposal, "plan_task_id")
+    || rawString(proposal, "optimization_plan_id")
+    || sourceBatchId
+    || proposalId
+    || firstProposalId
+    || null
+  );
 }
 
 export function taskStatusDescription(status?: string | null): string {
@@ -563,29 +556,4 @@ function toArchivePath(path: string): string {
 
 function fromArchivePath(path: string): string {
   return path.startsWith("workspace/") ? path.slice("workspace/".length) : path;
-}
-
-export function proposalEvidenceText(proposal: OptimizationProposalRecord): string {
-  const evidenceRefs = proposal.evidence_refs;
-  if (Array.isArray(evidenceRefs)) {
-    const labels = evidenceRefs.map(proposalEvidenceRefText).filter(Boolean);
-    if (labels.length) return labels.slice(0, 4).join("、");
-  }
-  return "agent run、evidence package、feedback signal";
-}
-
-function proposalEvidenceRefText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (!value || typeof value !== "object") return "";
-  const record = value as Record<string, unknown>;
-  const type = typeof record.type === "string" ? record.type : "";
-  const id = typeof record.id === "string" ? shortId(record.id) : "";
-  const reason = typeof record.reason === "string" ? record.reason : "";
-  return [type, id, reason].filter(Boolean).join(" / ");
-}
-
-export function reviewComment(action: OptimizationProposalReviewAction): string {
-  if (action === "approve") return "Feedback 工作台批准该 optimization proposal。";
-  if (action === "reject") return "Feedback 工作台拒绝该 optimization proposal。";
-  return "Feedback 工作台要求补充分析。";
 }

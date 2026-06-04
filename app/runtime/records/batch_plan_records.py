@@ -19,9 +19,9 @@ from .external_governance_records import ExternalGovernanceNotificationRecord
 
 
 class ExtensiblePlanRecord(StrictRuntimeRecord):
-    """Base for persisted plan payloads that may carry forward agent extras."""
+    """Base for persisted plan payloads after schema-owned normalization."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
 
 
 class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):

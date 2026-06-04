@@ -6,10 +6,9 @@ from typing import Awaitable, Callable, cast
 
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
-    batch_optimization_plan_prompt,
     eval_case_generation_prompt,
     execution_plan_prompt,
-    proposal_prompt,
+    proposal_generator_prompt,
     regression_impact_analysis_prompt,
 )
 from app.runtime.json_types import JsonObject
@@ -23,6 +22,11 @@ logger = logging.getLogger(__name__)
 
 def _agent_error_message(exc: Exception) -> str:
     return f"{exc.__class__.__name__}: {exc}"
+
+
+def _exception_raw_output_json(exc: Exception) -> JsonObject | None:
+    raw_output = getattr(exc, "raw_output_json", None)
+    return raw_output if isinstance(raw_output, dict) else None
 
 
 class AgentJobWorker:
@@ -88,6 +92,7 @@ class AgentJobWorker:
                 job,
                 error_code="AGENT_RUNTIME_ERROR",
                 message=_agent_error_message(exc),
+                raw_output_json=_exception_raw_output_json(exc),
             )
             logger.exception(
                 "agent job failed job_id=%s job_type=%s profile_name=%s status=%s error_code=%s",
@@ -125,12 +130,8 @@ class AgentJobWorker:
         input_path = str(job.get("input_path") or "")
         if job_type == "attribution":
             return attribution_prompt(input_path)
-        if job_type == "proposal":
-            attribution_job_id = job_input.get("attribution_job_id")
-            attribution_output = self.feedback_store.get_job_output(str(attribution_job_id), "attribution") if attribution_job_id else None
-            return proposal_prompt(input_path, input_payload=job_input, attribution_output=attribution_output)
         if job_type == "batch_plan":
-            return batch_optimization_plan_prompt(input_path, input_payload=job_input)
+            return proposal_generator_prompt(input_path, input_payload=job_input)
         if job_type == "execution":
             return execution_plan_prompt(input_path, input_payload=job_input)
         if job_type == "eval_case_generation":

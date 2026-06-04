@@ -16,12 +16,10 @@ from app.runtime.schema_versions import (
     FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
     FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    PROPOSAL_OUTPUT_SCHEMA_VERSION,
 )
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanGenerateRequest,
-    FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     SocEventIngestRequest,
 )
@@ -114,32 +112,6 @@ def _create_eval_case(store: FeedbackStore):
             "recommended_next_step": "generate_proposal",
         },
     )
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
-                {
-                    "proposal_id": "prop-eval",
-                    "title": "补充工具核查要求",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "main_agent_claude_md",
-                    "target_path": "CLAUDE.md",
-                    "recommendation": "回答配置问题前读取配置文件。",
-                    "expected_effect": "回答更完整。",
-                    "validation": "复测原始输入并确认产生工具调用。",
-                    "risk": "响应耗时增加。",
-                    "requires_approval": True,
-                }
-            ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
-    )
     job = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
     eval_case = _complete_eval_case_generation_job(store, job, feedback_case=feedback_case)
     return eval_case, feedback_case
@@ -195,27 +167,6 @@ def _attribution_output(job: dict, **overrides):
         "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "测试归因指向主智能体 workspace。"},
         "rationale": "测试用结构化归因输出。",
         "recommended_next_step": "generate_proposal",
-    }
-    output.update(overrides)
-    return output
-
-
-def _proposal_output(job: dict, **overrides):
-    output = {
-        "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
-        "feedback_case_id": job["feedback_case_id"],
-        "proposal_job_id": job["job_id"],
-        "status": "needs_human_review",
-        "proposals": [],
-        "external_guidance": [
-            {
-                "owner": "needs_human_analysis",
-                "actionability": "needs_human_analysis",
-                "recommendation": "测试场景需要人工确认具体优化方案。",
-                "reason": "TEST_FIXTURE_NO_ACTIONABLE_PROPOSAL",
-            }
-        ],
-        "no_action_reason": "needs_human_analysis",
     }
     output.update(overrides)
     return output
@@ -312,40 +263,64 @@ def _complete_eval_case_generation_job(store: FeedbackStore, job: dict, *, feedb
     return completed["validated_output_json"]["eval_cases"][0]
 
 
-def _create_approved_task_for_target(store: FeedbackStore, target_path: str):
+def _create_approved_task_for_target(
+    store: FeedbackStore,
+    target_path: str,
+    *,
+    target_type: str = "workspace_file",
+    title: str | None = None,
+    recommendation: str | None = None,
+):
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": PROPOSAL_OUTPUT_SCHEMA_VERSION,
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    completed = store.complete_batch_plan_job(
+        plan_job["job_id"],
+        _batch_plan_output(
+            plan_job,
+            status="pending_approval",
+            actionability="direct_workspace_change",
+            target_type=target_type,
+            target_path=target_path,
+            recommendation=recommendation or f"按反馈调整 {target_path}。",
+            expected_effect="提高反馈场景表现。",
+            validation="复测反馈场景。",
+            risk="需确认文件内容变更符合预期。",
+            tasks=[
                 {
-                    "title": f"修改 {target_path}",
-                    "actionability": "direct_workspace_change",
-                    "target_type": "workspace_file",
+                    "execution_kind": "workspace_execution",
+                    "status": "pending_execution",
+                    "title": title or f"修改 {target_path}",
+                    "description": recommendation or f"按反馈调整 {target_path}。",
+                    "objective": "提高反馈场景表现。",
+                    "target_summary": target_path,
+                    "target_type": target_type,
                     "target_path": target_path,
-                    "recommendation": f"按反馈调整 {target_path}。",
+                    "owner": "main_agent_workspace",
+                    "actionability": "direct_workspace_change",
+                    "recommendation": recommendation or f"按反馈调整 {target_path}。",
+                    "recommended_actions": [f"修改 {target_path}"],
+                    "acceptance_criteria": ["复测反馈场景通过"],
                     "expected_effect": "提高反馈场景表现。",
                     "validation": "复测反馈场景。",
                     "risk": "需确认文件内容变更符合预期。",
-                    "requires_approval": True,
+                    "feedback_case_ids": [feedback_case["feedback_case_id"]],
+                    "eval_case_ids": [],
+                    "attribution_job_ids": [attribution_job["job_id"]],
+                    "task_context": {"target_file": target_path},
                 }
             ],
-            "external_guidance": [],
-            "no_action_reason": None,
-        },
+            blocked_items=[],
+        ),
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    return store.create_task(proposal_id=proposal["proposal_id"])
+    plan = completed["validated_output_json"]
+    plan_task = plan["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])
+    return prepared["optimization_task"]
 
 __all__ = [
     "asyncio",
@@ -356,7 +331,6 @@ __all__ = [
     "ClaudeRuntime",
     "AgentJobResponse",
     "FeedbackOptimizationBatchPlanGenerateRequest",
-    "FeedbackProposalRegenerateRequest",
     "FeedbackSignalCreateRequest",
     "FeedbackStore",
     "LocalSessionStore",
@@ -370,7 +344,6 @@ __all__ = [
     "_create_batch_with_completed_attribution",
     "_create_eval_case",
     "_eval_case_generation_output",
-    "_proposal_output",
     "_record_run",
     "_settings",
     "_store",

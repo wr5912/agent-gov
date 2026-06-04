@@ -244,7 +244,7 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     assert completed_job["raw_output_json"]["_formatter"]["name"] == "dspy"
     assert impact["job_id"] == "riaj-projection"
     assert "_formatter" not in impact
-    assert impact["impacted_assets"][0]["agent_note"] == {"source": "regression-impact-analyzer"}
+    assert "agent_note" not in impact["impacted_assets"][0]
     assert impact["recommendations"] == ["继续保留当前回归资产。"]
 
 

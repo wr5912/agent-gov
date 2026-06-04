@@ -9,12 +9,16 @@ from ..errors import BusinessRuleViolation, ConflictError
 from ..feedback_job_flags import no_actionable_attributions, with_reused_existing
 from ..feedback_schemas import validate_feedback_optimization_plan_output
 from ..records.batch_plan_records import (
+    FeedbackOptimizationAttributionSummaryRecord,
     FeedbackOptimizationBlockedItemRecord,
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
 )
 from ..json_types import JsonObject
 from ..runtime_db import utc_now
+
+
+BATCH_PLAN_ACTIVE_JOB_STATUSES = {"created", "queued", "running", "schema_validating", "evidence_packaging"}
 
 
 class FeedbackBatchPlanStoreMixin:
@@ -49,6 +53,22 @@ class FeedbackBatchPlanStoreMixin:
         force: bool = True,
         regeneration_instruction: Optional[str] = None,
     ) -> Optional[JsonObject]:
+        with self._job_create_lock:
+            return self._create_batch_plan_job_locked(
+                batch_id,
+                profile_version=profile_version,
+                force=force,
+                regeneration_instruction=regeneration_instruction,
+            )
+
+    def _create_batch_plan_job_locked(
+        self,
+        batch_id: str,
+        *,
+        profile_version: Optional[JsonObject] = None,
+        force: bool = True,
+        regeneration_instruction: Optional[str] = None,
+    ) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
@@ -57,28 +77,49 @@ class FeedbackBatchPlanStoreMixin:
         instruction = instruction or None
         if not force and not instruction and isinstance(batch.get("optimization_plan"), dict):
             return with_reused_existing(batch)
+        active_job = self._latest_active_batch_plan_job(batch_id)
+        if active_job:
+            self._discard_inactive_batch_plan_jobs(batch_id, keep_job_id=str(active_job["job_id"]))
+            return active_job
         attributions = self._batch_attribution_outputs(batch)
         if not attributions:
-            self._update_batch(
-                batch_id,
-                status="needs_human_review",
-                fields={
-                    "optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction),
-                    "optimization_plan_job_id": None,
-                    "optimization_plan_job": None,
-                    "optimization_plan_error": None,
-                },
-            )
+            self._discard_inactive_batch_plan_jobs(batch_id)
+            self._record_no_actionable_batch_plan(batch_id, batch, instruction)
             return no_actionable_attributions(batch_id)
 
-        feedback_case_id = self._latest(batch.get("feedback_case_ids")) or self._string(attributions[0].get("feedback_case_id")) or ""
-        feedback_case = self.find_case(feedback_case_id) if feedback_case_id else None
-        evidence_package_id = self._latest((feedback_case or {}).get("evidence_package_ids")) or f"batch-evidence-{batch_id}"
         job_id = f"fbp-{uuid.uuid4()}"
-        input_payload = {
+        try:
+            input_payload = self._batch_plan_job_input_payload(batch, attributions, job_id, instruction)
+            self._create_batch_plan_agent_job(batch_id, job_id, input_payload, profile_version=profile_version)
+        except Exception:
+            self._discard_job(job_id)
+            raise
+        self._discard_inactive_batch_plan_jobs(batch_id, keep_job_id=job_id)
+        return self.get_job(job_id)
+
+    def _record_no_actionable_batch_plan(self, batch_id: str, batch: JsonObject, instruction: str | None) -> None:
+        self._update_batch(
+            batch_id,
+            status="needs_human_review",
+            fields={
+                "optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction),
+                "optimization_plan_job_id": None,
+                "optimization_plan_job": None,
+                "optimization_plan_error": None,
+            },
+        )
+
+    def _batch_plan_job_input_payload(
+        self,
+        batch: JsonObject,
+        attributions: list[JsonObject],
+        job_id: str,
+        instruction: str | None,
+    ) -> JsonObject:
+        payload = {
             "schema_version": "feedback-optimization-plan-input/v1",
             "job_id": job_id,
-            "batch_id": batch_id,
+            "batch_id": batch["batch_id"],
             "feedback_case_ids": batch.get("feedback_case_ids") or [],
             "eval_case_ids": batch.get("eval_case_ids") or [],
             "source_refs": batch.get("source_refs") or [],
@@ -92,32 +133,49 @@ class FeedbackBatchPlanStoreMixin:
             "task": "generate_feedback_optimization_plan",
         }
         if instruction:
-            input_payload["regeneration_instruction"] = instruction
-        try:
-            spec = agent_job_spec("batch_plan")
-            job = self.create_agent_job(
-                job_id=job_id,
-                job_type=spec.job_type,
-                scope_kind="optimization_batch",
-                scope_id=batch_id,
-                profile_name=PROPOSAL_GENERATOR_PROFILE,
-                input_payload=input_payload,
-                output_schema_version=spec.output_schema_version,
-                profile_version=profile_version,
-            )
-            self._update_batch(
-                batch_id,
-                status="optimization_plan_queued",
-                fields={
-                    "optimization_plan_job_id": job_id,
-                    "optimization_plan_job": job,
-                    "optimization_plan_error": None,
-                },
-            )
-        except Exception:
+            payload["regeneration_instruction"] = instruction
+        return payload
+
+    def _create_batch_plan_agent_job(
+        self,
+        batch_id: str,
+        job_id: str,
+        input_payload: JsonObject,
+        *,
+        profile_version: Optional[JsonObject],
+    ) -> JsonObject:
+        spec = agent_job_spec("batch_plan")
+        job = self.create_agent_job(
+            job_id=job_id,
+            job_type=spec.job_type,
+            scope_kind="optimization_batch",
+            scope_id=batch_id,
+            profile_name=PROPOSAL_GENERATOR_PROFILE,
+            input_payload=input_payload,
+            output_schema_version=spec.output_schema_version,
+            profile_version=profile_version,
+        )
+        self._update_batch(
+            batch_id,
+            status="optimization_plan_queued",
+            fields={"optimization_plan_job_id": job_id, "optimization_plan_job": job, "optimization_plan_error": None},
+        )
+        return job
+
+    def _latest_active_batch_plan_job(self, batch_id: str) -> Optional[JsonObject]:
+        for job in self.list_agent_jobs(job_type="batch_plan", scope_kind="optimization_batch", scope_id=batch_id, limit=10):
+            if job.get("status") in BATCH_PLAN_ACTIVE_JOB_STATUSES:
+                return job
+        return None
+
+    def _discard_inactive_batch_plan_jobs(self, batch_id: str, *, keep_job_id: str | None = None) -> None:
+        for job in self.list_agent_jobs(job_type="batch_plan", scope_kind="optimization_batch", scope_id=batch_id, limit=1000):
+            job_id = str(job.get("job_id") or "")
+            if not job_id or job_id == keep_job_id:
+                continue
+            if job.get("status") in BATCH_PLAN_ACTIVE_JOB_STATUSES:
+                continue
             self._discard_job(job_id)
-            raise
-        return self.get_job(job_id)
 
     def complete_batch_plan_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
@@ -177,65 +235,22 @@ class FeedbackBatchPlanStoreMixin:
         target_path = self._string(plan.get("target_path"))
         if not target_path or not self._target_allowed(target_path):
             raise ConflictError("Optimization plan target is not actionable")
-        proposal_id = self._string(plan.get("internal_proposal_id")) or f"prop-{uuid.uuid4()}"
-        feedback_case_id = self._latest(batch.get("feedback_case_ids")) or ""
-        now = utc_now()
-        proposal_actionability = self._string(plan.get("actionability"))
-        if proposal_actionability not in {"direct_workspace_change", "workspace_config_change"}:
-            proposal_actionability = "direct_workspace_change"
-        proposal = {
-            "proposal_id": proposal_id,
-            "created_at": now,
-            "feedback_case_id": feedback_case_id,
-            "proposal_job_id": f"batch-plan-{batch_id}",
-            "status": "approved",
-            "actionability": plan.get("actionability") or "direct_workspace_change",
-            "target_type": plan.get("target_type") or plan.get("optimization_object_type") or "main_agent_claude_md",
-            "target_path": target_path,
-            "title": plan.get("title") or "反馈批次优化方案",
-            "recommendation": plan.get("recommendation") or "",
-            "expected_effect": plan.get("expected_effect") or "",
-            "validation": plan.get("validation") or "",
-            "risk": plan.get("risk") or "",
-            "regeneration_instruction": plan.get("regeneration_instruction"),
-            "requires_approval": True,
-            "base_agent_version_id": self._current_agent_version_id(),
-            "source_batch_id": batch_id,
-            "source_feedback_case_ids": batch.get("feedback_case_ids") or [],
-            "source_refs": batch.get("source_refs") or [],
-            "latest_review": {
-                "review_id": f"opr-{uuid.uuid4()}",
-                "proposal_id": proposal_id,
-                "created_at": now,
-                "action": "approve",
-                "status": "approved",
-                "comment": comment,
-                "source": "feedback_optimization_batch",
-            },
-        }
-        with self.Session.begin() as db:
-            db.merge(self._proposal_model_from_dict(proposal))
-        task = self.create_task(proposal_id=proposal_id, execution_mode="manual_or_patch", comment=comment or f"由优化批次 {batch_id} 执行创建。")
+        task = self.create_task_from_optimization_plan(
+            batch=batch,
+            plan=plan,
+            execution_mode="manual_or_patch",
+            comment=comment or f"由优化批次 {batch_id} 执行创建。",
+        )
         if not task:
             return None
-        task = self._update_task_payload(
-            task["optimization_task_id"],
-            status=task["status"],
-            fields={
-                "source": "feedback_optimization_batch",
-                "source_batch_id": batch_id,
-                "feedback_case_ids": batch.get("feedback_case_ids") or [],
-                "eval_case_ids": batch.get("eval_case_ids") or [],
-            },
-        ) or task
-        approved_plan = {**plan, "status": "approved", "approved_at": utc_now(), "approval_comment": comment, "internal_proposal_id": proposal_id}
+        approved_plan = {**plan, "status": "approved", "approved_at": utc_now(), "approval_comment": comment}
         updated_batch = self._update_batch(
             batch_id,
             status="execution_planning",
             fields={
                 "optimization_plan": approved_plan,
-                "internal_proposal_id": proposal_id,
                 "optimization_task_id": task["optimization_task_id"],
+                "optimization_task_ids": self._unique_strings([*(batch.get("optimization_task_ids") or []), task["optimization_task_id"]]),
                 "optimization_task": task,
             },
         )
@@ -282,106 +297,31 @@ class FeedbackBatchPlanStoreMixin:
             )
             return {"batch": updated, "optimization_task": existing_task, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
 
-        proposal_id = self._string(plan_task.get("internal_proposal_id")) or f"prop-{uuid.uuid4()}"
-        proposal = self._proposal_from_plan_task(
+        task = self.create_task_from_optimization_plan(
             batch=batch,
             plan=plan,
             plan_task=plan_task,
-            proposal_id=proposal_id,
-            target_path=target_path,
+            execution_mode="manual_or_patch",
             comment=comment,
         )
-        with self.Session.begin() as db:
-            db.merge(self._proposal_model_from_dict(proposal))
-        task = self.create_task(proposal_id=proposal_id, execution_mode="manual_or_patch", comment=comment or f"由优化批次 {batch_id} 的任务 {plan_task_id} 执行创建。")
         if not task:
             return None
-        task = self._update_task_payload(
-            task["optimization_task_id"],
-            status=task["status"],
-            fields={
-                "source": "feedback_optimization_batch",
-                "source_batch_id": batch_id,
-                "source_plan_task_id": plan_task_id,
-                "feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
-                "eval_case_ids": batch.get("eval_case_ids") or [],
-            },
-        ) or task
         optimization_task_ids = self._unique_strings([*(batch.get("optimization_task_ids") or []), task["optimization_task_id"]])
         updated = self._update_batch_plan_task(
             batch_id,
             plan_task_id,
             {
                 "status": "execution_planning",
-                "internal_proposal_id": proposal_id,
                 "optimization_task_id": task["optimization_task_id"],
             },
             batch_status="execution_planning",
             top_level_fields={
-                "internal_proposal_id": batch.get("internal_proposal_id") or proposal_id,
                 "optimization_task_id": batch.get("optimization_task_id") or task["optimization_task_id"],
                 "optimization_task": task,
                 "optimization_task_ids": optimization_task_ids,
             },
         )
         return {"batch": updated, "optimization_task": task, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
-
-    def _proposal_from_plan_task(
-        self,
-        *,
-        batch: JsonObject,
-        plan: JsonObject,
-        plan_task: JsonObject,
-        proposal_id: str,
-        target_path: str,
-        comment: Optional[str],
-    ) -> JsonObject:
-        batch_id = str(batch["batch_id"])
-        plan_task_id = str(plan_task["plan_task_id"])
-        now = utc_now()
-        actionability = self._string(plan_task.get("actionability"))
-        if actionability not in {"direct_workspace_change", "workspace_config_change"}:
-            actionability = "direct_workspace_change"
-        return {
-            "proposal_id": proposal_id,
-            "created_at": now,
-            "feedback_case_id": self._latest(plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids")) or "",
-            "proposal_job_id": f"batch-plan-task-{batch_id}-{plan_task_id}",
-            "status": "approved",
-            "actionability": actionability,
-            "target_type": plan_task.get("target_type") or "main_agent_claude_md",
-            "target_path": target_path,
-            "title": plan_task.get("title") or plan.get("title") or "反馈批次优化任务",
-            "description": plan_task.get("description") or "",
-            "objective": plan_task.get("objective") or "",
-            "target_summary": plan_task.get("target_summary") or "",
-            "task_context": plan_task.get("task_context") if isinstance(plan_task.get("task_context"), dict) else {},
-            "recommendation": plan_task.get("recommendation") or plan.get("recommendation") or "",
-            "recommended_actions": plan_task.get("recommended_actions") or [],
-            "acceptance_criteria": plan_task.get("acceptance_criteria") or [],
-            "expected_effect": plan_task.get("expected_effect") or plan.get("expected_effect") or "",
-            "validation": plan_task.get("validation") or plan.get("validation") or "",
-            "risk": plan_task.get("risk") or plan.get("risk") or "",
-            "analysis_summary": plan_task.get("analysis_summary") or "",
-            "evidence_summary": plan_task.get("evidence_summary") or "",
-            "evidence_refs": plan_task.get("evidence_refs") or [],
-            "regeneration_instruction": plan.get("regeneration_instruction"),
-            "requires_approval": True,
-            "base_agent_version_id": self._current_agent_version_id(),
-            "source_batch_id": batch_id,
-            "source_plan_task_id": plan_task_id,
-            "source_feedback_case_ids": plan_task.get("feedback_case_ids") or batch.get("feedback_case_ids") or [],
-            "source_refs": batch.get("source_refs") or [],
-            "latest_review": {
-                "review_id": f"opr-{uuid.uuid4()}",
-                "proposal_id": proposal_id,
-                "created_at": now,
-                "action": "approve",
-                "status": "approved",
-                "comment": comment,
-                "source": "feedback_optimization_plan_task",
-            },
-        }
 
     def notify_batch_plan_task_external(
         self,
@@ -481,7 +421,9 @@ class FeedbackBatchPlanStoreMixin:
             "feedback_case_ids": self._string_list(validated.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
             "eval_case_ids": self._string_list(validated.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
             "attribution_job_ids": self._string_list(validated.get("attribution_job_ids")) or self._string_list(input_json.get("attribution_job_ids")),
-            "attribution_summaries": validated.get("attribution_summaries") or self._batch_plan_attribution_summaries(input_json.get("attribution_outputs")),
+            "attribution_summaries": self._normalize_batch_plan_attribution_summaries(
+                validated.get("attribution_summaries") or self._batch_plan_attribution_summaries(input_json.get("attribution_outputs"))
+            ),
             "optimization_plan_job_id": job["job_id"],
             "generated_by": PROPOSAL_GENERATOR_PROFILE,
         }
@@ -505,6 +447,36 @@ class FeedbackBatchPlanStoreMixin:
                     "rationale": item.get("rationale"),
                 }
             )
+        return summaries
+
+    def _normalize_batch_plan_attribution_summaries(self, value: Any) -> list[JsonObject]:
+        summaries: list[JsonObject] = []
+        for item in value or []:
+            if isinstance(item, str):
+                summary = self._string(item)
+                if summary:
+                    summaries.append(
+                        FeedbackOptimizationAttributionSummaryRecord(summary=summary).model_dump(mode="json", exclude_none=True)
+                    )
+                continue
+            if not isinstance(item, dict):
+                continue
+            attribution_job_id = (
+                self._string(item.get("attribution_job_id"))
+                or self._string(item.get("job_id"))
+                or self._string(item.get("_job_id"))
+            )
+            summary = FeedbackOptimizationAttributionSummaryRecord(
+                attribution_job_id=attribution_job_id,
+                feedback_case_id=self._string(item.get("feedback_case_id")),
+                problem_type=self._string(item.get("problem_type")),
+                optimization_object_type=self._string(item.get("optimization_object_type")),
+                actionability=self._string(item.get("actionability")),
+                confidence=self._string(item.get("confidence")),
+                rationale=self._string(item.get("rationale")),
+                summary=self._string(item.get("summary")),
+            )
+            summaries.append(summary.model_dump(mode="json", exclude_none=True))
         return summaries
 
     def _build_batch_optimization_plan(

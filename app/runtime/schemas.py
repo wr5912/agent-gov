@@ -199,18 +199,6 @@ class FeedbackSignalResponse(BaseModel):
     metadata: JsonObject = Field(default_factory=dict)
 
 
-class FeedbackProposalRegenerateRequest(BaseModel):
-    regeneration_instruction: Optional[str] = Field(default=None, max_length=2000)
-
-    @field_validator("regeneration_instruction", mode="before")
-    @classmethod
-    def _trim_instruction(cls, value: object) -> object:
-        if value is None or not isinstance(value, str):
-            return value
-        text = value.strip()
-        return text or None
-
-
 class SocEventIngestRequest(BaseModel):
     event_id: str
     source_system: str
@@ -405,17 +393,6 @@ class FeedbackCaseResponse(BaseModel):
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
     proposal_job_ids: list[str] = Field(default_factory=list)
-
-
-class OptimizationProposalReviewRequest(BaseModel):
-    action: Optional[Literal["approve", "reject", "request_more_analysis"]] = None
-    comment: Optional[str] = None
-
-
-class OptimizationTaskCreateRequest(BaseModel):
-    proposal_id: Optional[str] = None
-    execution_mode: Literal["manual_or_patch"] = "manual_or_patch"
-    comment: Optional[str] = None
 
 
 class OptimizationTaskMarkAppliedRequest(BaseModel):

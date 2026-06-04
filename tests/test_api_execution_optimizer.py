@@ -11,6 +11,7 @@ from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.schema_versions import (
     FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
     REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
 from app.services.agent_job_worker import AgentJobWorker
@@ -108,35 +109,56 @@ def _approved_task(module):
             "recommended_next_step": "generate_proposal",
         },
     )
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    if batch.get("eval_case_generation_job_id"):
+        store._discard_job(batch["eval_case_generation_job_id"])  # noqa: SLF001 - keep this endpoint test focused on execution jobs.
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    completed = store.complete_batch_plan_job(
+        plan_job["job_id"],
         {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [
+            "schema_version": FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
+            "batch_id": batch["batch_id"],
+            "status": "pending_approval",
+            "title": "补充配置读取要求",
+            "summary": "在 CLAUDE.md 增加回答配置类问题前读取配置的要求。",
+            "confidence": "high",
+            "actionability": "direct_workspace_change",
+            "target_type": "main_agent_claude_md",
+            "target_path": "CLAUDE.md",
+            "recommendation": "在 CLAUDE.md 增加回答配置类问题前读取配置的要求。",
+            "expected_effect": "回答更完整。",
+            "validation": "复测 workspace 配置类问题。",
+            "risk": "响应耗时可能增加。",
+            "feedback_case_ids": [feedback_case["feedback_case_id"]],
+            "attribution_job_ids": [attribution_job["job_id"]],
+            "tasks": [
                 {
-                    "proposal_id": "prop-api-exec",
+                    "execution_kind": "workspace_execution",
+                    "status": "pending_execution",
                     "title": "补充配置读取要求",
-                    "actionability": "direct_workspace_change",
+                    "description": "在 CLAUDE.md 增加回答配置类问题前读取配置的要求。",
+                    "objective": "回答配置类问题前读取当前配置。",
+                    "target_summary": "CLAUDE.md",
                     "target_type": "main_agent_claude_md",
                     "target_path": "CLAUDE.md",
+                    "owner": "main_agent_workspace",
+                    "actionability": "direct_workspace_change",
                     "recommendation": "在 CLAUDE.md 增加回答配置类问题前读取配置的要求。",
+                    "recommended_actions": ["修改 CLAUDE.md"],
+                    "acceptance_criteria": ["复测 workspace 配置类问题。"],
                     "expected_effect": "回答更完整。",
                     "validation": "复测 workspace 配置类问题。",
                     "risk": "响应耗时可能增加。",
-                    "requires_approval": True,
+                    "feedback_case_ids": [feedback_case["feedback_case_id"]],
+                    "eval_case_ids": [],
+                    "attribution_job_ids": [attribution_job["job_id"]],
                 }
             ],
-            "external_guidance": [],
-            "no_action_reason": None,
+            "blocked_items": [],
         },
     )
-    proposal = store.list_proposals(feedback_case_id=feedback_case["feedback_case_id"])[0]
-    store.review_proposal(proposal["proposal_id"], action="approve", comment="确认")
-    return store.create_task(proposal_id=proposal["proposal_id"])
+    plan_task = completed["validated_output_json"]["tasks"][0]
+    return store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])["optimization_task"]
 
 
 def _ready_execution_job(module, task):

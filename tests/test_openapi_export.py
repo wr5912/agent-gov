@@ -204,26 +204,20 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "EvalRunResponse",
         array=True,
     )
-    assert_schema_ref(schema, "/api/optimization-proposals", "get", "OptimizationProposalResponse", array=True)
-    assert_schema_ref(schema, "/api/optimization-proposals/{proposal_id}", "get", "OptimizationProposalResponse")
     assert_schema_ref(
         schema,
-        "/api/optimization-proposals/{proposal_id}/approve",
+        "/api/feedback-cases/{feedback_case_id}/optimization-plan",
         "post",
-        "OptimizationProposalReviewResponse",
+        "AgentJobResponse",
     )
-    assert_schema_ref(
-        schema,
-        "/api/optimization-proposals/{proposal_id}/reject",
-        "post",
-        "OptimizationProposalReviewResponse",
-    )
-    assert_schema_ref(
-        schema,
-        "/api/optimization-proposals/{proposal_id}/request-more-analysis",
-        "post",
-        "OptimizationProposalReviewResponse",
-    )
+    assert "/api/feedback-cases/{feedback_case_id}/proposal-jobs" not in schema["paths"]
+    assert "/api/feedback-cases/{feedback_case_id}/proposal-jobs/regenerate" not in schema["paths"]
+    assert "/api/optimization-proposals" not in schema["paths"]
+    assert "/api/optimization-proposals/{proposal_id}" not in schema["paths"]
+    assert "/api/optimization-proposals/{proposal_id}/approve" not in schema["paths"]
+    assert "/api/optimization-proposals/{proposal_id}/reject" not in schema["paths"]
+    assert "/api/optimization-proposals/{proposal_id}/request-more-analysis" not in schema["paths"]
+    assert "/api/optimization-proposals/{proposal_id}/tasks" not in schema["paths"]
     assert_schema_ref(schema, "/api/external-governance-webhooks", "get", "ExternalGovernanceWebhookResponse", array=True)
     assert_schema_ref(schema, "/api/external-governance-items", "get", "ExternalGovernanceItemResponse", array=True)
     assert_schema_ref(
@@ -310,10 +304,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert "AgentVersionExcludedPathResponse" not in schema["components"]["schemas"]
     assert "AgentVersionSkippedPathResponse" not in schema["components"]["schemas"]
     assert "AgentVersionRelatedDataResponse" not in schema["components"]["schemas"]
-    review_schema = schema["components"]["schemas"]["OptimizationProposalReviewResponse"]
-    assert review_schema["properties"]["proposal"] == {
-        "$ref": "#/components/schemas/OptimizationProposalResponse"
-    }
+    assert "OptimizationProposalReviewResponse" not in schema["components"]["schemas"]
+    assert "OptimizationProposalResponse" not in schema["components"]["schemas"]
     evidence_schema = schema["components"]["schemas"]["EvidencePackageResponse"]
     assert evidence_schema["properties"]["source_refs"] == {"$ref": "#/components/schemas/EvidenceSourceRefsResponse"}
     assert evidence_schema["properties"]["included_files"]["items"] == {

@@ -74,9 +74,9 @@ class EvalCaseSourceRefRecord(StrictRuntimeRecord):
 
 
 class ExtensibleRuntimeRecord(StrictRuntimeRecord):
-    """Base for persisted records that must accept agent-provided extras."""
+    """Base for normalized runtime records with schema-owned persisted fields."""
 
-    model_config = ConfigDict(extra="allow")
+    model_config = ConfigDict(extra="ignore")
 
 
 class FeedbackOptimizationTaskContextRecord(ExtensibleRuntimeRecord):

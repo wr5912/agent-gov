@@ -3,15 +3,14 @@ import json
 
 from feedback_store_test_utils import (
     AgentJobResponse,
-    FeedbackProposalRegenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackStore,
     SocEventIngestRequest,
     ValidationError,
     _attribution_output,
+    _batch_plan_output,
     _create_approved_task_for_target,
     _create_batch_with_completed_attribution,
-    _proposal_output,
     _record_run,
     _settings,
     _store,
@@ -25,9 +24,7 @@ from app.runtime.runtime_db import (
     AgentJobModel,
     EvidenceFileModel,
     EvidencePackageModel,
-    ExternalNotificationModel,
     FeedbackOptimizationBatchModel,
-    OptimizationProposalModel,
 )
 
 
@@ -159,18 +156,19 @@ def test_case_evidence_and_job_outputs(tmp_path):
     assert output["schema_version"] == "attribution-output/v1"
     assert output["actionability"] == "needs_human_analysis"
 
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.start_job(proposal_job["job_id"])
-    completed_proposal = store.complete_proposal_job(proposal_job["job_id"], _proposal_output(proposal_job))
-    proposal_output = store.get_job_output(proposal_job["job_id"], "proposal")
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    store.start_job(plan_job["job_id"])
+    assert store.create_batch_plan_job(batch["batch_id"])["job_id"] == plan_job["job_id"]
+    completed_plan = store.complete_batch_plan_job(plan_job["job_id"], _batch_plan_output(plan_job))
+    plan_output = store.get_job_output(plan_job["job_id"], "batch_plan")
 
-    assert completed_proposal["status"] == "completed"
-    assert store.create_proposal_job(feedback_case["feedback_case_id"])["job_id"] == proposal_job["job_id"]
-    assert proposal_output["external_guidance"]
-    assert store.list_proposals() == []
+    assert completed_plan["status"] == "completed"
+    assert plan_output["blocked_items"]
+    assert store.find_optimization_batch(batch["batch_id"])["optimization_plan"]["optimization_plan_job_id"] == plan_job["job_id"]
 
 
-def test_regenerated_proposal_job_records_single_use_instruction(tmp_path):
+def test_regenerated_single_case_plan_job_records_single_use_instruction(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
@@ -179,15 +177,17 @@ def test_regenerated_proposal_job_records_single_use_instruction(tmp_path):
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
 
-    empty_instruction_job = store.create_proposal_job(
-        feedback_case["feedback_case_id"],
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    empty_instruction_job = store.create_batch_plan_job(
+        batch["batch_id"],
         force=True,
         regeneration_instruction="   ",
     )
     assert "regeneration_instruction" not in empty_instruction_job["input_json"]
+    store.fail_job(empty_instruction_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
 
-    job = store.create_proposal_job(
-        feedback_case["feedback_case_id"],
+    job = store.create_batch_plan_job(
+        batch["batch_id"],
         force=True,
         regeneration_instruction="  请优先考虑修改 triage-alert skill。  ",
     )
@@ -197,6 +197,54 @@ def test_regenerated_proposal_job_records_single_use_instruction(tmp_path):
     assert input_payload["regeneration_instruction"] == "请优先考虑修改 triage-alert skill。"
 
 
+def _create_external_plan_task(store, feedback_case, attribution_job, *, owner="knowledge-base"):
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    store.complete_batch_plan_job(
+        plan_job["job_id"],
+        _batch_plan_output(
+            plan_job,
+            status="pending_approval",
+            actionability="external_guidance",
+            target_type="external_mcp_service",
+            target_path=None,
+            recommendation="通知外部系统补齐反馈场景所需数据。",
+            tasks=[
+                {
+                    "execution_kind": "external_webhook",
+                    "status": "pending_notification",
+                    "title": "通知外部系统补齐反馈数据",
+                    "description": "反馈场景需要外部系统补齐数据。",
+                    "objective": "补齐 Agent 研判所需外部数据。",
+                    "target_summary": f"external:{owner}",
+                    "target_type": "external_mcp_service",
+                    "target_path": None,
+                    "owner": owner,
+                    "actionability": "external_guidance",
+                    "recommendation": "补充漏洞处置 SOP 条目。",
+                    "recommended_actions": ["补齐反馈场景所需外部数据。"],
+                    "acceptance_criteria": ["回归用例可获取完整外部数据。"],
+                    "expected_effect": "Agent 可基于完整外部数据回答。",
+                    "validation": "复测原始反馈场景。",
+                    "risk": "外部系统变更需确认兼容性。",
+                    "feedback_case_ids": [feedback_case["feedback_case_id"]],
+                    "eval_case_ids": [],
+                    "attribution_job_ids": [attribution_job["job_id"]],
+                    "task_context": {
+                        "mcp_server": owner,
+                        "tool_name": f"mcp__{owner}__query",
+                        "observed_issue": "反馈场景所需外部数据缺失。",
+                        "affected_fields": ["sop"],
+                    },
+                }
+            ],
+            blocked_items=[],
+        ),
+    )
+    batch = store.find_optimization_batch(batch["batch_id"])
+    return batch, batch["optimization_plan"], batch["optimization_plan"]["tasks"][0]
+
+
 def test_external_guidance_creates_governance_item_and_notifies_selected_webhook(tmp_path):
     store, settings = _store(tmp_path)
     _record_run(store)
@@ -204,32 +252,12 @@ def test_external_guidance_creates_governance_item_and_notifies_selected_webhook
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [],
-            "external_guidance": [
-                {
-                    "owner": "knowledge-base",
-                    "actionability": "external_guidance",
-                    "recommendation": "补充漏洞处置 SOP 条目。",
-                    "reason": "当前知识库无对应处置流程。",
-                }
-            ],
-            "no_action_reason": None,
-        },
-    )
-
-    output = store.get_job_output(proposal_job["job_id"], "proposal")
+    batch, plan, plan_task = _create_external_plan_task(store, feedback_case, attribution_job)
+    item = store._upsert_external_governance_item_for_plan_task(batch, plan, plan_task)
     items = store.list_external_governance_items(feedback_case_id=feedback_case["feedback_case_id"])
 
     assert len(items) == 1
-    assert output["external_guidance"][0]["external_item_id"] == items[0]["external_item_id"]
+    assert item["external_item_id"] == items[0]["external_item_id"]
     assert items[0]["status"] == "pending_notification"
 
     (settings.data_dir / "external-governance-webhooks.yaml").write_text(
@@ -247,22 +275,19 @@ webhooks:
     def fake_sender(webhook, payload):
         seen["webhook"] = webhook
         seen["payload"] = payload
-        with store.Session() as db:
-            rows = db.scalars(
-                select(ExternalNotificationModel).where(
-                    ExternalNotificationModel.external_item_id == items[0]["external_item_id"]
-                )
-            ).all()
-        seen["pre_send_notification_statuses"] = [row.status for row in rows]
         return {"http_status": 201, "response_body": "created"}
 
-    updated = store.notify_external_governance_item(items[0]["external_item_id"], webhook_alias="knowledge-base", sender=fake_sender)
+    updated = store.notify_batch_plan_task_external(
+        batch["batch_id"],
+        plan_task["plan_task_id"],
+        webhook_alias="knowledge-base",
+        sender=fake_sender,
+    )["external_item"]
 
     assert store.list_external_webhooks()[0]["alias"] == "knowledge-base"
     assert seen["webhook"]["token"] == "dev-token"
     assert seen["payload"]["schema_version"] == "external-governance-notification/v1"
     assert seen["payload"]["webhook_alias"] == "knowledge-base"
-    assert seen["pre_send_notification_statuses"] == ["sending"]
     assert updated["status"] == "notified"
     assert updated["latest_notification"]["status"] == "sent"
     assert updated["latest_notification"]["http_status"] == 201
@@ -275,37 +300,18 @@ def test_external_governance_notification_failure_updates_item_status(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [],
-            "external_guidance": [
-                {
-                    "owner": "knowledge-base",
-                    "actionability": "external_guidance",
-                    "recommendation": "补充知识库条目。",
-                    "reason": "外部知识库缺失。",
-                }
-            ],
-            "no_action_reason": None,
-        },
-    )
-    item = store.list_external_governance_items(feedback_case_id=feedback_case["feedback_case_id"])[0]
+    batch, _, plan_task = _create_external_plan_task(store, feedback_case, attribution_job)
     (settings.data_dir / "external-governance-webhooks.yaml").write_text(
         "webhooks:\n  - alias: knowledge-base\n    name: 知识库\n    url: http://example.invalid/kb\n",
         encoding="utf-8",
     )
 
-    updated = store.notify_external_governance_item(
-        item["external_item_id"],
+    updated = store.notify_batch_plan_task_external(
+        batch["batch_id"],
+        plan_task["plan_task_id"],
         webhook_alias="knowledge-base",
         sender=lambda webhook, payload: {"http_status": 500, "response_body": "failed"},
-    )
+    )["external_item"]
 
     assert updated["status"] == "notification_failed"
     assert updated["latest_notification"]["status"] == "failed"
@@ -333,27 +339,12 @@ def test_external_governance_notify_requires_known_webhook_alias(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(
-        proposal_job["job_id"],
-        {
-            "schema_version": "proposal-output/v1",
-            "feedback_case_id": feedback_case["feedback_case_id"],
-            "proposal_job_id": proposal_job["job_id"],
-            "status": "completed",
-            "proposals": [],
-            "external_guidance": [
-                {
-                    "owner": "sec-ops-data-mcp",
-                    "actionability": "external_guidance",
-                    "recommendation": "检查 MCP 服务数据字段。",
-                    "reason": "字段缺失。",
-                }
-            ],
-            "no_action_reason": None,
-        },
+    batch, _, plan_task = _create_external_plan_task(store, feedback_case, attribution_job, owner="sec-ops-data-mcp")
+    item = store._upsert_external_governance_item_for_plan_task(
+        batch,
+        batch["optimization_plan"],
+        plan_task,
     )
-    item = store.list_external_governance_items(feedback_case_id=feedback_case["feedback_case_id"])[0]
 
     with pytest.raises(ConfigurationError, match="External governance webhook config not found"):
         store.notify_external_governance_item(item["external_item_id"], webhook_alias="missing")
@@ -468,33 +459,38 @@ def test_failed_agent_jobs_can_retry_without_duplicating_active_jobs(tmp_path):
     assert retried_attribution["job_id"] != attribution_job["job_id"]
     store.complete_attribution_job(retried_attribution["job_id"], _attribution_output(retried_attribution))
 
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    assert store.create_proposal_job(feedback_case["feedback_case_id"])["job_id"] == proposal_job["job_id"]
-    failed_proposal = store.fail_job(proposal_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
-    failed_proposal_case = store.find_case(feedback_case["feedback_case_id"])
-    retried_proposal = store.create_proposal_job(feedback_case["feedback_case_id"])
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    assert store.create_batch_plan_job(batch["batch_id"])["job_id"] == plan_job["job_id"]
+    failed_plan = store.fail_job(plan_job["job_id"], error_code="AGENT_RUNTIME_ERROR", message="failed")
+    failed_batch = store.find_optimization_batch(batch["batch_id"])
+    retried_plan = store.create_batch_plan_job(batch["batch_id"])
 
-    assert failed_proposal["error_json"]["message"] == "failed"
-    assert failed_proposal_case["status"] == "pending_proposal"
-    assert retried_proposal["job_id"] != proposal_job["job_id"]
+    assert failed_plan["error_json"]["message"] == "failed"
+    assert failed_batch["status"] == "needs_human_review"
+    assert failed_batch["optimization_plan_error"]["message"] == "failed"
+    assert retried_plan["job_id"] != plan_job["job_id"]
 
 
-def test_force_attribution_discards_current_job_and_downstream_proposal(tmp_path):
+def test_force_attribution_discards_current_job_and_allows_new_downstream_plan(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    store.complete_proposal_job(proposal_job["job_id"], _proposal_output(proposal_job))
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    store.complete_batch_plan_job(plan_job["job_id"], _batch_plan_output(plan_job))
 
     regenerated = store.create_attribution_job(feedback_case["feedback_case_id"], force=True)
+    store.complete_attribution_job(regenerated["job_id"], _attribution_output(regenerated))
     updated_case = store.find_case(feedback_case["feedback_case_id"])
+    new_plan_job = store.create_batch_plan_job(batch["batch_id"])
 
     assert regenerated["job_id"] != attribution_job["job_id"]
     assert store.get_job(attribution_job["job_id"]) is None
-    assert store.get_job(proposal_job["job_id"]) is None
+    assert new_plan_job["job_id"] != plan_job["job_id"]
     assert updated_case["attribution_job_ids"] == [regenerated["job_id"]]
     assert updated_case["proposal_job_ids"] == []
 
@@ -562,54 +558,63 @@ def test_complete_attribution_job_rolls_back_when_case_update_fails(tmp_path, mo
     assert unchanged_case["status"] == "attribution_queued"
 
 
-def test_complete_proposal_job_rolls_back_rows_when_case_update_fails(tmp_path, monkeypatch):
+def test_complete_batch_plan_job_rolls_back_rows_when_batch_update_fails(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
     store.complete_attribution_job(attribution_job["job_id"], _attribution_output(attribution_job))
-    proposal_job = store.create_proposal_job(feedback_case["feedback_case_id"])
-    raw_output = {
-        "schema_version": "proposal-output/v1",
-        "feedback_case_id": feedback_case["feedback_case_id"],
-        "proposal_job_id": proposal_job["job_id"],
-        "status": "completed",
-        "proposals": [
+    batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    raw_output = _batch_plan_output(
+        plan_job,
+        status="pending_approval",
+        actionability="direct_workspace_change",
+        target_type="main_agent_claude_md",
+        target_path="CLAUDE.md",
+        tasks=[
             {
-                "proposal_id": "prop-rollback",
+                "execution_kind": "workspace_execution",
+                "status": "pending_execution",
                 "title": "补充配置核查要求",
-                "actionability": "direct_workspace_change",
+                "description": "回答工作区配置问题前读取配置文件。",
+                "objective": "提高回答完整性。",
+                "target_summary": "CLAUDE.md",
                 "target_type": "main_agent_claude_md",
                 "target_path": "CLAUDE.md",
+                "owner": "main_agent_workspace",
+                "actionability": "direct_workspace_change",
                 "recommendation": "回答工作区配置问题前读取配置文件。",
+                "recommended_actions": ["修改 CLAUDE.md"],
+                "acceptance_criteria": ["复测原始反馈输入。"],
                 "expected_effect": "提高回答完整性。",
                 "validation": "复测原始反馈输入。",
                 "risk": "回答耗时可能增加。",
-                "requires_approval": True,
+                "feedback_case_ids": [feedback_case["feedback_case_id"]],
+                "eval_case_ids": [],
+                "attribution_job_ids": [attribution_job["job_id"]],
             }
         ],
-        "external_guidance": [],
-        "no_action_reason": None,
-    }
+        blocked_items=[],
+    )
 
-    def fail_case_update(*args, **kwargs):
-        raise RuntimeError("case status update failed")
+    def fail_batch_update(*args, **kwargs):
+        raise RuntimeError("batch status update failed")
 
-    monkeypatch.setattr(store, "_append_case_update_row", fail_case_update)
+    monkeypatch.setattr(store, "_update_batch_row", fail_batch_update)
 
-    with pytest.raises(RuntimeError, match="case status update failed"):
-        store.complete_proposal_job(proposal_job["job_id"], raw_output)
+    with pytest.raises(RuntimeError, match="batch status update failed"):
+        store.complete_batch_plan_job(plan_job["job_id"], raw_output)
 
-    unchanged_job = store.get_job(proposal_job["job_id"])
-    unchanged_case = store.find_case(feedback_case["feedback_case_id"])
-    with store.Session() as db:
-        assert db.scalars(select(OptimizationProposalModel)).all() == []
+    unchanged_job = store.get_job(plan_job["job_id"])
+    unchanged_batch = store.find_optimization_batch(batch["batch_id"])
     assert unchanged_job["status"] == "queued"
     assert unchanged_job["raw_output_json"] is None
     assert unchanged_job["validated_output_json"] is None
     assert unchanged_job["completed_at"] is None
-    assert unchanged_case["status"] == "proposal_queued"
+    assert unchanged_batch["status"] == "optimization_plan_queued"
+    assert unchanged_batch["optimization_plan"] is None
 
 
 def test_fail_job_rolls_back_when_case_update_fails(tmp_path, monkeypatch):
@@ -865,18 +870,19 @@ def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     assert regenerated_attribution["job_id"] != attribution_job["job_id"]
     assert regenerated_attribution["status"] == "queued"
 
-    proposal_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
-    proposal_case = store.create_case(source_ids=[proposal_signal["signal_id"]])
-    valid_attribution = store.create_attribution_job(proposal_case["feedback_case_id"])
+    plan_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    plan_case = store.create_case(source_ids=[plan_signal["signal_id"]])
+    valid_attribution = store.create_attribution_job(plan_case["feedback_case_id"])
     store.complete_attribution_job(valid_attribution["job_id"], _attribution_output(valid_attribution))
-    proposal_job = store.create_proposal_job(proposal_case["feedback_case_id"])
-    reviewed_proposal = store.complete_proposal_job(proposal_job["job_id"], {"schema_version": "proposal-output/v1"})
-    proposal_case_after_review = store.find_case(proposal_case["feedback_case_id"])
-    reused_proposal = store.create_proposal_job(proposal_case["feedback_case_id"])
+    batch = store.ensure_single_case_optimization_batch(plan_case["feedback_case_id"])
+    plan_job = store.create_batch_plan_job(batch["batch_id"])
+    reviewed_plan = store.complete_batch_plan_job(plan_job["job_id"], {"schema_version": "feedback-optimization-plan-output/v1"})
+    reviewed_batch = store.find_optimization_batch(batch["batch_id"])
+    reused_plan = store.create_batch_plan_job(batch["batch_id"])
 
-    assert reviewed_proposal["status"] == "needs_human_review"
-    assert proposal_case_after_review["status"] == "needs_human_review"
-    assert reused_proposal["job_id"] == proposal_job["job_id"]
+    assert reviewed_plan["status"] == "needs_human_review"
+    assert reviewed_batch["status"] == "needs_human_review"
+    assert reused_plan["job_id"] != plan_job["job_id"]
 
 
 def test_legacy_schema_error_message_is_normalized_on_read(tmp_path):

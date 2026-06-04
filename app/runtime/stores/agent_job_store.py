@@ -163,8 +163,6 @@ class AgentJobStoreMixin:
             projected = self.complete_attribution_job(job_id, raw_output)
             self._sync_attribution_agent_job_to_batches(job, projected)
             return projected
-        if job_type == "proposal":
-            return self.complete_proposal_job(job_id, raw_output)
         if job_type == "batch_plan":
             return self.complete_batch_plan_job(job_id, raw_output)
         if job_type == "execution":
@@ -175,11 +173,18 @@ class AgentJobStoreMixin:
             return self._complete_regression_impact_agent_job(job, raw_output)
         return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job_type}")
 
-    def fail_projected_agent_job(self, job: JsonObject, *, error_code: str, message: str) -> Optional[JsonObject]:
+    def fail_projected_agent_job(
+        self,
+        job: JsonObject,
+        *,
+        error_code: str,
+        message: str,
+        raw_output_json: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
-        if job_type in {"attribution", "proposal", "batch_plan"}:
-            failed = self.fail_job(job_id, error_code=error_code, message=message)
+        if job_type in {"attribution", "batch_plan"}:
+            failed = self.fail_job(job_id, error_code=error_code, message=message, raw_output_json=raw_output_json)
             if job_type == "attribution":
                 self._sync_attribution_agent_job_to_batches(job, failed)
             return failed
@@ -187,12 +192,24 @@ class AgentJobStoreMixin:
             return self.fail_execution_job(job_id, error_code=error_code, message=message)
         elif job_type == "regression_impact_analysis":
             self._fail_regression_impact_projection(job, error_code=error_code, message=message)
-        return self.fail_agent_job(job_id, error_code=error_code, message=message)
+        return self.fail_agent_job(job_id, error_code=error_code, message=message, raw_output_json=raw_output_json)
 
-    def fail_agent_job(self, job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
+    def fail_agent_job(
+        self,
+        job_id: str,
+        *,
+        error_code: str,
+        message: str,
+        raw_output_json: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "job_id": job_id}
         with self.Session.begin() as db:
-            row = self._set_agent_job_json_row(db, job_id, error_json=error_payload)
+            row = self._set_agent_job_json_row(
+                db,
+                job_id,
+                raw_output_json=raw_output_json if raw_output_json is not None else _UNSET,
+                error_json=error_payload,
+            )
             if not row:
                 return None
             self._append_agent_job_update_row(db, job_id, status="failed", completed_at=utc_now())

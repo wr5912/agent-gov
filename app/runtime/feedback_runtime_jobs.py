@@ -32,39 +32,6 @@ class FeedbackRuntimeJobsMixin:
             )
         )
 
-    async def run_proposal_job(
-        self,
-        feedback_case_id: str,
-        *,
-        force: bool = False,
-        regeneration_instruction: Optional[str] = None,
-    ) -> AgentJobResponse | None:
-        if self.job_orchestrator is None:
-            return None
-        return await self.job_orchestrator.run_proposal_job(
-            feedback_case_id,
-            force=force,
-            regeneration_instruction=regeneration_instruction,
-        )
-
-    def queue_proposal_job(
-        self,
-        feedback_case_id: str,
-        *,
-        force: bool = False,
-        regeneration_instruction: Optional[str] = None,
-    ) -> AgentJobResponse | None:
-        if self.feedback_store is None:
-            return None
-        return self._agent_job_response(
-            self.feedback_store.queue_proposal_agent_job(
-                feedback_case_id,
-                profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
-                force=force,
-                regeneration_instruction=regeneration_instruction,
-            )
-        )
-
     async def run_batch_optimization_plan(
         self,
         batch_id: str,

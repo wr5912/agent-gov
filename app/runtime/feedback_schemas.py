@@ -9,7 +9,6 @@ from .normalizers.feedback_output_normalizers import (
     normalize_execution_plan_output,
     normalize_feedback_optimization_plan_output,
     normalize_feedback_eval_case_generation_output,
-    normalize_proposal_output,
     normalize_regression_impact_analysis_output,
     task_context_has_external_specificity as _task_context_has_external_specificity,
 )
@@ -20,14 +19,11 @@ from .normalizers.feedback_output_records import (
     NormalizedEvidenceRef,
     NormalizedExecutionOperation,
     NormalizedExecutionPlanOutput,
-    NormalizedExternalGuidanceItem,
     NormalizedFeedbackEvalCaseGenerationOutput,
     NormalizedFeedbackOptimizationPlanOutput,
     NormalizedGeneratedEvalCase,
     NormalizedOptimizationPlanTask,
     NormalizedOutputRecord,
-    NormalizedProposalItem,
-    NormalizedProposalOutput,
     NormalizedRegressionImpactAnalysisOutput,
     NormalizedResponsibilityBoundary,
     NormalizedSummaryItem,
@@ -40,7 +36,6 @@ from .schema_versions import (
     FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
     FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
     FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    PROPOSAL_OUTPUT_SCHEMA_VERSION,
     REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
 )
 
@@ -112,42 +107,6 @@ class AttributionOutput(NormalizedAttributionOutput):
     responsibility_boundary: ResponsibilityBoundary
     rationale: str
     recommended_next_step: Literal["generate_proposal", "needs_human_review", "stop"] = "generate_proposal"
-
-
-class ProposalItem(NormalizedProposalItem):
-    proposal_id: Optional[str] = None
-    title: str
-    actionability: Actionability
-    target_type: str
-    target_path: Optional[str] = None
-    recommendation: str
-    expected_effect: str
-    validation: str
-    risk: str
-    requires_approval: bool = True
-
-
-class ExternalGuidance(NormalizedExternalGuidanceItem):
-    owner: str
-    actionability: Actionability
-    recommendation: str
-    reason: Optional[str] = None
-
-
-class ProposalOutput(NormalizedProposalOutput):
-    schema_version: Literal[PROPOSAL_OUTPUT_SCHEMA_VERSION]
-    feedback_case_id: str
-    proposal_job_id: str
-    status: Literal["completed", "needs_human_review"] = "completed"
-    proposals: list[ProposalItem] = Field(default_factory=list)
-    external_guidance: list[ExternalGuidance] = Field(default_factory=list)
-    no_action_reason: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _has_result(self) -> "ProposalOutput":
-        if not self.proposals and not self.external_guidance and not self.no_action_reason:
-            raise ValueError("proposal output must include proposals, external_guidance, or no_action_reason")
-        return self
 
 
 class TaskContext(NormalizedTaskContext):
@@ -273,15 +232,6 @@ def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None,
     normalized = normalize_attribution_output(payload)
     try:
         return _validated_payload(AttributionOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
-
-def validate_proposal_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_proposal_output(payload)
-    try:
-        return _validated_payload(ProposalOutput, normalized), None
     except ValidationError as exc:
         return None, exc.json()
 

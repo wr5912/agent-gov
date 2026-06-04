@@ -125,7 +125,6 @@ export function ChatPanel({
           placeholder="输入任务或问题，Ctrl/⌘ + Enter 发送..."
         />
         <div className="composer-actions">
-          <span className="hint">Ctrl/⌘ + Enter 发送</span>
           {streaming ? (
             <button className="secondary-button" onClick={onStop}><Square size={15} /> 停止</button>
           ) : (

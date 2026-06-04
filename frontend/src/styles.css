@@ -441,13 +441,17 @@ button:disabled {
 }
 
 .composer {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
   border-top: 1px solid var(--line);
   padding: 16px 24px;
   background: rgba(255, 250, 243, 0.82);
 }
 .composer textarea {
+  flex: 1;
   width: 100%;
-  min-height: 86px;
+  min-height: 64px;
   max-height: 220px;
   resize: vertical;
   border: 1px solid var(--line-strong);
@@ -458,10 +462,15 @@ button:disabled {
   padding: 14px 16px;
 }
 .composer-actions {
-  justify-content: space-between;
-  margin-top: 10px;
+  flex: none;
+  align-items: stretch;
+  justify-content: flex-end;
 }
-.hint { color: var(--muted-2); font-size: 12px; }
+.composer-actions .primary-button,
+.composer-actions .secondary-button {
+  min-height: 64px;
+  padding: 0 16px;
+}
 
 .inspector-tabs {
   display: grid;

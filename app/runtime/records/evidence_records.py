@@ -86,6 +86,11 @@ class EvidenceCompletenessRecord(StrictRuntimeRecord):
     has_runs: bool = False
     has_tool_calls: bool = False
     has_trace_summary: bool = False
+    has_runtime_config_summary: bool = False
+    has_effective_mcp_config: bool = False
+    has_mcp_connection_summary: bool = False
+    has_runtime_env_snapshot: bool = False
+    has_workspace_placeholder_summary: bool = False
     has_main_agent_version: bool = False
     has_messages: bool = False
     has_agent_activity: bool = False

@@ -54,7 +54,7 @@ class AgentJobRunner:
             "max_budget_usd": self.settings.max_budget_usd,
             "env": env,
             "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers),
+            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers, env),
             "strict_mcp_config": True,
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": False,

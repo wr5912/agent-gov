@@ -25,6 +25,7 @@ RUNTIME_DATA_DIRS = (
     "data/transcripts",
     "data/uploads",
     "data/outputs",
+    "data/outputs/reports",
     "data/agent-memory",
     "data/feedback-signals",
     "data/soc-events",

@@ -12,6 +12,7 @@
       "Bash(python -m pytest *)",
       "Bash(jq *)",
       "Bash(cat templates/**)",
+      "Write(/data/outputs/**)",
       "mcp__sec-ops-data__*"
     ],
     "ask": [

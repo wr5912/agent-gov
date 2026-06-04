@@ -438,19 +438,20 @@ agent: soc-analyst
 默认 `docker/.env.example` 中设置：
 
 ```bash
-DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,Skill,mcp__sec-ops-data__*
+DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,Skill,Write,mcp__sec-ops-data__*
 DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
 PERMISSION_MODE=dontAsk
 ENABLE_POLICY_HOOKS=true
+MAX_TURNS=16
 ```
 
 这意味着：
 
-- 默认只允许读文件、搜索文件。
+- 默认允许读文件、搜索文件、调用 `sec-ops-data` MCP，以及把报告类产物写入 profile 声明的输出目录。
 - 默认不允许 Bash、WebFetch、WebSearch。
 - 任何未预先允许的工具不会弹交互式确认，而是拒绝。
 
-`app/runtime/policy.py` 还提供了 SDK 级 PreToolUse hook，用于阻断高危 Bash 命令。
+`app/runtime/policy.py` 还提供了 SDK 级 PreToolUse hook，用于阻断高危 Bash 命令，并把 main profile 的 `Write` 限制在 `/data/outputs`。日报类输出应写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
 
 不要把宿主机敏感目录挂入容器，例如：
 
@@ -500,9 +501,9 @@ ${HOME}/volume-agent-runtime/data/runtime.sqlite3
 cp docker/.env.local.example docker/.env.local
 ```
 
-编辑 `docker/.env.local`，按需调整 `HOST_RUNTIME_VOLUME_ROOT` 即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向同一个运行态根，其他 profile workspace/root 会由后端自动推导。需要显式沿用旧目录时，可以把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
+编辑 `docker/.env.local`，按需调整 `HOST_RUNTIME_VOLUME_ROOT` 即可。`make up` 会在 `docker/.env` 之后加载 `docker/.env.local`，用于本地私有覆盖。用于 Docker Compose 时请保留容器内路径 `/main-workspace`、`/data` 和 `/claude-roots/main`；只有直接在宿主机运行后端时，才把 `WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 改成 `${HOST_RUNTIME_VOLUME_ROOT}` 下的宿主机路径。需要显式沿用旧目录时，可以把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 
-本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置，并通过 `docker/.env.local` 的 `CLAUDE_MCP_CONFIG_PATH` 指向它。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
+本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置。main profile 的 MCP 配置优先级是：显式 `CLAUDE_MCP_CONFIG_PATH`、`/main-workspace/.mcp.local.json`、`/main-workspace/.mcp.json`；feedback profiles 始终使用各自 workspace 的 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
 
 如果刚从 Docker API/worker 切换到 PyCharm 本机调试，先修复后端共享 volume 的宿主机权限。该脚本只处理 API/worker 共享的 workspace、data 和 `claude-roots/*`，不处理 Langfuse 数据卷：
 

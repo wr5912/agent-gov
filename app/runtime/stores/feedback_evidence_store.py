@@ -1,13 +1,33 @@
 from __future__ import annotations
 
+import json
+import os
+import re
 import uuid
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable, Mapping, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..mcp_config import build_mcp_config_summary, resolve_main_mcp_config_path
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
 from ..json_types import JsonObject
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
+
+_MAIN_MCP_SERVERS = ("sec-ops-data", "security-kb")
+_RUNTIME_ENV_SNAPSHOT_KEYS = (
+    "CLAUDE_MCP_CONFIG_PATH",
+    "MCP_SERVER_URL",
+    "NO_PROXY",
+    "no_proxy",
+    "CLAUDE_ENV_JSON",
+    "MAX_TURNS",
+    "DEFAULT_ALLOWED_TOOLS",
+    "DEFAULT_DISALLOWED_TOOLS",
+)
+_PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+_PLACEHOLDER_SCAN_EXTENSIONS = {".json", ".md", ".sh", ".txt", ".yaml", ".yml"}
+_PLACEHOLDER_SCAN_SKIP_PARTS = {".git", ".env", "secrets", "node_modules", "dist", "__pycache__"}
+_PLACEHOLDER_SCAN_MAX_BYTES = 512_000
 
 
 class FeedbackEvidenceStoreMixin:
@@ -95,6 +115,8 @@ class FeedbackEvidenceStoreMixin:
             }
             for run in runs_clean
         ]
+        runtime_env_snapshot = self._runtime_env_snapshot()
+        effective_mcp_config = self._effective_mcp_config()
         return {
             "signals_clean": signals_clean,
             "events_clean": events_clean,
@@ -105,6 +127,11 @@ class FeedbackEvidenceStoreMixin:
             "agent_activity": agent_activity,
             "langfuse_trace_refs": langfuse_trace_refs,
             "trace_summary": trace_summary,
+            "runtime_config_summary": self._runtime_config_summary(effective_mcp_config),
+            "effective_mcp_config": effective_mcp_config,
+            "mcp_connection_summary": self._mcp_connection_summary(runs_clean),
+            "runtime_env_snapshot": runtime_env_snapshot,
+            "workspace_placeholder_summary": self._workspace_placeholder_summary(),
         }
 
     def _build_evidence_files(
@@ -120,6 +147,11 @@ class FeedbackEvidenceStoreMixin:
             "tool_calls.json": context["tool_calls"],
             "soc_events.json": context["events_clean"],
             "trace_summary.json": context["trace_summary"],
+            "runtime_config_summary.json": context["runtime_config_summary"],
+            "effective_mcp_config.json": context["effective_mcp_config"],
+            "mcp_connection_summary.json": context["mcp_connection_summary"],
+            "runtime_env_snapshot.json": context["runtime_env_snapshot"],
+            "workspace_placeholder_summary.json": context["workspace_placeholder_summary"],
             "main_agent_version.json": main_agent_version,
             "redaction_report.json": redaction_report,
         }
@@ -180,6 +212,11 @@ class FeedbackEvidenceStoreMixin:
                     "has_runs": bool(context["runs_clean"]),
                     "has_tool_calls": bool(context["tool_calls"]),
                     "has_trace_summary": bool(context["trace_summary"]),
+                    "has_runtime_config_summary": bool(context["runtime_config_summary"]),
+                    "has_effective_mcp_config": bool(context["effective_mcp_config"]),
+                    "has_mcp_connection_summary": bool(context["mcp_connection_summary"]),
+                    "has_runtime_env_snapshot": bool(context["runtime_env_snapshot"]),
+                    "has_workspace_placeholder_summary": bool(context["workspace_placeholder_summary"]),
                     "has_main_agent_version": bool(main_agent_version["main_agent_version_id"]),
                     "has_messages": bool(context["messages"] and any(item.get("messages") for item in context["messages"])),
                     "has_agent_activity": bool(context["agent_activity"] and any(item.get("agent_activity") for item in context["agent_activity"])),
@@ -189,6 +226,181 @@ class FeedbackEvidenceStoreMixin:
             }
         )
         return record.to_payload()
+
+    def _runtime_config_summary(self, effective_mcp_config: JsonObject) -> JsonObject:
+        return {
+            "main_workspace_dir": str(self.main_workspace_dir),
+            "data_dir": str(self.data_dir),
+            "report_output_dir": str(self.data_dir / "outputs" / "reports"),
+            "main_profile_writable_paths": [str(self.data_dir / "outputs")],
+            "default_max_turns_env": self._safe_env_value("MAX_TURNS"),
+            "default_allowed_tools_env": self._safe_env_value("DEFAULT_ALLOWED_TOOLS"),
+            "default_disallowed_tools_env": self._safe_env_value("DEFAULT_DISALLOWED_TOOLS"),
+            "effective_mcp_config_source": effective_mcp_config.get("source"),
+            "effective_mcp_config_path": effective_mcp_config.get("path"),
+        }
+
+    def _effective_mcp_config(self) -> JsonObject:
+        env = self._mcp_expansion_env()
+        explicit = Path(env["CLAUDE_MCP_CONFIG_PATH"]) if env.get("CLAUDE_MCP_CONFIG_PATH") else None
+        resolution = resolve_main_mcp_config_path(self.main_workspace_dir, explicit)
+        summary = build_mcp_config_summary(resolution.path, _MAIN_MCP_SERVERS, env)
+        return {
+            "profile": "main-agent",
+            "source": resolution.source,
+            "explicit_env_present": explicit is not None,
+            "workspace_local_path": str(self.main_workspace_dir / ".mcp.local.json"),
+            "workspace_local_exists": (self.main_workspace_dir / ".mcp.local.json").exists(),
+            "workspace_template_path": str(self.main_workspace_dir / ".mcp.json"),
+            "workspace_template_exists": (self.main_workspace_dir / ".mcp.json").exists(),
+            **summary,
+        }
+
+    def _runtime_env_snapshot(self) -> JsonObject:
+        parsed_claude_env, claude_env_error = self._parsed_claude_env_json()
+        keys = {key: self._safe_env_value(key) for key in _RUNTIME_ENV_SNAPSHOT_KEYS}
+        return {
+            "keys": keys,
+            "claude_env_json_keys": sorted(parsed_claude_env),
+            "claude_env_json_error": claude_env_error,
+        }
+
+    def _mcp_connection_summary(self, runs: list[JsonObject]) -> JsonObject:
+        run_summaries: list[JsonObject] = []
+        failed: set[str] = set()
+        connected: set[str] = set()
+        for run in runs:
+            servers: list[JsonObject] = []
+            for raw in self._iter_mcp_server_entries(run.get("messages") or []):
+                name = self._string(raw.get("name"))
+                status = self._string(raw.get("status"))
+                if status == "failed" and name:
+                    failed.add(name)
+                if status == "connected" and name:
+                    connected.add(name)
+                servers.append({"name": name, "status": status})
+            run_summaries.append(
+                {
+                    "run_id": run.get("run_id"),
+                    "session_id": run.get("session_id"),
+                    "mcp_servers": servers,
+                    "errors": run.get("errors") or [],
+                }
+            )
+        return {"runs": run_summaries, "failed_server_names": sorted(failed), "connected_server_names": sorted(connected)}
+
+    def _iter_mcp_server_entries(self, value: Any) -> Iterable[JsonObject]:
+        if isinstance(value, dict):
+            servers = value.get("mcp_servers")
+            if isinstance(servers, list):
+                for server in servers:
+                    if isinstance(server, dict):
+                        yield server
+            for child in value.values():
+                yield from self._iter_mcp_server_entries(child)
+        elif isinstance(value, list):
+            for child in value:
+                yield from self._iter_mcp_server_entries(child)
+
+    def _mcp_expansion_env(self) -> dict[str, str]:
+        env = {key: value for key, value in os.environ.items() if isinstance(value, str)}
+        parsed, _ = self._parsed_claude_env_json()
+        env.update(parsed)
+        return env
+
+    def _parsed_claude_env_json(self) -> tuple[Mapping[str, str], str | None]:
+        raw = os.environ.get("CLAUDE_ENV_JSON")
+        if not raw:
+            return {}, None
+        try:
+            loaded = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            return {}, f"JSONDecodeError: {exc.msg}"
+        if not isinstance(loaded, dict):
+            return {}, "CLAUDE_ENV_JSON is not an object"
+        parsed = {str(key): str(value) for key, value in loaded.items() if isinstance(value, str | int | float | bool)}
+        return parsed, None
+
+    def _safe_env_value(self, key: str) -> JsonObject:
+        value = os.environ.get(key)
+        payload: JsonObject = {"present": value is not None, "is_empty": value == "" if value is not None else None}
+        if value is None:
+            return payload
+        payload["length"] = len(value)
+        lowered = key.lower()
+        if any(part in lowered for part in SENSITIVE_KEY_PARTS):
+            return payload
+        if key == "CLAUDE_ENV_JSON":
+            parsed, error = self._parsed_claude_env_json()
+            payload["json_keys"] = sorted(parsed)
+            payload["json_error"] = error
+            return payload
+        if key.endswith("_PATH") or key in {"MAX_TURNS", "DEFAULT_ALLOWED_TOOLS", "DEFAULT_DISALLOWED_TOOLS"}:
+            payload["value_preview"] = value[:160]
+        return payload
+
+    def _workspace_placeholder_summary(self) -> JsonObject:
+        items: list[JsonObject] = []
+        if not self.main_workspace_dir.exists():
+            return {"workspace_dir": str(self.main_workspace_dir), "exists": False, "items": items}
+        for path in sorted(self.main_workspace_dir.rglob("*")):
+            if not self._placeholder_scan_allowed(path):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                continue
+            matches = sorted({match.group(1) for match in _PLACEHOLDER_RE.finditer(text)})
+            if not matches:
+                continue
+            rel = path.relative_to(self.main_workspace_dir).as_posix()
+            items.append(
+                {
+                    "path": rel,
+                    "placeholder_names": matches,
+                    "category": self._placeholder_category(rel),
+                    "attribution_hint": self._placeholder_attribution_hint(rel),
+                }
+            )
+        return {"workspace_dir": str(self.main_workspace_dir), "exists": True, "items": items}
+
+    def _placeholder_scan_allowed(self, path: Path) -> bool:
+        if not path.is_file() or path.suffix not in _PLACEHOLDER_SCAN_EXTENSIONS:
+            return False
+        rel_parts = set(path.relative_to(self.main_workspace_dir).parts)
+        if rel_parts & _PLACEHOLDER_SCAN_SKIP_PARTS:
+            return False
+        try:
+            return path.stat().st_size <= _PLACEHOLDER_SCAN_MAX_BYTES
+        except OSError:
+            return False
+
+    def _placeholder_category(self, rel_path: str) -> str:
+        if rel_path in {".mcp.json", ".mcp.local.json"}:
+            return "mcp_config"
+        if rel_path == ".claude/settings.json":
+            return "claude_project_settings"
+        if rel_path.startswith("mcp_servers/") and rel_path.endswith(".json"):
+            return "mcp_sample_data"
+        if rel_path.endswith(".md") or rel_path.endswith(".example"):
+            return "documentation_or_example"
+        if rel_path.endswith(".sh"):
+            return "shell_default_or_script"
+        return "workspace_template_file"
+
+    def _placeholder_attribution_hint(self, rel_path: str) -> str:
+        category = self._placeholder_category(rel_path)
+        if category == "mcp_config":
+            return "Use effective_mcp_config.json for final MCP config attribution."
+        if category == "claude_project_settings":
+            return "If this affected runtime permissions, prefer runtime_code/runtime_fix."
+        if category == "mcp_sample_data":
+            return "If returned by an MCP tool, prefer external_mcp_service/tool_data_quality."
+        if category == "documentation_or_example":
+            return "Usually not_actionable unless evidence shows the example was used at runtime."
+        if category == "shell_default_or_script":
+            return "Do not treat shell default syntax as unresolved unless execution evidence shows failure."
+        return "Classify by the runtime component that consumed the placeholder."
 
     def _store_evidence_package_rows(
         self,

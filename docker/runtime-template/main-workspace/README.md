@@ -76,7 +76,7 @@ export RESPONSE_EXECUTION_ENABLED=false
 
 不要把 `.env`、`CLAUDE.local.md`、`.claude/settings.local.json`、密钥或 Claude 全局状态提交到仓库。
 
-本机后端调试可使用 `.mcp.local.json` 覆盖默认 MCP 地址，并由 runtime 的 `CLAUDE_MCP_CONFIG_PATH` 指向该文件。该文件属于本地私有配置，不应提交；生产环境应由部署配置重新注入 MCP 服务地址。
+本机后端调试可使用 `.mcp.local.json` 覆盖默认 MCP 地址。main profile 会优先使用显式 `CLAUDE_MCP_CONFIG_PATH`，其次使用本目录的 `.mcp.local.json`，最后回退 `.mcp.json`。该文件属于本地私有配置，不应提交；生产环境应由部署配置重新注入 MCP 服务地址。
 
 ## 内置 MCP 服务
 
@@ -85,6 +85,8 @@ export RESPONSE_EXECUTION_ENABLED=false
 - `sec-ops-data`：通过 `${MCP_SERVER_URL}` 查询告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
 
 生产落地时，应把该服务替换为你本地开发或企业内部的 MCP 服务。stdio 与 HTTP MCP 配置方式详见：[MCP_REPLACEMENT_GUIDE.md](docs/MCP_REPLACEMENT_GUIDE.md)。
+
+日报类报告应同时返回聊天正文并写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。如果 MCP 工具不可用，报告应直接列出数据缺口，不应使用本地样例或历史文件伪造实时统计。
 
 ## 安全设计
 

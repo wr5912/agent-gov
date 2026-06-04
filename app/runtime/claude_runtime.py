@@ -382,7 +382,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "system_prompt": system_prompt,
             "env": env,
             "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers),
+            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers, env),
             "strict_mcp_config": self.settings.strict_mcp_config,
             "skills": self._skills_option(req),
             "include_hook_events": self.settings.include_hook_events,

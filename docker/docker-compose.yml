@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.34
+    image: claude-agent-runtime-api:0.2.35
     container_name: claude-agent-runtime-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
@@ -95,6 +95,11 @@ services:
       EVAL_CASE_GOVERNOR_CLAUDE_ROOT: ${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
       REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT: ${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
+      CLAUDE_MCP_CONFIG_PATH: ${CLAUDE_MCP_CONFIG_PATH:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
+      NO_PROXY: ${NO_PROXY:-}
+      no_proxy: ${no_proxy:-}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
       PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
       PIP_TRUSTED_HOST: mirrors.aliyun.com
@@ -121,7 +126,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.34
+    image: claude-agent-runtime-api:0.2.35
     container_name: claude-agent-runtime-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
@@ -155,6 +160,11 @@ services:
       EVAL_CASE_GOVERNOR_CLAUDE_ROOT: ${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
       REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT: ${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
+      CLAUDE_MCP_CONFIG_PATH: ${CLAUDE_MCP_CONFIG_PATH:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
+      NO_PROXY: ${NO_PROXY:-}
+      no_proxy: ${no_proxy:-}
       AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS: ${AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS:-2}
       LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
       PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
@@ -184,7 +194,7 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: claude-agent-runtime-ui:0.2.34
+    image: claude-agent-runtime-ui:0.2.35
     container_name: claude-agent-runtime-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"

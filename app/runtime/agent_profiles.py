@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from .mcp_config import resolve_main_mcp_config_path
 from .settings import AppSettings
 
 
@@ -93,6 +94,7 @@ def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candid
 
 
 def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
+    mcp_resolution = resolve_main_mcp_config_path(settings.main_workspace_dir, settings.claude_mcp_config_path)
     return AgentRuntimeProfile(
         name=MAIN_AGENT_PROFILE,
         role=MAIN_AGENT_PROFILE,
@@ -100,11 +102,11 @@ def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
         claude_root=settings.main_claude_root,
         claude_config_dir=settings.main_claude_root / ".claude",
         data_dir=settings.data_dir,
-        mcp_config_path=settings.claude_mcp_config_path or settings.main_workspace_dir / ".mcp.json",
+        mcp_config_path=mcp_resolution.path,
         project_settings_path=settings.main_workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name="runtime.main_agent",
         readable_paths=(settings.main_workspace_dir, settings.data_dir),
-        writable_paths=(settings.data_dir,),
+        writable_paths=(settings.data_dir / "outputs",),
         denied_paths=(
             settings.attribution_analyzer_claude_root,
             settings.proposal_generator_claude_root,

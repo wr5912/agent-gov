@@ -103,6 +103,7 @@ def test_bootstrap_runtime_volume_fills_missing_without_overwrite(tmp_path):
 
     assert (runtime_root / "main-workspace" / "CLAUDE.md").read_text(encoding="utf-8") == "custom"
     assert (runtime_root / "main-workspace" / "agent.yaml").read_text(encoding="utf-8") == "agent"
+    assert (runtime_root / "data" / "outputs" / "reports").is_dir()
     assert (runtime_root / "data" / "agent-governance" / "worktrees").is_dir()
     assert result["skipped_existing"]
 

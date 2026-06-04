@@ -1,7 +1,11 @@
 VENV ?= .venv
 PYTHON ?= $(VENV)/bin/python
 UV ?= uv
-COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
+COMPOSE_ENV_FILES := --env-file docker/.env
+ifneq ($(wildcard docker/.env.local),)
+COMPOSE_ENV_FILES += --env-file docker/.env.local
+endif
+COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f docker/docker-compose.yml
 
 .PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
 

@@ -137,7 +137,7 @@ class AppSettings(BaseSettings):
 
     claude_tools_raw: Optional[str] = Field(default=None, alias="CLAUDE_TOOLS")
     default_skills_raw: Optional[str] = Field(default=None, alias="DEFAULT_SKILLS")
-    default_allowed_tools_raw: str = Field(default="Read,Grep,Glob,Skill", alias="DEFAULT_ALLOWED_TOOLS")
+    default_allowed_tools_raw: str = Field(default="Read,Grep,Glob,Skill,Write", alias="DEFAULT_ALLOWED_TOOLS")
     default_disallowed_tools_raw: str = Field(default="Bash,WebFetch,WebSearch", alias="DEFAULT_DISALLOWED_TOOLS")
     default_skills_mode: Literal["all", "default", "none"] = Field(default="default", alias="DEFAULT_SKILLS_MODE")
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")
@@ -155,7 +155,7 @@ class AppSettings(BaseSettings):
     dspy_output_formatter_max_retries: int = Field(default=1, alias="DSPY_OUTPUT_FORMATTER_MAX_RETRIES")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
     include_partial_messages: bool = Field(default=False, alias="INCLUDE_PARTIAL_MESSAGES")
-    max_turns: int = Field(default=8, alias="MAX_TURNS")
+    max_turns: int = Field(default=16, alias="MAX_TURNS")
     max_budget_usd: Optional[float] = Field(default=None, alias="MAX_BUDGET_USD")
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")
 

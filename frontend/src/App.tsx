@@ -72,7 +72,7 @@ export default function App() {
   const [skillsMode, setSkillsMode] = useState<"all" | "default" | "none">("default");
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
-  const [maxTurns, setMaxTurns] = useState(8);
+  const [maxTurns, setMaxTurns] = useState(16);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [streamEvents, setStreamEvents] = useState<StreamLogEvent[]>([]);

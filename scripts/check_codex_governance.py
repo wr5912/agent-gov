@@ -9,6 +9,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from codex_governance_legacy_feedback import (
+    legacy_feedback_active_ref_issue_specs,
+    legacy_feedback_active_refs,
+)
 from codex_governance_json import (
     annotation_contains_name,
     is_allowed_jsonobject_field,
@@ -71,6 +75,7 @@ class Snapshot:
     python: dict[str, PythonMetrics] = field(default_factory=dict)
     state_machine_paths: set[str] = field(default_factory=set)
     missing_transitions: set[tuple[str, str]] = field(default_factory=set)
+    legacy_feedback_active_refs: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -458,6 +463,7 @@ def collect_current_snapshot(
     python: dict[str, PythonMetrics] = {}
     state_machine_paths: set[str] = set()
     missing_transitions: set[tuple[str, str]] = set()
+    legacy_feedback_refs: set[str] = set()
 
     for path in _iter_source_files(root, source_roots):
         rel_path = _relative_path(root, path)
@@ -465,6 +471,7 @@ def collect_current_snapshot(
         if _is_generated_text(text):
             continue
         file_lines[rel_path] = _count_lines_text(text)
+        legacy_feedback_refs.update(legacy_feedback_active_refs(rel_path, text))
         if path.suffix in PYTHON_SUFFIXES:
             python[rel_path] = _python_metrics(rel_path, text, route_path_parts)
             if path.name in STATE_MACHINE_FILENAMES:
@@ -478,6 +485,7 @@ def collect_current_snapshot(
         python=python,
         state_machine_paths=state_machine_paths,
         missing_transitions=missing_transitions,
+        legacy_feedback_active_refs=legacy_feedback_refs,
     )
 
 
@@ -495,11 +503,13 @@ def collect_base_snapshot(
     file_lines: dict[str, int] = {}
     python: dict[str, PythonMetrics] = {}
     missing_transitions: set[tuple[str, str]] = set()
+    legacy_feedback_refs: set[str] = set()
     for rel_path in sorted(current_paths):
         text = _git_show(root, base_ref, rel_path)
         if text is None or _is_generated_text(text):
             continue
         file_lines[rel_path] = _count_lines_text(text)
+        legacy_feedback_refs.update(legacy_feedback_active_refs(rel_path, text))
         if Path(rel_path).suffix in PYTHON_SUFFIXES:
             python[rel_path] = _python_metrics(rel_path, text, route_path_parts)
 
@@ -515,6 +525,7 @@ def collect_base_snapshot(
         python=python,
         state_machine_paths=state_paths,
         missing_transitions=missing_transitions,
+        legacy_feedback_active_refs=legacy_feedback_refs,
     )
 
 
@@ -676,6 +687,16 @@ def collect_jsonobject_boundary_issues(current: Snapshot, base: Snapshot) -> lis
     ]
 
 
+def collect_legacy_feedback_active_ref_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
+    return [
+        GovernanceIssue(path, message, blocking)
+        for path, message, blocking in legacy_feedback_active_ref_issue_specs(
+            current.legacy_feedback_active_refs,
+            base.legacy_feedback_active_refs,
+        )
+    ]
+
+
 def collect_issues(
     current: Snapshot,
     base: Snapshot,
@@ -689,6 +710,7 @@ def collect_issues(
     issues.extend(collect_map_any_boundary_issues(current, base))
     issues.extend(collect_legacy_json_type_import_issues(current, base))
     issues.extend(collect_jsonobject_boundary_issues(current, base))
+    issues.extend(collect_legacy_feedback_active_ref_issues(current, base))
     return sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
 
 

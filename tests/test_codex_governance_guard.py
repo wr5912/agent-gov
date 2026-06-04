@@ -495,6 +495,23 @@ def test_new_store_public_jsonobject_return_fails(tmp_path: Path) -> None:
     assert "new store public method returning JsonObject: Store.get_entity" in result.stdout
 
 
+def test_new_legacy_feedback_active_reference_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "frontend" / "src" / "feedback.ts"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        'export const legacyPath = "/api/feedback-cases/fbc-test/proposal-jobs";\n',
+        encoding="utf-8",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new active legacy feedback optimization reference: /proposal-jobs" in result.stdout
+
+
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

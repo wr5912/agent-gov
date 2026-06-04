@@ -21,6 +21,20 @@
 - README、docs、测试和治理硬门如何验证新契约。
 - 内部兼容 facade、shim、旧工作流分支、不可达 UI 和一次性调试脚本是否删除；如保留，必须写明明确期限或后续清理条件。
 
+## 反馈闭环 / Agent Job / DSPy 契约专项要求
+
+反馈优化、归因、批次优化方案、agent job、DSPy formatter、提示词、OpenAPI 和前端生成类型相关问题，默认按产品级契约问题处理，不得只按局部 bug 修补。
+
+排查和整改必须同时核查：
+
+- 用户可见页面状态、错误详情、重试按钮、tab 空状态和 API response 是否一致。
+- `agent_jobs` 状态、`error_json`、`raw_output_json`、`validated_output_json`、store 投影和 batch/case 聚合字段是否在一个契约下收口。
+- DSPy Signature、结构化提示词、输出 schema、normalizer、Pydantic record 和 response schema 是否存在双轨或重复约束。
+- 单条反馈优化方案和批次优化方案是否复用同一优化方案生成契约；如果保留分支，必须说明不可合并原因。
+- 旧 proposal job、旧 proposal 路由、旧 prompt、旧 formatter signature、旧前端入口和旧生成类型是否已经从活跃主流程清零。
+
+历史 job 和历史 payload 不作为产品契约长期保留；失败记录如果会干扰当前批次或用户页面，应进入清理或迁移策略。任务失败必须投影到用户可见 tab/API 状态，不能只留在后端日志。
+
 ## 本仓库治理硬门
 
 本仓库的非琐碎代码、配置、测试和治理文档变更，必须运行：

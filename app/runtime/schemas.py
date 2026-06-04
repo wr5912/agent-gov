@@ -122,6 +122,15 @@ class RuntimeDocsResponse(BaseModel):
     openapi: Optional[str] = None
 
 
+class RuntimeDependencyVersions(BaseModel):
+    claude_agent_sdk: Optional[str] = None
+    bundled_claude_code_cli: Optional[str] = None
+    path_claude_code_cli: Optional[str] = None
+    langfuse: Optional[str] = None
+    opentelemetry_sdk: Optional[str] = None
+    opentelemetry_exporter_otlp_proto_http: Optional[str] = None
+
+
 class RuntimeHealthResponse(ExtensibleResponse):
     status: str
     api_host: str
@@ -146,6 +155,7 @@ class RuntimeHealthResponse(ExtensibleResponse):
     programmatic_agents: bool
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None
+    runtime_dependency_versions: RuntimeDependencyVersions = Field(default_factory=RuntimeDependencyVersions)
     langfuse_enabled: bool
     langfuse_base_url: Optional[str] = None
     langfuse_otel_endpoint_configured: bool

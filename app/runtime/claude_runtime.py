@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -37,6 +37,22 @@ from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
 _MISSING_SDK_SESSION_MARKER = "No conversation found with session ID"
+_LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
+
+
+def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        text = "true" if value else "false"
+    elif isinstance(value, (int, float, str)):
+        text = str(value)
+    else:
+        return None
+    text = text.strip()
+    if not text:
+        return None
+    return text[:_LANGFUSE_ATTRIBUTE_MAX_LENGTH]
 
 
 @dataclass
@@ -450,14 +466,70 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             telemetry_input=telemetry_input,
         )
 
-    def _runtime_observation_metadata(self, context: RuntimeRequestContext, mode: str, *, profile: AgentRuntimeProfile | None = None) -> JsonObject:
+    def _runtime_observation_metadata(
+        self,
+        context: RuntimeRequestContext,
+        mode: str,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+    ) -> JsonObject:
+        telemetry = context.telemetry_input
         return {
             "api_session_id": context.session.session_id,
+            "sdk_session_id": context.session.sdk_session_id,
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
+            "alert_id": telemetry.get("alert_id"),
+            "case_id": telemetry.get("case_id"),
             "mode": mode,
             "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
+            "agent": telemetry.get("agent"),
+            "skills_mode": telemetry.get("skills_mode"),
         }
+
+    def _langfuse_propagation_attributes(
+        self,
+        req: ChatRequest,
+        context: RuntimeRequestContext,
+        mode: str,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+    ) -> JsonObject:
+        metadata = {
+            key: clean_langfuse_attribute_value(value)
+            for key, value in self._runtime_observation_metadata(context, mode, profile=profile).items()
+        }
+        metadata.update(self._business_metadata(req.metadata))
+        return {
+            "user_id": self._langfuse_user_id(req.metadata),
+            "session_id": context.session.session_id,
+            "metadata": {key: value for key, value in metadata.items() if value},
+            "trace_name": (profile or self.profiles[MAIN_AGENT_PROFILE]).langfuse_observation_name,
+        }
+
+    @staticmethod
+    def _business_metadata(metadata: JsonObject) -> Mapping[str, str]:
+        aliases = {
+            "tenant_id": ("tenant_id", "tenantId"),
+            "feedback_batch_id": ("feedback_batch_id", "feedbackBatchId"),
+            "agent_id": ("agent_id", "agentId"),
+        }
+        values: dict[str, str] = {}
+        for target, names in aliases.items():
+            for name in names:
+                value = clean_langfuse_attribute_value(metadata.get(name))
+                if value:
+                    values[target] = value
+                    break
+        return values
+
+    @staticmethod
+    def _langfuse_user_id(metadata: JsonObject) -> Optional[str]:
+        for name in ("user_id", "userId", "user.id", "langfuse.user.id"):
+            value = clean_langfuse_attribute_value(metadata.get(name))
+            if value:
+                return value
+        return None
 
     def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
         return {
@@ -600,40 +672,44 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override)
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
+        root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
+        propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)
         with self.langfuse.start_observation(
             as_type="span",
             name=profile.langfuse_observation_name,
             input=context.telemetry_input,
-            metadata=self._runtime_observation_metadata(context, "non_stream", profile=profile),
+            metadata=root_metadata,
         ) as root_span:
             context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
-            with self.langfuse.start_observation(
-                as_type="generation",
-                name=f"{profile.langfuse_observation_name}.claude_sdk_query",
-                input=self._generation_input(req, context),
-                model=req.model or self.settings.agent_model,
-            ) as generation:
-                try:
-                    async def execute_query() -> None:
-                        options = self._build_options(req, context.session, profile=profile)
-                        prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                        async for msg in query(prompt=prompt_stream, options=options):
-                            self._track_query_message(msg, state, ResultMessage)
-
+            with self.langfuse.propagate_attributes(**propagation):
+                with self.langfuse.start_observation(
+                    as_type="generation",
+                    name=f"{profile.langfuse_observation_name}.claude_sdk_query",
+                    input=self._generation_input(req, context),
+                    model=req.model or self.settings.agent_model,
+                    metadata=root_metadata,
+                ) as generation:
                     try:
-                        await execute_query()
-                    except Exception as exc:
-                        if not self._should_retry_without_sdk_resume(exc, context, state):
-                            raise
-                        self._clear_stale_sdk_session(context)
-                        state = RuntimeQueryState(sdk_session_id=None)
-                        await execute_query()
-                except Exception as exc:
-                    if not self._should_suppress_exception(exc, state.errors):
-                        state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                        async def execute_query() -> None:
+                            options = self._build_options(req, context.session, profile=profile)
+                            prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                            async for msg in query(prompt=prompt_stream, options=options):
+                                self._track_query_message(msg, state, ResultMessage)
 
-                answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
-                self._update_runtime_observations(root_span, generation, context, state, output)
+                        try:
+                            await execute_query()
+                        except Exception as exc:
+                            if not self._should_retry_without_sdk_resume(exc, context, state):
+                                raise
+                            self._clear_stale_sdk_session(context)
+                            state = RuntimeQueryState(sdk_session_id=None)
+                            await execute_query()
+                    except Exception as exc:
+                        if not self._should_suppress_exception(exc, state.errors):
+                            state.errors.append(f"{exc.__class__.__name__}: {exc}")
+
+                    answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
+                    self._update_runtime_observations(root_span, generation, context, state, output)
         self._flush_langfuse()
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
@@ -647,11 +723,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         context = self._new_runtime_request_context(req)
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
+        root_metadata = self._runtime_observation_metadata(context, "stream")
+        propagation = self._langfuse_propagation_attributes(req, context, "stream")
         with self.langfuse.start_observation(
             as_type="span",
             name=self._main_observation_name(),
             input=context.telemetry_input,
-            metadata=self._runtime_observation_metadata(context, "stream"),
+            metadata=root_metadata,
         ) as root_span:
             context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
             yield {
@@ -665,55 +743,57 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     "case_id": req.case_id,
                 },
             }
-            with self.langfuse.start_observation(
-                as_type="generation",
-                name=f"{self._main_observation_name()}.claude_sdk_query",
-                input=self._generation_input(req, context),
-                model=req.model or self.settings.agent_model,
-            ) as generation:
-                try:
-                    async def emit_query_events() -> AsyncIterator[JsonObject]:
-                        options = self._build_options(req, context.session)
-                        prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                        async for msg in query(prompt=prompt_stream, options=options):
-                            event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
-                            yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
-                            if is_result:
-                                agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
-                                yield {
-                                    "event": "result",
-                                    "data": {
-                                        "session_id": context.session.session_id,
-                                        "sdk_session_id": state.sdk_session_id,
-                                        "run_id": context.run_id,
-                                        "agent_version_id": context.agent_version_id,
-                                        "alert_id": req.alert_id,
-                                        "case_id": req.case_id,
-                                        "agent_activity": agent_activity,
-                                        "usage": to_plain(state.usage),
-                                        "total_cost_usd": state.total_cost_usd,
-                                        "stop_reason": state.stop_reason,
-                                        "errors": result_errors,
-                                    },
-                                }
-
+            with self.langfuse.propagate_attributes(**propagation):
+                with self.langfuse.start_observation(
+                    as_type="generation",
+                    name=f"{self._main_observation_name()}.claude_sdk_query",
+                    input=self._generation_input(req, context),
+                    model=req.model or self.settings.agent_model,
+                    metadata=root_metadata,
+                ) as generation:
                     try:
-                        async for item in emit_query_events():
-                            yield item
+                        async def emit_query_events() -> AsyncIterator[JsonObject]:
+                            options = self._build_options(req, context.session)
+                            prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
+                            async for msg in query(prompt=prompt_stream, options=options):
+                                event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
+                                yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
+                                if is_result:
+                                    agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
+                                    yield {
+                                        "event": "result",
+                                        "data": {
+                                            "session_id": context.session.session_id,
+                                            "sdk_session_id": state.sdk_session_id,
+                                            "run_id": context.run_id,
+                                            "agent_version_id": context.agent_version_id,
+                                            "alert_id": req.alert_id,
+                                            "case_id": req.case_id,
+                                            "agent_activity": agent_activity,
+                                            "usage": to_plain(state.usage),
+                                            "total_cost_usd": state.total_cost_usd,
+                                            "stop_reason": state.stop_reason,
+                                            "errors": result_errors,
+                                        },
+                                    }
+
+                        try:
+                            async for item in emit_query_events():
+                                yield item
+                        except Exception as exc:
+                            if not self._should_retry_without_sdk_resume(exc, context, state):
+                                raise
+                            self._clear_stale_sdk_session(context)
+                            state = RuntimeQueryState(sdk_session_id=None)
+                            async for item in emit_query_events():
+                                yield item
                     except Exception as exc:
-                        if not self._should_retry_without_sdk_resume(exc, context, state):
-                            raise
-                        self._clear_stale_sdk_session(context)
-                        state = RuntimeQueryState(sdk_session_id=None)
-                        async for item in emit_query_events():
-                            yield item
-                except Exception as exc:
-                    if not self._should_suppress_exception(exc, state.errors):
-                        state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                        yield {"event": "error", "data": {"errors": state.errors}}
-                finally:
-                    answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
-                    self._complete_runtime_request(req, context, state, answer, agent_activity)
-                    self._update_runtime_observations(root_span, generation, context, state, output)
-                    yield {"event": "done", "data": "[DONE]"}
+                        if not self._should_suppress_exception(exc, state.errors):
+                            state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                            yield {"event": "error", "data": {"errors": state.errors}}
+                    finally:
+                        answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
+                        self._complete_runtime_request(req, context, state, answer, agent_activity)
+                        self._update_runtime_observations(root_span, generation, context, state, output)
+                        yield {"event": "done", "data": "[DONE]"}
         self._flush_langfuse()

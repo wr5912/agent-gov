@@ -266,6 +266,8 @@ OTEL_LOG_RAW_API_BODIES=1
 
 容器启动后可通过 `/health` 查看状态字段：`langfuse_enabled`、`langfuse_public_key_configured`、`langfuse_secret_key_configured`、`langfuse_otel_signals`。不要把真实 Langfuse key 写入 `docker/.env.example` 或提交到仓库。
 
+`/health` 还会返回 `runtime_dependency_versions`，用于确认当前运行时实际解析到的 `claude-agent-sdk`、bundled Claude Code CLI、`langfuse` 和 OpenTelemetry 版本。`make langfuse-smoke` 会检查本地 Langfuse health、Runtime 版本、Redis/Bull ingestion 队列和最近一条 `runtime.*` trace 的基本结构；没有配置 Langfuse API key 或尚未产生 trace 时，会跳过对应深度检查。
+
 ## API 文档
 
 容器启动后，FastAPI 自动提供详细 OpenAPI 文档：
@@ -492,7 +494,7 @@ ${HOME}/volume-agent-runtime/data/runtime.sqlite3
 
 ## 本地开发
 
-首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。后端配置默认读取 `docker/.env`，本机调试时可再放一个不提交的 `docker/.env.local` 覆盖容器路径和本机端口：
+首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。本项目 Makefile 中的 Python 脚本入口统一使用 `.venv/bin/python`，不要直接依赖宿主机 `python3`。后端配置默认读取 `docker/.env`，本机调试时可再放一个不提交的 `docker/.env.local` 覆盖容器路径和本机端口：
 
 ```bash
 cp docker/.env.local.example docker/.env.local

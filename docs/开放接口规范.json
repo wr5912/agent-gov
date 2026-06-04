@@ -9253,6 +9253,78 @@
         "title": "RegressionPlanResponse",
         "type": "object"
       },
+      "RuntimeDependencyVersions": {
+        "properties": {
+          "bundled_claude_code_cli": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bundled Claude Code Cli"
+          },
+          "claude_agent_sdk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Claude Agent Sdk"
+          },
+          "langfuse": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Langfuse"
+          },
+          "opentelemetry_exporter_otlp_proto_http": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opentelemetry Exporter Otlp Proto Http"
+          },
+          "opentelemetry_sdk": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Opentelemetry Sdk"
+          },
+          "path_claude_code_cli": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Path Claude Code Cli"
+          }
+        },
+        "title": "RuntimeDependencyVersions",
+        "type": "object"
+      },
       "RuntimeDocsResponse": {
         "properties": {
           "openapi": {
@@ -9451,6 +9523,9 @@
           "runtime_db_path": {
             "title": "Runtime Db Path",
             "type": "string"
+          },
+          "runtime_dependency_versions": {
+            "$ref": "#/components/schemas/RuntimeDependencyVersions"
           },
           "setting_sources_effective": {
             "anyOf": [
@@ -10052,7 +10127,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.33"
+    "version": "0.2.34"
   },
   "openapi": "3.1.0",
   "paths": {

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import shutil
+import subprocess
+from importlib.metadata import PackageNotFoundError, version
+from importlib.util import find_spec
+from pathlib import Path
+
 from fastapi import APIRouter, FastAPI
 
 from app.runtime.agent_git_store import AgentVersionProvider
-from app.runtime.schemas import RuntimeHealthResponse, RuntimeRootResponse
+from app.runtime.schemas import RuntimeDependencyVersions, RuntimeHealthResponse, RuntimeRootResponse
 from app.runtime.settings import AppSettings
 
 
@@ -72,6 +78,7 @@ def build_health_payload(
         programmatic_agents=settings.enable_programmatic_agents,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),
+        runtime_dependency_versions=runtime_dependency_versions(),
         agent_repository_status=repository_status,
         langfuse_enabled=settings.langfuse_enabled,
         langfuse_base_url=settings.langfuse_base_url,
@@ -85,3 +92,46 @@ def build_health_payload(
             "openapi": app.openapi_url,
         },
     )
+
+
+def runtime_dependency_versions() -> RuntimeDependencyVersions:
+    return RuntimeDependencyVersions(
+        claude_agent_sdk=package_version("claude-agent-sdk"),
+        bundled_claude_code_cli=bundled_claude_code_cli_version(),
+        path_claude_code_cli=command_version(shutil.which("claude")),
+        langfuse=package_version("langfuse"),
+        opentelemetry_sdk=package_version("opentelemetry-sdk"),
+        opentelemetry_exporter_otlp_proto_http=package_version("opentelemetry-exporter-otlp-proto-http"),
+    )
+
+
+def package_version(package_name: str) -> str | None:
+    try:
+        return version(package_name)
+    except PackageNotFoundError:
+        return None
+
+
+def bundled_claude_code_cli_version() -> str | None:
+    spec = find_spec("claude_agent_sdk")
+    if spec is None or spec.origin is None:
+        return None
+    bundled = Path(spec.origin).resolve().parent / "_bundled" / "claude"
+    if not bundled.exists():
+        return None
+    return command_version(str(bundled))
+
+
+def command_version(command: str | None) -> str | None:
+    if not command:
+        return None
+    try:
+        output = subprocess.check_output(
+            [command, "--version"],
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    return output.strip() or None

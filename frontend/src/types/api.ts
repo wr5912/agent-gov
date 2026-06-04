@@ -4330,6 +4330,21 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** RuntimeDependencyVersions */
+        RuntimeDependencyVersions: {
+            /** Bundled Claude Code Cli */
+            bundled_claude_code_cli?: string | null;
+            /** Claude Agent Sdk */
+            claude_agent_sdk?: string | null;
+            /** Langfuse */
+            langfuse?: string | null;
+            /** Opentelemetry Exporter Otlp Proto Http */
+            opentelemetry_exporter_otlp_proto_http?: string | null;
+            /** Opentelemetry Sdk */
+            opentelemetry_sdk?: string | null;
+            /** Path Claude Code Cli */
+            path_claude_code_cli?: string | null;
+        };
         /** RuntimeDocsResponse */
         RuntimeDocsResponse: {
             /** Openapi */
@@ -4394,6 +4409,7 @@ export interface components {
             runtime_db_backend: string;
             /** Runtime Db Path */
             runtime_db_path: string;
+            runtime_dependency_versions?: components["schemas"]["RuntimeDependencyVersions"];
             /** Setting Sources Effective */
             setting_sources_effective?: string[] | null;
             /** Status */

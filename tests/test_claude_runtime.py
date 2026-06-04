@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from contextlib import nullcontext
 
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.policy import build_profile_pre_tool_use_hook
@@ -573,6 +574,9 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
     assert result.langfuse_public_key_configured is True
     assert result.langfuse_secret_key_configured is True
     assert result.langfuse_otel_signals == ["traces", "logs"]
+    assert result.runtime_dependency_versions.claude_agent_sdk
+    assert result.runtime_dependency_versions.langfuse
+    assert result.runtime_dependency_versions.opentelemetry_sdk
     serialized = str(result)
     assert "pk-test" not in serialized
     assert "sk-test" not in serialized
@@ -694,9 +698,25 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
-    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
+    propagations = []
 
-    result = asyncio.run(runtime.run(ChatRequest(message="hello", metadata={"api_key": "secret"})))
+    def fake_propagate_attributes(**kwargs):
+        propagations.append(kwargs)
+        return nullcontext()
+
+    monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
+    monkeypatch.setattr(runtime.langfuse, "propagate_attributes", fake_propagate_attributes)
+
+    result = asyncio.run(
+        runtime.run(
+            ChatRequest(
+                message="hello",
+                alert_id="alert-1",
+                case_id="case-1",
+                metadata={"api_key": "secret", "tenant_id": "tenant-a", "user_id": "user-a"},
+            )
+        )
+    )
 
     assert result.answer == "hello answer"
     assert result.agent_activity["requested_skills"] == []
@@ -718,6 +738,11 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     root, generation = fake_langfuse.observations
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
+    assert root.kwargs["metadata"]["run_id"] == result.run_id
+    assert root.kwargs["metadata"]["api_session_id"] == result.session_id
+    assert root.kwargs["metadata"]["alert_id"] == "alert-1"
+    assert root.kwargs["metadata"]["case_id"] == "case-1"
+    assert generation.kwargs["metadata"]["run_id"] == result.run_id
     assert root.updates[-1]["output"]["answer"] == "hello answer"
     assert root.updates[-1]["output"]["messages"][3]["event"] == "AssistantMessage"
     assert root.updates[-1]["output"]["agent_activity"]["tool_names"] == [
@@ -730,6 +755,24 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert root.trace_io_updates[-1]["output"]["agent_activity"]["skill_calls"][0]["name"] == "trace-debugger"
     assert generation.updates[-1]["usage_details"] == {"input_tokens": 3, "output_tokens": 5}
     assert generation.updates[-1]["cost_details"] == {"total_cost_usd": 0.01}
+    assert propagations == [
+        {
+            "user_id": "user-a",
+            "session_id": result.session_id,
+            "metadata": {
+                "api_session_id": result.session_id,
+                "run_id": result.run_id,
+                "alert_id": "alert-1",
+                "case_id": "case-1",
+                "mode": "non_stream",
+                "profile": "main-agent",
+                "skills_mode": "default",
+                "tenant_id": "tenant-a",
+            },
+            "trace_name": "runtime.main_agent",
+        }
+    ]
+    assert "api_key" not in propagations[0]["metadata"]
 
 
 def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):

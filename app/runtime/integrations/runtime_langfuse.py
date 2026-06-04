@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 from contextlib import nullcontext
 from typing import Any, Optional
 
@@ -94,6 +95,31 @@ class RuntimeLangfuseClient:
         except Exception as exc:
             print(f"[WARN] failed to start Langfuse observation: {exc}", flush=True)
             return nullcontext(None)
+
+    def propagate_attributes(
+        self,
+        *,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        trace_name: Optional[str] = None,
+    ) -> Any:
+        if not self.settings.langfuse_enabled:
+            return nullcontext()
+        clean_metadata = {key: value for key, value in (metadata or {}).items() if value}
+        try:
+            ensure_langfuse_otel_compat()
+            from langfuse import propagate_attributes
+
+            return propagate_attributes(
+                user_id=user_id,
+                session_id=session_id,
+                metadata=clean_metadata or None,
+                trace_name=trace_name,
+            )
+        except Exception as exc:
+            print(f"[WARN] failed to propagate Langfuse attributes: {exc}", flush=True)
+            return nullcontext()
 
     @staticmethod
     def update_observation(observation: Any, **kwargs: Any) -> None:

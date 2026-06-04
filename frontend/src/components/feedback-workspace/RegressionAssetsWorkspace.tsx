@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, CheckCircle2, Flag, Loader2, Pencil, Save, ShieldAlert, XCircle } from "lucide-react";
+import { Archive, CheckCircle2, CircleHelp, Flag, Loader2, Pencil, Save, ShieldAlert, XCircle } from "lucide-react";
 import {
   archiveRegressionAsset,
   getRegressionAssetGovernanceEvents,
@@ -15,6 +15,19 @@ import type {
   EvalCaseUpdateRequest,
 } from "../../types/feedback";
 import type { RuntimeClientConfig } from "../../types/runtime";
+import {
+  EVAL_CASE_ASSET_LAYER_OPTIONS,
+  EVAL_CASE_BLOCKING_POLICY_OPTIONS,
+  EVAL_CASE_FIELD_DESCRIPTIONS,
+  EVAL_CASE_PROMOTION_STATUS_OPTIONS,
+  EVAL_CASE_STATUS_OPTIONS,
+  formatEvalCaseAssetLayer,
+  formatEvalCaseBlockingPolicy,
+  formatEvalCaseFlakyStatus,
+  formatEvalCasePromotionStatus,
+  formatEvalCaseStatus,
+  formatEvalResultStatus,
+} from "../../utils/domainLabels";
 import { DetailJsonPreview, DetailMetricGrid, Pill } from "./common";
 import { evalCaseEditDraft, evalStatusTone, formatDate, parseEvalCaseLabels, shortId } from "./selectors";
 
@@ -37,10 +50,6 @@ interface EditDraft {
   blockingPolicy: string;
   error?: string;
 }
-
-const ASSET_LAYER_OPTIONS = ["candidate", "batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"];
-const PROMOTION_OPTIONS = ["candidate", "needs_review", "approved", "rejected", "superseded", "archived"];
-const BLOCKING_OPTIONS = ["blocking", "blocking_if_relevant", "non_blocking"];
 
 export function RegressionAssetsPanel({
   actionId,
@@ -145,7 +154,7 @@ export function RegressionAssetsPanel({
         await markRegressionAssetFlaky(clientConfig, selectedAsset.eval_case_id, {
           operator: "ui",
           role: "developer",
-          reason: kind === "mark-flaky" ? "前端标记 flaky" : "前端恢复 stable",
+          reason: kind === "mark-flaky" ? "前端标记不稳定" : "前端恢复稳定",
         }, kind === "mark-flaky");
       }
       setToast(`已处理回归资产 ${shortId(selectedAsset.eval_case_id)}`);
@@ -165,11 +174,11 @@ export function RegressionAssetsPanel({
         <div className="fw-inline-controls">
           <select value={layerFilter} onChange={(event) => setLayerFilter(event.target.value)} aria-label="资产层过滤">
             <option value="">全部资产层</option>
-            {ASSET_LAYER_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
+            {EVAL_CASE_ASSET_LAYER_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
           </select>
           <select value={promotionFilter} onChange={(event) => setPromotionFilter(event.target.value)} aria-label="晋级状态过滤">
             <option value="">全部晋级状态</option>
-            {PROMOTION_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
+            {EVAL_CASE_PROMOTION_STATUS_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
           </select>
         </div>
         <div className="fw-case-list">
@@ -186,9 +195,9 @@ export function RegressionAssetsPanel({
               <span className="fw-case-main">
                 <span className="fw-case-title"><strong>{shortId(asset.eval_case_id)}</strong>{asset.prompt}</span>
                 <span className="fw-case-tags">
-                  <Pill tone={evalStatusTone(asset.status)}>{asset.status}</Pill>
-                  <Pill tone={asset.promotion_status === "approved" ? "green" : "gray"}>{asset.promotion_status || "-"}</Pill>
-                  <Pill tone={asset.blocking_policy === "blocking" ? "red" : "blue"}>{asset.blocking_policy || "-"}</Pill>
+                  <Pill tone={evalStatusTone(asset.status)}>{formatEvalCaseStatus(asset.status)}</Pill>
+                  <Pill tone={asset.promotion_status === "approved" ? "green" : "gray"}>{formatEvalCasePromotionStatus(asset.promotion_status)}</Pill>
+                  <Pill tone={asset.blocking_policy === "blocking" ? "red" : "blue"}>{formatEvalCaseBlockingPolicy(asset.blocking_policy)}</Pill>
                 </span>
                 <span className="fw-case-cause">更新：{formatDate(asset.updated_at)}</span>
               </span>
@@ -204,9 +213,9 @@ export function RegressionAssetsPanel({
             <div className="fw-panel-header">
               <div>
                 <strong title={selectedAsset.eval_case_id}>{shortId(selectedAsset.eval_case_id)}</strong>
-                <span className="fw-muted"> {selectedAsset.asset_layer || "-"}</span>
+                <span className="fw-muted"> {formatEvalCaseAssetLayer(selectedAsset.asset_layer)}</span>
               </div>
-              <Pill tone={selectedAsset.flaky_status === "flaky" ? "orange" : "green"}>{selectedAsset.flaky_status || "stable"}</Pill>
+              <Pill tone={selectedAsset.flaky_status === "flaky" ? "orange" : "green"}>{formatEvalCaseFlakyStatus(selectedAsset.flaky_status || "stable")}</Pill>
             </div>
             <div className="fw-current-case-actions fw-batch-actions">
               <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => setDraft(editDraft(selectedAsset))}>
@@ -219,7 +228,7 @@ export function RegressionAssetsPanel({
               </button>
               <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => runAssetAction(selectedAsset.flaky_status === "flaky" ? "unmark-flaky" : "mark-flaky")}>
                 <Flag size={16} />
-                {selectedAsset.flaky_status === "flaky" ? "恢复稳定" : "标记 flaky"}
+                {selectedAsset.flaky_status === "flaky" ? "恢复稳定" : "标记不稳定"}
               </button>
               <button className="fw-small-secondary" type="button" disabled={busy || selectedAsset.status === "archived"} onClick={() => runAssetAction("archive")}>
                 <Archive size={16} />
@@ -228,10 +237,10 @@ export function RegressionAssetsPanel({
             </div>
             <DetailMetricGrid
               items={[
-                ["状态", selectedAsset.status],
-                ["晋级", selectedAsset.promotion_status],
-                ["门禁", selectedAsset.blocking_policy],
-                ["最近结果", selectedAsset.last_result_status || "-"],
+                ["状态", formatEvalCaseStatus(selectedAsset.status)],
+                ["晋级", formatEvalCasePromotionStatus(selectedAsset.promotion_status)],
+                ["门禁", formatEvalCaseBlockingPolicy(selectedAsset.blocking_policy)],
+                ["最近结果", formatEvalResultStatus(selectedAsset.last_result_status)],
                 ["失败率", selectedAsset.failure_rate ?? "-"],
                 ["版本", shortId(selectedAsset.content_hash)],
               ]}
@@ -297,38 +306,50 @@ function RegressionAssetForm({
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
-    <form className="fw-batch-eval-form" onSubmit={onSubmit}>
-      <label>
-        <span>Prompt</span>
-        <textarea value={draft.prompt} onChange={(event) => onChange({ ...draft, prompt: event.target.value })} rows={4} />
-      </label>
-      <label>
-        <span>Expected</span>
-        <textarea value={draft.expectedBehavior} onChange={(event) => onChange({ ...draft, expectedBehavior: event.target.value })} rows={3} />
-      </label>
-      <div className="fw-inline-controls">
-        <select value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as EditDraft["status"] })}>
-          <option value="draft">draft</option>
-          <option value="active">active</option>
-          <option value="archived">archived</option>
-        </select>
-        <select value={draft.assetLayer} onChange={(event) => onChange({ ...draft, assetLayer: event.target.value })}>
-          {ASSET_LAYER_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
-        </select>
-        <select value={draft.promotionStatus} onChange={(event) => onChange({ ...draft, promotionStatus: event.target.value })}>
-          {PROMOTION_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
-        </select>
-        <select value={draft.blockingPolicy} onChange={(event) => onChange({ ...draft, blockingPolicy: event.target.value })}>
-          {BLOCKING_OPTIONS.map((option) => <option value={option} key={option}>{option}</option>)}
-        </select>
+    <form className="fw-eval-edit-form fw-batch-eval-form fw-regression-asset-form" onSubmit={onSubmit}>
+      <div className="fw-regression-asset-main-fields">
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="问题描述" help={EVAL_CASE_FIELD_DESCRIPTIONS.prompt} tooltipAlign="start" />
+          <textarea value={draft.prompt} onChange={(event) => onChange({ ...draft, prompt: event.target.value })} rows={4} />
+        </label>
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="预期行为" help={EVAL_CASE_FIELD_DESCRIPTIONS.expected_behavior} />
+          <textarea value={draft.expectedBehavior} onChange={(event) => onChange({ ...draft, expectedBehavior: event.target.value })} rows={4} />
+        </label>
       </div>
-      <label>
-        <span>Labels</span>
+      <div className="fw-eval-edit-grid fw-regression-asset-state-grid">
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="状态" help={EVAL_CASE_FIELD_DESCRIPTIONS.status} tooltipAlign="start" />
+          <select value={draft.status} onChange={(event) => onChange({ ...draft, status: event.target.value as EditDraft["status"] })}>
+            {EVAL_CASE_STATUS_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="资产层" help={EVAL_CASE_FIELD_DESCRIPTIONS.asset_layer} />
+          <select value={draft.assetLayer} onChange={(event) => onChange({ ...draft, assetLayer: event.target.value })}>
+            {EVAL_CASE_ASSET_LAYER_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="晋级状态" help={EVAL_CASE_FIELD_DESCRIPTIONS.promotion_status} tooltipAlign="start" />
+          <select value={draft.promotionStatus} onChange={(event) => onChange({ ...draft, promotionStatus: event.target.value })}>
+            {EVAL_CASE_PROMOTION_STATUS_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label className="fw-eval-edit-field">
+          <FieldLabelWithHelp label="门禁" help={EVAL_CASE_FIELD_DESCRIPTIONS.blocking_policy} />
+          <select value={draft.blockingPolicy} onChange={(event) => onChange({ ...draft, blockingPolicy: event.target.value })}>
+            {EVAL_CASE_BLOCKING_POLICY_OPTIONS.map((option) => <option value={option.value} key={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+      </div>
+      <label className="fw-eval-edit-field">
+        <FieldLabelWithHelp label="标签" help={EVAL_CASE_FIELD_DESCRIPTIONS.labels} tooltipAlign="start" />
         <input value={draft.labelsText} onChange={(event) => onChange({ ...draft, labelsText: event.target.value })} />
       </label>
-      <label>
-        <span>Checks JSON</span>
-        <textarea value={draft.checksText} onChange={(event) => onChange({ ...draft, checksText: event.target.value })} rows={6} />
+      <label className="fw-eval-edit-field">
+        <FieldLabelWithHelp label="检查规则 JSON" help={EVAL_CASE_FIELD_DESCRIPTIONS.checks_json} tooltipAlign="start" />
+        <textarea className="fw-eval-json-editor" value={draft.checksText} onChange={(event) => onChange({ ...draft, checksText: event.target.value })} rows={6} />
       </label>
       {draft.error ? <p className="fw-note-box">{draft.error}</p> : null}
       <div className="fw-batch-eval-form-actions">
@@ -342,6 +363,25 @@ function RegressionAssetForm({
         </button>
       </div>
     </form>
+  );
+}
+
+function FieldLabelWithHelp({
+  label,
+  help,
+  tooltipAlign = "center",
+}: {
+  label: string;
+  help: string;
+  tooltipAlign?: "center" | "start";
+}) {
+  return (
+    <span className="fw-field-label-with-help">
+      {label}
+      <span className={`fw-field-help is-tooltip-${tooltipAlign}`} tabIndex={0} aria-label={`${label}说明：${help}`} data-tooltip={help}>
+        <CircleHelp size={13} aria-hidden="true" />
+      </span>
+    </span>
   );
 }
 

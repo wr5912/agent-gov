@@ -3860,10 +3860,79 @@ button:disabled {
   gap: 6px;
 }
 
-.fw-eval-edit-field span {
+.fw-eval-edit-field > span {
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.fw-field-label-with-help {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.fw-field-help {
+  position: relative;
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: help;
+  outline: none;
+}
+
+.fw-field-help:hover,
+.fw-field-help:focus-visible {
+  background: rgba(204, 96, 58, 0.12);
+  color: var(--brand);
+}
+
+.fw-field-help::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 30;
+  width: max-content;
+  max-width: min(320px, 72vw);
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: #172033;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.22);
+  color: #fffdf8;
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  text-align: left;
+  transform: translateX(-50%) translateY(-2px);
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s ease;
+  visibility: hidden;
+  white-space: normal;
+}
+
+.fw-field-help:hover::after,
+.fw-field-help:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  visibility: visible;
+}
+
+.fw-field-help.is-tooltip-start::after {
+  left: 0;
+  transform: translateY(-2px);
+}
+
+.fw-field-help.is-tooltip-start:hover::after,
+.fw-field-help.is-tooltip-start:focus-visible::after {
+  transform: translateY(0);
 }
 
 .fw-eval-edit-field input,
@@ -3889,6 +3958,30 @@ button:disabled {
   min-height: 180px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
+}
+
+.fw-regression-asset-form {
+  gap: 12px;
+}
+
+.fw-regression-asset-main-fields {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fw-regression-asset-state-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.fw-regression-asset-form .fw-eval-edit-field textarea {
+  min-height: 96px;
+}
+
+.fw-regression-asset-form .fw-eval-json-editor {
+  min-height: 172px;
 }
 
 .fw-detail-json-output {
@@ -4637,6 +4730,11 @@ button:disabled {
   .fw-eval-edit-grid {
     grid-template-columns: 1fr;
   }
+
+  .fw-regression-asset-main-fields,
+  .fw-regression-asset-state-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 /* Feedback workbench theme integration */
@@ -5047,6 +5145,22 @@ button:disabled {
 }
 
 @media (max-width: 680px) {
+  .fw-regression-asset-main-fields,
+  .fw-regression-asset-state-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .fw-field-help::after {
+    left: 0;
+    max-width: min(300px, calc(100vw - 40px));
+    transform: translateY(-2px);
+  }
+
+  .fw-field-help:hover::after,
+  .fw-field-help:focus-visible::after {
+    transform: translateY(0);
+  }
+
   .feedback-label-picker {
     grid-template-columns: 1fr;
   }

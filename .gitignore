@@ -35,6 +35,7 @@ docker/volume/data/feedback-analysis/jobs/*
 docker/volume/data/optimization-proposals/*
 docker/volume/data/optimization-tasks/*
 docker/volume/data/agent-versions/
+docker/volume/data/agent-governance/
 docker/volume/main-workspace/CLAUDE.local.md
 docker/volume/main-workspace/.mcp.local.json
 docker/volume/main-workspace/.claude/settings.local.json

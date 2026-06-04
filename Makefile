@@ -1,18 +1,14 @@
 VENV ?= .venv
 PYTHON ?= $(VENV)/bin/python
+PYTHON_BOOTSTRAP ?= python3
 UV ?= uv
 COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 
-.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke
+.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
 
 setup: langfuse-dirs
 	cp -n docker/.env.example docker/.env || true
-	mkdir -p docker/volume/main-workspace docker/volume/attribution-workspace docker/volume/proposal-workspace
-	mkdir -p docker/volume/claude-roots/main/.claude docker/volume/claude-roots/attribution/.claude docker/volume/claude-roots/proposal/.claude
-	mkdir -p docker/volume/data/sessions docker/volume/data/transcripts docker/volume/data/uploads docker/volume/data/outputs docker/volume/data/agent-memory
-	mkdir -p docker/volume/data/feedback-signals docker/volume/data/soc-events docker/volume/data/pending-correlations docker/volume/data/feedback-cases
-	mkdir -p docker/volume/data/evidence-packages docker/volume/data/feedback-analysis/jobs docker/volume/data/optimization-proposals docker/volume/data/optimization-tasks docker/volume/data/agent-versions/main
-	@if [ ! -f docker/volume/claude-roots/main/.claude/settings.json ]; then printf '{}\n' > docker/volume/claude-roots/main/.claude/settings.json; fi
+	$(PYTHON_BOOTSTRAP) scripts/bootstrap_runtime_volume.py
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
 	$(UV) pip install --python $(PYTHON) -r requirements.txt pytest
@@ -64,9 +60,9 @@ ui-feedback-smoke:
 	RUNTIME_UI_BASE="$$ui_base" RUNTIME_API_BASE="$$api_base" pnpm --dir frontend verify:feedback-browser
 
 langfuse-dirs:
-	mkdir -p docker/volume/langfuse/postgres docker/volume/langfuse/clickhouse/data docker/volume/langfuse/clickhouse/logs
-	mkdir -p docker/volume/langfuse/redis docker/volume/langfuse/minio
-	chmod a+rwx docker/volume/langfuse docker/volume/langfuse/postgres docker/volume/langfuse/clickhouse docker/volume/langfuse/clickhouse/data docker/volume/langfuse/clickhouse/logs docker/volume/langfuse/redis docker/volume/langfuse/minio 2>/dev/null || true
+	$(PYTHON_BOOTSTRAP) scripts/bootstrap_runtime_volume.py --quiet
+	@runtime_root=$$($(PYTHON_BOOTSTRAP) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
+	chmod a+rwx "$$runtime_root/langfuse" "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio" 2>/dev/null || true
 
 langfuse-up: langfuse-dirs
 	$(COMPOSE) --profile langfuse up -d langfuse-postgres langfuse-clickhouse langfuse-redis langfuse-minio langfuse-web langfuse-worker
@@ -92,6 +88,22 @@ langfuse-smoke:
 	done; \
 	echo "Langfuse health failed: $$langfuse_url/api/public/health" >&2; \
 	exit 1
+
+runtime-bootstrap:
+	$(PYTHON_BOOTSTRAP) scripts/bootstrap_runtime_volume.py
+
+runtime-template-scan:
+	$(PYTHON) scripts/runtime_template_safety.py verify docker/runtime-template
+
+runtime-template-export:
+	$(PYTHON) scripts/export_runtime_template.py
+
+runtime-template-restore:
+	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi
+	$(PYTHON) scripts/restore_runtime_template_backup.py --backup "$(BACKUP)"
+
+runtime-template-restore-list:
+	$(PYTHON) scripts/restore_runtime_template_backup.py --list
 
 smoke:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \

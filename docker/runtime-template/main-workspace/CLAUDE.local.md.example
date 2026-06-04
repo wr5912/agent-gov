@@ -4,8 +4,8 @@
 
 ## 本地环境
 
-- SOC API: `http://host.docker.internal:8080`
-- 知识库 API: `http://host.docker.internal:8090`
+- SOC API: `${SOC_API_URL}`
+- 知识库 API: `${SECURITY_KB_API_URL}`
 - 默认查询租户：`dev-tenant`
 - 默认时间范围：最近 24 小时
 

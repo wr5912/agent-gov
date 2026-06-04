@@ -1,4 +1,4 @@
-# Dependencies declared by docker/volume/claude-root/.agents/skills/a2ui-adk/SKILL.md.
+# Dependencies declared by the runtime template A2UI skill.
 # The A2UI Python agent SDK itself is installed from the A2UI source tree in
 # docker/Dockerfile because it is not consumed as a normal PyPI package here.
 a2a-sdk>=0.3.0

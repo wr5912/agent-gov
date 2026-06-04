@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.31
+    image: claude-agent-runtime-api:0.2.32
     container_name: claude-agent-runtime-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
@@ -121,7 +121,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.31
+    image: claude-agent-runtime-api:0.2.32
     container_name: claude-agent-runtime-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
@@ -184,7 +184,7 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: claude-agent-runtime-ui:0.2.31
+    image: claude-agent-runtime-ui:0.2.32
     container_name: claude-agent-runtime-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"
@@ -259,8 +259,8 @@ services:
       CLICKHOUSE_USER: ${LANGFUSE_CLICKHOUSE_USER:-clickhouse}
       CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:-langfuse-clickhouse}
     volumes:
-      - ${LANGFUSE_CLICKHOUSE_DATA_MOUNT:-./volume/langfuse/clickhouse/data}:/var/lib/clickhouse
-      - ${LANGFUSE_CLICKHOUSE_LOGS_MOUNT:-./volume/langfuse/clickhouse/logs}:/var/log/clickhouse-server
+      - ${LANGFUSE_CLICKHOUSE_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/langfuse/clickhouse/data}:/var/lib/clickhouse
+      - ${LANGFUSE_CLICKHOUSE_LOGS_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/langfuse/clickhouse/logs}:/var/log/clickhouse-server
     healthcheck:
       test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
       interval: 5s
@@ -283,7 +283,7 @@ services:
       - "${LANGFUSE_BIND_IP:-127.0.0.1}:${LANGFUSE_MINIO_HOST_PORT:-59000}:9000"
       - "${LANGFUSE_BIND_IP:-127.0.0.1}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
     volumes:
-      - ${LANGFUSE_MINIO_DATA_MOUNT:-./volume/langfuse/minio}:/data
+      - ${LANGFUSE_MINIO_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/langfuse/minio}:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 1s
@@ -305,7 +305,7 @@ services:
     environment:
       REDIS_AUTH: ${LANGFUSE_REDIS_AUTH:-langfuse-redis}
     volumes:
-      - ${LANGFUSE_REDIS_DATA_MOUNT:-./volume/langfuse/redis}:/data
+      - ${LANGFUSE_REDIS_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/langfuse/redis}:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_AUTH\" ping | grep PONG"]
       interval: 3s
@@ -324,7 +324,7 @@ services:
       TZ: UTC
       PGTZ: UTC
     volumes:
-      - ${LANGFUSE_POSTGRES_DATA_MOUNT:-./volume/langfuse/postgres}:/var/lib/postgresql/data
+      - ${LANGFUSE_POSTGRES_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/langfuse/postgres}:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 3s

@@ -1,5 +1,8 @@
 import { Bot, MessageSquarePlus, RefreshCw, Trash2 } from "lucide-react";
+import packageJson from "../../package.json";
 import type { AgentInfo, SessionInfo, SkillInfo } from "../types/runtime";
+
+const APP_VERSION = `v${packageJson.version}`;
 
 interface SidebarProps {
   sessions: SessionInfo[];
@@ -35,8 +38,8 @@ export function Sidebar({
       <div className="brand">
         <div className="brand-icon"><Bot size={18} /></div>
         <div>
-          <h1>Claude Agent</h1>
-          <p>Runtime Playground</p>
+          <h1>Agent Playground</h1>
+          <p>{APP_VERSION}</p>
         </div>
       </div>
 

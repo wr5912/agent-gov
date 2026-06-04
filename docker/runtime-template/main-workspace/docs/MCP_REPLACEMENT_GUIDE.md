@@ -50,8 +50,8 @@ volume/main-workspace/.mcp.json
       "command": "${PYTHON_BIN:-python}",
       "args": ["${CLAUDE_WORKSPACE:-/main-workspace}/mcp_servers/my_soc_mcp/server.py"],
       "env": {
-        "SOC_API_URL": "${SOC_API_URL:-http://host.docker.internal:8080}",
-        "SOC_API_TOKEN": "${SOC_API_TOKEN:-}",
+        "SOC_API_URL": "${SOC_API_URL}",
+        "SOC_API_TOKEN": "${SOC_API_TOKEN}",
         "SOC_TENANT": "${SOC_TENANT:-default}"
       }
     }
@@ -91,8 +91,8 @@ npm run build
       "command": "node",
       "args": ["${CLAUDE_WORKSPACE:-/main-workspace}/mcp_servers/my_soc_mcp/dist/server.js"],
       "env": {
-        "SOC_API_URL": "${SOC_API_URL:-http://host.docker.internal:8080}",
-        "SOC_API_TOKEN": "${SOC_API_TOKEN:-}"
+        "SOC_API_URL": "${SOC_API_URL}",
+        "SOC_API_TOKEN": "${SOC_API_TOKEN}"
       }
     }
   }
@@ -104,7 +104,7 @@ npm run build
 如果你的 MCP 已经作为 HTTP 服务启动，例如：
 
 ```text
-http://host.docker.internal:9000/mcp
+${MCP_SERVER_URL}
 ```
 
 则 `.mcp.json` 可以配置为：
@@ -114,7 +114,7 @@ http://host.docker.internal:9000/mcp
   "mcpServers": {
     "soc-data": {
       "type": "http",
-      "url": "${SOC_MCP_URL:-http://host.docker.internal:9000/mcp}",
+      "url": "${SOC_MCP_URL}",
       "headers": {
         "Authorization": "Bearer ${SOC_MCP_TOKEN}"
       }
@@ -127,7 +127,7 @@ http://host.docker.internal:9000/mcp
 - Claude Agent SDK 当前使用 `type: "http"` / `type: "stdio"` 标识 MCP server 类型；如果其他工具示例使用 `transport: "http"`，在本 runtime 中应改为 `type: "http"`。
 - 如果 `${SOC_MCP_TOKEN}` 没有默认值且环境变量未设置，Claude Code 会解析失败。
 - 开发环境可先去掉 `headers`，生产环境必须接入鉴权。
-- 如果 Claude Code 运行在 Docker 容器内，`127.0.0.1` 指向容器自身，不是宿主机。访问宿主机端口时优先使用 `http://host.docker.internal:<port>/mcp`，并确保 compose 为 API 容器配置了 `host.docker.internal:host-gateway`。
+- 如果 Claude Code 运行在 Docker 容器内，容器自身地址不是宿主机地址。访问宿主机或企业 MCP 服务时，使用部署注入的 `${MCP_SERVER_URL}`，不要把本机 IP 或端口写入模板。
 
 当前网络安全运营模拟数据服务示例：
 
@@ -136,7 +136,7 @@ http://host.docker.internal:9000/mcp
   "mcpServers": {
     "sec-ops-data": {
       "type": "http",
-      "url": "http://host.docker.internal:58001/mcp"
+      "url": "${MCP_SERVER_URL}"
     }
   }
 }

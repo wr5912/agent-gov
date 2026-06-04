@@ -69,7 +69,7 @@ Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt
 
 `LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。
 
-为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `docker/volume/data/`、六个 workspace 和 `docker/volume/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
+为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `${HOME}/volume-agent-runtime/data/`、六个 workspace 和 `${HOME}/volume-agent-runtime/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
 启动：
 
@@ -164,7 +164,7 @@ pnpm --dir frontend generate:api-types
 - 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`GET/POST /api/feedback-optimization-batches/{batch_id}/eval-cases`、`PATCH/DELETE /api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`GET /api/optimization-tasks`、`POST /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST /api/optimization-tasks/{task_id}/mark-applied`、`POST /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`POST/GET /api/optimization-tasks/{task_id}/regression-runs`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
 - 评估和版本：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`POST/GET /api/eval-runs/{eval_run_id}/impact-analysis`、`GET /api/agent-versions/main/current`、`GET /api/agent-versions/main`、`POST /api/agent-versions/main/snapshots`、`POST /api/agent-versions/main/{version_id}/rollback`、`GET /api/agent-versions/main/diff`、`GET /api/agent-versions/main/file-diff`、`GET /api/agent-versions/main/{version_id}`。
 
-运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `docker/volume/data/`：
+运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `${HOME}/volume-agent-runtime/data/`：
 
 - `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、`execution_applications`、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
 - `/data/.runtime-tmp/jobs/` 是归因、建议和评估 Agent 的临时 job workspace。
@@ -213,7 +213,7 @@ LANGFUSE_OTEL_ENDPOINT=http://langfuse.example.com/api/public/otel
 
 ### 本地 Langfuse Docker profile
 
-Langfuse 自托管 profile 默认不随 API 启动。它按 Langfuse 官方 v3 低规模 Docker Compose 形态运行：`langfuse-web`、`langfuse-worker`、Postgres、ClickHouse、Redis、MinIO。持久化数据统一写入 `docker/volume/langfuse/`。ClickHouse 默认固定为 `24.3`，满足 Langfuse v3 的最低版本要求。
+Langfuse 自托管 profile 默认不随 API 启动。它按 Langfuse 官方 v3 低规模 Docker Compose 形态运行：`langfuse-web`、`langfuse-worker`、Postgres、ClickHouse、Redis、MinIO。持久化数据统一写入 `${HOME}/volume-agent-runtime/langfuse/`。ClickHouse 默认固定为 `24.3`，满足 Langfuse v3 的最低版本要求。
 
 启动本地 Langfuse：
 
@@ -345,55 +345,42 @@ curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/sessions"
 
 ## 配置挂载说明
 
-`docker/docker-compose.yml` 默认挂载：
+`docker/docker-compose.yml` 默认从 `HOST_RUNTIME_VOLUME_ROOT` 派生运行态目录。`docker/.env.example` 默认值为 `${HOME}/volume-agent-runtime`：
 
 ```yaml
 volumes:
-  - ./volume/main-workspace:/main-workspace
-  - ./volume/attribution-analyzer-workspace:/attribution-analyzer-workspace
-  - ./volume/proposal-generator-workspace:/proposal-generator-workspace
-  - ./volume/execution-optimizer-workspace:/execution-optimizer-workspace
-  - ./volume/eval-case-governor-workspace:/eval-case-governor-workspace
-  - ./volume/regression-impact-analyzer-workspace:/regression-impact-analyzer-workspace
-  - ./volume/data:/data
-  - ./volume/claude-roots/main:/claude-roots/main
-  - ./volume/claude-roots/attribution-analyzer:/claude-roots/attribution-analyzer
-  - ./volume/claude-roots/proposal-generator:/claude-roots/proposal-generator
-  - ./volume/claude-roots/execution-optimizer:/claude-roots/execution-optimizer
-  - ./volume/claude-roots/eval-case-governor:/claude-roots/eval-case-governor
-  - ./volume/claude-roots/regression-impact-analyzer:/claude-roots/regression-impact-analyzer
+  - ${HOST_RUNTIME_VOLUME_ROOT}/main-workspace:/main-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/attribution-analyzer-workspace:/attribution-analyzer-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/proposal-generator-workspace:/proposal-generator-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/execution-optimizer-workspace:/execution-optimizer-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/eval-case-governor-workspace:/eval-case-governor-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/regression-impact-analyzer-workspace:/regression-impact-analyzer-workspace
+  - ${HOST_RUNTIME_VOLUME_ROOT}/data:/data
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main:/claude-roots/main
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/attribution-analyzer:/claude-roots/attribution-analyzer
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/proposal-generator:/claude-roots/proposal-generator
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/execution-optimizer:/claude-roots/execution-optimizer
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/eval-case-governor:/claude-roots/eval-case-governor
+  - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/regression-impact-analyzer:/claude-roots/regression-impact-analyzer
 ```
 
-你可以只改宿主机目录，不需要改镜像：
+可复用模板保存在 `docker/runtime-template/`，实际运行目录由 `make runtime-bootstrap` 或容器 entrypoint 从模板补齐。真实运行态文件默认不提交到 git；其中 `runtime.sqlite3`、临时 job、Agent 版本仓库、候选 worktree、发布归档和 Langfuse 运行数据都属于本地运行态。
 
-- `docker/volume/main-workspace/CLAUDE.md`
-- `docker/volume/main-workspace/CLAUDE.local.md.example`：本地私有指令模板，可复制为 `CLAUDE.local.md`
-- `docker/volume/main-workspace/.claude/settings.json`
-- `docker/volume/main-workspace/.claude/settings.local.json.example`：本地私有权限模板，可复制为 `.claude/settings.local.json`
-- `docker/volume/main-workspace/.claude/agents/*.md`
-- `docker/volume/main-workspace/.claude/skills/*/SKILL.md`
-- `docker/volume/main-workspace/.claude/commands/*.md`
-- `docker/volume/main-workspace/.claude/rules/*`
-- `docker/volume/main-workspace/.claude/output-styles/*.md`
-- `docker/volume/main-workspace/.mcp.json`
-- `docker/volume/main-workspace/.worktreeinclude`
-- `docker/volume/main-workspace/agent.yaml`
-- `docker/volume/attribution-analyzer-workspace/CLAUDE.md`
-- `docker/volume/attribution-analyzer-workspace/agent.yaml`
-- `docker/volume/proposal-generator-workspace/CLAUDE.md`
-- `docker/volume/proposal-generator-workspace/agent.yaml`
-- `docker/volume/execution-optimizer-workspace/CLAUDE.md`
-- `docker/volume/execution-optimizer-workspace/agent.yaml`
-- `docker/volume/eval-case-governor-workspace/CLAUDE.md`
-- `docker/volume/eval-case-governor-workspace/agent.yaml`
-- `docker/volume/regression-impact-analyzer-workspace/CLAUDE.md`
-- `docker/volume/regression-impact-analyzer-workspace/agent.yaml`
+常用模板命令：
 
-`docker/volume/data/` 中的运行态文件默认不提交到 git；其中 `runtime.sqlite3`、临时 job、Agent 版本包和 Langfuse 运行数据都属于本地运行态。
+```bash
+make runtime-bootstrap
+make runtime-template-scan
+make runtime-template-export
+make runtime-template-restore-list
+make runtime-template-restore BACKUP=<backup-file>
+```
+
+`runtime-template-export` 会先备份当前 `docker/runtime-template/`，再把 `${HOME}/volume-agent-runtime` 中允许导出的配置复制到 staging，完成脱敏和校验后才替换模板。API key、MCP header、数据库凭据、IP、PORT、URL、本机路径、`.mcp.local.json`、`.env`、SQLite、日志、transcripts、uploads、worktrees 和 release archives 都不会进入模板。
 
 ## subagent 文件格式
 
-示例：`docker/volume/main-workspace/.claude/agents/soc-analyst.md`
+示例：`docker/runtime-template/main-workspace/.claude/agents/soc-analyst.md`
 
 ```markdown
 ---
@@ -415,7 +402,7 @@ model: inherit
 
 ## skill 文件格式
 
-示例：`docker/volume/main-workspace/.claude/skills/alert-triage/SKILL.md`
+示例：`docker/runtime-template/main-workspace/.claude/skills/alert-triage/SKILL.md`
 
 ```markdown
 ---
@@ -477,7 +464,7 @@ ENABLE_POLICY_HOOKS=true
 API 维护一个轻量 session store，权威数据保存在 SQLite：
 
 ```text
-docker/volume/data/runtime.sqlite3
+${HOME}/volume-agent-runtime/data/runtime.sqlite3
 ```
 
 它保存：
@@ -488,7 +475,7 @@ docker/volume/data/runtime.sqlite3
 - turns
 - title 和 metadata
 
-`docker/volume/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。
+`${HOME}/volume-agent-runtime/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。
 
 ## 生产化建议
 
@@ -511,9 +498,9 @@ docker/volume/data/runtime.sqlite3
 cp docker/.env.local.example docker/.env.local
 ```
 
-编辑 `docker/.env.local`，把 `PROJECT_ROOT` 改为当前仓库绝对路径即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向 `docker/volume/`，其他 profile workspace/root 会由后端自动推导。
+编辑 `docker/.env.local`，按需调整 `HOST_RUNTIME_VOLUME_ROOT` 即可。`WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 会指向同一个运行态根，其他 profile workspace/root 会由后端自动推导。需要显式沿用旧目录时，可以把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 
-本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `docker/volume/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置，并通过 `docker/.env.local` 的 `CLAUDE_MCP_CONFIG_PATH` 指向它。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免 `localhost`、宿主机 IP 或 `host.docker.internal` 请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
+本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置，并通过 `docker/.env.local` 的 `CLAUDE_MCP_CONFIG_PATH` 指向它。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
 
 如果刚从 Docker API/worker 切换到 PyCharm 本机调试，先修复后端共享 volume 的宿主机权限。该脚本只处理 API/worker 共享的 workspace、data 和 `claude-roots/*`，不处理 Langfuse 数据卷：
 

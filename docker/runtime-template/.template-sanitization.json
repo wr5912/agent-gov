@@ -1,0 +1,24 @@
+{
+  "source": "runtime-template",
+  "private_network_values": "placeholder_or_documentation_range_only",
+  "secrets": "placeholder_only",
+  "local_overrides": "excluded_except_example_files",
+  "runtime_state": "excluded",
+  "forbidden": [
+    ".git",
+    ".env",
+    ".mcp.local.json",
+    "CLAUDE.local.md",
+    ".claude/settings.local.json",
+    "claude-roots",
+    "data",
+    "langfuse",
+    "sessions",
+    "transcripts",
+    "uploads",
+    "outputs",
+    "agent-governance",
+    "agent-releases",
+    "agent-versions"
+  ]
+}

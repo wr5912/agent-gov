@@ -13,6 +13,13 @@ ensure_claude_config_dir() {
     mkdir -p "$root/.claude"
 }
 
+if [ -d /app/docker/runtime-template ] && [ -f /app/scripts/bootstrap_runtime_volume.py ]; then
+    python /app/scripts/bootstrap_runtime_volume.py \
+        --runtime-root / \
+        --template-dir /app/docker/runtime-template \
+        --quiet
+fi
+
 ensure_claude_config_dir "${MAIN_CLAUDE_ROOT:-${CLAUDE_ROOT:-/claude-roots/main}}"
 ensure_claude_config_dir "${ATTRIBUTION_ANALYZER_CLAUDE_ROOT:-/claude-roots/attribution-analyzer}"
 ensure_claude_config_dir "${PROPOSAL_GENERATOR_CLAUDE_ROOT:-/claude-roots/proposal-generator}"

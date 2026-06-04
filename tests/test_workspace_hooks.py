@@ -5,7 +5,7 @@ import sys
 
 def test_post_tool_audit_uses_data_dir_fallback(tmp_path):
     data_dir = tmp_path / "data"
-    script = "docker/volume/main-workspace/hooks/post_tool_audit.py"
+    script = "docker/runtime-template/main-workspace/hooks/post_tool_audit.py"
     payload = {
         "session_id": "sess-test",
         "cwd": "/main-workspace",

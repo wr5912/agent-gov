@@ -25,8 +25,8 @@ def main() -> None:
     print(str(output_path))
 
 
-def _apply_local_defaults(project_root: Path) -> None:
-    volume_root = project_root / "docker" / "volume"
+def _apply_local_defaults(_project_root: Path) -> None:
+    volume_root = Path(os.environ.get("HOST_RUNTIME_VOLUME_ROOT") or Path.home() / "volume-agent-runtime")
     defaults = {
         "WORKSPACE_DIR": volume_root / "main-workspace",
         "MAIN_WORKSPACE_DIR": volume_root / "main-workspace",

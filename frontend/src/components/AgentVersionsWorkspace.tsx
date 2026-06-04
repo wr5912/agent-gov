@@ -170,10 +170,11 @@ export function AgentVersionsWorkspace({
               >
                 <div className="version-row-main">
                   <span className={`version-status ${statusTone(item.status)}`}>{statusText(item.status)}</span>
-                  <strong>{item.title || item.change_set_id}</strong>
-                  <p>{item.note || item.branch_name}</p>
+                  <strong>{changeSetDisplayTitle()}</strong>
+                  <p>{changeSetSubtitle(item)}</p>
                 </div>
                 <div className="version-row-tags">
+                  <span>变更单：{shortId(item.change_set_id)}</span>
                   <span>任务：{shortId(item.optimization_task_id)}</span>
                   <span>base：{shortId(item.base_commit_sha)}</span>
                   {item.candidate_commit_sha ? <span>candidate：{shortId(item.candidate_commit_sha)}</span> : null}
@@ -190,9 +191,9 @@ export function AgentVersionsWorkspace({
             <>
               <div className="version-detail-head">
                 <div>
-                  <span className="version-detail-source">{selected.branch_name}</span>
-                  <h2>{selected.change_set_id}</h2>
-                  <p>{formatDate(selected.created_at)}</p>
+                  <span className="version-detail-source">变更单：{shortId(selected.change_set_id)}</span>
+                  <h2>{changeSetDisplayTitle()}</h2>
+                  <p>{changeSetSubtitle(selected)} · {formatDate(selected.created_at)}</p>
                 </div>
                 <span className={`version-status ${statusTone(selected.status)}`}>{statusText(selected.status)}</span>
               </div>
@@ -202,6 +203,7 @@ export function AgentVersionsWorkspace({
                 <span>执行 job：{shortId(selected.execution_job_id)}</span>
                 <span>base：{shortId(selected.base_commit_sha)}</span>
                 <span>candidate：{shortId(selected.candidate_commit_sha)}</span>
+                <span>分支：{selected.branch_name}</span>
                 <span>worktree：{selected.worktree_path}</span>
                 {releaseForSelected ? <span>release：{releaseForSelected.tag_name}</span> : null}
               </div>
@@ -334,6 +336,14 @@ function changeSetSearchText(item: AgentChangeSet): string {
     item.title,
     item.note,
   ].filter(Boolean).join(" ").toLowerCase();
+}
+
+function changeSetDisplayTitle(): string {
+  return "候选变更";
+}
+
+function changeSetSubtitle(item: AgentChangeSet): string {
+  return item.title || item.note || item.branch_name || shortId(item.change_set_id);
 }
 
 function openChangeSetCount(items: AgentChangeSet[]): number {

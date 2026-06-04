@@ -15,6 +15,7 @@ __pycache__/
 docker/volume/claude-root/
 docker/volume/claude-roots/
 docker/volume/claude-roots/*/.bash_history
+docker/volume/*workspace/
 docker/volume/langfuse/
 docker/volume/data/claude-config/
 docker/volume/data/sessions/*
@@ -40,5 +41,7 @@ docker/volume/main-workspace/CLAUDE.local.md
 docker/volume/main-workspace/.mcp.local.json
 docker/volume/main-workspace/.claude/settings.local.json
 docker/volume/main-workspace/.claude/agent-memory-local/
+docker/.runtime-template-backups/
+docker/.runtime-template-staging/
 # Added by code-review-graph
 .code-review-graph/

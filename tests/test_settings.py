@@ -49,11 +49,11 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
     local_env.write_text(
         "\n".join(
             [
-                f"PROJECT_ROOT={tmp_path.as_posix()}",
+                f"HOST_RUNTIME_VOLUME_ROOT={(tmp_path / 'volume-agent-runtime').as_posix()}",
                 "API_PORT=8080",
-                "WORKSPACE_DIR=${PROJECT_ROOT}/docker/volume/main-workspace",
-                "DATA_DIR=${PROJECT_ROOT}/docker/volume/data",
-                "CLAUDE_ROOT=${PROJECT_ROOT}/docker/volume/claude-roots/main",
+                "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
+                "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
+                "CLAUDE_ROOT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main",
                 "LANGFUSE_BASE_URL=http://localhost:53000",
                 "",
             ]
@@ -65,21 +65,21 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
 
     assert AppSettings.model_config["env_file"] == ("docker/.env", "docker/.env.local")
     assert settings.api_port == 8080
-    assert settings.workspace_dir == tmp_path / "docker" / "volume" / "main-workspace"
+    assert settings.workspace_dir == tmp_path / "volume-agent-runtime" / "main-workspace"
     assert settings.main_workspace_dir == settings.workspace_dir
-    assert settings.attribution_analyzer_workspace_dir == tmp_path / "docker" / "volume" / "attribution-analyzer-workspace"
-    assert settings.proposal_generator_workspace_dir == tmp_path / "docker" / "volume" / "proposal-generator-workspace"
-    assert settings.execution_optimizer_workspace_dir == tmp_path / "docker" / "volume" / "execution-optimizer-workspace"
-    assert settings.eval_case_governor_workspace_dir == tmp_path / "docker" / "volume" / "eval-case-governor-workspace"
-    assert settings.regression_impact_analyzer_workspace_dir == tmp_path / "docker" / "volume" / "regression-impact-analyzer-workspace"
-    assert settings.data_dir == tmp_path / "docker" / "volume" / "data"
-    assert settings.claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "main"
+    assert settings.attribution_analyzer_workspace_dir == tmp_path / "volume-agent-runtime" / "attribution-analyzer-workspace"
+    assert settings.proposal_generator_workspace_dir == tmp_path / "volume-agent-runtime" / "proposal-generator-workspace"
+    assert settings.execution_optimizer_workspace_dir == tmp_path / "volume-agent-runtime" / "execution-optimizer-workspace"
+    assert settings.eval_case_governor_workspace_dir == tmp_path / "volume-agent-runtime" / "eval-case-governor-workspace"
+    assert settings.regression_impact_analyzer_workspace_dir == tmp_path / "volume-agent-runtime" / "regression-impact-analyzer-workspace"
+    assert settings.data_dir == tmp_path / "volume-agent-runtime" / "data"
+    assert settings.claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "main"
     assert settings.main_claude_root == settings.claude_root
-    assert settings.attribution_analyzer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "attribution-analyzer"
-    assert settings.proposal_generator_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "proposal-generator"
-    assert settings.execution_optimizer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "execution-optimizer"
-    assert settings.eval_case_governor_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "eval-case-governor"
-    assert settings.regression_impact_analyzer_claude_root == tmp_path / "docker" / "volume" / "claude-roots" / "regression-impact-analyzer"
+    assert settings.attribution_analyzer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "attribution-analyzer"
+    assert settings.proposal_generator_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "proposal-generator"
+    assert settings.execution_optimizer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "execution-optimizer"
+    assert settings.eval_case_governor_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"
+    assert settings.regression_impact_analyzer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"
     assert settings.claude_home == settings.claude_root / ".claude"
     assert settings.langfuse_base_url == "http://localhost:53000"
 

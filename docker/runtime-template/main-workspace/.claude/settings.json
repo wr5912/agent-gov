@@ -95,10 +95,10 @@
     },
     "network": {
       "allowedDomains": [
-        "localhost",
-        "host.docker.internal",
-        "*.internal",
-        "*.corp"
+        "${SERVICE_HOST}",
+        "${SERVICE_HOST}",
+        "${INTERNAL_DOMAIN}",
+        "${INTERNAL_DOMAIN}"
       ],
       "deniedDomains": []
     }

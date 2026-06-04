@@ -1,13 +1,15 @@
 from pathlib import Path
 
 
-def test_import_app(monkeypatch):
+def test_import_app(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    monkeypatch.setenv("WORKSPACE_DIR", str(root / "docker" / "volume" / "main-workspace"))
-    monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(root / "docker" / "volume" / "main-workspace"))
-    monkeypatch.setenv("DATA_DIR", str(root / "docker" / "volume" / "data"))
+    workspace = root / "docker" / "runtime-template" / "main-workspace"
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setenv("WORKSPACE_DIR", str(workspace))
+    monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(workspace))
+    monkeypatch.setenv("DATA_DIR", str(runtime_root / "data"))
     monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-    claude_root = root / "docker" / "volume" / "claude-roots" / "main"
+    claude_root = runtime_root / "claude-roots" / "main"
     monkeypatch.setenv("CLAUDE_ROOT", str(claude_root))
     monkeypatch.setenv("MAIN_CLAUDE_ROOT", str(claude_root))
     monkeypatch.setenv("CLAUDE_HOME", str(claude_root / ".claude"))

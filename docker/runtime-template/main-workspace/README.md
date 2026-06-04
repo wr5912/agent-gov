@@ -14,7 +14,7 @@
 ## 目录结构
 
 ```text
-volume/
+${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/
 ├── main-workspace/            # 主智能体 Claude Code 工作区
 │   ├── CLAUDE.md              # 主智能体指令
 │   ├── agent.yaml             # 平台元配置
@@ -33,9 +33,9 @@ volume/
 假设容器内挂载方式为：
 
 ```bash
--v ./volume/main-workspace:/main-workspace \
--v ./volume/claude-roots/main:/claude-roots/main \
--v ./volume/data:/data
+-v ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/main-workspace:/main-workspace \
+-v ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/claude-roots/main:/claude-roots/main \
+-v ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}/data:/data
 ```
 
 进入容器后：
@@ -67,9 +67,9 @@ cp .claude/settings.local.json.example .claude/settings.local.json
 
 ```bash
 export CLAUDE_WORKSPACE=/main-workspace
-export SOC_API_URL=http://host.docker.internal:8080
+export SOC_API_URL=${SOC_API_URL}
 export SOC_API_TOKEN=replace-me
-export SECURITY_KB_API_URL=http://host.docker.internal:8090
+export SECURITY_KB_API_URL=${SECURITY_KB_API_URL}
 export SECURITY_KB_API_TOKEN=replace-me
 export RESPONSE_EXECUTION_ENABLED=false
 ```
@@ -82,7 +82,7 @@ export RESPONSE_EXECUTION_ENABLED=false
 
 `.mcp.json` 默认配置为网络安全运营模拟数据 HTTP MCP 服务：
 
-- `sec-ops-data`：通过 `http://host.docker.internal:58001/mcp` 查询告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
+- `sec-ops-data`：通过 `${MCP_SERVER_URL}` 查询告警、资产、事件、漏洞、IOC、事件单和仪表盘统计。
 
 生产落地时，应把该服务替换为你本地开发或企业内部的 MCP 服务。stdio 与 HTTP MCP 配置方式详见：[MCP_REPLACEMENT_GUIDE.md](docs/MCP_REPLACEMENT_GUIDE.md)。
 

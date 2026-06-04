@@ -5,8 +5,8 @@
     "rule_name": "Suspicious Rundll32 Network Connection",
     "timestamp": "2026-05-09T02:15:12Z",
     "host": {
-      "hostname": "win-workstation-01",
-      "ip": "10.0.12.34",
+      "hostname": "${SERVICE_HOST}",
+      "ip": "192.0.2.10",
       "asset_criticality": "medium"
     },
     "process": {
@@ -18,7 +18,7 @@
     },
     "network": {
       "dst_ip": "203.0.113.10",
-      "dst_port": 443,
+      "dst_port": "${SERVICE_PORT}",
       "protocol": "tcp"
     },
     "mitre": [
@@ -32,8 +32,8 @@
     "rule_name": "PowerShell Encoded Command",
     "timestamp": "2026-05-09T03:48:22Z",
     "host": {
-      "hostname": "server-02",
-      "ip": "10.0.20.8",
+      "hostname": "${SERVICE_HOST}",
+      "ip": "192.0.2.20",
       "asset_criticality": "high"
     },
     "process": {

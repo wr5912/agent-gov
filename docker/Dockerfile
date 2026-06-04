@@ -81,6 +81,8 @@ RUN set -eux; \
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
 COPY app /app/app
+COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
+COPY docker/runtime-template /app/docker/runtime-template
 COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
 RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \

@@ -34,6 +34,16 @@
 #
 # 修改公开 API 或前端契约后，必须验证 OpenAPI 和前端类型不再暴露已删除旧入口。
 #
+# ## Typed Output 验证
+#
+# 涉及 DSPy formatter、Agent job 输出或 Pydantic 输出模型时，Verify 阶段必须确认：
+#
+# - formatter 成功路径返回的是具体 Pydantic OutputModel 实例，内部主流程没有立即退化为 `JsonObject`。
+# - Pydantic 校验失败会进入 job 失败状态，并投影到 `error_json`、API response 和用户可见页面。
+# - 新主流程没有新增 Agent 输出 `schema_version`、`*_SCHEMA_VERSION` 或 `output_schema_version` 契约层。
+# - job type、profile、prompt builder、DSPy Signature 和 OutputModel 的来源是集中注册表。
+# - `model_dump(mode="json")` 只出现在 DB、HTTP、文件、日志或观测边界；如在内部出现，必须说明原因。
+#
 # ## 长程重构验证矩阵
 #
 # 长程重构、GSD 阶段执行、Pydantic/schema 收口、store 投影层变更、OpenAPI/前端类型变更，

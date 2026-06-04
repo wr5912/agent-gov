@@ -32,8 +32,13 @@
 - DSPy Signature、结构化提示词、输出 schema、normalizer、Pydantic record 和 response schema 是否存在双轨或重复约束。
 - 单条反馈优化方案和批次优化方案是否复用同一优化方案生成契约；如果保留分支，必须说明不可合并原因。
 - 旧 proposal job、旧 proposal 路由、旧 prompt、旧 formatter signature、旧前端入口和旧生成类型是否已经从活跃主流程清零。
+- DSPy 输出成功后是否以内层 Pydantic OutputModel 实例继续流转；不得在 formatter 边界立即 dump 成 `JsonObject` 再靠 normalizer/schema version 二次证明结构。
+- Agent 输出结构契约默认由 DSPy Signature + Pydantic OutputModel 表达；无外部协议、多版本运行时或历史迁移需求时，不得新增 `schema_version` / `output_schema_version` / `*_SCHEMA_VERSION`。
+- job type、profile、prompt builder、DSPy Signature 和 OutputModel 必须收口到集中注册表，避免在 worker、runner、formatter、store 中重复 if/else。
 
 历史 job 和历史 payload 不作为产品契约长期保留；失败记录如果会干扰当前批次或用户页面，应进入清理或迁移策略。任务失败必须投影到用户可见 tab/API 状态，不能只留在后端日志。
+
+`docs/开放接口规范.json` 属于生成物边界：如果保留为离线 API 快照，必须有重新生成后 diff 干净的漂移检查；如果只服务前端类型生成，应改为临时生成文件而不是长期提交静态 JSON。
 
 ## 本仓库治理硬门
 

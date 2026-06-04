@@ -512,6 +512,20 @@ def test_new_legacy_feedback_active_reference_fails(tmp_path: Path) -> None:
     assert "new active legacy feedback optimization reference: /proposal-jobs" in result.stdout
 
 
+def test_new_agent_output_schema_version_reference_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "app" / "runtime" / "schema_versions.py"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('NEW_AGENT_OUTPUT_SCHEMA_VERSION = "new-agent-output/v1"\n', encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new active agent output schema version reference: _SCHEMA_VERSION" in result.stdout
+
+
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

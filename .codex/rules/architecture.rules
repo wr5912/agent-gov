@@ -52,6 +52,22 @@
 #
 # 不得把“旧逻辑本来就是这样”“为了兼容所以保留”“先小修一下”作为默认结论。
 #
+# ## Typed Output 单一契约
+#
+# 当 DSPy Signature 的 OutputField 指向 Pydantic 模型，或运行时已经有明确 OutputModel /
+# Record / Response model 时，typed model 是默认结构契约。不得在主流程中继续用裸 dict、
+# `JsonObject`、`schema_version` 字符串、提示词格式要求或 normalizer 作为并行契约。
+#
+# 计划必须说明 typed model 的流转边界：
+#
+# - 内部：formatter、runner、orchestrator、store completion 优先传递 Pydantic model 实例。
+# - 边界：SQLite JSON、HTTP response、临时文件、日志和 Langfuse metadata 才允许 `model_dump(mode="json")`。
+# - 兼容：normalizer 只用于历史数据、外部脏输入或测试 fixture 迁移；不得参与新主流程。
+# - 版本：没有外部协议、多版本运行时、历史 payload 迁移需求时，不得新增 Agent 输出 schema version。
+#
+# 新增 job/profile/output 类型必须优先进入集中注册表，注册表至少声明 job type、profile、
+# prompt builder、DSPy Signature 和 OutputModel；不得再让这些信息散落在多个 if/else 分支。
+#
 # ## 长程重构边界
 #
 # 长程重构、GSD 阶段执行或跨层 schema 收口必须先定义边界再实现。计划至少覆盖：

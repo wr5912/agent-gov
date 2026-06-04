@@ -9821,7 +9821,7 @@
   "info": {
     "description": "A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     "title": "Claude Agent Runtime API",
-    "version": "0.2.36"
+    "version": "0.2.37"
   },
   "openapi": "3.1.0",
   "paths": {

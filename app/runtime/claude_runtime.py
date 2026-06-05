@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
+from pydantic import BaseModel
+
 from .agent_profiles import (
     MAIN_AGENT_PROFILE,
     PROFILE_VERSION_IDS,
@@ -436,15 +438,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         *,
         profile_name: str,
         prompt: str,
-        expected_schema_version: str,
         job_type: str,
         job_input: JsonObject,
-    ) -> JsonObject:
+    ) -> BaseModel:
         self.job_runner.output_formatter = self.output_formatter
         return await self.job_runner.run_profile_json(
             profile_name=profile_name,
             prompt=prompt,
-            expected_schema_version=expected_schema_version,
             job_type=job_type,
             job_input=job_input,
         )

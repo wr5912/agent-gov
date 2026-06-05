@@ -13,6 +13,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
+from .runtime_db_migrations import migrate_0006_remove_agent_job_output_contract_column
 
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -180,7 +181,6 @@ class AgentJobModel(Base):
     error_path: Mapped[str] = mapped_column(String(2048))
     runtime_version: Mapped[str] = mapped_column(String(64))
     schema_version: Mapped[str] = mapped_column(String(64))
-    output_schema_version: Mapped[str] = mapped_column(String(128))
     timeout_seconds: Mapped[int] = mapped_column(default=300)
     retry_count: Mapped[int] = mapped_column(default=0)
     profile_version_json: Mapped[Optional[JsonObject]] = mapped_column(JSON, nullable=True)
@@ -545,6 +545,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0003_agent_jobs", _migrate_0003_agent_jobs),
         ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
         ("0005_agent_governance", _migrate_0005_agent_governance),
+        ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
     ):
         if version in applied:
             continue
@@ -642,7 +643,6 @@ def _migrate_0003_agent_jobs(connection: Connection) -> None:
             error_path VARCHAR(2048) NOT NULL,
             runtime_version VARCHAR(64) NOT NULL,
             schema_version VARCHAR(64) NOT NULL,
-            output_schema_version VARCHAR(128) NOT NULL,
             timeout_seconds INTEGER,
             retry_count INTEGER,
             profile_version_json JSON,

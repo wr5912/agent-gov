@@ -43,7 +43,6 @@ class AgentJobRecord(StrictRuntimeRecord):
     error_path: str
     runtime_version: str
     schema_version: str
-    output_schema_version: str
     timeout_seconds: int = 300
     retry_count: int = 0
     profile_version: Optional[JsonObject] = None
@@ -121,7 +120,6 @@ class AgentJobRecord(StrictRuntimeRecord):
             "error_path": row.error_path,
             "runtime_version": row.runtime_version,
             "schema_version": row.schema_version,
-            "output_schema_version": row.output_schema_version,
             "timeout_seconds": row.timeout_seconds,
             "retry_count": row.retry_count,
             "profile_version": row.profile_version_json,
@@ -199,7 +197,6 @@ class AgentJobProjectionRecord(StrictRuntimeRecord):
     error_path: str = ""
     runtime_version: Optional[str] = None
     schema_version: Optional[str] = None
-    output_schema_version: Optional[str] = None
     timeout_seconds: int = 300
     retry_count: int = 0
     profile_version: Optional[JsonObject] = None

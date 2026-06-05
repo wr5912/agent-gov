@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal, Optional, TypeVar
 
-from pydantic import Field, ValidationError, model_validator
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from .normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
@@ -30,14 +30,9 @@ from .normalizers.feedback_output_records import (
     NormalizedTaskContext,
 )
 from .json_types import JsonObject
-from .schema_versions import (
-    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
-    EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
-    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
-)
+
+
+TOutputModel = TypeVar("TOutputModel", bound=BaseModel)
 
 
 ProblemType = Literal[
@@ -94,7 +89,6 @@ class ResponsibilityBoundary(NormalizedResponsibilityBoundary):
 
 
 class AttributionOutput(NormalizedAttributionOutput):
-    schema_version: Literal[ATTRIBUTION_OUTPUT_SCHEMA_VERSION]
     feedback_case_id: str
     attribution_job_id: str
     status: Literal["completed", "needs_human_review"] = "completed"
@@ -186,7 +180,6 @@ class AttributionSummary(NormalizedAttributionSummary):
 
 
 class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
-    schema_version: Literal[FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION]
     batch_id: str
     optimization_plan_id: Optional[str] = None
     created_at: Optional[str] = None
@@ -224,8 +217,28 @@ class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
         return self
 
 
+def output_model_payload(output: BaseModel) -> JsonObject:
+    return output.model_dump(mode="json", exclude_none=True)
+
+
 def _validated_payload(model: type[NormalizedOutputRecord], normalized: JsonObject) -> JsonObject:
-    return model.model_validate(normalized).to_payload()
+    return output_model_payload(model.model_validate(normalized))
+
+
+def _coerce_output_model(
+    value: BaseModel | JsonObject,
+    *,
+    model: type[TOutputModel],
+    normalizer: object,
+) -> tuple[TOutputModel | None, str | None]:
+    if isinstance(value, model):
+        return value, None
+    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
+    try:
+        normalized = normalizer(payload)  # type: ignore[operator]
+        return model.model_validate(normalized), None
+    except ValidationError as exc:
+        return None, exc.json()
 
 
 def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
@@ -257,7 +270,6 @@ class ExecutionOperation(NormalizedExecutionOperation):
 
 
 class ExecutionPlanOutput(NormalizedExecutionPlanOutput):
-    schema_version: Literal[EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION]
     optimization_task_id: str
     execution_job_id: str
     status: Literal["ready", "needs_human_review"] = "ready"
@@ -287,7 +299,6 @@ def validate_execution_plan_output(payload: JsonObject) -> tuple[JsonObject | No
 
 
 class GeneratedEvalCaseOutput(NormalizedGeneratedEvalCase):
-    schema_version: str = FEEDBACK_EVAL_CASE_SCHEMA_VERSION
     eval_case_id: Optional[str] = None
     status: Literal["active", "draft", "archived"] = "draft"
     source: Optional[str] = "eval_case_governor"
@@ -313,7 +324,6 @@ class GeneratedEvalCaseOutput(NormalizedGeneratedEvalCase):
 
 
 class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutput):
-    schema_version: Literal[FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION]
     job_id: Optional[str] = None
     scope_kind: Optional[str] = None
     scope_id: Optional[str] = None
@@ -336,7 +346,6 @@ class ImpactedAssetSummary(NormalizedSummaryItem):
 
 
 class RegressionImpactAnalysisOutput(NormalizedRegressionImpactAnalysisOutput):
-    schema_version: Literal[REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION]
     impact_analysis_id: Optional[str] = None
     eval_run_id: str
     status: Literal["completed", "needs_human_review"] = "completed"
@@ -370,3 +379,29 @@ def validate_regression_impact_analysis_output(payload: JsonObject) -> tuple[Jso
         return _validated_payload(RegressionImpactAnalysisOutput, normalized), None
     except ValidationError as exc:
         return None, exc.json()
+
+
+def coerce_attribution_output_model(value: BaseModel | JsonObject) -> tuple[AttributionOutput | None, str | None]:
+    return _coerce_output_model(value, model=AttributionOutput, normalizer=normalize_attribution_output)
+
+
+def coerce_feedback_optimization_plan_output_model(
+    value: BaseModel | JsonObject,
+) -> tuple[FeedbackOptimizationPlanOutput | None, str | None]:
+    return _coerce_output_model(value, model=FeedbackOptimizationPlanOutput, normalizer=normalize_feedback_optimization_plan_output)
+
+
+def coerce_execution_plan_output_model(value: BaseModel | JsonObject) -> tuple[ExecutionPlanOutput | None, str | None]:
+    return _coerce_output_model(value, model=ExecutionPlanOutput, normalizer=normalize_execution_plan_output)
+
+
+def coerce_feedback_eval_case_generation_output_model(
+    value: BaseModel | JsonObject,
+) -> tuple[FeedbackEvalCaseGenerationOutput | None, str | None]:
+    return _coerce_output_model(value, model=FeedbackEvalCaseGenerationOutput, normalizer=normalize_feedback_eval_case_generation_output)
+
+
+def coerce_regression_impact_analysis_output_model(
+    value: BaseModel | JsonObject,
+) -> tuple[RegressionImpactAnalysisOutput | None, str | None]:
+    return _coerce_output_model(value, model=RegressionImpactAnalysisOutput, normalizer=normalize_regression_impact_analysis_output)

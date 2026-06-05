@@ -297,7 +297,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
     agent_job_schema = schema["components"]["schemas"]["AgentJobResponse"]
     assert_nullable_schema_ref(agent_job_schema, "error_json", "FeedbackJobErrorResponse")
     assert "profile_version" in agent_job_schema["properties"]
-    assert "output_schema_version" in agent_job_schema["properties"]
+    assert "output_schema_version" not in agent_job_schema["properties"]
     assert "AgentVersionRestoreResponse" not in schema["components"]["schemas"]
     assert "AgentVersionManifestResponse" not in schema["components"]["schemas"]
     assert "AgentVersionIncludedRootResponse" not in schema["components"]["schemas"]

@@ -4,6 +4,9 @@ import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, Callable
 
+from pydantic import BaseModel
+
+from .agent_job_types import AgentJobType
 from .agent_profiles import AgentRuntimeProfile
 from .message_utils import extract_text
 from .mcp_config import filtered_mcp_servers
@@ -81,10 +84,9 @@ class AgentJobRunner:
         *,
         profile_name: str,
         prompt: str,
-        expected_schema_version: str,
-        job_type: str,
+        job_type: AgentJobType | str,
         job_input: JsonObject,
-    ) -> JsonObject:
+    ) -> BaseModel:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
@@ -92,7 +94,7 @@ class AgentJobRunner:
         errors: list[str] = []
         options = self.build_options(profile)
 
-        async def collect() -> JsonObject:
+        async def collect() -> BaseModel:
             async for msg in query(prompt=self.single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 if text:
@@ -109,7 +111,6 @@ class AgentJobRunner:
                 job_type=job_type,
                 raw_text=answer,
                 job_input=job_input,
-                expected_schema_version=expected_schema_version,
             )
 
         return await asyncio.wait_for(collect(), timeout=profile.max_runtime_seconds)
@@ -117,22 +118,20 @@ class AgentJobRunner:
     async def format_agent_text(
         self,
         *,
-        job_type: str,
+        job_type: AgentJobType | str,
         raw_text: str,
         job_input: JsonObject,
-        expected_schema_version: str,
-    ) -> JsonObject:
+    ) -> BaseModel:
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 self.output_formatter.format,
                 job_type=job_type,
                 raw_text=raw_text,
                 job_input=job_input,
-                expected_schema_version=expected_schema_version,
             ),
             timeout=self.settings.dspy_output_formatter_timeout_seconds,
         )
-        return result.payload
+        return result.output
 
     @staticmethod
     async def single_prompt_stream(prompt: str) -> AsyncIterator[JsonObject]:

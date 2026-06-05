@@ -3,11 +3,12 @@ from __future__ import annotations
 import uuid
 from typing import Any, Callable, Optional
 
+from pydantic import BaseModel
+
 from ..agent_job_types import agent_job_spec
-from ..agent_profiles import PROPOSAL_GENERATOR_PROFILE
 from ..errors import BusinessRuleViolation, ConflictError
 from ..feedback_job_flags import no_actionable_attributions, with_reused_existing
-from ..feedback_schemas import validate_feedback_optimization_plan_output
+from ..feedback_schemas import coerce_feedback_optimization_plan_output_model, output_model_payload
 from ..records.batch_plan_records import (
     FeedbackOptimizationAttributionSummaryRecord,
     FeedbackOptimizationBlockedItemRecord,
@@ -150,9 +151,8 @@ class FeedbackBatchPlanStoreMixin:
             job_type=spec.job_type,
             scope_kind="optimization_batch",
             scope_id=batch_id,
-            profile_name=PROPOSAL_GENERATOR_PROFILE,
+            profile_name=spec.profile_name,
             input_payload=input_payload,
-            output_schema_version=spec.output_schema_version,
             profile_version=profile_version,
         )
         self._update_batch(
@@ -177,16 +177,17 @@ class FeedbackBatchPlanStoreMixin:
                 continue
             self._discard_job(job_id)
 
-    def complete_batch_plan_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
+    def complete_batch_plan_job(self, job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
         batch_id = self._job_batch_id(job)
-        validated, error = validate_feedback_optimization_plan_output(raw_output)
-        if not validated:
+        output_model, error = coerce_feedback_optimization_plan_output_model(raw_output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_output
+        if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid feedback optimization plan output")
             with self.Session.begin() as db:
-                if not self._set_job_json_row(db, job_id, raw_output_json=raw_output, error_json=error_payload):
+                if not self._set_job_json_row(db, job_id, raw_output_json=raw_payload, error_json=error_payload):
                     return None
                 self._append_job_update_row(db, job_id, status="schema_validating")
                 completed_row = self._append_job_update_row(db, job_id, status="needs_human_review", completed_at=utc_now())
@@ -205,9 +206,10 @@ class FeedbackBatchPlanStoreMixin:
             self._cleanup_job_tmp(job_id)
             return self.get_job(job_id)
 
+        validated = output_model_payload(output_model)
         plan = self._normalize_batch_plan_output(validated, job)
         with self.Session.begin() as db:
-            if not self._set_job_json_row(db, job_id, raw_output_json=raw_output, validated_output_json=plan, error_json=None):
+            if not self._set_job_json_row(db, job_id, raw_output_json=raw_payload, validated_output_json=plan, error_json=None):
                 return None
             self._append_job_update_row(db, job_id, status="schema_validating")
             completed_row = self._append_job_update_row(db, job_id, status="completed", completed_at=utc_now())
@@ -407,7 +409,6 @@ class FeedbackBatchPlanStoreMixin:
         plan = {
             **validated,
             "schema_version": "feedback-optimization-plan/v1",
-            "source_output_schema_version": validated.get("schema_version"),
             "optimization_plan_id": self._string(validated.get("optimization_plan_id")) or f"fop-{uuid.uuid4()}",
             "batch_id": batch_id,
             "created_at": self._string(validated.get("created_at")) or utc_now(),
@@ -425,7 +426,7 @@ class FeedbackBatchPlanStoreMixin:
                 validated.get("attribution_summaries") or self._batch_plan_attribution_summaries(input_json.get("attribution_outputs"))
             ),
             "optimization_plan_job_id": job["job_id"],
-            "generated_by": PROPOSAL_GENERATOR_PROFILE,
+            "generated_by": agent_job_spec("batch_plan").profile_name,
         }
         if input_json.get("regeneration_instruction") and not plan.get("regeneration_instruction"):
             plan["regeneration_instruction"] = input_json["regeneration_instruction"]

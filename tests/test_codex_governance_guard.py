@@ -526,6 +526,34 @@ def test_new_agent_output_schema_version_reference_fails(tmp_path: Path) -> None
     assert "new active agent output schema version reference: _SCHEMA_VERSION" in result.stdout
 
 
+def test_new_static_openapi_snapshot_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "docs" / "开放接口规范.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('{"openapi":"3.1.0"}\n', encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new active static OpenAPI snapshot: tracked OpenAPI JSON" in result.stdout
+
+
+def test_new_agent_output_schema_version_doc_reference_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / "docs" / "plan.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("expected_schema_version: feedback-optimization-plan-output/v1\n", encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "new active agent output schema version document reference: expected_schema_version" in result.stdout
+
+
 def test_default_scan_includes_scripts(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

@@ -188,7 +188,8 @@ export function buildBatchAttributionJobs(batch: FeedbackOptimizationBatchRecord
 export function attributionOutputFromJob(job: FeedbackAnalysisJobRecord): AttributionOutput | null {
   const output = job.validated_output_json || job.raw_output_json;
   if (!output || typeof output !== "object" || Array.isArray(output)) return null;
-  if ((output as Record<string, unknown>).schema_version !== "attribution-output/v1") return null;
+  const record = output as Record<string, unknown>;
+  if (typeof record.feedback_case_id !== "string" || typeof record.attribution_job_id !== "string") return null;
   return output as AttributionOutput;
 }
 

@@ -18,7 +18,15 @@ from pydantic import ValidationError
 from sqlalchemy import select, text
 
 from app.runtime.records.execution_records import ExecutionApplicationRecord
+from app.runtime.feedback_schemas import coerce_execution_plan_output_model
+from app.runtime.output_formatter import OutputFormatterResult
 from app.runtime.runtime_db import AgentJobModel
+
+
+def _execution_formatter_result(payload: dict) -> OutputFormatterResult:
+    output, error = coerce_execution_plan_output_model(payload)
+    assert output is not None, error
+    return OutputFormatterResult(output=output)
 
 
 def test_plan_task_target_policy_and_task_deduplicates(tmp_path):
@@ -70,7 +78,6 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -140,7 +147,6 @@ def test_execution_plan_stores_planned_diff_without_writing_workspace(
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -192,7 +198,6 @@ def test_complete_execution_job_rolls_back_when_task_update_fails(tmp_path, monk
         store.complete_execution_job(
             job["execution_job_id"],
             {
-                "schema_version": "execution-plan-output/v1",
                 "optimization_task_id": task["optimization_task_id"],
                 "execution_job_id": job["execution_job_id"],
                 "status": "ready",
@@ -243,6 +248,29 @@ def test_fail_execution_job_rolls_back_when_task_update_fails(tmp_path, monkeypa
     assert unchanged_task["status"] == "execution_planning"
 
 
+def test_execution_projection_failure_preserves_formatter_raw_output(tmp_path):
+    store, _ = _store(tmp_path)
+    task = _create_approved_task_for_target(store, "CLAUDE.md")
+    job = store.create_execution_job(task["optimization_task_id"])
+    raw_output = {
+        "_formatter": {"name": "dspy", "status": "failed", "error_type": "ValidationError"},
+        "raw_text": "reasoning only",
+    }
+
+    failed = store.fail_projected_agent_job(
+        job,
+        error_code="AGENT_RUNTIME_ERROR",
+        message="formatter failed",
+        raw_output_json=raw_output,
+    )
+    updated_task = store.find_task(task["optimization_task_id"])
+
+    assert failed["status"] == "failed"
+    assert failed["raw_output_json"] == raw_output
+    assert failed["error_json"]["error_code"] == "AGENT_RUNTIME_ERROR"
+    assert updated_task["status"] == "execution_failed"
+
+
 def test_complete_execution_job_rolls_back_when_batch_plan_task_update_fails(tmp_path, monkeypatch):
     store, _ = _store(tmp_path)
     batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
@@ -261,7 +289,6 @@ def test_complete_execution_job_rolls_back_when_batch_plan_task_update_fails(tmp
         store.complete_execution_job(
             job["execution_job_id"],
             {
-                "schema_version": "execution-plan-output/v1",
                 "optimization_task_id": task["optimization_task_id"],
                 "execution_job_id": job["execution_job_id"],
                 "status": "ready",
@@ -300,7 +327,6 @@ def test_execution_application_rolls_back_when_task_update_fails(tmp_path, monke
     ready_job = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -353,7 +379,6 @@ def test_execution_application_syncs_batch_plan_task(tmp_path):
     ready_job = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -404,7 +429,6 @@ def test_execution_application_rolls_back_when_batch_plan_task_update_fails(tmp_
     ready_job = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -494,7 +518,6 @@ def test_execution_plan_binds_expected_sha_from_target_context(tmp_path):
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -546,7 +569,6 @@ def test_execution_output_fills_system_fields_from_job_context(tmp_path):
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "execution_job_id": job["execution_job_id"],
             "status": "needs_human_review",
             "summary": "目标文件与提案意图不匹配，需要人工确认。",
@@ -575,7 +597,6 @@ def test_execution_plan_rejects_non_text_or_skipped_target(tmp_path):
     failed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -623,7 +644,6 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
         input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
         input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
         output = {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": input_payload["optimization_task_id"],
             "execution_job_id": input_payload["execution_job_id"],
             "status": "ready",
@@ -661,10 +681,10 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     class FakeFormatter:
-        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+        def format(self, *, job_type, raw_text, job_input):
             seen["formatter_job_type"] = job_type
             seen["formatter_raw_text"] = raw_text
-            return OutputFormatterResult(payload=seen["formatted_payload"])
+            return _execution_formatter_result(seen["formatted_payload"])
 
     from app.runtime.output_formatter import OutputFormatterResult
 
@@ -674,7 +694,7 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     updated_task = store.find_task(task["optimization_task_id"])
 
     assert seen["formatter_job_type"] == "execution"
-    assert "execution-plan-output/v1" in str(seen["formatter_raw_text"])
+    assert "追加配置读取要求" in str(seen["formatter_raw_text"])
     assert job.status == "completed"
     assert job.validated_output_json is not None
     assert job.validated_output_json["status"] == "ready"
@@ -723,7 +743,6 @@ def test_execution_optimizer_uses_deterministic_eval_plan_without_agent(tmp_path
 def test_execution_plan_output_normalizes_agent_friendly_fields():
     validated, error = validate_execution_plan_output(
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": "opt-1",
             "execution_job_id": "fbe-1",
             "status": "safe_to_apply",

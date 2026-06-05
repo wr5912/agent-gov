@@ -153,7 +153,6 @@ def test_case_evidence_and_job_outputs(tmp_path):
 
     assert completed["status"] == "completed"
     assert store.create_attribution_job(feedback_case["feedback_case_id"])["job_id"] == attribution_job["job_id"]
-    assert output["schema_version"] == "attribution-output/v1"
     assert output["actionability"] == "needs_human_analysis"
 
     batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
@@ -819,7 +818,6 @@ def test_batch_detail_refreshes_latest_task_execution_job(tmp_path):
     store.complete_execution_job(
         first["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task_id,
             "execution_job_id": first["execution_job_id"],
             "status": "needs_human_review",
@@ -833,7 +831,6 @@ def test_batch_detail_refreshes_latest_task_execution_job(tmp_path):
     store.complete_execution_job(
         second["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task_id,
             "execution_job_id": second["execution_job_id"],
             "status": "needs_human_review",
@@ -857,7 +854,7 @@ def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
 
-    reviewed_attribution = store.complete_attribution_job(attribution_job["job_id"], {"schema_version": "attribution-output/v1"})
+    reviewed_attribution = store.complete_attribution_job(attribution_job["job_id"], {})
     attribution_case = store.find_case(feedback_case["feedback_case_id"])
     reused_attribution = store.create_attribution_job(feedback_case["feedback_case_id"])
 
@@ -876,7 +873,7 @@ def test_schema_review_jobs_are_not_implicitly_recreated(tmp_path):
     store.complete_attribution_job(valid_attribution["job_id"], _attribution_output(valid_attribution))
     batch = store.ensure_single_case_optimization_batch(plan_case["feedback_case_id"])
     plan_job = store.create_batch_plan_job(batch["batch_id"])
-    reviewed_plan = store.complete_batch_plan_job(plan_job["job_id"], {"schema_version": "feedback-optimization-plan-output/v1"})
+    reviewed_plan = store.complete_batch_plan_job(plan_job["job_id"], {})
     reviewed_batch = store.find_optimization_batch(batch["batch_id"])
     reused_plan = store.create_batch_plan_job(batch["batch_id"])
 

@@ -6,17 +6,17 @@ import json
 import uuid
 from typing import Any, Optional
 
+from pydantic import BaseModel
 from sqlalchemy import select
 
-from ..agent_profiles import EXECUTION_OPTIMIZER_PROFILE
+from ..agent_job_types import agent_job_spec
 from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
-from ..feedback_schemas import validate_execution_plan_output
+from ..feedback_schemas import coerce_execution_plan_output_model, output_model_payload
 from ..records.execution_records import ExecutionApplicationRecord
 from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
-from ..schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION
 
 
 MAX_PLANNED_DIFF_INPUT_CHARS = 120_000
@@ -59,14 +59,14 @@ class FeedbackExecutionStoreMixin:
             baseline_version_id=baseline_version_id,
         )
         try:
+            spec = agent_job_spec("execution")
             job = self.create_agent_job(
                 job_id=job_id,
-                job_type="execution",
+                job_type=spec.job_type,
                 scope_kind="optimization_task",
                 scope_id=task_id,
-                profile_name=EXECUTION_OPTIMIZER_PROFILE,
+                profile_name=spec.profile_name,
                 input_payload=input_payload,
-                output_schema_version=EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
                 profile_version=profile_version,
             )
             self._attach_execution_job_to_task(task_id, job, status="execution_planning")
@@ -108,18 +108,31 @@ class FeedbackExecutionStoreMixin:
                 return None
         return self.get_execution_job(execution_job_id)
 
-    def complete_execution_job(self, execution_job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
+    def complete_execution_job(self, execution_job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
         job = self.get_execution_job(execution_job_id)
         if not job:
             return None
-        output = self._execution_output_with_job_context(raw_output, job)
-        validated, error = validate_execution_plan_output(output)
-        if not validated:
-            failed = self.fail_execution_job(execution_job_id, error_code="SCHEMA_VALIDATION_FAILED", message=error or "invalid execution output")
+        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
+        output = self._execution_output_with_job_context(raw_input, job)
+        output_model, error = coerce_execution_plan_output_model(output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_input
+        if not output_model:
+            failed = self.fail_execution_job(
+                execution_job_id,
+                error_code="SCHEMA_VALIDATION_FAILED",
+                message=error or "invalid execution output",
+                raw_output_json=raw_input,
+            )
             return failed
+        validated = output_model_payload(output_model)
         sanitized, sanitize_error = self._sanitize_execution_plan(validated, job)
         if sanitize_error:
-            failed = self.fail_execution_job(execution_job_id, error_code="EXECUTION_PLAN_UNSAFE", message=sanitize_error)
+            failed = self.fail_execution_job(
+                execution_job_id,
+                error_code="EXECUTION_PLAN_UNSAFE",
+                message=sanitize_error,
+                raw_output_json=raw_payload,
+            )
             return failed
         next_status = "completed" if sanitized.get("status") == "ready" else "needs_human_review"
         task = self.find_task(str(job["optimization_task_id"]))
@@ -127,7 +140,7 @@ class FeedbackExecutionStoreMixin:
             row = self._set_agent_job_json_row(
                 db,
                 execution_job_id,
-                raw_output_json=raw_output,
+                raw_output_json=raw_payload,
                 validated_output_json=sanitized,
                 error_json=None,
             )
@@ -152,17 +165,27 @@ class FeedbackExecutionStoreMixin:
         output["baseline_agent_version_id"] = self._string(output.get("baseline_agent_version_id")) or self._string(job.get("baseline_agent_version_id"))
         return output
 
-    def fail_execution_job(self, execution_job_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
+    def fail_execution_job(
+        self,
+        execution_job_id: str,
+        *,
+        error_code: str,
+        message: str,
+        raw_output_json: Optional[JsonObject] = None,
+    ) -> Optional[JsonObject]:
         error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "execution_job_id": execution_job_id}
         job = self.get_execution_job(execution_job_id)
         if not job:
             return None
         task = self.find_task(str(job["optimization_task_id"]))
         with self.Session.begin() as db:
+            json_fields: dict[str, JsonObject] = {"error_json": error_payload}
+            if raw_output_json is not None:
+                json_fields["raw_output_json"] = raw_output_json
             row = self._set_agent_job_json_row(
                 db,
                 execution_job_id,
-                error_json=error_payload,
+                **json_fields,
             )
             if not row:
                 return None
@@ -329,7 +352,6 @@ class FeedbackExecutionStoreMixin:
             },
         }
         return {
-            "schema_version": EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
             "optimization_task_id": job["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",

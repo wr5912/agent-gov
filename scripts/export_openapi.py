@@ -9,7 +9,11 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export the FastAPI OpenAPI schema to a JSON file.")
-    parser.add_argument("--output", default="docs/开放接口规范.json", help="Output path for the generated OpenAPI JSON.")
+    parser.add_argument(
+        "--output",
+        default="/tmp/claude-agent-runtime-openapi.json",
+        help="Output path for the generated OpenAPI JSON.",
+    )
     args = parser.parse_args()
 
     project_root = Path(__file__).resolve().parents[1]

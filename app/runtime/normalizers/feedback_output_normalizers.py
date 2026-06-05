@@ -3,12 +3,6 @@ from __future__ import annotations
 import json
 
 from ..json_types import JsonObject
-from ..schema_versions import (
-    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
-    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
-)
 from .feedback_output_records import (
     NormalizedAttributionOutput,
     NormalizedAttributionSummary,
@@ -169,7 +163,6 @@ def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObje
     normalized: JsonObject = dict(payload)
     if not normalized.get("optimization_plan_id") and normalized.get("plan_id"):
         normalized["optimization_plan_id"] = str(normalized["plan_id"])
-    normalized.setdefault("schema_version", FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION)
     normalized["status"] = _normalize_plan_status(normalized.get("status"))
     normalized["confidence"] = _normalize_confidence(normalized.get("confidence"))
     normalized["actionability"] = _normalize_actionability(normalized.get("actionability"))
@@ -498,7 +491,6 @@ def normalize_execution_plan_output(payload: JsonObject) -> JsonObject:
 
 def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonObject:
     normalized: JsonObject = dict(payload)
-    normalized.setdefault("schema_version", FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION)
     if "eval_cases" not in normalized and isinstance(normalized.get("eval_case"), dict):
         normalized["eval_cases"] = [normalized["eval_case"]]
     cases: list[NormalizedGeneratedEvalCase] = []
@@ -506,7 +498,7 @@ def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonO
         if not isinstance(item, dict):
             continue
         case = dict(item)
-        case.setdefault("schema_version", FEEDBACK_EVAL_CASE_SCHEMA_VERSION)
+        case.setdefault("schema_version", "feedback-eval-case/v1")
         case["status"] = _normalize_eval_case_status(case.get("status"))
         case["asset_layer"] = str(case.get("asset_layer") or "candidate")
         case["promotion_status"] = str(case.get("promotion_status") or ("approved" if case["status"] == "active" else "candidate"))
@@ -531,7 +523,6 @@ def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonO
 
 def normalize_regression_impact_analysis_output(payload: JsonObject) -> JsonObject:
     normalized: JsonObject = dict(payload)
-    normalized.setdefault("schema_version", REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION)
     normalized["gate_result"] = normalized.get("gate_result") if isinstance(normalized.get("gate_result"), dict) else {}
     normalized["impacted_assets"] = _normalize_summary_items(normalized.get("impacted_assets"))
     normalized["recommendations"] = _string_list(normalized.get("recommendations"))

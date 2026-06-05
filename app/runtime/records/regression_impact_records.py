@@ -12,10 +12,7 @@ from .base import StrictRuntimeRecord
 
 
 RegressionImpactAnalysisStatus = Literal["pending", "completed", "needs_human_review", "failed"]
-RegressionImpactAnalysisSchemaVersion = Literal[
-    "regression-impact-analysis/v1",
-    "regression-impact-analysis-output/v1",
-]
+RegressionImpactAnalysisSchemaVersion = Literal["regression-impact-analysis/v1"]
 
 
 class RegressionImpactedAssetRecord(StrictRuntimeRecord):

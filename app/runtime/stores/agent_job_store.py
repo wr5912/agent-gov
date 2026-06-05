@@ -4,11 +4,14 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from pydantic import BaseModel
 from sqlalchemy import select, update
 
+from ..agent_job_types import AgentJobType, coerce_agent_job_type
 from ..feedback_schemas import (
-    validate_feedback_eval_case_generation_output,
-    validate_regression_impact_analysis_output,
+    coerce_feedback_eval_case_generation_output_model,
+    coerce_regression_impact_analysis_output_model,
+    output_model_payload,
 )
 from ..runtime_db import (
     AgentJobModel,
@@ -19,7 +22,6 @@ from ..runtime_db import (
 from ..records.agent_job_records import AgentJobRecord
 from ..json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, apply_regression_impact_analysis_record
-from ..schema_versions import FEEDBACK_EVAL_CASE_SCHEMA_VERSION
 
 
 _UNSET = object()
@@ -37,7 +39,6 @@ class AgentJobStoreMixin:
         scope_id: str,
         profile_name: str,
         input_payload: JsonObject,
-        output_schema_version: str,
         input_path: Optional[str] = None,
         profile_version: Optional[JsonObject] = None,
         status: str = "queued",
@@ -60,7 +61,6 @@ class AgentJobStoreMixin:
             error_path=f"sqlite://agent_jobs/{job_id}/error_json",
             runtime_version=self.runtime_version,
             schema_version=f"{job_type}-agent-job/v1",
-            output_schema_version=output_schema_version,
             timeout_seconds=300,
             retry_count=0,
             profile_version_json=profile_version,
@@ -152,24 +152,27 @@ class AgentJobStoreMixin:
                 timed_out_ids.append(row.job_id)
         timed_out = [job for job in (self.get_agent_job(job_id) for job_id in timed_out_ids) if job]
         for job in timed_out:
-            if job.get("job_type") == "attribution":
+            if job.get("job_type") == AgentJobType.ATTRIBUTION:
                 self._sync_attribution_agent_job_to_batches(job, job)
         return timed_out
 
-    def complete_projected_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
-        job_type = str(job.get("job_type") or "")
+    def complete_projected_agent_job(self, job: JsonObject, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
         job_id = str(job.get("job_id") or "")
-        if job_type == "attribution":
+        try:
+            job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
+        except ValueError:
+            return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job.get('job_type')}")
+        if job_type == AgentJobType.ATTRIBUTION:
             projected = self.complete_attribution_job(job_id, raw_output)
             self._sync_attribution_agent_job_to_batches(job, projected)
             return projected
-        if job_type == "batch_plan":
+        if job_type == AgentJobType.BATCH_PLAN:
             return self.complete_batch_plan_job(job_id, raw_output)
-        if job_type == "execution":
+        if job_type == AgentJobType.EXECUTION:
             return self.complete_execution_job(job_id, raw_output)
-        if job_type == "eval_case_generation":
+        if job_type == AgentJobType.EVAL_CASE_GENERATION:
             return self._complete_eval_case_generation_agent_job(job, raw_output)
-        if job_type == "regression_impact_analysis":
+        if job_type == AgentJobType.REGRESSION_IMPACT_ANALYSIS:
             return self._complete_regression_impact_agent_job(job, raw_output)
         return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job_type}")
 
@@ -181,16 +184,19 @@ class AgentJobStoreMixin:
         message: str,
         raw_output_json: Optional[JsonObject] = None,
     ) -> Optional[JsonObject]:
-        job_type = str(job.get("job_type") or "")
         job_id = str(job.get("job_id") or "")
-        if job_type in {"attribution", "batch_plan"}:
+        try:
+            job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
+        except ValueError:
+            return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job.get('job_type')}", raw_output_json=raw_output_json)
+        if job_type in {AgentJobType.ATTRIBUTION, AgentJobType.BATCH_PLAN}:
             failed = self.fail_job(job_id, error_code=error_code, message=message, raw_output_json=raw_output_json)
-            if job_type == "attribution":
+            if job_type == AgentJobType.ATTRIBUTION:
                 self._sync_attribution_agent_job_to_batches(job, failed)
             return failed
-        elif job_type == "execution":
-            return self.fail_execution_job(job_id, error_code=error_code, message=message)
-        elif job_type == "regression_impact_analysis":
+        elif job_type == AgentJobType.EXECUTION:
+            return self.fail_execution_job(job_id, error_code=error_code, message=message, raw_output_json=raw_output_json)
+        elif job_type == AgentJobType.REGRESSION_IMPACT_ANALYSIS:
             self._fail_regression_impact_projection(job, error_code=error_code, message=message)
         return self.fail_agent_job(job_id, error_code=error_code, message=message, raw_output_json=raw_output_json)
 
@@ -259,40 +265,45 @@ class AgentJobStoreMixin:
             self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
         return self.get_agent_job(job_id)
 
-    def _complete_eval_case_generation_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
-        validated, error = validate_feedback_eval_case_generation_output(raw_output)
-        if not validated:
+    def _complete_eval_case_generation_agent_job(self, job: JsonObject, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
+        output_model, error = coerce_feedback_eval_case_generation_output_model(raw_output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_output
+        if not output_model:
             return self._complete_agent_job(
                 str(job["job_id"]),
-                raw_output_json=raw_output,
+                raw_output_json=raw_payload,
                 error_json={"error_code": "SCHEMA_VALIDATION_FAILED", "message": error or "invalid eval case generation output"},
                 status="needs_human_review",
             )
+        validated = output_model_payload(output_model)
         projected = self._project_eval_case_generation(job, validated)
         return self._complete_agent_job(
             str(job["job_id"]),
-            raw_output_json=raw_output,
+            raw_output_json=raw_payload,
             validated_output_json=projected,
             error_json=None,
             status="completed" if projected.get("status") == "completed" else "needs_human_review",
         )
 
-    def _complete_regression_impact_agent_job(self, job: JsonObject, raw_output: JsonObject) -> Optional[JsonObject]:
-        output = dict(raw_output)
+    def _complete_regression_impact_agent_job(self, job: JsonObject, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
+        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else dict(raw_output)
+        output = dict(raw_input)
         output["eval_run_id"] = output.get("eval_run_id") or job.get("scope_id")
-        validated, error = validate_regression_impact_analysis_output(output)
-        if not validated:
+        output_model, error = coerce_regression_impact_analysis_output_model(output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_input
+        if not output_model:
             self._fail_regression_impact_projection(job, error_code="SCHEMA_VALIDATION_FAILED", message=error or "invalid impact output")
             return self._complete_agent_job(
                 str(job["job_id"]),
-                raw_output_json=raw_output,
+                raw_output_json=raw_payload,
                 error_json={"error_code": "SCHEMA_VALIDATION_FAILED", "message": error or "invalid impact output"},
                 status="needs_human_review",
             )
+        validated = output_model_payload(output_model)
         projected = self._project_regression_impact(job, validated)
         return self._complete_agent_job(
             str(job["job_id"]),
-            raw_output_json=raw_output,
+            raw_output_json=raw_payload,
             validated_output_json=projected,
             error_json=None,
             status="completed" if projected.get("status") == "completed" else "needs_human_review",
@@ -421,7 +432,7 @@ class AgentJobStoreMixin:
 
     def _eval_case_payload_from_agent(self, item: JsonObject, job_input: JsonObject, now: str) -> JsonObject:
         payload = dict(item)
-        payload["schema_version"] = payload.get("schema_version") or FEEDBACK_EVAL_CASE_SCHEMA_VERSION
+        payload["schema_version"] = payload.get("schema_version") or "feedback-eval-case/v1"
         payload["eval_case_id"] = self._string(payload.get("eval_case_id")) or f"evc-{uuid.uuid4()}"
         payload["created_at"] = self._string(payload.get("created_at")) or now
         payload["updated_at"] = now

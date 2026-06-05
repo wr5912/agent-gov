@@ -20,10 +20,24 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
+from app.runtime.feedback_schemas import coerce_attribution_output_model, coerce_feedback_optimization_plan_output_model
 from app.runtime.json_types import JsonObject
+from app.runtime.output_formatter import OutputFormatterResult
 from app.runtime.runtime_db import EvalRunItemModel
 from app.runtime.schemas import ChatResponse
 from app.services.feedback_eval_runner import FeedbackEvalRunner
+
+
+def _formatter_result(job_type: object, payload: JsonObject) -> OutputFormatterResult:
+    job_type_value = getattr(job_type, "value", job_type)
+    if job_type_value == "attribution":
+        output, error = coerce_attribution_output_model(payload)
+    elif job_type_value == "batch_plan":
+        output, error = coerce_feedback_optimization_plan_output_model(payload)
+    else:
+        raise AssertionError(f"unexpected formatter job type: {job_type}")
+    assert output is not None, error
+    return OutputFormatterResult(output=output)
 
 
 def _insert_eval_case(store: FeedbackStore, eval_case_id: str, prompt: str) -> JsonObject:
@@ -100,7 +114,6 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": feedback_case["feedback_case_id"],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -584,7 +597,6 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
         input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
         input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
         output = {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": input_payload["feedback_case_id"],
             "attribution_job_id": input_payload["job_id"],
             "status": "needs_human_review",
@@ -618,10 +630,10 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     class FakeFormatter:
-        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+        def format(self, *, job_type, raw_text, job_input):
             seen["formatter_job_type"] = job_type
             seen["formatter_raw_text"] = raw_text
-            return OutputFormatterResult(payload=seen["formatted_payload"])
+            return _formatter_result(job_type, seen["formatted_payload"])
 
     from app.runtime.output_formatter import OutputFormatterResult
 
@@ -638,7 +650,6 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert seen["formatter_job_type"] == "attribution"
     assert "tool_usage_deficiency" in str(seen["formatter_raw_text"])
     assert attribution_job.status == "completed"
-    assert output["schema_version"] == "attribution-output/v1"
     assert output["feedback_case_id"] == feedback_case["feedback_case_id"]
     assert output["problem_type"] == "tool_data_quality"
     assert output["optimization_object_type"] == "main_agent_claude_md"
@@ -690,12 +701,11 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
         )
 
     class FakeFormatter:
-        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+        def format(self, *, job_type, raw_text, job_input):
             seen["job_type"] = job_type
             seen["raw_text"] = raw_text
             seen["job_input"] = job_input
             payload = {
-                "schema_version": "attribution-output/v1",
                 "feedback_case_id": job_input["feedback_case_id"],
                 "attribution_job_id": job_input["job_id"],
                 "status": "needs_human_review",
@@ -709,7 +719,7 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
                 "rationale": "归因分析智能体只输出了证据片段，格式化器保守转为需人工复核。",
                 "recommended_next_step": "needs_human_review",
             }
-            return OutputFormatterResult(payload=payload)
+            return _formatter_result(job_type, payload)
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     runtime.output_formatter = FakeFormatter()
@@ -721,9 +731,7 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
     assert "feedback.json" in str(seen["raw_text"])
     assert attribution_job.status == "completed"
     assert attribution_job.raw_output_json is not None
-    assert attribution_job.raw_output_json["schema_version"] == "attribution-output/v1"
     assert "_formatter" not in attribution_job.raw_output_json
-    assert output["schema_version"] == "attribution-output/v1"
     assert output["recommended_next_step"] == "needs_human_review"
     assert store.find_case(feedback_case["feedback_case_id"])["status"] == "pending_proposal"
 
@@ -741,7 +749,6 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
     store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": feedback_case["feedback_case_id"],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -766,7 +773,6 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
         prompt_text = prompt_items[0]["message"]["content"]
         input_payload = json.loads(prompt_text.split("optimization_plan_input_json:\n", 1)[1])
         output = {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": input_payload["batch_id"],
             "status": "needs_human_review",
             "title": "不能生成可执行优化方案",
@@ -817,10 +823,10 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     class FakeFormatter:
-        def format(self, *, job_type, raw_text, job_input, expected_schema_version):
+        def format(self, *, job_type, raw_text, job_input):
             seen["formatter_job_type"] = job_type
             seen["formatter_raw_text"] = raw_text
-            return OutputFormatterResult(payload=seen["formatted_payload"])
+            return _formatter_result(job_type, seen["formatted_payload"])
 
     from app.runtime.output_formatter import OutputFormatterResult
 
@@ -837,7 +843,7 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
     assert updated.optimization_plan_job.status == "completed"
     assert output["schema_version"] == "feedback-optimization-plan/v1"
     assert updated.optimization_plan_job.raw_output_json is not None
-    assert updated.optimization_plan_job.raw_output_json["schema_version"] == "feedback-optimization-plan-output/v1"
+    assert updated.optimization_plan_job.raw_output_json["batch_id"] == batch["batch_id"]
 
 
 def test_sqlite_store_does_not_create_legacy_runtime_dirs(tmp_path):

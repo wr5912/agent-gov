@@ -2,35 +2,26 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import Any, Generic, TypeVar
+
+from .litellm_defaults import configure_litellm_import_defaults
+
+configure_litellm_import_defaults()
 
 import dspy
 from pydantic import BaseModel
 
-from .feedback_schemas import (
-    AttributionOutput,
-    ExecutionPlanOutput,
-    FeedbackEvalCaseGenerationOutput,
-    FeedbackOptimizationPlanOutput,
-    RegressionImpactAnalysisOutput,
-)
-from .schema_versions import (
-    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
-    EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
-)
+from .agent_job_types import AgentJobType, agent_job_spec, coerce_agent_job_type
 from .json_types import JsonObject
 from .settings import AppSettings
 
 
-FormatterJobType = Literal["attribution", "batch_plan", "execution", "eval_case_generation", "regression_impact_analysis"]
+TOutput = TypeVar("TOutput", bound=BaseModel)
 
 
 @dataclass(frozen=True)
-class OutputFormatterResult:
-    payload: JsonObject
+class OutputFormatterResult(Generic[TOutput]):
+    output: TOutput
 
 
 class OutputFormatterError(RuntimeError):
@@ -40,7 +31,6 @@ class OutputFormatterError(RuntimeError):
         self,
         *,
         job_type: str,
-        expected_schema_version: str,
         raw_text: str,
         cause: Exception,
     ) -> None:
@@ -50,7 +40,6 @@ class OutputFormatterError(RuntimeError):
                 "name": "dspy",
                 "status": "failed",
                 "job_type": job_type,
-                "expected_schema_version": expected_schema_version,
                 "error_type": cause.__class__.__name__,
                 "error_message": _truncate(str(cause), 4000),
             },
@@ -60,7 +49,7 @@ class OutputFormatterError(RuntimeError):
 
 
 class DSPyOutputFormatter:
-    """Convert free-form feedback Agent output into the runtime schemas.
+    """Convert free-form feedback Agent output into typed Pydantic output models.
 
     Feedback jobs treat formatter availability as a runtime requirement instead
     of silently falling back to placeholder outputs.
@@ -77,28 +66,29 @@ class DSPyOutputFormatter:
     def format(
         self,
         *,
-        job_type: FormatterJobType,
+        job_type: AgentJobType | str,
         raw_text: str,
         job_input: JsonObject,
-        expected_schema_version: str,
-    ) -> OutputFormatterResult:
+    ) -> OutputFormatterResult[BaseModel]:
         if not self.enabled():
             raise RuntimeError("DSPy output formatter is disabled")
-        output_model = _output_model_for_job_type(job_type)
-        metadata = _formatter_metadata_payload(job_type, expected_schema_version, job_input)
+        normalized_job_type = coerce_agent_job_type(job_type)
+        metadata = _formatter_metadata_payload(normalized_job_type, job_input)
         try:
             with self._langfuse_scope(metadata) as observation:
                 try:
-                    payload = self._format_with_dspy(
-                        job_type=job_type,
+                    output = self._format_with_dspy(
+                        job_type=normalized_job_type,
                         raw_text=raw_text,
                         job_input=job_input,
-                        output_model=output_model,
+                        output_model=agent_job_spec(normalized_job_type).output_model,
                     )
-                    payload.setdefault("schema_version", expected_schema_version)
                     self._update_observation(
                         observation,
-                        output={"status": "completed", "schema_version": payload.get("schema_version")},
+                        output={
+                            "status": "completed",
+                            "output_model": output.__class__.__name__,
+                        },
                     )
                 except Exception as exc:
                     self._update_observation(
@@ -112,21 +102,20 @@ class DSPyOutputFormatter:
                     raise
         except Exception as exc:
             raise OutputFormatterError(
-                job_type=job_type,
-                expected_schema_version=expected_schema_version,
+                job_type=normalized_job_type.value,
                 raw_text=raw_text,
                 cause=exc,
             ) from exc
-        return OutputFormatterResult(payload=payload)
+        return OutputFormatterResult(output=output)
 
     def _format_with_dspy(
         self,
         *,
-        job_type: FormatterJobType,
+        job_type: AgentJobType,
         raw_text: str,
         job_input: JsonObject,
         output_model: type[BaseModel],
-    ) -> JsonObject:
+    ) -> BaseModel:
         self._instrument_dspy()
         signature = _signature_for_job_type(job_type)
         predictor = dspy.Predict(signature)
@@ -139,7 +128,7 @@ class DSPyOutputFormatter:
                         raw_agent_output=raw_text,
                         job_input_json=json.dumps(job_input, ensure_ascii=False, indent=2),
                     )
-                return _coerce_payload(getattr(result, "formatted_output"), output_model)
+                return _coerce_output_model(getattr(result, "formatted_output"), output_model)
             except Exception as exc:
                 last_error = exc
         if last_error:
@@ -198,105 +187,12 @@ class DSPyOutputFormatter:
             self.langfuse.update_observation(observation, **kwargs)
 
 
-def _output_model_for_job_type(job_type: FormatterJobType) -> type[BaseModel]:
-    if job_type == "attribution":
-        return AttributionOutput
-    if job_type == "batch_plan":
-        return FeedbackOptimizationPlanOutput
-    if job_type == "execution":
-        return ExecutionPlanOutput
-    if job_type == "eval_case_generation":
-        return FeedbackEvalCaseGenerationOutput
-    if job_type == "regression_impact_analysis":
-        return RegressionImpactAnalysisOutput
-    raise RuntimeError(f"Unsupported formatter job type: {job_type}")
+def _output_model_for_job_type(job_type: AgentJobType | str) -> type[BaseModel]:
+    return agent_job_spec(job_type).output_model
 
 
-class AttributionFormattingSignature(dspy.Signature):
-    """把归因分析智能体的自然语言或片段 JSON 转换为目标输出 schema。
-
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息；证据不足时输出
-    insufficient_information、needs_human_analysis 或 needs_human_review。
-    不要补充原文和证据没有支持的业务事实。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="归因分析智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="归因 job 输入，包含 feedback_case_id、job_id、证据路径等。")
-    formatted_output: AttributionOutput = dspy.OutputField(
-        desc=f"符合 {ATTRIBUTION_OUTPUT_SCHEMA_VERSION} 的完整对象。"
-    )
-
-
-class BatchPlanFormattingSignature(dspy.Signature):
-    """把批次优化方案生成智能体的输出转换为目标输出 schema。
-
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。可执行任务必须放在
-    tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；能定位到外部系统、
-    工具/API 和具体问题描述的项必须生成 external_webhook 任务；不能定位到具体对象、
-    接口、工具或问题 ID 的项才放入 blocked_items。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="批次优化方案 job 输入，包含 batch、归因输出、回归用例和目标策略。")
-    formatted_output: FeedbackOptimizationPlanOutput = dspy.OutputField(
-        desc=f"符合 {FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION} 的完整对象。"
-    )
-
-
-class ExecutionFormattingSignature(dspy.Signature):
-    """把执行优化智能体的自然语言或片段 JSON 转换为目标输出 schema。
-
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。只能基于 target_file_contexts
-    为 target_paths 生成 append_text、replace_file、create_file 或 noop 操作；无法安全执行时输出 needs_human_review。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="执行 job 输入，包含 optimization_task_id、execution_job_id、target_paths 和 proposal。")
-    formatted_output: ExecutionPlanOutput = dspy.OutputField(
-        desc=f"符合 {EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION} 的完整对象。"
-    )
-
-
-class EvalCaseGenerationFormattingSignature(dspy.Signature):
-    """把 eval-case-governor 的自然语言或片段 JSON 转换为评估用例生成输出 schema。
-
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。每个 eval case 必须包含
-    prompt、expected_behavior、checks_json 和 labels；证据不足时输出 no_action_reason。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="eval-case-governor 原始输出。")
-    job_input_json: str = dspy.InputField(desc="评估用例生成 job 输入，包含反馈来源、归因和建议上下文。")
-    formatted_output: FeedbackEvalCaseGenerationOutput = dspy.OutputField(
-        desc=f"符合 {FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION} 的完整对象。"
-    )
-
-
-class RegressionImpactFormattingSignature(dspy.Signature):
-    """把 regression-impact-analyzer 的自然语言或片段 JSON 转换为回归影响分析输出 schema。
-
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。必须总结 gate_result、
-    impacted_assets 和 recommendations；不确定时输出 needs_human_review。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="regression-impact-analyzer 原始输出。")
-    job_input_json: str = dspy.InputField(desc="回归影响分析 job 输入，包含 eval_run、gate_result 和 item 快照。")
-    formatted_output: RegressionImpactAnalysisOutput = dspy.OutputField(
-        desc=f"符合 {REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION} 的完整对象。"
-    )
-
-
-def _signature_for_job_type(job_type: FormatterJobType) -> type[Any]:
-    if job_type == "attribution":
-        return AttributionFormattingSignature
-    if job_type == "batch_plan":
-        return BatchPlanFormattingSignature
-    if job_type == "execution":
-        return ExecutionFormattingSignature
-    if job_type == "eval_case_generation":
-        return EvalCaseGenerationFormattingSignature
-    if job_type == "regression_impact_analysis":
-        return RegressionImpactFormattingSignature
-    raise RuntimeError(f"Unsupported formatter job type: {job_type}")
+def _signature_for_job_type(job_type: AgentJobType | str) -> type[dspy.Signature]:
+    return agent_job_spec(job_type).formatter_signature
 
 
 def _dspy_lm_context(lm: Any) -> Any:
@@ -307,27 +203,26 @@ def _dspy_lm_context(lm: Any) -> Any:
     return _NullContext()
 
 
-def _coerce_payload(value: Any, output_model: type[BaseModel]) -> JsonObject:
+def _coerce_output_model(value: Any, output_model: type[TOutput]) -> TOutput:
     if isinstance(value, output_model):
-        return cast(JsonObject, value.model_dump(mode="json"))
+        return value
     if isinstance(value, BaseModel):
-        return cast(JsonObject, output_model.model_validate(value.model_dump(mode="json")).model_dump(mode="json"))
+        return output_model.model_validate(value.model_dump(mode="json"))
     if isinstance(value, dict):
-        return cast(JsonObject, output_model.model_validate(value).model_dump(mode="json"))
+        return output_model.model_validate(value)
     if isinstance(value, str):
-        return cast(JsonObject, output_model.model_validate(json.loads(value)).model_dump(mode="json"))
+        return output_model.model_validate(json.loads(value))
     raise TypeError(f"Unsupported DSPy formatter output: {type(value).__name__}")
 
 
 def _formatter_metadata_payload(
-    job_type: FormatterJobType,
-    expected_schema_version: str,
+    job_type: AgentJobType,
     job_input: JsonObject,
 ) -> dict[str, str]:
     metadata = {
         "component": "dspy_output_formatter",
-        "job_type": job_type,
-        "expected_schema_version": expected_schema_version,
+        "job_type": job_type.value,
+        "output_model": agent_job_spec(job_type).output_model.__name__,
     }
     for key in (
         "job_id",

@@ -593,7 +593,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 | --- | --- | --- |
 | 治理硬门 | `.venv/bin/python scripts/check_codex_governance.py --mode fail` | 无 `FAIL` |
 | 后端全量 | `make test` | pytest 全部通过 |
-| OpenAPI 导出 | `.venv/bin/python scripts/export_openapi.py` | `docs/开放接口规范.json` 与代码一致 |
+| OpenAPI 导出 | `.venv/bin/python scripts/export_openapi.py` | 运行时 `/openapi.json` 或临时导出 OpenAPI JSON 与代码一致 |
 | 前端类型 | `pnpm --dir frontend generate:api-types` | `frontend/src/types/api.ts` 已同步 |
 | 前端构建 | `pnpm --dir frontend build` | TypeScript 和 Vite build 通过 |
 | 浏览器 smoke | `pnpm --dir frontend verify:feedback-browser` | console error、failed request、4xx/5xx 为 0 |

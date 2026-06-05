@@ -129,7 +129,6 @@ class AgentJobQueueStoreMixin:
             scope_id=scope_id,
             profile_name=spec.profile_name,
             input_payload=input_payload,
-            output_schema_version=spec.output_schema_version,
             profile_version=profile_version,
         )
         if batch_id:
@@ -167,7 +166,6 @@ class AgentJobQueueStoreMixin:
             scope_id=eval_run_id,
             profile_name=spec.profile_name,
             input_payload=input_payload,
-            output_schema_version=spec.output_schema_version,
             profile_version=profile_version,
         )
         self._upsert_pending_regression_impact(eval_run_id, job)
@@ -194,7 +192,6 @@ class AgentJobQueueStoreMixin:
             scope_id=scope_id,
             profile_name=str(domain_job.get("profile_name") or spec.profile_name),
             input_payload=domain_job.get("input_json") if isinstance(domain_job.get("input_json"), dict) else {},
-            output_schema_version=spec.output_schema_version,
             input_path=str(domain_job.get("input_path") or ""),
             profile_version=profile_version or domain_job.get("profile_version"),
             status=status if reused_existing(domain_job) else "queued",
@@ -220,7 +217,6 @@ class AgentJobQueueStoreMixin:
             scope_id=str(domain_job["optimization_task_id"]),
             profile_name=str(domain_job.get("profile_name") or spec.profile_name),
             input_payload=domain_job.get("input_json") if isinstance(domain_job.get("input_json"), dict) else {},
-            output_schema_version=spec.output_schema_version,
             input_path=str(domain_job.get("input_path") or ""),
             profile_version=profile_version or domain_job.get("profile_version"),
             status=agent_status if reused_existing(domain_job) else "queued",

@@ -192,7 +192,6 @@ class NormalizedProblemTypeValue(StrictRuntimeRecord):
 
 
 class NormalizedAttributionOutput(NormalizedOutputRecord):
-    schema_version: Optional[str] = None
     feedback_case_id: JsonValue = None
     attribution_job_id: JsonValue = None
     status: JsonValue = None
@@ -208,7 +207,6 @@ class NormalizedAttributionOutput(NormalizedOutputRecord):
 
 
 class NormalizedProposalOutput(NormalizedOutputRecord):
-    schema_version: Optional[str] = None
     feedback_case_id: JsonValue = None
     proposal_job_id: JsonValue = None
     status: JsonValue = None
@@ -294,7 +292,6 @@ class NormalizedBlockedOptimizationItem(NormalizedOutputRecord):
 
 
 class NormalizedFeedbackOptimizationPlanOutput(NormalizedOutputRecord):
-    schema_version: str
     batch_id: JsonValue = None
     optimization_plan_id: JsonValue = None
     created_at: JsonValue = None
@@ -323,7 +320,6 @@ class NormalizedFeedbackOptimizationPlanOutput(NormalizedOutputRecord):
 
 
 class NormalizedExecutionPlanOutput(NormalizedOutputRecord):
-    schema_version: JsonValue = None
     optimization_task_id: JsonValue = None
     execution_job_id: JsonValue = None
     status: str
@@ -336,7 +332,6 @@ class NormalizedExecutionPlanOutput(NormalizedOutputRecord):
 
 
 class NormalizedFeedbackEvalCaseGenerationOutput(NormalizedOutputRecord):
-    schema_version: str
     job_id: JsonValue = None
     scope_kind: JsonValue = None
     scope_id: JsonValue = None
@@ -347,7 +342,6 @@ class NormalizedFeedbackEvalCaseGenerationOutput(NormalizedOutputRecord):
 
 
 class NormalizedRegressionImpactAnalysisOutput(NormalizedOutputRecord):
-    schema_version: str
     impact_analysis_id: JsonValue = None
     eval_run_id: JsonValue = None
     gate_result: JsonObject = Field(default_factory=dict)

@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from app.runtime.errors import ConflictError
+from app.runtime.feedback_schemas import FeedbackOptimizationPlanOutput
 from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
 
 
@@ -136,7 +137,6 @@ def test_batch_projection_rejects_invalid_persisted_status(tmp_path):
 def test_feedback_optimization_plan_output_requires_actionable_external_context():
     validated, error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-test",
             "status": "pending_approval",
             "title": "外部服务优化方案",
@@ -179,7 +179,6 @@ def test_feedback_optimization_plan_output_requires_actionable_external_context(
 def test_feedback_optimization_plan_output_promotes_actionable_blocked_external_item():
     validated, error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-test",
             "status": "pending_approval",
             "title": "漏洞数据源优化方案",
@@ -236,7 +235,6 @@ def test_feedback_optimization_plan_output_promotes_actionable_blocked_external_
 def test_feedback_optimization_plan_output_promotes_blocked_item_with_plan_context():
     validated, error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-test",
             "status": "pending_approval",
             "title": "漏洞数据查询优化方案",
@@ -277,7 +275,6 @@ def test_feedback_optimization_plan_output_promotes_blocked_item_with_plan_conte
 def test_feedback_optimization_plan_output_keeps_generic_blocked_external_item():
     validated, error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-test",
             "status": "pending_approval",
             "title": "外部问题优化方案",
@@ -344,7 +341,6 @@ def test_batch_plan_task_projection_normalizes_evidence_refs(tmp_path):
 def test_feedback_optimization_plan_output_normalizes_string_attribution_summaries():
     validated, error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-test",
             "status": "ready_for_execution",
             "title": "漏洞数据查询优化方案",
@@ -395,8 +391,8 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     async def fake_run_profile_json(**kwargs):
         seen.update(kwargs)
         job_input = kwargs["job_input"]
-        return {
-            "schema_version": "feedback-optimization-plan-output/v1",
+        return FeedbackOptimizationPlanOutput.model_validate(
+            {
             "batch_id": job_input["batch_id"],
             "status": "pending_approval",
             "title": "补强工作区配置核查",
@@ -447,7 +443,8 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
                 }
             ],
             "blocked_items": [],
-        }
+            }
+        )
 
     monkeypatch.setattr(runtime, "_run_profile_json", fake_run_profile_json)
 
@@ -459,7 +456,6 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     job = store.get_job(updated.optimization_plan_job_id)
 
     assert seen["profile_name"] == "proposal-generator"
-    assert seen["expected_schema_version"] == "feedback-optimization-plan-output/v1"
     assert seen["job_type"] == "batch_plan"
     assert "optimization_plan_input_json" in seen["prompt"]
     assert seen["job_input"]["regeneration_instruction"] == "优先保持指令简洁"
@@ -468,7 +464,6 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert job["status"] == "completed"
     assert plan.generated_by == "proposal-generator"
     assert plan.status == "pending_approval"
-    assert plan.source_output_schema_version == "feedback-optimization-plan-output/v1"
     assert plan_task.title == "补充工作区配置核查指令"
     assert plan_task.target_path == "CLAUDE.md"
     assert plan_task.task_context.target_file == "CLAUDE.md"
@@ -559,7 +554,6 @@ def test_batch_plan_external_task_notifies_selected_webhook(tmp_path):
     completed = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": batch["feedback_case_ids"][0],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -641,7 +635,6 @@ def test_batch_plan_blocks_external_task_without_specific_object_context(tmp_pat
     completed = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": batch["feedback_case_ids"][0],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -675,7 +668,6 @@ def test_batch_plan_puts_non_executable_results_in_blocked_items(tmp_path):
     completed = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": batch["feedback_case_ids"][0],
             "attribution_job_id": attribution_job["job_id"],
             "status": "needs_human_review",

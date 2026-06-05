@@ -151,7 +151,6 @@ class FeedbackOptimizationPlanRecord(ExtensiblePlanRecord):
     task_summary: FeedbackOptimizationPlanTaskSummaryRecord = Field(default_factory=FeedbackOptimizationPlanTaskSummaryRecord)
     blocked_items: list[FeedbackOptimizationBlockedItemRecord] = Field(default_factory=list)
     blocked_summary: FeedbackOptimizationBlockedSummaryRecord = Field(default_factory=FeedbackOptimizationBlockedSummaryRecord)
-    source_output_schema_version: Optional[str] = None
     optimization_plan_job_id: Optional[str] = None
     generated_by: Optional[str] = None
     internal_proposal_id: Optional[str] = None

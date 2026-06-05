@@ -8,12 +8,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from app.runtime.schemas import FeedbackSignalCreateRequest
-from app.runtime.schema_versions import (
-    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
-    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-    REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
-)
+
 from app.services.agent_job_worker import AgentJobWorker
 from app.services.execution_application import ExecutionApplicationError
 
@@ -94,7 +89,6 @@ def _approved_task(module):
     store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": feedback_case["feedback_case_id"],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -116,7 +110,6 @@ def _approved_task(module):
     completed = store.complete_batch_plan_job(
         plan_job["job_id"],
         {
-            "schema_version": FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
             "batch_id": batch["batch_id"],
             "status": "pending_approval",
             "title": "补充配置读取要求",
@@ -167,7 +160,6 @@ def _ready_execution_job(module, task):
     return module.feedback_store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",
@@ -592,7 +584,7 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
                 source_run = item.get("source_run") or {}
                 eval_cases.append(
                     {
-                        "schema_version": FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+                        "schema_version": "feedback-eval-case/v1",
                         "status": "draft",
                         "source": "eval_case_governor",
                         "source_feedback_case_id": feedback_case["feedback_case_id"],
@@ -612,7 +604,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
                     }
                 )
             return {
-                "schema_version": FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
                 "job_id": job_input["job_id"],
                 "scope_kind": job_input["scope_kind"],
                 "scope_id": job_input["scope_id"],
@@ -622,7 +613,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             }
         if job_type == "attribution":
             return {
-                "schema_version": "attribution-output/v1",
                 "feedback_case_id": job_input["feedback_case_id"],
                 "attribution_job_id": job_input["job_id"],
                 "status": "completed",
@@ -638,7 +628,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             }
         if job_type == "batch_plan":
             return {
-                "schema_version": "feedback-optimization-plan-output/v1",
                 "batch_id": job_input["batch_id"],
                 "status": "pending_approval",
                 "title": "补强工作区配置核查",
@@ -692,7 +681,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             }
         if job_type == "execution":
             return {
-                "schema_version": "execution-plan-output/v1",
                 "optimization_task_id": job_input["optimization_task_id"],
                 "execution_job_id": job_input["execution_job_id"],
                 "status": "ready",
@@ -713,7 +701,6 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
         if job_type == "regression_impact_analysis":
             eval_run = job_input["eval_run"]
             return {
-                "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
                 "eval_run_id": job_input["eval_run_id"],
                 "status": "completed",
                 "result_status": eval_run["result_status"],

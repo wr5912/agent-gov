@@ -11,12 +11,6 @@ from app.runtime.feedback_schemas import (
     validate_execution_plan_output,
     validate_feedback_optimization_plan_output,
 )
-from app.runtime.schema_versions import (
-    ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-    FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
-    FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
-)
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanGenerateRequest,
@@ -97,7 +91,6 @@ def _create_eval_case(store: FeedbackStore):
     store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": feedback_case["feedback_case_id"],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -134,7 +127,6 @@ def _create_batch_with_completed_attribution(store: FeedbackStore):
     completed = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
             "feedback_case_id": batch["feedback_case_ids"][0],
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",
@@ -154,7 +146,6 @@ def _create_batch_with_completed_attribution(store: FeedbackStore):
 
 def _attribution_output(job: dict, **overrides):
     output = {
-        "schema_version": ATTRIBUTION_OUTPUT_SCHEMA_VERSION,
         "feedback_case_id": job["feedback_case_id"],
         "attribution_job_id": job["job_id"],
         "status": "completed",
@@ -175,7 +166,6 @@ def _attribution_output(job: dict, **overrides):
 def _batch_plan_output(job: dict, **overrides):
     input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
     output = {
-        "schema_version": FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
         "batch_id": input_json.get("batch_id") or "",
         "status": "needs_human_review",
         "title": "测试批次优化方案",
@@ -222,14 +212,13 @@ def _eval_case_generation_output(job: dict, feedback_case: dict, **overrides):
             break
     prompt = source_run.get("message") or "复测原始反馈场景。"
     output = {
-        "schema_version": FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
         "job_id": job["job_id"],
         "scope_kind": job.get("scope_kind"),
         "scope_id": job.get("scope_id"),
         "status": "completed",
         "eval_cases": [
             {
-                "schema_version": FEEDBACK_EVAL_CASE_SCHEMA_VERSION,
+                "schema_version": "feedback-eval-case/v1",
                 "status": "draft",
                 "source": "eval_case_governor",
                 "source_feedback_case_id": feedback_case["feedback_case_id"],

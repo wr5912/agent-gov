@@ -291,7 +291,6 @@ def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
     completed_job = store.complete_attribution_job(
         attribution_job["job_id"],
         {
-            "schema_version": "attribution-output/v1",
             "feedback_case_id": feedback_case_id,
             "attribution_job_id": attribution_job["job_id"],
             "status": "completed",

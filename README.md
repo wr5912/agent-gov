@@ -150,9 +150,9 @@ http://localhost:55173
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案、执行计划、回归用例生成和回归影响分析统一走 `agent_jobs` 异步队列，前端通过 `GET /api/agent-jobs/{job_id}` 轮询状态。
 
-完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 生成 [docs/开放接口规范.json](docs/开放接口规范.json)。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
-前端 OpenAPI 类型由 [docs/开放接口规范.json](docs/开放接口规范.json) 生成，命令为：
+前端 OpenAPI 类型由运行时 schema 临时导出后生成，命令为：
 
 ```bash
 pnpm --dir frontend generate:api-types

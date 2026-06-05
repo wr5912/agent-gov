@@ -26,7 +26,6 @@ class AgentJobResponse(BaseModel):
     error_path: str
     runtime_version: Optional[str] = None
     schema_version: Optional[str] = None
-    output_schema_version: Optional[str] = None
     timeout_seconds: int = 300
     retry_count: int = 0
     profile_version: Optional[JsonObject] = None

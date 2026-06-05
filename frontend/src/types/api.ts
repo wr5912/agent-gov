@@ -1693,8 +1693,6 @@ export interface components {
             job_id: string;
             /** Job Type */
             job_type: string;
-            /** Output Schema Version */
-            output_schema_version?: string | null;
             /** Profile Name */
             profile_name: string;
             /** Profile Version */

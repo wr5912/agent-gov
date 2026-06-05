@@ -4,19 +4,15 @@ import asyncio
 import logging
 from typing import Awaitable, Callable, cast
 
-from app.runtime.prompts.feedback_prompts import (
-    attribution_prompt,
-    eval_case_generation_prompt,
-    execution_plan_prompt,
-    proposal_generator_prompt,
-    regression_impact_analysis_prompt,
-)
+from pydantic import BaseModel
+
+from app.runtime.agent_job_types import AgentJobType, agent_job_spec, coerce_agent_job_type
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 
 
-RunProfileJson = Callable[..., Awaitable[JsonObject]]
+RunProfileJson = Callable[..., Awaitable[BaseModel]]
 logger = logging.getLogger(__name__)
 
 
@@ -110,8 +106,9 @@ class AgentJobWorker:
             if result is None:
                 await asyncio.sleep(self.poll_interval_seconds)
 
-    async def _run_job(self, job: JsonObject) -> JsonObject:
-        if job.get("job_type") == "execution":
+    async def _run_job(self, job: JsonObject) -> BaseModel | JsonObject:
+        job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
+        if job_type == AgentJobType.EXECUTION:
             execution = self.feedback_store.get_execution_job(str(job["job_id"]))
             deterministic = self.feedback_store.deterministic_execution_plan_output(execution or {})
             if deterministic:
@@ -119,26 +116,14 @@ class AgentJobWorker:
         job_input = cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
         return await self.run_profile_json(
             profile_name=str(job["profile_name"]),
-            prompt=self._prompt(job, job_input),
-            expected_schema_version=str(job["output_schema_version"]),
-            job_type=str(job["job_type"]),
+            prompt=self._prompt(job_type, job, job_input),
+            job_type=job_type,
             job_input=job_input,
         )
 
-    def _prompt(self, job: JsonObject, job_input: JsonObject) -> str:
-        job_type = str(job.get("job_type") or "")
+    def _prompt(self, job_type: AgentJobType, job: JsonObject, job_input: JsonObject) -> str:
         input_path = str(job.get("input_path") or "")
-        if job_type == "attribution":
-            return attribution_prompt(input_path)
-        if job_type == "batch_plan":
-            return proposal_generator_prompt(input_path, input_payload=job_input)
-        if job_type == "execution":
-            return execution_plan_prompt(input_path, input_payload=job_input)
-        if job_type == "eval_case_generation":
-            return eval_case_generation_prompt(input_path, input_payload=job_input)
-        if job_type == "regression_impact_analysis":
-            return regression_impact_analysis_prompt(input_path, input_payload=job_input)
-        raise RuntimeError(f"Unsupported agent job type: {job_type}")
+        return agent_job_spec(job_type).prompt_builder(input_path, job_input)
 
     @staticmethod
     def _job_response(payload: JsonObject | None) -> AgentJobResponse | None:

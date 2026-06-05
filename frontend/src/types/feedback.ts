@@ -197,7 +197,6 @@ export type FeedbackAnalysisJobRecord = AgentJobRecord & {
 };
 
 export type AttributionOutput = {
-  schema_version: "attribution-output/v1";
   status: "completed" | "needs_human_review";
   feedback_case_id?: string;
   attribution_job_id?: string;

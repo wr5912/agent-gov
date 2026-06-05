@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.runtime.schema_versions import EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION, FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION
+from app.runtime.feedback_schemas import ExecutionPlanOutput, FeedbackEvalCaseGenerationOutput
 from feedback_store_test_utils import _create_batch_with_completed_attribution
 from test_api_execution_optimizer import _load_app, _run_one_agent_job
 
@@ -17,33 +17,35 @@ def test_batch_plan_task_execute_endpoint_is_consumed_by_worker(monkeypatch, tmp
 
     async def fake_run_profile_json(**kwargs):
         if kwargs["job_type"] == "eval_case_generation":
-            return {
-                "schema_version": FEEDBACK_EVAL_CASE_GENERATION_OUTPUT_SCHEMA_VERSION,
-                "status": "needs_human_review",
-                "eval_cases": [],
-                "no_action_reason": "测试只验证 execute 队列链路，跳过用例生成。",
-            }
+            return FeedbackEvalCaseGenerationOutput.model_validate(
+                {
+                    "status": "needs_human_review",
+                    "eval_cases": [],
+                    "no_action_reason": "测试只验证 execute 队列链路，跳过用例生成。",
+                }
+            )
         assert kwargs["job_type"] == "execution"
         job_input = kwargs["job_input"]
-        return {
-            "schema_version": EXECUTION_PLAN_OUTPUT_SCHEMA_VERSION,
-            "optimization_task_id": job_input["optimization_task_id"],
-            "execution_job_id": job_input["execution_job_id"],
-            "status": "ready",
-            "baseline_agent_version_id": job_input["baseline_agent_version_id"],
-            "summary": "追加配置核查要求。",
-            "operations": [
-                {
-                    "operation": "append_text",
-                    "path": "CLAUDE.md",
-                    "append_text": "\n回答配置类问题前必须读取当前 workspace 配置。\n",
-                    "rationale": "补强主智能体指令。",
-                }
-            ],
-            "validation": "复测 workspace 配置类问题。",
-            "risk": "回答耗时可能增加。",
-            "human_review_required": True,
-        }
+        return ExecutionPlanOutput.model_validate(
+            {
+                "optimization_task_id": job_input["optimization_task_id"],
+                "execution_job_id": job_input["execution_job_id"],
+                "status": "ready",
+                "baseline_agent_version_id": job_input["baseline_agent_version_id"],
+                "summary": "追加配置核查要求。",
+                "operations": [
+                    {
+                        "operation": "append_text",
+                        "path": "CLAUDE.md",
+                        "append_text": "\n回答配置类问题前必须读取当前 workspace 配置。\n",
+                        "rationale": "补强主智能体指令。",
+                    }
+                ],
+                "validation": "复测 workspace 配置类问题。",
+                "risk": "回答耗时可能增加。",
+                "human_review_required": True,
+            }
+        )
 
     monkeypatch.setattr(module.runtime, "_run_profile_json", fake_run_profile_json)
     batch = _create_batch_with_completed_attribution(module.feedback_store)

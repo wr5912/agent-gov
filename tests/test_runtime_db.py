@@ -1,3 +1,4 @@
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -12,6 +13,63 @@ def test_runtime_db_reuses_engine_for_same_path(tmp_path):
     second = make_session_factory(db_path)
 
     assert first.kw["bind"] is second.kw["bind"]
+
+
+def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE agent_jobs (
+                job_id VARCHAR(128) NOT NULL PRIMARY KEY,
+                job_type VARCHAR(64) NOT NULL,
+                scope_kind VARCHAR(64) NOT NULL,
+                scope_id VARCHAR(256) NOT NULL,
+                status VARCHAR(64) NOT NULL,
+                profile_name VARCHAR(128) NOT NULL,
+                created_at VARCHAR(64) NOT NULL,
+                started_at VARCHAR(64),
+                completed_at VARCHAR(64),
+                input_path VARCHAR(2048) NOT NULL,
+                raw_output_path VARCHAR(2048) NOT NULL,
+                validated_output_path VARCHAR(2048) NOT NULL,
+                error_path VARCHAR(2048) NOT NULL,
+                runtime_version VARCHAR(64) NOT NULL,
+                schema_version VARCHAR(64) NOT NULL,
+                output_schema_version VARCHAR(128) NOT NULL,
+                timeout_seconds INTEGER,
+                retry_count INTEGER,
+                profile_version_json JSON,
+                input_json JSON,
+                raw_output_json JSON,
+                validated_output_json JSON,
+                error_json JSON
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_jobs (
+                job_id, job_type, scope_kind, scope_id, status, profile_name, created_at,
+                input_path, raw_output_path, validated_output_path, error_path, runtime_version,
+                schema_version, output_schema_version, timeout_seconds, retry_count
+            )
+            VALUES (
+                'job-old', 'batch_plan', 'optimization_batch', 'fob-old', 'queued',
+                'proposal-generator', '2026-06-01T00:00:00+00:00', '/tmp/input.json',
+                'sqlite://raw', 'sqlite://validated', 'sqlite://error', '0.0.0',
+                'batch_plan-agent-job/v1', 'feedback-optimization-plan-output/v1', 300, 0
+            )
+            """
+        )
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(agent_jobs)").fetchall()}
+        row = connection.exec_driver_sql("SELECT job_id, job_type FROM agent_jobs WHERE job_id = 'job-old'").fetchone()
+
+    assert "output_schema_version" not in columns
+    assert tuple(row) == ("job-old", "batch_plan")
 
 
 def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):

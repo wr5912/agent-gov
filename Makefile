@@ -1,6 +1,8 @@
 VENV ?= .venv
 PYTHON ?= $(VENV)/bin/python
 UV ?= uv
+LITELLM_LOCAL_MODEL_COST_MAP ?= True
+PYTHON_RUN ?= LITELLM_LOCAL_MODEL_COST_MAP=$(LITELLM_LOCAL_MODEL_COST_MAP) $(PYTHON)
 COMPOSE_ENV_FILES := --env-file docker/.env
 ifneq ($(wildcard docker/.env.local),)
 COMPOSE_ENV_FILES += --env-file docker/.env.local
@@ -63,8 +65,8 @@ ui-feedback-smoke:
 	RUNTIME_UI_BASE="$$ui_base" RUNTIME_API_BASE="$$api_base" pnpm --dir frontend verify:feedback-browser
 
 langfuse-dirs:
-	$(PYTHON) scripts/bootstrap_runtime_volume.py --quiet
-	@runtime_root=$$($(PYTHON) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
+	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --quiet
+	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
 	chmod a+rwx "$$runtime_root/langfuse" "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio" 2>/dev/null || true
 
 langfuse-up: langfuse-dirs
@@ -77,29 +79,29 @@ langfuse-logs:
 	$(COMPOSE) --profile langfuse logs -f langfuse-web langfuse-worker
 
 langfuse-smoke:
-	$(PYTHON) scripts/langfuse_smoke.py --env-file docker/.env
+	$(PYTHON_RUN) scripts/langfuse_smoke.py --env-file docker/.env
 
 runtime-bootstrap:
-	$(PYTHON) scripts/bootstrap_runtime_volume.py
+	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py
 
 runtime-template-scan:
-	$(PYTHON) scripts/runtime_template_safety.py verify docker/runtime-template
+	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-template
 
 runtime-template-export:
-	$(PYTHON) scripts/export_runtime_template.py
+	$(PYTHON_RUN) scripts/export_runtime_template.py
 
 runtime-template-restore:
 	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi
-	$(PYTHON) scripts/restore_runtime_template_backup.py --backup "$(BACKUP)"
+	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --backup "$(BACKUP)"
 
 runtime-template-restore-list:
-	$(PYTHON) scripts/restore_runtime_template_backup.py --list
+	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --list
 
 smoke:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
-	curl -s "$$api_base/health" | $(PYTHON) -m json.tool
+	curl -s "$$api_base/health" | $(PYTHON_RUN) -m json.tool
 
 chat:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
@@ -109,11 +111,11 @@ chat:
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \
-		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON) -m json.tool
+		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON_RUN) -m json.tool
 
 codex-guard:
-	$(PYTHON) scripts/check_codex_governance.py --mode fail
+	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
 
 test: codex-guard
-	$(PYTHON) -m compileall app
-	$(PYTHON) -m pytest -q
+	$(PYTHON_RUN) -m compileall app
+	$(PYTHON_RUN) -m pytest -q

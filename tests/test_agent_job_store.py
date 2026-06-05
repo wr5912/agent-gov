@@ -14,7 +14,6 @@ from feedback_store_test_utils import (
 from app.runtime.agent_job_types import agent_job_spec
 from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
 from app.runtime.runtime_db import AgentJobModel
-from app.runtime.schema_versions import REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION
 from app.services.agent_job_worker import AgentJobWorker
 
 
@@ -42,7 +41,6 @@ def test_agent_job_claim_is_single_consumer(tmp_path):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
 
     claimed = store.claim_next_agent_job()
@@ -64,7 +62,6 @@ def test_stale_running_agent_job_times_out_and_next_job_can_claim(tmp_path):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
     claimed = store.claim_next_agent_job()
     assert claimed is not None
@@ -75,7 +72,6 @@ def test_stale_running_agent_job_times_out_and_next_job_can_claim(tmp_path):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
     with store.Session.begin() as db:
         row = db.get(AgentJobModel, claimed["job_id"])
@@ -103,7 +99,6 @@ def test_agent_job_worker_logs_claim_and_runtime_failure(tmp_path, caplog):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
 
     async def fail_runtime(**_kwargs):
@@ -137,7 +132,6 @@ def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
     with store.Session.begin() as db:
         db.execute(text("UPDATE agent_jobs SET status = 'unknown_status' WHERE job_id = 'evg-invalid-status'"))
@@ -156,7 +150,6 @@ def test_agent_job_json_update_rejects_invalid_persisted_json(tmp_path):
         scope_id="feedback-dataset",
         profile_name=spec.profile_name,
         input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
-        output_schema_version=spec.output_schema_version,
     )
     with store.Session.begin() as db:
         row = db.get(AgentJobModel, "evg-invalid-error-json")
@@ -212,13 +205,11 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
         scope_id=eval_run["eval_run_id"],
         profile_name=spec.profile_name,
         input_payload={"schema_version": "regression-impact-analysis-input/v1", "eval_run_id": eval_run["eval_run_id"]},
-        output_schema_version=spec.output_schema_version,
     )
 
     completed = store.complete_projected_agent_job(
         job,
         {
-            "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
             "eval_run_id": eval_run["eval_run_id"],
             "status": "completed",
             "result_status": "passed",
@@ -241,7 +232,7 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     impact = store.get_regression_impact_analysis(eval_run["eval_run_id"])
     completed_job = store.get_agent_job("riaj-projection")
     assert completed["status"] == "completed"
-    assert completed_job["raw_output_json"]["_formatter"]["name"] == "dspy"
+    assert "_formatter" not in completed_job["raw_output_json"]
     assert impact["job_id"] == "riaj-projection"
     assert "_formatter" not in impact
     assert "agent_note" not in impact["impacted_assets"][0]
@@ -256,7 +247,6 @@ def test_regression_impact_force_rerun_clears_previous_error_json(tmp_path):
     store.complete_projected_agent_job(
         failed_job,
         {
-            "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
             "eval_run_id": eval_run["eval_run_id"],
             "status": "completed",
             "impacted_assets": [],
@@ -269,7 +259,6 @@ def test_regression_impact_force_rerun_clears_previous_error_json(tmp_path):
     store.complete_projected_agent_job(
         rerun_job,
         {
-            "schema_version": REGRESSION_IMPACT_ANALYSIS_OUTPUT_SCHEMA_VERSION,
             "eval_run_id": eval_run["eval_run_id"],
             "status": "completed",
             "result_status": "passed",

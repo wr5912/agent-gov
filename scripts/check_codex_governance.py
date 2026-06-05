@@ -12,6 +12,7 @@ from typing import Iterable
 from codex_governance_legacy_feedback import (
     legacy_feedback_active_ref_issue_specs,
     legacy_feedback_active_refs,
+    legacy_feedback_repo_refs,
 )
 from codex_governance_json import (
     annotation_contains_name,
@@ -485,7 +486,7 @@ def collect_current_snapshot(
         python=python,
         state_machine_paths=state_machine_paths,
         missing_transitions=missing_transitions,
-        legacy_feedback_active_refs=legacy_feedback_refs,
+        legacy_feedback_active_refs=legacy_feedback_refs | legacy_feedback_repo_refs(root),
     )
 
 
@@ -520,6 +521,7 @@ def collect_base_snapshot(
         state_missing = _missing_state_transitions(rel_path, text)
         if state_missing is not None:
             missing_transitions.update(state_missing)
+    legacy_feedback_refs.update(legacy_feedback_repo_refs(root, base_ref))
     return Snapshot(
         file_lines=file_lines,
         python=python,

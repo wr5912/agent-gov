@@ -11,7 +11,6 @@ def test_execution_application_rejects_duplicate_application(tmp_path):
     ready_job = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",

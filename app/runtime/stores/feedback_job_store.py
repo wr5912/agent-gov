@@ -6,12 +6,12 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from pydantic import BaseModel
 from sqlalchemy import delete, select
 
 from ..agent_job_types import agent_job_spec
-from ..agent_profiles import ATTRIBUTION_ANALYZER_PROFILE
 from ..feedback_job_flags import with_reused_existing
-from ..feedback_schemas import validate_attribution_output
+from ..feedback_schemas import coerce_attribution_output_model, output_model_payload
 from ..records.agent_job_records import AgentJobRecord
 from ..json_types import JsonObject
 from ..runtime_db import (
@@ -98,9 +98,8 @@ class FeedbackJobStoreMixin:
                     job_type=spec.job_type,
                     scope_kind="feedback_case",
                     scope_id=feedback_case_id,
-                    profile_name=ATTRIBUTION_ANALYZER_PROFILE,
+                    profile_name=spec.profile_name,
                     input_payload=input_payload,
-                    output_schema_version=spec.output_schema_version,
                     profile_version=profile_version,
                 )
                 self._append_case_update(feedback_case, attribution_job_id=job_id, status="attribution_queued")
@@ -112,16 +111,17 @@ class FeedbackJobStoreMixin:
     def start_job(self, job_id: str) -> Optional[JsonObject]:
         return self._append_job_update(job_id, status="running", started_at=utc_now())
 
-    def complete_attribution_job(self, job_id: str, raw_output: JsonObject) -> Optional[JsonObject]:
+    def complete_attribution_job(self, job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
-        validated, error = validate_attribution_output(raw_output)
+        output_model, error = coerce_attribution_output_model(raw_output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_output
         feedback_case = self.find_case(str(job["feedback_case_id"]))
-        if not validated:
+        if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid attribution output")
             with self.Session.begin() as db:
-                if not self._set_job_json_row(db, job_id, raw_output_json=raw_output, error_json=error_payload):
+                if not self._set_job_json_row(db, job_id, raw_output_json=raw_payload, error_json=error_payload):
                     return None
                 self._append_job_update_row(db, job_id, status="schema_validating")
                 self._append_job_update_row(db, job_id, status="needs_human_review", completed_at=utc_now())
@@ -129,8 +129,9 @@ class FeedbackJobStoreMixin:
                     self._append_case_update_row(db, feedback_case, status="needs_human_review")
             self._cleanup_job_tmp(job_id)
             return self.get_job(job_id)
+        validated = output_model_payload(output_model)
         with self.Session.begin() as db:
-            if not self._set_job_json_row(db, job_id, raw_output_json=raw_output, validated_output_json=validated, error_json=None):
+            if not self._set_job_json_row(db, job_id, raw_output_json=raw_payload, validated_output_json=validated, error_json=None):
                 return None
             self._append_job_update_row(db, job_id, status="schema_validating")
             self._append_job_update_row(db, job_id, status="completed", completed_at=utc_now())

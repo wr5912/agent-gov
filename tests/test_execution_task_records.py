@@ -17,7 +17,6 @@ def test_execution_application_rejects_invalid_persisted_task_payload(tmp_path):
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": task["optimization_task_id"],
             "execution_job_id": job["execution_job_id"],
             "status": "ready",

@@ -16,12 +16,12 @@ from app.runtime.normalizers.feedback_output_task_context import (
     task_context_has_external_specificity,
 )
 from app.runtime.feedback_schemas import (
+    FeedbackOptimizationPlanOutput,
     validate_execution_plan_output,
     validate_feedback_eval_case_generation_output,
     validate_feedback_optimization_plan_output,
     validate_regression_impact_analysis_output,
 )
-from app.runtime.schema_versions import FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION
 from feedback_store_test_utils import _batch_plan_output, _settings
 
 
@@ -32,7 +32,7 @@ def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_pa
 
     def fake_formatter(**kwargs: object):
         seen.update(kwargs)
-        return payload
+        return FeedbackOptimizationPlanOutput.model_validate(payload)
 
     monkeypatch.setattr(formatter, "_format_with_dspy", fake_formatter)
 
@@ -40,13 +40,13 @@ def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_pa
         job_type="batch_plan",
         raw_text=f"前缀\n{payload}",
         job_input={"batch_id": "fob-test"},
-        expected_schema_version=FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
     )
 
     assert seen["job_type"] == "batch_plan"
     assert "前缀" in str(seen["raw_text"])
-    assert result.payload["schema_version"] == FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION
-    assert "_formatter" not in result.payload
+    assert isinstance(result.output, FeedbackOptimizationPlanOutput)
+    assert result.output.batch_id == "fob-test"
+    assert "_formatter" not in result.output.model_dump(mode="json")
 
 
 def test_dspy_output_formatter_error_preserves_raw_output_diagnostics(tmp_path, monkeypatch):
@@ -62,7 +62,6 @@ def test_dspy_output_formatter_error_preserves_raw_output_diagnostics(tmp_path, 
             job_type="batch_plan",
             raw_text="优化方案生成智能体输出了一段自然语言方案。",
             job_input={"batch_id": "fob-test"},
-            expected_schema_version=FEEDBACK_OPTIMIZATION_PLAN_OUTPUT_SCHEMA_VERSION,
         )
 
     raw_output = exc_info.value.raw_output_json
@@ -169,7 +168,6 @@ def test_normalize_feedback_plan_output_records_blocked_workspace_task_reason():
         }
     )
 
-    assert normalized["schema_version"] == "feedback-optimization-plan-output/v1"
     assert normalized["status"] == "pending_approval"
     assert normalized["confidence"] == "medium"
     assert normalized["actionability"] == "direct_workspace_change"
@@ -360,7 +358,6 @@ def test_normalize_regression_impact_analysis_output_uses_intermediate_asset_rec
 def test_validated_feedback_optimization_plan_output_drops_agent_extra_fields():
     plan, plan_error = validate_feedback_optimization_plan_output(
         {
-            "schema_version": "feedback-optimization-plan-output/v1",
             "batch_id": "fob-1",
             "status": "ready",
             "confidence": "high",
@@ -387,7 +384,6 @@ def test_validated_feedback_optimization_plan_output_drops_agent_extra_fields():
 def test_validated_execution_eval_and_regression_outputs_drop_agent_extra_fields():
     execution, execution_error = validate_execution_plan_output(
         {
-            "schema_version": "execution-plan-output/v1",
             "optimization_task_id": "opt-1",
             "execution_job_id": "job-1",
             "status": "ready",
@@ -404,7 +400,6 @@ def test_validated_execution_eval_and_regression_outputs_drop_agent_extra_fields
     )
     eval_cases, eval_error = validate_feedback_eval_case_generation_output(
         {
-            "schema_version": "feedback-eval-case-generation-output/v1",
             "status": "completed",
             "eval_cases": [
                 {
@@ -417,7 +412,6 @@ def test_validated_execution_eval_and_regression_outputs_drop_agent_extra_fields
     )
     impact, impact_error = validate_regression_impact_analysis_output(
         {
-            "schema_version": "regression-impact-analysis-output/v1",
             "eval_run_id": "erun-1",
             "status": "completed",
             "impacted_assets": [{"summary": "CLAUDE.md", "agent_note": {"source": "impact"}}],

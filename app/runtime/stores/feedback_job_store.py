@@ -6,14 +6,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from pydantic import BaseModel
 from sqlalchemy import delete, select
 
 from ..agent_job_types import agent_job_spec
 from ..feedback_job_flags import with_reused_existing
-from ..feedback_schemas import coerce_attribution_output_model, output_model_payload
-from ..records.agent_job_records import AgentJobRecord
+from ..feedback_schemas import AttributionFormatterOutput, coerce_attribution_output_model, output_model_payload
 from ..json_types import JsonObject
+from ..records.agent_job_records import AgentJobRecord
 from ..runtime_db import (
     AgentJobModel,
     ExternalGovernanceItemModel,
@@ -24,7 +23,6 @@ from ..runtime_db import (
     utc_now,
 )
 from ..state_machines import JOB_IN_PROGRESS_STATES, validate_transition
-
 
 _UNSET = object()
 
@@ -111,14 +109,14 @@ class FeedbackJobStoreMixin:
     def start_job(self, job_id: str) -> Optional[JsonObject]:
         return self._append_job_update(job_id, status="running", started_at=utc_now())
 
-    def complete_attribution_job(self, job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
+    def complete_attribution_job(self, job_id: str, formatter_output: AttributionFormatterOutput | JsonObject) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
-        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
-        output = self._attribution_output_with_job_context(raw_input, job)
+        formatter_output_json = output_model_payload(formatter_output) if isinstance(formatter_output, AttributionFormatterOutput) else formatter_output
+        output = self._attribution_output_with_job_context(formatter_output_json, job)
         output_model, error = coerce_attribution_output_model(output)
-        raw_payload = output_model_payload(output_model) if output_model else raw_input
+        raw_payload = output_model_payload(output_model) if output_model else formatter_output_json
         feedback_case = self.find_case(str(job["feedback_case_id"]))
         if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid attribution output")
@@ -142,10 +140,12 @@ class FeedbackJobStoreMixin:
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
 
-    def _attribution_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
+    def _attribution_output_with_job_context(self, formatter_output_json: JsonObject, job: JsonObject) -> JsonObject:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
-        output = dict(raw_output)
-        output["feedback_case_id"] = self._string(job.get("feedback_case_id")) or self._string(input_json.get("feedback_case_id")) or self._string(job.get("scope_id"))
+        output = dict(formatter_output_json)
+        output["feedback_case_id"] = (
+            self._string(job.get("feedback_case_id")) or self._string(input_json.get("feedback_case_id")) or self._string(job.get("scope_id"))
+        )
         output["attribution_job_id"] = job["job_id"]
         return output
 
@@ -241,7 +241,6 @@ class FeedbackJobStoreMixin:
         if invalidate_downstream:
             row.current_proposal_job_id = None
         return True
-
 
     def _job_to_dict(self, row: AgentJobModel) -> JsonObject:
         job = self._agent_job_to_dict(row)
@@ -397,7 +396,6 @@ class FeedbackJobStoreMixin:
             return False
         timeout_seconds = int(job.get("timeout_seconds") or 300)
         return datetime.now(timezone.utc) >= base + timedelta(seconds=timeout_seconds)
-
 
     def _materialize_extra_json(self, job_id: str, job_type: str, file_name: str, payload: JsonObject) -> str:
         path = self.tmp_jobs_dir / job_id / job_type / file_name

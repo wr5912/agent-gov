@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import text
 
 from app.runtime.errors import ConflictError
-from app.runtime.feedback_schemas import FeedbackOptimizationPlanOutput
+from app.runtime.feedback_schemas import FeedbackOptimizationPlanFormatterOutput
 from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
 
 
@@ -449,58 +449,52 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     async def fake_run_profile_json(**kwargs):
         seen.update(kwargs)
         job_input = kwargs["job_input"]
-        return FeedbackOptimizationPlanOutput.model_validate(
+        return FeedbackOptimizationPlanFormatterOutput.model_validate(
             {
-            "batch_id": job_input["batch_id"],
-            "status": "pending_approval",
-            "title": "补强工作区配置核查",
-            "summary": "根据归因结果生成一个 workspace 优化任务。",
-            "problem_types": ["tool_misuse"],
-            "confidence": "high",
-            "actionability": "direct_workspace_change",
-            "target_type": "main_agent_claude_md",
-            "target_path": "CLAUDE.md",
-            "recommendation": "在 CLAUDE.md 中补充回答工作区配置问题前必须读取配置文件的要求。",
-            "expected_effect": "Agent 回答同类问题时先读取当前配置。",
-            "validation": "使用批次回归用例验证是否读取配置并回答完整。",
-            "risk": "可能增加少量工具调用。",
-            "source_refs": job_input["source_refs"],
-            "feedback_case_ids": job_input["feedback_case_ids"],
-            "eval_case_ids": job_input["eval_case_ids"],
-            "attribution_job_ids": job_input["attribution_job_ids"],
-            "attribution_summaries": [],
-            "rationale": "归因结果显示 Agent 未读取当前工作区配置。",
-            "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
-            "tasks": [
-                {
-                    "execution_kind": "workspace_execution",
-                    "status": "pending_execution",
-                    "title": "补充工作区配置核查指令",
-                    "description": "在主智能体指令中要求回答工作区配置问题前读取当前配置文件。",
-                    "objective": "让 Agent 对配置枚举类问题使用当前文件内容作答。",
-                    "target_summary": "workspace:CLAUDE.md",
-                    "target_type": "main_agent_claude_md",
-                    "target_path": "CLAUDE.md",
-                    "owner": "main_agent_workspace",
-                    "actionability": "direct_workspace_change",
-                    "confidence": "high",
-                    "problem_type": "tool_misuse",
-                    "recommendation": "追加配置核查要求。",
-                    "recommended_actions": ["由 execution-optimizer 生成 CLAUDE.md 的受控追加方案。"],
-                    "acceptance_criteria": ["回归用例通过，且回答前读取当前配置文件。"],
-                    "expected_effect": "同类反馈不再复现。",
-                    "validation": "运行批次回归测试。",
-                    "risk": "回答耗时略增。",
-                    "analysis_summary": "Agent 未读取当前配置。",
-                    "evidence_summary": "messages.json 显示回答来自记忆。",
-                    "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
-                    "task_context": {"target_file": "CLAUDE.md", "config_section": "workspace-capability-answering"},
-                    "feedback_case_ids": job_input["feedback_case_ids"],
-                    "eval_case_ids": job_input["eval_case_ids"],
-                    "attribution_job_ids": job_input["attribution_job_ids"],
-                }
-            ],
-            "blocked_items": [],
+                "status": "pending_approval",
+                "title": "补强工作区配置核查",
+                "summary": "根据归因结果生成一个 workspace 优化任务。",
+                "problem_types": ["tool_misuse"],
+                "confidence": "high",
+                "actionability": "direct_workspace_change",
+                "target_type": "main_agent_claude_md",
+                "target_path": "CLAUDE.md",
+                "recommendation": "在 CLAUDE.md 中补充回答工作区配置问题前必须读取配置文件的要求。",
+                "expected_effect": "Agent 回答同类问题时先读取当前配置。",
+                "validation": "使用批次回归用例验证是否读取配置并回答完整。",
+                "risk": "可能增加少量工具调用。",
+                "rationale": "归因结果显示 Agent 未读取当前工作区配置。",
+                "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
+                "tasks": [
+                    {
+                        "execution_kind": "workspace_execution",
+                        "status": "pending_execution",
+                        "title": "补充工作区配置核查指令",
+                        "description": "在主智能体指令中要求回答工作区配置问题前读取当前配置文件。",
+                        "objective": "让 Agent 对配置枚举类问题使用当前文件内容作答。",
+                        "target_summary": "workspace:CLAUDE.md",
+                        "target_type": "main_agent_claude_md",
+                        "target_path": "CLAUDE.md",
+                        "owner": "main_agent_workspace",
+                        "actionability": "direct_workspace_change",
+                        "confidence": "high",
+                        "problem_type": "tool_misuse",
+                        "recommendation": "追加配置核查要求。",
+                        "recommended_actions": ["由 execution-optimizer 生成 CLAUDE.md 的受控追加方案。"],
+                        "acceptance_criteria": ["回归用例通过，且回答前读取当前配置文件。"],
+                        "expected_effect": "同类反馈不再复现。",
+                        "validation": "运行批次回归测试。",
+                        "risk": "回答耗时略增。",
+                        "analysis_summary": "Agent 未读取当前配置。",
+                        "evidence_summary": "messages.json 显示回答来自记忆。",
+                        "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
+                        "task_context": {"target_file": "CLAUDE.md", "config_section": "workspace-capability-answering"},
+                        "feedback_case_ids": job_input["feedback_case_ids"],
+                        "eval_case_ids": job_input["eval_case_ids"],
+                        "attribution_job_ids": job_input["attribution_job_ids"],
+                    }
+                ],
+                "blocked_items": [],
             }
         )
 

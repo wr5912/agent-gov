@@ -19,6 +19,9 @@
 # - 任务涉及 DSPy、Pydantic 输出模型、Agent job 或 LLM 输出格式时，Analyze 阶段必须判断
 #   当前结构契约是否已经由 typed model 表达；不得默认再添加 schema_version、JsonObject 主流程
 #   或 normalizer 双轨作为“保险”。
+# - 任务涉及 formatter、runner、worker、orchestrator 或 store completion 时，Analyze 阶段必须核查
+#   `raw_agent_text -> formatter_output -> projected_output -> boundary payload` 四个阶段的类型注解和变量命名，
+#   不得把 formatter 输出泛化为 `BaseModel` 或继续命名为 `raw_output`。
 # - 任务涉及 Agent/DSPy/LLM 输出契约时，Analyze 阶段必须先做字段所有权判断：
 #   后端已能从 job input、DB row、route 参数、store context 或调度上下文确定的字段，
 #   不得进入 Agent 输出契约，也不得让 LLM 复述后再作为权威值。
@@ -41,6 +44,8 @@
 #   只有证据证明是孤立实现错误时，才按普通 bug 处理。
 # - Pydantic / DSPy typed output 已能表达结构契约时，内部主流程优先传递模型实例；
 #   JSON dump 只允许出现在 DB、HTTP、文件、日志或观测等明确边界。
+# - Formatter 主链路的返回类型必须是 `FormatterOutputModel` 或具体 formatter 输出模型；
+#   后端投影后的输出必须是 `ProjectedOutputModel` 或具体投影模型；两者不得用 `BaseModel` 混写。
 # - LLM 只对其生成的业务语义负责；job_id、batch_id、case ids、时间戳、scope、
 #   provenance、执行上下文和其他可确定性获取的系统字段必须由后端注入或覆盖。
 # - “精准改动”“匹配现有风格”“外部行为不变”是普通小改默认值；

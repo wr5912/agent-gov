@@ -7,8 +7,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel
+from app.services.feedback_eval_runner import FeedbackEvalRunner
+from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
 
+from .agent_git_store import AgentVersionProvider
+from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
+from .agent_job_types import FormatterOutputModel
+from .agent_loader import load_programmatic_agents
+from .agent_profile_versions import profile_version_snapshot
 from .agent_profiles import (
     MAIN_AGENT_PROFILE,
     PROFILE_VERSION_IDS,
@@ -16,27 +22,20 @@ from .agent_profiles import (
     build_profiles,
     candidate_main_profile,
 )
-from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
-from .agent_loader import load_programmatic_agents
-from .agent_profile_versions import profile_version_snapshot
-from .agent_git_store import AgentVersionProvider
 from .errors import RuntimeUnavailableError
-from .runtime_db import utc_now
-from .stores.feedback_store import FeedbackStore
-from .message_utils import extract_text, message_event_name, to_plain
+from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
+from .integrations.runtime_langfuse import RuntimeLangfuseClient
+from .json_types import JsonObject
 from .mcp_config import filtered_mcp_servers
+from .message_utils import extract_text, message_event_name, to_plain
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
-from .json_types import JsonObject
 from .runtime_activity import RuntimeActivityExtractor
-from .integrations.runtime_langfuse import RuntimeLangfuseClient, ensure_langfuse_otel_compat
+from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
-from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
-from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
-from app.services.feedback_eval_runner import FeedbackEvalRunner
-
+from .stores.feedback_store import FeedbackStore
 
 _MISSING_SDK_SESSION_MARKER = "No conversation found with session ID"
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
@@ -142,8 +141,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         skills = req.skills if req.skills is not None else self.settings.default_skills
         if agent:
             parts.append(
-                f"请优先委派或使用名为 `{agent}` 的 Claude Code subagent 处理本次任务；"
-                "如果运行时无法直接切换到该 subagent，则按该 subagent 的职责边界执行。"
+                f"请优先委派或使用名为 `{agent}` 的 Claude Code subagent 处理本次任务；如果运行时无法直接切换到该 subagent，则按该 subagent 的职责边界执行。"
             )
         if skills:
             parts.append(f"本次任务优先使用这些 Skills：{', '.join(skills)}。")
@@ -194,11 +192,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         agent_version_id: Optional[str],
     ) -> JsonObject:
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
-        disallowed_tools = (
-            req.disallowed_tools
-            if req.disallowed_tools is not None
-            else self.settings.default_disallowed_tools
-        )
+        disallowed_tools = req.disallowed_tools if req.disallowed_tools is not None else self.settings.default_disallowed_tools
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -357,19 +351,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if self.settings.provider_api_url:
             env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
 
-        system_append = "\n\n".join(
-            part for part in [self.settings.claude_system_append, req.system_append] if part
-        )
+        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append] if part)
         system_prompt = {"type": "preset", "preset": "claude_code"}
         if system_append:
             system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
 
         allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
-        disallowed_tools = (
-            req.disallowed_tools
-            if req.disallowed_tools is not None
-            else self.settings.default_disallowed_tools
-        )
+        disallowed_tools = req.disallowed_tools if req.disallowed_tools is not None else self.settings.default_disallowed_tools
 
         kwargs: dict[str, object] = {
             "tools": self.settings.claude_tools,
@@ -440,7 +428,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         prompt: str,
         job_type: str,
         job_input: JsonObject,
-    ) -> BaseModel:
+    ) -> FormatterOutputModel:
         self.job_runner.output_formatter = self.output_formatter
         return await self.job_runner.run_profile_json(
             profile_name=profile_name,
@@ -495,10 +483,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         *,
         profile: AgentRuntimeProfile | None = None,
     ) -> JsonObject:
-        metadata = {
-            key: clean_langfuse_attribute_value(value)
-            for key, value in self._runtime_observation_metadata(context, mode, profile=profile).items()
-        }
+        metadata = {key: clean_langfuse_attribute_value(value) for key, value in self._runtime_observation_metadata(context, mode, profile=profile).items()}
         metadata.update(self._business_metadata(req.metadata))
         return {
             "user_id": self._langfuse_user_id(req.metadata),
@@ -592,7 +577,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         )
         return answer, agent_activity, output
 
-    def _update_runtime_observations(self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: JsonObject) -> None:
+    def _update_runtime_observations(
+        self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: JsonObject
+    ) -> None:
         level = "ERROR" if state.errors else "DEFAULT"
         status_message = "\n".join(state.errors) if state.errors else None
         self.langfuse.update_observation(
@@ -690,6 +677,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     metadata=root_metadata,
                 ) as generation:
                     try:
+
                         async def execute_query() -> None:
                             options = self._build_options(req, context.session, profile=profile)
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
@@ -752,6 +740,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     metadata=root_metadata,
                 ) as generation:
                     try:
+
                         async def emit_query_events() -> AsyncIterator[JsonObject]:
                             options = self._build_options(req, context.session)
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)

@@ -8,8 +8,21 @@ ifneq ($(wildcard docker/.env.local),)
 COMPOSE_ENV_FILES += --env-file docker/.env.local
 endif
 COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f docker/docker-compose.yml
+PYTHON_TYPECHECK_TARGETS := \
+	app/runtime/agent_job_types.py \
+	app/runtime/output_formatter.py \
+	app/runtime/agent_job_runner.py \
+	app/runtime/claude_runtime.py \
+	app/services/agent_job_worker.py \
+	app/services/feedback_job_orchestrator.py \
+	app/runtime/stores/agent_job_store.py \
+	app/runtime/stores/feedback_job_store.py \
+	app/runtime/stores/feedback_batch_plan_store.py \
+	app/runtime/stores/feedback_execution_store.py \
+	scripts/check_codex_governance.py \
+	scripts/codex_governance_typed_output.py
 
-.PHONY: setup build up down logs test smoke zip chat codex-guard ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
+.PHONY: setup build up down logs test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -115,6 +128,17 @@ chat:
 
 codex-guard:
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
+
+ruff-check:
+	$(PYTHON_RUN) -m ruff check $(PYTHON_TYPECHECK_TARGETS)
+
+ruff-format-check:
+	$(PYTHON_RUN) -m ruff format --check $(PYTHON_TYPECHECK_TARGETS)
+
+pyright:
+	$(PYTHON_RUN) -m pyright
+
+typecheck: ruff-check ruff-format-check pyright
 
 test: codex-guard
 	$(PYTHON_RUN) -m compileall app

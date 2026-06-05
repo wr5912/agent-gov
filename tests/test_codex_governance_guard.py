@@ -124,6 +124,37 @@ def _payload_dict_return_source() -> str:
     return "class Record:\n" "    def to_payload(self) -> " "dict[str, object]:\n" "        return {}\n"
 
 
+def _formatter_result_basemodel_source() -> str:
+    return (
+        "from pydantic import BaseModel\n\n"
+        "class OutputFormatterResult:\n"
+        "    pass\n\n"
+        "def format() -> OutputFormatterResult[BaseModel]:\n"
+        "    return OutputFormatterResult()\n"
+    )
+
+
+def _runner_basemodel_return_source() -> str:
+    return "from pydantic import BaseModel\n\n" "async def run_profile_json() -> BaseModel:\n" "    return BaseModel()\n"
+
+
+def _completion_raw_output_basemodel_source() -> str:
+    return (
+        "from pydantic import BaseModel\n"
+        "from app.runtime.json_types import JsonObject\n\n"
+        "def complete_batch_plan_job(self, job_id: str, raw_output: BaseModel | JsonObject) -> None:\n"
+        "    return None\n"
+    )
+
+
+def _run_profile_alias_basemodel_source() -> str:
+    return (
+        "from typing import Awaitable, Callable\n"
+        "from pydantic import BaseModel\n\n"
+        "RunProfileJson = Callable[..., Awaitable[BaseModel]]\n"
+    )
+
+
 def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "large.py", 5)
@@ -403,6 +434,50 @@ def test_new_map_any_type_boundary_fails(
     _commit_all(tmp_path)
     path = tmp_path / "app" / "schema.py"
     path.write_text(source_factory("new_contract"), encoding="utf-8")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert expected_message in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "source", "expected_message"),
+    [
+        (
+            "app/runtime/output_formatter.py",
+            _formatter_result_basemodel_source(),
+            "new typed-output stage erasure: format:return:OutputFormatterResult[BaseModel]",
+        ),
+        (
+            "app/runtime/agent_job_runner.py",
+            _runner_basemodel_return_source(),
+            "new typed-output stage erasure: run_profile_json:return:BaseModel",
+        ),
+        (
+            "app/runtime/stores/feedback_batch_plan_store.py",
+            _completion_raw_output_basemodel_source(),
+            "new typed-output stage erasure: complete_batch_plan_job:arg:raw_output:BaseModel|JsonObject",
+        ),
+        (
+            "app/services/agent_job_worker.py",
+            _run_profile_alias_basemodel_source(),
+            "new typed-output stage erasure: RunProfileJson:alias:BaseModel",
+        ),
+    ],
+)
+def test_new_typed_output_stage_erasure_fails(
+    tmp_path: Path,
+    rel_path: str,
+    source: str,
+    expected_message: str,
+) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    path = tmp_path / rel_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
 
     result = _run_guard(tmp_path)
 

@@ -20,7 +20,7 @@ from feedback_store_test_utils import (
     pytest,
 )
 from app.runtime.errors import BusinessRuleViolation
-from app.runtime.feedback_schemas import coerce_attribution_output_model, coerce_feedback_optimization_plan_output_model
+from app.runtime.feedback_schemas import AttributionFormatterOutput, FeedbackOptimizationPlanFormatterOutput
 from app.runtime.json_types import JsonObject
 from app.runtime.output_formatter import OutputFormatterResult
 from app.runtime.runtime_db import EvalRunItemModel
@@ -31,12 +31,29 @@ from app.services.feedback_eval_runner import FeedbackEvalRunner
 def _formatter_result(job_type: object, payload: JsonObject) -> OutputFormatterResult:
     job_type_value = getattr(job_type, "value", job_type)
     if job_type_value == "attribution":
-        output, error = coerce_attribution_output_model(payload)
+        output = AttributionFormatterOutput.model_validate({key: value for key, value in payload.items() if key not in {"feedback_case_id", "attribution_job_id"}})
     elif job_type_value == "batch_plan":
-        output, error = coerce_feedback_optimization_plan_output_model(payload)
+        output = FeedbackOptimizationPlanFormatterOutput.model_validate(
+            {
+                key: value
+                for key, value in payload.items()
+                if key
+                not in {
+                    "schema_version",
+                    "batch_id",
+                    "optimization_plan_id",
+                    "created_at",
+                    "source_refs",
+                    "feedback_case_ids",
+                    "eval_case_ids",
+                    "attribution_job_ids",
+                    "attribution_summaries",
+                    "regeneration_instruction",
+                }
+            }
+        )
     else:
         raise AssertionError(f"unexpected formatter job type: {job_type}")
-    assert output is not None, error
     return OutputFormatterResult(output=output)
 
 
@@ -600,15 +617,15 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
             "feedback_case_id": input_payload["feedback_case_id"],
             "attribution_job_id": input_payload["job_id"],
             "status": "needs_human_review",
-            "problem_type": "tool_usage_deficiency",
-            "optimization_object_type": "agent_behavior",
-            "actionability": "low",
+            "problem_type": "tool_data_quality",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "needs_human_analysis",
             "confidence": "low",
             "human_review_required": True,
-            "evidence_refs": input_payload["allowed_evidence_paths"],
-            "responsibility_boundary": "agent",
+            "evidence_refs": [{"type": "evidence_file", "id": "tool_calls.json", "reason": "tool_calls.json 为空，无法证明回答前使用过工具。"}],
+            "responsibility_boundary": {"owner": "agent", "reason": "需要人工确认是否应补强回答能力类问题前的工具使用准则。"},
             "rationale": "该 run 有 messages 和 trace summary，但 tool_calls.json 为空；归因为工具证据链不足。",
-            "recommended_next_step": "Human reviewer should examine whether the agent should have used tools before answering capability queries.",
+            "recommended_next_step": "needs_human_review",
         }
         seen["formatted_payload"] = output
         seen["prompt_text"] = prompt_text
@@ -648,7 +665,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
     assert seen["max_turns"] == 16
     assert seen["formatter_job_type"] == "attribution"
-    assert "tool_usage_deficiency" in str(seen["formatter_raw_text"])
+    assert "tool_data_quality" in str(seen["formatter_raw_text"])
     assert attribution_job.status == "completed"
     assert output["feedback_case_id"] == feedback_case["feedback_case_id"]
     assert output["problem_type"] == "tool_data_quality"

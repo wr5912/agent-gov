@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.runtime.feedback_schemas import ExecutionPlanOutput, FeedbackEvalCaseGenerationOutput
+from app.runtime.feedback_schemas import ExecutionPlanFormatterOutput, FeedbackEvalCaseGenerationFormatterOutput
 from feedback_store_test_utils import _create_batch_with_completed_attribution
 from test_api_execution_optimizer import _load_app, _run_one_agent_job
 
@@ -17,21 +17,16 @@ def test_batch_plan_task_execute_endpoint_is_consumed_by_worker(monkeypatch, tmp
 
     async def fake_run_profile_json(**kwargs):
         if kwargs["job_type"] == "eval_case_generation":
-            return FeedbackEvalCaseGenerationOutput.model_validate(
+            return FeedbackEvalCaseGenerationFormatterOutput.model_validate(
                 {
-                    "status": "needs_human_review",
                     "eval_cases": [],
                     "no_action_reason": "测试只验证 execute 队列链路，跳过用例生成。",
                 }
             )
         assert kwargs["job_type"] == "execution"
-        job_input = kwargs["job_input"]
-        return ExecutionPlanOutput.model_validate(
+        return ExecutionPlanFormatterOutput.model_validate(
             {
-                "optimization_task_id": job_input["optimization_task_id"],
-                "execution_job_id": job_input["execution_job_id"],
                 "status": "ready",
-                "baseline_agent_version_id": job_input["baseline_agent_version_id"],
                 "summary": "追加配置核查要求。",
                 "operations": [
                     {

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from typing import Any, Callable
+from collections.abc import AsyncIterator, Callable
+from typing import Any
 
-from pydantic import BaseModel
-
-from .agent_job_types import AgentJobType
+from .agent_job_types import AgentJobType, FormatterOutputModel
 from .agent_profiles import AgentRuntimeProfile
-from .message_utils import extract_text
+from .json_types import JsonObject
 from .mcp_config import filtered_mcp_servers
+from .message_utils import extract_text
 from .output_formatter import DSPyOutputFormatter
 from .policy import build_default_hooks, guard_tool_use
-from .json_types import JsonObject
 from .settings import AppSettings
 
 
@@ -86,7 +84,7 @@ class AgentJobRunner:
         prompt: str,
         job_type: AgentJobType | str,
         job_input: JsonObject,
-    ) -> BaseModel:
+    ) -> FormatterOutputModel:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
@@ -94,7 +92,7 @@ class AgentJobRunner:
         errors: list[str] = []
         options = self.build_options(profile)
 
-        async def collect() -> BaseModel:
+        async def collect() -> FormatterOutputModel:
             async for msg in query(prompt=self.single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 if text:
@@ -121,7 +119,7 @@ class AgentJobRunner:
         job_type: AgentJobType | str,
         raw_text: str,
         job_input: JsonObject,
-    ) -> BaseModel:
+    ) -> FormatterOutputModel:
         result = await asyncio.wait_for(
             asyncio.to_thread(
                 self.output_formatter.format,

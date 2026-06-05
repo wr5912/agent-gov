@@ -26,6 +26,7 @@ license: "MIT-compatible adaptation with attribution"
 - 是否已经识别治理硬门暂未覆盖的结构风险？检查未报警不能替代架构判断。
 - 是否通过用户意图和旧债信号判断需要进入“替换旧设计模式”？
 - 如果任务涉及 Agent、DSPy、LLM 输出格式化或提示词输出要求，是否已经区分 backend-owned、agent-owned 和 boundary-owned 字段？
+- 如果任务涉及 formatter、runner、worker、orchestrator 或 store completion，是否已经区分 `raw_agent_text`、`formatter_output`、`projected_output` 和边界 JSON payload，且没有把 formatter 输出擦成 `BaseModel`？
 - 是否存在多个合理解释？如果存在，先列出并确认。
 - 是否存在更简单的实现路径？如果存在，优先提出。
 
@@ -36,6 +37,7 @@ license: "MIT-compatible adaptation with attribution"
 - 说明逻辑修改点。
 - 说明架构阈值命中情况；命中时给出先拆分、抽象或统一的处理方式。
 - 如涉及 Agent、DSPy、LLM 输出契约，列出字段所有权矩阵、允许覆盖方、序列化边界和负向测试。
+- 如涉及 typed output 主链路，列出 `FormatterOutputModel`、`ProjectedOutputModel`、具体 OutputModel、store completion 参数类型和允许保留 `JsonObject` 的兼容边界。
 - 如触发替换旧设计模式，列出旧设计的删除、迁移、保留清单，以及公开契约、配置、数据、文档、测试和内部兼容层处理方式。
 - 说明 Docker 卷挂载路径；不涉及写“不涉及”。
 - 说明验证方式和成功标准。
@@ -124,6 +126,14 @@ license: "MIT-compatible adaptation with attribution"
 - boundary-owned：DB、HTTP、文件、日志和观测等序列化边界；`model_dump(mode="json")` 只应出现在这些边界。
 
 prompt 和 Signature 只能要求 agent-owned 输出字段。backend-owned 字段可以作为输入上下文帮助 grounding，但不能成为 Agent 输出结构的一部分。
+
+## Typed Output 类型边界
+
+- Formatter 和 runner 主链路返回 `FormatterOutputModel` 或具体 formatter 输出模型，不得返回裸 `BaseModel`。
+- Store completion 接收具体 formatter 输出模型；只有历史 fixture、外部脏输入或确定性投影路径允许额外接收 `JsonObject` 或具体 projected 输出模型。
+- 后端补齐上下文字段后的模型属于 `ProjectedOutputModel`；DB、HTTP、文件、日志和观测边界才 dump 成 JSON payload。
+- 变量命名必须体现阶段：Agent 原文用 `raw_agent_text` / `raw_text`，DSPy 结果用 `formatter_output`，投影结果用 `projected_output`，持久化字段才使用 `raw_output_json`。
+- 新增 job 类型时，必须同步集中注册表、`FormatterOutputModel`、`ProjectedOutputModel`、DSPy Signature、OutputModel、projection 测试和 hostile backend-owned 字段污染测试。
 
 ## 生命周期状态硬约束
 

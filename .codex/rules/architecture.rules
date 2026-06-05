@@ -68,6 +68,13 @@
 # 新增 job/profile/output 类型必须优先进入集中注册表，注册表至少声明 job type、profile、
 # prompt builder、DSPy Signature 和 OutputModel；不得再让这些信息散落在多个 if/else 分支。
 #
+# Formatter 输出、投影输出和序列化 payload 必须在类型注解中保持阶段边界：
+#
+# - formatter/runner 主链路返回 `FormatterOutputModel` 或具体 formatter 输出模型，不得擦成 `BaseModel`。
+# - store completion 接收具体 formatter 输出模型；只有历史 fixture、外部脏输入或确定性投影边界可额外接收 `JsonObject` 或已投影模型。
+# - `raw_agent_text`、`formatter_output`、`projected_output`、`raw_output_json` 等命名必须区分阶段，禁止把 formatter 输出继续命名为 `raw_output`。
+# - 新增 formatter/job 类型必须同步 `FormatterOutputModel`、`ProjectedOutputModel` 和集中注册表，避免局部 if/else 自行声明契约。
+#
 # ## Agent 输出字段所有权
 #
 # 涉及 Agent、DSPy formatter、LLM 输出格式化或提示词输出要求时，计划必须先列字段所有权矩阵：

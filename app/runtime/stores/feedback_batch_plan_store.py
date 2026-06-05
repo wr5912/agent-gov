@@ -1,23 +1,25 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, Optional
-
-from pydantic import BaseModel
+from collections.abc import Callable
+from typing import Any, Optional
 
 from ..agent_job_types import agent_job_spec
 from ..errors import BusinessRuleViolation, ConflictError
 from ..feedback_job_flags import no_actionable_attributions, with_reused_existing
-from ..feedback_schemas import coerce_feedback_optimization_plan_output_model, output_model_payload
+from ..feedback_schemas import (
+    FeedbackOptimizationPlanFormatterOutput,
+    coerce_feedback_optimization_plan_output_model,
+    output_model_payload,
+)
+from ..json_types import JsonObject
 from ..records.batch_plan_records import (
     FeedbackOptimizationAttributionSummaryRecord,
     FeedbackOptimizationBlockedItemRecord,
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
 )
-from ..json_types import JsonObject
 from ..runtime_db import utc_now
-
 
 BATCH_PLAN_ACTIVE_JOB_STATUSES = {"created", "queued", "running", "schema_validating", "evidence_packaging"}
 
@@ -177,15 +179,21 @@ class FeedbackBatchPlanStoreMixin:
                 continue
             self._discard_job(job_id)
 
-    def complete_batch_plan_job(self, job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
+    def complete_batch_plan_job(
+        self,
+        job_id: str,
+        formatter_output: FeedbackOptimizationPlanFormatterOutput | JsonObject,
+    ) -> Optional[JsonObject]:
         job = self.get_job(job_id)
         if not job:
             return None
         batch_id = self._job_batch_id(job)
-        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
-        output = self._batch_plan_output_with_job_context(raw_input, job)
+        formatter_output_json = (
+            output_model_payload(formatter_output) if isinstance(formatter_output, FeedbackOptimizationPlanFormatterOutput) else formatter_output
+        )
+        output = self._batch_plan_output_with_job_context(formatter_output_json, job)
         output_model, error = coerce_feedback_optimization_plan_output_model(output)
-        raw_payload = output_model_payload(output_model) if output_model else raw_input
+        raw_payload = output_model_payload(output_model) if output_model else formatter_output_json
         if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid feedback optimization plan output")
             with self.Session.begin() as db:
@@ -357,7 +365,6 @@ class FeedbackBatchPlanStoreMixin:
         )
         return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
 
-
     def _non_actionable_plan(self, batch: JsonObject, reason: str, regeneration_instruction: Optional[str] = None) -> JsonObject:
         blocked_items = [
             {
@@ -451,14 +458,14 @@ class FeedbackBatchPlanStoreMixin:
             plan["regeneration_instruction"] = input_json["regeneration_instruction"]
         return self._normalize_plan_task_collections(batch or plan, plan)
 
-    def _batch_plan_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
+    def _batch_plan_output_with_job_context(self, formatter_output_json: JsonObject, job: JsonObject) -> JsonObject:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         batch_id = self._string(input_json.get("batch_id")) or self._string(job.get("batch_id")) or self._string(job.get("scope_id")) or ""
         batch = self.find_optimization_batch(batch_id) or {}
         feedback_case_ids = self._string_list(batch.get("feedback_case_ids"))
         eval_case_ids = self._string_list(batch.get("eval_case_ids"))
         attribution_job_ids = self._string_list(input_json.get("attribution_job_ids")) or self._string_list(batch.get("attribution_job_ids"))
-        output = dict(raw_output)
+        output = dict(formatter_output_json)
         output.update(
             {
                 "batch_id": batch_id,
@@ -526,17 +533,11 @@ class FeedbackBatchPlanStoreMixin:
             if isinstance(item, str):
                 summary = self._string(item)
                 if summary:
-                    summaries.append(
-                        FeedbackOptimizationAttributionSummaryRecord(summary=summary).model_dump(mode="json", exclude_none=True)
-                    )
+                    summaries.append(FeedbackOptimizationAttributionSummaryRecord(summary=summary).model_dump(mode="json", exclude_none=True))
                 continue
             if not isinstance(item, dict):
                 continue
-            attribution_job_id = (
-                self._string(item.get("attribution_job_id"))
-                or self._string(item.get("job_id"))
-                or self._string(item.get("_job_id"))
-            )
+            attribution_job_id = self._string(item.get("attribution_job_id")) or self._string(item.get("job_id")) or self._string(item.get("_job_id"))
             summary = FeedbackOptimizationAttributionSummaryRecord(
                 attribution_job_id=attribution_job_id,
                 feedback_case_id=self._string(item.get("feedback_case_id")),
@@ -570,11 +571,7 @@ class FeedbackBatchPlanStoreMixin:
         status = "pending_approval" if executable_tasks else "needs_human_review"
         actionability = self._string(primary.get("actionability")) or "needs_human_analysis"
         rationale_lines = [self._string(item.get("rationale")) for item in attributions if self._string(item.get("rationale"))]
-        evidence_refs = [
-            ref
-            for item in attributions
-            for ref in self._normalize_plan_evidence_refs(item.get("evidence_refs"))
-        ][:20]
+        evidence_refs = [ref for item in attributions for ref in self._normalize_plan_evidence_refs(item.get("evidence_refs"))][:20]
         eval_case_ids = batch.get("eval_case_ids") or []
         recommendation = (
             "根据本批次归因结果，调整目标 Agent 配置，要求其在回答反馈暴露的场景时使用当前工作区的权威配置、"
@@ -600,10 +597,7 @@ class FeedbackBatchPlanStoreMixin:
             "target_path": target_path,
             "recommendation": recommendation,
             "expected_effect": "提高反馈场景回答的完整性、可核查性和稳定性，降低同类反馈再次出现的概率。",
-            "validation": (
-                f"使用本批次关联的 {len(eval_case_ids)} 条回归测试用例逐条验证；所有用例均展示完整运行过程，"
-                "失败项进入继续优化。"
-            ),
+            "validation": (f"使用本批次关联的 {len(eval_case_ids)} 条回归测试用例逐条验证；所有用例均展示完整运行过程，失败项进入继续优化。"),
             "risk": "可能增加回答前的工具调用成本；如指令过强，简单问题可能产生不必要的检查步骤。",
             "source_refs": batch.get("source_refs") or [],
             "feedback_case_ids": batch.get("feedback_case_ids") or [],

@@ -5,15 +5,10 @@ import argparse
 import ast
 import subprocess
 import sys
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
-from codex_governance_legacy_feedback import (
-    legacy_feedback_active_ref_issue_specs,
-    legacy_feedback_active_refs,
-    legacy_feedback_repo_refs,
-)
 from codex_governance_json import (
     annotation_contains_name,
     is_allowed_jsonobject_field,
@@ -23,7 +18,19 @@ from codex_governance_json import (
     jsonobject_boundary_issue_specs,
     legacy_json_type_import_issue_specs,
 )
-
+from codex_governance_legacy_feedback import (
+    legacy_feedback_active_ref_issue_specs,
+    legacy_feedback_active_refs,
+    legacy_feedback_repo_refs,
+)
+from codex_governance_typed_output import (
+    annotation_contains_output_formatter_result_basemodel,
+    annotation_is_bare_basemodel,
+    annotation_is_base_json_union,
+    is_typed_output_completion_function,
+    is_typed_output_runner_function,
+    typed_output_stage_erasure_issue_specs,
+)
 
 DEFAULT_SOURCE_ROOTS = ("src", "app", "backend", "server", "frontend/src", "packages", "scripts")
 PYTHON_SUFFIXES = {".py"}
@@ -64,6 +71,7 @@ class PythonMetrics:
     classes: dict[str, int] = field(default_factory=dict)
     unowned_dict_returns: set[str] = field(default_factory=set)
     map_any_boundaries: set[str] = field(default_factory=set)
+    typed_output_stage_erasure: set[str] = field(default_factory=set)
     legacy_json_type_imports: set[str] = field(default_factory=set)
     disallowed_jsonobject_fields: set[str] = field(default_factory=set)
     store_jsonobject_returns: set[str] = field(default_factory=set)
@@ -186,10 +194,7 @@ def _is_route_path(rel_path: str, route_path_parts: set[str]) -> bool:
 
 
 def _public_method_count(node: ast.ClassDef) -> int:
-    return sum(
-        isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and not item.name.startswith("_")
-        for item in node.body
-    )
+    return sum(isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)) and not item.name.startswith("_") for item in node.body)
 
 
 def _annotation_contains_dict(annotation: ast.expr | None) -> bool:
@@ -261,15 +266,9 @@ def _annotation_contains_map_any(annotation: ast.expr | None) -> bool:
         return _annotation_contains_map_any(parsed_annotation)
     if isinstance(annotation, ast.Subscript):
         items = _annotation_slice_items(annotation.slice)
-        if (
-            _is_map_name(annotation.value)
-            and len(items) == 2
-            and any(_annotation_contains_any(item) for item in items)
-        ):
+        if _is_map_name(annotation.value) and len(items) == 2 and any(_annotation_contains_any(item) for item in items):
             return True
-        return _annotation_contains_map_any(annotation.value) or any(
-            _annotation_contains_map_any(item) for item in items
-        )
+        return _annotation_contains_map_any(annotation.value) or any(_annotation_contains_map_any(item) for item in items)
     if isinstance(annotation, ast.Tuple):
         return any(_annotation_contains_map_any(item) for item in annotation.elts)
     if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
@@ -337,6 +336,7 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         self.classes: dict[str, int] = {}
         self.unowned_dict_returns: set[str] = set()
         self.map_any_boundaries: set[str] = set()
+        self.typed_output_stage_erasure: set[str] = set()
         self.legacy_json_type_imports: set[str] = set()
         self.disallowed_jsonobject_fields: set[str] = set()
         self.store_jsonobject_returns: set[str] = set()
@@ -370,12 +370,16 @@ class _PythonMetricVisitor(ast.NodeVisitor):
             self.store_jsonobject_returns.add(name)
         if _annotation_contains_map_any(node.returns):
             self.map_any_boundaries.add(f"{name}:return")
+        if annotation_contains_output_formatter_result_basemodel(node.returns):
+            self.typed_output_stage_erasure.add(f"{name}:return:OutputFormatterResult[BaseModel]")
+        if is_typed_output_runner_function(self.rel_path, node.name) and annotation_is_bare_basemodel(node.returns):
+            self.typed_output_stage_erasure.add(f"{name}:return:BaseModel")
         for arg in _function_arguments(node):
             if _annotation_contains_map_any(arg.annotation):
                 self.map_any_boundaries.add(f"{name}:arg:{arg.arg}")
-        if _is_route_path(self.rel_path, self.route_path_parts) and any(
-            _is_route_decorator(decorator) for decorator in node.decorator_list
-        ):
+            if arg.arg == "raw_output" and is_typed_output_completion_function(node.name) and annotation_is_base_json_union(arg.annotation):
+                self.typed_output_stage_erasure.add(f"{name}:arg:{arg.arg}:BaseModel|JsonObject")
+        if _is_route_path(self.rel_path, self.route_path_parts) and any(_is_route_decorator(decorator) for decorator in node.decorator_list):
             self.route_count += 1
         self.scope.append(node.name)
         self.generic_visit(node)
@@ -394,6 +398,9 @@ class _PythonMetricVisitor(ast.NodeVisitor):
         if _annotation_contains_map_any(node.annotation) or _annotation_contains_map_any(node.value):
             qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
             self.map_any_boundaries.add(f"{qualified_name}:annotation")
+        if annotation_contains_output_formatter_result_basemodel(node.annotation):
+            qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
+            self.typed_output_stage_erasure.add(f"{qualified_name}:annotation:OutputFormatterResult[BaseModel]")
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign) -> None:
@@ -402,6 +409,13 @@ class _PythonMetricVisitor(ast.NodeVisitor):
                 target_name = _annotation_target_name(target)
                 qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
                 self.map_any_boundaries.add(f"{qualified_name}:annotation")
+        if self.rel_path in {"app/services/agent_job_worker.py", "app/services/feedback_job_orchestrator.py"} and annotation_contains_name(
+            node.value, "BaseModel"
+        ):
+            for target in node.targets:
+                target_name = _annotation_target_name(target)
+                if target_name == "RunProfileJson":
+                    self.typed_output_stage_erasure.add(f"{target_name}:alias:BaseModel")
         self.generic_visit(node)
 
 
@@ -416,6 +430,7 @@ def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> Pyt
         classes=visitor.classes,
         unowned_dict_returns=visitor.unowned_dict_returns,
         map_any_boundaries=visitor.map_any_boundaries,
+        typed_output_stage_erasure=visitor.typed_output_stage_erasure,
         legacy_json_type_imports=visitor.legacy_json_type_imports,
         disallowed_jsonobject_fields=visitor.disallowed_jsonobject_fields,
         store_jsonobject_returns=visitor.store_jsonobject_returns,
@@ -425,22 +440,12 @@ def _python_metrics(rel_path: str, text: str, route_path_parts: set[str]) -> Pyt
 
 def _dict_string_keys(tree: ast.Module, name: str) -> set[str] | None:
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and any(
-            isinstance(target, ast.Name) and target.id == name for target in node.targets
-        ):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
             if isinstance(node.value, ast.Dict):
-                return {
-                    key.value
-                    for key in node.value.keys
-                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
-                }
+                return {key.value for key in node.value.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
         if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id == name:
             if isinstance(node.value, ast.Dict):
-                return {
-                    key.value
-                    for key in node.value.keys
-                    if isinstance(key, ast.Constant) and isinstance(key.value, str)
-                }
+                return {key.value for key in node.value.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
     return None
 
 
@@ -678,27 +683,6 @@ def collect_legacy_json_type_import_issues(current: Snapshot, base: Snapshot) ->
     ]
 
 
-def collect_jsonobject_boundary_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
-    return [
-        GovernanceIssue(path, message, blocking)
-        for path, message, blocking in jsonobject_boundary_issue_specs(
-            current.python,
-            base.python,
-            PythonMetrics(),
-        )
-    ]
-
-
-def collect_legacy_feedback_active_ref_issues(current: Snapshot, base: Snapshot) -> list[GovernanceIssue]:
-    return [
-        GovernanceIssue(path, message, blocking)
-        for path, message, blocking in legacy_feedback_active_ref_issue_specs(
-            current.legacy_feedback_active_refs,
-            base.legacy_feedback_active_refs,
-        )
-    ]
-
-
 def collect_issues(
     current: Snapshot,
     base: Snapshot,
@@ -710,9 +694,21 @@ def collect_issues(
     issues.extend(collect_state_machine_issues(current, base))
     issues.extend(collect_dict_return_issues(current, base))
     issues.extend(collect_map_any_boundary_issues(current, base))
+    issues.extend(
+        GovernanceIssue(path, message, blocking)
+        for path, message, blocking in typed_output_stage_erasure_issue_specs(current.python, base.python, PythonMetrics())
+    )
     issues.extend(collect_legacy_json_type_import_issues(current, base))
-    issues.extend(collect_jsonobject_boundary_issues(current, base))
-    issues.extend(collect_legacy_feedback_active_ref_issues(current, base))
+    issues.extend(
+        GovernanceIssue(path, message, blocking) for path, message, blocking in jsonobject_boundary_issue_specs(current.python, base.python, PythonMetrics())
+    )
+    issues.extend(
+        GovernanceIssue(path, message, blocking)
+        for path, message, blocking in legacy_feedback_active_ref_issue_specs(
+            current.legacy_feedback_active_refs,
+            base.legacy_feedback_active_refs,
+        )
+    )
     return sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
 
 

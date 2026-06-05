@@ -3,14 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Final, TypeAlias
 
 from .litellm_defaults import configure_litellm_import_defaults
 
 configure_litellm_import_defaults()
 
 import dspy
-from pydantic import BaseModel
 
 from .agent_profiles import (
     ATTRIBUTION_ANALYZER_PROFILE,
@@ -42,6 +41,31 @@ from .prompts.feedback_prompts import (
 
 
 PromptBuilder = Callable[[str, JsonObject], str]
+
+FormatterOutputModel: TypeAlias = (
+    AttributionFormatterOutput
+    | FeedbackOptimizationPlanFormatterOutput
+    | ExecutionPlanFormatterOutput
+    | FeedbackEvalCaseGenerationFormatterOutput
+    | RegressionImpactAnalysisFormatterOutput
+)
+ProjectedOutputModel: TypeAlias = (
+    AttributionOutput | FeedbackOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput | RegressionImpactAnalysisOutput
+)
+FormatterOutputModelClass: TypeAlias = (
+    type[AttributionFormatterOutput]
+    | type[FeedbackOptimizationPlanFormatterOutput]
+    | type[ExecutionPlanFormatterOutput]
+    | type[FeedbackEvalCaseGenerationFormatterOutput]
+    | type[RegressionImpactAnalysisFormatterOutput]
+)
+ProjectedOutputModelClass: TypeAlias = (
+    type[AttributionOutput]
+    | type[FeedbackOptimizationPlanOutput]
+    | type[ExecutionPlanOutput]
+    | type[FeedbackEvalCaseGenerationOutput]
+    | type[RegressionImpactAnalysisOutput]
+)
 
 
 class AgentJobType(StrEnum):
@@ -88,7 +112,9 @@ class ExecutionFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出。")
     job_input_json: str = dspy.InputField(desc="执行 job 输入，包含 optimization_task_id、execution_job_id、target_paths 和 proposal。")
-    formatted_output: ExecutionPlanFormatterOutput = dspy.OutputField(desc="执行方案业务内容，不包含 execution_job_id、optimization_task_id 和 baseline_agent_version_id。")
+    formatted_output: ExecutionPlanFormatterOutput = dspy.OutputField(
+        desc="执行方案业务内容，不包含 execution_job_id、optimization_task_id 和 baseline_agent_version_id。"
+    )
 
 
 class EvalCaseGenerationFormattingSignature(dspy.Signature):
@@ -121,8 +147,8 @@ class AgentJobSpec:
     job_type: AgentJobType
     profile_name: str
     prompt_builder: PromptBuilder
-    output_model: type[BaseModel]
-    formatter_output_model: type[BaseModel]
+    output_model: ProjectedOutputModelClass
+    formatter_output_model: FormatterOutputModelClass
     formatter_signature: type[dspy.Signature]
 
 

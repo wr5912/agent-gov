@@ -25,6 +25,7 @@ developer_instructions = '''
 - 触发替换旧设计模式时，计划中必须列出旧设计的删除、迁移、保留清单，并逐项说明公开 API、配置/env、持久化数据、文档、测试和内部兼容层处理方式。
 - 计划中必须说明架构阈值命中情况；命中时先说明拆分、抽象或统一方案。
 - 涉及 Agent、DSPy、LLM 输出格式化或提示词输出要求时，计划必须先列 backend-owned、agent-owned、boundary-owned 字段矩阵；job input、DB row、route 参数、store context 或调度上下文已知的字段不得要求 LLM 输出。
+- 涉及 formatter、runner、worker、orchestrator 或 store completion 时，计划必须先列 `raw_agent_text -> formatter_output -> projected_output -> boundary payload` 的类型边界；formatter 主链路不得返回裸 `BaseModel`，store completion 不得新增 `raw_output: BaseModel | JsonObject`。
 - 计划中必须说明治理硬门；具体命令优先使用 `AGENTS.override.md` 或项目文档声明的本地硬门。
 - 普通小改只修改完成目标所必需的文件；替换旧设计模式下，按已确认的新架构边界删除、迁移或统一旧实现。
 - 优先复用健康的项目已有模式，不引入投机性抽象或依赖。
@@ -52,6 +53,7 @@ developer_instructions = '''
 - 生命周期状态、schema、profile/job/type 分类值或跨事务更新出现分散实现。
 - 表达持久化生命周期且存在受限转移的状态字段缺少集中状态集合、完整转移表或统一写入校验。
 - Agent/DSPy/LLM 输出契约让 LLM 复述 job_id、batch_id、case ids、时间戳、scope、provenance 等后端已知字段，并把它们作为权威输出。
+- Formatter 输出、投影输出和 JSON payload 在类型注解或变量命名中混写，例如 `run_profile_json -> BaseModel`、`OutputFormatterResult[BaseModel]` 或 `complete_*_job(raw_output: BaseModel | JsonObject)`。
 - 旧 facade、兼容 shim、历史路径、旧数据格式、过期 API、不可达 UI 分支或调试脚本仍参与主流程，且没有明确迁移/删除计划。
 
 ## 验证
@@ -64,4 +66,5 @@ developer_instructions = '''
 4. 残余风险和建议下一步。
 5. 项目覆盖层声明的治理硬门结果。
 6. 如涉及 Agent/DSPy/LLM 输出契约，hostile backend-owned 字段污染测试结果。
+7. 如涉及 typed output 主链路，Ruff/Pyright 或 `make typecheck` 结果，以及主链路类型擦除检索结果。
 '''

@@ -6,18 +6,21 @@ import json
 import uuid
 from typing import Any, Optional
 
-from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..agent_job_types import agent_job_spec
 from ..errors import ConflictError
 from ..feedback_job_flags import with_reused_existing
-from ..feedback_schemas import coerce_execution_plan_output_model, output_model_payload
-from ..records.execution_records import ExecutionApplicationRecord
+from ..feedback_schemas import (
+    ExecutionPlanFormatterOutput,
+    ExecutionPlanOutput,
+    coerce_execution_plan_output_model,
+    output_model_payload,
+)
 from ..json_types import JsonObject
+from ..records.execution_records import ExecutionApplicationRecord
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationTaskModel, utc_now
-
 
 MAX_PLANNED_DIFF_INPUT_CHARS = 120_000
 MAX_PLANNED_DIFF_OUTPUT_CHARS = 80_000
@@ -108,20 +111,26 @@ class FeedbackExecutionStoreMixin:
                 return None
         return self.get_execution_job(execution_job_id)
 
-    def complete_execution_job(self, execution_job_id: str, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
+    def complete_execution_job(
+        self,
+        execution_job_id: str,
+        formatter_output: ExecutionPlanFormatterOutput | ExecutionPlanOutput | JsonObject,
+    ) -> Optional[JsonObject]:
         job = self.get_execution_job(execution_job_id)
         if not job:
             return None
-        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
-        output = self._execution_output_with_job_context(raw_input, job)
+        formatter_output_json = (
+            output_model_payload(formatter_output) if isinstance(formatter_output, (ExecutionPlanFormatterOutput, ExecutionPlanOutput)) else formatter_output
+        )
+        output = self._execution_output_with_job_context(formatter_output_json, job)
         output_model, error = coerce_execution_plan_output_model(output)
-        raw_payload = output_model_payload(output_model) if output_model else raw_input
+        raw_payload = output_model_payload(output_model) if output_model else formatter_output_json
         if not output_model:
             failed = self.fail_execution_job(
                 execution_job_id,
                 error_code="SCHEMA_VALIDATION_FAILED",
                 message=error or "invalid execution output",
-                raw_output_json=raw_input,
+                raw_output_json=formatter_output_json,
             )
             return failed
         validated = output_model_payload(output_model)
@@ -158,8 +167,8 @@ class FeedbackExecutionStoreMixin:
                 )
         return self.get_execution_job(execution_job_id)
 
-    def _execution_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
-        output = dict(raw_output)
+    def _execution_output_with_job_context(self, formatter_output_json: JsonObject, job: JsonObject) -> JsonObject:
+        output = dict(formatter_output_json)
         output["execution_job_id"] = self._string(job.get("execution_job_id"))
         output["optimization_task_id"] = self._string(job.get("optimization_task_id"))
         output["baseline_agent_version_id"] = self._string(job.get("baseline_agent_version_id"))
@@ -315,7 +324,6 @@ class FeedbackExecutionStoreMixin:
             limit=limit,
         )
 
-
     def deterministic_execution_plan_output(self, job: JsonObject) -> Optional[JsonObject]:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         proposal = input_json.get("proposal") if isinstance(input_json.get("proposal"), dict) else {}
@@ -335,9 +343,7 @@ class FeedbackExecutionStoreMixin:
             "title": self._string(proposal.get("title")) or "反馈回归评估用例",
             "prompt": recommendation,
             "labels": self._unique_strings(["feedback_optimization", "eval_case", "execution_optimizer"]),
-            "expected_behavior": self._string(proposal.get("expected_effect"))
-            or self._string(proposal.get("validation"))
-            or recommendation,
+            "expected_behavior": self._string(proposal.get("expected_effect")) or self._string(proposal.get("validation")) or recommendation,
             "checks_json": {
                 "requires_non_empty_answer": True,
                 "requires_no_runtime_errors": True,
@@ -369,7 +375,6 @@ class FeedbackExecutionStoreMixin:
             "risk": "该方案只新增评估用例草案，不修改主智能体指令；语义断言仍需人工复核。",
             "human_review_required": True,
         }
-
 
     def _latest_execution_job(self, task_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
@@ -511,7 +516,6 @@ class FeedbackExecutionStoreMixin:
     def _execution_application_to_dict(self, row: ExecutionApplicationModel) -> JsonObject:
         return ExecutionApplicationRecord.from_row(row).to_payload()
 
-
     def _sanitize_execution_plan(self, plan: JsonObject, job: JsonObject) -> tuple[Optional[JsonObject], Optional[str]]:
         sanitized = dict(plan)
         sanitized["execution_job_id"] = job["execution_job_id"]
@@ -519,11 +523,7 @@ class FeedbackExecutionStoreMixin:
         sanitized["baseline_agent_version_id"] = job.get("baseline_agent_version_id")
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         target_paths = set(str(path) for path in input_json.get("target_paths") or [])
-        target_contexts = {
-            str(item.get("path")): item
-            for item in input_json.get("target_file_contexts") or []
-            if isinstance(item, dict) and item.get("path")
-        }
+        target_contexts = {str(item.get("path")): item for item in input_json.get("target_file_contexts") or [] if isinstance(item, dict) and item.get("path")}
         operations = []
         seen_write_paths: set[str] = set()
         for item in sanitized.get("operations") or []:

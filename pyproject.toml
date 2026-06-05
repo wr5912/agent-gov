@@ -1,0 +1,28 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 160
+src = ["app", "scripts", "tests"]
+extend-exclude = [
+  ".venv",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  "docker/volume",
+  "frontend/node_modules",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+  "E501",
+  "UP017",
+  "UP041",
+  "UP045",
+  "SIM102",
+  "SIM108",
+  "SIM117",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"app/runtime/agent_job_types.py" = ["E402", "I001"]
+"app/runtime/output_formatter.py" = ["E402", "I001"]

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from .litellm_defaults import configure_litellm_import_defaults
 
@@ -11,7 +11,7 @@ configure_litellm_import_defaults()
 import dspy
 from pydantic import BaseModel
 
-from .agent_job_types import AgentJobType, agent_job_spec, coerce_agent_job_type
+from .agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec, coerce_agent_job_type
 from .json_types import JsonObject
 from .settings import AppSettings
 
@@ -69,7 +69,7 @@ class DSPyOutputFormatter:
         job_type: AgentJobType | str,
         raw_text: str,
         job_input: JsonObject,
-    ) -> OutputFormatterResult[BaseModel]:
+    ) -> OutputFormatterResult[FormatterOutputModel]:
         if not self.enabled():
             raise RuntimeError("DSPy output formatter is disabled")
         normalized_job_type = coerce_agent_job_type(job_type)
@@ -77,11 +77,14 @@ class DSPyOutputFormatter:
         try:
             with self._langfuse_scope(metadata) as observation:
                 try:
-                    output = self._format_with_dspy(
-                        job_type=normalized_job_type,
-                        raw_text=raw_text,
-                        job_input=job_input,
-                        output_model=agent_job_spec(normalized_job_type).formatter_output_model,
+                    output = cast(
+                        FormatterOutputModel,
+                        self._format_with_dspy(
+                            job_type=normalized_job_type,
+                            raw_text=raw_text,
+                            job_input=job_input,
+                            output_model=agent_job_spec(normalized_job_type).formatter_output_model,
+                        ),
                     )
                     self._update_observation(
                         observation,
@@ -114,8 +117,8 @@ class DSPyOutputFormatter:
         job_type: AgentJobType,
         raw_text: str,
         job_input: JsonObject,
-        output_model: type[BaseModel],
-    ) -> BaseModel:
+        output_model: type[TOutput],
+    ) -> TOutput:
         self._instrument_dspy()
         signature = _signature_for_job_type(job_type)
         predictor = dspy.Predict(signature)
@@ -128,7 +131,7 @@ class DSPyOutputFormatter:
                         raw_agent_output=raw_text,
                         job_input_json=json.dumps(job_input, ensure_ascii=False, indent=2),
                     )
-                return _coerce_output_model(getattr(result, "formatted_output"), output_model)
+                return _coerce_output_model(result.formatted_output, output_model)
             except Exception as exc:
                 last_error = exc
         if last_error:
@@ -185,10 +188,6 @@ class DSPyOutputFormatter:
     def _update_observation(self, observation: Any, **kwargs: Any) -> None:
         if self.langfuse is not None and hasattr(self.langfuse, "update_observation"):
             self.langfuse.update_observation(observation, **kwargs)
-
-
-def _output_model_for_job_type(job_type: AgentJobType | str) -> type[BaseModel]:
-    return agent_job_spec(job_type).output_model
 
 
 def _signature_for_job_type(job_type: AgentJobType | str) -> type[dspy.Signature]:

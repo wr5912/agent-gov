@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Awaitable, Callable, Optional, cast
+from collections.abc import Awaitable, Callable
+from typing import Optional, cast
 
-from pydantic import BaseModel
-
-from app.runtime.agent_job_types import AgentJobType, agent_job_spec
-from app.runtime.agent_profiles import PROFILE_VERSION_IDS, AgentRuntimeProfile
+from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
 from app.runtime.agent_profile_versions import profile_version_snapshot
+from app.runtime.agent_profiles import PROFILE_VERSION_IDS, AgentRuntimeProfile
 from app.runtime.feedback_job_flags import has_no_actionable_attributions, reused_existing
+from app.runtime.feedback_schemas import (
+    AttributionFormatterOutput,
+    ExecutionPlanFormatterOutput,
+    FeedbackOptimizationPlanFormatterOutput,
+)
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 
-RunProfileJson = Callable[..., Awaitable[BaseModel]]
+RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 JobResult = JsonObject | None
 
 
@@ -72,8 +76,13 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(str(job["input_path"]), _job_input(job)),
                 job_type=spec.job_type,
                 job_input=_job_input(job),
-                complete=lambda raw: self.feedback_store.complete_attribution_job(job["job_id"], raw),
-                fail=lambda code, message, raw_output=None: self.feedback_store.fail_job(job["job_id"], error_code=code, message=message, raw_output_json=raw_output),
+                complete=lambda formatter_output: self.feedback_store.complete_attribution_job(
+                    job["job_id"],
+                    cast(AttributionFormatterOutput, formatter_output),
+                ),
+                fail=lambda code, message, raw_output=None: self.feedback_store.fail_job(
+                    job["job_id"], error_code=code, message=message, raw_output_json=raw_output
+                ),
                 final_result=lambda: self.feedback_store.get_job(job["job_id"]),
             )
         )
@@ -105,8 +114,13 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(str(job["input_path"]), input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
-                complete=lambda raw: self.feedback_store.complete_batch_plan_job(job["job_id"], raw),
-                fail=lambda code, message, raw_output=None: self.feedback_store.fail_job(job["job_id"], error_code=code, message=message, raw_output_json=raw_output),
+                complete=lambda formatter_output: self.feedback_store.complete_batch_plan_job(
+                    job["job_id"],
+                    cast(FeedbackOptimizationPlanFormatterOutput, formatter_output),
+                ),
+                fail=lambda code, message, raw_output=None: self.feedback_store.fail_job(
+                    job["job_id"], error_code=code, message=message, raw_output_json=raw_output
+                ),
                 final_result=lambda: self.feedback_store.find_optimization_batch(batch_id),
             )
         )
@@ -138,7 +152,10 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(input_path, input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
-                complete=lambda raw: self.feedback_store.complete_execution_job(job["execution_job_id"], raw),
+                complete=lambda formatter_output: self.feedback_store.complete_execution_job(
+                    job["execution_job_id"],
+                    cast(ExecutionPlanFormatterOutput, formatter_output),
+                ),
                 fail=lambda code, message, raw_output=None: self.feedback_store.fail_execution_job(job["execution_job_id"], error_code=code, message=message),
                 final_result=lambda: self.feedback_store.get_execution_job(job["execution_job_id"]),
             )
@@ -151,18 +168,18 @@ class FeedbackJobOrchestrator:
         prompt: str,
         job_type: AgentJobType,
         job_input: JsonObject,
-        complete: Callable[[BaseModel | JsonObject], object],
+        complete: Callable[[FormatterOutputModel], object],
         fail: Callable[[str, str, JsonObject | None], object],
         final_result: Callable[[], JobResult],
     ) -> JobResult:
         try:
-            raw = await self.run_profile_json(
+            formatter_output = await self.run_profile_json(
                 profile_name=profile_name,
                 prompt=prompt,
                 job_type=job_type,
                 job_input=job_input,
             )
-            complete(raw)
+            complete(formatter_output)
         except asyncio.TimeoutError as exc:
             fail("AGENT_TIMEOUT", _agent_error_message(exc), None)
         except Exception as exc:

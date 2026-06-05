@@ -2,17 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, cast
+from collections.abc import Awaitable, Callable
+from typing import cast
 
-from pydantic import BaseModel
-
-from app.runtime.agent_job_types import AgentJobType, agent_job_spec, coerce_agent_job_type
+from app.runtime.agent_job_types import (
+    AgentJobType,
+    FormatterOutputModel,
+    ProjectedOutputModel,
+    agent_job_spec,
+    coerce_agent_job_type,
+)
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 
-
-RunProfileJson = Callable[..., Awaitable[BaseModel]]
+RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 logger = logging.getLogger(__name__)
 
 
@@ -58,8 +62,8 @@ class AgentJobWorker:
             job.get("profile_name"),
         )
         try:
-            raw = await self._run_job(job)
-            completed = self.feedback_store.complete_projected_agent_job(job, raw)
+            job_output = await self._run_job(job)
+            completed = self.feedback_store.complete_projected_agent_job(job, job_output)
             logger.info(
                 "agent job completed job_id=%s job_type=%s profile_name=%s status=%s",
                 job.get("job_id"),
@@ -106,7 +110,7 @@ class AgentJobWorker:
             if result is None:
                 await asyncio.sleep(self.poll_interval_seconds)
 
-    async def _run_job(self, job: JsonObject) -> BaseModel | JsonObject:
+    async def _run_job(self, job: JsonObject) -> FormatterOutputModel | ProjectedOutputModel | JsonObject:
         job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
         if job_type == AgentJobType.EXECUTION:
             execution = self.feedback_store.get_execution_job(str(job["job_id"]))

@@ -160,9 +160,9 @@ class FeedbackExecutionStoreMixin:
 
     def _execution_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
         output = dict(raw_output)
-        output["execution_job_id"] = self._string(output.get("execution_job_id")) or self._string(job.get("execution_job_id"))
-        output["optimization_task_id"] = self._string(output.get("optimization_task_id")) or self._string(job.get("optimization_task_id"))
-        output["baseline_agent_version_id"] = self._string(output.get("baseline_agent_version_id")) or self._string(job.get("baseline_agent_version_id"))
+        output["execution_job_id"] = self._string(job.get("execution_job_id"))
+        output["optimization_task_id"] = self._string(job.get("optimization_task_id"))
+        output["baseline_agent_version_id"] = self._string(job.get("baseline_agent_version_id"))
         return output
 
     def fail_execution_job(
@@ -516,7 +516,7 @@ class FeedbackExecutionStoreMixin:
         sanitized = dict(plan)
         sanitized["execution_job_id"] = job["execution_job_id"]
         sanitized["optimization_task_id"] = job["optimization_task_id"]
-        sanitized["baseline_agent_version_id"] = sanitized.get("baseline_agent_version_id") or job.get("baseline_agent_version_id")
+        sanitized["baseline_agent_version_id"] = job.get("baseline_agent_version_id")
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         target_paths = set(str(path) for path in input_json.get("target_paths") or [])
         target_contexts = {

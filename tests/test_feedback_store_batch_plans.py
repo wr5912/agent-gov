@@ -112,16 +112,74 @@ def test_complete_batch_plan_job_sanitizes_attribution_summary_extras(tmp_path):
 
     assert completed["status"] == "completed"
     summary = updated["optimization_plan"]["attribution_summaries"][0]
-    assert summary == {
-        "attribution_job_id": "fba-attribution-1",
-        "feedback_case_id": batch["feedback_case_ids"][0],
-        "problem_type": "tool_data_quality",
-        "optimization_object_type": "mcp_description",
-        "actionability": "external_guidance",
-        "confidence": "high",
-        "rationale": "外部 MCP 数据源返回不完整。",
-        "summary": "归因指向外部 MCP 数据源。",
-    }
+    assert summary["attribution_job_id"] == batch["attribution_job_ids"][0]
+    assert summary["feedback_case_id"] == batch["feedback_case_ids"][0]
+    assert summary["problem_type"] == "tool_misuse"
+    assert summary["optimization_object_type"] == "main_agent_claude_md"
+    assert summary["actionability"] == "direct_workspace_change"
+    assert summary["confidence"] == "high"
+    assert summary["rationale"] == "Agent 回答工作区能力问题时未读取当前配置文件。"
+    assert "owner" not in summary
+    assert "summary" not in summary
+
+
+def test_batch_plan_output_context_fields_are_backend_authoritative(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    raw_output = _batch_plan_output(
+        job,
+        batch_id="fob-agent-wrong",
+        optimization_plan_id="fop-agent-wrong",
+        created_at="2026-01-01T00:00:00+00:00",
+        source_refs=[{"source_kind": "agent", "source_id": "wrong"}],
+        feedback_case_ids=["fbc-agent-wrong"],
+        eval_case_ids=["evc-agent-wrong"],
+        attribution_job_ids=["fba-agent-wrong"],
+        status="pending_approval",
+        actionability="direct_workspace_change",
+        target_type="main_agent_claude_md",
+        target_path="CLAUDE.md",
+        tasks=[
+            {
+                "plan_task_id": "fopt-agent-wrong",
+                "execution_kind": "workspace_execution",
+                "status": "completed",
+                "title": "补充主智能体约束",
+                "description": "补充读取配置前的约束。",
+                "objective": "降低同类反馈。",
+                "target_type": "main_agent_claude_md",
+                "target_path": "CLAUDE.md",
+                "actionability": "direct_workspace_change",
+                "recommendation": "补充读取配置前必须核查 workspace。",
+                "expected_effect": "减少同类反馈。",
+                "validation": "复测原反馈。",
+                "risk": "可能增加一次文件读取。",
+                "feedback_case_ids": ["fbc-agent-wrong"],
+                "eval_case_ids": ["evc-agent-wrong"],
+                "attribution_job_ids": ["fba-agent-wrong"],
+                "task_context": {"target_file": "CLAUDE.md"},
+            }
+        ],
+        blocked_items=[],
+    )
+
+    completed = store.complete_batch_plan_job(job["job_id"], raw_output)
+    plan = completed["validated_output_json"]
+    task = plan["tasks"][0]
+
+    assert plan["batch_id"] == batch["batch_id"]
+    assert plan["optimization_plan_id"] != "fop-agent-wrong"
+    assert plan["created_at"] != "2026-01-01T00:00:00+00:00"
+    assert plan["source_refs"] == batch["source_refs"]
+    assert plan["feedback_case_ids"] == batch["feedback_case_ids"]
+    assert plan["eval_case_ids"] == batch["eval_case_ids"]
+    assert plan["attribution_job_ids"] == batch["attribution_job_ids"]
+    assert task["plan_task_id"] != "fopt-agent-wrong"
+    assert task["status"] == "pending_execution"
+    assert task["feedback_case_ids"] == batch["feedback_case_ids"]
+    assert task["eval_case_ids"] == batch["eval_case_ids"]
+    assert task["attribution_job_ids"] == batch["attribution_job_ids"]
 
 
 def test_batch_projection_rejects_invalid_persisted_status(tmp_path):

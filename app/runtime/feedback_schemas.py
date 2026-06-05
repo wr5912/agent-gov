@@ -88,6 +88,19 @@ class ResponsibilityBoundary(NormalizedResponsibilityBoundary):
     reason: str
 
 
+class AttributionFormatterOutput(NormalizedOutputRecord):
+    status: Literal["completed", "needs_human_review"] = "completed"
+    problem_type: ProblemType
+    optimization_object_type: OptimizationObjectType
+    actionability: Actionability
+    confidence: Confidence
+    human_review_required: bool
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    responsibility_boundary: ResponsibilityBoundary
+    rationale: str
+    recommended_next_step: Literal["generate_proposal", "needs_human_review", "stop"] = "generate_proposal"
+
+
 class AttributionOutput(NormalizedAttributionOutput):
     feedback_case_id: str
     attribution_job_id: str
@@ -107,7 +120,7 @@ class TaskContext(NormalizedTaskContext):
     pass
 
 
-class OptimizationPlanTaskOutput(NormalizedOptimizationPlanTask):
+class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
     plan_task_id: Optional[str] = None
     source_index: int = 0
     execution_kind: Literal["workspace_execution", "external_webhook"]
@@ -139,7 +152,7 @@ class OptimizationPlanTaskOutput(NormalizedOptimizationPlanTask):
     task_context: TaskContext = Field(default_factory=TaskContext)
 
     @model_validator(mode="after")
-    def _is_executable_task(self) -> "OptimizationPlanTaskOutput":
+    def _is_executable_task(self) -> "OptimizationPlanTaskFormatterOutput":
         if self.execution_kind == "workspace_execution":
             if not self.target_path:
                 raise ValueError("workspace_execution task must include target_path")
@@ -153,7 +166,11 @@ class OptimizationPlanTaskOutput(NormalizedOptimizationPlanTask):
         return self
 
 
-class BlockedOptimizationItemOutput(NormalizedBlockedOptimizationItem):
+class OptimizationPlanTaskOutput(OptimizationPlanTaskFormatterOutput):
+    pass
+
+
+class BlockedOptimizationItemFormatterOutput(NormalizedBlockedOptimizationItem):
     blocked_item_id: Optional[str] = None
     source_index: int = 0
     status: Literal["blocked", "needs_human_review"] | str = "blocked"
@@ -175,8 +192,41 @@ class BlockedOptimizationItemOutput(NormalizedBlockedOptimizationItem):
     task_context: TaskContext = Field(default_factory=TaskContext)
 
 
+class BlockedOptimizationItemOutput(BlockedOptimizationItemFormatterOutput):
+    pass
+
+
 class AttributionSummary(NormalizedAttributionSummary):
     pass
+
+
+class FeedbackOptimizationPlanFormatterOutput(NormalizedOutputRecord):
+    status: Literal["pending_approval", "needs_human_review"] = "pending_approval"
+    title: str
+    summary: Optional[str] = None
+    problem_types: list[str] = Field(default_factory=list)
+    confidence: Confidence = "medium"
+    actionability: Actionability = "needs_human_analysis"
+    target_type: Optional[str] = None
+    target_path: Optional[str] = None
+    recommendation: str
+    expected_effect: str
+    validation: str
+    risk: str
+    rationale: Optional[str] = None
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
+    tasks: list[OptimizationPlanTaskFormatterOutput] = Field(default_factory=list)
+    blocked_items: list[BlockedOptimizationItemFormatterOutput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _has_tasks_or_blockers(self) -> "FeedbackOptimizationPlanFormatterOutput":
+        if not self.tasks and not self.blocked_items:
+            raise ValueError("feedback optimization plan must include tasks or blocked_items")
+        if not self.tasks:
+            self.status = "needs_human_review"
+        elif self.status != "needs_human_review":
+            self.status = "pending_approval"
+        return self
 
 
 class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
@@ -269,6 +319,24 @@ class ExecutionOperation(NormalizedExecutionOperation):
     rationale: Optional[str] = None
 
 
+class ExecutionPlanFormatterOutput(NormalizedOutputRecord):
+    status: Literal["ready", "needs_human_review"] = "ready"
+    summary: str
+    operations: list[ExecutionOperation] = Field(default_factory=list)
+    validation: Optional[str] = None
+    risk: Optional[str] = None
+    human_review_required: bool = True
+    no_action_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_action_or_reason(self) -> "ExecutionPlanFormatterOutput":
+        if self.status == "ready" and not self.operations:
+            raise ValueError("ready execution plan must include operations")
+        if self.status == "needs_human_review" and not self.no_action_reason:
+            raise ValueError("needs_human_review execution plan must include no_action_reason")
+        return self
+
+
 class ExecutionPlanOutput(NormalizedExecutionPlanOutput):
     optimization_task_id: str
     execution_job_id: str
@@ -323,6 +391,32 @@ class GeneratedEvalCaseOutput(NormalizedGeneratedEvalCase):
     proposal_summary: Optional[JsonObject] = None
 
 
+class GeneratedEvalCaseFormatterOutput(NormalizedOutputRecord):
+    source_feedback_case_id: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_id: Optional[str] = None
+    source_refs: list[JsonObject] = Field(default_factory=list)
+    scenario_pack: Optional[str] = None
+    prompt: str
+    expected_behavior: Optional[str] = None
+    checks_json: JsonObject = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)
+    source_summary: Optional[JsonObject] = None
+    attribution_summary: Optional[JsonObject] = None
+    proposal_summary: Optional[JsonObject] = None
+
+
+class FeedbackEvalCaseGenerationFormatterOutput(NormalizedOutputRecord):
+    eval_cases: list[GeneratedEvalCaseFormatterOutput] = Field(default_factory=list)
+    no_action_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_eval_cases_or_reason(self) -> "FeedbackEvalCaseGenerationFormatterOutput":
+        if not self.eval_cases and not self.no_action_reason:
+            raise ValueError("eval case generation output must include eval_cases or no_action_reason")
+        return self
+
+
 class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutput):
     job_id: Optional[str] = None
     scope_kind: Optional[str] = None
@@ -343,6 +437,21 @@ class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutpu
 
 class ImpactedAssetSummary(NormalizedSummaryItem):
     pass
+
+
+class RegressionImpactAnalysisFormatterOutput(NormalizedOutputRecord):
+    status: Literal["completed", "needs_human_review"] = "completed"
+    recommendations: list[str] = Field(default_factory=list)
+    summary: Optional[str] = None
+    risk_assessment: Optional[str] = None
+    next_steps: list[str] = Field(default_factory=list)
+    no_action_reason: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _has_recommendation_or_reason(self) -> "RegressionImpactAnalysisFormatterOutput":
+        if not self.recommendations and not self.next_steps and not self.summary and not self.no_action_reason:
+            raise ValueError("regression impact output must include recommendations, next_steps, summary, or no_action_reason")
+        return self
 
 
 class RegressionImpactAnalysisOutput(NormalizedRegressionImpactAnalysisOutput):

@@ -16,7 +16,7 @@ from app.runtime.normalizers.feedback_output_task_context import (
     task_context_has_external_specificity,
 )
 from app.runtime.feedback_schemas import (
-    FeedbackOptimizationPlanOutput,
+    FeedbackOptimizationPlanFormatterOutput,
     validate_execution_plan_output,
     validate_feedback_eval_case_generation_output,
     validate_feedback_optimization_plan_output,
@@ -32,7 +32,7 @@ def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_pa
 
     def fake_formatter(**kwargs: object):
         seen.update(kwargs)
-        return FeedbackOptimizationPlanOutput.model_validate(payload)
+        return FeedbackOptimizationPlanFormatterOutput.model_validate(payload)
 
     monkeypatch.setattr(formatter, "_format_with_dspy", fake_formatter)
 
@@ -43,9 +43,10 @@ def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_pa
     )
 
     assert seen["job_type"] == "batch_plan"
+    assert seen["output_model"] is FeedbackOptimizationPlanFormatterOutput
     assert "前缀" in str(seen["raw_text"])
-    assert isinstance(result.output, FeedbackOptimizationPlanOutput)
-    assert result.output.batch_id == "fob-test"
+    assert isinstance(result.output, FeedbackOptimizationPlanFormatterOutput)
+    assert not hasattr(result.output, "batch_id")
     assert "_formatter" not in result.output.model_dump(mode="json")
 
 

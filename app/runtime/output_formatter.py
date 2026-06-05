@@ -81,7 +81,7 @@ class DSPyOutputFormatter:
                         job_type=normalized_job_type,
                         raw_text=raw_text,
                         job_input=job_input,
-                        output_model=agent_job_spec(normalized_job_type).output_model,
+                        output_model=agent_job_spec(normalized_job_type).formatter_output_model,
                     )
                     self._update_observation(
                         observation,
@@ -222,7 +222,7 @@ def _formatter_metadata_payload(
     metadata = {
         "component": "dspy_output_formatter",
         "job_type": job_type.value,
-        "output_model": agent_job_spec(job_type).output_model.__name__,
+        "output_model": agent_job_spec(job_type).formatter_output_model.__name__,
     }
     for key in (
         "job_id",

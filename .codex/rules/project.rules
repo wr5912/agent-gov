@@ -19,8 +19,13 @@
 # - 任务涉及 DSPy、Pydantic 输出模型、Agent job 或 LLM 输出格式时，Analyze 阶段必须判断
 #   当前结构契约是否已经由 typed model 表达；不得默认再添加 schema_version、JsonObject 主流程
 #   或 normalizer 双轨作为“保险”。
+# - 任务涉及 Agent/DSPy/LLM 输出契约时，Analyze 阶段必须先做字段所有权判断：
+#   后端已能从 job input、DB row、route 参数、store context 或调度上下文确定的字段，
+#   不得进入 Agent 输出契约，也不得让 LLM 复述后再作为权威值。
 # - Plan 阶段写明阈值命中情况、处理方式、验证方式、Docker 卷路径；触发替换旧设计模式时，
 #   还必须列出旧设计的删除、迁移、保留清单和公开契约/配置/数据/文档/测试/内部兼容层处理方式。
+# - Plan 阶段如涉及 Agent/DSPy/LLM 输出契约，必须列出 backend-owned、agent-owned、
+#   boundary-owned 字段矩阵，并说明 prompt、Signature、OutputModel、projection 和测试如何落位。
 # - Execute 阶段普通小改只做已确认计划内的最小必要改动；替换旧设计模式下，
 #   按已确认的新架构边界删除、迁移或统一旧实现。
 # - Verify 阶段按 `verify.rules` 做功能验证和架构验证。
@@ -36,6 +41,8 @@
 #   只有证据证明是孤立实现错误时，才按普通 bug 处理。
 # - Pydantic / DSPy typed output 已能表达结构契约时，内部主流程优先传递模型实例；
 #   JSON dump 只允许出现在 DB、HTTP、文件、日志或观测等明确边界。
+# - LLM 只对其生成的业务语义负责；job_id、batch_id、case ids、时间戳、scope、
+#   provenance、执行上下文和其他可确定性获取的系统字段必须由后端注入或覆盖。
 # - “精准改动”“匹配现有风格”“外部行为不变”是普通小改默认值；
 #   触发替换旧设计模式后，不得用这些原则默认保留旧 facade、兼容 shim、历史路径或重复实现。
 #

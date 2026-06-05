@@ -115,8 +115,10 @@ class FeedbackJobStoreMixin:
         job = self.get_job(job_id)
         if not job:
             return None
-        output_model, error = coerce_attribution_output_model(raw_output)
-        raw_payload = output_model_payload(output_model) if output_model else raw_output
+        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
+        output = self._attribution_output_with_job_context(raw_input, job)
+        output_model, error = coerce_attribution_output_model(output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_input
         feedback_case = self.find_case(str(job["feedback_case_id"]))
         if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid attribution output")
@@ -139,6 +141,13 @@ class FeedbackJobStoreMixin:
                 self._append_case_update_row(db, feedback_case, status="pending_proposal")
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
+
+    def _attribution_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        output = dict(raw_output)
+        output["feedback_case_id"] = self._string(job.get("feedback_case_id")) or self._string(input_json.get("feedback_case_id")) or self._string(job.get("scope_id"))
+        output["attribution_job_id"] = job["job_id"]
+        return output
 
     def fail_job(
         self,

@@ -288,7 +288,7 @@ class AgentJobStoreMixin:
     def _complete_regression_impact_agent_job(self, job: JsonObject, raw_output: BaseModel | JsonObject) -> Optional[JsonObject]:
         raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else dict(raw_output)
         output = dict(raw_input)
-        output["eval_run_id"] = output.get("eval_run_id") or job.get("scope_id")
+        output["eval_run_id"] = job.get("scope_id")
         output_model, error = coerce_regression_impact_analysis_output_model(output)
         raw_payload = output_model_payload(output_model) if output_model else raw_input
         if not output_model:
@@ -345,6 +345,10 @@ class AgentJobStoreMixin:
                     results.append({"status": "skipped", "reason": "missing prompt"})
                     continue
                 payload = self._eval_case_payload_from_agent(item, job_input, now)
+                if payload is None:
+                    skipped += 1
+                    results.append({"status": "skipped", "reason": "source feedback case is not in job input"})
+                    continue
                 existing = self.find_eval_case(source_feedback_case_id=self._string(payload.get("source_feedback_case_id")))
                 if existing and not force:
                     reused += 1
@@ -366,6 +370,9 @@ class AgentJobStoreMixin:
             self._sync_eval_generation_scope_row(db, job, eval_cases, created, reused, updated, skipped, results)
         return {
             **output,
+            "job_id": job["job_id"],
+            "scope_kind": job.get("scope_kind"),
+            "scope_id": job.get("scope_id"),
             "status": "completed" if eval_cases else "needs_human_review",
             "created": created,
             "reused": reused,
@@ -376,21 +383,26 @@ class AgentJobStoreMixin:
         }
 
     def _project_regression_impact(self, job: JsonObject, output: JsonObject) -> JsonObject:
-        eval_run_id = str(output.get("eval_run_id") or job.get("scope_id") or "")
-        created_at = self._string(output.get("created_at")) or utc_now()
+        eval_run_id = str(job.get("scope_id") or "")
+        eval_run = self.get_eval_run(eval_run_id) or {}
         completed_at = utc_now()
         with self.Session.begin() as db:
             row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
-            impact_analysis_id = self._string(output.get("impact_analysis_id")) or (row.impact_analysis_id if row else f"ria-{uuid.uuid4()}")
+            impact_analysis_id = row.impact_analysis_id if row else f"ria-{uuid.uuid4()}"
             record_fields = set(RegressionImpactAnalysisRecord.model_fields)
+            recommendations = self._string_list(output.get("recommendations")) or self._impact_recommendations(eval_run)
             payload = {
                 **{key: value for key, value in output.items() if key in record_fields},
                 "impact_analysis_id": impact_analysis_id,
                 "eval_run_id": eval_run_id,
-                "created_at": row.created_at if row else created_at,
+                "created_at": row.created_at if row else utc_now(),
                 "completed_at": completed_at,
                 "status": output.get("status") or "completed",
                 "job_id": job["job_id"],
+                "result_status": eval_run.get("result_status"),
+                "gate_result": eval_run.get("gate_result") if isinstance(eval_run.get("gate_result"), dict) else {},
+                "impacted_assets": self._impacted_assets_from_eval_run(eval_run),
+                "recommendations": recommendations,
                 "error_json": None,
             }
             record = (
@@ -430,20 +442,55 @@ class AgentJobStoreMixin:
             )
             apply_regression_impact_analysis_record(row, record)
 
-    def _eval_case_payload_from_agent(self, item: JsonObject, job_input: JsonObject, now: str) -> JsonObject:
-        payload = dict(item)
-        payload["schema_version"] = payload.get("schema_version") or "feedback-eval-case/v1"
-        payload["eval_case_id"] = self._string(payload.get("eval_case_id")) or f"evc-{uuid.uuid4()}"
-        payload["created_at"] = self._string(payload.get("created_at")) or now
+    def _eval_case_payload_from_agent(self, item: JsonObject, job_input: JsonObject, now: str) -> Optional[JsonObject]:
+        feedback_contexts = [context for context in job_input.get("feedback_cases") or [] if isinstance(context, dict)]
+        feedback_context_by_case_id = {
+            str((context.get("feedback_case") or {}).get("feedback_case_id")): context
+            for context in feedback_contexts
+            if isinstance(context.get("feedback_case"), dict) and (context.get("feedback_case") or {}).get("feedback_case_id")
+        }
+        allowed_feedback_case_ids = set(feedback_context_by_case_id)
+        requested_feedback_case_id = self._string(item.get("source_feedback_case_id"))
+        fallback_feedback_case_id = self._string(job_input.get("feedback_case_id"))
+        if requested_feedback_case_id and requested_feedback_case_id not in allowed_feedback_case_ids:
+            return None
+        source_feedback_case_id = requested_feedback_case_id or (fallback_feedback_case_id if fallback_feedback_case_id in allowed_feedback_case_ids else None)
+        if not source_feedback_case_id and len(allowed_feedback_case_ids) == 1:
+            source_feedback_case_id = next(iter(allowed_feedback_case_ids))
+        if not source_feedback_case_id:
+            return None
+
+        context = feedback_context_by_case_id.get(source_feedback_case_id) or {}
+        source_run = context.get("source_run") if isinstance(context.get("source_run"), dict) else {}
+        source_refs = [dict(ref) for ref in context.get("source_refs") or [] if isinstance(ref, dict)]
+        if len(source_refs) == 1:
+            source_kind = self._string(source_refs[0].get("source_kind")) or "feedback_case"
+            source_id = self._string(source_refs[0].get("source_id")) or source_feedback_case_id
+        else:
+            source_kind = "feedback_case"
+            source_id = source_feedback_case_id
+
+        payload = {
+            "schema_version": "feedback-eval-case/v1",
+            "eval_case_id": f"evc-{uuid.uuid4()}",
+            "created_at": now,
+            "status": "draft",
+            "source": "eval_case_governor",
+            "source_feedback_case_id": source_feedback_case_id,
+            "source_run_id": self._string(source_run.get("run_id")),
+            "source_kind": source_kind,
+            "source_id": source_id,
+            "source_refs": source_refs,
+            "scenario_pack": self._string(item.get("scenario_pack")),
+            "prompt": str(item.get("prompt") or "").strip(),
+            "expected_behavior": self._string(item.get("expected_behavior")) or "",
+            "checks_json": item.get("checks_json") if isinstance(item.get("checks_json"), dict) else {},
+            "labels": self._unique_strings([*(item.get("labels") or []), "feedback_optimization"]),
+            "source_summary": item.get("source_summary") if isinstance(item.get("source_summary"), dict) else None,
+            "attribution_summary": item.get("attribution_summary") if isinstance(item.get("attribution_summary"), dict) else None,
+            "proposal_summary": item.get("proposal_summary") if isinstance(item.get("proposal_summary"), dict) else None,
+        }
         payload["updated_at"] = now
-        payload["status"] = self._string(payload.get("status")) or "draft"
-        payload["source"] = self._string(payload.get("source")) or "eval_case_governor"
-        payload["source_feedback_case_id"] = self._string(payload.get("source_feedback_case_id")) or self._string(job_input.get("feedback_case_id"))
-        payload["source_run_id"] = self._string(payload.get("source_run_id"))
-        payload["prompt"] = str(payload.get("prompt") or "").strip()
-        payload["expected_behavior"] = self._string(payload.get("expected_behavior")) or ""
-        payload["checks_json"] = payload.get("checks_json") if isinstance(payload.get("checks_json"), dict) else {}
-        payload["labels"] = self._unique_strings([*(payload.get("labels") or []), "feedback_optimization"])
         return self._eval_case_with_asset_defaults(payload)
 
     def _eval_case_generation_result(self, payload: JsonObject, eval_case: JsonObject, status: str) -> JsonObject:

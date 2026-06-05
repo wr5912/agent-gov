@@ -86,6 +86,24 @@ def test_feedback_prompts_are_structured():
         assert "请输出足够清晰" not in prompt
 
 
+def test_feedback_prompts_do_not_require_agents_to_repeat_backend_context_fields():
+    attribution = attribution_prompt("/tmp/attribution.json")
+    proposal = proposal_generator_prompt("/tmp/batch-plan.json")
+    execution = execution_plan_prompt("/tmp/execution.json")
+    eval_case_generation = eval_case_generation_prompt("/tmp/eval-case.json")
+    regression_impact = regression_impact_analysis_prompt("/tmp/regression-impact.json")
+
+    assert "feedback_case_id 和 attribution_job_id 对应的反馈与归因任务" not in attribution
+    assert "顶层方案必须能直接读出：title、summary、problem_types、confidence、actionability、target_type、target_path、recommendation、expected_effect、validation、risk、source_refs" not in proposal
+    assert "输出中必须能直接读出：optimization_task_id、execution_job_id" not in execution
+    assert "输出中必须能直接读出：job_id、scope_kind、scope_id" not in eval_case_generation
+    assert "输出中必须能直接读出：eval_run_id、status、result_status、gate_result" not in regression_impact
+    assert "由后端从输入上下文注入，不需要复述" in proposal
+    assert "由后端从输入上下文注入，不需要复述" in execution
+    assert "由后端注入，不需要复述" in eval_case_generation
+    assert "由后端从 eval_run 注入，不需要复述" in regression_impact
+
+
 def test_feedback_prompts_spell_out_business_information_points():
     prompts = {
         "attribution": attribution_prompt("/tmp/attribution.json"),

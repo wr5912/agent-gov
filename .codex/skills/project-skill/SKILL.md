@@ -25,6 +25,7 @@ license: "MIT-compatible adaptation with attribution"
 - 是否已经检查待修改文件的行数、类/函数/路由规模、复制风险、生命周期状态和 schema 表示？
 - 是否已经识别治理硬门暂未覆盖的结构风险？检查未报警不能替代架构判断。
 - 是否通过用户意图和旧债信号判断需要进入“替换旧设计模式”？
+- 如果任务涉及 Agent、DSPy、LLM 输出格式化或提示词输出要求，是否已经区分 backend-owned、agent-owned 和 boundary-owned 字段？
 - 是否存在多个合理解释？如果存在，先列出并确认。
 - 是否存在更简单的实现路径？如果存在，优先提出。
 
@@ -34,6 +35,7 @@ license: "MIT-compatible adaptation with attribution"
 - 列出涉及文件。
 - 说明逻辑修改点。
 - 说明架构阈值命中情况；命中时给出先拆分、抽象或统一的处理方式。
+- 如涉及 Agent、DSPy、LLM 输出契约，列出字段所有权矩阵、允许覆盖方、序列化边界和负向测试。
 - 如触发替换旧设计模式，列出旧设计的删除、迁移、保留清单，以及公开契约、配置、数据、文档、测试和内部兼容层处理方式。
 - 说明 Docker 卷挂载路径；不涉及写“不涉及”。
 - 说明验证方式和成功标准。
@@ -113,6 +115,16 @@ license: "MIT-compatible adaptation with attribution"
 治理硬门以 git base 对比判定旧债；既有超限可暂存但本次不得增长，新增超限直接失败。
 普通文档或 issue 可用于人工还债排期，但不得作为治理放行豁免。
 
+## Agent 输出字段所有权
+
+涉及 Agent、DSPy formatter、LLM 输出格式化或提示词输出要求时，先做字段所有权矩阵：
+
+- backend-owned：job input、DB row、route 参数、store context、scheduler context 或确定性 projection 已知的字段，例如 job_id、batch_id、case ids、时间戳、scope、provenance、eval run、gate result、task execution id。不得要求 LLM 输出；如脏输出包含，后端必须覆盖或忽略。
+- agent-owned：只有 Agent 结果才能提供的业务语义，例如分析结论、优化动作、业务假设、风险说明、证据摘要和建议。这类字段才进入 Agent 输出契约。
+- boundary-owned：DB、HTTP、文件、日志和观测等序列化边界；`model_dump(mode="json")` 只应出现在这些边界。
+
+prompt 和 Signature 只能要求 agent-owned 输出字段。backend-owned 字段可以作为输入上下文帮助 grounding，但不能成为 Agent 输出结构的一部分。
+
 ## 生命周期状态硬约束
 
 - 当字段表达持久化生命周期且存在受约束的合法转移时，必须进入集中状态机。
@@ -126,6 +138,7 @@ license: "MIT-compatible adaptation with attribution"
 - 生命周期状态字段变更：至少补充 1 个非法状态转移或非法状态输入测试。
 - 并发资源变更：至少补充 1 个重复执行、竞争或部分失败场景测试。
 - 外部输入变更：至少补充 1 个异常、恶意或越权输入测试。
+- Agent/DSPy/LLM 输出契约变更：至少补充 1 个 hostile backend-owned 字段污染测试，证明错误 job_id、batch_id、case ids、时间戳、scope 或 provenance 不会覆盖后端权威值。
 - happy path 只作为基线，不单独代表测试充分。
 
 ## 环境规范
@@ -171,6 +184,7 @@ Docker：
 - 把生命周期状态字段的合法转移写成散落的 if 分支。
 - 只把状态值放进集中集合，却没有合法转移表和非法转移测试。
 - 同一实体在多套 schema、DTO、ORM 或手写 dict 中重复定义。
+- 让 Agent 或 LLM 复述后端已经知道的 job_id、batch_id、case ids、时间戳、scope、provenance 等系统字段，并把它们作为权威输出。
 - 修改路由、settings 或 Docker env 但不同步 README / docs 对应章节。
 - 修改数据库表结构或字段语义但不写项目约定的 migration。
 - 给跨资源更新分多次不可恢复的事务提交。

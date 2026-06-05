@@ -182,8 +182,10 @@ class FeedbackBatchPlanStoreMixin:
         if not job:
             return None
         batch_id = self._job_batch_id(job)
-        output_model, error = coerce_feedback_optimization_plan_output_model(raw_output)
-        raw_payload = output_model_payload(output_model) if output_model else raw_output
+        raw_input = output_model_payload(raw_output) if isinstance(raw_output, BaseModel) else raw_output
+        output = self._batch_plan_output_with_job_context(raw_input, job)
+        output_model, error = coerce_feedback_optimization_plan_output_model(output)
+        raw_payload = output_model_payload(output_model) if output_model else raw_input
         if not output_model:
             error_payload = self._job_error_payload(job, "SCHEMA_VALIDATION_FAILED", error or "invalid feedback optimization plan output")
             with self.Session.begin() as db:
@@ -404,33 +406,101 @@ class FeedbackBatchPlanStoreMixin:
 
     def _normalize_batch_plan_output(self, validated: JsonObject, job: JsonObject) -> JsonObject:
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
-        batch_id = self._string(validated.get("batch_id")) or self._string(input_json.get("batch_id")) or ""
+        batch_id = self._string(input_json.get("batch_id")) or self._string(job.get("batch_id")) or self._string(job.get("scope_id")) or ""
         batch = self.find_optimization_batch(batch_id) or {}
+        feedback_case_ids = self._string_list(batch.get("feedback_case_ids"))
+        eval_case_ids = self._string_list(batch.get("eval_case_ids"))
+        attribution_job_ids = self._string_list(input_json.get("attribution_job_ids")) or self._string_list(batch.get("attribution_job_ids"))
         plan = {
             **validated,
             "schema_version": "feedback-optimization-plan/v1",
-            "optimization_plan_id": self._string(validated.get("optimization_plan_id")) or f"fop-{uuid.uuid4()}",
+            "optimization_plan_id": f"fop-{uuid.uuid4()}",
             "batch_id": batch_id,
-            "created_at": self._string(validated.get("created_at")) or utc_now(),
+            "created_at": utc_now(),
             "status": self._string(validated.get("status")) or "needs_human_review",
             "title": self._string(validated.get("title")) or "反馈批次优化方案",
             "recommendation": self._string(validated.get("recommendation")) or self._string(validated.get("summary")) or "根据归因结果生成优化任务。",
             "expected_effect": self._string(validated.get("expected_effect")) or "降低同类反馈再次出现的概率。",
             "validation": self._string(validated.get("validation")) or "使用本批次关联回归测试用例验证优化效果。",
             "risk": self._string(validated.get("risk")) or "需要关注优化后是否引入新的行为退化。",
-            "source_refs": validated.get("source_refs") or batch.get("source_refs") or [],
-            "feedback_case_ids": self._string_list(validated.get("feedback_case_ids")) or self._string_list(batch.get("feedback_case_ids")),
-            "eval_case_ids": self._string_list(validated.get("eval_case_ids")) or self._string_list(batch.get("eval_case_ids")),
-            "attribution_job_ids": self._string_list(validated.get("attribution_job_ids")) or self._string_list(input_json.get("attribution_job_ids")),
+            "source_refs": batch.get("source_refs") or input_json.get("source_refs") or [],
+            "feedback_case_ids": feedback_case_ids,
+            "eval_case_ids": eval_case_ids,
+            "attribution_job_ids": attribution_job_ids,
             "attribution_summaries": self._normalize_batch_plan_attribution_summaries(
-                validated.get("attribution_summaries") or self._batch_plan_attribution_summaries(input_json.get("attribution_outputs"))
+                self._batch_plan_attribution_summaries(input_json.get("attribution_outputs"))
             ),
             "optimization_plan_job_id": job["job_id"],
             "generated_by": agent_job_spec("batch_plan").profile_name,
+            "tasks": self._sanitize_batch_plan_task_source_ids(
+                validated.get("tasks"),
+                feedback_case_ids=feedback_case_ids,
+                eval_case_ids=eval_case_ids,
+                attribution_job_ids=attribution_job_ids,
+                id_fields=("plan_task_id",),
+            ),
+            "blocked_items": self._sanitize_batch_plan_task_source_ids(
+                validated.get("blocked_items"),
+                feedback_case_ids=feedback_case_ids,
+                eval_case_ids=eval_case_ids,
+                attribution_job_ids=attribution_job_ids,
+                id_fields=("blocked_item_id", "plan_task_id"),
+            ),
         }
-        if input_json.get("regeneration_instruction") and not plan.get("regeneration_instruction"):
+        if input_json.get("regeneration_instruction"):
             plan["regeneration_instruction"] = input_json["regeneration_instruction"]
         return self._normalize_plan_task_collections(batch or plan, plan)
+
+    def _batch_plan_output_with_job_context(self, raw_output: JsonObject, job: JsonObject) -> JsonObject:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        batch_id = self._string(input_json.get("batch_id")) or self._string(job.get("batch_id")) or self._string(job.get("scope_id")) or ""
+        batch = self.find_optimization_batch(batch_id) or {}
+        feedback_case_ids = self._string_list(batch.get("feedback_case_ids"))
+        eval_case_ids = self._string_list(batch.get("eval_case_ids"))
+        attribution_job_ids = self._string_list(input_json.get("attribution_job_ids")) or self._string_list(batch.get("attribution_job_ids"))
+        output = dict(raw_output)
+        output.update(
+            {
+                "batch_id": batch_id,
+                "source_refs": batch.get("source_refs") or input_json.get("source_refs") or [],
+                "feedback_case_ids": feedback_case_ids,
+                "eval_case_ids": eval_case_ids,
+                "attribution_job_ids": attribution_job_ids,
+                "attribution_summaries": self._batch_plan_attribution_summaries(input_json.get("attribution_outputs")),
+            }
+        )
+        return output
+
+    def _sanitize_batch_plan_task_source_ids(
+        self,
+        items: Any,
+        *,
+        feedback_case_ids: list[str],
+        eval_case_ids: list[str],
+        attribution_job_ids: list[str],
+        id_fields: tuple[str, ...],
+    ) -> list[JsonObject]:
+        sanitized: list[JsonObject] = []
+        allowed = {
+            "feedback_case_ids": set(feedback_case_ids),
+            "eval_case_ids": set(eval_case_ids),
+            "attribution_job_ids": set(attribution_job_ids),
+        }
+        for item in items or []:
+            if not isinstance(item, dict):
+                continue
+            normalized = dict(item)
+            for field_name in id_fields:
+                normalized.pop(field_name, None)
+            normalized.pop("status", None)
+            for field_name, allowed_values in allowed.items():
+                selected = [value for value in self._string_list(normalized.get(field_name)) if value in allowed_values]
+                if selected:
+                    normalized[field_name] = selected
+                else:
+                    normalized.pop(field_name, None)
+            sanitized.append(normalized)
+        return sanitized
 
     def _batch_plan_attribution_summaries(self, attributions: Any) -> list[JsonObject]:
         summaries: list[JsonObject] = []

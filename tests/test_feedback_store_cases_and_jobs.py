@@ -167,6 +167,28 @@ def test_case_evidence_and_job_outputs(tmp_path):
     assert store.find_optimization_batch(batch["batch_id"])["optimization_plan"]["optimization_plan_job_id"] == plan_job["job_id"]
 
 
+def test_attribution_output_context_fields_are_backend_authoritative(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    store.create_evidence_package(feedback_case["feedback_case_id"])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        _attribution_output(
+            attribution_job,
+            feedback_case_id="fbc-agent-wrong",
+            attribution_job_id="fba-agent-wrong",
+        ),
+    )
+
+    output = completed["validated_output_json"]
+    assert output["feedback_case_id"] == feedback_case["feedback_case_id"]
+    assert output["attribution_job_id"] == attribution_job["job_id"]
+
+
 def test_regenerated_single_case_plan_job_records_single_use_instruction(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)

@@ -20,10 +20,15 @@ from .agent_profiles import (
     REGRESSION_IMPACT_ANALYZER_PROFILE,
 )
 from .feedback_schemas import (
+    AttributionFormatterOutput,
     AttributionOutput,
+    ExecutionPlanFormatterOutput,
     ExecutionPlanOutput,
+    FeedbackEvalCaseGenerationFormatterOutput,
     FeedbackEvalCaseGenerationOutput,
+    FeedbackOptimizationPlanFormatterOutput,
     FeedbackOptimizationPlanOutput,
+    RegressionImpactAnalysisFormatterOutput,
     RegressionImpactAnalysisOutput,
 )
 from .json_types import JsonObject
@@ -57,7 +62,7 @@ class AttributionFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="归因分析智能体原始输出。")
     job_input_json: str = dspy.InputField(desc="归因 job 输入，包含 feedback_case_id、job_id、证据路径等。")
-    formatted_output: AttributionOutput = dspy.OutputField(desc="完整归因输出对象。")
+    formatted_output: AttributionFormatterOutput = dspy.OutputField(desc="归因业务内容，不包含 feedback_case_id 和 attribution_job_id。")
 
 
 class BatchPlanFormattingSignature(dspy.Signature):
@@ -71,7 +76,7 @@ class BatchPlanFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出。")
     job_input_json: str = dspy.InputField(desc="优化方案 job 输入，包含 batch、归因输出、回归用例和目标策略。")
-    formatted_output: FeedbackOptimizationPlanOutput = dspy.OutputField(desc="完整优化方案输出对象。")
+    formatted_output: FeedbackOptimizationPlanFormatterOutput = dspy.OutputField(desc="优化方案业务内容，不包含批次、方案、时间和来源 ID 等后端上下文字段。")
 
 
 class ExecutionFormattingSignature(dspy.Signature):
@@ -83,7 +88,7 @@ class ExecutionFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出。")
     job_input_json: str = dspy.InputField(desc="执行 job 输入，包含 optimization_task_id、execution_job_id、target_paths 和 proposal。")
-    formatted_output: ExecutionPlanOutput = dspy.OutputField(desc="完整执行方案输出对象。")
+    formatted_output: ExecutionPlanFormatterOutput = dspy.OutputField(desc="执行方案业务内容，不包含 execution_job_id、optimization_task_id 和 baseline_agent_version_id。")
 
 
 class EvalCaseGenerationFormattingSignature(dspy.Signature):
@@ -95,19 +100,20 @@ class EvalCaseGenerationFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="eval-case-governor 原始输出。")
     job_input_json: str = dspy.InputField(desc="评估用例生成 job 输入，包含反馈来源、归因和建议上下文。")
-    formatted_output: FeedbackEvalCaseGenerationOutput = dspy.OutputField(desc="完整评估用例生成输出对象。")
+    formatted_output: FeedbackEvalCaseGenerationFormatterOutput = dspy.OutputField(desc="评估用例草案业务内容，不包含 job、scope、结果计数和生命周期字段。")
 
 
 class RegressionImpactFormattingSignature(dspy.Signature):
     """把 regression-impact-analyzer 的自然语言或片段 JSON 转换为回归影响分析输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。必须总结 gate_result、
-    impacted_assets 和 recommendations；不确定时输出 needs_human_review。
+    只能使用 raw_agent_output 和 job_input_json 中已有的信息。必须基于输入中的
+    gate_result 和 impacted assets 解释影响并给出 recommendations；不确定时输出
+    needs_human_review。
     """
 
     raw_agent_output: str = dspy.InputField(desc="regression-impact-analyzer 原始输出。")
     job_input_json: str = dspy.InputField(desc="回归影响分析 job 输入，包含 eval_run、gate_result 和 item 快照。")
-    formatted_output: RegressionImpactAnalysisOutput = dspy.OutputField(desc="完整回归影响分析输出对象。")
+    formatted_output: RegressionImpactAnalysisFormatterOutput = dspy.OutputField(desc="回归影响解释内容，不包含 eval_run、gate_result 和持久化 ID。")
 
 
 @dataclass(frozen=True)
@@ -116,6 +122,7 @@ class AgentJobSpec:
     profile_name: str
     prompt_builder: PromptBuilder
     output_model: type[BaseModel]
+    formatter_output_model: type[BaseModel]
     formatter_signature: type[dspy.Signature]
 
 
@@ -145,6 +152,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         profile_name=ATTRIBUTION_ANALYZER_PROFILE,
         prompt_builder=_attribution_prompt_builder,
         output_model=AttributionOutput,
+        formatter_output_model=AttributionFormatterOutput,
         formatter_signature=AttributionFormattingSignature,
     ),
     AgentJobType.BATCH_PLAN: AgentJobSpec(
@@ -152,6 +160,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         profile_name=PROPOSAL_GENERATOR_PROFILE,
         prompt_builder=_proposal_prompt_builder,
         output_model=FeedbackOptimizationPlanOutput,
+        formatter_output_model=FeedbackOptimizationPlanFormatterOutput,
         formatter_signature=BatchPlanFormattingSignature,
     ),
     AgentJobType.EXECUTION: AgentJobSpec(
@@ -159,6 +168,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         profile_name=EXECUTION_OPTIMIZER_PROFILE,
         prompt_builder=_execution_prompt_builder,
         output_model=ExecutionPlanOutput,
+        formatter_output_model=ExecutionPlanFormatterOutput,
         formatter_signature=ExecutionFormattingSignature,
     ),
     AgentJobType.EVAL_CASE_GENERATION: AgentJobSpec(
@@ -166,6 +176,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         profile_name=EVAL_CASE_GOVERNOR_PROFILE,
         prompt_builder=_eval_case_prompt_builder,
         output_model=FeedbackEvalCaseGenerationOutput,
+        formatter_output_model=FeedbackEvalCaseGenerationFormatterOutput,
         formatter_signature=EvalCaseGenerationFormattingSignature,
     ),
     AgentJobType.REGRESSION_IMPACT_ANALYSIS: AgentJobSpec(
@@ -173,6 +184,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         profile_name=REGRESSION_IMPACT_ANALYZER_PROFILE,
         prompt_builder=_regression_impact_prompt_builder,
         output_model=RegressionImpactAnalysisOutput,
+        formatter_output_model=RegressionImpactAnalysisFormatterOutput,
         formatter_signature=RegressionImpactFormattingSignature,
     ),
 }

@@ -68,6 +68,22 @@
 # 新增 job/profile/output 类型必须优先进入集中注册表，注册表至少声明 job type、profile、
 # prompt builder、DSPy Signature 和 OutputModel；不得再让这些信息散落在多个 if/else 分支。
 #
+# ## Agent 输出字段所有权
+#
+# 涉及 Agent、DSPy formatter、LLM 输出格式化或提示词输出要求时，计划必须先列字段所有权矩阵：
+#
+# - backend-owned：可由 job input、DB row、route 参数、store context、scheduler context
+#   或确定性 projection 得到的字段，例如 job_id、batch_id、case ids、时间戳、scope、
+#   provenance、eval run、gate result、task execution id。prompt 和 Signature 不得要求 LLM
+#   输出这类字段；如外部脏输出包含这类字段，后端必须覆盖或忽略。
+# - agent-owned：只有 Agent 结果才能提供的业务语义，例如分析结论、优化动作、业务假设、
+#   风险说明、证据摘要和建议。这类字段才允许进入 Agent 输出契约。
+# - boundary-owned：SQLite JSON、HTTP response、临时文件、日志、Langfuse metadata 等
+#   序列化边界字段。`model_dump(mode="json")` 只应出现在这些边界。
+#
+# backend-owned 字段可以作为 formatter 输入上下文用于 grounding，但不能作为 Agent 输出结构的一部分。
+# 如果为了兼容历史脏数据保留 normalizer，必须说明它只服务历史或外部边界，不能参与新成功主流程。
+#
 # ## 长程重构边界
 #
 # 长程重构、GSD 阶段执行或跨层 schema 收口必须先定义边界再实现。计划至少覆盖：

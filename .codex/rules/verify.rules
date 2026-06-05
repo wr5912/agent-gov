@@ -43,6 +43,9 @@
 # - 新主流程没有新增 Agent 输出 `schema_version`、`*_SCHEMA_VERSION` 或 `output_schema_version` 契约层。
 # - job type、profile、prompt builder、DSPy Signature 和 OutputModel 的来源是集中注册表。
 # - `model_dump(mode="json")` 只出现在 DB、HTTP、文件、日志或观测边界；如在内部出现，必须说明原因。
+# - prompt、DSPy Signature 和 OutputModel 只要求 agent-owned 输出字段；backend-owned 字段只作为输入上下文或后端投影值。
+# - touched job type 至少有 1 个 hostile backend-owned 字段污染测试，例如 Agent 输出错误 job_id、
+#   batch_id、case ids、时间戳、scope 或 provenance，最终 validated/projection 必须使用后端权威值。
 #
 # ## 长程重构验证矩阵
 #

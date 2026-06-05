@@ -175,6 +175,48 @@ def test_eval_case_generation_agent_job_projects_to_eval_case(tmp_path):
     assert store.find_eval_case(eval_case["eval_case_id"])["prompt"]
 
 
+def test_eval_case_generation_uses_backend_source_and_lifecycle_fields(tmp_path):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全")
+    job = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
+
+    completed = store.complete_projected_agent_job(
+        job,
+        {
+            "job_id": "evg-agent-wrong",
+            "scope_kind": "feedback_dataset",
+            "scope_id": "feedback-dataset",
+            "status": "completed",
+            "eval_cases": [
+                {
+                    "eval_case_id": "evc-agent-wrong",
+                    "status": "active",
+                    "source": "agent_supplied",
+                    "source_run_id": "run-agent-wrong",
+                    "prompt": "复现原始问题。",
+                    "expected_behavior": "回答前读取当前 workspace 配置。",
+                    "checks_json": {"requires_tool_use": True},
+                    "labels": ["tool_data_incomplete"],
+                }
+            ],
+            "results": [{"status": "agent_supplied"}],
+        },
+    )
+    eval_case = completed["validated_output_json"]["eval_cases"][0]
+
+    assert completed["validated_output_json"]["job_id"] == job["job_id"]
+    assert completed["validated_output_json"]["scope_kind"] == job["scope_kind"]
+    assert completed["validated_output_json"]["scope_id"] == job["scope_id"]
+    assert completed["validated_output_json"]["results"][0]["status"] == "created"
+    assert eval_case["eval_case_id"] != "evc-agent-wrong"
+    assert eval_case["status"] == "draft"
+    assert eval_case["source"] == "eval_case_governor"
+    assert eval_case["source_feedback_case_id"] == feedback_case["feedback_case_id"]
+    assert eval_case["source_run_id"] == "run-1"
+
+
 def test_batch_projection_refreshes_eval_case_generation_job_status(tmp_path):
     store, _ = _store(tmp_path)
     _record_run(store)
@@ -198,6 +240,7 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     store, _ = _store(tmp_path)
     spec = agent_job_spec("regression_impact_analysis")
     eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="manual_feedback_dataset")
+    finished_eval_run = store.finish_eval_run(eval_run["eval_run_id"])
     job = store.create_agent_job(
         job_id="riaj-projection",
         job_type=spec.job_type,
@@ -210,10 +253,11 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     completed = store.complete_projected_agent_job(
         job,
         {
-            "eval_run_id": eval_run["eval_run_id"],
+            "impact_analysis_id": "ria-agent-wrong",
+            "eval_run_id": "evr-agent-wrong",
             "status": "completed",
-            "result_status": "passed",
-            "gate_result": {"status": "passed"},
+            "result_status": "failed",
+            "gate_result": {"status": "agent_wrong"},
             "impacted_assets": [
                 {
                     "asset_id": "eval-asset-1",
@@ -235,7 +279,11 @@ def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
     assert "_formatter" not in completed_job["raw_output_json"]
     assert impact["job_id"] == "riaj-projection"
     assert "_formatter" not in impact
-    assert "agent_note" not in impact["impacted_assets"][0]
+    assert impact["impact_analysis_id"] != "ria-agent-wrong"
+    assert impact["eval_run_id"] == eval_run["eval_run_id"]
+    assert impact["result_status"] == finished_eval_run["result_status"]
+    assert impact["gate_result"] == finished_eval_run["gate_result"]
+    assert impact["impacted_assets"] == []
     assert impact["recommendations"] == ["继续保留当前回归资产。"]
 
 

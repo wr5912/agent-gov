@@ -33,7 +33,6 @@ def attribution_prompt(input_path: str) -> str:
         (
             "业务信息要点",
             "输出中必须能直接读出：\n"
-            "- feedback_case_id 和 attribution_job_id 对应的反馈与归因任务。\n"
             "- problem_type：反馈问题类别，说明为什么属于该类。\n"
             "- optimization_object_type：应优化的对象或 not_actionable，说明判断依据。\n"
             "- actionability：可执行性判断，区分 workspace 修改、配置修改、评估用例、外部处理、运行时修复、人工分析或不可行动。\n"
@@ -85,8 +84,9 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
         (
             "业务信息要点",
             "顶层方案必须能直接读出：title、summary、problem_types、confidence、actionability、target_type、target_path、"
-            "recommendation、expected_effect、validation、risk、source_refs、feedback_case_ids、eval_case_ids、"
-            "attribution_job_ids、attribution_summaries、rationale 和 evidence_refs。\n"
+            "recommendation、expected_effect、validation、risk、rationale 和 evidence_refs。\n"
+            "batch_id、optimization_plan_id、created_at、source_refs、feedback_case_ids、eval_case_ids、"
+            "attribution_job_ids、attribution_summaries 和 regeneration_instruction 由后端从输入上下文注入，不需要复述。\n"
             "tasks 是开发人员可以点击执行的优化任务。每个 task 必须围绕任务本身描述："
             "tasks[].title、description、objective、target_summary、recommendation、recommended_actions、"
             "acceptance_criteria、expected_effect、validation、risk、analysis_summary、evidence_summary、evidence_refs。"
@@ -143,8 +143,9 @@ def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None =
         ),
         (
             "业务信息要点",
-            "输出中必须能直接读出：optimization_task_id、execution_job_id、status、summary、operations、validation、risk、"
+            "输出中必须能直接读出：status、summary、operations、validation、risk、"
             "human_review_required 和 no_action_reason。\n"
+            "optimization_task_id、execution_job_id 和 baseline_agent_version_id 由后端从输入上下文注入，不需要复述。\n"
             "每个 operation 必须说明 operations[].operation、path、expected_sha256、content 或 append_text、rationale。"
             "summary 要说明本次准备改什么；validation 要说明如何验证；risk 要说明可能的退化或人工注意点。",
         ),
@@ -186,10 +187,12 @@ def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | 
         ),
         (
             "业务信息要点",
-            "输出中必须能直接读出：job_id、scope_kind、scope_id、status、eval_cases、results 和 no_action_reason。\n"
+            "输出中必须能直接读出：eval_cases 和 no_action_reason。\n"
+            "job_id、scope_kind、scope_id、status、results、计数、eval_case_id、created_at、updated_at 和生命周期状态由后端注入，不需要复述。\n"
             "每个 eval case 必须覆盖 prompt、expected_behavior、checks_json 和 labels；"
             "prompt 应复现用户原始输入或最接近的反馈场景，expected_behavior 应描述修复后应满足的行为。"
             "checks_json 应表达可检查的行为点，labels 应标识问题类型、目标对象或风险域。"
+            "多反馈输入中需要能定位来源时，只能引用输入中已有的 source_feedback_case_id；"
             "能确定来源时补充 source_kind、source_id、source_refs、attribution_summary 或 proposal_summary。",
         ),
         (
@@ -223,9 +226,9 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
         ),
         (
             "业务信息要点",
-            "输出中必须能直接读出：eval_run_id、status、result_status、gate_result、impacted_assets、recommendations、"
+            "输出中必须能直接读出：status、recommendations、"
             "summary、risk_assessment、next_steps 和 no_action_reason。\n"
-            "gate_result 要说明阻断或放行依据；impacted_assets 要说明受影响的 eval case、asset、状态或摘要；"
+            "eval_run_id、result_status、gate_result 和 impacted_assets 由后端从 eval_run 注入，不需要复述。\n"
             "recommendations 要说明应新增、调整、保留或人工复核哪些回归资产；next_steps 要说明后续动作。"
             "无法判断时说明需要人工复核及缺少的信息。",
         ),

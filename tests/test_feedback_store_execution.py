@@ -569,7 +569,9 @@ def test_execution_output_fills_system_fields_from_job_context(tmp_path):
     completed = store.complete_execution_job(
         job["execution_job_id"],
         {
-            "execution_job_id": job["execution_job_id"],
+            "execution_job_id": "fbe-agent-wrong",
+            "optimization_task_id": "fot-agent-wrong",
+            "baseline_agent_version_id": "agent-version-wrong",
             "status": "needs_human_review",
             "summary": "目标文件与提案意图不匹配，需要人工确认。",
             "operations": [],
@@ -580,6 +582,7 @@ def test_execution_output_fills_system_fields_from_job_context(tmp_path):
     )
 
     assert completed["status"] == "needs_human_review"
+    assert completed["validated_output_json"]["execution_job_id"] == job["execution_job_id"]
     assert completed["validated_output_json"]["optimization_task_id"] == task["optimization_task_id"]
     assert completed["validated_output_json"]["baseline_agent_version_id"] == task["baseline_agent_version_id"]
     assert completed["error_json"] is None

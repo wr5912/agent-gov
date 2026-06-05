@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
-from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
+from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_plan_response_schemas import FeedbackOptimizationPlanTaskResponse
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
     FeedbackOptimizationBatchExecutionResponse,
@@ -27,6 +26,7 @@ from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanReviewRequest,
     FeedbackOptimizationPlanTaskExecuteRequest,
 )
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
 
@@ -264,6 +264,9 @@ def _register_batch_plan_task_routes(
         batch = ensure_found(batch, "Feedback optimization batch not found")
         plan_task = ensure_found(_batch_plan_task(batch, plan_task_id), "Optimization plan task not found")
         execution_kind = plan_task.execution_kind
+        if execution_kind == "internal_action":
+            result = feedback_store._execute_batch_plan_task_internal_action(batch_id, plan_task_id)  # noqa: SLF001
+            return ensure_found(result, "Optimization plan task not found")
         if execution_kind == "external_webhook":
             require_request(bool(req.webhook_alias), "webhook_alias is required for external tasks")
             result = feedback_store.notify_batch_plan_task_external(batch_id, plan_task_id, webhook_alias=req.webhook_alias)

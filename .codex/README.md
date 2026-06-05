@@ -11,6 +11,10 @@
 - `skills/project-skill/SKILL.md`：团队开发通用技能。
 - `agents/worker.toml`：通用项目 worker 画像。
 
+## 本仓库专项技能
+
+- `skills/codex-config-optimizer/SKILL.md`：治理 Codex 配置、AGENTS/rules/hooks 和 skill 膨胀问题；首版为本仓库本地技能，验证稳定并泛化后再考虑提取为团队通用 skill。
+
 ## 通用入口配置
 
 - `hooks.json`：本仓库已按 `AGENTS.override.md` 接入 Stop 治理硬门；复制为通用模板前应清空项目命令，各项目在自己的覆盖层重新声明并配置本地命令。

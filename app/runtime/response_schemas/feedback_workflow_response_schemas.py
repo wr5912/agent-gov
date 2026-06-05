@@ -4,17 +4,18 @@ from typing import Optional
 
 from pydantic import BaseModel, Field
 
-from app.runtime.response_schemas.agent_version_response_schemas import AgentVersionDiffResponse, AgentVersionSummaryResponse
+from app.runtime.feedback_schemas import Actionability
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
+from app.runtime.response_schemas.agent_version_response_schemas import AgentVersionDiffResponse, AgentVersionSummaryResponse
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse
-from app.runtime.feedback_schemas import Actionability
 from app.runtime.response_schemas.feedback_plan_response_schemas import (
     FeedbackOptimizationPlanResponse,
     FeedbackOptimizationPlanTaskResponse,
 )
 from app.runtime.schemas import (
+    EvalCaseResponse,
     EvalRunResponse,
     ExtensibleResponse,
     FeedbackEvalCaseGenerateResponse,
@@ -278,9 +279,7 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     eval_case_generation: Optional[FeedbackEvalCaseGenerateResponse] = None
     attribution_job_ids: list[str] = Field(default_factory=list)
     attribution_jobs: list[AgentJobResponse] = Field(default_factory=list)
-    attribution_summary: FeedbackOptimizationBatchAttributionSummaryResponse = Field(
-        default_factory=FeedbackOptimizationBatchAttributionSummaryResponse
-    )
+    attribution_summary: FeedbackOptimizationBatchAttributionSummaryResponse = Field(default_factory=FeedbackOptimizationBatchAttributionSummaryResponse)
     optimization_plan: Optional[FeedbackOptimizationPlanResponse] = None
     optimization_plan_job_id: Optional[str] = None
     optimization_plan_job: Optional[AgentJobResponse] = None
@@ -317,6 +316,8 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     execution_job: Optional[OptimizationExecutionJobResponse] = None
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
     external_item: Optional[ExternalGovernanceItemResponse] = None
+    eval_cases: list[EvalCaseResponse] = Field(default_factory=list)
+    internal_action_result: Optional[JsonObject] = None
 
 
 class FeedbackOptimizationBatchRegressionResponse(BaseModel):

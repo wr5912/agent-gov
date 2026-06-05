@@ -20,9 +20,14 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/stores/feedback_batch_plan_store.py \
 	app/runtime/stores/feedback_execution_store.py \
 	scripts/check_codex_governance.py \
-	scripts/codex_governance_typed_output.py
+	scripts/codex_governance_typed_output.py \
+	scripts/check_test_coverage_policy.py \
+	scripts/run_main_flow_tests.py
 
-.PHONY: setup build up down logs test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
+COVERAGE_JSON ?= /tmp/claude-agent-runtime-coverage.json
+COVERAGE_POLICY ?= tests/coverage_policy.json
+
+.PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -142,4 +147,12 @@ typecheck: ruff-check ruff-format-check pyright
 
 test: codex-guard
 	$(PYTHON_RUN) -m compileall app
-	$(PYTHON_RUN) -m pytest -q
+	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
+	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+
+coverage:
+	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
+	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+
+main-flow-test:
+	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)

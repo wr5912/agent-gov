@@ -79,39 +79,36 @@ class AgentJobType(StrEnum):
 class AttributionFormattingSignature(dspy.Signature):
     """把归因分析智能体的自然语言或片段 JSON 转换为归因输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息；证据不足时输出
+    只能使用 raw_agent_output 中已有的业务要点；证据不足时输出
     insufficient_information、needs_human_analysis 或 needs_human_review。
     不要补充原文和证据没有支持的业务事实。
     """
 
     raw_agent_output: str = dspy.InputField(desc="归因分析智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="归因 job 输入，包含 feedback_case_id、job_id、证据路径等。")
     formatted_output: AttributionFormatterOutput = dspy.OutputField(desc="归因业务内容，不包含 feedback_case_id 和 attribution_job_id。")
 
 
 class BatchPlanFormattingSignature(dspy.Signature):
     """把优化方案生成智能体的输出转换为优化方案输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。可执行任务必须放在
+    只能使用 raw_agent_output 中已有的优化方案业务要点。可执行任务必须放在
     tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；能定位到外部系统、
     工具/API 和具体问题描述的项必须生成 external_webhook 任务；不能定位到具体对象、
-    接口、工具或问题 ID 的项才放入 blocked_items。
+    接口、工具或问题 ID 的项才放入 blocked_items。评估用例晋级任务必须生成
+    internal_action/promote_eval_cases，使用 approved 表示晋级后的 promotion_status。
     """
 
     raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="优化方案 job 输入，包含 batch、归因输出、回归用例和目标策略。")
     formatted_output: FeedbackOptimizationPlanFormatterOutput = dspy.OutputField(desc="优化方案业务内容，不包含批次、方案、时间和来源 ID 等后端上下文字段。")
 
 
 class ExecutionFormattingSignature(dspy.Signature):
     """把执行优化智能体的自然语言或片段 JSON 转换为执行方案输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。只能基于 target_file_contexts
-    为 target_paths 生成 append_text、replace_file、create_file 或 noop 操作；无法安全执行时输出 needs_human_review。
+    只能使用 raw_agent_output 中已有的执行方案业务要点。无法安全执行时输出 needs_human_review。
     """
 
     raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出。")
-    job_input_json: str = dspy.InputField(desc="执行 job 输入，包含 optimization_task_id、execution_job_id、target_paths 和 proposal。")
     formatted_output: ExecutionPlanFormatterOutput = dspy.OutputField(
         desc="执行方案业务内容，不包含 execution_job_id、optimization_task_id 和 baseline_agent_version_id。"
     )
@@ -120,25 +117,21 @@ class ExecutionFormattingSignature(dspy.Signature):
 class EvalCaseGenerationFormattingSignature(dspy.Signature):
     """把 eval-case-governor 的自然语言或片段 JSON 转换为评估用例生成输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。每个 eval case 必须包含
+    只能使用 raw_agent_output 中已有的评估用例业务要点。每个 eval case 必须包含
     prompt、expected_behavior、checks_json 和 labels；证据不足时输出 no_action_reason。
     """
 
     raw_agent_output: str = dspy.InputField(desc="eval-case-governor 原始输出。")
-    job_input_json: str = dspy.InputField(desc="评估用例生成 job 输入，包含反馈来源、归因和建议上下文。")
     formatted_output: FeedbackEvalCaseGenerationFormatterOutput = dspy.OutputField(desc="评估用例草案业务内容，不包含 job、scope、结果计数和生命周期字段。")
 
 
 class RegressionImpactFormattingSignature(dspy.Signature):
     """把 regression-impact-analyzer 的自然语言或片段 JSON 转换为回归影响分析输出模型。
 
-    只能使用 raw_agent_output 和 job_input_json 中已有的信息。必须基于输入中的
-    gate_result 和 impacted assets 解释影响并给出 recommendations；不确定时输出
-    needs_human_review。
+    只能使用 raw_agent_output 中已有的回归影响业务要点；不确定时输出 needs_human_review。
     """
 
     raw_agent_output: str = dspy.InputField(desc="regression-impact-analyzer 原始输出。")
-    job_input_json: str = dspy.InputField(desc="回归影响分析 job 输入，包含 eval_run、gate_result 和 item 快照。")
     formatted_output: RegressionImpactAnalysisFormatterOutput = dspy.OutputField(desc="回归影响解释内容，不包含 eval_run、gate_result 和持久化 ID。")
 
 

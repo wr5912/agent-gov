@@ -1,0 +1,60 @@
+{
+  "coverage": {
+    "global": {
+      "line_percent_min": 73.73,
+      "branch_percent_min": 53.92
+    },
+    "files": []
+  },
+  "main_flows": [
+    {
+      "id": "feedback_batch_optimization_plan",
+      "description": "Feedback batch optimization plan generation from request to API/UI projection.",
+      "scenarios": [
+        {
+          "id": "api_full_success_path",
+          "description": "Signal, batch, attribution, batch plan, execution, regression, and publish complete successfully.",
+          "pytest": [
+            "tests/test_api_execution_optimizer.py::test_feedback_optimization_batch_full_api_e2e"
+          ]
+        },
+        {
+          "id": "duplicate_click_reuses_running_job_and_replaces_failed_job",
+          "description": "Repeated plan generation does not leave duplicate active jobs and failed jobs are replaced.",
+          "pytest": [
+            "tests/test_feedback_store_batch_plans.py::test_batch_plan_running_job_is_reused_and_failed_job_is_replaced_on_retry"
+          ]
+        },
+        {
+          "id": "formatter_failure_is_projected_to_batch_error",
+          "description": "Formatter failure preserves diagnostics and exposes optimization_plan_error.",
+          "pytest": [
+            "tests/test_feedback_store_batch_plans.py::test_batch_plan_failure_preserves_raw_output_diagnostics",
+            "tests/test_feedback_job_orchestrator_errors.py::test_batch_plan_orchestrator_preserves_formatter_raw_output"
+          ]
+        },
+        {
+          "id": "backend_fields_are_authoritative",
+          "description": "Backend-owned identifiers and context fields override polluted agent output.",
+          "pytest": [
+            "tests/test_feedback_store_batch_plans.py::test_batch_plan_output_context_fields_are_backend_authoritative"
+          ]
+        },
+        {
+          "id": "incomplete_formatter_task_is_visible_as_blocked_item",
+          "description": "Incomplete formatter task does not disappear and is projected as a visible blocker.",
+          "pytest": [
+            "tests/test_feedback_store_batch_plans.py::test_complete_batch_plan_job_projects_incomplete_formatter_task_as_blocked_item"
+          ]
+        },
+        {
+          "id": "plan_tab_empty_success_failure_states",
+          "description": "Optimization plan tab renders empty state, generated plan, and generation failure details.",
+          "ui_scripts": [
+            "verify:feedback-ui-states"
+          ]
+        }
+      ]
+    }
+  ]
+}

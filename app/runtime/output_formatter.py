@@ -10,6 +10,7 @@ configure_litellm_import_defaults()
 
 import dspy
 from pydantic import BaseModel
+from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_none
 
 from .agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec, coerce_agent_job_type
 from .json_types import JsonObject
@@ -82,16 +83,12 @@ class DSPyOutputFormatter:
                         self._format_with_dspy(
                             job_type=normalized_job_type,
                             raw_text=raw_text,
-                            job_input=job_input,
                             output_model=agent_job_spec(normalized_job_type).formatter_output_model,
                         ),
                     )
                     self._update_observation(
                         observation,
-                        output={
-                            "status": "completed",
-                            "output_model": output.__class__.__name__,
-                        },
+                        output=_formatter_success_observation_payload(output, raw_text),
                     )
                 except Exception as exc:
                     self._update_observation(
@@ -116,26 +113,25 @@ class DSPyOutputFormatter:
         *,
         job_type: AgentJobType,
         raw_text: str,
-        job_input: JsonObject,
         output_model: type[TOutput],
     ) -> TOutput:
         self._instrument_dspy()
         signature = _signature_for_job_type(job_type)
         predictor = dspy.Predict(signature)
         lm = self._lm_instance()
-        last_error: Exception | None = None
-        for _ in range(max(1, self.settings.dspy_output_formatter_max_retries + 1)):
-            try:
+        attempts = max(1, self.settings.dspy_output_formatter_max_retries + 1)
+        for attempt in Retrying(
+            stop=stop_after_attempt(attempts),
+            wait=wait_none(),
+            retry=retry_if_exception_type(Exception),
+            reraise=True,
+        ):
+            with attempt:
                 with _dspy_lm_context(lm):
                     result = predictor(
                         raw_agent_output=raw_text,
-                        job_input_json=json.dumps(job_input, ensure_ascii=False, indent=2),
                     )
                 return _coerce_output_model(result.formatted_output, output_model)
-            except Exception as exc:
-                last_error = exc
-        if last_error:
-            raise last_error
         raise RuntimeError("DSPy formatter produced no result")
 
     def _lm_instance(self) -> Any:
@@ -212,6 +208,20 @@ def _coerce_output_model(value: Any, output_model: type[TOutput]) -> TOutput:
     if isinstance(value, str):
         return output_model.model_validate(json.loads(value))
     raise TypeError(f"Unsupported DSPy formatter output: {type(value).__name__}")
+
+
+def _formatter_success_observation_payload(output: BaseModel, raw_text: str) -> JsonObject:
+    payload = output.model_dump(mode="json", exclude_none=True)
+    tasks = [item for item in payload.get("tasks") or [] if isinstance(item, dict)]
+    blocked_items = [item for item in payload.get("blocked_items") or [] if isinstance(item, dict)]
+    return {
+        "status": "completed",
+        "output_model": output.__class__.__name__,
+        "raw_text": _truncate(raw_text, 20000),
+        "task_count": len(tasks),
+        "blocked_count": len(blocked_items),
+        "internal_action_count": sum(1 for item in tasks if item.get("execution_kind") == "internal_action"),
+    }
 
 
 def _formatter_metadata_payload(

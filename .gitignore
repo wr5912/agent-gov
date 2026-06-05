@@ -8,6 +8,7 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage*
 .data/
 /data/
 /artifacts/
@@ -45,3 +46,4 @@ docker/.runtime-template-backups/
 docker/.runtime-template-staging/
 # Added by code-review-graph
 .code-review-graph/
+temp/

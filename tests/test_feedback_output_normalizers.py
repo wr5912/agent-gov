@@ -1,6 +1,19 @@
-import pytest
+from contextlib import nullcontext
 
-from app.runtime.output_formatter import DSPyOutputFormatter, OutputFormatterError
+import app.runtime.output_formatter as output_formatter_module
+import pytest
+from app.runtime.agent_job_types import AgentJobType
+from app.runtime.feedback_schemas import (
+    AttributionFormatterOutput,
+    ExecutionPlanFormatterOutput,
+    FeedbackEvalCaseGenerationFormatterOutput,
+    FeedbackOptimizationPlanFormatterOutput,
+    RegressionImpactAnalysisFormatterOutput,
+    validate_execution_plan_output,
+    validate_feedback_eval_case_generation_output,
+    validate_feedback_optimization_plan_output,
+    validate_regression_impact_analysis_output,
+)
 from app.runtime.normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
@@ -15,17 +28,12 @@ from app.runtime.normalizers.feedback_output_task_context import (
     normalize_task_context_payload,
     task_context_has_external_specificity,
 )
-from app.runtime.feedback_schemas import (
-    FeedbackOptimizationPlanFormatterOutput,
-    validate_execution_plan_output,
-    validate_feedback_eval_case_generation_output,
-    validate_feedback_optimization_plan_output,
-    validate_regression_impact_analysis_output,
-)
+from app.runtime.output_formatter import DSPyOutputFormatter, OutputFormatterError
+
 from feedback_store_test_utils import _batch_plan_output, _settings
 
 
-def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_path, monkeypatch):
+def test_dspy_output_formatter_uses_dspy_with_raw_agent_output_only(tmp_path, monkeypatch):
     formatter = DSPyOutputFormatter(_settings(tmp_path))
     payload = _batch_plan_output({"input_json": {"batch_id": "fob-test"}})
     seen: dict[str, object] = {}
@@ -45,9 +53,104 @@ def test_dspy_output_formatter_always_uses_dspy_even_for_schema_like_text(tmp_pa
     assert seen["job_type"] == "batch_plan"
     assert seen["output_model"] is FeedbackOptimizationPlanFormatterOutput
     assert "前缀" in str(seen["raw_text"])
+    assert "job_input" not in seen
+    assert "job_input_json" not in seen
     assert isinstance(result.output, FeedbackOptimizationPlanFormatterOutput)
     assert not hasattr(result.output, "batch_id")
     assert "_formatter" not in result.output.model_dump(mode="json")
+
+
+def test_dspy_output_formatter_predictor_receives_no_job_input_context(tmp_path, monkeypatch):
+    formatter = DSPyOutputFormatter(_settings(tmp_path))
+    payload = _batch_plan_output({"input_json": {"batch_id": "fob-test"}})
+    seen: dict[str, object] = {}
+
+    class FakePredict:
+        def __init__(self, signature: object) -> None:
+            seen["signature"] = signature
+
+        def __call__(self, **kwargs: object):
+            seen["predictor_kwargs"] = kwargs
+            return type("Prediction", (), {"formatted_output": payload})()
+
+    monkeypatch.setattr(formatter, "_instrument_dspy", lambda: None)
+    monkeypatch.setattr(formatter, "_lm_instance", lambda: object())
+    monkeypatch.setattr(output_formatter_module, "_dspy_lm_context", lambda _lm: nullcontext())
+    monkeypatch.setattr(output_formatter_module.dspy, "Predict", FakePredict)
+
+    output = formatter._format_with_dspy(
+        job_type=AgentJobType.BATCH_PLAN,
+        raw_text="## 方案概览\n- 标题：测试批次优化方案\n- 阻断项：测试场景不生成可执行任务。",
+        output_model=FeedbackOptimizationPlanFormatterOutput,
+    )
+
+    assert isinstance(output, FeedbackOptimizationPlanFormatterOutput)
+    assert seen["predictor_kwargs"] == {"raw_agent_output": "## 方案概览\n- 标题：测试批次优化方案\n- 阻断项：测试场景不生成可执行任务。"}
+
+
+def test_dspy_output_formatter_retries_transient_predictor_failure(tmp_path, monkeypatch):
+    formatter = DSPyOutputFormatter(_settings(tmp_path))
+    payload = _batch_plan_output({"input_json": {"batch_id": "fob-test"}})
+    calls: list[dict[str, object]] = []
+
+    class FakePredict:
+        def __init__(self, _signature: object) -> None:
+            pass
+
+        def __call__(self, **kwargs: object):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("transient formatter failure")
+            return type("Prediction", (), {"formatted_output": payload})()
+
+    monkeypatch.setattr(formatter, "_instrument_dspy", lambda: None)
+    monkeypatch.setattr(formatter, "_lm_instance", lambda: object())
+    monkeypatch.setattr(output_formatter_module, "_dspy_lm_context", lambda _lm: nullcontext())
+    monkeypatch.setattr(output_formatter_module.dspy, "Predict", FakePredict)
+
+    output = formatter._format_with_dspy(
+        job_type=AgentJobType.BATCH_PLAN,
+        raw_text="## 方案概览\n- 标题：测试批次优化方案",
+        output_model=FeedbackOptimizationPlanFormatterOutput,
+    )
+
+    assert isinstance(output, FeedbackOptimizationPlanFormatterOutput)
+    assert calls == [
+        {"raw_agent_output": "## 方案概览\n- 标题：测试批次优化方案"},
+        {"raw_agent_output": "## 方案概览\n- 标题：测试批次优化方案"},
+    ]
+
+
+def test_dspy_output_formatter_zero_retries_attempts_once_and_preserves_diagnostics(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    settings.dspy_output_formatter_max_retries = 0
+    formatter = DSPyOutputFormatter(settings)
+    calls: list[dict[str, object]] = []
+
+    class FakePredict:
+        def __init__(self, _signature: object) -> None:
+            pass
+
+        def __call__(self, **kwargs: object):
+            calls.append(kwargs)
+            raise RuntimeError("permanent formatter failure")
+
+    monkeypatch.setattr(formatter, "_instrument_dspy", lambda: None)
+    monkeypatch.setattr(formatter, "_lm_instance", lambda: object())
+    monkeypatch.setattr(output_formatter_module, "_dspy_lm_context", lambda _lm: nullcontext())
+    monkeypatch.setattr(output_formatter_module.dspy, "Predict", FakePredict)
+
+    with pytest.raises(OutputFormatterError) as exc_info:
+        formatter.format(
+            job_type="batch_plan",
+            raw_text="## 方案概览\n- 标题：测试批次优化方案",
+            job_input={"batch_id": "fob-test"},
+        )
+
+    assert calls == [{"raw_agent_output": "## 方案概览\n- 标题：测试批次优化方案"}]
+    assert exc_info.value.raw_output_json["_formatter"]["status"] == "failed"
+    assert exc_info.value.raw_output_json["_formatter"]["error_type"] == "RuntimeError"
+    assert "permanent formatter failure" in exc_info.value.raw_output_json["_formatter"]["error_message"]
 
 
 def test_dspy_output_formatter_error_preserves_raw_output_diagnostics(tmp_path, monkeypatch):
@@ -68,6 +171,137 @@ def test_dspy_output_formatter_error_preserves_raw_output_diagnostics(tmp_path, 
     raw_output = exc_info.value.raw_output_json
     assert raw_output["_formatter"]["status"] == "failed"
     assert "自然语言方案" in raw_output["raw_text"]
+
+
+def test_formatter_models_run_normalizers_before_strict_validation():
+    attribution = AttributionFormatterOutput.model_validate(
+        {
+            "problem_type": "tool_usage_gap",
+            "optimization_object_type": "agent",
+            "actionability": "manual_review",
+            "confidence": "high",
+            "human_review_required": True,
+            "responsibility_boundary": "sec-ops-data",
+            "rationale": "反馈显示工具数据不完整。",
+            "recommended_next_step": "review",
+        }
+    )
+    execution = ExecutionPlanFormatterOutput.model_validate(
+        {
+            "status": "blocked",
+            "summary": "缺少可安全修改的目标文件。",
+            "operations": [],
+            "no_action_reason": "target_paths 为空。",
+        }
+    )
+    eval_generation = FeedbackEvalCaseGenerationFormatterOutput.model_validate({})
+    regression = RegressionImpactAnalysisFormatterOutput.model_validate({"recommendations": "重新运行受影响回归集。"})
+
+    assert attribution.problem_type == "tool_data_quality"
+    assert attribution.optimization_object_type == "main_agent_claude_md"
+    assert attribution.actionability == "needs_human_analysis"
+    assert attribution.recommended_next_step == "needs_human_review"
+    assert attribution.responsibility_boundary.owner == "sec-ops-data"
+    assert execution.status == "needs_human_review"
+    assert eval_generation.no_action_reason == "eval-case-governor 未生成可用评估用例。"
+    assert regression.recommendations == ["重新运行受影响回归集。"]
+
+
+def test_batch_plan_formatter_converts_incomplete_task_to_blocked_item():
+    output = FeedbackOptimizationPlanFormatterOutput.model_validate(
+        {
+            "status": "pending_approval",
+            "title": "统筹优化 sec-ops 数据源问题",
+            "tasks": [
+                {
+                    "title": "修复 sec-ops 数据源 2026 年数据缺失",
+                    "description": "在运行时环境中补充数据源覆盖说明。",
+                }
+            ],
+        }
+    )
+
+    assert output.status == "needs_human_review"
+    assert output.tasks == []
+    assert output.blocked_items[0].title == "修复 sec-ops 数据源 2026 年数据缺失"
+    assert "Agent 输出的优化任务缺少可执行字段" in output.blocked_items[0].reason
+    assert "execution_kind" in output.blocked_items[0].reason
+    assert "objective" in output.blocked_items[0].reason
+    assert output.blocked_items[0].recommendation == "在运行时环境中补充数据源覆盖说明。"
+
+
+def test_batch_plan_formatter_infers_target_type_from_target_path():
+    output = FeedbackOptimizationPlanFormatterOutput.model_validate(
+        {
+            "status": "pending_approval",
+            "title": "统筹优化 MCP 配置和回归资产",
+            "target_path": ".mcp.json",
+            "recommendation": "修复 MCP 配置并补充回归验证。",
+            "expected_effect": "降低同类配置问题复现概率。",
+            "validation": "运行关联回归用例。",
+            "risk": "默认地址可能不适用于生产环境。",
+            "tasks": [
+                {
+                    "execution_kind": "workspace_execution",
+                    "actionability": "workspace_config_change",
+                    "target_path": ".mcp.json",
+                    "title": "修复 MCP 配置",
+                    "description": "为 sec-ops-data MCP 地址补充本地默认值。",
+                    "objective": "避免变量缺失导致 MCP 服务器连接失败。",
+                    "recommendation": "在 .mcp.json 中补充默认地址。",
+                    "expected_effect": "MCP 工具能正常初始化。",
+                    "validation": "启动会话检查 MCP 状态。",
+                    "risk": "默认地址仅适合本地环境。",
+                },
+                {
+                    "actionability": "eval_only",
+                    "target_path": ".planning/eval/sec-ops-data.json",
+                    "title": "补充 MCP 配置回归用例",
+                    "description": "注册回归用例覆盖 MCP 地址缺失场景。",
+                    "objective": "防止配置问题回归。",
+                    "recommendation": "新增配置回归验证。",
+                    "expected_effect": "回归流水线能发现同类问题。",
+                    "validation": "运行新增回归用例。",
+                    "risk": "用例可能需要人工校准断言。",
+                },
+            ],
+        }
+    )
+
+    assert output.target_type == "mcp_config"
+    assert output.tasks[0].target_type == "mcp_config"
+    assert output.tasks[1].execution_kind == "workspace_execution"
+    assert output.tasks[1].target_type == "eval_case"
+    assert output.blocked_items == []
+
+
+def test_batch_plan_formatter_promotes_eval_case_task_to_internal_action():
+    output = FeedbackOptimizationPlanFormatterOutput.model_validate(
+        {
+            "status": "pending_approval",
+            "title": "反馈优化批次方案",
+            "tasks": [
+                {
+                    "title": "将评估用例提升为活跃回归用例",
+                    "description": "把本批次候选评估用例纳入长期回归资产。",
+                    "objective": "让同类反馈修复后进入稳定回归验证。",
+                    "recommendation": "晋级关联评估用例。",
+                    "expected_effect": "后续版本回归可覆盖该反馈场景。",
+                    "validation": "检查用例状态和审计记录。",
+                    "risk": "用例断言过宽时可能降低回归信号质量。",
+                    "eval_case_ids": ["evc-1"],
+                }
+            ],
+        }
+    )
+
+    assert output.blocked_items == []
+    task = output.tasks[0]
+    assert task.execution_kind == "internal_action"
+    assert task.internal_action == "promote_eval_cases"
+    assert task.target_type == "eval_case"
+    assert task.actionability == "regression_asset_governance"
+    assert task.eval_case_ids == ["evc-1"]
 
 
 def test_normalize_task_context_payload_coerces_lists_and_drops_empty_values():
@@ -175,6 +409,34 @@ def test_normalize_feedback_plan_output_records_blocked_workspace_task_reason():
     assert normalized["tasks"] == []
     assert normalized["blocked_items"][0]["reason"] == "任务缺少 target_path，不能交给 execution-optimizer 执行。"
     assert normalized["blocked_items"][0]["title"].startswith("{")
+
+
+def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
+    normalized = normalize_feedback_optimization_plan_output(
+        {
+            "batch_id": "fob-test",
+            "status": "pending_approval",
+            "tasks": [
+                {
+                    "execution_kind": "internal_action",
+                    "internal_action": "promote_eval_cases",
+                    "title": "晋级回归资产",
+                    "description": "缺少明确 eval_case_ids。",
+                    "objective": "纳入长期回归资产。",
+                    "target_type": "eval_case",
+                    "actionability": "regression_asset_governance",
+                    "recommendation": "执行内部晋级动作。",
+                    "expected_effect": "回归计划可复用该资产。",
+                    "validation": "检查评估用例状态。",
+                    "risk": "误晋级会污染回归集。",
+                }
+            ],
+        }
+    )
+
+    assert normalized["tasks"] == []
+    assert normalized["status"] == "pending_approval"
+    assert normalized["blocked_items"][0]["reason"] == "内部回归资产治理任务缺少 eval_case_ids 或受支持的 internal_action，不能自动执行。"
 
 
 def test_normalize_feedback_plan_output_sanitizes_attribution_summary_extras():

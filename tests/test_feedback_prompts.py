@@ -34,6 +34,8 @@ def test_proposal_generator_prompt_delegates_wire_format_to_dspy():
     )
 
     assert "optimization_plan_input_json" in prompt
+    assert "不要输出 JSON、代码块、schema payload" in prompt
+    assert "只输出 Markdown 小节或列表形式的结构化业务要点" in prompt
     assert "最终输出必须是一个 JSON 对象" not in prompt
     assert "不要输出 Markdown 方案、表格、代码围栏或解释性前后缀" not in prompt
     assert "系统会优先直接校验该 JSON" not in prompt
@@ -126,10 +128,10 @@ def test_feedback_prompts_spell_out_business_information_points():
             "recommended_next_step",
         ),
         "optimization_plan": (
-            "attribution_summaries",
-            "evidence_refs",
-            "tasks[].title",
-            "acceptance_criteria",
+            "目标路径或外部对象",
+            "证据引用",
+            "任务标题",
+            "验收标准",
             "task_context",
             "external_webhook",
             "blocked_items",
@@ -174,5 +176,5 @@ def test_attribution_and_proposal_generator_prompts_require_chinese_user_facing_
     assert "证据引用原因" in attribution
     assert "责任边界" in attribution
     assert "所有面向人的说明文本必须使用简体中文" in proposal
-    assert "tasks[].title/description/objective/recommendation" in proposal
-    assert "blocked_items[].title/reason/recommendation" in proposal
+    assert "任务标题、任务描述、任务目标、任务建议动作" in proposal
+    assert "阻断项原因和阻断项建议必须使用简体中文" in proposal

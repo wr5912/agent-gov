@@ -26,3 +26,19 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "app/runtime/agent_job_types.py" = ["E402", "I001"]
 "app/runtime/output_formatter.py" = ["E402", "I001"]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "scripts"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = true
+exclude_also = [
+  "if TYPE_CHECKING:",
+  "if __name__ == .__main__.:",
+]
+
+[tool.coverage.json]
+pretty_print = true

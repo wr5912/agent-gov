@@ -2,46 +2,47 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Optional
 
 from sqlalchemy import delete, select
 
+from ...version import APP_VERSION
 from ..collection_utils import unique_strings
-from ..integrations.external_governance import ExternalGovernanceService
 from ..execution_targets import WorkspaceExecutionTargetPolicy
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..integrations.external_governance import ExternalGovernanceService
 from ..json_types import JsonObject
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import (
-    OptimizationProposalModel,
     AgentJobModel,
     ExecutionApplicationModel,
+    OptimizationProposalModel,
     OptimizationTaskModel,
     ProposalReviewModel,
     make_session_factory,
     runtime_db_path_from_data_dir,
-    utc_now,
 )
+from .agent_job_queue_store import AgentJobQueueStoreMixin
+from .agent_job_store import AgentJobStoreMixin
 from .feedback_batch_plan_store import FeedbackBatchPlanStoreMixin
 from .feedback_batch_store import FeedbackBatchStoreMixin
 from .feedback_case_store import FeedbackCaseStoreMixin
 from .feedback_compensation_store import FeedbackCompensationStoreMixin
-from .feedback_evidence_store import FeedbackEvidenceStoreMixin
 from .feedback_eval_store import FeedbackEvalStoreMixin
+from .feedback_evidence_store import FeedbackEvidenceStoreMixin
 from .feedback_execution_store import FeedbackExecutionStoreMixin
 from .feedback_external_governance_store import FeedbackExternalGovernanceStoreMixin
+from .feedback_internal_action_store import FeedbackInternalActionStoreMixin
 from .feedback_job_store import FeedbackJobStoreMixin
 from .feedback_plan_task_store import FeedbackPlanTaskStoreMixin
 from .feedback_proposal_store import FeedbackProposalStoreMixin
 from .feedback_regression_asset_store import FeedbackRegressionAssetStoreMixin
 from .feedback_source_store import FeedbackSourceStoreMixin
 from .feedback_task_store import FeedbackTaskStoreMixin
-from .agent_job_store import AgentJobStoreMixin
-from .agent_job_queue_store import AgentJobQueueStoreMixin
-from ...version import APP_VERSION
 
 
 class FeedbackStore(
@@ -49,6 +50,7 @@ class FeedbackStore(
     AgentJobStoreMixin,
     FeedbackCompensationStoreMixin,
     FeedbackBatchPlanStoreMixin,
+    FeedbackInternalActionStoreMixin,
     FeedbackPlanTaskStoreMixin,
     FeedbackExecutionStoreMixin,
     FeedbackTaskStoreMixin,

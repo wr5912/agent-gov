@@ -4,8 +4,9 @@ from typing import Optional
 
 from pydantic import Field
 
-from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse
 from app.runtime.feedback_schemas import Actionability, Confidence, OptimizationObjectType, ProblemType
+from app.runtime.json_types import JsonObject
+from app.runtime.response_schemas.feedback_output_response_schemas import EvidenceRefResponse
 from app.runtime.schemas import ExtensibleResponse, FeedbackSourceRef
 
 
@@ -47,6 +48,7 @@ class FeedbackOptimizationPlanTaskResponse(ExtensibleResponse):
     source_index: Optional[int] = None
     execution_kind: str
     status: str
+    internal_action: Optional[str] = None
     title: Optional[str] = None
     target_type: Optional[str] = None
     target_path: Optional[str] = None
@@ -77,6 +79,7 @@ class FeedbackOptimizationPlanTaskResponse(ExtensibleResponse):
     external_item_id: Optional[str] = None
     applied_agent_version_id: Optional[str] = None
     latest_webhook_alias: Optional[str] = None
+    internal_action_result: Optional[JsonObject] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
 
@@ -109,6 +112,7 @@ class FeedbackOptimizationPlanTaskSummaryResponse(ExtensibleResponse):
     total: int = 0
     workspace_execution: int = 0
     external_webhook: int = 0
+    internal_action: int = 0
 
 
 class FeedbackOptimizationBlockedSummaryResponse(ExtensibleResponse):

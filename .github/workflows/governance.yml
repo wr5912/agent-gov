@@ -42,3 +42,19 @@ jobs:
 
       - name: Tests
         run: make test
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install frontend dependencies
+        run: |
+          corepack enable pnpm
+          pnpm --dir frontend install --frozen-lockfile
+
+      - name: Frontend build
+        run: pnpm --dir frontend build
+
+      - name: Main flow UI states
+        run: make main-flow-test

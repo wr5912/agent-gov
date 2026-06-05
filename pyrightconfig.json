@@ -13,7 +13,9 @@
     "app/runtime/stores/feedback_batch_plan_store.py",
     "app/runtime/stores/feedback_execution_store.py",
     "scripts/check_codex_governance.py",
-    "scripts/codex_governance_typed_output.py"
+    "scripts/codex_governance_typed_output.py",
+    "scripts/check_test_coverage_policy.py",
+    "scripts/run_main_flow_tests.py"
   ],
   "exclude": [
     ".venv",

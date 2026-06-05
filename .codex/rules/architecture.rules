@@ -91,6 +91,24 @@
 # backend-owned 字段可以作为 formatter 输入上下文用于 grounding，但不能作为 Agent 输出结构的一部分。
 # 如果为了兼容历史脏数据保留 normalizer，必须说明它只服务历史或外部边界，不能参与新成功主流程。
 #
+# ## 内部治理动作分类
+#
+# 反馈闭环、Agent job 或批次优化方案中，如果自然语言任务描述的是后端已经能确定、验证并执行的治理动作，
+# 必须优先建模为 typed internal action，而不是伪装成 workspace patch、external webhook，或因为缺少
+# workspace target_path 直接降级为 blocked。
+#
+# internal action 计划必须说明：
+#
+# - action 名称、允许的 target_type、必填输入字段和后端权威字段。
+# - 与 workspace_execution、external_webhook、blocked 的分类边界。
+# - 权限与作用域校验，例如 ID 必须属于当前 batch/case/job/scope。
+# - 状态变更、审计事件、revision 或 governance event 的写入位置。
+# - all-or-nothing 事务边界和失败投影到 task/job/API/UI 的方式。
+# - 对应的 hostile 输入、越权输入或部分失败负向测试。
+#
+# Agent 只允许建议 internal action 的业务理由、目标对象和验证语义；operator、role、status、时间戳、
+# 执行结果、审计身份和可由后端确定的 scope/provenance 必须由后端生成或覆盖。
+#
 # ## 长程重构边界
 #
 # 长程重构、GSD 阶段执行或跨层 schema 收口必须先定义边界再实现。计划至少覆盖：

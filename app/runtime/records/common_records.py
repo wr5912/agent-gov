@@ -31,7 +31,7 @@ class FeedbackSourceRefRecord(StrictRuntimeRecord):
         }
 
     @model_validator(mode="after")
-    def validate_source_ref(self) -> "FeedbackSourceRefRecord":
+    def validate_source_ref(self) -> FeedbackSourceRefRecord:
         if not self.source_id.strip():
             raise ValueError("source_id cannot be empty")
         return self
@@ -65,7 +65,7 @@ class EvalCaseSourceRefRecord(StrictRuntimeRecord):
         }
 
     @model_validator(mode="after")
-    def validate_source_ref(self) -> "EvalCaseSourceRefRecord":
+    def validate_source_ref(self) -> EvalCaseSourceRefRecord:
         if not self.source_kind.strip():
             raise ValueError("source_kind cannot be empty")
         if not self.source_id.strip():
@@ -110,7 +110,7 @@ class FeedbackOptimizationEvidenceRefRecord(ExtensibleRuntimeRecord):
     reason: str = ""
 
     @model_validator(mode="after")
-    def validate_evidence_ref_shape(self) -> "FeedbackOptimizationEvidenceRefRecord":
+    def validate_evidence_ref_shape(self) -> FeedbackOptimizationEvidenceRefRecord:
         if not self.id.strip():
             raise ValueError("evidence ref id cannot be empty")
         if not self.type.strip():
@@ -136,6 +136,7 @@ class FeedbackOptimizationPlanTaskSummaryRecord(StrictRuntimeRecord):
     total: int = Field(default=0, ge=0)
     workspace_execution: int = Field(default=0, ge=0)
     external_webhook: int = Field(default=0, ge=0)
+    internal_action: int = Field(default=0, ge=0)
 
 
 class FeedbackOptimizationBlockedSummaryRecord(StrictRuntimeRecord):

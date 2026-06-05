@@ -4,13 +4,11 @@ import sys
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-from pydantic import ValidationError
-
 from app.runtime.schemas import FeedbackSignalCreateRequest
-
 from app.services.agent_job_worker import AgentJobWorker
 from app.services.execution_application import ExecutionApplicationError
+from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 
 def _load_app(monkeypatch, tmp_path, *, api_key=""):
@@ -235,9 +233,7 @@ def test_regression_impact_analysis_endpoints_can_force_requeue(monkeypatch, tmp
     existing = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
 
     with TestClient(module.app) as client:
-        reused_response = client.post(
-            f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs/{eval_run['eval_run_id']}/impact-analysis"
-        )
+        reused_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs/{eval_run['eval_run_id']}/impact-analysis")
         batch_forced_response = client.post(
             f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs/{eval_run['eval_run_id']}/impact-analysis",
             params={"force": True},
@@ -500,12 +496,8 @@ def test_apply_execution_job_records_pending_compensation_when_restore_fails(mon
 
     monkeypatch.setattr(module.agent_version_store, "restore_version", original_restore)
     with TestClient(module.app) as client:
-        restore_response = client.post(
-            f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore"
-        )
-        second_restore_response = client.post(
-            f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore"
-        )
+        restore_response = client.post(f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore")
+        second_restore_response = client.post(f"/api/execution-compensations/{compensations[0]['compensation_id']}/restore")
         job_response = client.get(f"/api/agent-jobs/{job['execution_job_id']}")
 
     assert restore_response.status_code == 200
@@ -713,7 +705,9 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
             }
         raise AssertionError(f"unexpected job_type: {job_type}")
 
-    async def fake_run_feedback_eval(*, eval_case_ids=None, optimization_task_id=None, source="optimization_batch_regression", regression_plan_id=None, **kwargs):
+    async def fake_run_feedback_eval(
+        *, eval_case_ids=None, optimization_task_id=None, source="optimization_batch_regression", regression_plan_id=None, **kwargs
+    ):
         eval_case_ids = [str(item) for item in eval_case_ids or []]
         run = module.feedback_store.create_eval_run(
             eval_case_ids=eval_case_ids,
@@ -737,6 +731,7 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
                 check_results=[{"name": "requires_non_empty_answer", "passed": True}],
             )
         return module.feedback_store.finish_eval_run(run["eval_run_id"])
+
     monkeypatch.setattr(module.runtime, "_run_profile_json", fake_run_profile_json)
     monkeypatch.setattr(module.runtime, "run_feedback_eval", fake_run_feedback_eval)
 
@@ -821,7 +816,7 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert impact_job.status == "completed"
     assert plan["generated_by"] == "proposal-generator"
     assert plan["optimization_plan_job_id"]
-    assert plan_task["schema_version"] == "feedback-optimization-plan-task/v2"
+    assert plan_task["schema_version"] == "feedback-optimization-plan-task/v3"
     assert plan_task["task_context"]["target_file"] == "CLAUDE.md"
     assert execute_response.json()["execution_job"]["status"] == "queued"
     assert apply_response.json()["optimization_task"]["applied_agent_version_id"]

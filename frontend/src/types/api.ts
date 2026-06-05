@@ -2887,7 +2887,7 @@ export interface components {
         /** FeedbackOptimizationAttributionSummaryResponse */
         FeedbackOptimizationAttributionSummaryResponse: {
             /** Actionability */
-            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "regression_asset_governance" | "needs_human_analysis" | "not_actionable") | null;
             /** Attribution Job Id */
             attribution_job_id?: string | null;
             /** Confidence */
@@ -3216,8 +3216,14 @@ export interface components {
         FeedbackOptimizationPlanTaskExecuteResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
+            /** Eval Cases */
+            eval_cases?: components["schemas"]["EvalCaseResponse"][];
             execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             external_item?: components["schemas"]["ExternalGovernanceItemResponse"] | null;
+            /** Internal Action Result */
+            internal_action_result?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
             plan_task?: components["schemas"]["FeedbackOptimizationPlanTaskResponse"] | null;
         };
@@ -3226,7 +3232,7 @@ export interface components {
             /** Acceptance Criteria */
             acceptance_criteria?: string[];
             /** Actionability */
-            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "regression_asset_governance" | "needs_human_analysis" | "not_actionable") | null;
             /** Analysis Summary */
             analysis_summary?: string | null;
             /** Applied Agent Version Id */
@@ -3255,6 +3261,12 @@ export interface components {
             external_item_id?: string | null;
             /** Feedback Case Ids */
             feedback_case_ids?: string[];
+            /** Internal Action */
+            internal_action?: string | null;
+            /** Internal Action Result */
+            internal_action_result?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
             /** Latest Webhook Alias */
             latest_webhook_alias?: string | null;
             /** Objective */
@@ -3306,6 +3318,11 @@ export interface components {
              * @default 0
              */
             external_webhook: number;
+            /**
+             * Internal Action
+             * @default 0
+             */
+            internal_action: number;
             /**
              * Total
              * @default 0
@@ -3829,7 +3846,7 @@ export interface components {
             /** Acceptance Criteria */
             acceptance_criteria?: string[];
             /** Actionability */
-            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "needs_human_analysis" | "not_actionable") | null;
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "regression_asset_governance" | "needs_human_analysis" | "not_actionable") | null;
             /** Base Agent Version Id */
             base_agent_version_id?: string | null;
             /** Created At */

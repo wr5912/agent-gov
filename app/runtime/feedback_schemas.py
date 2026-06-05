@@ -1,15 +1,19 @@
 from __future__ import annotations
 
-from typing import Literal, Optional, TypeVar
+from collections.abc import Callable
+from typing import Literal, Optional, TypeVar, cast
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
+from .json_types import JsonObject
 from .normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
-    normalize_feedback_optimization_plan_output,
     normalize_feedback_eval_case_generation_output,
+    normalize_feedback_optimization_plan_output,
     normalize_regression_impact_analysis_output,
+)
+from .normalizers.feedback_output_normalizers import (
     task_context_has_external_specificity as _task_context_has_external_specificity,
 )
 from .normalizers.feedback_output_records import (
@@ -29,10 +33,134 @@ from .normalizers.feedback_output_records import (
     NormalizedSummaryItem,
     NormalizedTaskContext,
 )
-from .json_types import JsonObject
-
 
 TOutputModel = TypeVar("TOutputModel", bound=BaseModel)
+FormatterAgentOutputNormalizer = Callable[[JsonObject], JsonObject]
+
+_EXECUTABLE_PLAN_TASK_REQUIRED_FIELDS = (
+    "execution_kind",
+    "objective",
+    "target_type",
+    "actionability",
+    "recommendation",
+    "expected_effect",
+    "validation",
+    "risk",
+)
+
+
+def _normalize_formatter_agent_output(value: object, normalizer: FormatterAgentOutputNormalizer) -> object:
+    if not isinstance(value, dict):
+        return value
+    return normalizer(cast(JsonObject, value))
+
+
+def _normalize_feedback_plan_formatter_agent_output(value: object) -> object:
+    if not isinstance(value, dict):
+        return value
+    return normalize_feedback_optimization_plan_output(_annotate_incomplete_formatter_tasks(cast(JsonObject, value)))
+
+
+def _annotate_incomplete_formatter_tasks(agent_output: JsonObject) -> JsonObject:
+    tasks = agent_output.get("tasks")
+    if not isinstance(tasks, list):
+        return agent_output
+
+    changed = False
+    annotated_tasks: list[object] = []
+    for task in tasks:
+        if not isinstance(task, dict):
+            annotated_tasks.append(task)
+            continue
+        task_payload = cast(JsonObject, task)
+        annotated_task = _annotate_eval_case_promotion_formatter_task(task_payload)
+        if annotated_task is not task_payload:
+            changed = True
+        task = annotated_task
+        missing_fields = _missing_formatter_task_fields(task)
+        if not missing_fields:
+            annotated_tasks.append(task)
+            continue
+
+        annotated = dict(task)
+        annotated["execution_kind"] = "blocked"
+        annotated["status"] = "blocked"
+        annotated.setdefault("actionability", "needs_human_analysis")
+        if not _has_formatter_value(annotated.get("reason")):
+            annotated["reason"] = f"Agent 输出的优化任务缺少可执行字段：{', '.join(missing_fields)}。"
+        if not _has_formatter_value(annotated.get("recommendation")):
+            annotated["recommendation"] = (
+                _first_formatter_text(annotated.get("description"), annotated.get("summary"), annotated.get("title"))
+                or "请补充任务目标、执行范围、建议动作、预期效果、验证方式和风险后重新生成优化方案。"
+            )
+        annotated_tasks.append(cast(JsonObject, annotated))
+        changed = True
+
+    if not changed:
+        return agent_output
+    annotated_output = dict(agent_output)
+    annotated_output["tasks"] = annotated_tasks
+    return cast(JsonObject, annotated_output)
+
+
+def _annotate_eval_case_promotion_formatter_task(task: JsonObject) -> JsonObject:
+    if not _looks_like_eval_case_promotion_formatter_task(task):
+        return task
+    annotated = dict(task)
+    annotated.setdefault("execution_kind", "internal_action")
+    annotated.setdefault("internal_action", "promote_eval_cases")
+    annotated.setdefault("target_type", "eval_case")
+    annotated.setdefault("actionability", "regression_asset_governance")
+    return annotated
+
+
+def _looks_like_eval_case_promotion_formatter_task(task: JsonObject) -> bool:
+    if _has_formatter_value(task.get("target_path")):
+        return False
+    internal_action = str(task.get("internal_action") or "").strip()
+    if internal_action in {"promote_eval_cases", "promote_eval_case", "eval_case_promotion"}:
+        return True
+    target_type = str(task.get("target_type") or task.get("optimization_object_type") or "").strip()
+    actionability = str(task.get("actionability") or "").strip()
+    if target_type == "eval_case" and actionability in {"regression_asset_governance", "eval_case_promotion"}:
+        return True
+    text = " ".join(str(task.get(key) or "") for key in ("title", "description", "objective", "recommendation", "expected_effect"))
+    return bool(_has_formatter_value(task.get("eval_case_ids"))) and any(
+        keyword in text for keyword in ("晋级", "提升为活跃", "提升为 active", "promotion_status", "回归资产")
+    )
+
+
+def _missing_formatter_task_fields(task: JsonObject) -> list[str]:
+    return [field_name for field_name in _EXECUTABLE_PLAN_TASK_REQUIRED_FIELDS if not _formatter_task_field_present(task, field_name)]
+
+
+def _formatter_task_field_present(task: JsonObject, field_name: str) -> bool:
+    if _has_formatter_value(task.get(field_name)):
+        return True
+    if field_name == "target_type":
+        return _has_formatter_value(task.get("target_path"))
+    if field_name == "execution_kind":
+        return _has_formatter_value(task.get("target_path")) or _has_formatter_value(task.get("actionability"))
+    return False
+
+
+def _has_formatter_value(value: object) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, dict)):
+        return bool(value)
+    return True
+
+
+def _first_formatter_text(*values: object) -> str | None:
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text:
+                return text
+    return None
 
 
 ProblemType = Literal[
@@ -70,6 +198,7 @@ Actionability = Literal[
     "eval_only",
     "external_guidance",
     "runtime_fix",
+    "regression_asset_governance",
     "needs_human_analysis",
     "not_actionable",
 ]
@@ -100,6 +229,11 @@ class AttributionFormatterOutput(NormalizedOutputRecord):
     rationale: str
     recommended_next_step: Literal["generate_proposal", "needs_human_review", "stop"] = "generate_proposal"
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_formatter_output(cls, value: object) -> object:
+        return _normalize_formatter_agent_output(value, normalize_attribution_output)
+
 
 class AttributionOutput(NormalizedAttributionOutput):
     feedback_case_id: str
@@ -123,8 +257,9 @@ class TaskContext(NormalizedTaskContext):
 class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
     plan_task_id: Optional[str] = None
     source_index: int = 0
-    execution_kind: Literal["workspace_execution", "external_webhook"]
+    execution_kind: Literal["workspace_execution", "external_webhook", "internal_action"]
     status: Literal["pending_execution", "pending_notification", "needs_human_review"] | str = ""
+    internal_action: Optional[Literal["promote_eval_cases"]] = None
     title: str
     description: str
     objective: str
@@ -152,7 +287,7 @@ class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
     task_context: TaskContext = Field(default_factory=TaskContext)
 
     @model_validator(mode="after")
-    def _is_executable_task(self) -> "OptimizationPlanTaskFormatterOutput":
+    def _is_executable_task(self) -> OptimizationPlanTaskFormatterOutput:
         if self.execution_kind == "workspace_execution":
             if not self.target_path:
                 raise ValueError("workspace_execution task must include target_path")
@@ -163,6 +298,13 @@ class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
                 raise ValueError("external_webhook task must include actionable task_context")
             if not self.status:
                 self.status = "pending_notification"
+        if self.execution_kind == "internal_action":
+            if self.internal_action != "promote_eval_cases":
+                raise ValueError("internal_action task must include supported internal_action")
+            if not self.eval_case_ids:
+                raise ValueError("promote_eval_cases task must include eval_case_ids")
+            if not self.status:
+                self.status = "pending_execution"
         return self
 
 
@@ -218,8 +360,13 @@ class FeedbackOptimizationPlanFormatterOutput(NormalizedOutputRecord):
     tasks: list[OptimizationPlanTaskFormatterOutput] = Field(default_factory=list)
     blocked_items: list[BlockedOptimizationItemFormatterOutput] = Field(default_factory=list)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_formatter_output(cls, value: object) -> object:
+        return _normalize_feedback_plan_formatter_agent_output(value)
+
     @model_validator(mode="after")
-    def _has_tasks_or_blockers(self) -> "FeedbackOptimizationPlanFormatterOutput":
+    def _has_tasks_or_blockers(self) -> FeedbackOptimizationPlanFormatterOutput:
         if not self.tasks and not self.blocked_items:
             raise ValueError("feedback optimization plan must include tasks or blocked_items")
         if not self.tasks:
@@ -257,7 +404,7 @@ class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
     regeneration_instruction: Optional[str] = None
 
     @model_validator(mode="after")
-    def _has_tasks_or_blockers(self) -> "FeedbackOptimizationPlanOutput":
+    def _has_tasks_or_blockers(self) -> FeedbackOptimizationPlanOutput:
         if not self.tasks and not self.blocked_items:
             raise ValueError("feedback optimization plan must include tasks or blocked_items")
         if not self.tasks:
@@ -299,15 +446,12 @@ def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None,
         return None, exc.json()
 
 
-
 def validate_feedback_optimization_plan_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_feedback_optimization_plan_output(payload)
     try:
         return _validated_payload(FeedbackOptimizationPlanOutput, normalized), None
     except ValidationError as exc:
         return None, exc.json()
-
-
 
 
 class ExecutionOperation(NormalizedExecutionOperation):
@@ -328,8 +472,13 @@ class ExecutionPlanFormatterOutput(NormalizedOutputRecord):
     human_review_required: bool = True
     no_action_reason: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_formatter_output(cls, value: object) -> object:
+        return _normalize_formatter_agent_output(value, normalize_execution_plan_output)
+
     @model_validator(mode="after")
-    def _has_action_or_reason(self) -> "ExecutionPlanFormatterOutput":
+    def _has_action_or_reason(self) -> ExecutionPlanFormatterOutput:
         if self.status == "ready" and not self.operations:
             raise ValueError("ready execution plan must include operations")
         if self.status == "needs_human_review" and not self.no_action_reason:
@@ -350,7 +499,7 @@ class ExecutionPlanOutput(NormalizedExecutionPlanOutput):
     no_action_reason: Optional[str] = None
 
     @model_validator(mode="after")
-    def _has_action_or_reason(self) -> "ExecutionPlanOutput":
+    def _has_action_or_reason(self) -> ExecutionPlanOutput:
         if self.status == "ready" and not self.operations:
             raise ValueError("ready execution plan must include operations")
         if self.status == "needs_human_review" and not self.no_action_reason:
@@ -410,8 +559,13 @@ class FeedbackEvalCaseGenerationFormatterOutput(NormalizedOutputRecord):
     eval_cases: list[GeneratedEvalCaseFormatterOutput] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_formatter_output(cls, value: object) -> object:
+        return _normalize_formatter_agent_output(value, normalize_feedback_eval_case_generation_output)
+
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> "FeedbackEvalCaseGenerationFormatterOutput":
+    def _has_eval_cases_or_reason(self) -> FeedbackEvalCaseGenerationFormatterOutput:
         if not self.eval_cases and not self.no_action_reason:
             raise ValueError("eval case generation output must include eval_cases or no_action_reason")
         return self
@@ -427,7 +581,7 @@ class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutpu
     no_action_reason: Optional[str] = None
 
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> "FeedbackEvalCaseGenerationOutput":
+    def _has_eval_cases_or_reason(self) -> FeedbackEvalCaseGenerationOutput:
         if not self.eval_cases and not self.no_action_reason:
             raise ValueError("eval case generation output must include eval_cases or no_action_reason")
         if not self.eval_cases:
@@ -447,8 +601,13 @@ class RegressionImpactAnalysisFormatterOutput(NormalizedOutputRecord):
     next_steps: list[str] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_formatter_output(cls, value: object) -> object:
+        return _normalize_formatter_agent_output(value, normalize_regression_impact_analysis_output)
+
     @model_validator(mode="after")
-    def _has_recommendation_or_reason(self) -> "RegressionImpactAnalysisFormatterOutput":
+    def _has_recommendation_or_reason(self) -> RegressionImpactAnalysisFormatterOutput:
         if not self.recommendations and not self.next_steps and not self.summary and not self.no_action_reason:
             raise ValueError("regression impact output must include recommendations, next_steps, summary, or no_action_reason")
         return self
@@ -468,7 +627,7 @@ class RegressionImpactAnalysisOutput(NormalizedRegressionImpactAnalysisOutput):
     no_action_reason: Optional[str] = None
 
     @model_validator(mode="after")
-    def _has_recommendation_or_reason(self) -> "RegressionImpactAnalysisOutput":
+    def _has_recommendation_or_reason(self) -> RegressionImpactAnalysisOutput:
         if not self.recommendations and not self.next_steps and not self.no_action_reason:
             raise ValueError("regression impact output must include recommendations, next_steps, or no_action_reason")
         return self

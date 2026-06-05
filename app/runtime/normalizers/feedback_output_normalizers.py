@@ -4,14 +4,14 @@ import json
 
 from ..json_types import JsonObject
 from .feedback_output_records import (
+    NormalizedActionabilityValue,
     NormalizedAttributionOutput,
     NormalizedAttributionSummary,
-    NormalizedActionabilityValue,
     NormalizedBlockedOptimizationItem,
     NormalizedConfidenceValue,
     NormalizedEvidenceRef,
-    NormalizedExecutionPlanOutput,
     NormalizedExecutionOperation,
+    NormalizedExecutionPlanOutput,
     NormalizedExternalGuidanceItem,
     NormalizedFeedbackEvalCaseGenerationOutput,
     NormalizedFeedbackOptimizationPlanOutput,
@@ -26,12 +26,26 @@ from .feedback_output_records import (
 )
 from .feedback_output_task_context import (
     external_context_target as _external_context_target,
+)
+from .feedback_output_task_context import (
     external_task_acceptance_criteria as _external_task_acceptance_criteria,
+)
+from .feedback_output_task_context import (
     external_task_actions as _external_task_actions,
+)
+from .feedback_output_task_context import (
     external_task_objective as _external_task_objective,
+)
+from .feedback_output_task_context import (
     external_task_validation as _external_task_validation,
+)
+from .feedback_output_task_context import (
     infer_external_task_context as _infer_external_task_context,
+)
+from .feedback_output_task_context import (
     normalize_task_context_payload as _normalize_task_context_payload,
+)
+from .feedback_output_task_context import (
     task_context_has_external_specificity,
 )
 
@@ -82,9 +96,7 @@ def normalize_attribution_output(payload: JsonObject) -> JsonObject:
     evidence_refs = normalized.get("evidence_refs")
     if isinstance(evidence_refs, list):
         normalized["evidence_refs"] = [
-            item
-            if isinstance(item, dict)
-            else {"type": "evidence_file", "id": str(item), "reason": "归因分析智能体引用了该证据文件。"}
+            item if isinstance(item, dict) else {"type": "evidence_file", "id": str(item), "reason": "归因分析智能体引用了该证据文件。"}
             for item in evidence_refs
         ]
 
@@ -159,6 +171,22 @@ def _proposal_target_type(target_path: str) -> str:
     return "workspace_file"
 
 
+def _optimization_plan_target_type_from_path(target_path: str) -> str:
+    if target_path == "CLAUDE.md":
+        return "main_agent_claude_md"
+    if target_path == ".mcp.json":
+        return "mcp_config"
+    if target_path.startswith(".claude/skills/"):
+        return "skill"
+    if target_path.startswith(".claude/agents/"):
+        return "subagent"
+    if target_path.startswith(".claude/output-styles/"):
+        return "output_style"
+    if target_path.startswith("evals/") or target_path.startswith(".planning/eval/"):
+        return "eval_case"
+    return "runtime_code" if target_path else ""
+
+
 def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObject:
     normalized: JsonObject = dict(payload)
     if not normalized.get("optimization_plan_id") and normalized.get("plan_id"):
@@ -166,6 +194,12 @@ def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObje
     normalized["status"] = _normalize_plan_status(normalized.get("status"))
     normalized["confidence"] = _normalize_confidence(normalized.get("confidence"))
     normalized["actionability"] = _normalize_actionability(normalized.get("actionability"))
+    target_path = str(normalized.get("target_path") or "").strip()
+    target_type = str(normalized.get("target_type") or normalized.get("optimization_object_type") or "").strip()
+    if target_path:
+        normalized["target_path"] = target_path
+    if not target_type and target_path:
+        normalized["target_type"] = _optimization_plan_target_type_from_path(target_path)
 
     tasks: list[NormalizedOptimizationPlanTask] = []
     blocked_items: list[NormalizedBlockedOptimizationItem] = []
@@ -214,19 +248,37 @@ def normalize_feedback_optimization_plan_output(payload: JsonObject) -> JsonObje
 def _normalize_plan_task_output_item(item: JsonObject, index: int) -> JsonObject:
     task = dict(item)
     actionability = _normalize_actionability(task.get("actionability"))
+    target_path = str(task.get("target_path") or "").strip()
     target_type = str(task.get("target_type") or task.get("optimization_object_type") or "").strip()
+    if not target_type and target_path:
+        target_type = _optimization_plan_target_type_from_path(target_path)
+    eval_case_ids = _string_list(task.get("eval_case_ids"))
+    internal_action = _normalize_internal_action(task.get("internal_action"), target_type, actionability, target_path, eval_case_ids)
+    if internal_action:
+        target_type = target_type or "eval_case"
+        actionability = "regression_asset_governance"
     execution_kind = str(task.get("execution_kind") or "").strip()
     if not execution_kind:
-        if actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"}:
+        if internal_action:
+            execution_kind = "internal_action"
+        elif target_path or actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"}:
             execution_kind = "workspace_execution"
         elif actionability == "external_guidance" or target_type in {"external_mcp_service", "soc_process", "mcp_description"}:
             execution_kind = "external_webhook"
         else:
             execution_kind = "blocked"
+    if execution_kind == "internal_action":
+        internal_action = internal_action or _normalize_internal_action("promote_eval_cases", target_type, actionability, target_path, eval_case_ids)
+        target_type = target_type or "eval_case"
+        actionability = "regression_asset_governance"
     task["source_index"] = int(task.get("source_index") or index)
     task["execution_kind"] = execution_kind
     task["status"] = task.get("status") or ("pending_notification" if execution_kind == "external_webhook" else "pending_execution")
+    if internal_action:
+        task["internal_action"] = internal_action
     task["target_type"] = target_type or ("external_mcp_service" if execution_kind == "external_webhook" else "main_agent_claude_md")
+    if target_path:
+        task["target_path"] = target_path
     task["actionability"] = actionability
     task["confidence"] = _normalize_confidence(task.get("confidence")) if task.get("confidence") is not None else None
     task["problem_type"] = _normalize_problem_type(task.get("problem_type")) if task.get("problem_type") is not None else None
@@ -259,9 +311,32 @@ def _normalize_plan_task_output_item(item: JsonObject, index: int) -> JsonObject
     task["recommended_actions"] = _string_list(task.get("recommended_actions"))
     task["acceptance_criteria"] = _string_list(task.get("acceptance_criteria")) or [task["validation"]]
     task["feedback_case_ids"] = _string_list(task.get("feedback_case_ids"))
-    task["eval_case_ids"] = _string_list(task.get("eval_case_ids"))
+    task["eval_case_ids"] = eval_case_ids
     task["attribution_job_ids"] = _string_list(task.get("attribution_job_ids"))
     return NormalizedOptimizationPlanTask.model_validate(task).to_payload()
+
+
+def _normalize_internal_action(
+    value: object,
+    target_type: str,
+    actionability: str,
+    target_path: str,
+    eval_case_ids: list[str],
+) -> str:
+    action = str(value or "").strip()
+    aliases = {
+        "promote_eval_case": "promote_eval_cases",
+        "promote_eval_cases": "promote_eval_cases",
+        "eval_case_promotion": "promote_eval_cases",
+        "regression_asset_governance": "promote_eval_cases",
+    }
+    if action in aliases:
+        return aliases[action]
+    if target_path:
+        return ""
+    if target_type == "eval_case" and actionability == "regression_asset_governance" and eval_case_ids:
+        return "promote_eval_cases"
+    return ""
 
 
 def _plan_task_output_is_executable(task: JsonObject) -> bool:
@@ -270,6 +345,8 @@ def _plan_task_output_is_executable(task: JsonObject) -> bool:
         return bool(task.get("target_path"))
     if execution_kind == "external_webhook":
         return task_context_has_external_specificity(_normalize_task_context_payload(task.get("task_context")))
+    if execution_kind == "internal_action":
+        return task.get("internal_action") == "promote_eval_cases" and bool(_string_list(task.get("eval_case_ids")))
     return False
 
 
@@ -280,6 +357,8 @@ def _blocked_item_from_plan_task(task: JsonObject, index: int) -> JsonObject:
             reason = "任务缺少 target_path，不能交给 execution-optimizer 执行。"
         elif task.get("execution_kind") == "external_webhook":
             reason = "任务缺少明确的外部对象、接口或问题 ID，不能派发到外部系统。"
+        elif task.get("execution_kind") == "internal_action":
+            reason = "内部回归资产治理任务缺少 eval_case_ids 或受支持的 internal_action，不能自动执行。"
         else:
             reason = "该项未形成可执行 workspace 任务或外部系统任务。"
     return _normalize_blocked_output_item(
@@ -371,14 +450,18 @@ def _external_plan_task_from_blocked_item(
 def _normalize_plan_status(value: object) -> str:
     return NormalizedPlanStatusValue.model_validate({"value": value}).value
 
+
 def _normalize_confidence(value: object) -> str:
     return NormalizedConfidenceValue.model_validate({"value": value}).value
+
 
 def _normalize_actionability(value: object) -> str:
     return NormalizedActionabilityValue.model_validate({"value": value}).value
 
+
 def _normalize_problem_type(value: object) -> str:
     return NormalizedProblemTypeValue.model_validate({"value": value}).value
+
 
 def _normalize_evidence_refs(value: object) -> list[JsonObject]:
     refs: list[NormalizedEvidenceRef] = []
@@ -390,11 +473,7 @@ def _normalize_evidence_refs(value: object) -> list[JsonObject]:
             if ref_id:
                 refs.append(NormalizedEvidenceRef.model_validate({"type": ref_type, "id": ref_id, "reason": reason}))
         else:
-            refs.append(
-                NormalizedEvidenceRef.model_validate(
-                    {"type": "evidence_file", "id": str(item), "reason": "优化方案生成智能体引用了该证据。"}
-                )
-            )
+            refs.append(NormalizedEvidenceRef.model_validate({"type": "evidence_file", "id": str(item), "reason": "优化方案生成智能体引用了该证据。"}))
     return [ref.to_payload() for ref in refs]
 
 

@@ -4,7 +4,6 @@ import json
 
 from ..json_types import JsonObject
 
-
 NATURAL_LANGUAGE_CHINESE_RULE = (
     "自然语言输出要求：除 schema 字段名、枚举值、ID、路径、代码标识符、MCP/tool 名称外，"
     "所有面向人的说明文本必须使用简体中文；如果输入证据中已有英文自然语言，必须用中文转述，不要原样复制英文说明。\n"
@@ -66,8 +65,7 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
-            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
-            f"optimization_plan_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\noptimization_plan_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
         )
     return _structured_prompt(
         (
@@ -83,13 +81,12 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
         ),
         (
             "业务信息要点",
-            "顶层方案必须能直接读出：title、summary、problem_types、confidence、actionability、target_type、target_path、"
-            "recommendation、expected_effect、validation、risk、rationale 和 evidence_refs。\n"
+            "顶层方案必须能直接读出：标题、摘要、问题类型、置信度、可执行性、目标对象、目标路径或外部对象、"
+            "优化建议、预期效果、验证方式、风险、生成理由和证据引用。\n"
             "batch_id、optimization_plan_id、created_at、source_refs、feedback_case_ids、eval_case_ids、"
             "attribution_job_ids、attribution_summaries 和 regeneration_instruction 由后端从输入上下文注入，不需要复述。\n"
             "tasks 是开发人员可以点击执行的优化任务。每个 task 必须围绕任务本身描述："
-            "tasks[].title、description、objective、target_summary、recommendation、recommended_actions、"
-            "acceptance_criteria、expected_effect、validation、risk、analysis_summary、evidence_summary、evidence_refs。"
+            "任务标题、描述、目标、目标摘要、建议、建议动作、验收标准、预期效果、验证方式、风险、分析摘要、证据摘要和证据引用。"
             "归因依据只可放到 analysis_summary、evidence_summary 或 evidence_refs。\n"
             "blocked_items 只用于不能执行且不能派发的项；每个 blocked item 必须说明 title、reason、recommendation 和缺失条件。",
         ),
@@ -110,11 +107,18 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
             "如果无法明确到外部对象、接口、工具、ID 或受影响字段，不要生成 external_webhook 任务，改写入 blocked_items 并说明缺什么。",
         ),
         (
+            "内部治理任务",
+            "回归资产晋级任务要求：execution_kind=internal_action；internal_action=promote_eval_cases；"
+            "target_type=eval_case；actionability=regression_asset_governance；必须列出 eval_case_ids。"
+            "晋级后的权威状态是 status=active、promotion_status=approved，不要使用 promoted。"
+            "这类任务用于把本批次候选评估用例纳入长期回归资产；如果缺少 eval_case_ids，改写入 blocked_items 并说明缺什么。",
+        ),
+        (
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
-            "title、summary、recommendation、expected_effect、validation、risk、rationale、"
-            "tasks[].title/description/objective/recommendation/recommended_actions/acceptance_criteria/expected_effect/validation/risk、"
-            "blocked_items[].title/reason/recommendation 必须使用简体中文。\n"
+            "不要输出 JSON、代码块、schema payload 或带 ``` 的代码围栏；只输出 Markdown 小节或列表形式的结构化业务要点。\n"
+            "标题、摘要、建议、预期效果、验证方式、风险、理由、任务标题、任务描述、任务目标、任务建议动作、"
+            "任务验收标准、阻断项原因和阻断项建议必须使用简体中文。\n"
             "不要用 manual_review 表示可执行任务。开发人员阅读优化方案后点击执行即表示同意执行对应 task，因此不要设计二次审批字段。\n"
             "如果 optimization_plan_input_json.regeneration_instruction 非空，可作为本次重新生成的开发人员补充意图；"
             "但它不能覆盖中文输出、证据约束、target_policy 和可执行性要求。",
@@ -127,8 +131,7 @@ def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None =
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
-            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
-            f"execution_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\nexecution_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
         )
     return _structured_prompt(
         (
@@ -160,8 +163,7 @@ def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None =
         ),
         (
             "约束",
-            f"{NATURAL_LANGUAGE_CHINESE_RULE}"
-            "summary、operations[].rationale、validation、risk、no_action_reason 必须使用简体中文。",
+            f"{NATURAL_LANGUAGE_CHINESE_RULE}summary、operations[].rationale、validation、risk、no_action_reason 必须使用简体中文。",
         ),
         ("输入上下文", embedded_context),
     )
@@ -171,14 +173,12 @@ def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | 
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
-            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
-            f"eval_case_generation_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\neval_case_generation_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
         )
     return _structured_prompt(
         (
             "角色",
-            "你是反馈闭环中的评估用例治理智能体 eval-case-governor。你的职责是基于反馈来源、已校验归因和优化建议，"
-            "生成可复测原问题的评估用例草案。",
+            "你是反馈闭环中的评估用例治理智能体 eval-case-governor。你的职责是基于反馈来源、已校验归因和优化建议，生成可复测原问题的评估用例草案。",
         ),
         ("输入", f"输入文件：{input_path}"),
         (
@@ -209,8 +209,7 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
     embedded_context = ""
     if input_payload is not None:
         embedded_context = (
-            "\n\n以下是完整输入上下文，不需要调用工具读取文件。\n"
-            f"regression_impact_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
+            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\nregression_impact_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
         )
     return _structured_prompt(
         (
@@ -221,8 +220,7 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
         ("输入", f"输入文件：{input_path}"),
         (
             "工作方式",
-            "先阅读 eval_run、gate_result 和 item 快照，再判断本次变更是否影响现有回归资产、是否需要新增或调整资产、"
-            "以及是否需要人工复核。",
+            "先阅读 eval_run、gate_result 和 item 快照，再判断本次变更是否影响现有回归资产、是否需要新增或调整资产、以及是否需要人工复核。",
         ),
         (
             "业务信息要点",
@@ -234,8 +232,7 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
         ),
         (
             "约束",
-            f"{NATURAL_LANGUAGE_CHINESE_RULE}"
-            "summary、risk_assessment、recommendations、next_steps、no_action_reason 必须使用简体中文。",
+            f"{NATURAL_LANGUAGE_CHINESE_RULE}summary、risk_assessment、recommendations、next_steps、no_action_reason 必须使用简体中文。",
         ),
         ("输入上下文", embedded_context),
     )

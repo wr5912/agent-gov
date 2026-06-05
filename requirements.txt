@@ -11,5 +11,7 @@ mcp>=1.26.0
 SQLAlchemy>=2.0,<3.0
 alembic>=1.13,<2.0
 dspy>=3.0,<4.0
+tenacity>=8,<10
+pytest-cov>=7,<8
 ruff>=0.11,<1.0
 pyright>=1.1,<2.0

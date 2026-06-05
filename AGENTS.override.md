@@ -40,6 +40,18 @@
 
 `docs/开放接口规范.json` 属于生成物边界：如果保留为离线 API 快照，必须有重新生成后 diff 干净的漂移检查；如果只服务前端类型生成，应改为临时生成文件而不是长期提交静态 JSON。
 
+## 测试覆盖与主流程保障
+
+本仓库区分本地开发验证和正式硬门，避免把全量 coverage 放进每次调试内循环：
+
+- 日常局部开发默认运行目标 pytest，例如 `.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。
+- 修改反馈优化主流程、Agent job、formatter、store 投影、API response 或用户可见 tab 状态时，必须运行 `make main-flow-test`，并确认 `tests/coverage_policy.json` 已绑定对应 pytest nodeid 或 UI verification script。
+- 提交、CI、发版或用户明确要求完整验证时运行 `make test`；该命令会触发全量 pytest、coverage JSON 和 coverage policy 硬门。
+- 专门调整覆盖率策略或提升覆盖率阈值时运行 `make coverage`。
+- UI 空态、成功态、失败态错误详情属于主流程验收，不得只用后端 store 测试或 coverage 百分比代替。
+
+`tests/coverage_policy.json` 是主流程覆盖清单和全局覆盖率基线的单一入口。新增或修改产品主流程时，必须同步更新该文件；全局覆盖率阈值先以当前实测基线禁止下降，再逐步提高，不追求一次性全仓库 100% 造成无意义测试或排除项。
+
 ## 本仓库治理硬门
 
 本仓库的非琐碎代码、配置、测试和治理文档变更，必须运行：

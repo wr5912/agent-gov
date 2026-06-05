@@ -8,7 +8,24 @@
 # - Python 运行使用仓库本地 `.venv/bin/python`。
 # - 后端变更默认运行相关 `pytest`；跨模块变更运行 `make test` 或等价命令。
 # - 前端变更默认运行 `pnpm build`，必要时补充浏览器验证。
+# - 产品主流程改动必须先声明 UI、API、job、store、formatter 和测试映射；如项目配置了
+#   主流程 manifest 或 coverage policy，必须同步对应场景绑定。
+# - 本地开发内循环优先目标测试或主流程测试；全量 coverage 适合作为 CI、提交前或发版前硬门。
+#   不得把 coverage 百分比当作主流程场景覆盖的替代品。
+# - 用户可见页面状态变更必须验证空态、成功态和失败态错误详情；只跑后端 store 测试不足以证明 UI 契约成立。
 # - Docker 持久化相关变更必须检查默认 `${HOME}/volume-agent-runtime` 路径，以及历史 `docker/volume/` 迁移/兼容路径。
+#
+# ## 中段治理 checkpoint
+#
+# 涉及反馈闭环、Agent job、DSPy formatter、Pydantic OutputModel、store projection、OpenAPI 或前端生成类型的
+# 非琐碎变更，不得等到最终 `make test` 才运行治理。实现中段完成主要 schema/store/formatter 改动后，
+# 必须先执行：
+#
+# - `.venv/bin/python scripts/check_codex_governance.py --mode fail`
+# - 对本轮新增或修改的 Python 文件运行 ruff check/format；如果文件未纳入 Makefile 白名单，也必须单独覆盖。
+#
+# 如果中段 checkpoint 发现新增 JsonObject 边界、长函数、超限文件、未归属 dict、公开 store JsonObject 返回、
+# schema 双轨或 import/type 问题，必须先修复结构问题，再继续补功能或测试。
 #
 # ## 架构验证
 #
@@ -21,6 +38,7 @@
 # - 如公开 API、配置/env、持久化数据或旧入口被改变，是否补充迁移说明、文档更新和针对新契约的测试。
 # - 是否同步了 README、docs、生成类型、公开契约或环境变量示例。
 # - 是否运行了项目覆盖层声明的治理硬门。
+# - 是否影响主流程覆盖清单；如影响，是否已更新 manifest / coverage policy 并运行对应主流程测试。
 # - 如治理输出 `BASELINE` 或类似提示，是否确认它表示既有超限未增长；如输出 `FAIL`，必须先修复。
 #
 # ## 旧路径清零验证
@@ -58,6 +76,7 @@
 #
 # - fail 模式治理硬门。
 # - 后端相关测试；跨模块或治理变更运行 `make test`。
+# - 产品主流程测试；项目如提供 `make main-flow-test` 或等价命令，主流程改动必须运行。
 # - OpenAPI 导出和前端生成类型同步。
 # - 前端构建；涉及浏览器可见页面时补真实浏览器 smoke。
 # - 涉及持久化投影、历史 schema 或 Docker 卷数据时，使用真实历史数据验证列表、详情和关键 UI。

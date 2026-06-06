@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.errors import BusinessRuleViolation, ConflictError
+from app.runtime.errors import BusinessRuleViolation, ConflictError, MainWorkspaceDirtyError
 from app.runtime.feedback_batch_execution_request_schemas import (
     FeedbackOptimizationBatchExecuteAllRequest,
     FeedbackOptimizationBatchExecutionRollbackRequest,
@@ -49,6 +49,11 @@ class RuntimeStub:
                 "human_review_required": True,
             },
         )
+
+
+class RuntimeShouldNotRun:
+    async def run_execution_job(self, optimization_task_id: str, *, force: bool = False):  # noqa: ARG002
+        raise AssertionError("runtime should not run when main workspace is dirty")
 
 
 def _service(tmp_path):
@@ -179,6 +184,23 @@ def test_execute_all_rejects_invalid_task_before_creating_run(tmp_path):
     with pytest.raises(ConflictError, match="actionability"):
         asyncio.run(service.execute_all(batch["batch_id"], FeedbackOptimizationBatchExecuteAllRequest(force=True)))
 
+    assert store.latest_batch_execution_run(batch["batch_id"]) is None
+    assert not store.list_tasks()
+
+
+def test_execute_all_rejects_dirty_workspace_before_creating_run(tmp_path):
+    service, store, agent_store = _service(tmp_path)
+    service.runtime = RuntimeShouldNotRun()  # type: ignore[assignment]
+    batch = _batch_with_plan_tasks(store, [_workspace_plan_task("CLAUDE.md")])
+    agent_store.repository_dir.joinpath("CLAUDE.md").write_text("# manual edit\n", encoding="utf-8")
+
+    with pytest.raises(MainWorkspaceDirtyError) as exc_info:
+        asyncio.run(service.execute_all(batch["batch_id"], FeedbackOptimizationBatchExecuteAllRequest(force=True)))
+
+    assert "uncommitted changes" in str(exc_info.value)
+    assert exc_info.value.error_code == "MAIN_WORKSPACE_DIRTY"
+    assert exc_info.value.error_details
+    assert exc_info.value.error_details["changed_files"][0]["path"] == "CLAUDE.md"
     assert store.latest_batch_execution_run(batch["batch_id"]) is None
     assert not store.list_tasks()
 

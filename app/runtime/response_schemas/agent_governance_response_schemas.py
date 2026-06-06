@@ -22,6 +22,9 @@ class AgentRepositoryStatusResponse(ExtensibleResponse):
     current_commit_sha: Optional[str] = None
     current_branch: Optional[str] = None
     dirty: bool = False
+    changed_file_count: int = 0
+    changed_files: list[JsonObject] = Field(default_factory=list)
+    file_diffs: list[JsonObject] = Field(default_factory=list)
     maintenance_active: bool = False
 
 
@@ -138,5 +141,14 @@ class AgentChangeSetPublishRequest(BaseModel):
 
 
 class AgentReleaseRollbackRequest(BaseModel):
+    operator: str = "runtime"
+    note: Optional[str] = None
+
+
+class AgentRepositoryDiscardChangesRequest(BaseModel):
+    paths: list[str] = Field(default_factory=list)
+
+
+class AgentRepositorySnapshotRequest(BaseModel):
     operator: str = "runtime"
     note: Optional[str] = None

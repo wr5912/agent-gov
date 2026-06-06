@@ -27,15 +27,18 @@ function timestamp() {
 
 function agentJob(state) {
   const failed = state === "failed";
+  const timedOut = state === "timeout";
+  const active = state === "queued" || state === "running";
   return {
     job_id: "fbp-ui-state",
     job_type: "batch_plan",
     profile_name: "proposal-generator",
-    status: failed ? "failed" : "completed",
+    status: failed ? "failed" : timedOut ? "timeout" : active ? state : "completed",
     created_at: timestamp(),
     started_at: timestamp(),
-    completed_at: timestamp(),
-    error_json: failed ? planError() : null,
+    completed_at: active ? null : timestamp(),
+    timeout_seconds: 300,
+    error_json: failed ? planError() : timedOut ? planTimeoutError() : null,
     raw_output_json: failed ? { raw_text: "formatter failed", _formatter: { status: "failed", name: "dspy" } } : null,
   };
 }
@@ -51,6 +54,13 @@ function planError() {
         type: "missing",
       },
     ],
+  };
+}
+
+function planTimeoutError() {
+  return {
+    error_code: "AGENT_TIMEOUT",
+    message: "Agent job exceeded timeout_seconds=300",
   };
 }
 
@@ -166,8 +176,52 @@ function executionRun(status = "completed") {
   };
 }
 
+function repositoryStatus(dirty = false) {
+  return {
+    schema_version: "agent-repository-status/v1",
+    provider: "local",
+    repository_name: "main-agent-config",
+    repository_dir: "/main-workspace",
+    worktrees_dir: "/data/agent-git-worktrees",
+    releases_dir: "/data/agent-releases",
+    status: "active",
+    degraded_reason: null,
+    current_commit_sha: "agent-before-ui",
+    current_branch: "main",
+    dirty,
+    changed_file_count: dirty ? 1 : 0,
+    changed_files: dirty
+      ? [
+          {
+            path: ".mcp.json",
+            status: "modified",
+            staged: false,
+            unstaged: true,
+            untracked: false,
+            discardable: true,
+          },
+        ]
+      : [],
+    file_diffs: dirty
+      ? [
+          {
+            path: ".mcp.json",
+            status: "modified",
+            unified_diff: '--- HEAD:.mcp.json\n+++ workspace:.mcp.json\n@@\n-{}\n+{"mcpServers":{"sec-ops":{}}}\n',
+            is_text: true,
+            truncated: false,
+            reason: null,
+          },
+        ]
+      : [],
+    maintenance_active: false,
+  };
+}
+
 function batchForState(state, edit = {}) {
   const failed = state === "failed";
+  const timedOut = state === "timeout";
+  const activePlanJob = state === "queued" || state === "running";
   const pendingExecution = state === "pending_execution_unapplied";
   const success = state === "success" || state === "executed" || state === "rolled_back" || pendingExecution;
   const run = state === "executed" ? executionRun("completed") : state === "rolled_back" ? executionRun("rolled_back") : null;
@@ -184,7 +238,7 @@ function batchForState(state, edit = {}) {
   return {
     batch_id: "fob-ui-state",
     title: batchTitle,
-    status: state === "executed" ? "applied_pending_regression" : state === "rolled_back" || pendingExecution || success ? "pending_execution" : failed ? "needs_human_review" : "attribution_completed",
+    status: state === "executed" ? "applied_pending_regression" : state === "rolled_back" || pendingExecution || success ? "pending_execution" : failed || timedOut ? "needs_human_review" : activePlanJob ? "optimization_plan_queued" : "attribution_completed",
     priority: "medium",
     source_refs: [{ source_kind: "signal", source_id: "fbs-ui-state" }],
     feedback_case_ids: ["fbc-ui-state"],
@@ -194,7 +248,7 @@ function batchForState(state, edit = {}) {
     attribution_summary: { total: 1, completed: 1, needs_review_or_failed: 0 },
     optimization_plan_job_id: state === "empty" ? null : "fbp-ui-state",
     optimization_plan_job: state === "empty" ? null : agentJob(state),
-    optimization_plan_error: failed ? planError() : null,
+    optimization_plan_error: failed ? planError() : timedOut ? planTimeoutError() : null,
     optimization_plan: plan,
     optimization_task: pendingExecution ? { optimization_task_id: "opt-ui-state", status: "pending_execution" } : null,
     optimization_task_id: pendingExecution ? "opt-ui-state" : null,
@@ -214,8 +268,8 @@ function apiPayload(path, stateRef) {
   if (path === "/api/agents") return [];
   if (path === "/api/skills") return [];
   if (path === "/api/config") return { mappings: [] };
-  if (path === "/api/agent-repository") return {};
-  if (path === "/api/agent-repository/current") return {};
+  if (path === "/api/agent-repository") return repositoryStatus(Boolean(stateRef.repositoryDirty));
+  if (path === "/api/agent-repository/current") return { agent_version_id: "agent-before-ui", commit_sha: "agent-before-ui", created_at: timestamp(), reason: "current" };
   if (path === "/api/agent-change-sets") return [];
   if (path === "/api/agent-releases") return [];
   if (path === "/api/feedback-sources") return [];
@@ -302,6 +356,28 @@ async function verifyGenerationTransition(page, stateRef, targetState) {
   await page.getByText("tasks.0.execution_kind").first().waitFor({ timeout: 15_000 });
 }
 
+async function verifyOptimizationPlanJobBackgroundFailureRefresh(page, stateRef) {
+  stateRef.value = "queued";
+  await openPlanTab(page, batchTitle);
+  await page.getByText("优化方案正在生成").first().waitFor({ timeout: 15_000 });
+  await page.getByText("queued").first().waitFor({ timeout: 15_000 });
+  stateRef.value = "failed";
+  await page.getByText("生成失败").first().waitFor({ timeout: 15_000 });
+  await page.getByText("AGENT_RUNTIME_ERROR").first().waitFor({ timeout: 15_000 });
+  await page.getByText("DSPy output formatter failed for batch_plan").first().waitFor({ timeout: 15_000 });
+}
+
+async function verifyOptimizationPlanJobTimeoutRefresh(page, stateRef) {
+  stateRef.value = "queued";
+  await openPlanTab(page, batchTitle);
+  await page.getByText("优化方案正在生成").first().waitFor({ timeout: 15_000 });
+  await page.getByText("queued").first().waitFor({ timeout: 15_000 });
+  stateRef.value = "timeout";
+  await page.getByText("生成失败").first().waitFor({ timeout: 15_000 });
+  await page.getByText("AGENT_TIMEOUT").first().waitFor({ timeout: 15_000 });
+  await page.getByText("Agent job exceeded timeout_seconds=300").first().waitFor({ timeout: 15_000 });
+}
+
 async function verifyPlanTaskEditSuccess(page, stateRef) {
   stateRef.value = "success";
   stateRef.edit = {};
@@ -354,6 +430,28 @@ async function verifyOneClickExecutionAndRollback(page, stateRef) {
   }
 }
 
+async function verifyWorkspaceDirtyPreflight(page, stateRef) {
+  stateRef.value = "success";
+  stateRef.repositoryDirty = true;
+  stateRef.discardCount = 0;
+  await openPlanTab(page, batchTitle);
+  await page.getByText("MAIN_WORKSPACE_DIRTY").waitFor({ timeout: 15_000 });
+  await page.getByText(".mcp.json").first().waitFor({ timeout: 15_000 });
+  await page.getByText('{"mcpServers":{"sec-ops":{}}}').first().waitFor({ timeout: 15_000 });
+  const oneClick = page.getByRole("button", { name: "一键执行" });
+  if (!(await oneClick.isDisabled())) {
+    throw new Error("One-click execution should be disabled while main workspace is dirty");
+  }
+  await page.getByRole("button", { name: "丢弃未提交改动" }).click();
+  await page.getByText("MAIN_WORKSPACE_DIRTY").waitFor({ state: "detached", timeout: 15_000 });
+  if (await oneClick.isDisabled()) {
+    throw new Error("One-click execution should be enabled after discarding dirty workspace changes");
+  }
+  if (stateRef.discardCount !== 1) {
+    throw new Error(`Expected one discard request, got ${stateRef.discardCount}`);
+  }
+}
+
 async function verifyPendingExecutionPlanStillAllowsRegenerateWithoutReject(page, stateRef) {
   stateRef.value = "pending_execution_unapplied";
   await openPlanTab(page, batchTitle);
@@ -373,7 +471,17 @@ async function main() {
     await waitForVite();
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    const stateRef = { value: "empty", next: "success", edit: {}, editPatchCount: 0, executeAllCount: 0, rollbackCount: 0 };
+    const stateRef = {
+      value: "empty",
+      next: "success",
+      edit: {},
+      editPatchCount: 0,
+      executeAllCount: 0,
+      rollbackCount: 0,
+      repositoryDirty: false,
+      discardCount: 0,
+      snapshotCount: 0,
+    };
     await page.addInitScript(
       ({ apiBaseValue }) => {
         window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: apiBaseValue, apiKey: "" }));
@@ -410,6 +518,16 @@ async function main() {
         const batch = batchForState("executed", stateRef.edit || {});
         return json(route, { batch, execution_run: batch.latest_execution_run });
       }
+      if (route.request().method() === "POST" && url.pathname === "/api/agent-repository/discard-changes") {
+        stateRef.discardCount += 1;
+        stateRef.repositoryDirty = false;
+        return json(route, repositoryStatus(false));
+      }
+      if (route.request().method() === "POST" && url.pathname === "/api/agent-repository/snapshot") {
+        stateRef.snapshotCount += 1;
+        stateRef.repositoryDirty = false;
+        return json(route, { agent_version_id: "agent-snapshot-ui", commit_sha: "agent-snapshot-ui", created_at: timestamp(), reason: "manual_workspace_snapshot" });
+      }
       if (route.request().method() === "POST" && url.pathname === "/api/feedback-optimization-batches/fob-ui-state/optimization-plan/executions/fbx-ui-state/rollback") {
         stateRef.rollbackCount += 1;
         stateRef.value = "rolled_back";
@@ -425,9 +543,12 @@ async function main() {
       await verifyInitialEmptyState(page, stateRef);
       await verifyGenerationTransition(page, stateRef, "success");
       await verifyGenerationTransition(page, stateRef, "failed");
+      await verifyOptimizationPlanJobBackgroundFailureRefresh(page, stateRef);
+      await verifyOptimizationPlanJobTimeoutRefresh(page, stateRef);
       await verifyPlanTaskEditSuccess(page, stateRef);
       await verifyPlanTaskEditInvalidJson(page, stateRef);
       await verifyPendingExecutionPlanStillAllowsRegenerateWithoutReject(page, stateRef);
+      await verifyWorkspaceDirtyPreflight(page, stateRef);
       await verifyOneClickExecutionAndRollback(page, stateRef);
     } finally {
       await browser.close();
@@ -435,7 +556,7 @@ async function main() {
   } finally {
     await stopChild(server);
   }
-  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "execute_all", "rollback"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "background_failed_refresh", "timeout_refresh", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "workspace_dirty_preflight", "execute_all", "rollback"] }, null, 2));
 }
 
 main().catch((error) => {

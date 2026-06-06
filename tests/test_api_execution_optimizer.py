@@ -284,6 +284,29 @@ def test_apply_execution_job_endpoint_writes_file_and_creates_versions(monkeypat
     assert "+回答配置类问题前必须读取" in diff_response.json()["unified_diff"]
 
 
+def test_agent_repository_status_reports_dirty_files_and_discards_confirmed_paths(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    module.agent_version_store.ensure_bootstrap()
+    secret_path = module.settings.main_workspace_dir / ".mcp.json"
+    secret_path.write_text('{"api_key":"secret-value"}\n', encoding="utf-8")
+
+    with TestClient(module.app) as client:
+        status_response = client.get("/api/agent-repository")
+        discard_response = client.post("/api/agent-repository/discard-changes", json={"paths": [".mcp.json"]})
+
+    assert status_response.status_code == 200
+    status = status_response.json()
+    assert status["dirty"] is True
+    assert status["changed_file_count"] == 1
+    assert status["changed_files"][0]["path"] == ".mcp.json"
+    assert status["file_diffs"][0]["path"] == ".mcp.json"
+    assert "[redacted sensitive line]" in status["file_diffs"][0]["unified_diff"]
+    assert "secret-value" not in status["file_diffs"][0]["unified_diff"]
+    assert discard_response.status_code == 200
+    assert discard_response.json()["dirty"] is False
+    assert not secret_path.exists()
+
+
 def test_apply_execution_job_rejects_baseline_conflict(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
@@ -348,8 +371,9 @@ def test_apply_execution_job_rejects_target_hash_conflict(monkeypatch, tmp_path)
         application = module.feedback_store.latest_execution_application(job["execution_job_id"])
 
     assert response.status_code == 409
-    assert response.json()["error_code"] == "CONFLICT"
+    assert response.json()["error_code"] == "MAIN_WORKSPACE_DIRTY"
     assert "uncommitted changes" in response.json()["detail"]
+    assert response.json()["changed_files"][0]["path"] == "CLAUDE.md"
     assert failed_job["status"] == "completed"
     assert application is None
 

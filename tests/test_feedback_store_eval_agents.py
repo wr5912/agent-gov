@@ -1,6 +1,13 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
+from app.runtime.errors import BusinessRuleViolation
+from app.runtime.feedback_schemas import AttributionFormatterOutput, FeedbackOptimizationPlanFormatterOutput
+from app.runtime.json_types import JsonObject
+from app.runtime.output_formatter import OutputFormatterResult
+from app.runtime.runtime_db import EvalRunItemModel
+from app.runtime.schemas import ChatResponse
+from app.services.feedback_eval_runner import FeedbackEvalRunner
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -19,13 +26,6 @@ from feedback_store_test_utils import (
     asyncio,
     pytest,
 )
-from app.runtime.errors import BusinessRuleViolation
-from app.runtime.feedback_schemas import AttributionFormatterOutput, FeedbackOptimizationPlanFormatterOutput
-from app.runtime.json_types import JsonObject
-from app.runtime.output_formatter import OutputFormatterResult
-from app.runtime.runtime_db import EvalRunItemModel
-from app.runtime.schemas import ChatResponse
-from app.services.feedback_eval_runner import FeedbackEvalRunner
 
 
 def _formatter_result(job_type: object, payload: JsonObject) -> OutputFormatterResult:
@@ -97,8 +97,8 @@ def _chat_response(answer: str, *, errors: list[str] | None = None, agent_activi
 
 
 def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-after")
@@ -517,8 +517,8 @@ def test_promoted_eval_case_enters_regression_plan_and_gate_blocks_failures(tmp_
 
 
 def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
@@ -559,8 +559,8 @@ def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(t
 
 
 def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
@@ -652,7 +652,6 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
             seen["formatter_raw_text"] = raw_text
             return _formatter_result(job_type, seen["formatted_payload"])
 
-    from app.runtime.output_formatter import OutputFormatterResult
 
     runtime.output_formatter = FakeFormatter()
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
@@ -677,10 +676,8 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
 
 
 def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
-
-    from app.runtime.output_formatter import OutputFormatterResult
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
@@ -754,8 +751,8 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
 
 
 def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
     store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
@@ -788,9 +785,7 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
         async for item in prompt:
             prompt_items.append(item)
         prompt_text = prompt_items[0]["message"]["content"]
-        input_payload = json.loads(prompt_text.split("optimization_plan_input_json:\n", 1)[1])
         output = {
-            "batch_id": input_payload["batch_id"],
             "status": "needs_human_review",
             "title": "不能生成可执行优化方案",
             "summary": "当前归因需要先由人确认具体缺失项。",
@@ -802,11 +797,6 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
             "expected_effect": "避免生成错误优化任务。",
             "validation": "人工补充归因后重新生成。",
             "risk": "暂不执行变更。",
-            "source_refs": input_payload["source_refs"],
-            "feedback_case_ids": input_payload["feedback_case_ids"],
-            "eval_case_ids": input_payload["eval_case_ids"],
-            "attribution_job_ids": input_payload["attribution_job_ids"],
-            "attribution_summaries": [],
             "tasks": [],
             "blocked_items": [
                 {
@@ -815,9 +805,6 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
                     "actionability": "needs_human_analysis",
                     "reason": "当前归因需要先由人确认具体缺失项。",
                     "recommendation": "人工补充归因后重新生成。",
-                    "feedback_case_ids": input_payload["feedback_case_ids"],
-                    "eval_case_ids": input_payload["eval_case_ids"],
-                    "attribution_job_ids": input_payload["attribution_job_ids"],
                 }
             ],
         }
@@ -845,14 +832,16 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
             seen["formatter_raw_text"] = raw_text
             return _formatter_result(job_type, seen["formatted_payload"])
 
-    from app.runtime.output_formatter import OutputFormatterResult
 
     runtime.output_formatter = FakeFormatter()
     batch = store.ensure_single_case_optimization_batch(feedback_case["feedback_case_id"])
     updated = asyncio.run(runtime.run_batch_optimization_plan(batch["batch_id"]))
     output = store.get_job_output(updated.optimization_plan_job_id, "batch_plan")
 
-    assert "optimization_plan_input_json" in str(seen["prompt_text"])
+    assert "optimization_plan_prompt_context" in str(seen["prompt_text"])
+    assert "optimization_plan_input_json" not in str(seen["prompt_text"])
+    assert "schema_version" not in str(seen["prompt_text"])
+    assert "job_id" not in str(seen["prompt_text"])
     assert seen["allowed_tools"] == []
     assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob"}
     assert seen["formatter_job_type"] == "batch_plan"

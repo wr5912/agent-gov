@@ -44,7 +44,7 @@ import type {
   FeedbackSourceRecord,
   EvalCaseUpdateRequest,
 } from "../../types/feedback";
-import type { RuntimeClientConfig } from "../../types/runtime";
+import type { AgentRepositoryStatus, RuntimeClientConfig } from "../../types/runtime";
 
 export function BatchesPanel({
   actionId,
@@ -52,10 +52,12 @@ export function BatchesPanel({
   clientConfig,
   evalCases,
   externalWebhooks,
+  agentRepository,
   selectedBatch,
   sources,
   onArchiveEvalCase,
   onCreateEvalCase,
+  onDiscardAgentWorkspaceChanges,
   onExecuteBatchPlanAll,
   onExecutePlanTask,
   onGeneratePlan,
@@ -64,6 +66,7 @@ export function BatchesPanel({
   onRunRegression,
   onRollbackBatchExecution,
   onSelectBatch,
+  onSaveAgentWorkspaceSnapshot,
   onUpdateEvalCase,
   onUpdatePlanTask,
   renderAttributionResult,
@@ -73,6 +76,7 @@ export function BatchesPanel({
   clientConfig: RuntimeClientConfig;
   evalCases: EvalCaseRecord[];
   externalWebhooks: ExternalGovernanceWebhookRecord[];
+  agentRepository: AgentRepositoryStatus | null;
   selectedBatch: FeedbackOptimizationBatchRecord | null;
   sources: FeedbackSourceRecord[];
   onArchiveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCase: EvalCaseRecord) => Promise<boolean>;
@@ -80,6 +84,7 @@ export function BatchesPanel({
     batch: FeedbackOptimizationBatchRecord,
     payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
   ) => Promise<boolean>;
+  onDiscardAgentWorkspaceChanges: (repository: AgentRepositoryStatus | null | undefined) => void;
   onExecuteBatchPlanAll: (batch: FeedbackOptimizationBatchRecord, payload?: FeedbackOptimizationBatchExecuteAllRequest) => void;
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
@@ -87,6 +92,7 @@ export function BatchesPanel({
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
   onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
+  onSaveAgentWorkspaceSnapshot: (repository: AgentRepositoryStatus | null | undefined) => void;
   onSelectBatch: (batch: FeedbackOptimizationBatchRecord) => void;
   onUpdateEvalCase: (
     batch: FeedbackOptimizationBatchRecord,
@@ -225,12 +231,15 @@ export function BatchesPanel({
             {activeBatchDetail === "plan" ? (
               <BatchPlanDetails
                 actionId={actionId}
+                agentRepository={agentRepository}
                 batch={selectedBatch}
                 clientConfig={clientConfig}
                 externalWebhooks={externalWebhooks}
+                onDiscardAgentWorkspaceChanges={onDiscardAgentWorkspaceChanges}
                 onExecuteBatchPlanAll={onExecuteBatchPlanAll}
                 onExecutePlanTask={onExecutePlanTask}
                 onRollbackBatchExecution={onRollbackBatchExecution}
+                onSaveAgentWorkspaceSnapshot={onSaveAgentWorkspaceSnapshot}
                 onUpdatePlanTask={onUpdatePlanTask}
               />
             ) : null}

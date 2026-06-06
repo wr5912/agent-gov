@@ -18,6 +18,7 @@ import {
 } from "./selectors";
 import { BatchExecutionRunPanel } from "./BatchExecutionRunPanel";
 import { BatchPlanTaskCard, type BatchExecutionTaskResult } from "./BatchPlanTaskCard";
+import { WorkspaceDirtyPreflightPanel } from "./WorkspaceDirtyPreflightPanel";
 import type {
   ExternalGovernanceWebhookRecord,
   FeedbackBatchExecutionRunRecord,
@@ -27,7 +28,7 @@ import type {
   FeedbackOptimizationPlanTaskRecord,
   FeedbackOptimizationPlanTaskUpdateRequest,
 } from "../../types/feedback";
-import type { RuntimeClientConfig } from "../../types/runtime";
+import type { AgentRepositoryStatus, RuntimeClientConfig } from "../../types/runtime";
 
 const PLAN_RUNNING_STATUSES = new Set(["created", "queued", "running", "schema_validating", "evidence_packaging"]);
 
@@ -50,21 +51,27 @@ type PlanTabItem =
 
 export function BatchPlanDetails({
   actionId,
+  agentRepository,
   batch,
   clientConfig,
   externalWebhooks,
+  onDiscardAgentWorkspaceChanges,
   onExecuteBatchPlanAll,
   onExecutePlanTask,
   onRollbackBatchExecution,
+  onSaveAgentWorkspaceSnapshot,
   onUpdatePlanTask,
 }: {
   actionId: string | null;
+  agentRepository: AgentRepositoryStatus | null;
   batch: FeedbackOptimizationBatchRecord;
   clientConfig: RuntimeClientConfig;
   externalWebhooks: ExternalGovernanceWebhookRecord[];
+  onDiscardAgentWorkspaceChanges: (repository: AgentRepositoryStatus | null | undefined) => void;
   onExecuteBatchPlanAll: (batch: FeedbackOptimizationBatchRecord, payload?: FeedbackOptimizationBatchExecuteAllRequest) => void;
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
+  onSaveAgentWorkspaceSnapshot: (repository: AgentRepositoryStatus | null | undefined) => void;
   onUpdatePlanTask: (
     batch: FeedbackOptimizationBatchRecord,
     planTask: FeedbackOptimizationPlanTaskRecord,
@@ -95,12 +102,16 @@ export function BatchPlanDetails({
   const selectedPlanItemKey = selectedPlanItem?.key || "";
   const aliasForTask = (task: FeedbackOptimizationPlanTaskRecord) => webhookAliases[task.plan_task_id] || externalWebhooks[0]?.alias || "";
   const externalTasks = tasks.filter((task) => task.execution_kind === "external_webhook");
+  const hasWorkspaceTasks = tasks.some((task) => task.execution_kind === "workspace_execution");
   const missingExternalAlias = externalTasks.some((task) => !aliasForTask(task));
+  const workspaceDirtyBlocksExecution = Boolean(hasWorkspaceTasks && agentRepository?.dirty);
   const executeAllBusy = actionId === `batch-execute-all:${batch.batch_id}`;
-  const executeAllDisabled = Boolean(actionId) || !tasks.length || missingExternalAlias;
-  const executeAllTitle = missingExternalAlias
-    ? "存在外部任务未选择 Webhook，不能一键执行。"
-    : "生成并应用所有可执行任务，workspace 变更会合并为一个 Agent 版本。";
+  const executeAllDisabled = Boolean(actionId) || !tasks.length || missingExternalAlias || workspaceDirtyBlocksExecution;
+  const executeAllTitle = workspaceDirtyBlocksExecution
+    ? "Main Agent workspace 有未提交改动，先丢弃或保存为 Agent 版本。"
+    : missingExternalAlias
+      ? "存在外部任务未选择 Webhook，不能一键执行。"
+      : "生成并应用所有可执行任务，workspace 变更会合并为一个 Agent 版本。";
   const executeAllPayload = (): FeedbackOptimizationBatchExecuteAllRequest => ({
     force: true,
     webhook_alias_by_task_id: Object.fromEntries(
@@ -161,6 +172,14 @@ export function BatchPlanDetails({
         {selectedPlanItem?.kind === "blocked" ? <BatchPlanBlockedItemCard item={selectedPlanItem.blockedItem} /> : null}
         {!planItems.length ? <p className="fw-note-box">当前优化方案没有可展示任务。必要时重新归因或重新生成优化方案。</p> : null}
       </div>
+      {workspaceDirtyBlocksExecution ? (
+        <WorkspaceDirtyPreflightPanel
+          actionId={actionId}
+          repository={agentRepository}
+          onDiscard={onDiscardAgentWorkspaceChanges}
+          onSaveSnapshot={onSaveAgentWorkspaceSnapshot}
+        />
+      ) : null}
       <div className="fw-batch-one-click-bar">
         <button
           className="fw-small-primary"

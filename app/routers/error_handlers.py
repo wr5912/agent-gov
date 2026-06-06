@@ -10,12 +10,15 @@ from app.runtime.errors import FeedbackStoreError
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(FeedbackStoreError)
     async def feedback_store_error_handler(_: Request, exc: FeedbackStoreError) -> JSONResponse:
+        content = {
+            "detail": str(exc),
+            "error_code": exc.error_code,
+        }
+        if isinstance(exc.error_details, dict):
+            content.update(exc.error_details)
         return JSONResponse(
             status_code=exc.status_code,
-            content={
-                "detail": str(exc),
-                "error_code": exc.error_code,
-            },
+            content=content,
         )
 
     @app.exception_handler(StarletteHTTPException)

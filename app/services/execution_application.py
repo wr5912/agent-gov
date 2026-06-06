@@ -10,7 +10,7 @@ from typing import cast
 from pydantic import BaseModel
 
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.errors import FeedbackStoreError
+from app.runtime.errors import FeedbackStoreError, MainWorkspaceDirtyError
 from app.runtime.json_types import JsonObject
 from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
@@ -247,7 +247,7 @@ class ExecutionApplicationService:
     def _batch_execution_baseline(self, contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]]) -> str:
         repository_status = self.agent_version_store.repository_status()
         if repository_status.get("dirty"):
-            raise ExecutionApplicationError(409, "Main Agent workspace has uncommitted changes")
+            raise MainWorkspaceDirtyError(repository_status)
         current_version_id = self.agent_version_store.current_version_id()
         baselines = {baseline for _task, _job, _plan, baseline in contexts if baseline}
         if len(baselines) > 1:
@@ -394,7 +394,7 @@ class ExecutionApplicationService:
     ) -> tuple[JsonObject, JsonObject, Path]:
         repository_status = self.agent_version_store.repository_status()
         if repository_status.get("dirty"):
-            raise ExecutionApplicationError(409, "Main Agent workspace has uncommitted changes")
+            raise MainWorkspaceDirtyError(repository_status)
         current_version_id = self.agent_version_store.current_version_id()
         if baseline_version_id and current_version_id != baseline_version_id:
             raise ExecutionApplicationError(409, "Current Agent version differs from execution baseline")

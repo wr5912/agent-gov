@@ -11,11 +11,12 @@ from pathlib import Path
 from typing import Optional, Protocol
 
 from app.runtime.agent_version_store import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
+from app.runtime.feedback_privacy import SENSITIVE_KEY_PARTS
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import utc_now
 
-
 MAX_FILE_DIFF_BYTES = 200_000
+MAX_REPOSITORY_STATUS_DIFFS = 20
 
 
 class AgentVersionProvider(Protocol):
@@ -124,13 +125,20 @@ class GitAgentVersionStore:
             "current_commit_sha": None,
             "current_branch": None,
             "dirty": False,
+            "changed_file_count": 0,
+            "changed_files": [],
+            "file_diffs": [],
             "maintenance_active": self._maintenance,
         }
         try:
             self.ensure_bootstrap()
+            changes = self._workspace_changes()
             status["current_commit_sha"] = self.current_commit_sha()
             status["current_branch"] = self._git(["branch", "--show-current"], cwd=self.repository_dir).strip() or None
-            status["dirty"] = bool(self._git(["status", "--porcelain"], cwd=self.repository_dir).strip())
+            status["dirty"] = bool(changes)
+            status["changed_file_count"] = len(changes)
+            status["changed_files"] = changes
+            status["file_diffs"] = [self.workspace_file_diff(str(item["path"])) for item in changes[:MAX_REPOSITORY_STATUS_DIFFS]]
         except Exception as exc:
             status["status"] = "degraded"
             status["degraded_reason"] = f"{exc.__class__.__name__}: {exc}"
@@ -156,6 +164,53 @@ class GitAgentVersionStore:
             if parent_version_id:
                 summary["parent_version_id"] = parent_version_id
             return summary
+
+    def discard_workspace_changes(self, paths: list[str]) -> JsonObject:
+        with self._lock:
+            self._ensure_repo_ready()
+            current = {str(item["path"]): item for item in self._workspace_changes()}
+            requested = self._requested_dirty_paths(paths, current)
+            if not requested:
+                return self.repository_status()
+            tracked_paths = [path for path in requested if not bool(current[path].get("untracked"))]
+            if tracked_paths:
+                self._git(["restore", "--staged", "--", *tracked_paths], cwd=self.repository_dir, check=False)
+                self._git(["restore", "--worktree", "--", *tracked_paths], cwd=self.repository_dir, check=False)
+            self._git(["clean", "-fd", "--", *requested], cwd=self.repository_dir, check=False)
+            remaining = {str(item["path"]) for item in self._workspace_changes()} & set(requested)
+            if remaining:
+                raise AgentGitError(f"Failed to discard workspace changes: {', '.join(sorted(remaining))}")
+            return self.repository_status()
+
+    def workspace_file_diff(self, path: str) -> JsonObject:
+        safe_path = self._safe_relative_path(path)
+        if not safe_path:
+            return self._workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
+        changes = {str(item["path"]): item for item in self._workspace_changes()}
+        change = changes.get(safe_path)
+        status = str((change or {}).get("status") or "unchanged")
+        result: JsonObject = {
+            "path": safe_path,
+            "status": status,
+            "unified_diff": "",
+            "is_text": False,
+            "truncated": False,
+            "reason": None,
+        }
+        if not change:
+            result["reason"] = "文件没有未提交变化。"
+            return result
+        if bool(change.get("untracked")):
+            return self._untracked_workspace_file_diff(safe_path, status)
+        diff = self._git(["diff", "--no-ext-diff", "--no-renames", "HEAD", "--", safe_path], cwd=self.repository_dir, check=False)
+        if len(diff.encode("utf-8")) > MAX_FILE_DIFF_BYTES:
+            result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"diff 超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
+            return result
+        result["is_text"] = True
+        result["unified_diff"] = self._redact_sensitive_diff(diff)
+        if not result["unified_diff"]:
+            result["reason"] = "文件变化无法生成文本 diff。"
+        return result
 
     def restore_version(self, version_id: str, *, note: Optional[str] = None) -> Optional[JsonObject]:
         target = self.version_summary(version_id, reason="rollback_target")
@@ -371,6 +426,127 @@ class GitAgentVersionStore:
             finally:
                 self._maintenance = False
 
+    def _workspace_changes(self) -> list[JsonObject]:
+        raw = self._git(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], cwd=self.repository_dir)
+        changes: list[JsonObject] = []
+        for line in raw.splitlines():
+            if len(line) < 4:
+                continue
+            index_status = line[0]
+            worktree_status = line[1]
+            raw_path = line[3:]
+            if " -> " in raw_path:
+                raw_path = raw_path.split(" -> ", 1)[1]
+            safe_path = self._safe_relative_path(raw_path)
+            if not safe_path:
+                continue
+            untracked = index_status == "?" and worktree_status == "?"
+            changes.append(
+                {
+                    "path": safe_path,
+                    "status": self._workspace_change_status(index_status, worktree_status),
+                    "index_status": index_status,
+                    "worktree_status": worktree_status,
+                    "staged": index_status not in {" ", "?"},
+                    "unstaged": worktree_status not in {" ", "?"},
+                    "untracked": untracked,
+                    "discardable": True,
+                }
+            )
+        return changes
+
+    def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
+        requested: list[str] = []
+        for path in paths:
+            safe_path = self._safe_relative_path(path)
+            if not safe_path:
+                raise AgentGitError(f"Invalid workspace path: {path}")
+            if safe_path not in current:
+                raise AgentGitError(f"Workspace path has no uncommitted changes: {safe_path}")
+            if safe_path not in requested:
+                requested.append(safe_path)
+        return requested
+
+    @staticmethod
+    def _workspace_change_status(index_status: str, worktree_status: str) -> str:
+        if index_status == "?" and worktree_status == "?":
+            return "untracked"
+        if "D" in {index_status, worktree_status}:
+            return "deleted"
+        if "A" in {index_status, worktree_status}:
+            return "added"
+        if "R" in {index_status, worktree_status}:
+            return "renamed"
+        if "M" in {index_status, worktree_status}:
+            return "modified"
+        return "changed"
+
+    def _untracked_workspace_file_diff(self, safe_path: str, status: str) -> JsonObject:
+        result: JsonObject = {
+            "path": safe_path,
+            "status": status,
+            "unified_diff": "",
+            "is_text": False,
+            "truncated": False,
+            "reason": None,
+        }
+        path = self.repository_dir / safe_path
+        if path.is_dir():
+            result["reason"] = "未跟踪目录未展开内容。"
+            return result
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            result["reason"] = f"{exc.__class__.__name__}: {exc}"
+            return result
+        if len(data) > MAX_FILE_DIFF_BYTES:
+            result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"文件超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
+            return result
+        if b"\x00" in data:
+            result["reason"] = "文件包含二进制内容，未展开内容。"
+            return result
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            result["reason"] = "文件不是 UTF-8 文本，未展开内容。"
+            return result
+        result["is_text"] = True
+        result["unified_diff"] = self._redact_sensitive_diff(
+            "".join(
+                difflib.unified_diff(
+                    [],
+                    text.splitlines(keepends=True),
+                    fromfile=f"HEAD:{safe_path}",
+                    tofile=f"workspace:{safe_path}",
+                    lineterm="\n",
+                )
+            )
+        )
+        return result
+
+    def _workspace_diff_error(self, path: str, status: str, reason: str) -> JsonObject:
+        return {
+            "path": path,
+            "status": status,
+            "unified_diff": "",
+            "is_text": False,
+            "truncated": False,
+            "reason": reason,
+        }
+
+    @staticmethod
+    def _redact_sensitive_diff(diff: str) -> str:
+        lines: list[str] = []
+        for line in diff.splitlines(keepends=True):
+            lowered = line.lower()
+            if line.startswith(("+++", "---", "@@")) or not any(part in lowered for part in SENSITIVE_KEY_PARTS):
+                lines.append(line)
+                continue
+            marker = line[:1] if line[:1] in {"+", "-", " "} else ""
+            newline = "\n" if line.endswith("\n") else ""
+            lines.append(f"{marker}[redacted sensitive line]{newline}")
+        return "".join(lines)
+
     def _ensure_repo_ready(self) -> None:
         self.ensure_bootstrap()
 
@@ -386,8 +562,7 @@ class GitAgentVersionStore:
             cwd=str(cwd),
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
         if check and proc.returncode != 0:
@@ -466,8 +641,7 @@ class GitAgentVersionStore:
         proc = subprocess.run(
             ["git", "show", f"{ref}:{safe_path}"],
             cwd=str(self.repository_dir),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
         if proc.returncode != 0:

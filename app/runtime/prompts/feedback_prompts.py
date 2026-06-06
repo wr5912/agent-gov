@@ -61,12 +61,13 @@ def attribution_prompt(input_path: str) -> str:
     )
 
 
-def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
-    embedded_context = ""
-    if input_payload is not None:
-        embedded_context = (
-            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\noptimization_plan_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
-        )
+def _prompt_context_section(context_name: str, prompt_context: JsonObject | None) -> str:
+    if prompt_context is None:
+        return ""
+    return f"以下是精简输入上下文，不需要调用工具读取完整输入文件。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
+
+
+def proposal_generator_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
@@ -83,8 +84,8 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
             "业务信息要点",
             "顶层方案必须能直接读出：标题、摘要、问题类型、置信度、可执行性、目标对象、目标路径或外部对象、"
             "优化建议、预期效果、验证方式、风险、生成理由和证据引用。\n"
-            "batch_id、optimization_plan_id、created_at、source_refs、feedback_case_ids、eval_case_ids、"
-            "attribution_job_ids、attribution_summaries 和 regeneration_instruction 由后端从输入上下文注入，不需要复述。\n"
+            "批次标识、计划标识、创建时间、来源关联、反馈范围、评估范围和归因关联由后端保存时补齐；"
+            "Agent 不需要复述任何系统 ID 或时间戳。重新生成意图只作为本次业务约束参考。\n"
             "tasks 是开发人员可以点击执行的优化任务。每个 task 必须围绕任务本身描述："
             "任务标题、描述、目标、目标摘要、建议、建议动作、验收标准、预期效果、验证方式、风险、分析摘要、证据摘要和证据引用。"
             "归因依据只可放到 analysis_summary、evidence_summary 或 evidence_refs。\n"
@@ -109,9 +110,9 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
         (
             "内部治理任务",
             "回归资产晋级任务要求：execution_kind=internal_action；internal_action=promote_eval_cases；"
-            "target_type=eval_case；actionability=regression_asset_governance；必须列出 eval_case_ids。"
-            "晋级后的权威状态是 status=active、promotion_status=approved，不要使用 promoted。"
-            "这类任务用于把本批次候选评估用例纳入长期回归资产；如果缺少 eval_case_ids，改写入 blocked_items 并说明缺什么。",
+            "target_type=eval_case；actionability=regression_asset_governance。"
+            "晋级后的权威状态由后端设置为 active 和 approved，不要设计新的状态词。"
+            "这类任务用于把本批次候选评估用例纳入长期回归资产；如果候选用例业务依据不足，改写入 blocked_items 并说明缺什么。",
         ),
         (
             "约束",
@@ -120,19 +121,14 @@ def proposal_generator_prompt(input_path: str, *, input_payload: JsonObject | No
             "标题、摘要、建议、预期效果、验证方式、风险、理由、任务标题、任务描述、任务目标、任务建议动作、"
             "任务验收标准、阻断项原因和阻断项建议必须使用简体中文。\n"
             "不要用 manual_review 表示可执行任务。开发人员阅读优化方案后点击执行即表示同意执行对应 task，因此不要设计二次审批字段。\n"
-            "如果 optimization_plan_input_json.regeneration_instruction 非空，可作为本次重新生成的开发人员补充意图；"
+            "如果 optimization_plan_prompt_context.regeneration_instruction 非空，可作为本次重新生成的开发人员补充意图；"
             "但它不能覆盖中文输出、证据约束、target_policy 和可执行性要求。",
         ),
-        ("输入上下文", embedded_context),
+        ("输入上下文", _prompt_context_section("optimization_plan_prompt_context", prompt_context)),
     )
 
 
-def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
-    embedded_context = ""
-    if input_payload is not None:
-        embedded_context = (
-            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\nexecution_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
-        )
+def execution_plan_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
@@ -148,7 +144,7 @@ def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None =
             "业务信息要点",
             "输出中必须能直接读出：status、summary、operations、validation、risk、"
             "human_review_required 和 no_action_reason。\n"
-            "optimization_task_id、execution_job_id 和 baseline_agent_version_id 由后端从输入上下文注入，不需要复述。\n"
+            "任务标识、执行作业标识和基线版本由后端保存时补齐；Agent 不需要复述任何系统 ID。\n"
             "每个 operation 必须说明 operations[].operation、path、expected_sha256、content 或 append_text、rationale。"
             "summary 要说明本次准备改什么；validation 要说明如何验证；risk 要说明可能的退化或人工注意点。",
         ),
@@ -165,16 +161,11 @@ def execution_plan_prompt(input_path: str, *, input_payload: JsonObject | None =
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}summary、operations[].rationale、validation、risk、no_action_reason 必须使用简体中文。",
         ),
-        ("输入上下文", embedded_context),
+        ("输入上下文", _prompt_context_section("execution_prompt_context", prompt_context)),
     )
 
 
-def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
-    embedded_context = ""
-    if input_payload is not None:
-        embedded_context = (
-            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\neval_case_generation_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
-        )
+def eval_case_generation_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
@@ -188,12 +179,12 @@ def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | 
         (
             "业务信息要点",
             "输出中必须能直接读出：eval_cases 和 no_action_reason。\n"
-            "job_id、scope_kind、scope_id、status、results、计数、eval_case_id、created_at、updated_at 和生命周期状态由后端注入，不需要复述。\n"
+            "生成任务标识、作用范围、处理结果、计数、评估用例标识、时间戳和生命周期状态由后端保存时补齐；"
+            "Agent 不需要复述任何系统 ID 或时间戳。\n"
             "每个 eval case 必须覆盖 prompt、expected_behavior、checks_json 和 labels；"
             "prompt 应复现用户原始输入或最接近的反馈场景，expected_behavior 应描述修复后应满足的行为。"
             "checks_json 应表达可检查的行为点，labels 应标识问题类型、目标对象或风险域。"
-            "多反馈输入中需要能定位来源时，只能引用输入中已有的 source_feedback_case_id；"
-            "能确定来源时补充 source_kind、source_id、source_refs、attribution_summary 或 proposal_summary。",
+            "多反馈输入中需要能定位来源时，在 source_summary、attribution_summary 或 proposal_summary 中转述业务来源和证据依据。",
         ),
         (
             "约束",
@@ -201,16 +192,11 @@ def eval_case_generation_prompt(input_path: str, *, input_payload: JsonObject | 
             "prompt、expected_behavior、checks_json 中面向人的说明、labels 的中文含义必须清晰。"
             "不要凭空编造证据中不存在的业务事实；证据不足时输出 no_action_reason 并说明需要人工补充。",
         ),
-        ("输入上下文", embedded_context),
+        ("输入上下文", _prompt_context_section("eval_case_generation_prompt_context", prompt_context)),
     )
 
 
-def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObject | None = None) -> str:
-    embedded_context = ""
-    if input_payload is not None:
-        embedded_context = (
-            f"\n\n以下是完整输入上下文，不需要调用工具读取文件。\nregression_impact_input_json:\n{json.dumps(input_payload, ensure_ascii=False, indent=2)}\n"
-        )
+def regression_impact_analysis_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
@@ -226,7 +212,8 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
             "业务信息要点",
             "输出中必须能直接读出：status、recommendations、"
             "summary、risk_assessment、next_steps 和 no_action_reason。\n"
-            "eval_run_id、result_status、gate_result 和 impacted_assets 由后端从 eval_run 注入，不需要复述。\n"
+            "评估运行标识、结果状态、门禁结果和受影响资产由后端根据 eval_run 保存时补齐；"
+            "Agent 不需要复述任何系统 ID。\n"
             "recommendations 要说明应新增、调整、保留或人工复核哪些回归资产；next_steps 要说明后续动作。"
             "无法判断时说明需要人工复核及缺少的信息。",
         ),
@@ -234,5 +221,5 @@ def regression_impact_analysis_prompt(input_path: str, *, input_payload: JsonObj
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}summary、risk_assessment、recommendations、next_steps、no_action_reason 必须使用简体中文。",
         ),
-        ("输入上下文", embedded_context),
+        ("输入上下文", _prompt_context_section("regression_impact_prompt_context", prompt_context)),
     )

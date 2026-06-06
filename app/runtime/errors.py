@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+from app.runtime.json_types import JsonObject
+
 
 class FeedbackStoreError(Exception):
     """Base class for route-safe feedback optimization domain errors."""
 
     status_code = 400
     error_code = "FEEDBACK_STORE_ERROR"
+    error_details: JsonObject | None = None
+
+    def __init__(self, message: str = "", *, error_details: JsonObject | None = None) -> None:
+        super().__init__(message)
+        self.error_details = error_details
 
 
 class BusinessRuleViolation(FeedbackStoreError):
@@ -19,6 +26,22 @@ class ConflictError(FeedbackStoreError):
 
     status_code = 409
     error_code = "CONFLICT"
+
+
+class MainWorkspaceDirtyError(ConflictError):
+    """Raised when main Agent workspace has uncommitted changes."""
+
+    error_code = "MAIN_WORKSPACE_DIRTY"
+
+    def __init__(self, repository_status: JsonObject) -> None:
+        super().__init__(
+            "Main Agent workspace has uncommitted changes",
+            error_details={
+                "repository_status": repository_status,
+                "changed_files": repository_status.get("changed_files") if isinstance(repository_status.get("changed_files"), list) else [],
+                "file_diffs": repository_status.get("file_diffs") if isinstance(repository_status.get("file_diffs"), list) else [],
+            },
+        )
 
 
 class ConfigurationError(FeedbackStoreError):

@@ -88,6 +88,29 @@ def test_dspy_output_formatter_predictor_receives_no_job_input_context(tmp_path,
     assert seen["predictor_kwargs"] == {"raw_agent_output": "## 方案概览\n- 标题：测试批次优化方案\n- 阻断项：测试场景不生成可执行任务。"}
 
 
+def test_dspy_output_formatter_lm_uses_configured_max_tokens(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    settings.dspy_output_formatter_max_tokens = 12_345
+    formatter = DSPyOutputFormatter(settings)
+    seen: dict[str, object] = {}
+
+    def fake_lm(**kwargs: object):
+        seen.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(output_formatter_module.dspy, "LM", fake_lm)
+
+    formatter._lm_instance()
+
+    assert seen["max_tokens"] == 12_345
+
+
+def test_dspy_output_formatter_timeout_default_matches_agent_job_timeout(tmp_path):
+    settings = _settings(tmp_path)
+
+    assert settings.dspy_output_formatter_timeout_seconds == 300
+
+
 def test_dspy_output_formatter_retries_transient_predictor_failure(tmp_path, monkeypatch):
     formatter = DSPyOutputFormatter(_settings(tmp_path))
     payload = _batch_plan_output({"input_json": {"batch_id": "fob-test"}})

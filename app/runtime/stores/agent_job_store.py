@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, cast
 
 from sqlalchemy import select, update
 
+from ..agent_job_logging import log_agent_job_event
 from ..agent_job_types import AgentJobType, FormatterOutputModel, ProjectedOutputModel, coerce_agent_job_type
 from ..feedback_schemas import (
     AttributionFormatterOutput,
@@ -29,6 +31,7 @@ from ..runtime_db import (
 )
 
 _UNSET = object()
+logger = logging.getLogger(__name__)
 
 
 class AgentJobStoreMixin:
@@ -75,7 +78,9 @@ class AgentJobStoreMixin:
             if existing:
                 return self._agent_job_to_dict(existing)
             db.add(row)
-        return self.get_agent_job(job_id) or self._agent_job_to_dict(row)
+        created = self.get_agent_job(job_id) or self._agent_job_to_dict(row)
+        log_agent_job_event(logger, logging.INFO, "agent_job.queued", created)
+        return created
 
     def get_agent_job(self, job_id: str) -> Optional[JsonObject]:
         if not job_id:
@@ -158,6 +163,8 @@ class AgentJobStoreMixin:
         for job in timed_out:
             if job.get("job_type") == AgentJobType.ATTRIBUTION:
                 self._sync_attribution_agent_job_to_batches(job, job)
+            elif job.get("job_type") == AgentJobType.BATCH_PLAN:
+                self._sync_batch_plan_agent_job_to_batch(job)
         return timed_out
 
     def complete_projected_agent_job(
@@ -370,6 +377,26 @@ class AgentJobStoreMixin:
             jobs = [domain_job for domain_job in (self.get_job(str(job_id)) for job_id in job_ids) if domain_job]
             if jobs:
                 self.record_batch_attribution_jobs(str(batch["batch_id"]), jobs)
+
+    def _sync_batch_plan_agent_job_to_batch(self, job: JsonObject) -> None:
+        batch_id = self._batch_plan_job_batch_id(job)
+        if not batch_id:
+            return
+        with self.Session.begin() as db:
+            self._update_batch_row(
+                db,
+                batch_id,
+                status="needs_human_review",
+                fields={
+                    "optimization_plan_job_id": job["job_id"],
+                    "optimization_plan_job": job,
+                    "optimization_plan_error": job.get("error_json"),
+                },
+            )
+
+    def _batch_plan_job_batch_id(self, job: JsonObject) -> Optional[str]:
+        input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        return self._string(input_json.get("batch_id")) or (self._string(job.get("scope_id")) if job.get("scope_kind") == "optimization_batch" else None)
 
     def _project_eval_case_generation(self, job: JsonObject, output: JsonObject) -> JsonObject:
         job_input = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}

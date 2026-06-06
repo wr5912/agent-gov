@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+import socket
 from collections.abc import Awaitable, Callable
 from typing import cast
 
+from app.runtime.agent_job_logging import log_agent_job_event
 from app.runtime.agent_job_types import (
     AgentJobType,
     FormatterOutputModel,
@@ -38,39 +41,24 @@ class AgentJobWorker:
         feedback_store: FeedbackStore,
         run_profile_json: RunProfileJson,
         poll_interval_seconds: float = 2.0,
+        worker_instance: str | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.run_profile_json = run_profile_json
         self.poll_interval_seconds = poll_interval_seconds
+        self.worker_instance = worker_instance or f"{socket.gethostname()}:{os.getpid()}"
 
     async def run_once(self) -> AgentJobResponse | None:
         for timed_out in self.feedback_store._timeout_stale_agent_jobs():
-            logger.warning(
-                "agent job timed out job_id=%s job_type=%s profile_name=%s status=%s",
-                timed_out.get("job_id"),
-                timed_out.get("job_type"),
-                timed_out.get("profile_name"),
-                timed_out.get("status"),
-            )
+            log_agent_job_event(logger, logging.WARNING, "agent_job.stale_timeout", timed_out, worker_instance=self.worker_instance)
         job = self.feedback_store.claim_next_agent_job()
         if not job:
             return None
-        logger.info(
-            "agent job claimed job_id=%s job_type=%s profile_name=%s",
-            job.get("job_id"),
-            job.get("job_type"),
-            job.get("profile_name"),
-        )
+        log_agent_job_event(logger, logging.INFO, "agent_job.claimed", job, worker_instance=self.worker_instance)
         try:
             job_output = await self._run_job(job)
             completed = self.feedback_store.complete_projected_agent_job(job, job_output)
-            logger.info(
-                "agent job completed job_id=%s job_type=%s profile_name=%s status=%s",
-                job.get("job_id"),
-                job.get("job_type"),
-                job.get("profile_name"),
-                (completed or {}).get("status"),
-            )
+            log_agent_job_event(logger, logging.INFO, "agent_job.completed", completed or job, worker_instance=self.worker_instance)
             return self._job_response(completed)
         except asyncio.TimeoutError as exc:
             failed = self.feedback_store.fail_projected_agent_job(
@@ -78,14 +66,7 @@ class AgentJobWorker:
                 error_code="AGENT_TIMEOUT",
                 message=_agent_error_message(exc),
             )
-            logger.warning(
-                "agent job timeout job_id=%s job_type=%s profile_name=%s status=%s error_code=%s",
-                job.get("job_id"),
-                job.get("job_type"),
-                job.get("profile_name"),
-                (failed or {}).get("status"),
-                "AGENT_TIMEOUT",
-            )
+            log_agent_job_event(logger, logging.WARNING, "agent_job.timeout", failed or job, worker_instance=self.worker_instance, error_code="AGENT_TIMEOUT")
             return self._job_response(failed)
         except Exception as exc:
             failed = self.feedback_store.fail_projected_agent_job(
@@ -94,13 +75,14 @@ class AgentJobWorker:
                 message=_agent_error_message(exc),
                 raw_output_json=_exception_raw_output_json(exc),
             )
-            logger.exception(
-                "agent job failed job_id=%s job_type=%s profile_name=%s status=%s error_code=%s",
-                job.get("job_id"),
-                job.get("job_type"),
-                job.get("profile_name"),
-                (failed or {}).get("status"),
-                "AGENT_RUNTIME_ERROR",
+            log_agent_job_event(
+                logger,
+                logging.ERROR,
+                "agent_job.failed",
+                failed or job,
+                worker_instance=self.worker_instance,
+                error_code="AGENT_RUNTIME_ERROR",
+                exc_info=True,
             )
             return self._job_response(failed)
 

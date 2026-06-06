@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from sqlalchemy import select
 
@@ -12,7 +11,6 @@ from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentChangeSetEventModel, AgentChangeSetModel, AgentReleaseModel, OptimizationTaskModel, utc_now
 from app.runtime.state_machines import validate_transition
 from app.runtime.stores.feedback_store import FeedbackStore
-
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
 
@@ -46,6 +44,21 @@ class AgentGovernanceService:
 
     def repository_status(self) -> JsonObject:
         return self.agent_version_store.repository_status()
+
+    def discard_repository_changes(self, paths: list[str]) -> JsonObject:
+        try:
+            return self.agent_version_store.discard_workspace_changes(paths)
+        except AgentGitError as exc:
+            raise AgentGovernanceError(409, str(exc)) from exc
+
+    def snapshot_repository(self, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
+        try:
+            return self.agent_version_store.create_snapshot(
+                reason="manual_workspace_snapshot",
+                note=note or f"{operator} 保存 Main Agent workspace 当前未提交改动。",
+            )
+        except AgentGitError as exc:
+            raise AgentGovernanceError(409, str(exc)) from exc
 
     def current_ref(self) -> JsonObject:
         current = self.agent_version_store.current_commit_sha()

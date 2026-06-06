@@ -14,6 +14,8 @@ import type {
   AgentGitRef,
   AgentRelease,
   AgentReleaseRollbackRequest,
+  AgentRepositoryDiscardChangesRequest,
+  AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
   ChatRequest,
   ConfigMappingResponse,
@@ -65,6 +67,22 @@ export function getConfigMapping(config: RuntimeClientConfig) {
 
 export function getAgentRepositoryStatus(config: RuntimeClientConfig) {
   return requestJson<AgentRepositoryStatus>(config, "/api/agent-repository");
+}
+
+export function discardAgentRepositoryChanges(config: RuntimeClientConfig, payload: AgentRepositoryDiscardChangesRequest) {
+  return requestJson<AgentRepositoryStatus>(config, "/api/agent-repository/discard-changes", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function snapshotAgentRepository(config: RuntimeClientConfig, payload: AgentRepositorySnapshotRequest = { operator: "ui" }) {
+  return requestJson<AgentGitRef>(config, "/api/agent-repository/snapshot", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getCurrentAgentRef(config: RuntimeClientConfig) {

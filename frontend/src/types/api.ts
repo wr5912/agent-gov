@@ -294,6 +294,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-repository/discard-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Discard confirmed uncommitted changes from the main Agent workspace */
+        post: operations["discard_agent_repository_changes_api_agent_repository_discard_changes_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-repository/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save current main Agent workspace as an Agent version */
+        post: operations["snapshot_agent_repository_api_agent_repository_snapshot_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs": {
         parameters: {
             query?: never;
@@ -1795,8 +1829,32 @@ export interface components {
              */
             operator: string;
         };
+        /** AgentRepositoryDiscardChangesRequest */
+        AgentRepositoryDiscardChangesRequest: {
+            /** Paths */
+            paths?: string[];
+        };
+        /** AgentRepositorySnapshotRequest */
+        AgentRepositorySnapshotRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Operator
+             * @default runtime
+             */
+            operator: string;
+        };
         /** AgentRepositoryStatusResponse */
         AgentRepositoryStatusResponse: {
+            /**
+             * Changed File Count
+             * @default 0
+             */
+            changed_file_count: number;
+            /** Changed Files */
+            changed_files?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
             /** Current Branch */
             current_branch?: string | null;
             /** Current Commit Sha */
@@ -1808,6 +1866,10 @@ export interface components {
              * @default false
              */
             dirty: boolean;
+            /** File Diffs */
+            file_diffs?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
             /**
              * Maintenance Active
              * @default false
@@ -5230,6 +5292,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentGitRefResponse"];
+                };
+            };
+        };
+    };
+    discard_agent_repository_changes_api_agent_repository_discard_changes_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRepositoryDiscardChangesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRepositoryStatusResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    snapshot_agent_repository_api_agent_repository_snapshot_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRepositorySnapshotRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentGitRefResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

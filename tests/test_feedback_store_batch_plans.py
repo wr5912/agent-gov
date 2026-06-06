@@ -1,7 +1,7 @@
 from app.runtime.errors import BusinessRuleViolation, ConflictError
 from app.runtime.feedback_schemas import FeedbackOptimizationPlanFormatterOutput
 from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
-from app.runtime.runtime_db import FeedbackOptimizationBatchModel
+from app.runtime.runtime_db import AgentJobModel, FeedbackOptimizationBatchModel
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -141,6 +141,60 @@ def test_batch_plan_failure_preserves_raw_output_diagnostics(tmp_path):
     assert updated["optimization_plan"] is None
     assert updated["optimization_plan_error"]["error_code"] == "AGENT_RUNTIME_ERROR"
     assert updated["optimization_plan_job"]["raw_output_json"] == raw_output
+
+
+def test_stale_batch_plan_timeout_projects_to_batch_error(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    claimed = store.claim_next_agent_job(job_types=["batch_plan"])
+    assert claimed is not None
+    assert claimed["job_id"] == job["job_id"]
+    with store.Session.begin() as db:
+        row = db.get(AgentJobModel, job["job_id"])
+        assert row is not None
+        row.started_at = "2026-01-01T00:00:00+00:00"
+        row.timeout_seconds = 1
+
+    timed_out = store._timeout_stale_agent_jobs()
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert [item["job_id"] for item in timed_out] == [job["job_id"]]
+    assert updated["status"] == "needs_human_review"
+    assert updated["optimization_plan"] is None
+    assert updated["optimization_plan_job"]["status"] == "timeout"
+    assert updated["optimization_plan_error"]["error_code"] == "AGENT_TIMEOUT"
+
+
+def test_batch_plan_projection_refreshes_stale_job_snapshot(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    error_payload = {
+        "error_code": "AGENT_TIMEOUT",
+        "message": "Agent job exceeded timeout_seconds=300",
+        "created_at": "2026-06-06T08:48:12+00:00",
+        "job_id": job["job_id"],
+    }
+    with store.Session.begin() as db:
+        row = db.get(AgentJobModel, job["job_id"])
+        assert row is not None
+        row.status = "timeout"
+        row.started_at = "2026-06-06T08:43:11+00:00"
+        row.completed_at = "2026-06-06T08:48:12+00:00"
+        row.error_json = error_payload
+        batch_row = db.get(FeedbackOptimizationBatchModel, batch["batch_id"])
+        assert batch_row is not None
+        stale_payload = dict(batch_row.payload_json or {})
+        assert stale_payload["optimization_plan_job"]["status"] == "queued"
+        assert stale_payload["optimization_plan_error"] is None
+
+    refreshed = store.find_optimization_batch(batch["batch_id"])
+
+    assert refreshed["status"] == "needs_human_review"
+    assert refreshed["optimization_plan"] is None
+    assert refreshed["optimization_plan_job"]["status"] == "timeout"
+    assert refreshed["optimization_plan_error"]["error_code"] == "AGENT_TIMEOUT"
 
 
 def test_complete_batch_plan_job_sanitizes_attribution_summary_extras(tmp_path):
@@ -498,7 +552,6 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
 
     async def fake_run_profile_json(**kwargs):
         seen.update(kwargs)
-        job_input = kwargs["job_input"]
         return FeedbackOptimizationPlanFormatterOutput.model_validate(
             {
                 "status": "pending_execution",
@@ -539,9 +592,6 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
                         "evidence_summary": "messages.json 显示回答来自记忆。",
                         "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答未核查当前配置。"}],
                         "task_context": {"target_file": "CLAUDE.md", "config_section": "workspace-capability-answering"},
-                        "feedback_case_ids": job_input["feedback_case_ids"],
-                        "eval_case_ids": job_input["eval_case_ids"],
-                        "attribution_job_ids": job_input["attribution_job_ids"],
                     }
                 ],
                 "blocked_items": [],
@@ -559,7 +609,10 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
 
     assert seen["profile_name"] == "proposal-generator"
     assert seen["job_type"] == "batch_plan"
-    assert "optimization_plan_input_json" in seen["prompt"]
+    assert "optimization_plan_prompt_context" in seen["prompt"]
+    assert "optimization_plan_input_json" not in seen["prompt"]
+    assert "schema_version" not in seen["prompt"]
+    assert "job_id" not in seen["prompt"]
     assert seen["job_input"]["regeneration_instruction"] == "优先保持指令简洁"
     assert job["job_type"] == "batch_plan"
     assert job["profile_name"] == "proposal-generator"
@@ -570,6 +623,8 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert plan_task.target_path == "CLAUDE.md"
     assert plan_task.task_context.target_file == "CLAUDE.md"
     assert plan_task.task_context.config_section == "workspace-capability-answering"
+    assert plan_task.feedback_case_ids == seen["job_input"]["feedback_case_ids"]
+    assert plan_task.attribution_job_ids == seen["job_input"]["attribution_job_ids"]
 
 
 def test_complete_batch_plan_job_projects_incomplete_formatter_task_as_blocked_item(tmp_path):

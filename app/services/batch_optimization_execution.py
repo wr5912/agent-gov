@@ -6,7 +6,7 @@ from typing import cast
 from pydantic import BaseModel
 
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
+from app.runtime.errors import BusinessRuleViolation, ConflictError, MainWorkspaceDirtyError, NotFoundError
 from app.runtime.feedback_batch_execution_request_schemas import (
     FeedbackOptimizationBatchExecuteAllRequest,
     FeedbackOptimizationBatchExecutionRollbackRequest,
@@ -62,6 +62,7 @@ class BatchOptimizationExecutionService:
         if latest and self._latest_run_covers_current_tasks(latest, tasks):
             return FeedbackOptimizationBatchExecuteAllResponse(batch=batch, execution_run=latest.to_payload())
         self._prevalidate_tasks(tasks, request)
+        self._assert_main_workspace_clean()
         run = self._new_run(batch_id, request)
         self.feedback_store.record_batch_execution_run(run, batch_status="execution_planning")
         try:
@@ -283,6 +284,11 @@ class BatchOptimizationExecutionService:
         latest = self.feedback_store.latest_batch_execution_run(batch_id)
         if latest and latest.status == "running":
             raise ConflictError(f"Batch execution is already running: {latest.execution_run_id}")
+
+    def _assert_main_workspace_clean(self) -> None:
+        repository_status = self.execution_application.agent_version_store.repository_status()
+        if repository_status.get("dirty"):
+            raise MainWorkspaceDirtyError(repository_status)
 
     def _latest_run_covers_current_tasks(self, run: FeedbackBatchExecutionRunRecord, tasks: list[JsonObject]) -> bool:
         if run.status not in {"completed", "partial_failed"}:

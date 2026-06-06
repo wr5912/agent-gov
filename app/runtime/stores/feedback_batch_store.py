@@ -136,10 +136,7 @@ class FeedbackBatchStoreMixin:
         refs: list[JsonObject] = []
         refs.extend({"source_kind": "signal", "source_id": source_id} for source_id in feedback_case.get("signal_ids") or [])
         refs.extend({"source_kind": "soc_event", "source_id": source_id} for source_id in feedback_case.get("event_ids") or [])
-        refs.extend(
-            {"source_kind": "pending_correlation", "source_id": source_id}
-            for source_id in feedback_case.get("pending_correlation_ids") or []
-        )
+        refs.extend({"source_kind": "pending_correlation", "source_id": source_id} for source_id in feedback_case.get("pending_correlation_ids") or [])
         return self._normalize_source_refs(refs)
 
     def _batch_model_from_payload(self, payload: JsonObject) -> FeedbackOptimizationBatchModel:
@@ -362,6 +359,7 @@ class FeedbackBatchStoreMixin:
         task_id = self._string(payload.get("optimization_task_id"))
         execution_job_id = self._string(payload.get("execution_job_id"))
         eval_case_generation_job_id = self._string(payload.get("eval_case_generation_job_id"))
+        optimization_plan_job_id = self._string(payload.get("optimization_plan_job_id"))
         eval_run_id = self._string(payload.get("eval_run_id"))
         plan = payload.get("optimization_plan") if isinstance(payload.get("optimization_plan"), dict) else None
         if plan is not None:
@@ -370,6 +368,7 @@ class FeedbackBatchStoreMixin:
             eval_case_generation_job = self.get_agent_job(eval_case_generation_job_id)
             if eval_case_generation_job:
                 payload["eval_case_generation_job"] = eval_case_generation_job
+        payload = self._refresh_batch_plan_job(payload, optimization_plan_job_id)
         payload = self._refresh_batch_attribution_jobs(payload)
         task = self.find_task(task_id) if task_id else None
         if task:
@@ -380,13 +379,34 @@ class FeedbackBatchStoreMixin:
                 payload["execution_job_id"] = latest_execution.get("execution_job_id")
             if not eval_run_id:
                 task_status = self._string(task.get("status"))
-                if task_status in {"execution_planning", "execution_ready", "execution_failed", "needs_human_review", "failed", "applied_pending_regression", "regression_running"}:
+                if task_status in {
+                    "execution_planning",
+                    "execution_ready",
+                    "execution_failed",
+                    "needs_human_review",
+                    "failed",
+                    "applied_pending_regression",
+                    "regression_running",
+                }:
                     payload["status"] = task_status
         elif execution_job_id and not isinstance(payload.get("execution_job"), dict):
             payload["execution_job"] = self.get_execution_job(execution_job_id)
         if eval_run_id and not isinstance(payload.get("latest_eval_run"), dict):
             payload["latest_eval_run"] = self.get_eval_run(eval_run_id)
         return payload
+
+    def _refresh_batch_plan_job(self, batch: JsonObject, job_id: str | None) -> JsonObject:
+        if not job_id:
+            return batch
+        job = self.get_job(job_id)
+        if not job:
+            return batch
+        refreshed = dict(batch)
+        refreshed["optimization_plan_job"] = job
+        if not isinstance(refreshed.get("optimization_plan"), dict) and job.get("status") in {"failed", "needs_human_review", "timeout"}:
+            refreshed["status"] = "needs_human_review"
+            refreshed["optimization_plan_error"] = job.get("error_json")
+        return refreshed
 
     def _refresh_batch_attribution_jobs(self, payload: JsonObject) -> JsonObject:
         job_ids = self._unique_strings(payload.get("attribution_job_ids") or [])
@@ -505,10 +525,7 @@ class FeedbackBatchStoreMixin:
         for key in ("tasks", "blocked_items"):
             if not isinstance(synced.get(key), list):
                 continue
-            synced[key] = [
-                {**item, "eval_case_ids": sync_values(item.get("eval_case_ids"))} if isinstance(item, dict) else item
-                for item in synced[key]
-            ]
+            synced[key] = [{**item, "eval_case_ids": sync_values(item.get("eval_case_ids"))} if isinstance(item, dict) else item for item in synced[key]]
         return synced
 
     def _batch_attribution_outputs(self, batch: JsonObject) -> list[JsonObject]:

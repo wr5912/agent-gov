@@ -3,6 +3,7 @@ import {
   createFeedbackOptimizationBatch,
   createFeedbackOptimizationBatchEvalCase,
   createFeedbackOptimizationBatchRegressionPlan,
+  discardAgentRepositoryChanges,
   executeFeedbackOptimizationBatchPlanAll,
   executeFeedbackOptimizationPlanTask,
   generateFeedbackOptimizationBatchPlan,
@@ -12,6 +13,7 @@ import {
   rollbackFeedbackOptimizationBatchExecution,
   runFeedbackOptimizationBatchAttribution,
   runFeedbackOptimizationBatchRegression,
+  snapshotAgentRepository,
   updateFeedbackOptimizationBatchEvalCase,
   updateFeedbackOptimizationPlanTask,
 } from "../../api/runtime";
@@ -26,6 +28,7 @@ import type {
   FeedbackOptimizationPlanTaskRecord,
   FeedbackSourceRef,
 } from "../../types/feedback";
+import type { AgentRepositoryStatus } from "../../types/runtime";
 import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
   shortId,
@@ -37,7 +40,9 @@ type StateSetter<T> = Dispatch<SetStateAction<T>>;
 
 const TERMINAL_AGENT_JOB_STATUSES = new Set(["completed", "failed", "needs_human_review", "timeout"]);
 const AGENT_JOB_POLL_INTERVAL_MS = 1500;
-const AGENT_JOB_POLL_ATTEMPTS = 80;
+const DEFAULT_AGENT_JOB_POLL_WINDOW_MS = 120_000;
+const MAX_AGENT_JOB_POLL_WINDOW_MS = 330_000;
+const AGENT_JOB_POLL_TIMEOUT_BUFFER_SECONDS = 30;
 
 function delay(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -78,10 +83,13 @@ export function useFeedbackWorkspaceActions({
   async function waitForAgentJob(jobId?: string | null) {
     if (!jobId) return null;
     let latest: AgentJobRecord | null = null;
-    for (let attempt = 0; attempt < AGENT_JOB_POLL_ATTEMPTS; attempt += 1) {
+    const startedAt = Date.now();
+    let deadline = startedAt + DEFAULT_AGENT_JOB_POLL_WINDOW_MS;
+    while (Date.now() < deadline) {
       latest = await getAgentJob(clientConfig, jobId);
       if (TERMINAL_AGENT_JOB_STATUSES.has(String(latest.status))) return latest;
-      await delay(AGENT_JOB_POLL_INTERVAL_MS);
+      deadline = Math.max(deadline, startedAt + pollWindowMs(latest));
+      await delay(Math.min(AGENT_JOB_POLL_INTERVAL_MS, Math.max(deadline - Date.now(), 0)));
     }
     return latest;
   }
@@ -191,9 +199,15 @@ export function useFeedbackWorkspaceActions({
         batch.batch_id,
         instruction ? { regeneration_instruction: instruction } : undefined,
       );
-      const completed = await waitForAgentJob(job.job_id);
-      setToast(`${batch.optimization_plan ? "重新生成优化方案" : "优化方案生成"} ${completed?.status || job.status}：${shortId(job.job_id)}`);
       setSelectedBatchId(batch.batch_id);
+      await refreshWorkbench();
+      const completed = await waitForAgentJob(job.job_id);
+      const status = String(completed?.status || job.status || "");
+      if (!TERMINAL_AGENT_JOB_STATUSES.has(status)) {
+        setToast(`优化方案仍在后台处理中 ${status || "running"}：${shortId(job.job_id)}`);
+      } else {
+        setToast(`${batch.optimization_plan ? "重新生成优化方案" : "优化方案生成"} ${status}：${shortId(job.job_id)}`);
+      }
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
@@ -247,6 +261,47 @@ export function useFeedbackWorkspaceActions({
     } catch (error) {
       setToast(error instanceof Error ? error.message : "一键执行优化方案失败");
       await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function discardAgentWorkspaceChanges(repository: AgentRepositoryStatus | null | undefined) {
+    const paths = repositoryChangedPaths(repository);
+    if (!paths.length) {
+      setToast("Main Agent workspace 当前没有需要丢弃的未提交改动");
+      return;
+    }
+    setActionId("agent-repository:discard");
+    try {
+      await discardAgentRepositoryChanges(clientConfig, { paths });
+      setToast(`已丢弃 Main Agent workspace 的 ${paths.length} 个未提交改动`);
+      await onRefreshVersions?.();
+      await refreshWorkbench();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "丢弃 Main Agent workspace 改动失败");
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function saveAgentWorkspaceSnapshot(repository: AgentRepositoryStatus | null | undefined) {
+    const paths = repositoryChangedPaths(repository);
+    if (!paths.length) {
+      setToast("Main Agent workspace 当前没有需要保存的未提交改动");
+      return;
+    }
+    setActionId("agent-repository:snapshot");
+    try {
+      const version = await snapshotAgentRepository(clientConfig, {
+        operator: "ui",
+        note: `保存一键执行前 Main Agent workspace 的 ${paths.length} 个未提交改动。`,
+      });
+      setToast(`已保存 Main Agent workspace 为版本 ${shortId(version.agent_version_id)}`);
+      await onRefreshVersions?.();
+      await refreshWorkbench();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "保存 Main Agent workspace 版本失败");
     } finally {
       setActionId(null);
     }
@@ -387,6 +442,8 @@ export function useFeedbackWorkspaceActions({
     openBatchPlanGeneration,
     submitBatchPlanGeneration,
     executeBatchPlanAll,
+    discardAgentWorkspaceChanges,
+    saveAgentWorkspaceSnapshot,
     rollbackBatchExecution,
     executePlanTask,
     updatePlanTask,
@@ -396,4 +453,18 @@ export function useFeedbackWorkspaceActions({
     archiveBatchEvalCase,
     removeBatchEvalCase,
   };
+}
+
+function repositoryChangedPaths(repository: AgentRepositoryStatus | null | undefined): string[] {
+  const files = Array.isArray(repository?.changed_files) ? repository.changed_files : [];
+  return files
+    .map((item) => item?.path)
+    .filter((path): path is string => typeof path === "string" && Boolean(path));
+}
+
+function pollWindowMs(job: AgentJobRecord): number {
+  const timeoutSeconds = Number(job.timeout_seconds || 0);
+  if (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0) return DEFAULT_AGENT_JOB_POLL_WINDOW_MS;
+  const withBuffer = (timeoutSeconds + AGENT_JOB_POLL_TIMEOUT_BUFFER_SECONDS) * 1000;
+  return Math.min(MAX_AGENT_JOB_POLL_WINDOW_MS, Math.max(DEFAULT_AGENT_JOB_POLL_WINDOW_MS, withBuffer));
 }

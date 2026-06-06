@@ -40,8 +40,8 @@
 # ## 旧设计申辩拦截
 #
 # 当问题暴露为产品页面空状态、错误详情未投影、重复 job、重复提示词、重复输出 schema、
-# DSPy Signature 与提示词双重约束、OpenAPI/前端类型残留旧入口、formatter/normalizer 双轨、
-# 单/批次工作流分支重复或历史数据参与主流程时，默认视为设计质量问题。
+# 结构化输出契约与提示词双重约束、OpenAPI/前端类型残留旧入口、formatter/normalizer 双轨、
+# 多工作流分支重复或历史数据参与主流程时，默认视为设计质量问题。
 #
 # 分析和计划必须覆盖：
 #
@@ -52,21 +52,38 @@
 #
 # 不得把“旧逻辑本来就是这样”“为了兼容所以保留”“先小修一下”作为默认结论。
 #
+# ## 文档术语实体化拦截
+#
+# 设计文档、需求说明或治理方案中的能力词不能直接映射为 UI 按钮、状态机、job、
+# API 路由或 schema 字段。出现“批准”“拒绝”“执行方案”“可审计”“可应用”“可回滚”
+# 等会诱导多入口或多阶段流程的词时，必须先判断它们表达的是用户决策、系统内部过程，
+# 还是审计记录诉求。
+#
+# 分析和计划必须覆盖：
+#
+# - 用户旅程：用户要完成的任务、最短路径和必须主动决策的节点。
+# - 动作替代：是否可用已有确认、执行、编辑、重新生成、撤销或回滚动作表达同一意图。
+# - 记录化审计：diff、快照、日志、事件、版本和结果详情是否足以承载可审计、可追踪或可回滚诉求。
+# - 对象必要性：每个新增按钮、状态、job、API 或 schema 字段是否有明确用户动作支撑。
+#
+# 如果只是为了让内部治理概念显式可见，不得新增用户流程；优先把信息落到记录、详情、
+# 事件或审计视图中。
+#
 # ## Typed Output 单一契约
 #
-# 当 DSPy Signature 的 OutputField 指向 Pydantic 模型，或运行时已经有明确 OutputModel /
+# 当结构化输出框架的输出字段指向 Pydantic/typed 模型，或运行时已经有明确 OutputModel /
 # Record / Response model 时，typed model 是默认结构契约。不得在主流程中继续用裸 dict、
 # `JsonObject`、`schema_version` 字符串、提示词格式要求或 normalizer 作为并行契约。
 #
 # 计划必须说明 typed model 的流转边界：
 #
 # - 内部：formatter、runner、orchestrator、store completion 优先传递 Pydantic model 实例。
-# - 边界：SQLite JSON、HTTP response、临时文件、日志和 Langfuse metadata 才允许 `model_dump(mode="json")`。
+# - 边界：SQLite JSON、HTTP response、临时文件、日志和观测 metadata 才允许 `model_dump(mode="json")`。
 # - 兼容：normalizer 只用于历史数据、外部脏输入或测试 fixture 迁移；不得参与新主流程。
 # - 版本：没有外部协议、多版本运行时、历史 payload 迁移需求时，不得新增 Agent 输出 schema version。
 #
 # 新增 job/profile/output 类型必须优先进入集中注册表，注册表至少声明 job type、profile、
-# prompt builder、DSPy Signature 和 OutputModel；不得再让这些信息散落在多个 if/else 分支。
+# prompt builder、结构化输出契约和 OutputModel；不得再让这些信息散落在多个 if/else 分支。
 #
 # Formatter 输出、投影输出和序列化 payload 必须在类型注解中保持阶段边界：
 #
@@ -77,15 +94,15 @@
 #
 # ## Agent 输出字段所有权
 #
-# 涉及 Agent、DSPy formatter、LLM 输出格式化或提示词输出要求时，计划必须先列字段所有权矩阵：
+# 涉及 Agent、结构化 formatter、LLM 输出格式化或提示词输出要求时，计划必须先列字段所有权矩阵：
 #
 # - backend-owned：可由 job input、DB row、route 参数、store context、scheduler context
-#   或确定性 projection 得到的字段，例如 job_id、batch_id、case ids、时间戳、scope、
+#   或确定性 projection 得到的字段，例如 job_id、workflow_id、case ids、时间戳、scope、
 #   provenance、eval run、gate result、task execution id。prompt 和 Signature 不得要求 LLM
 #   输出这类字段；如外部脏输出包含这类字段，后端必须覆盖或忽略。
 # - agent-owned：只有 Agent 结果才能提供的业务语义，例如分析结论、优化动作、业务假设、
 #   风险说明、证据摘要和建议。这类字段才允许进入 Agent 输出契约。
-# - boundary-owned：SQLite JSON、HTTP response、临时文件、日志、Langfuse metadata 等
+# - boundary-owned：SQLite JSON、HTTP response、临时文件、日志、观测 metadata 等
 #   序列化边界字段。`model_dump(mode="json")` 只应出现在这些边界。
 #
 # backend-owned 字段可以作为 formatter 输入上下文用于 grounding，但不能作为 Agent 输出结构的一部分。
@@ -93,7 +110,7 @@
 #
 # ## 内部治理动作分类
 #
-# 反馈闭环、Agent job 或批次优化方案中，如果自然语言任务描述的是后端已经能确定、验证并执行的治理动作，
+# 用户可见工作流、Agent job 或自动化方案中，如果自然语言任务描述的是后端已经能确定、验证并执行的治理动作，
 # 必须优先建模为 typed internal action，而不是伪装成 workspace patch、external webhook，或因为缺少
 # workspace target_path 直接降级为 blocked。
 #
@@ -101,7 +118,7 @@
 #
 # - action 名称、允许的 target_type、必填输入字段和后端权威字段。
 # - 与 workspace_execution、external_webhook、blocked 的分类边界。
-# - 权限与作用域校验，例如 ID 必须属于当前 batch/case/job/scope。
+# - 权限与作用域校验，例如 ID 必须属于当前 workflow/case/job/scope。
 # - 状态变更、审计事件、revision 或 governance event 的写入位置。
 # - all-or-nothing 事务边界和失败投影到 task/job/API/UI 的方式。
 # - 对应的 hostile 输入、越权输入或部分失败负向测试。

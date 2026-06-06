@@ -2,6 +2,10 @@ import asyncio
 import logging
 
 import pytest
+from app.runtime.agent_job_types import agent_job_spec
+from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
+from app.runtime.runtime_db import AgentJobModel
+from app.services.agent_job_worker import AgentJobWorker
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -11,19 +15,12 @@ from feedback_store_test_utils import (
     _record_run,
     _store,
 )
-from app.runtime.agent_job_types import agent_job_spec
-from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
-from app.runtime.runtime_db import AgentJobModel
-from app.services.agent_job_worker import AgentJobWorker
 
 
 def test_unified_agent_job_schema_drops_legacy_job_tables(tmp_path):
     store, _ = _store(tmp_path)
     with store.Session() as db:
-        table_names = {
-            str(row[0])
-            for row in db.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).all()
-        }
+        table_names = {str(row[0]) for row in db.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).all()}
 
     assert "agent_jobs" in table_names
     assert "execution_applications" in table_names
@@ -109,6 +106,7 @@ def test_agent_job_worker_logs_claim_and_runtime_failure(tmp_path, caplog):
         feedback_store=store,
         run_profile_json=fail_runtime,
         poll_interval_seconds=0,
+        worker_instance="test-worker",
     )
 
     result = asyncio.run(worker.run_once())
@@ -118,8 +116,56 @@ def test_agent_job_worker_logs_claim_and_runtime_failure(tmp_path, caplog):
     assert result.error_json is not None
     assert result.status == "failed"
     assert result.error_json.error_code == "AGENT_RUNTIME_ERROR"
-    assert "agent job claimed job_id=evg-worker-fails" in messages
-    assert "agent job failed job_id=evg-worker-fails" in messages
+    assert "event=agent_job.claimed" in messages
+    assert "event=agent_job.failed" in messages
+    assert "job_id=evg-worker-fails" in messages
+    assert "error_code=AGENT_RUNTIME_ERROR" in messages
+    assert "worker_instance=test-worker" in messages
+    assert "input_json" not in messages
+    assert "raw_output" not in messages
+
+
+def test_agent_job_worker_logs_stale_timeout(tmp_path, caplog):
+    store, _ = _store(tmp_path)
+    spec = agent_job_spec("eval_case_generation")
+    store.create_agent_job(
+        job_id="evg-worker-stale",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
+    )
+    claimed = store.claim_next_agent_job()
+    assert claimed is not None
+    with store.Session.begin() as db:
+        row = db.get(AgentJobModel, claimed["job_id"])
+        assert row is not None
+        row.started_at = "2026-01-01T00:00:00+00:00"
+        row.timeout_seconds = 1
+
+    async def unused_runtime(**_kwargs):
+        raise AssertionError("stale timeout scan should not run queued job")
+
+    caplog.set_level(logging.INFO, logger="app.services.agent_job_worker")
+    worker = AgentJobWorker(
+        feedback_store=store,
+        run_profile_json=unused_runtime,
+        poll_interval_seconds=0,
+        worker_instance="test-worker",
+    )
+
+    result = asyncio.run(worker.run_once())
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert result is None
+    assert "event=agent_job.stale_timeout" in messages
+    assert "job_id=evg-worker-stale" in messages
+    assert "status=timeout" in messages
+    assert "error_code=AGENT_TIMEOUT" in messages
+    assert "worker_instance=test-worker" in messages
+    assert "input_json" not in messages
+    assert "raw_output" not in messages
 
 
 def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path):

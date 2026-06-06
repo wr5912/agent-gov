@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -19,6 +19,8 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentGitRefResponse,
     AgentReleaseResponse,
     AgentReleaseRollbackRequest,
+    AgentRepositoryDiscardChangesRequest,
+    AgentRepositorySnapshotRequest,
     AgentRepositoryStatusResponse,
 )
 from app.runtime.schemas import EvalRunResponse
@@ -49,6 +51,22 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
     )
     async def get_agent_repository_status() -> AgentRepositoryStatusResponse:
         return agent_governance.repository_status()
+
+    @router.post(
+        "/agent-repository/discard-changes",
+        response_model=AgentRepositoryStatusResponse,
+        summary="Discard confirmed uncommitted changes from the main Agent workspace",
+    )
+    async def discard_agent_repository_changes(req: AgentRepositoryDiscardChangesRequest) -> AgentRepositoryStatusResponse:
+        return agent_governance.discard_repository_changes(req.paths)
+
+    @router.post(
+        "/agent-repository/snapshot",
+        response_model=AgentGitRefResponse,
+        summary="Save current main Agent workspace as an Agent version",
+    )
+    async def snapshot_agent_repository(req: AgentRepositorySnapshotRequest) -> AgentGitRefResponse:
+        return agent_governance.snapshot_repository(operator=req.operator, note=req.note)
 
     @router.get(
         "/agent-repository/current",

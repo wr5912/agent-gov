@@ -65,6 +65,8 @@ export function ExternalFeedbackWorkspace({
     openBatchPlanGeneration,
     submitBatchPlanGeneration,
     executeBatchPlanAll,
+    discardAgentWorkspaceChanges,
+    saveAgentWorkspaceSnapshot,
     rollbackBatchExecution,
     executePlanTask,
     updatePlanTask,
@@ -139,10 +141,12 @@ export function ExternalFeedbackWorkspace({
             clientConfig={clientConfig}
             evalCases={data.eval_cases}
             externalWebhooks={data.external_webhooks}
+            agentRepository={agentRepository || null}
             selectedBatch={selectedBatch}
             sources={data.sources}
             onArchiveEvalCase={archiveBatchEvalCase}
             onCreateEvalCase={createBatchEvalCase}
+            onDiscardAgentWorkspaceChanges={discardAgentWorkspaceChanges}
             onExecuteBatchPlanAll={executeBatchPlanAll}
             onExecutePlanTask={executePlanTask}
             onGeneratePlan={openBatchPlanGeneration}
@@ -150,6 +154,7 @@ export function ExternalFeedbackWorkspace({
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
             onRollbackBatchExecution={rollbackBatchExecution}
+            onSaveAgentWorkspaceSnapshot={saveAgentWorkspaceSnapshot}
             onSelectBatch={(batch) => setSelectedBatchId(batch.batch_id)}
             onUpdateEvalCase={updateBatchEvalCase}
             onUpdatePlanTask={updatePlanTask}

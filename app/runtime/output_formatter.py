@@ -147,6 +147,8 @@ class DSPyOutputFormatter:
             kwargs["api_key"] = self.settings.provider_api_key
         if self.settings.provider_api_url:
             kwargs["api_base"] = self.settings.provider_api_url
+        if self.settings.dspy_output_formatter_max_tokens > 0:
+            kwargs["max_tokens"] = self.settings.dspy_output_formatter_max_tokens
         try:
             self._lm = dspy.LM(model=model, **kwargs)
         except TypeError:

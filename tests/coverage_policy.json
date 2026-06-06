@@ -62,17 +62,18 @@
         },
         {
           "id": "batch_plan_one_click_execution",
-          "description": "One-click execution runs all actionable plan tasks, creates one Agent version for workspace tasks, rejects unsafe inputs, and can roll back to the pre-execution version.",
+          "description": "One-click execution runs all actionable plan tasks, creates one Agent version for workspace tasks, rejects unsafe inputs and dirty workspace preflight, and can roll back to the pre-execution version.",
           "pytest": [
             "tests/test_batch_plan_execute_all.py::test_execute_all_workspace_tasks_creates_one_agent_version",
             "tests/test_batch_plan_execute_all.py::test_execute_all_rejects_invalid_task_before_creating_run",
+            "tests/test_batch_plan_execute_all.py::test_execute_all_rejects_dirty_workspace_before_creating_run",
             "tests/test_batch_plan_execute_all.py::test_execute_all_requires_webhook_alias_for_external_tasks",
             "tests/test_batch_plan_execute_all.py::test_rollback_execute_all_resets_workspace_task_projection"
           ]
         },
         {
           "id": "plan_tab_empty_success_failure_states",
-          "description": "Optimization plan tab renders empty state, generated plan, generation failure details, editable plan task states, one-click execution controls, and execution record details.",
+          "description": "Optimization plan tab renders empty state, generated plan, generation failure and timeout details including background job refresh, editable plan task states, dirty workspace preflight, one-click execution controls, and execution record details.",
           "ui_scripts": [
             "verify:feedback-ui-states"
           ]

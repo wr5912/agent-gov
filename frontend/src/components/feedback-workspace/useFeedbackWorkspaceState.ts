@@ -3,7 +3,7 @@ import {
   getFeedbackWorkbenchData,
   runtimeApi,
 } from "../../api/runtime";
-import type { FeedbackWorkbenchData } from "../../types/feedback";
+import type { AgentJobRecord, FeedbackWorkbenchData } from "../../types/feedback";
 import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
   buildSourceRows,
@@ -42,7 +42,7 @@ const EMPTY_WORKBENCH: FeedbackWorkbenchData = {
   optimization_batches: [],
 };
 
-const EVAL_CASE_GENERATION_TERMINAL_STATUSES = new Set(["completed", "failed", "needs_human_review", "timeout"]);
+const TERMINAL_BATCH_JOB_STATUSES = new Set(["completed", "failed", "needs_human_review", "timeout"]);
 const BATCH_BACKGROUND_REFRESH_INTERVAL_MS = 2500;
 
 export function useFeedbackWorkspaceState({
@@ -87,7 +87,7 @@ export function useFeedbackWorkspaceState({
   }, [refreshWorkbench, refreshToken]);
 
   useEffect(() => {
-    if (activeMenu !== "batches" || !hasActiveBatchEvalCaseGenerationJob(data)) return undefined;
+    if (activeMenu !== "batches" || !hasActiveBatchBackgroundJob(data)) return undefined;
     let refreshing = false;
     const intervalId = window.setInterval(() => {
       if (refreshing) return;
@@ -178,11 +178,22 @@ export function useFeedbackWorkspaceState({
   };
 }
 
-function hasActiveBatchEvalCaseGenerationJob(data: FeedbackWorkbenchData): boolean {
-  return data.optimization_batches.some((batch) => {
-    const jobId = batch.eval_case_generation_job?.job_id || batch.eval_case_generation_job_id;
-    if (!jobId) return false;
-    const status = String(batch.eval_case_generation_job?.status || "");
-    return !EVAL_CASE_GENERATION_TERMINAL_STATUSES.has(status);
-  });
+function hasActiveBatchBackgroundJob(data: FeedbackWorkbenchData): boolean {
+  return data.optimization_batches.some(
+    (batch) =>
+      hasActiveJobRef(batch.eval_case_generation_job, batch.eval_case_generation_job_id) ||
+      hasActiveJobRef(batch.optimization_plan_job, batch.optimization_plan_job_id) ||
+      (batch.attribution_jobs || []).some(isActiveJob) ||
+      hasActiveJobRef(batch.execution_job, batch.execution_job_id) ||
+      hasActiveJobRef(batch.optimization_task?.latest_execution_job, batch.optimization_task?.latest_execution_job_id),
+  );
+}
+
+function hasActiveJobRef(job?: AgentJobRecord | null, jobId?: string | null): boolean {
+  if (!job?.job_id && !jobId) return false;
+  return job ? isActiveJob(job) : true;
+}
+
+function isActiveJob(job: AgentJobRecord): boolean {
+  return !TERMINAL_BATCH_JOB_STATUSES.has(String(job.status || ""));
 }

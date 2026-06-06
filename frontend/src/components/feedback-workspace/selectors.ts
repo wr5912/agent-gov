@@ -518,9 +518,9 @@ export function taskSourceId(task: OptimizationTaskRecord): string | null {
 
 export function taskStatusDescription(status?: string | null): string {
   if (status === "pending_execution") return "当前任务已创建，等待人工或后续 patch 执行；系统尚未自动修改文件。";
-  if (status === "execution_planning") return "执行优化智能体正在生成受控执行方案，尚未修改文件。";
-  if (status === "execution_ready") return "执行方案已生成，等待确认应用。";
-  if (status === "execution_failed") return "执行方案生成或应用失败，需要重新生成或人工复核。";
+  if (status === "execution_planning") return "执行优化智能体正在处理任务，尚未完成文件变更。";
+  if (status === "execution_ready") return "任务执行记录已生成，等待后续处理。";
+  if (status === "execution_failed") return "任务执行失败，需要重新执行或人工复核。";
   if (status === "applied_pending_regression") return "当前任务已确认应用并创建主智能体版本快照，等待手动回归验证。";
   if (status === "regression_running") return "当前任务正在运行回归验证。";
   if (status === "completed") return "当前任务已完成。";

@@ -77,7 +77,9 @@ function attributionJob() {
   };
 }
 
-function optimizationPlan() {
+function optimizationPlan(edit = {}) {
+  const taskTitle = edit.title || "补充工作区配置核查指令";
+  const taskDescription = edit.description || "在回答工作区配置类问题前读取当前配置文件。";
   return {
     optimization_plan_id: "fop-ui-state",
     status: "pending_approval",
@@ -101,7 +103,8 @@ function optimizationPlan() {
         actionability: "direct_workspace_change",
         target_type: "main_agent_claude_md",
         target_path: "CLAUDE.md",
-        title: "补充工作区配置核查指令",
+        title: taskTitle,
+        description: taskDescription,
         objective: "要求回答配置类问题前读取当前配置。",
         recommendation: "向 CLAUDE.md 增加配置核查要求。",
         expected_effect: "减少基于记忆回答导致的信息缺失。",
@@ -114,13 +117,70 @@ function optimizationPlan() {
   };
 }
 
-function batchForState(state) {
+function executionRun(status = "completed") {
+  const rolledBack = status === "rolled_back";
+  return {
+    schema_version: "feedback-batch-execution-run/v1",
+    execution_run_id: "fbx-ui-state",
+    batch_id: "fob-ui-state",
+    created_at: timestamp(),
+    started_at: timestamp(),
+    completed_at: timestamp(),
+    status,
+    force: true,
+    pre_execution_agent_version_id: "agent-before-ui",
+    pre_execution_agent_version: { agent_version_id: "agent-before-ui", created_at: timestamp(), reason: "batch_execution_base" },
+    applied_agent_version_id: "agent-after-ui",
+    applied_agent_version: { agent_version_id: "agent-after-ui", created_at: timestamp(), reason: "batch_candidate_change_set" },
+    applied_diff: {
+      from_version_id: "agent-before-ui",
+      to_version_id: "agent-after-ui",
+      added: [],
+      modified: [{ path: "CLAUDE.md", before: {}, after: {} }],
+      deleted: [],
+      unchanged_count: 0,
+    },
+    change_set_id: "agc-ui-state",
+    candidate_commit_sha: "agent-after-ui",
+    task_results: [
+      {
+        plan_task_id: "fopt-ui-state",
+        execution_kind: "workspace_execution",
+        status: "completed",
+        started_at: timestamp(),
+        completed_at: timestamp(),
+        optimization_task_id: "opt-ui-state",
+        execution_job_id: "fbe-ui-state",
+        applied_agent_version_id: "agent-after-ui",
+      },
+    ],
+    warnings: [],
+    rollback_result: rolledBack
+      ? {
+          restored_at: timestamp(),
+          status: "restored",
+          target_agent_version_id: "agent-before-ui",
+          restore_result: { current_version: { agent_version_id: "agent-before-ui" } },
+        }
+      : null,
+  };
+}
+
+function batchForState(state, edit = {}) {
   const failed = state === "failed";
-  const success = state === "success";
+  const success = state === "success" || state === "executed" || state === "rolled_back";
+  const run = state === "executed" ? executionRun("completed") : state === "rolled_back" ? executionRun("rolled_back") : null;
+  const plan = success ? optimizationPlan(edit) : null;
+  if (state === "executed" && plan?.tasks?.[0]) {
+    plan.tasks[0].status = "applied_pending_regression";
+    plan.tasks[0].applied_agent_version_id = "agent-after-ui";
+    plan.tasks[0].optimization_task_id = "opt-ui-state";
+    plan.tasks[0].execution_job_id = "fbe-ui-state";
+  }
   return {
     batch_id: "fob-ui-state",
     title: batchTitle,
-    status: success ? "pending_approval" : failed ? "needs_human_review" : "attribution_completed",
+    status: state === "executed" ? "applied_pending_regression" : state === "rolled_back" ? "pending_execution" : success ? "pending_approval" : failed ? "needs_human_review" : "attribution_completed",
     priority: "medium",
     source_refs: [{ source_kind: "signal", source_id: "fbs-ui-state" }],
     feedback_case_ids: ["fbc-ui-state"],
@@ -131,15 +191,18 @@ function batchForState(state) {
     optimization_plan_job_id: state === "empty" ? null : "fbp-ui-state",
     optimization_plan_job: state === "empty" ? null : agentJob(state),
     optimization_plan_error: failed ? planError() : null,
-    optimization_plan: success ? optimizationPlan() : null,
+    optimization_plan: plan,
     optimization_task: null,
     execution_job: null,
+    latest_execution_run: run,
+    execution_runs: run ? [run] : [],
     created_at: timestamp(),
     updated_at: timestamp(),
   };
 }
 
-function apiPayload(path, state) {
+function apiPayload(path, stateRef) {
+  const state = stateRef.value;
   if (path === "/health") return { status: "ok", model: "ui-state-mock" };
   if (path === "/api/sessions") return [];
   if (path === "/api/agents") return [];
@@ -160,7 +223,7 @@ function apiPayload(path, state) {
   if (path === "/api/external-governance-webhooks") return [];
   if (path === "/api/eval-cases") return [];
   if (path === "/api/eval-runs") return [];
-  if (path === "/api/feedback-optimization-batches") return [batchForState(state)];
+  if (path === "/api/feedback-optimization-batches") return [batchForState(state, stateRef.edit || {})];
   if (path === "/api/agent-jobs/fbp-ui-state") return agentJob(state);
   return {};
 }
@@ -233,13 +296,65 @@ async function verifyGenerationTransition(page, stateRef, targetState) {
   await page.getByText("tasks.0.execution_kind").first().waitFor({ timeout: 15_000 });
 }
 
+async function verifyPlanTaskEditSuccess(page, stateRef) {
+  stateRef.value = "success";
+  stateRef.edit = {};
+  stateRef.editPatchCount = 0;
+  await openPlanTab(page, batchTitle);
+  await page.getByRole("button", { name: "编辑" }).first().click();
+  await page.getByLabel("标题").fill("人工编辑后的优化任务");
+  await page.getByLabel("描述").fill("人工修订后的任务说明。");
+  await page.getByRole("button", { name: "保存" }).click();
+  await page.getByText("人工编辑后的优化任务").first().waitFor({ timeout: 15_000 });
+  await page.getByText("人工修订后的任务说明。").first().waitFor({ timeout: 15_000 });
+  if (stateRef.editPatchCount !== 1) {
+    throw new Error(`Expected one edit PATCH request, got ${stateRef.editPatchCount}`);
+  }
+}
+
+async function verifyPlanTaskEditInvalidJson(page, stateRef) {
+  stateRef.value = "success";
+  stateRef.edit = {};
+  stateRef.editPatchCount = 0;
+  await openPlanTab(page, batchTitle);
+  await page.getByRole("button", { name: "编辑" }).first().click();
+  await page.getByLabel("任务上下文").fill("{bad-json");
+  await page.getByRole("button", { name: "保存" }).click();
+  await page.locator(".fw-job-error").getByText(/JSON|Unexpected|Expected/).waitFor({ timeout: 15_000 });
+  if (stateRef.editPatchCount !== 0) {
+    throw new Error(`Invalid JSON should not call edit API, got ${stateRef.editPatchCount}`);
+  }
+}
+
+async function verifyOneClickExecutionAndRollback(page, stateRef) {
+  stateRef.value = "success";
+  stateRef.executeAllCount = 0;
+  stateRef.rollbackCount = 0;
+  await openPlanTab(page, batchTitle);
+  await page.getByRole("button", { name: "一键执行" }).click();
+  await page.getByText("Agent 优化结果").first().waitFor({ timeout: 15_000 });
+  await page.getByText("completed").first().waitFor({ timeout: 15_000 });
+  await page.getByText("查看快照和原始记录", { exact: true }).click();
+  await page.getByText("agent-after-ui").first().waitFor({ timeout: 15_000 });
+  await page.getByText("CLAUDE.md").first().waitFor({ timeout: 15_000 });
+  await page.getByText("高级操作", { exact: true }).first().waitFor({ timeout: 15_000 });
+  await page.getByRole("button", { name: "回滚" }).click();
+  await page.getByText("rolled_back").first().waitFor({ timeout: 15_000 });
+  if (stateRef.executeAllCount !== 1) {
+    throw new Error(`Expected one execute-all request, got ${stateRef.executeAllCount}`);
+  }
+  if (stateRef.rollbackCount !== 1) {
+    throw new Error(`Expected one rollback request, got ${stateRef.rollbackCount}`);
+  }
+}
+
 async function main() {
   const server = startVite();
   try {
     await waitForVite();
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    const stateRef = { value: "empty", next: "success" };
+    const stateRef = { value: "empty", next: "success", edit: {}, editPatchCount: 0, executeAllCount: 0, rollbackCount: 0 };
     await page.addInitScript(
       ({ apiBaseValue }) => {
         window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: apiBaseValue, apiKey: "" }));
@@ -253,8 +368,37 @@ async function main() {
         stateRef.value = stateRef.next;
         return json(route, agentJob(stateRef.value));
       }
+      if (route.request().method() === "PATCH" && url.pathname === "/api/feedback-optimization-batches/fob-ui-state/optimization-plan/tasks/fopt-ui-state") {
+        const payload = route.request().postDataJSON();
+        stateRef.value = "success";
+        stateRef.editPatchCount += 1;
+        stateRef.edit = {
+          title: payload.title || "补充工作区配置核查指令",
+          description: payload.description || "在回答工作区配置类问题前读取当前配置文件。",
+        };
+        const batch = batchForState("success", stateRef.edit);
+        return json(route, {
+          batch,
+          plan_task: batch.optimization_plan.tasks[0],
+          optimization_task: null,
+          invalidated_execution_job_ids: ["fbe-stale-ui"],
+          external_item: null,
+        });
+      }
+      if (route.request().method() === "POST" && url.pathname === "/api/feedback-optimization-batches/fob-ui-state/optimization-plan/execute-all") {
+        stateRef.executeAllCount += 1;
+        stateRef.value = "executed";
+        const batch = batchForState("executed", stateRef.edit || {});
+        return json(route, { batch, execution_run: batch.latest_execution_run });
+      }
+      if (route.request().method() === "POST" && url.pathname === "/api/feedback-optimization-batches/fob-ui-state/optimization-plan/executions/fbx-ui-state/rollback") {
+        stateRef.rollbackCount += 1;
+        stateRef.value = "rolled_back";
+        const batch = batchForState("rolled_back", stateRef.edit || {});
+        return json(route, { batch, execution_run: batch.latest_execution_run });
+      }
       if (url.origin === apiBase || url.pathname.startsWith("/api/") || url.pathname === "/health") {
-        return json(route, apiPayload(url.pathname, stateRef.value));
+        return json(route, apiPayload(url.pathname, stateRef));
       }
       return route.continue();
     });
@@ -262,13 +406,16 @@ async function main() {
       await verifyInitialEmptyState(page, stateRef);
       await verifyGenerationTransition(page, stateRef, "success");
       await verifyGenerationTransition(page, stateRef, "failed");
+      await verifyPlanTaskEditSuccess(page, stateRef);
+      await verifyPlanTaskEditInvalidJson(page, stateRef);
+      await verifyOneClickExecutionAndRollback(page, stateRef);
     } finally {
       await browser.close();
     }
   } finally {
     await stopChild(server);
   }
-  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "edit_success", "edit_invalid_json", "execute_all", "rollback"] }, null, 2));
 }
 
 main().catch((error) => {

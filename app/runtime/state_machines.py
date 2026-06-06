@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Mapping
+from collections.abc import Mapping
 
 from .errors import FeedbackStoreError
 
@@ -230,11 +230,29 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
             "sent",
             "notification_failed",
             "blocked",
+            "completed",
         },
-        "execution_ready": {"applied_pending_regression", "execution_failed", "needs_human_review", "failed"},
-        "needs_human_review": {"draft", "attribution_running", "optimization_plan_queued", "pending_approval", "execution_planning", "failed"},
-        "failed": {"execution_planning", "regression_running", "applied_pending_regression"},
-        "applied_pending_regression": {"regression_running", "regression_passed", "regression_failed", "completed", "failed", "needs_human_review", "blocked"},
+        "execution_ready": {"pending_execution", "execution_planning", "applied_pending_regression", "execution_failed", "needs_human_review", "failed"},
+        "needs_human_review": {
+            "draft",
+            "attribution_running",
+            "optimization_plan_queued",
+            "pending_approval",
+            "pending_execution",
+            "execution_planning",
+            "failed",
+        },
+        "failed": {"pending_execution", "execution_planning", "regression_running", "applied_pending_regression"},
+        "applied_pending_regression": {
+            "pending_execution",
+            "regression_running",
+            "regression_passed",
+            "regression_failed",
+            "completed",
+            "failed",
+            "needs_human_review",
+            "blocked",
+        },
         "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review", "blocked"},
         "regression_passed": {"completed"},
         "regression_failed": {"regression_running", "failed", "completed", "needs_human_review"},
@@ -243,16 +261,16 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "sent": {"notification_failed", "pending_approval", "execution_planning"},
         "notification_failed": {"sent", "pending_approval", "execution_planning", "needs_human_review"},
         "pending_execution": {"execution_planning", "execution_ready", "execution_failed", "applied_pending_regression", "failed"},
-        "execution_failed": {"execution_planning", "failed", "needs_human_review"},
+        "execution_failed": {"pending_execution", "execution_planning", "failed", "needs_human_review"},
     },
     "task": {
         "pending_execution": {"execution_planning", "execution_ready", "needs_human_review", "failed", "execution_failed", "applied_pending_regression"},
         "execution_planning": {"execution_planning", "execution_ready", "needs_human_review", "failed", "execution_failed", "applied_pending_regression"},
-        "execution_ready": {"applied_pending_regression", "execution_failed", "failed", "needs_human_review"},
-        "needs_human_review": {"execution_planning", "execution_ready", "failed", "execution_failed", "applied_pending_regression"},
-        "failed": {"execution_planning", "regression_running", "applied_pending_regression"},
-        "execution_failed": {"execution_planning", "failed", "needs_human_review"},
-        "applied_pending_regression": {"regression_running", "regression_passed", "regression_failed", "completed", "failed"},
+        "execution_ready": {"pending_execution", "applied_pending_regression", "execution_failed", "failed", "needs_human_review"},
+        "needs_human_review": {"pending_execution", "execution_planning", "execution_ready", "failed", "execution_failed", "applied_pending_regression"},
+        "failed": {"pending_execution", "execution_planning", "regression_running", "applied_pending_regression"},
+        "execution_failed": {"pending_execution", "execution_planning", "failed", "needs_human_review"},
+        "applied_pending_regression": {"pending_execution", "regression_running", "regression_passed", "regression_failed", "completed", "failed"},
         "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review"},
         "regression_passed": {"completed"},
         "regression_failed": {"regression_running", "failed", "completed", "needs_human_review"},
@@ -284,8 +302,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "superseded": set(),
     },
     "external_governance_item": {
-        "pending_notification": {"notified", "notification_failed", "superseded"},
-        "notification_failed": {"notified", "notification_failed", "superseded"},
+        "pending_notification": {"pending_notification", "notified", "notification_failed", "superseded"},
+        "notification_failed": {"pending_notification", "notified", "notification_failed", "superseded"},
         "notified": {"notified", "notification_failed", "superseded"},
         "superseded": set(),
     },

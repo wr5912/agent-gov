@@ -19,6 +19,7 @@ from ..records.batch_plan_records import (
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
 )
+from ..response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationPlanTaskExecuteResponse
 from ..runtime_db import utc_now
 
 BATCH_PLAN_ACTIVE_JOB_STATUSES = {"created", "queued", "running", "schema_validating", "evidence_packaging"}
@@ -294,6 +295,9 @@ class FeedbackBatchPlanStoreMixin:
         existing_task_id = self._string(plan_task.get("optimization_task_id"))
         existing_task = self.find_task(existing_task_id) if existing_task_id else None
         if existing_task:
+            blocker = self.execution_job_queue_blocker(existing_task["optimization_task_id"])
+            if blocker:
+                raise ConflictError(blocker)
             updated = self._update_batch_plan_task(
                 batch_id,
                 plan_task_id,
@@ -364,6 +368,16 @@ class FeedbackBatchPlanStoreMixin:
             batch_status=str(batch.get("status") or "pending_approval"),
         )
         return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
+
+    def execute_batch_plan_task_internal_action(
+        self,
+        batch_id: str,
+        plan_task_id: str,
+        *,
+        reason: Optional[str] = None,
+    ) -> Optional[FeedbackOptimizationPlanTaskExecuteResponse]:
+        result = self._execute_batch_plan_task_internal_action(batch_id, plan_task_id, reason=reason)
+        return FeedbackOptimizationPlanTaskExecuteResponse.model_validate(result) if result else None
 
     def _execute_batch_plan_task_internal_action(
         self,

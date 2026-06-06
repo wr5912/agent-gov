@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
@@ -8,7 +8,6 @@ from app.routers.error_helpers import ensure_found, raise_conflict, require_requ
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     ExecutionCompensationResponse,
     ExternalGovernanceItemResponse,
@@ -24,6 +23,7 @@ from app.runtime.schemas import (
     OptimizationExecutionCreateRequest,
     OptimizationTaskMarkAppliedRequest,
 )
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
 
@@ -122,9 +122,12 @@ def _register_execution_job_routes(
         summary="Queue one controlled execution plan for an optimization task",
     )
     async def create_optimization_execution_job(task_id: str, req: OptimizationExecutionCreateRequest) -> AgentJobResponse:
+        blocker = runtime.execution_job_queue_blocker(task_id)
+        if blocker:
+            raise_conflict(blocker)
         job = runtime.queue_execution_job(task_id, force=req.force)
         if not job:
-            raise_conflict("Optimization task cannot queue an execution plan")
+            raise_conflict(runtime.execution_job_queue_blocker(task_id) or "Optimization task cannot queue an execution plan")
         return job
 
 

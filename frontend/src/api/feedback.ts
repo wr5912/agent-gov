@@ -6,7 +6,6 @@ import type {
   EvalCaseRecord,
   EvalCaseUpdateRequest,
   EvalRunRecord,
-  ExecutionCompensationRecord,
   ExternalGovernanceItemRecord,
   ExternalGovernanceWebhookRecord,
   FeedbackCaseCreateRequest,
@@ -16,18 +15,23 @@ import type {
   FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchAttributionResponse,
   FeedbackOptimizationBatchCreateRequest,
+  FeedbackOptimizationBatchExecuteAllRequest,
+  FeedbackOptimizationBatchExecuteAllResponse,
+  FeedbackOptimizationBatchExecutionRollbackRequest,
+  FeedbackOptimizationBatchExecutionRollbackResponse,
   FeedbackOptimizationBatchExecutionResponse,
   FeedbackOptimizationBatchRegressionResponse,
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationPlanTaskExecuteRequest,
   FeedbackOptimizationPlanTaskExecuteResponse,
+  FeedbackOptimizationPlanTaskUpdateRequest,
+  FeedbackOptimizationPlanTaskUpdateResponse,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
   FeedbackSourceRecord,
   FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
-  OptimizationExecutionApplyResponse,
   OptimizationTaskRecord,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
@@ -221,6 +225,41 @@ export function rejectFeedbackOptimizationBatchPlan(config: RuntimeClientConfig,
   );
 }
 
+export function executeFeedbackOptimizationBatchPlanAll(
+  config: RuntimeClientConfig,
+  batchId: string,
+  payload: FeedbackOptimizationBatchExecuteAllRequest = {},
+) {
+  return requestJson<FeedbackOptimizationBatchExecuteAllResponse>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/execute-all`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+    },
+  );
+}
+
+export function rollbackFeedbackOptimizationBatchExecution(
+  config: RuntimeClientConfig,
+  batchId: string,
+  executionRunId: string,
+  payload: FeedbackOptimizationBatchExecutionRollbackRequest = {},
+) {
+  return requestJson<FeedbackOptimizationBatchExecutionRollbackResponse>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/executions/${encodeURIComponent(executionRunId)}/rollback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+    },
+  );
+}
+
 export function executeFeedbackOptimizationPlanTask(
   config: RuntimeClientConfig,
   batchId: string,
@@ -232,6 +271,24 @@ export function executeFeedbackOptimizationPlanTask(
     `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/tasks/${encodeURIComponent(planTaskId)}/execute`,
     {
       method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+    },
+  );
+}
+
+export function updateFeedbackOptimizationPlanTask(
+  config: RuntimeClientConfig,
+  batchId: string,
+  planTaskId: string,
+  payload: FeedbackOptimizationPlanTaskUpdateRequest,
+) {
+  return requestJson<FeedbackOptimizationPlanTaskUpdateResponse>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/tasks/${encodeURIComponent(planTaskId)}`,
+    {
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
       timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
@@ -389,85 +446,6 @@ export function notifyExternalGovernanceItem(config: RuntimeClientConfig, extern
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ webhook_alias: webhookAlias }),
     },
-  );
-}
-
-export function markOptimizationTaskApplied(config: RuntimeClientConfig, taskId: string, note?: string) {
-  return requestJson<OptimizationTaskRecord>(
-    config,
-    `/api/optimization-tasks/${encodeURIComponent(taskId)}/mark-applied`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ note }),
-    },
-  );
-}
-
-export function runOptimizationTaskRegression(config: RuntimeClientConfig, taskId: string, evalCaseIds: string[] = []) {
-  return requestJson<EvalRunRecord>(
-    config,
-    `/api/optimization-tasks/${encodeURIComponent(taskId)}/regression-runs`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eval_case_ids: evalCaseIds, optimization_task_id: taskId }),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
-    },
-  );
-}
-
-export function createOptimizationExecutionJob(config: RuntimeClientConfig, taskId: string, force = false) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/optimization-tasks/${encodeURIComponent(taskId)}/execution-jobs`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ force }),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
-    },
-  );
-}
-
-export function applyOptimizationExecutionJob(config: RuntimeClientConfig, taskId: string, executionJobId: string) {
-  return requestJson<OptimizationExecutionApplyResponse>(
-    config,
-    `/api/optimization-tasks/${encodeURIComponent(taskId)}/execution-jobs/${encodeURIComponent(executionJobId)}/apply`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ confirm: true }),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
-    },
-  );
-}
-
-export function getExecutionCompensations(
-  config: RuntimeClientConfig,
-  filters?: Pick<FeedbackFilters, "status" | "limit"> & {
-    optimization_task_id?: string;
-    execution_job_id?: string;
-  },
-) {
-  return requestJson<ExecutionCompensationRecord[]>(
-    config,
-    `/api/execution-compensations${feedbackQueryString(filters)}`,
-  );
-}
-
-export function getExecutionCompensation(config: RuntimeClientConfig, compensationId: string) {
-  return requestJson<ExecutionCompensationRecord>(
-    config,
-    `/api/execution-compensations/${encodeURIComponent(compensationId)}`,
-  );
-}
-
-export function restoreExecutionCompensation(config: RuntimeClientConfig, compensationId: string) {
-  return requestJson<ExecutionCompensationRecord>(
-    config,
-    `/api/execution-compensations/${encodeURIComponent(compensationId)}/restore`,
-    { method: "POST" },
   );
 }
 

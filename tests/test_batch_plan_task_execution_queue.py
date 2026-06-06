@@ -1,6 +1,6 @@
+from app.runtime.feedback_schemas import ExecutionPlanFormatterOutput, FeedbackEvalCaseGenerationFormatterOutput
 from fastapi.testclient import TestClient
 
-from app.runtime.feedback_schemas import ExecutionPlanFormatterOutput, FeedbackEvalCaseGenerationFormatterOutput
 from feedback_store_test_utils import _create_batch_with_completed_attribution
 from test_api_execution_optimizer import _load_app, _run_one_agent_job
 
@@ -81,3 +81,38 @@ def test_batch_plan_task_execute_endpoint_is_consumed_by_worker(monkeypatch, tmp
     assert updated_batch["status"] == "execution_ready"
     assert updated_plan_task["status"] == "execution_ready"
     assert updated_plan_task["latest_execution_job"]["execution_job_id"] == execution_job_id
+
+
+def test_batch_plan_task_execute_endpoint_reports_unqueueable_existing_task(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    batch = _create_batch_with_completed_attribution(module.feedback_store)
+    batch = module.feedback_store.generate_batch_optimization_plan(batch["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = module.feedback_store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])
+    task = prepared["optimization_task"]
+    bad_target_path = "main-workspace 根目录下的 .mcp.json 文件"
+    bad_proposal = {
+        **task["proposal"],
+        "actionability": "runtime_fix",
+        "target_path": bad_target_path,
+        "task_context": {**task["proposal"].get("task_context", {}), "target_file": ".mcp.json"},
+    }
+    module.feedback_store._update_task_payload(  # noqa: SLF001
+        task["optimization_task_id"],
+        status="pending_execution",
+        fields={"proposal": bad_proposal, "target_paths": [bad_target_path]},
+    )
+
+    with TestClient(module.app) as client:
+        response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan/tasks/{plan_task['plan_task_id']}/execute",
+            json={"force": True},
+        )
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert "目标文件现在填的是“main-workspace 根目录下的 .mcp.json 文件”" in detail
+    assert "把“目标文件”改成“.mcp.json”" in detail
+    assert "可执行性现在是“runtime_fix”" in detail
+    assert "把“可执行性”改成“workspace_config_change”" in detail
+    assert "Execution optimizer could not be queued" not in detail

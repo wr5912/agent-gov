@@ -28,6 +28,7 @@ from ..runtime_db import (
 )
 from .agent_job_queue_store import AgentJobQueueStoreMixin
 from .agent_job_store import AgentJobStoreMixin
+from .feedback_batch_execution_store import FeedbackBatchExecutionStoreMixin
 from .feedback_batch_plan_store import FeedbackBatchPlanStoreMixin
 from .feedback_batch_store import FeedbackBatchStoreMixin
 from .feedback_case_store import FeedbackCaseStoreMixin
@@ -38,6 +39,7 @@ from .feedback_execution_store import FeedbackExecutionStoreMixin
 from .feedback_external_governance_store import FeedbackExternalGovernanceStoreMixin
 from .feedback_internal_action_store import FeedbackInternalActionStoreMixin
 from .feedback_job_store import FeedbackJobStoreMixin
+from .feedback_plan_task_edit_store import FeedbackPlanTaskEditStoreMixin
 from .feedback_plan_task_store import FeedbackPlanTaskStoreMixin
 from .feedback_proposal_store import FeedbackProposalStoreMixin
 from .feedback_regression_asset_store import FeedbackRegressionAssetStoreMixin
@@ -49,8 +51,10 @@ class FeedbackStore(
     AgentJobQueueStoreMixin,
     AgentJobStoreMixin,
     FeedbackCompensationStoreMixin,
+    FeedbackBatchExecutionStoreMixin,
     FeedbackBatchPlanStoreMixin,
     FeedbackInternalActionStoreMixin,
+    FeedbackPlanTaskEditStoreMixin,
     FeedbackPlanTaskStoreMixin,
     FeedbackExecutionStoreMixin,
     FeedbackTaskStoreMixin,

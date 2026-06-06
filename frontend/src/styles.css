@@ -2275,6 +2275,63 @@ button:disabled {
   padding: 8px 10px;
 }
 
+.fw-batch-one-click-bar {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.fw-batch-execution-run-panel {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(248, 252, 255, 0.74);
+}
+
+.fw-agent-result-diff {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.fw-agent-result-diff h5 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.fw-batch-execution-result {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.fw-warning-list {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(181, 107, 33, 0.24);
+  border-radius: 8px;
+  padding: 8px;
+  background: rgba(255, 247, 237, 0.82);
+}
+
+.fw-warning-list .fw-formatted-text {
+  color: #9a3412;
+}
+
 .fw-batch-section-head-row {
   min-width: 0;
   display: flex;
@@ -3333,6 +3390,50 @@ button:disabled {
   margin-top: 4px;
 }
 
+.fw-plan-task-window {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.fw-plan-item-tabs {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.fw-plan-item-tab {
+  min-width: 180px;
+  max-width: 100%;
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: rgba(255, 253, 248, 0.78);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.fw-plan-item-tab.is-active {
+  border-color: rgba(55, 92, 146, 0.42);
+  background: rgba(239, 247, 255, 0.92);
+  box-shadow: 0 0 0 2px rgba(55, 92, 146, 0.1);
+}
+
+.fw-plan-item-tab > span:last-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .fw-plan-task-card {
   min-width: 0;
   display: grid;
@@ -3390,6 +3491,23 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+.fw-task-execution-result {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(55, 92, 146, 0.18);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(248, 252, 255, 0.78);
+}
+
+.fw-task-execution-result h5 {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .fw-plan-task-disclosure {
   min-width: 0;
   display: grid;
@@ -3416,6 +3534,23 @@ button:disabled {
 
 .fw-plan-task-actions .fw-select-field {
   max-width: 320px;
+}
+
+.fw-plan-task-advanced-actions {
+  margin-top: -4px;
+}
+
+.fw-plan-task-edit-form {
+  border-top: 1px solid var(--line);
+  padding-top: 10px;
+}
+
+.fw-plan-task-edit-form .fw-eval-edit-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.fw-plan-task-edit-form .fw-eval-json-editor {
+  min-height: 120px;
 }
 
 .fw-execution-operation-list,

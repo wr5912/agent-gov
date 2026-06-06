@@ -7,14 +7,22 @@ from fastapi import APIRouter, Depends, Query
 from app.routers.error_helpers import ensure_found, raise_conflict, require_request
 from app.routers.feedback_batch_regression import register_batch_regression_routes
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.feedback_batch_execution_request_schemas import (
+    FeedbackOptimizationBatchExecuteAllRequest,
+    FeedbackOptimizationBatchExecutionRollbackRequest,
+)
+from app.runtime.feedback_plan_task_request_schemas import FeedbackOptimizationPlanTaskUpdateRequest
 from app.runtime.json_types import JsonObject
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_plan_response_schemas import FeedbackOptimizationPlanTaskResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
+    FeedbackOptimizationBatchExecuteAllResponse,
     FeedbackOptimizationBatchExecutionResponse,
+    FeedbackOptimizationBatchExecutionRollbackResponse,
     FeedbackOptimizationBatchResponse,
     FeedbackOptimizationPlanTaskExecuteResponse,
+    FeedbackOptimizationPlanTaskUpdateResponse,
 )
 from app.runtime.schemas import (
     EvalCaseResponse,
@@ -28,6 +36,7 @@ from app.runtime.schemas import (
 )
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
+from app.services.batch_optimization_execution import BatchOptimizationExecutionService
 from app.services.execution_application import ExecutionApplicationService
 
 
@@ -52,6 +61,8 @@ def create_feedback_batches_router(
     _register_batch_eval_case_routes(router, feedback_store)
     _register_batch_analysis_routes(router, feedback_store, runtime)
     _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
+    _register_batch_plan_execute_all_routes(router, feedback_store, runtime, execution_application)
+    _register_batch_plan_task_edit_routes(router, feedback_store)
     _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
     register_batch_regression_routes(router, feedback_store, runtime, agent_governance)
     return router
@@ -243,6 +254,69 @@ def _register_batch_plan_review_routes(
         return ensure_found(batch, "Feedback optimization batch or plan not found")
 
 
+def _register_batch_plan_execute_all_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+    execution_application: ExecutionApplicationService,
+) -> None:
+    service = BatchOptimizationExecutionService(
+        feedback_store=feedback_store,
+        runtime=runtime,
+        execution_application=execution_application,
+    )
+
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all",
+        response_model=FeedbackOptimizationBatchExecuteAllResponse,
+        summary="Execute all tasks from one batch optimization plan and create one Agent version",
+    )
+    async def execute_feedback_optimization_batch_plan_all(
+        batch_id: str,
+        req: FeedbackOptimizationBatchExecuteAllRequest | None = None,
+    ) -> FeedbackOptimizationBatchExecuteAllResponse:
+        return await service.execute_all(batch_id, req or FeedbackOptimizationBatchExecuteAllRequest())
+
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/optimization-plan/executions/{execution_run_id}/rollback",
+        response_model=FeedbackOptimizationBatchExecutionRollbackResponse,
+        summary="Rollback one batch optimization execution to its pre-execution Agent version",
+    )
+    async def rollback_feedback_optimization_batch_execution(
+        batch_id: str,
+        execution_run_id: str,
+        req: FeedbackOptimizationBatchExecutionRollbackRequest | None = None,
+    ) -> FeedbackOptimizationBatchExecutionRollbackResponse:
+        return service.rollback(batch_id, execution_run_id, req or FeedbackOptimizationBatchExecutionRollbackRequest())
+
+
+def _register_batch_plan_task_edit_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+
+    @router.patch(
+        "/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}",
+        response_model=FeedbackOptimizationPlanTaskUpdateResponse,
+        summary="Edit one task from a batch optimization plan before execution",
+    )
+    async def update_feedback_optimization_plan_task(
+        batch_id: str,
+        plan_task_id: str,
+        req: FeedbackOptimizationPlanTaskUpdateRequest,
+    ) -> FeedbackOptimizationPlanTaskUpdateResponse:
+        result = feedback_store.update_batch_plan_task(
+            batch_id,
+            plan_task_id,
+            req.model_dump(mode="json", exclude_unset=True),
+        )
+        edit_result = ensure_found(result, "Optimization plan task not found")
+        return FeedbackOptimizationPlanTaskUpdateResponse(
+            batch=edit_result.batch,
+            plan_task=edit_result.plan_task,
+            optimization_task=edit_result.optimization_task,
+            invalidated_execution_job_ids=edit_result.invalidated_execution_job_ids,
+            external_item=edit_result.external_item,
+        )
+
+
 def _register_batch_plan_task_routes(
     router: APIRouter,
     feedback_store: FeedbackStore,
@@ -265,7 +339,7 @@ def _register_batch_plan_task_routes(
         plan_task = ensure_found(_batch_plan_task(batch, plan_task_id), "Optimization plan task not found")
         execution_kind = plan_task.execution_kind
         if execution_kind == "internal_action":
-            result = feedback_store._execute_batch_plan_task_internal_action(batch_id, plan_task_id)  # noqa: SLF001
+            result = feedback_store.execute_batch_plan_task_internal_action(batch_id, plan_task_id)
             return ensure_found(result, "Optimization plan task not found")
         if execution_kind == "external_webhook":
             require_request(bool(req.webhook_alias), "webhook_alias is required for external tasks")
@@ -285,6 +359,9 @@ def _register_batch_plan_task_routes(
         if task.get("applied_agent_version_id"):
             batch = feedback_store.record_batch_plan_task_execution_result(batch_id, plan_task_id, optimization_task=task)
             return {"batch": batch, "optimization_task": task, "plan_task": _batch_plan_task(batch, plan_task_id), "execution_job": None, "apply_result": None}
+        blocker = feedback_store.execution_job_queue_blocker(task["optimization_task_id"])
+        if blocker:
+            raise_conflict(blocker)
 
         queued_job = runtime.queue_execution_job(task["optimization_task_id"], force=req.force)
         task = feedback_store.find_task(task["optimization_task_id"]) or task
@@ -295,7 +372,7 @@ def _register_batch_plan_task_routes(
                 plan_task_id,
                 optimization_task=task,
             )
-            raise_conflict("Execution optimizer could not be queued")
+            raise_conflict(feedback_store.execution_job_queue_blocker(task["optimization_task_id"]) or "Execution optimizer could not be queued")
         batch = feedback_store.record_batch_plan_task_execution_result(
             batch_id,
             plan_task_id,

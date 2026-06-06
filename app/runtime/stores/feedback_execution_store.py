@@ -24,6 +24,7 @@ from ..runtime_db import AgentJobModel, ExecutionApplicationModel, OptimizationT
 
 MAX_PLANNED_DIFF_INPUT_CHARS = 120_000
 MAX_PLANNED_DIFF_OUTPUT_CHARS = 80_000
+EXECUTION_JOB_ACTIONABILITIES = {"direct_workspace_change", "workspace_config_change", "eval_only"}
 
 
 class FeedbackExecutionStoreMixin:
@@ -37,16 +38,11 @@ class FeedbackExecutionStoreMixin:
         force: bool = False,
     ) -> Optional[JsonObject]:
         task = self.find_task(task_id)
-        if not task or task.get("applied_agent_version_id"):
+        if not task or self._execution_job_queue_blockers(task):
             return None
         proposal = task.get("proposal") if isinstance(task.get("proposal"), dict) else None
-        if not proposal or proposal.get("status") != "approved":
-            return None
-        if proposal.get("actionability") not in {"direct_workspace_change", "workspace_config_change"}:
-            return None
         target_paths = [str(path) for path in task.get("target_paths") or [] if isinstance(path, str)]
-        if not target_paths or any(not self._target_allowed(path) for path in target_paths):
-            return None
+        proposal = proposal or {}
         if not force:
             existing = self._latest_execution_job(task_id)
             if existing and existing.get("status") in {"queued", "running", "completed", "needs_human_review"}:
@@ -77,6 +73,44 @@ class FeedbackExecutionStoreMixin:
             self._discard_execution_job(job_id)
             raise
         return self.get_execution_job(job_id)
+
+    def execution_job_queue_blocker(self, task_id: str) -> Optional[str]:
+        task = self.find_task(task_id)
+        if not task:
+            return "找不到对应的优化任务，无法执行。"
+        blockers = self._execution_job_queue_blockers(task)
+        return "；".join(blockers) if blockers else None
+
+    def _execution_job_queue_blockers(self, task: JsonObject) -> list[str]:
+        blockers: list[str] = []
+        if task.get("applied_agent_version_id"):
+            blockers.append("这个优化任务已经应用过，不能重复执行。")
+        proposal = task.get("proposal") if isinstance(task.get("proposal"), dict) else None
+        if not proposal:
+            blockers.append("这个优化任务缺少已确认的方案快照，无法生成执行方案。")
+            return blockers
+        if proposal.get("status") != "approved":
+            blockers.append("这个优化任务的方案还不是 approved 状态，请先确认方案后再执行。")
+        target_paths = [str(path).strip() for path in task.get("target_paths") or [] if isinstance(path, str) and str(path).strip()]
+        target_file = self._string((proposal.get("task_context") or {}).get("target_file")) if isinstance(proposal.get("task_context"), dict) else ""
+        if not target_paths:
+            blockers.append("这个优化任务没有填写可执行的目标文件路径。")
+        for target_path in target_paths:
+            denied = self._target_denied_reason(target_path)
+            if denied:
+                blockers.append(f"目标文件“{target_path}”不在允许修改的 workspace 文件范围内，原因：{denied}。")
+            if target_file and len(target_paths) == 1 and target_path != target_file:
+                blockers.append(
+                    f"目标文件现在填的是“{target_path}”，但任务上下文里识别出的具体文件是“{target_file}”。"
+                    f"请编辑任务，把“目标文件”改成“{target_file}”这种相对 main-workspace 的具体文件路径。"
+                )
+        actionability = self._string(proposal.get("actionability"))
+        if actionability not in EXECUTION_JOB_ACTIONABILITIES:
+            blockers.append(
+                f"可执行性现在是“{actionability or '空'}”，execution-optimizer 不能直接执行这种类型。"
+                "如果这是修改 workspace 配置文件的任务，请编辑任务，把“可执行性”改成“workspace_config_change”。"
+            )
+        return blockers
 
     def _execution_job_input_payload(
         self,

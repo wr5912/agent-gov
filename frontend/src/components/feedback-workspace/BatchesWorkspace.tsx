@@ -6,7 +6,7 @@ import {
   type EvalCaseGenerationState,
 } from "./BatchEvalCaseGenerationStatus";
 import { BatchFeedbackSourcesDetails } from "./BatchFeedbackDetails";
-import { BatchExecutionSummary, BatchPlanDetails } from "./BatchPlanDetails";
+import { BatchPlanDetails } from "./BatchPlanDetails";
 import { BatchRegressionDetails } from "./BatchRegressionDetails";
 import {
   DetailJsonPreview,
@@ -37,35 +37,41 @@ import type {
   ExternalGovernanceWebhookRecord,
   FeedbackAnalysisJobRecord,
   FeedbackOptimizationBatchEvalCaseCreateRequest,
+  FeedbackOptimizationBatchExecuteAllRequest,
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationPlanTaskRecord,
+  FeedbackOptimizationPlanTaskUpdateRequest,
   FeedbackSourceRecord,
   EvalCaseUpdateRequest,
-  OptimizationTaskRecord,
 } from "../../types/feedback";
+import type { RuntimeClientConfig } from "../../types/runtime";
 
 export function BatchesPanel({
   actionId,
   batches,
+  clientConfig,
   evalCases,
   externalWebhooks,
   selectedBatch,
   sources,
   onArchiveEvalCase,
   onCreateEvalCase,
+  onExecuteBatchPlanAll,
   onExecutePlanTask,
   onGeneratePlan,
   onRemoveEvalCase,
   onRejectPlan,
   onRunAttribution,
   onRunRegression,
+  onRollbackBatchExecution,
   onSelectBatch,
   onUpdateEvalCase,
+  onUpdatePlanTask,
   renderAttributionResult,
-  renderBatchTasksDetails,
 }: {
   actionId: string | null;
   batches: FeedbackOptimizationBatchRecord[];
+  clientConfig: RuntimeClientConfig;
   evalCases: EvalCaseRecord[];
   externalWebhooks: ExternalGovernanceWebhookRecord[];
   selectedBatch: FeedbackOptimizationBatchRecord | null;
@@ -75,20 +81,26 @@ export function BatchesPanel({
     batch: FeedbackOptimizationBatchRecord,
     payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
   ) => Promise<boolean>;
+  onExecuteBatchPlanAll: (batch: FeedbackOptimizationBatchRecord, payload?: FeedbackOptimizationBatchExecuteAllRequest) => void;
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
   onRejectPlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
+  onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
   onSelectBatch: (batch: FeedbackOptimizationBatchRecord) => void;
   onUpdateEvalCase: (
     batch: FeedbackOptimizationBatchRecord,
     evalCase: EvalCaseRecord,
     payload: EvalCaseUpdateRequest,
   ) => Promise<boolean>;
+  onUpdatePlanTask: (
+    batch: FeedbackOptimizationBatchRecord,
+    planTask: FeedbackOptimizationPlanTaskRecord,
+    payload: FeedbackOptimizationPlanTaskUpdateRequest,
+  ) => Promise<boolean>;
   renderAttributionResult: (output: AttributionOutput) => ReactNode;
-  renderBatchTasksDetails: (tasks: OptimizationTaskRecord[]) => ReactNode;
 }) {
   const [activeBatchDetail, setActiveBatchDetail] = useState<BatchDetailView>(() => defaultBatchDetail(selectedBatch));
   const batchSourceRows = useMemo(() => buildBatchSourceRows(selectedBatch, sources), [selectedBatch, sources]);
@@ -101,9 +113,9 @@ export function BatchesPanel({
       selectedBatch?.execution_job_id ||
       selectedBatch?.execution_apply_result,
   );
-  const canRunBatchRegression = Boolean(selectedBatch?.optimization_task?.applied_agent_version_id);
+  const canRunBatchRegression = Boolean(selectedBatch?.latest_execution_run?.applied_agent_version_id || selectedBatch?.optimization_task?.applied_agent_version_id);
   const regressionDisabledReason = selectedBatch?.optimization_task
-    ? "执行方案尚未应用，未产生 Agent 版本，不能运行回归测试。"
+    ? "优化任务尚未应用，未产生 Agent 版本，不能运行回归测试。"
     : "尚未执行优化方案，不能运行回归测试。";
 
   useEffect(() => {
@@ -216,16 +228,16 @@ export function BatchesPanel({
             {activeBatchDetail === "feedback" ? <BatchFeedbackSourcesDetails rows={batchSourceRows} /> : null}
             {activeBatchDetail === "attribution" ? <BatchAttributionDetails jobs={attributionJobs} renderAttributionResult={renderAttributionResult} /> : null}
             {activeBatchDetail === "plan" ? (
-              <>
-                <BatchPlanDetails
-                  actionId={actionId}
-                  batch={selectedBatch}
-                  externalWebhooks={externalWebhooks}
-                  onExecutePlanTask={onExecutePlanTask}
-                />
-                <BatchExecutionSummary batch={selectedBatch} />
-                {selectedBatch.optimization_task ? renderBatchTasksDetails([selectedBatch.optimization_task]) : null}
-              </>
+              <BatchPlanDetails
+                actionId={actionId}
+                batch={selectedBatch}
+                clientConfig={clientConfig}
+                externalWebhooks={externalWebhooks}
+                onExecuteBatchPlanAll={onExecuteBatchPlanAll}
+                onExecutePlanTask={onExecutePlanTask}
+                onRollbackBatchExecution={onRollbackBatchExecution}
+                onUpdatePlanTask={onUpdatePlanTask}
+              />
             ) : null}
             {activeBatchDetail === "regression" ? (
               <BatchRegressionDetails
@@ -273,10 +285,10 @@ function BatchResultNav({
   const planHint = batch.optimization_plan
     ? batchPlanDisplayTitle(batch)
     : planError
-      ? "优化方案生成失败，查看错误详情后可重新生成"
-      : planRunning
-        ? "优化方案正在生成，完成后刷新展示结果"
-        : "统筹归因结果后生成待执行方案";
+        ? "优化方案生成失败，查看错误详情后可重新生成"
+        : planRunning
+          ? "优化方案正在生成，完成后刷新展示结果"
+          : "统筹归因结果后生成待执行任务";
   const regressionRunStatus = batch.latest_eval_run?.result_status || batch.latest_eval_run?.status;
   const regressionTone = regressionRunStatus ? evalStatusTone(regressionRunStatus) : evalCaseGeneration?.tone || "gray";
   const regressionValue = regressionRunStatus

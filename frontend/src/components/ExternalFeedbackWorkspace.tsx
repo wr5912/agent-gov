@@ -7,10 +7,9 @@ import {
 import { AgentVersionsWorkspace } from "./AgentVersionsWorkspace";
 import { AttributionResult } from "./feedback-workspace/AttributionResult";
 import { BatchesPanel } from "./feedback-workspace/BatchesWorkspace";
-import { ExecutionApplyConfirmModal, InstructionModal } from "./feedback-workspace/FeedbackModals";
+import { InstructionModal } from "./feedback-workspace/FeedbackModals";
 import { RegressionAssetsPanel } from "./feedback-workspace/RegressionAssetsWorkspace";
 import { SignalsPanel } from "./feedback-workspace/SignalsWorkspace";
-import { TasksDetails } from "./feedback-workspace/TasksDetails";
 import { useFeedbackWorkspaceActions } from "./feedback-workspace/useFeedbackWorkspaceActions";
 import { useFeedbackWorkspaceState, visibleMenuItems } from "./feedback-workspace/useFeedbackWorkspaceState";
 import {
@@ -58,27 +57,23 @@ export function ExternalFeedbackWorkspace({
     actionId,
     batchPlanGenerateDraft,
     setBatchPlanGenerateDraft,
-    executionApplyDraft,
-    setExecutionApplyDraft,
     batchPlanGenerateBusy,
-    executionApplyBusy,
     toggleSource,
     generateEvalCasesFromSelection,
     createBatchFromSelection,
     runBatchAttribution,
     openBatchPlanGeneration,
     submitBatchPlanGeneration,
+    executeBatchPlanAll,
+    rollbackBatchExecution,
     executePlanTask,
+    updatePlanTask,
     rejectBatchPlan,
     runBatchRegression,
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,
     removeBatchEvalCase,
-    createExecutionJob,
-    applyExecutionJob,
-    submitExecutionApply,
-    restoreCompensation,
   } = useFeedbackWorkspaceActions({
     clientConfig,
     onFeedbackChanged,
@@ -142,32 +137,25 @@ export function ExternalFeedbackWorkspace({
           <BatchesPanel
             actionId={actionId}
             batches={visibleBatches}
+            clientConfig={clientConfig}
             evalCases={data.eval_cases}
             externalWebhooks={data.external_webhooks}
             selectedBatch={selectedBatch}
             sources={data.sources}
             onArchiveEvalCase={archiveBatchEvalCase}
             onCreateEvalCase={createBatchEvalCase}
+            onExecuteBatchPlanAll={executeBatchPlanAll}
             onExecutePlanTask={executePlanTask}
             onGeneratePlan={openBatchPlanGeneration}
             onRemoveEvalCase={removeBatchEvalCase}
             onRejectPlan={rejectBatchPlan}
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
+            onRollbackBatchExecution={rollbackBatchExecution}
             onSelectBatch={(batch) => setSelectedBatchId(batch.batch_id)}
             onUpdateEvalCase={updateBatchEvalCase}
+            onUpdatePlanTask={updatePlanTask}
             renderAttributionResult={(output) => <AttributionResult output={output} />}
-            renderBatchTasksDetails={(tasks) => (
-              <TasksDetails
-                clientConfig={clientConfig}
-                tasks={tasks}
-                actionId={actionId}
-                variant="batch-plan"
-                onCreateExecutionJob={createExecutionJob}
-                onApplyExecutionJob={applyExecutionJob}
-                onRestoreCompensation={restoreCompensation}
-              />
-            )}
           />
         ) : null}
 
@@ -198,7 +186,7 @@ export function ExternalFeedbackWorkspace({
         {activeMenu !== "versions" ? (
           <footer className="fw-info-bar">
             <GitBranch size={18} />
-            <span>{"当前链路：反馈信息 -> 候选回归用例 -> 回归资产治理 -> 优化批次 -> 归因分析智能体 -> 优化方案生成智能体 -> 执行优化智能体 -> 批次回归测试。"}</span>
+            <span>{"当前链路：反馈信息 -> 候选回归用例 -> 回归资产治理 -> 优化批次 -> 归因分析智能体 -> 优化方案生成智能体 -> 一键执行 -> 批次回归测试。"}</span>
             {monitoringConfig?.langfuseUrl ? <a href={monitoringConfig.langfuseUrl} target="_blank" rel="noreferrer">Langfuse</a> : null}
           </footer>
         ) : null}
@@ -216,15 +204,6 @@ export function ExternalFeedbackWorkspace({
           onCancel={() => setBatchPlanGenerateDraft(null)}
           onChange={(instruction) => setBatchPlanGenerateDraft((current) => (current ? { ...current, instruction } : current))}
           onSubmit={submitBatchPlanGeneration}
-        />
-      ) : null}
-
-      {executionApplyDraft ? (
-        <ExecutionApplyConfirmModal
-          busy={executionApplyBusy}
-          onCancel={() => setExecutionApplyDraft(null)}
-          onConfirm={submitExecutionApply}
-          task={executionApplyDraft.task}
         />
       ) : null}
 

@@ -131,6 +131,58 @@ class ExecutionApplicationResponse(ExtensibleResponse):
     error_json: Optional[FeedbackJobErrorResponse] = None
 
 
+class FeedbackBatchExecutionTaskResultResponse(ExtensibleResponse):
+    plan_task_id: str
+    execution_kind: str
+    status: str
+    started_at: str
+    completed_at: Optional[str] = None
+    optimization_task_id: Optional[str] = None
+    execution_job_id: Optional[str] = None
+    execution_job: Optional[AgentJobResponse] = None
+    external_item_id: Optional[str] = None
+    webhook_alias: Optional[str] = None
+    internal_action: Optional[str] = None
+    summary: Optional[str] = None
+    planned_diff: Optional[OptimizationExecutionPlannedDiffResponse] = None
+    applied_agent_version_id: Optional[str] = None
+    rollback_supported: bool = True
+    rollback_note: Optional[str] = None
+    error_json: Optional[FeedbackJobErrorResponse] = None
+
+
+class FeedbackBatchExecutionRollbackResponse(ExtensibleResponse):
+    restored_at: str
+    status: str
+    target_agent_version_id: Optional[str] = None
+    restore_result: JsonObject = Field(default_factory=dict)
+    error_json: Optional[FeedbackJobErrorResponse] = None
+
+
+class FeedbackBatchExecutionRunResponse(ExtensibleResponse):
+    schema_version: str = "feedback-batch-execution-run/v1"
+    execution_run_id: str
+    batch_id: str
+    created_at: str
+    started_at: str
+    completed_at: Optional[str] = None
+    status: str
+    force: bool = True
+    note: Optional[str] = None
+    pre_execution_agent_version_id: Optional[str] = None
+    pre_execution_agent_version: Optional[AgentVersionSummaryResponse] = None
+    applied_agent_version_id: Optional[str] = None
+    applied_agent_version: Optional[AgentVersionSummaryResponse] = None
+    applied_diff: Optional[AgentVersionDiffResponse] = None
+    change_set_id: Optional[str] = None
+    change_set: Optional[JsonObject] = None
+    candidate_commit_sha: Optional[str] = None
+    task_results: list[FeedbackBatchExecutionTaskResultResponse] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    rollback_result: Optional[FeedbackBatchExecutionRollbackResponse] = None
+    error_json: Optional[FeedbackJobErrorResponse] = None
+
+
 class OptimizationExecutionJobResponse(ExtensibleResponse):
     execution_job_id: str
     optimization_task_id: str
@@ -289,6 +341,8 @@ class FeedbackOptimizationBatchResponse(ExtensibleResponse):
     optimization_task: Optional[OptimizationTaskResponse] = None
     execution_job_id: Optional[str] = None
     execution_job: Optional[OptimizationExecutionJobResponse] = None
+    execution_runs: list[FeedbackBatchExecutionRunResponse] = Field(default_factory=list)
+    latest_execution_run: Optional[FeedbackBatchExecutionRunResponse] = None
     eval_run_id: Optional[str] = None
     latest_eval_run: Optional[EvalRunResponse] = None
     regression_plan_id: Optional[str] = None
@@ -309,6 +363,16 @@ class FeedbackOptimizationBatchExecutionResponse(BaseModel):
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
 
 
+class FeedbackOptimizationBatchExecuteAllResponse(BaseModel):
+    batch: Optional[FeedbackOptimizationBatchResponse] = None
+    execution_run: FeedbackBatchExecutionRunResponse
+
+
+class FeedbackOptimizationBatchExecutionRollbackResponse(BaseModel):
+    batch: Optional[FeedbackOptimizationBatchResponse] = None
+    execution_run: FeedbackBatchExecutionRunResponse
+
+
 class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     plan_task: Optional[FeedbackOptimizationPlanTaskResponse] = None
@@ -318,6 +382,14 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     external_item: Optional[ExternalGovernanceItemResponse] = None
     eval_cases: list[EvalCaseResponse] = Field(default_factory=list)
     internal_action_result: Optional[JsonObject] = None
+
+
+class FeedbackOptimizationPlanTaskUpdateResponse(BaseModel):
+    batch: Optional[FeedbackOptimizationBatchResponse] = None
+    plan_task: Optional[FeedbackOptimizationPlanTaskResponse] = None
+    optimization_task: Optional[OptimizationTaskResponse] = None
+    invalidated_execution_job_ids: list[str] = Field(default_factory=list)
+    external_item: Optional[ExternalGovernanceItemResponse] = None
 
 
 class FeedbackOptimizationBatchRegressionResponse(BaseModel):

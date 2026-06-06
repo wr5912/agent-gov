@@ -72,6 +72,7 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     analysis_summary: Optional[str] = None
     evidence_summary: Optional[str] = None
     evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
+    edit_note: Optional[str] = None
     rationale: Optional[str] = None
     reason: Optional[str] = None
     feedback_case_ids: list[str] = Field(default_factory=list)

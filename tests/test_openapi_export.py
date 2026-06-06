@@ -111,6 +111,24 @@ def test_export_openapi_script_writes_schema(tmp_path):
     )
     assert_schema_ref(
         schema,
+        "/api/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all",
+        "post",
+        "FeedbackOptimizationBatchExecuteAllResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/optimization-plan/executions/{execution_run_id}/rollback",
+        "post",
+        "FeedbackOptimizationBatchExecutionRollbackResponse",
+    )
+    assert_schema_ref(
+        schema,
+        "/api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}",
+        "patch",
+        "FeedbackOptimizationPlanTaskUpdateResponse",
+    )
+    assert_schema_ref(
+        schema,
         "/api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute",
         "post",
         "FeedbackOptimizationPlanTaskExecuteResponse",
@@ -227,29 +245,15 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "ExternalGovernanceItemResponse",
     )
     plan_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanResponse"]
-    assert plan_schema["properties"]["blocked_items"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationBlockedItemResponse"
-    }
+    assert plan_schema["properties"]["blocked_items"]["items"] == {"$ref": "#/components/schemas/FeedbackOptimizationBlockedItemResponse"}
     assert plan_schema["properties"]["source_refs"]["items"] == {"$ref": "#/components/schemas/FeedbackSourceRef"}
-    assert plan_schema["properties"]["evidence_refs"]["items"] == {
-        "$ref": "#/components/schemas/EvidenceRefResponse"
-    }
-    assert plan_schema["properties"]["attribution_summaries"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationAttributionSummaryResponse"
-    }
-    assert plan_schema["properties"]["task_summary"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationPlanTaskSummaryResponse"
-    }
-    assert plan_schema["properties"]["blocked_summary"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationBlockedSummaryResponse"
-    }
+    assert plan_schema["properties"]["evidence_refs"]["items"] == {"$ref": "#/components/schemas/EvidenceRefResponse"}
+    assert plan_schema["properties"]["attribution_summaries"]["items"] == {"$ref": "#/components/schemas/FeedbackOptimizationAttributionSummaryResponse"}
+    assert plan_schema["properties"]["task_summary"] == {"$ref": "#/components/schemas/FeedbackOptimizationPlanTaskSummaryResponse"}
+    assert plan_schema["properties"]["blocked_summary"] == {"$ref": "#/components/schemas/FeedbackOptimizationBlockedSummaryResponse"}
     plan_task_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanTaskResponse"]
-    assert plan_task_schema["properties"]["task_context"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationTaskContextResponse"
-    }
-    assert plan_task_schema["properties"]["evidence_refs"]["items"] == {
-        "$ref": "#/components/schemas/EvidenceRefResponse"
-    }
+    assert plan_task_schema["properties"]["task_context"] == {"$ref": "#/components/schemas/FeedbackOptimizationTaskContextResponse"}
+    assert plan_task_schema["properties"]["evidence_refs"]["items"] == {"$ref": "#/components/schemas/EvidenceRefResponse"}
     assert "FeedbackAnalysisJobResponse" not in schema["components"]["schemas"]
     task_schema = schema["components"]["schemas"]["OptimizationTaskResponse"]
     assert_nullable_schema_ref(task_schema, "proposal", "OptimizationTaskProposalResponse")
@@ -263,12 +267,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(batch_schema, "execution_apply_result", "OptimizationExecutionApplyResponse")
     assert batch_schema["properties"]["attribution_jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
     assert_nullable_schema_ref(batch_schema, "optimization_plan_job", "AgentJobResponse")
-    assert batch_schema["properties"]["skipped_source_refs"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationSkippedSourceRefResponse"
-    }
-    assert batch_schema["properties"]["attribution_summary"] == {
-        "$ref": "#/components/schemas/FeedbackOptimizationBatchAttributionSummaryResponse"
-    }
+    assert batch_schema["properties"]["skipped_source_refs"]["items"] == {"$ref": "#/components/schemas/FeedbackOptimizationSkippedSourceRefResponse"}
+    assert batch_schema["properties"]["attribution_summary"] == {"$ref": "#/components/schemas/FeedbackOptimizationBatchAttributionSummaryResponse"}
     assert_nullable_schema_ref(batch_schema, "optimization_plan_error", "FeedbackJobErrorResponse")
     batch_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchExecutionResponse"]
     assert_nullable_schema_ref(batch_execution_schema, "optimization_task", "OptimizationTaskResponse")
@@ -284,12 +284,13 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_nullable_schema_ref(plan_task_execution_schema, "optimization_task", "OptimizationTaskResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
     assert_nullable_schema_ref(plan_task_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
+    plan_task_update_schema = schema["components"]["schemas"]["FeedbackOptimizationPlanTaskUpdateResponse"]
+    assert_nullable_schema_ref(plan_task_update_schema, "optimization_task", "OptimizationTaskResponse")
+    assert_nullable_schema_ref(plan_task_update_schema, "external_item", "ExternalGovernanceItemResponse")
     execution_plan_schema = schema["components"]["schemas"]["OptimizationExecutionPlanOutputResponse"]
     assert_nullable_schema_ref(execution_plan_schema, "planned_diff", "OptimizationExecutionPlannedDiffResponse")
     planned_diff_schema = schema["components"]["schemas"]["OptimizationExecutionPlannedDiffResponse"]
-    assert planned_diff_schema["properties"]["files"]["items"] == {
-        "$ref": "#/components/schemas/OptimizationExecutionPlannedDiffFileResponse"
-    }
+    assert planned_diff_schema["properties"]["files"]["items"] == {"$ref": "#/components/schemas/OptimizationExecutionPlannedDiffFileResponse"}
     execution_job_schema = schema["components"]["schemas"]["OptimizationExecutionJobResponse"]
     assert_nullable_schema_ref(execution_job_schema, "error_json", "FeedbackJobErrorResponse")
     assert "execution_job_id" in execution_job_schema["properties"]
@@ -308,9 +309,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert "OptimizationProposalResponse" not in schema["components"]["schemas"]
     evidence_schema = schema["components"]["schemas"]["EvidencePackageResponse"]
     assert evidence_schema["properties"]["source_refs"] == {"$ref": "#/components/schemas/EvidenceSourceRefsResponse"}
-    assert evidence_schema["properties"]["included_files"]["items"] == {
-        "$ref": "#/components/schemas/EvidenceIncludedFileResponse"
-    }
+    assert evidence_schema["properties"]["included_files"]["items"] == {"$ref": "#/components/schemas/EvidenceIncludedFileResponse"}
     assert evidence_schema["properties"]["redaction"] == {"$ref": "#/components/schemas/EvidenceRedactionResponse"}
     assert evidence_schema["properties"]["completeness"] == {"$ref": "#/components/schemas/EvidenceCompletenessResponse"}
     eval_case_schema = schema["components"]["schemas"]["EvalCaseResponse"]
@@ -320,13 +319,9 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert "promotion_status" in eval_case_schema["properties"]
     assert "blocking_policy" in eval_case_schema["properties"]
     eval_generate_schema = schema["components"]["schemas"]["FeedbackEvalCaseGenerateResponse"]
-    assert eval_generate_schema["properties"]["results"]["items"] == {
-        "$ref": "#/components/schemas/FeedbackEvalCaseGenerateResultResponse"
-    }
+    assert eval_generate_schema["properties"]["results"]["items"] == {"$ref": "#/components/schemas/FeedbackEvalCaseGenerateResultResponse"}
     eval_item_schema = schema["components"]["schemas"]["EvalRunItemResponse"]
-    assert eval_item_schema["properties"]["check_results"]["items"] == {
-        "$ref": "#/components/schemas/EvalRunCheckResultResponse"
-    }
+    assert eval_item_schema["properties"]["check_results"]["items"] == {"$ref": "#/components/schemas/EvalRunCheckResultResponse"}
     eval_run_schema = schema["components"]["schemas"]["EvalRunResponse"]
     assert eval_run_schema["properties"]["summary"] == {"$ref": "#/components/schemas/EvalRunSummaryResponse"}
     assert "gate_result" in eval_run_schema["properties"]

@@ -853,6 +853,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Execute all tasks from one batch optimization plan and create one Agent version */
+        post: operations["execute_feedback_optimization_batch_plan_all_api_feedback_optimization_batches__batch_id__optimization_plan_execute_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/executions/{execution_run_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback one batch optimization execution to its pre-execution Agent version */
+        post: operations["rollback_feedback_optimization_batch_execution_api_feedback_optimization_batches__batch_id__optimization_plan_executions__execution_run_id__rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/feedback-optimization-batches/{batch_id}/optimization-plan/reject": {
         parameters: {
             query?: never;
@@ -868,6 +902,23 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Edit one task from a batch optimization plan before execution */
+        patch: operations["update_feedback_optimization_plan_task_api_feedback_optimization_batches__batch_id__optimization_plan_tasks__plan_task_id__patch"];
         trace?: never;
     };
     "/api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute": {
@@ -2715,6 +2766,111 @@ export interface components {
             /** Url */
             url: string;
         };
+        /** FeedbackBatchExecutionRollbackResponse */
+        FeedbackBatchExecutionRollbackResponse: {
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            /** Restore Result */
+            restore_result?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Restored At */
+            restored_at: string;
+            /** Status */
+            status: string;
+            /** Target Agent Version Id */
+            target_agent_version_id?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** FeedbackBatchExecutionRunResponse */
+        FeedbackBatchExecutionRunResponse: {
+            applied_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
+            /** Applied Agent Version Id */
+            applied_agent_version_id?: string | null;
+            applied_diff?: components["schemas"]["AgentVersionDiffResponse"] | null;
+            /** Batch Id */
+            batch_id: string;
+            /** Candidate Commit Sha */
+            candidate_commit_sha?: string | null;
+            /** Change Set */
+            change_set?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /** Change Set Id */
+            change_set_id?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Created At */
+            created_at: string;
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            /** Execution Run Id */
+            execution_run_id: string;
+            /**
+             * Force
+             * @default true
+             */
+            force: boolean;
+            /** Note */
+            note?: string | null;
+            pre_execution_agent_version?: components["schemas"]["AgentVersionSummaryResponse"] | null;
+            /** Pre Execution Agent Version Id */
+            pre_execution_agent_version_id?: string | null;
+            rollback_result?: components["schemas"]["FeedbackBatchExecutionRollbackResponse"] | null;
+            /**
+             * Schema Version
+             * @default feedback-batch-execution-run/v1
+             */
+            schema_version: string;
+            /** Started At */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Task Results */
+            task_results?: components["schemas"]["FeedbackBatchExecutionTaskResultResponse"][];
+            /** Warnings */
+            warnings?: string[];
+        } & {
+            [key: string]: unknown;
+        };
+        /** FeedbackBatchExecutionTaskResultResponse */
+        FeedbackBatchExecutionTaskResultResponse: {
+            /** Applied Agent Version Id */
+            applied_agent_version_id?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
+            execution_job?: components["schemas"]["AgentJobResponse"] | null;
+            /** Execution Job Id */
+            execution_job_id?: string | null;
+            /** Execution Kind */
+            execution_kind: string;
+            /** External Item Id */
+            external_item_id?: string | null;
+            /** Internal Action */
+            internal_action?: string | null;
+            /** Optimization Task Id */
+            optimization_task_id?: string | null;
+            /** Plan Task Id */
+            plan_task_id: string;
+            planned_diff?: components["schemas"]["OptimizationExecutionPlannedDiffResponse"] | null;
+            /** Rollback Note */
+            rollback_note?: string | null;
+            /**
+             * Rollback Supported
+             * @default true
+             */
+            rollback_supported: boolean;
+            /** Started At */
+            started_at: string;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary?: string | null;
+            /** Webhook Alias */
+            webhook_alias?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** FeedbackCaseCreateRequest */
         FeedbackCaseCreateRequest: {
             /**
@@ -2996,12 +3152,41 @@ export interface components {
              */
             status: "active" | "draft" | "archived";
         };
+        /** FeedbackOptimizationBatchExecuteAllRequest */
+        FeedbackOptimizationBatchExecuteAllRequest: {
+            /**
+             * Force
+             * @default true
+             */
+            force: boolean;
+            /** Note */
+            note?: string | null;
+            /** Webhook Alias By Task Id */
+            webhook_alias_by_task_id?: {
+                [key: string]: string;
+            };
+        };
+        /** FeedbackOptimizationBatchExecuteAllResponse */
+        FeedbackOptimizationBatchExecuteAllResponse: {
+            batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
+            execution_run: components["schemas"]["FeedbackBatchExecutionRunResponse"];
+        };
         /** FeedbackOptimizationBatchExecutionResponse */
         FeedbackOptimizationBatchExecutionResponse: {
             apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
             execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
+        };
+        /** FeedbackOptimizationBatchExecutionRollbackRequest */
+        FeedbackOptimizationBatchExecutionRollbackRequest: {
+            /** Note */
+            note?: string | null;
+        };
+        /** FeedbackOptimizationBatchExecutionRollbackResponse */
+        FeedbackOptimizationBatchExecutionRollbackResponse: {
+            batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
+            execution_run: components["schemas"]["FeedbackBatchExecutionRunResponse"];
         };
         /** FeedbackOptimizationBatchPlanGenerateRequest */
         FeedbackOptimizationBatchPlanGenerateRequest: {
@@ -3047,11 +3232,14 @@ export interface components {
             execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
             /** Execution Job Id */
             execution_job_id?: string | null;
+            /** Execution Runs */
+            execution_runs?: components["schemas"]["FeedbackBatchExecutionRunResponse"][];
             /** Feedback Case Ids */
             feedback_case_ids?: string[];
             /** Internal Proposal Id */
             internal_proposal_id?: string | null;
             latest_eval_run?: components["schemas"]["EvalRunResponse"] | null;
+            latest_execution_run?: components["schemas"]["FeedbackBatchExecutionRunResponse"] | null;
             /** Latest Regression Gate */
             latest_regression_gate?: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -3140,6 +3328,21 @@ export interface components {
             total: number;
         } & {
             [key: string]: unknown;
+        };
+        /** FeedbackOptimizationEvidenceRefRecord */
+        FeedbackOptimizationEvidenceRefRecord: {
+            /** Id */
+            id: string;
+            /**
+             * Reason
+             * @default
+             */
+            reason: string;
+            /**
+             * Type
+             * @default evidence_file
+             */
+            type: string;
         };
         /** FeedbackOptimizationPlanResponse */
         FeedbackOptimizationPlanResponse: {
@@ -3245,6 +3448,8 @@ export interface components {
             created_at?: string | null;
             /** Description */
             description?: string | null;
+            /** Edit Note */
+            edit_note?: string | null;
             /** Eval Case Ids */
             eval_case_ids?: string[];
             /** Evidence Refs */
@@ -3336,6 +3541,55 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** FeedbackOptimizationPlanTaskUpdateRequest */
+        FeedbackOptimizationPlanTaskUpdateRequest: {
+            /** Acceptance Criteria */
+            acceptance_criteria?: string[] | null;
+            /** Actionability */
+            actionability?: ("direct_workspace_change" | "workspace_config_change" | "eval_only" | "external_guidance" | "runtime_fix" | "regression_asset_governance" | "needs_human_analysis" | "not_actionable") | null;
+            /** Description */
+            description?: string | null;
+            /** Edit Note */
+            edit_note?: string | null;
+            /** Eval Case Ids */
+            eval_case_ids?: string[] | null;
+            /** Evidence Refs */
+            evidence_refs?: components["schemas"]["FeedbackOptimizationEvidenceRefRecord"][] | null;
+            /** Evidence Summary */
+            evidence_summary?: string | null;
+            /** Expected Effect */
+            expected_effect?: string | null;
+            /** Objective */
+            objective?: string | null;
+            /** Owner */
+            owner?: string | null;
+            /** Recommendation */
+            recommendation?: string | null;
+            /** Recommended Actions */
+            recommended_actions?: string[] | null;
+            /** Risk */
+            risk?: string | null;
+            /** Target Path */
+            target_path?: string | null;
+            /** Target Summary */
+            target_summary?: string | null;
+            /** Target Type */
+            target_type?: string | null;
+            task_context?: components["schemas"]["FeedbackOptimizationTaskContextRecord"] | null;
+            /** Title */
+            title?: string | null;
+            /** Validation */
+            validation?: string | null;
+        };
+        /** FeedbackOptimizationPlanTaskUpdateResponse */
+        FeedbackOptimizationPlanTaskUpdateResponse: {
+            batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
+            external_item?: components["schemas"]["ExternalGovernanceItemResponse"] | null;
+            /** Invalidated Execution Job Ids */
+            invalidated_execution_job_ids?: string[];
+            optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
+            plan_task?: components["schemas"]["FeedbackOptimizationPlanTaskResponse"] | null;
+        };
         /** FeedbackOptimizationSkippedSourceRefResponse */
         FeedbackOptimizationSkippedSourceRefResponse: {
             /** Reason */
@@ -3346,6 +3600,47 @@ export interface components {
             source_kind?: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** FeedbackOptimizationTaskContextRecord */
+        FeedbackOptimizationTaskContextRecord: {
+            /** Affected Fields */
+            affected_fields?: string[];
+            /** Alert Ids */
+            alert_ids?: string[];
+            /** Api Method */
+            api_method?: string | null;
+            /** Api Name */
+            api_name?: string | null;
+            /** Api Path */
+            api_path?: string | null;
+            /** Asset Ids */
+            asset_ids?: string[];
+            /** Case Ids */
+            case_ids?: string[];
+            /** Config Section */
+            config_section?: string | null;
+            /** Dates */
+            dates?: string[];
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Expected Fix */
+            expected_fix?: string | null;
+            /** External System */
+            external_system?: string | null;
+            /** Mcp Server */
+            mcp_server?: string | null;
+            /** Observed Issue */
+            observed_issue?: string | null;
+            /** Query Ids */
+            query_ids?: string[];
+            /** Symbol */
+            symbol?: string | null;
+            /** Target File */
+            target_file?: string | null;
+            /** Tool Name */
+            tool_name?: string | null;
+            /** Tool Names */
+            tool_names?: string[];
         };
         /** FeedbackOptimizationTaskContextResponse */
         FeedbackOptimizationTaskContextResponse: {
@@ -6201,6 +6496,77 @@ export interface operations {
             };
         };
     };
+    execute_feedback_optimization_batch_plan_all_api_feedback_optimization_batches__batch_id__optimization_plan_execute_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["FeedbackOptimizationBatchExecuteAllRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOptimizationBatchExecuteAllResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rollback_feedback_optimization_batch_execution_api_feedback_optimization_batches__batch_id__optimization_plan_executions__execution_run_id__rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                execution_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["FeedbackOptimizationBatchExecutionRollbackRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOptimizationBatchExecutionRollbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     reject_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_reject_post: {
         parameters: {
             query?: never;
@@ -6223,6 +6589,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedbackOptimizationBatchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_feedback_optimization_plan_task_api_feedback_optimization_batches__batch_id__optimization_plan_tasks__plan_task_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+                plan_task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackOptimizationPlanTaskUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOptimizationPlanTaskUpdateResponse"];
                 };
             };
             /** @description Validation Error */

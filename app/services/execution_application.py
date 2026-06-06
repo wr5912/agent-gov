@@ -2,16 +2,17 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from threading import Lock
-from typing import Awaitable, Callable, cast
+from typing import cast
 
 from pydantic import BaseModel
 
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.errors import FeedbackStoreError
-from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
 from app.runtime.json_types import JsonObject
+from app.runtime.records.feedback_compensation_records import ExecutionCompensationRecord
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     ExecutionCompensationResponse,
@@ -19,10 +20,9 @@ from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     OptimizationTaskResponse,
 )
 from app.runtime.runtime_db import utc_now
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.settings import AppSettings
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
-
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +46,21 @@ class ExecutionRunApplyResult(BaseModel):
     execution_job: AgentJobResponse | None = None
     apply_result: OptimizationExecutionApplyResponse | None = None
     optimization_task: OptimizationTaskResponse | None = None
+
+
+class BatchWorkspaceExecutionItem(BaseModel):
+    plan_task_id: str
+    optimization_task_id: str
+    execution_job_id: str
+
+
+class BatchWorkspaceApplyResult(BaseModel):
+    pre_execution_agent_version: JsonObject
+    applied_agent_version: JsonObject
+    applied_diff: JsonObject | None = None
+    change_set: JsonObject
+    candidate_commit_sha: str
+    applications: list[JsonObject] = []
 
 
 class ExecutionApplicationService:
@@ -100,6 +115,18 @@ class ExecutionApplicationService:
     ) -> OptimizationExecutionApplyResponse:
         with self._apply_lock:
             return self._apply_ready_execution_job_locked(task_id, execution_job_id, note=note)
+
+    def apply_ready_batch_execution_jobs(
+        self,
+        batch_id: str,
+        items: list[BatchWorkspaceExecutionItem],
+        *,
+        note: str | None = None,
+    ) -> BatchWorkspaceApplyResult | None:
+        if not items:
+            return None
+        with self._apply_lock:
+            return self._apply_ready_batch_execution_jobs_locked(batch_id, items, note=note)
 
     def mark_task_applied_manually(self, task_id: str, *, note: str | None = None) -> OptimizationTaskResponse:
         with self._apply_lock:
@@ -173,6 +200,168 @@ class ExecutionApplicationService:
             optimization_task=optimization_task,
             applied_diff=applied_diff,
         )
+
+    def _apply_ready_batch_execution_jobs_locked(
+        self,
+        batch_id: str,
+        items: list[BatchWorkspaceExecutionItem],
+        *,
+        note: str | None,
+    ) -> BatchWorkspaceApplyResult:
+        contexts = self._ready_batch_execution_contexts(items)
+        baseline_version_id = self._batch_execution_baseline(contexts)
+        change_set, pre_version, worktree_path = self._prepare_batch_candidate_change_set(
+            batch_id=batch_id,
+            baseline_version_id=baseline_version_id,
+            note=note,
+        )
+        for task, job, plan, _baseline in contexts:
+            self._apply_operations_to_candidate(
+                execution_job_id=str(job["execution_job_id"]),
+                task_id=str(task["optimization_task_id"]),
+                plan=plan,
+                worktree_path=worktree_path,
+                pre_version=pre_version,
+            )
+        return self._commit_batch_candidate_and_record_applications(
+            contexts=contexts,
+            change_set=change_set,
+            worktree_path=worktree_path,
+            pre_version=pre_version,
+            note=note,
+        )
+
+    def _ready_batch_execution_contexts(
+        self,
+        items: list[BatchWorkspaceExecutionItem],
+    ) -> list[tuple[JsonObject, JsonObject, JsonObject, str]]:
+        contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]] = []
+        seen_jobs: set[str] = set()
+        for item in items:
+            if item.execution_job_id in seen_jobs:
+                raise ExecutionApplicationError(409, f"Duplicate execution job in batch apply: {item.execution_job_id}")
+            seen_jobs.add(item.execution_job_id)
+            contexts.append(self._ready_execution_context(item.optimization_task_id, item.execution_job_id))
+        return contexts
+
+    def _batch_execution_baseline(self, contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]]) -> str:
+        repository_status = self.agent_version_store.repository_status()
+        if repository_status.get("dirty"):
+            raise ExecutionApplicationError(409, "Main Agent workspace has uncommitted changes")
+        current_version_id = self.agent_version_store.current_version_id()
+        baselines = {baseline for _task, _job, _plan, baseline in contexts if baseline}
+        if len(baselines) > 1:
+            raise ExecutionApplicationError(409, "Batch execution jobs were generated from different Agent baselines")
+        baseline = next(iter(baselines), "") or current_version_id or ""
+        if baseline and current_version_id != baseline:
+            raise ExecutionApplicationError(409, "Current Agent version differs from execution baseline")
+        return baseline
+
+    def _prepare_batch_candidate_change_set(
+        self,
+        *,
+        batch_id: str,
+        baseline_version_id: str,
+        note: str | None,
+    ) -> tuple[JsonObject, JsonObject, Path]:
+        change_set = self.agent_governance.create_change_set(
+            base_commit_sha=baseline_version_id or None,
+            title=f"Batch execution application for {batch_id}",
+            note=note or f"一键执行优化批次 {batch_id}。",
+        )
+        if baseline_version_id and str(change_set.get("base_commit_sha")) != baseline_version_id:
+            raise ExecutionApplicationError(409, "Agent change set base differs from execution baseline")
+        pre_version = self.agent_version_store.version_summary(
+            str(change_set["base_commit_sha"]),
+            reason="change_set_base",
+            note=note or f"一键执行优化批次 {batch_id} 的候选基线。",
+        )
+        return change_set, pre_version, self.agent_governance.change_set_worktree_path(change_set)
+
+    def _commit_batch_candidate_and_record_applications(
+        self,
+        *,
+        contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]],
+        change_set: JsonObject,
+        worktree_path: Path,
+        pre_version: JsonObject,
+        note: str | None,
+    ) -> BatchWorkspaceApplyResult:
+        try:
+            candidate_commit = self.agent_version_store.commit_worktree(
+                worktree_path,
+                message=note or f"Apply batch execution plan {change_set['change_set_id']}",
+            )
+            applied_version = self.agent_version_store.version_summary(
+                candidate_commit,
+                reason="batch_candidate_change_set",
+                note=note or "execution-optimizer 一键执行批次任务的候选提交。",
+            )
+            applied_diff = self.agent_version_store.diff_versions(str(pre_version["agent_version_id"]), str(applied_version["agent_version_id"]))
+            change_set = self.agent_governance.mark_candidate_committed(
+                str(change_set["change_set_id"]),
+                candidate_commit_sha=candidate_commit,
+                execution_job_id=None,
+                note=note,
+            )
+            applications = self._record_batch_execution_applications(contexts, pre_version, applied_version, applied_diff, change_set, candidate_commit, note)
+        except Exception as exc:
+            detail = self._compensate_batch_post_write_failure(contexts, pre_version, exc)
+            raise ExecutionApplicationError(409, detail) from exc
+        return BatchWorkspaceApplyResult(
+            pre_execution_agent_version=pre_version,
+            applied_agent_version=applied_version,
+            applied_diff=applied_diff,
+            change_set=change_set,
+            candidate_commit_sha=candidate_commit,
+            applications=applications,
+        )
+
+    def _record_batch_execution_applications(
+        self,
+        contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]],
+        pre_version: JsonObject,
+        applied_version: JsonObject,
+        applied_diff: JsonObject | None,
+        change_set: JsonObject,
+        candidate_commit: str,
+        note: str | None,
+    ) -> list[JsonObject]:
+        applications: list[JsonObject] = []
+        for task, job, _plan, _baseline in contexts:
+            application = self.feedback_store.record_execution_application_applied(
+                str(job["execution_job_id"]),
+                pre_execution_version=pre_version,
+                applied_agent_version=applied_version,
+                applied_diff=applied_diff,
+                change_set=change_set,
+                candidate_commit_sha=candidate_commit,
+                note=note or f"一键执行优化批次任务 {task['optimization_task_id']}。",
+            )
+            if not application:
+                raise ExecutionApplicationError(404, "Execution job not found")
+            applications.append(application)
+        return applications
+
+    def _compensate_batch_post_write_failure(
+        self,
+        contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]],
+        pre_version: JsonObject,
+        error: Exception,
+    ) -> str:
+        original_error = str(error)
+        for task, job, _plan, _baseline in contexts:
+            try:
+                self.feedback_store.record_execution_application_failed(
+                    str(job["execution_job_id"]),
+                    optimization_task_id=str(task["optimization_task_id"]),
+                    message=original_error,
+                    pre_execution_version=pre_version,
+                    status="failed",
+                )
+            except Exception:
+                logger.exception("Failed to record batch execution application failure for job %s", job.get("execution_job_id"))
+        return f"Batch execution apply state sync failed: {original_error}"
 
     def _ready_execution_context(
         self,

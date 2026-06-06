@@ -10,6 +10,7 @@ from app.runtime.state_machines import BATCH_STATES, validate_transition
 from ..json_types import JsonObject
 from .agent_job_records import AgentJobProjectionRecord
 from .base import StrictRuntimeRecord
+from .batch_execution_records import FeedbackBatchExecutionRunRecord
 from .batch_plan_records import FeedbackOptimizationPlanRecord
 from .common_records import (
     FeedbackBatchAttributionSummaryRecord,
@@ -20,7 +21,6 @@ from .common_records import (
 from .eval_run_records import EvalRunProjectionRecord
 from .optimization_task_records import OptimizationTaskRecord
 from .regression_plan_records import RegressionPlanRecord
-
 
 FeedbackOptimizationBatchStatus = Literal[
     "draft",
@@ -79,6 +79,8 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
     execution_job_id: Optional[str] = None
     execution_job: Optional[AgentJobProjectionRecord] = None
     execution_apply_result: Optional[JsonObject] = None
+    execution_runs: list[FeedbackBatchExecutionRunRecord] = Field(default_factory=list)
+    latest_execution_run: Optional[FeedbackBatchExecutionRunRecord] = None
     eval_run_id: Optional[str] = None
     latest_eval_run: Optional[EvalRunProjectionRecord] = None
     regression_plan_id: Optional[str] = None
@@ -99,7 +101,7 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
         return [str(item) for item in value if item]
 
     @model_validator(mode="after")
-    def validate_batch_shape(self) -> "FeedbackOptimizationBatchRecord":
+    def validate_batch_shape(self) -> FeedbackOptimizationBatchRecord:
         if not self.source_refs:
             raise ValueError("feedback optimization batch must include source_refs")
         if not self.feedback_case_ids:
@@ -113,7 +115,7 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
         status: str,
         *,
         fields: JsonObject | None = None,
-    ) -> "FeedbackOptimizationBatchRecord":
+    ) -> FeedbackOptimizationBatchRecord:
         validate_transition("batch", self.status, status)
         payload = self.to_payload()
         payload.update(fields or {})
@@ -124,7 +126,7 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: FeedbackOptimizationBatchModel) -> "FeedbackOptimizationBatchRecord":
+    def from_row(cls, row: FeedbackOptimizationBatchModel) -> FeedbackOptimizationBatchRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {

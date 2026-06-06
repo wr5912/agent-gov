@@ -1,35 +1,34 @@
 import { useState, type Dispatch, type FormEvent, type SetStateAction } from "react";
 import {
-  applyOptimizationExecutionJob,
   createFeedbackOptimizationBatch,
   createFeedbackOptimizationBatchEvalCase,
   createFeedbackOptimizationBatchRegressionPlan,
-  createOptimizationExecutionJob,
+  executeFeedbackOptimizationBatchPlanAll,
   executeFeedbackOptimizationPlanTask,
   generateFeedbackOptimizationBatchPlan,
   generateFeedbackSourceEvalCases,
   getAgentJob,
   removeFeedbackOptimizationBatchEvalCase,
   rejectFeedbackOptimizationBatchPlan,
+  rollbackFeedbackOptimizationBatchExecution,
   runFeedbackOptimizationBatchAttribution,
   runFeedbackOptimizationBatchRegression,
-  restoreExecutionCompensation,
   updateFeedbackOptimizationBatchEvalCase,
+  updateFeedbackOptimizationPlanTask,
 } from "../../api/runtime";
 import type {
   AgentJobRecord,
   EvalCaseRecord,
   EvalCaseUpdateRequest,
-  ExecutionCompensationRecord,
   FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchRecord,
+  FeedbackOptimizationBatchExecuteAllRequest,
+  FeedbackOptimizationPlanTaskUpdateRequest,
   FeedbackOptimizationPlanTaskRecord,
   FeedbackSourceRef,
-  OptimizationTaskRecord,
 } from "../../types/feedback";
 import type { ExternalFeedbackWorkspaceProps } from "./types";
 import {
-  executionPlanReady,
   shortId,
   type SourceRow,
 } from "./selectors";
@@ -48,10 +47,6 @@ function delay(ms: number) {
 interface BatchPlanGenerateDraft {
   batch: FeedbackOptimizationBatchRecord;
   instruction: string;
-}
-
-interface ExecutionApplyDraft {
-  task: OptimizationTaskRecord;
 }
 
 export function useFeedbackWorkspaceActions({
@@ -79,9 +74,7 @@ export function useFeedbackWorkspaceActions({
 }) {
   const [actionId, setActionId] = useState<string | null>(null);
   const [batchPlanGenerateDraft, setBatchPlanGenerateDraft] = useState<BatchPlanGenerateDraft | null>(null);
-  const [executionApplyDraft, setExecutionApplyDraft] = useState<ExecutionApplyDraft | null>(null);
   const batchPlanGenerateBusy = Boolean(actionId?.startsWith("batch-plan:"));
-  const executionApplyBusy = Boolean(actionId?.startsWith("execution-apply:"));
 
   async function waitForAgentJob(jobId?: string | null) {
     if (!jobId) return null;
@@ -225,14 +218,78 @@ export function useFeedbackWorkspaceActions({
         setToast(`${result.external_item.status === "notified" ? "已发送外部任务" : "外部任务发送失败"}：${webhookAlias || result.external_item.latest_webhook_alias || "-"}`);
       } else {
         const completed = await waitForAgentJob(result.execution_job?.execution_job_id);
-        setToast(`任务执行方案 ${completed?.status || result.execution_job?.status || result.batch.status}`);
+        setToast(`任务执行 ${completed?.status || result.execution_job?.status || result.batch.status}`);
       }
       setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
       await refreshWorkbench();
       onFeedbackChanged?.();
     } catch (error) {
-      setToast(error instanceof Error ? error.message : "执行方案任务失败");
+      setToast(error instanceof Error ? error.message : "执行任务失败");
       await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function executeBatchPlanAll(batch: FeedbackOptimizationBatchRecord, payload: FeedbackOptimizationBatchExecuteAllRequest = {}) {
+    setActionId(`batch-execute-all:${batch.batch_id}`);
+    try {
+      const result = await executeFeedbackOptimizationBatchPlanAll(clientConfig, batch.batch_id, {
+        force: true,
+        ...payload,
+      });
+      const versionId = result.execution_run.applied_agent_version_id;
+      const statusText = result.execution_run.status === "completed" ? "已完成" : result.execution_run.status;
+      setToast(versionId ? `一键执行${statusText}，生成版本 ${shortId(versionId)}` : `一键执行${statusText}`);
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      await onRefreshVersions?.();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "一键执行优化方案失败");
+      await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function rollbackBatchExecution(batch: FeedbackOptimizationBatchRecord, executionRunId: string) {
+    setActionId(`batch-rollback:${executionRunId}`);
+    try {
+      const result = await rollbackFeedbackOptimizationBatchExecution(clientConfig, batch.batch_id, executionRunId, {
+        note: `从优化批次 ${batch.batch_id} 回滚执行记录 ${executionRunId}`,
+      });
+      setToast(`已回滚执行记录 ${shortId(result.execution_run.execution_run_id)}`);
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      await onRefreshVersions?.();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "回滚批次执行失败");
+      await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
+  async function updatePlanTask(
+    batch: FeedbackOptimizationBatchRecord,
+    planTask: FeedbackOptimizationPlanTaskRecord,
+    payload: FeedbackOptimizationPlanTaskUpdateRequest,
+  ) {
+    setActionId(`plan-task-edit:${planTask.plan_task_id}`);
+    try {
+      const result = await updateFeedbackOptimizationPlanTask(clientConfig, batch.batch_id, planTask.plan_task_id, payload);
+      const invalidatedCount = result.invalidated_execution_job_ids?.length || 0;
+      setToast(invalidatedCount ? `已更新优化任务，并清空 ${invalidatedCount} 条旧执行记录` : "已更新优化任务");
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return true;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "更新优化任务失败");
+      await refreshWorkbench();
+      return false;
     } finally {
       setActionId(null);
     }
@@ -334,97 +391,26 @@ export function useFeedbackWorkspaceActions({
     }
   }
 
-  async function createExecutionJob(task: OptimizationTaskRecord, force = false) {
-    setActionId(`execution:${task.optimization_task_id}`);
-    try {
-      const job = await createOptimizationExecutionJob(clientConfig, task.optimization_task_id, force);
-      const completed = await waitForAgentJob(job.job_id);
-      setToast(`执行方案生成 ${completed?.status || job.status}：${shortId(job.job_id)}`);
-      await refreshWorkbench();
-      onFeedbackChanged?.();
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "生成执行方案失败");
-    } finally {
-      setActionId(null);
-    }
-  }
-
-  function applyExecutionJob(task: OptimizationTaskRecord) {
-    const jobId = task.latest_execution_job?.execution_job_id || task.latest_execution_job_id;
-    if (!jobId) {
-      setToast("当前任务没有可应用的执行方案");
-      return;
-    }
-    if (!executionPlanReady(task.latest_execution_job)) {
-      setToast("执行方案尚未 ready，不能应用");
-      return;
-    }
-    setExecutionApplyDraft({ task });
-  }
-
-  async function submitExecutionApply() {
-    if (!executionApplyDraft) return;
-    const task = executionApplyDraft.task;
-    const jobId = task.latest_execution_job?.execution_job_id || task.latest_execution_job_id;
-    if (!jobId) {
-      setToast("当前任务没有可应用的执行方案");
-      setExecutionApplyDraft(null);
-      return;
-    }
-    setActionId(`execution-apply:${task.optimization_task_id}`);
-    try {
-      const result = await applyOptimizationExecutionJob(clientConfig, task.optimization_task_id, jobId);
-      setToast(`已应用执行方案，生成版本 ${shortId(result.optimization_task?.applied_agent_version_id)}`);
-      setExecutionApplyDraft(null);
-      await refreshWorkbench();
-      await onRefreshVersions?.();
-      onFeedbackChanged?.();
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "应用执行方案失败");
-    } finally {
-      setActionId(null);
-    }
-  }
-
-  async function restoreCompensation(compensation: ExecutionCompensationRecord) {
-    setActionId(`compensation-restore:${compensation.compensation_id}`);
-    try {
-      const updated = await restoreExecutionCompensation(clientConfig, compensation.compensation_id);
-      setToast(`已恢复补偿记录 ${shortId(updated.compensation_id)}`);
-      await refreshWorkbench();
-      await onRefreshVersions?.();
-      onFeedbackChanged?.();
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "恢复补偿记录失败");
-    } finally {
-      setActionId(null);
-    }
-  }
-
   return {
     actionId,
     batchPlanGenerateDraft,
     setBatchPlanGenerateDraft,
-    executionApplyDraft,
-    setExecutionApplyDraft,
     batchPlanGenerateBusy,
-    executionApplyBusy,
     toggleSource,
     generateEvalCasesFromSelection,
     createBatchFromSelection,
     runBatchAttribution,
     openBatchPlanGeneration,
     submitBatchPlanGeneration,
+    executeBatchPlanAll,
+    rollbackBatchExecution,
     executePlanTask,
+    updatePlanTask,
     rejectBatchPlan,
     runBatchRegression,
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,
     removeBatchEvalCase,
-    createExecutionJob,
-    applyExecutionJob,
-    submitExecutionApply,
-    restoreCompensation,
   };
 }

@@ -11,9 +11,9 @@ from ..json_types import JsonObject
 from .agent_governance_records import AgentChangeSetProjectionRecord
 from .agent_job_records import AgentJobProjectionRecord
 from .base import StrictRuntimeRecord
+from .common_records import FeedbackOptimizationEvidenceRefRecord, FeedbackOptimizationTaskContextRecord
 from .eval_run_records import EvalRunProjectionRecord
 from .execution_records import ExecutionApplicationRecord
-
 
 OptimizationTaskStatus = Literal[
     "pending_execution",
@@ -46,16 +46,21 @@ class OptimizationTaskPlanSnapshotRecord(StrictRuntimeRecord):
     description: Optional[str] = None
     objective: Optional[str] = None
     target_summary: Optional[str] = None
+    task_context: FeedbackOptimizationTaskContextRecord = Field(default_factory=FeedbackOptimizationTaskContextRecord)
     recommendation: Optional[str] = None
     recommended_actions: list[str] = Field(default_factory=list)
     acceptance_criteria: list[str] = Field(default_factory=list)
     expected_effect: Optional[str] = None
     validation: Optional[str] = None
     risk: Optional[str] = None
+    analysis_summary: Optional[str] = None
+    evidence_summary: Optional[str] = None
+    evidence_refs: list[FeedbackOptimizationEvidenceRefRecord] = Field(default_factory=list)
     source_batch_id: Optional[str] = None
     source_plan_task_id: Optional[str] = None
     source_feedback_case_ids: list[str] = Field(default_factory=list)
     regeneration_instruction: Optional[str] = None
+    edit_note: Optional[str] = None
 
 
 class OptimizationTaskRecord(StrictRuntimeRecord):
@@ -109,7 +114,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
         return [str(item) for item in value if item]
 
     @model_validator(mode="after")
-    def validate_task_shape(self) -> "OptimizationTaskRecord":
+    def validate_task_shape(self) -> OptimizationTaskRecord:
         if not self.proposal_id and not self.proposal_ids and not self.source_batch_id:
             raise ValueError("optimization task must reference a proposal or optimization batch")
         if not self.target_paths:
@@ -131,7 +136,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
         status: str,
         *,
         fields: JsonObject | None = None,
-    ) -> "OptimizationTaskRecord":
+    ) -> OptimizationTaskRecord:
         validate_transition("task", self.status, status)
         payload = self.to_payload()
         payload.update(fields or {})
@@ -142,7 +147,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
         return self.model_dump(mode="json")
 
     @classmethod
-    def from_row(cls, row: OptimizationTaskModel) -> "OptimizationTaskRecord":
+    def from_row(cls, row: OptimizationTaskModel) -> OptimizationTaskRecord:
         payload = dict(row.payload_json or {})
         payload.update(
             {

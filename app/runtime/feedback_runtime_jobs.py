@@ -9,9 +9,9 @@ from .agent_profiles import (
     PROPOSAL_GENERATOR_PROFILE,
     REGRESSION_IMPACT_ANALYZER_PROFILE,
 )
+from .json_types import JsonObject
 from .response_schemas.agent_job_response_schemas import AgentJobResponse
 from .response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
-from .json_types import JsonObject
 from .schemas import EvalRunResponse
 
 
@@ -80,6 +80,11 @@ class FeedbackRuntimeJobsMixin:
                 force=force,
             )
         )
+
+    def execution_job_queue_blocker(self, optimization_task_id: str) -> str | None:
+        if self.feedback_store is None:
+            return "Feedback store is unavailable"
+        return self.feedback_store.execution_job_queue_blocker(optimization_task_id)
 
     def queue_eval_case_generation_job(
         self,

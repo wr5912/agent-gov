@@ -1,5 +1,4 @@
 import pytest
-
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.state_machines import JOB_IN_PROGRESS_STATES, JOB_STATES, StateTransitionError, validate_transition
 
@@ -54,6 +53,13 @@ def test_batch_state_machine_allows_main_lifecycle():
     validate_transition("batch", "execution_ready", "applied_pending_regression")
     validate_transition("batch", "applied_pending_regression", "regression_running")
     validate_transition("batch", "regression_running", "completed")
+
+
+def test_batch_and_task_state_machine_allow_execution_rollback_to_pending():
+    validate_transition("batch", "execution_planning", "completed")
+    validate_transition("batch", "execution_ready", "execution_planning")
+    validate_transition("batch", "applied_pending_regression", "pending_execution")
+    validate_transition("task", "applied_pending_regression", "pending_execution")
 
 
 def test_batch_state_machine_rejects_terminal_reopen():

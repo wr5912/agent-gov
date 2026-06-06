@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import uuid
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
@@ -15,14 +16,13 @@ from ..external_governance_mapping import (
     apply_external_governance_record,
     external_governance_record_from_row,
 )
+from ..json_types import JsonObject
 from ..records.external_governance_records import (
     ExternalGovernanceItemRecord,
     ExternalGovernanceNotificationRecord,
     apply_external_governance_notification_record,
 )
-from ..json_types import JsonObject
 from ..runtime_db import ExternalGovernanceItemModel, ExternalNotificationModel, utc_now
-
 
 ExternalWebhookSender = Callable[[JsonObject, JsonObject], JsonObject]
 
@@ -191,13 +191,15 @@ class ExternalGovernanceService:
         with self.Session() as db:
             if row.latest_notification_id:
                 notification = db.get(ExternalNotificationModel, row.latest_notification_id)
-            else:
+            elif row.status in {"notified", "notification_failed"}:
                 notification = db.scalar(
                     select(ExternalNotificationModel)
                     .where(ExternalNotificationModel.external_item_id == row.external_item_id)
                     .order_by(ExternalNotificationModel.created_at.desc())
                     .limit(1)
                 )
+            else:
+                notification = None
         if notification:
             item["latest_notification"] = ExternalGovernanceNotificationRecord.from_row(notification).to_payload()
         return item

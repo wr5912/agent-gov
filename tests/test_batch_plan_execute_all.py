@@ -106,7 +106,7 @@ def _batch_with_plan_tasks(store: FeedbackStore, tasks: list[dict]):
         plan_job["job_id"],
         _batch_plan_output(
             plan_job,
-            status="pending_approval",
+            status="pending_execution",
             actionability="direct_workspace_change",
             target_type="main_agent_claude_md",
             target_path="CLAUDE.md",

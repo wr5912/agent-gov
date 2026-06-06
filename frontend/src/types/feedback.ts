@@ -21,7 +21,6 @@ type OpenApiFeedbackOptimizationBatchAttributionResponse = components["schemas"]
 type OpenApiFeedbackOptimizationBatchCreateRequest = components["schemas"]["FeedbackOptimizationBatchCreateRequest"];
 type OpenApiFeedbackOptimizationBatchExecuteAllRequest = components["schemas"]["FeedbackOptimizationBatchExecuteAllRequest"];
 type OpenApiFeedbackOptimizationBatchExecuteAllResponse = components["schemas"]["FeedbackOptimizationBatchExecuteAllResponse"];
-type OpenApiFeedbackOptimizationBatchExecutionResponse = components["schemas"]["FeedbackOptimizationBatchExecutionResponse"];
 type OpenApiFeedbackOptimizationBatchExecutionRollbackRequest = components["schemas"]["FeedbackOptimizationBatchExecutionRollbackRequest"];
 type OpenApiFeedbackOptimizationBatchExecutionRollbackResponse = components["schemas"]["FeedbackOptimizationBatchExecutionRollbackResponse"];
 type OpenApiFeedbackOptimizationBatchRegressionResponse = components["schemas"]["FeedbackOptimizationBatchRegressionResponse"];
@@ -374,7 +373,7 @@ export type EvalRunItemRecord = OpenApiEvalRunItemResponse;
 export type EvalRunRecord = OpenApiEvalRunResponse;
 
 export type FeedbackOptimizationPlanRecord = OpenApiFeedbackOptimizationPlanResponse & {
-  status: "pending_approval" | "approved" | "rejected" | "needs_human_review" | string;
+  status: "pending_execution" | "needs_human_review" | string;
   tasks?: FeedbackOptimizationPlanTaskRecord[];
   blocked_items?: FeedbackOptimizationBlockedItemRecord[];
 };
@@ -453,6 +452,7 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
   execution_job?: OptimizationExecutionJobRecord | null;
   execution_runs?: FeedbackBatchExecutionRunRecord[];
   latest_execution_run?: FeedbackBatchExecutionRunRecord | null;
+  applied_agent_version_id?: string | null;
   latest_eval_run?: EvalRunRecord | null;
   latest_regression_plan?: RegressionPlanRecord | null;
   latest_regression_gate?: Record<string, unknown>;
@@ -461,12 +461,6 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
 export type FeedbackOptimizationBatchAttributionResponse = OpenApiFeedbackOptimizationBatchAttributionResponse & {
   batch?: FeedbackOptimizationBatchRecord | null;
   jobs: AgentJobRecord[];
-};
-
-export type FeedbackOptimizationBatchExecutionResponse = OpenApiFeedbackOptimizationBatchExecutionResponse & {
-  batch?: FeedbackOptimizationBatchRecord | null;
-  optimization_task?: OptimizationTaskRecord | null;
-  execution_job?: OptimizationExecutionJobRecord | null;
 };
 
 export type FeedbackOptimizationBatchRegressionResponse = OpenApiFeedbackOptimizationBatchRegressionResponse & {

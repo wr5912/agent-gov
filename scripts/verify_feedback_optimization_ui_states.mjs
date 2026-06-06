@@ -82,7 +82,7 @@ function optimizationPlan(edit = {}) {
   const taskDescription = edit.description || "在回答工作区配置类问题前读取当前配置文件。";
   return {
     optimization_plan_id: "fop-ui-state",
-    status: "pending_approval",
+    status: "pending_execution",
     generated_by: "proposal-generator",
     title: "补充工作区配置核查指令",
     recommendation: "在回答工作区配置类问题前读取当前配置文件。",
@@ -168,7 +168,8 @@ function executionRun(status = "completed") {
 
 function batchForState(state, edit = {}) {
   const failed = state === "failed";
-  const success = state === "success" || state === "executed" || state === "rolled_back";
+  const pendingExecution = state === "pending_execution_unapplied";
+  const success = state === "success" || state === "executed" || state === "rolled_back" || pendingExecution;
   const run = state === "executed" ? executionRun("completed") : state === "rolled_back" ? executionRun("rolled_back") : null;
   const plan = success ? optimizationPlan(edit) : null;
   if (state === "executed" && plan?.tasks?.[0]) {
@@ -177,10 +178,13 @@ function batchForState(state, edit = {}) {
     plan.tasks[0].optimization_task_id = "opt-ui-state";
     plan.tasks[0].execution_job_id = "fbe-ui-state";
   }
+  if (pendingExecution && plan?.tasks?.[0]) {
+    plan.tasks[0].optimization_task_id = "opt-ui-state";
+  }
   return {
     batch_id: "fob-ui-state",
     title: batchTitle,
-    status: state === "executed" ? "applied_pending_regression" : state === "rolled_back" ? "pending_execution" : success ? "pending_approval" : failed ? "needs_human_review" : "attribution_completed",
+    status: state === "executed" ? "applied_pending_regression" : state === "rolled_back" || pendingExecution || success ? "pending_execution" : failed ? "needs_human_review" : "attribution_completed",
     priority: "medium",
     source_refs: [{ source_kind: "signal", source_id: "fbs-ui-state" }],
     feedback_case_ids: ["fbc-ui-state"],
@@ -192,7 +196,9 @@ function batchForState(state, edit = {}) {
     optimization_plan_job: state === "empty" ? null : agentJob(state),
     optimization_plan_error: failed ? planError() : null,
     optimization_plan: plan,
-    optimization_task: null,
+    optimization_task: pendingExecution ? { optimization_task_id: "opt-ui-state", status: "pending_execution" } : null,
+    optimization_task_id: pendingExecution ? "opt-ui-state" : null,
+    optimization_task_ids: pendingExecution ? ["opt-ui-state"] : [],
     execution_job: null,
     latest_execution_run: run,
     execution_runs: run ? [run] : [],
@@ -348,6 +354,19 @@ async function verifyOneClickExecutionAndRollback(page, stateRef) {
   }
 }
 
+async function verifyPendingExecutionPlanStillAllowsRegenerateWithoutReject(page, stateRef) {
+  stateRef.value = "pending_execution_unapplied";
+  await openPlanTab(page, batchTitle);
+  const regenerate = page.getByRole("button", { name: "重新生成优化方案" });
+  await regenerate.waitFor({ timeout: 15_000 });
+  if (await regenerate.isDisabled()) {
+    throw new Error("Pending execution without applied result should allow plan regeneration");
+  }
+  if (await page.getByRole("button", { name: "拒绝方案" }).count()) {
+    throw new Error("Batch optimization plan should not expose reject action");
+  }
+}
+
 async function main() {
   const server = startVite();
   try {
@@ -408,6 +427,7 @@ async function main() {
       await verifyGenerationTransition(page, stateRef, "failed");
       await verifyPlanTaskEditSuccess(page, stateRef);
       await verifyPlanTaskEditInvalidJson(page, stateRef);
+      await verifyPendingExecutionPlanStillAllowsRegenerateWithoutReject(page, stateRef);
       await verifyOneClickExecutionAndRollback(page, stateRef);
     } finally {
       await browser.close();
@@ -415,7 +435,7 @@ async function main() {
   } finally {
     await stopChild(server);
   }
-  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "edit_success", "edit_invalid_json", "execute_all", "rollback"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "execute_all", "rollback"] }, null, 2));
 }
 
 main().catch((error) => {

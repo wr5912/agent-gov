@@ -346,10 +346,6 @@ class FeedbackOptimizationBatchPlanGenerateRequest(BaseModel):
         return text or None
 
 
-class FeedbackOptimizationBatchPlanReviewRequest(BaseModel):
-    comment: Optional[str] = None
-
-
 class FeedbackOptimizationPlanTaskExecuteRequest(BaseModel):
     webhook_alias: Optional[str] = None
     force: bool = False

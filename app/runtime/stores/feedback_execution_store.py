@@ -87,10 +87,10 @@ class FeedbackExecutionStoreMixin:
             blockers.append("这个优化任务已经应用过，不能重复执行。")
         proposal = task.get("proposal") if isinstance(task.get("proposal"), dict) else None
         if not proposal:
-            blockers.append("这个优化任务缺少已确认的方案快照，无法生成执行方案。")
+            blockers.append("这个优化任务缺少已确认的任务快照，无法生成执行结果。")
             return blockers
         if proposal.get("status") != "approved":
-            blockers.append("这个优化任务的方案还不是 approved 状态，请先确认方案后再执行。")
+            blockers.append("这个优化任务还没有可执行的确认快照，请先更新任务后再执行。")
         target_paths = [str(path).strip() for path in task.get("target_paths") or [] if isinstance(path, str) and str(path).strip()]
         target_file = self._string((proposal.get("task_context") or {}).get("target_file")) if isinstance(proposal.get("task_context"), dict) else ""
         if not target_paths:
@@ -290,7 +290,7 @@ class FeedbackExecutionStoreMixin:
                 db,
                 task,
                 agent_version=applied_agent_version,
-                note=note or f"execution-optimizer 应用执行方案 {execution_job_id}。",
+                note=note or f"execution-optimizer 应用执行变更 {execution_job_id}。",
                 pre_execution_version=pre_execution_version,
                 execution_job=updated_job,
             )

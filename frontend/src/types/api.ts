@@ -836,23 +836,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/approve": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Execute one batch optimization plan, generate an execution plan, and apply controlled changes */
-        post: operations["approve_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_approve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all": {
         parameters: {
             query?: never;
@@ -881,23 +864,6 @@ export interface paths {
         put?: never;
         /** Rollback one batch optimization execution to its pre-execution Agent version */
         post: operations["rollback_feedback_optimization_batch_execution_api_feedback_optimization_batches__batch_id__optimization_plan_executions__execution_run_id__rollback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/feedback-optimization-batches/{batch_id}/optimization-plan/reject": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Reject one batch optimization plan */
-        post: operations["reject_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_reject_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3171,13 +3137,6 @@ export interface components {
             batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
             execution_run: components["schemas"]["FeedbackBatchExecutionRunResponse"];
         };
-        /** FeedbackOptimizationBatchExecutionResponse */
-        FeedbackOptimizationBatchExecutionResponse: {
-            apply_result?: components["schemas"]["OptimizationExecutionApplyResponse"] | null;
-            batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
-            execution_job?: components["schemas"]["OptimizationExecutionJobResponse"] | null;
-            optimization_task?: components["schemas"]["OptimizationTaskResponse"] | null;
-        };
         /** FeedbackOptimizationBatchExecutionRollbackRequest */
         FeedbackOptimizationBatchExecutionRollbackRequest: {
             /** Note */
@@ -3192,11 +3151,6 @@ export interface components {
         FeedbackOptimizationBatchPlanGenerateRequest: {
             /** Regeneration Instruction */
             regeneration_instruction?: string | null;
-        };
-        /** FeedbackOptimizationBatchPlanReviewRequest */
-        FeedbackOptimizationBatchPlanReviewRequest: {
-            /** Comment */
-            comment?: string | null;
         };
         /** FeedbackOptimizationBatchRegressionResponse */
         FeedbackOptimizationBatchRegressionResponse: {
@@ -6461,41 +6415,6 @@ export interface operations {
             };
         };
     };
-    approve_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_approve_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackOptimizationBatchPlanReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackOptimizationBatchExecutionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     execute_feedback_optimization_batch_plan_all_api_feedback_optimization_batches__batch_id__optimization_plan_execute_all_post: {
         parameters: {
             query?: never;
@@ -6554,41 +6473,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedbackOptimizationBatchExecutionRollbackResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_feedback_optimization_batch_plan_api_feedback_optimization_batches__batch_id__optimization_plan_reject_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                batch_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackOptimizationBatchPlanReviewRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FeedbackOptimizationBatchResponse"];
                 };
             };
             /** @description Validation Error */

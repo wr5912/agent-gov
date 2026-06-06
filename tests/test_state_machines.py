@@ -47,8 +47,8 @@ def test_batch_state_machine_allows_main_lifecycle():
     validate_transition("batch", "attribution_running", "draft")
     validate_transition("batch", "attribution_running", "attribution_completed")
     validate_transition("batch", "attribution_completed", "optimization_plan_queued")
-    validate_transition("batch", "optimization_plan_queued", "pending_approval")
-    validate_transition("batch", "pending_approval", "execution_planning")
+    validate_transition("batch", "optimization_plan_queued", "pending_execution")
+    validate_transition("batch", "pending_execution", "execution_planning")
     validate_transition("batch", "execution_planning", "execution_ready")
     validate_transition("batch", "execution_ready", "applied_pending_regression")
     validate_transition("batch", "applied_pending_regression", "regression_running")
@@ -59,7 +59,14 @@ def test_batch_and_task_state_machine_allow_execution_rollback_to_pending():
     validate_transition("batch", "execution_planning", "completed")
     validate_transition("batch", "execution_ready", "execution_planning")
     validate_transition("batch", "applied_pending_regression", "pending_execution")
+    validate_transition("batch", "pending_execution", "draft")
+    validate_transition("batch", "pending_execution", "optimization_plan_queued")
     validate_transition("task", "applied_pending_regression", "pending_execution")
+
+
+def test_batch_state_machine_rejects_pending_execution_to_rejected():
+    with pytest.raises(StateTransitionError, match="pending_execution -> rejected"):
+        validate_transition("batch", "pending_execution", "rejected")
 
 
 def test_batch_state_machine_rejects_terminal_reopen():

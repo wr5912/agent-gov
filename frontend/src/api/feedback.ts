@@ -19,7 +19,6 @@ import type {
   FeedbackOptimizationBatchExecuteAllResponse,
   FeedbackOptimizationBatchExecutionRollbackRequest,
   FeedbackOptimizationBatchExecutionRollbackResponse,
-  FeedbackOptimizationBatchExecutionResponse,
   FeedbackOptimizationBatchRegressionResponse,
   FeedbackOptimizationBatchRecord,
   FeedbackOptimizationPlanTaskExecuteRequest,
@@ -197,30 +196,6 @@ export function generateFeedbackOptimizationBatchPlan(
       headers: options ? { "Content-Type": "application/json" } : undefined,
       body: options ? JSON.stringify(options) : undefined,
       timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
-    },
-  );
-}
-
-export function approveFeedbackOptimizationBatchPlan(config: RuntimeClientConfig, batchId: string, comment?: string) {
-  return requestJson<FeedbackOptimizationBatchExecutionResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/approve`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comment }),
-    },
-  );
-}
-
-export function rejectFeedbackOptimizationBatchPlan(config: RuntimeClientConfig, batchId: string, comment?: string) {
-  return requestJson<FeedbackOptimizationBatchRecord>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/reject`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ comment }),
     },
   );
 }

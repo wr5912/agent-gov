@@ -113,7 +113,7 @@ export function BatchPlanDetails({
     <section className="fw-task-source fw-batch-plan-section">
       <div className="fw-task-section-head">
         <h4>优化方案</h4>
-        <Pill tone={plan.status === "pending_approval" ? "orange" : plan.status === "approved" ? "green" : "gray"}>{plan.status}</Pill>
+        <Pill tone={planStatusTone(plan.status)}>{plan.status}</Pill>
       </div>
       <DetailMetricGrid
         items={[
@@ -222,6 +222,14 @@ function taskResultTone(status?: string | null): PillTone {
   if (status === "failed" || status === "execution_failed") return "red";
   if (status === "skipped" || status === "partial_failed" || status === "needs_human_review") return "orange";
   if (status === "running" || status === "queued") return "blue";
+  return "gray";
+}
+
+function planStatusTone(status?: string | null): PillTone {
+  if (status === "pending_execution") return "blue";
+  if (status === "needs_human_review") return "orange";
+  if (status === "execution_failed" || status === "failed") return "red";
+  if (status === "completed" || status === "applied_pending_regression") return "green";
   return "gray";
 }
 

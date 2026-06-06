@@ -263,7 +263,7 @@ class FeedbackPlanTaskStoreMixin:
             return None
         next_plan = {**plan, "tasks": tasks, "updated_at": now, "task_summary": self._plan_task_summary(tasks)}
         fields = {"optimization_plan": next_plan, **(top_level_fields or {})}
-        return self._update_batch_row(db, batch_id, status=batch_status or str(batch.get("status") or "pending_approval"), fields=fields)
+        return self._update_batch_row(db, batch_id, status=batch_status or str(batch.get("status") or "pending_execution"), fields=fields)
 
     def _plan_task_summary(self, tasks: list[JsonObject]) -> JsonObject:
         summary: JsonObject = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0, "internal_action": 0}

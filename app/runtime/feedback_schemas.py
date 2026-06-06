@@ -343,7 +343,7 @@ class AttributionSummary(NormalizedAttributionSummary):
 
 
 class FeedbackOptimizationPlanFormatterOutput(NormalizedOutputRecord):
-    status: Literal["pending_approval", "needs_human_review"] = "pending_approval"
+    status: Literal["pending_execution", "needs_human_review"] = "pending_execution"
     title: str
     summary: Optional[str] = None
     problem_types: list[str] = Field(default_factory=list)
@@ -372,7 +372,7 @@ class FeedbackOptimizationPlanFormatterOutput(NormalizedOutputRecord):
         if not self.tasks:
             self.status = "needs_human_review"
         elif self.status != "needs_human_review":
-            self.status = "pending_approval"
+            self.status = "pending_execution"
         return self
 
 
@@ -380,7 +380,7 @@ class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
     batch_id: str
     optimization_plan_id: Optional[str] = None
     created_at: Optional[str] = None
-    status: Literal["pending_approval", "needs_human_review"] = "pending_approval"
+    status: Literal["pending_execution", "needs_human_review"] = "pending_execution"
     title: str
     summary: Optional[str] = None
     problem_types: list[str] = Field(default_factory=list)
@@ -410,7 +410,7 @@ class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
         if not self.tasks:
             self.status = "needs_human_review"
         elif self.status != "needs_human_review":
-            self.status = "pending_approval"
+            self.status = "pending_execution"
         return self
 
 

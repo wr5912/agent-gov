@@ -356,13 +356,6 @@ class FeedbackOptimizationBatchAttributionResponse(BaseModel):
     jobs: list[AgentJobResponse] = Field(default_factory=list)
 
 
-class FeedbackOptimizationBatchExecutionResponse(BaseModel):
-    batch: Optional[FeedbackOptimizationBatchResponse] = None
-    optimization_task: Optional[OptimizationTaskResponse] = None
-    execution_job: Optional[OptimizationExecutionJobResponse] = None
-    apply_result: Optional[OptimizationExecutionApplyResponse] = None
-
-
 class FeedbackOptimizationBatchExecuteAllResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     execution_run: FeedbackBatchExecutionRunResponse

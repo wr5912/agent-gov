@@ -18,7 +18,6 @@ from app.runtime.response_schemas.feedback_plan_response_schemas import Feedback
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
     FeedbackOptimizationBatchExecuteAllResponse,
-    FeedbackOptimizationBatchExecutionResponse,
     FeedbackOptimizationBatchExecutionRollbackResponse,
     FeedbackOptimizationBatchResponse,
     FeedbackOptimizationPlanTaskExecuteResponse,
@@ -31,7 +30,6 @@ from app.runtime.schemas import (
     FeedbackOptimizationBatchCreateRequest,
     FeedbackOptimizationBatchEvalCaseCreateRequest,
     FeedbackOptimizationBatchPlanGenerateRequest,
-    FeedbackOptimizationBatchPlanReviewRequest,
     FeedbackOptimizationPlanTaskExecuteRequest,
 )
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -60,7 +58,6 @@ def create_feedback_batches_router(
     _register_batch_crud_routes(router, feedback_store)
     _register_batch_eval_case_routes(router, feedback_store)
     _register_batch_analysis_routes(router, feedback_store, runtime)
-    _register_batch_plan_review_routes(router, feedback_store, runtime, execution_application)
     _register_batch_plan_execute_all_routes(router, feedback_store, runtime, execution_application)
     _register_batch_plan_task_edit_routes(router, feedback_store)
     _register_batch_plan_task_routes(router, feedback_store, runtime, execution_application)
@@ -202,56 +199,6 @@ def _register_batch_analysis_routes(
             ensure_found(feedback_store.find_optimization_batch(batch_id), "Feedback optimization batch not found")
             raise_conflict("Batch cannot queue an optimization plan without actionable attributions")
         return job
-
-
-def _register_batch_plan_review_routes(
-    router: APIRouter,
-    feedback_store: FeedbackStore,
-    runtime: ClaudeRuntime,
-    execution_application: ExecutionApplicationService,
-) -> None:
-
-    @router.post(
-        "/feedback-optimization-batches/{batch_id}/optimization-plan/approve",
-        response_model=FeedbackOptimizationBatchExecutionResponse,
-        summary="Execute one batch optimization plan, generate an execution plan, and apply controlled changes",
-    )
-    async def approve_feedback_optimization_batch_plan(
-        batch_id: str,
-        req: FeedbackOptimizationBatchPlanReviewRequest,
-    ) -> FeedbackOptimizationBatchExecutionResponse:
-        approved = feedback_store.approve_batch_optimization_plan(batch_id, comment=req.comment)
-        if not approved:
-            raise_conflict("Optimization plan cannot be approved")
-        task = approved["optimization_task"]
-        queued_job = runtime.queue_execution_job(task["optimization_task_id"], force=True)
-        if not queued_job:
-            feedback_store.record_batch_execution_result(batch_id, optimization_task=task)
-            raise_conflict("Execution optimizer could not be queued")
-        execution_job = feedback_store.get_execution_job(queued_job.job_id)
-        batch = feedback_store.record_batch_execution_result(
-            batch_id,
-            execution_job=execution_job,
-            optimization_task=task,
-        )
-        return {
-            "batch": batch,
-            "optimization_task": task,
-            "execution_job": execution_job,
-            "apply_result": None,
-        }
-
-    @router.post(
-        "/feedback-optimization-batches/{batch_id}/optimization-plan/reject",
-        response_model=FeedbackOptimizationBatchResponse,
-        summary="Reject one batch optimization plan",
-    )
-    async def reject_feedback_optimization_batch_plan(
-        batch_id: str,
-        req: FeedbackOptimizationBatchPlanReviewRequest,
-    ) -> FeedbackOptimizationBatchResponse:
-        batch = feedback_store.reject_batch_optimization_plan(batch_id, comment=req.comment)
-        return ensure_found(batch, "Feedback optimization batch or plan not found")
 
 
 def _register_batch_plan_execute_all_routes(

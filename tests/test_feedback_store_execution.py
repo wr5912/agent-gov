@@ -657,7 +657,7 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
                     "operation": "append_text",
                     "path": "CLAUDE.md",
                     "append_text": "\n回答配置类问题前必须读取当前 workspace 配置。\n",
-                    "rationale": "根据已批准方案补充主智能体配置读取要求。",
+                    "rationale": "根据已确认任务补充主智能体配置读取要求。",
                 }
             ],
             "validation": "运行评估套件。",

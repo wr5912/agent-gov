@@ -25,7 +25,7 @@ def _external_plan_task(store):
         plan_job["job_id"],
         _batch_plan_output(
             plan_job,
-            status="pending_approval",
+            status="pending_execution",
             actionability="external_guidance",
             target_type="external_mcp_service",
             target_path=None,

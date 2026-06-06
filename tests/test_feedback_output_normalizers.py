@@ -210,7 +210,7 @@ def test_formatter_models_run_normalizers_before_strict_validation():
 def test_batch_plan_formatter_converts_incomplete_task_to_blocked_item():
     output = FeedbackOptimizationPlanFormatterOutput.model_validate(
         {
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "统筹优化 sec-ops 数据源问题",
             "tasks": [
                 {
@@ -233,7 +233,7 @@ def test_batch_plan_formatter_converts_incomplete_task_to_blocked_item():
 def test_batch_plan_formatter_infers_target_type_from_target_path():
     output = FeedbackOptimizationPlanFormatterOutput.model_validate(
         {
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "统筹优化 MCP 配置和回归资产",
             "target_path": ".mcp.json",
             "recommendation": "修复 MCP 配置并补充回归验证。",
@@ -278,7 +278,7 @@ def test_batch_plan_formatter_infers_target_type_from_target_path():
 def test_batch_plan_formatter_promotes_eval_case_task_to_internal_action():
     output = FeedbackOptimizationPlanFormatterOutput.model_validate(
         {
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "反馈优化批次方案",
             "tasks": [
                 {
@@ -403,7 +403,7 @@ def test_normalize_feedback_plan_output_records_blocked_workspace_task_reason():
         }
     )
 
-    assert normalized["status"] == "pending_approval"
+    assert normalized["status"] == "pending_execution"
     assert normalized["confidence"] == "medium"
     assert normalized["actionability"] == "direct_workspace_change"
     assert normalized["tasks"] == []
@@ -415,7 +415,7 @@ def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
     normalized = normalize_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
-            "status": "pending_approval",
+            "status": "pending_execution",
             "tasks": [
                 {
                     "execution_kind": "internal_action",
@@ -435,7 +435,7 @@ def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
     )
 
     assert normalized["tasks"] == []
-    assert normalized["status"] == "pending_approval"
+    assert normalized["status"] == "pending_execution"
     assert normalized["blocked_items"][0]["reason"] == "内部回归资产治理任务缺少 eval_case_ids 或受支持的 internal_action，不能自动执行。"
 
 

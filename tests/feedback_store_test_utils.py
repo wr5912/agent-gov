@@ -271,7 +271,7 @@ def _create_approved_task_for_target(
         plan_job["job_id"],
         _batch_plan_output(
             plan_job,
-            status="pending_approval",
+            status="pending_execution",
             actionability="direct_workspace_change",
             target_type=target_type,
             target_path=target_path,

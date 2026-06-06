@@ -108,17 +108,17 @@ class NormalizedSummaryItem(NormalizedOutputRecord):
 
 
 class NormalizedPlanStatusValue(StrictRuntimeRecord):
-    value: str = "pending_approval"
+    value: str = "pending_execution"
 
     @field_validator("value", mode="before")
     @classmethod
     def normalize_value(cls, value: object) -> str:
         status_value = str(value or "").strip().lower()
-        if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval"}:
-            return "pending_approval"
+        if status_value in {"completed", "ready", "approved", "pending_review", "pending_approval", "pending_execution", "execution_ready"}:
+            return "pending_execution"
         if status_value in {"needs_review", "manual_review", "blocked", "failed", "needs_human_review"}:
             return "needs_human_review"
-        return "pending_approval"
+        return "pending_execution"
 
 
 class NormalizedConfidenceValue(StrictRuntimeRecord):

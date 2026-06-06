@@ -75,7 +75,7 @@ def test_edit_existing_task_invalidates_stale_execution_job(tmp_path):
     updated = store.update_batch_plan_task(
         batch["batch_id"],
         plan_task["plan_task_id"],
-        {"description": "人工修订后需要重新生成执行方案。"},
+        {"description": "人工修订后需要重新执行任务。"},
     )
     assert updated is not None
     edited_task = updated.optimization_task
@@ -87,7 +87,7 @@ def test_edit_existing_task_invalidates_stale_execution_job(tmp_path):
     assert edited_task["status"] == "pending_execution"
     assert edited_task["latest_execution_job_id"] is None
     assert edited_task["latest_execution_job"] is None
-    assert edited_task["proposal"]["description"] == "人工修订后需要重新生成执行方案。"
+    assert edited_task["proposal"]["description"] == "人工修订后需要重新执行任务。"
     assert edited_batch_task.get("execution_job_id") is None
     assert edited_batch_task["status"] == "pending_execution"
 

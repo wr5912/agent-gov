@@ -351,12 +351,12 @@ class FeedbackPlanTaskEditStoreMixin:
         return external_item_id
 
     def _batch_status_after_plan_task_edit(self, batch: JsonObject, plan_task: JsonObject) -> str:
-        current = self._string(batch.get("status")) or "pending_approval"
+        current = self._string(batch.get("status")) or "pending_execution"
         execution_kind = self._string(plan_task.get("execution_kind"))
         if execution_kind == "workspace_execution":
             if current in {"execution_planning", "execution_ready", "execution_failed", "failed", "needs_human_review", "pending_execution"}:
                 return "pending_execution"
             return current
         if execution_kind == "external_webhook":
-            return "pending_approval" if current in {"sent", "notification_failed", "needs_human_review"} else current
+            return "pending_execution" if current in {"sent", "notification_failed", "needs_human_review"} else current
         return current

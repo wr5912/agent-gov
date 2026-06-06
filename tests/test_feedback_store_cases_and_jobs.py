@@ -225,7 +225,7 @@ def _create_external_plan_task(store, feedback_case, attribution_job, *, owner="
         plan_job["job_id"],
         _batch_plan_output(
             plan_job,
-            status="pending_approval",
+            status="pending_execution",
             actionability="external_guidance",
             target_type="external_mcp_service",
             target_path=None,
@@ -590,7 +590,7 @@ def test_complete_batch_plan_job_rolls_back_rows_when_batch_update_fails(tmp_pat
     plan_job = store.create_batch_plan_job(batch["batch_id"])
     raw_output = _batch_plan_output(
         plan_job,
-        status="pending_approval",
+        status="pending_execution",
         actionability="direct_workspace_change",
         target_type="main_agent_claude_md",
         target_path="CLAUDE.md",
@@ -832,8 +832,9 @@ def test_batch_detail_refreshes_latest_task_execution_job(tmp_path):
     store, _ = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)
     batch = store.generate_batch_optimization_plan(batch["batch_id"])
-    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="执行优化")
-    task_id = approved["optimization_task"]["optimization_task_id"]
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="执行优化")
+    task_id = prepared["optimization_task"]["optimization_task_id"]
 
     first = store.create_execution_job(task_id, force=True)
     store.start_execution_job(first["execution_job_id"])

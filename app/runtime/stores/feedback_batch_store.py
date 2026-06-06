@@ -6,12 +6,11 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import ConflictError
-from ..records.batch_records import FeedbackOptimizationBatchRecord
 from ..json_types import JsonObject
+from ..records.batch_records import FeedbackOptimizationBatchRecord
 from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import FeedbackOptimizationBatchModel, OptimizationTaskModel, utc_now
 from ..state_machines import JOB_IN_PROGRESS_STATES
-
 
 FeedbackOptimizationBatchPayload = JsonObject
 
@@ -94,7 +93,7 @@ class FeedbackBatchStoreMixin:
             "created_at": now,
             "updated_at": now,
             "status": "draft",
-            "title": f"反馈优化批次 1 条反馈",
+            "title": "反馈优化批次 1 条反馈",
             "priority": feedback_case.get("priority") or "medium",
             "source_refs": refs,
             "feedback_case_ids": [feedback_case_id],
@@ -131,9 +130,7 @@ class FeedbackBatchStoreMixin:
         if batch.get("applied_agent_version_id") or batch.get("execution_apply_result"):
             return False
         task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
-        if task and task.get("applied_agent_version_id"):
-            return False
-        return True
+        return not (task and task.get("applied_agent_version_id"))
 
     def _source_refs_for_feedback_case(self, feedback_case: JsonObject) -> list[JsonObject]:
         refs: list[JsonObject] = []
@@ -227,20 +224,21 @@ class FeedbackBatchStoreMixin:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
+        lock_reason = self._batch_execution_lock_reason(batch)
+        if lock_reason:
+            raise ConflictError(f"当前批次{lock_reason}，不能原地重新归因；请基于反馈信息创建新批次。")
         cleanup_job_ids: list[str] = []
         fields = {
             "attribution_job_ids": [],
             "attribution_jobs": [],
             "attribution_summary": {"total": len(batch.get("feedback_case_ids") or []), "completed": 0, "running": 0, "needs_review_or_failed": 0},
             "optimization_plan": None,
-            "internal_proposal_id": None,
-            "optimization_task_id": None,
-            "optimization_task": None,
-            "execution_job_id": None,
-            "execution_job": None,
+            "optimization_plan_job_id": None,
+            "optimization_plan_job": None,
+            "optimization_plan_error": None,
             "eval_run_id": None,
             "latest_eval_run": None,
-            "execution_apply_result": None,
+            **self._batch_draft_artifact_reset_fields(),
         }
         with self.Session.begin() as db:
             row = db.get(FeedbackOptimizationBatchModel, batch_id)
@@ -529,12 +527,6 @@ class FeedbackBatchStoreMixin:
         return outputs
 
     def _assert_batch_plan_can_regenerate(self, batch: JsonObject) -> None:
-        plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
-        plan_status = self._string((plan or {}).get("status"))
-        if (
-            plan_status == "approved"
-            or batch.get("optimization_task_id")
-            or batch.get("execution_job_id")
-            or batch.get("execution_apply_result")
-        ):
-            raise ConflictError("当前优化方案已执行或进入执行链路，不能原地重新生成；请基于反馈信息创建新批次。")
+        lock_reason = self._batch_execution_lock_reason(batch)
+        if lock_reason:
+            raise ConflictError(f"当前优化方案{lock_reason}，不能原地重新生成；请基于反馈信息创建新批次。")

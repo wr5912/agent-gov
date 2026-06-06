@@ -103,12 +103,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
         "post",
         "AgentJobResponse",
     )
-    assert_schema_ref(
-        schema,
-        "/api/feedback-optimization-batches/{batch_id}/optimization-plan/approve",
-        "post",
-        "FeedbackOptimizationBatchExecutionResponse",
-    )
+    assert "/api/feedback-optimization-batches/{batch_id}/optimization-plan/approve" not in schema["paths"]
+    assert "/api/feedback-optimization-batches/{batch_id}/optimization-plan/reject" not in schema["paths"]
     assert_schema_ref(
         schema,
         "/api/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all",
@@ -270,10 +266,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert batch_schema["properties"]["skipped_source_refs"]["items"] == {"$ref": "#/components/schemas/FeedbackOptimizationSkippedSourceRefResponse"}
     assert batch_schema["properties"]["attribution_summary"] == {"$ref": "#/components/schemas/FeedbackOptimizationBatchAttributionSummaryResponse"}
     assert_nullable_schema_ref(batch_schema, "optimization_plan_error", "FeedbackJobErrorResponse")
-    batch_execution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchExecutionResponse"]
-    assert_nullable_schema_ref(batch_execution_schema, "optimization_task", "OptimizationTaskResponse")
-    assert_nullable_schema_ref(batch_execution_schema, "execution_job", "OptimizationExecutionJobResponse")
-    assert_nullable_schema_ref(batch_execution_schema, "apply_result", "OptimizationExecutionApplyResponse")
+    assert "FeedbackOptimizationBatchExecutionResponse" not in schema["components"]["schemas"]
+    assert "FeedbackOptimizationBatchPlanReviewRequest" not in schema["components"]["schemas"]
     batch_attribution_schema = schema["components"]["schemas"]["FeedbackOptimizationBatchAttributionResponse"]
     assert batch_attribution_schema["properties"]["jobs"]["items"] == {"$ref": "#/components/schemas/AgentJobResponse"}
     apply_schema = schema["components"]["schemas"]["OptimizationExecutionApplyResponse"]

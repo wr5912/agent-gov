@@ -68,7 +68,6 @@ export function ExternalFeedbackWorkspace({
     rollbackBatchExecution,
     executePlanTask,
     updatePlanTask,
-    rejectBatchPlan,
     runBatchRegression,
     createBatchEvalCase,
     updateBatchEvalCase,
@@ -148,7 +147,6 @@ export function ExternalFeedbackWorkspace({
             onExecutePlanTask={executePlanTask}
             onGeneratePlan={openBatchPlanGeneration}
             onRemoveEvalCase={removeBatchEvalCase}
-            onRejectPlan={rejectBatchPlan}
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
             onRollbackBatchExecution={rollbackBatchExecution}

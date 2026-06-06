@@ -307,15 +307,16 @@ def test_feedback_source_batch_generates_eval_plan_and_task(tmp_path):
     )
     batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed_job])
     batch = store.generate_batch_optimization_plan(batch["batch_id"])
-    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="同意执行")
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"], comment="同意执行")
 
-    assert batch["status"] == "pending_approval"
+    assert batch["status"] == "pending_execution"
     assert batch["optimization_plan"]["target_path"] == "CLAUDE.md"
-    assert approved["optimization_task"]["source"] == "feedback_optimization_batch"
-    assert approved["optimization_task"]["source_batch_id"] == batch["batch_id"]
-    assert approved["optimization_task"]["eval_case_ids"] == batch["eval_case_ids"]
-    assert approved["batch"]["internal_proposal_id"] is None
-    assert approved["optimization_task"]["proposal_id"] is None
+    assert prepared["optimization_task"]["source"] == "feedback_optimization_batch"
+    assert prepared["optimization_task"]["source_batch_id"] == batch["batch_id"]
+    assert prepared["optimization_task"]["eval_case_ids"] == batch["eval_case_ids"]
+    assert prepared["batch"]["internal_proposal_id"] is None
+    assert prepared["optimization_task"]["proposal_id"] is None
     assert store.list_proposals(feedback_case_id=feedback_case_id) == []
 
 

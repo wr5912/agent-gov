@@ -26,13 +26,14 @@ BATCH_PLAN_ACTIVE_JOB_STATUSES = {"created", "queued", "running", "schema_valida
 
 
 class FeedbackBatchPlanStoreMixin:
-    """Store operations for batch optimization plan generation and approval."""
+    """Store operations for batch optimization plan generation and task execution."""
 
     def generate_batch_optimization_plan(self, batch_id: str, *, regeneration_instruction: Optional[str] = None) -> Optional[JsonObject]:
         batch = self.find_optimization_batch(batch_id)
         if not batch:
             return None
         self._assert_batch_plan_can_regenerate(batch)
+        self._discard_batch_draft_artifacts(batch)
         instruction = regeneration_instruction.strip() if isinstance(regeneration_instruction, str) else None
         instruction = instruction or None
         attributions = self._batch_attribution_outputs(batch)
@@ -40,13 +41,26 @@ class FeedbackBatchPlanStoreMixin:
             return self._update_batch(
                 batch_id,
                 status="needs_human_review",
-                fields={"optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction)},
+                fields={
+                    **self._batch_draft_artifact_reset_fields(),
+                    "optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction),
+                    "optimization_plan_job_id": None,
+                    "optimization_plan_job": None,
+                    "optimization_plan_error": None,
+                },
             )
         plan = self._build_batch_optimization_plan(batch, attributions, regeneration_instruction=instruction)
         return self._update_batch(
             batch_id,
             status=plan["status"],
-            fields={"optimization_plan": plan, "updated_at": utc_now()},
+            fields={
+                **self._batch_draft_artifact_reset_fields(),
+                "optimization_plan": plan,
+                "optimization_plan_job_id": None,
+                "optimization_plan_job": None,
+                "optimization_plan_error": None,
+                "updated_at": utc_now(),
+            },
         )
 
     def create_batch_plan_job(
@@ -93,6 +107,7 @@ class FeedbackBatchPlanStoreMixin:
 
         job_id = f"fbp-{uuid.uuid4()}"
         try:
+            self._discard_batch_draft_artifacts(batch)
             input_payload = self._batch_plan_job_input_payload(batch, attributions, job_id, instruction)
             self._create_batch_plan_agent_job(batch_id, job_id, input_payload, profile_version=profile_version)
         except Exception:
@@ -106,6 +121,7 @@ class FeedbackBatchPlanStoreMixin:
             batch_id,
             status="needs_human_review",
             fields={
+                **self._batch_draft_artifact_reset_fields(),
                 "optimization_plan": self._non_actionable_plan(batch, "暂无可用归因结果，不能生成可执行优化方案。", instruction),
                 "optimization_plan_job_id": None,
                 "optimization_plan_job": None,
@@ -161,7 +177,13 @@ class FeedbackBatchPlanStoreMixin:
         self._update_batch(
             batch_id,
             status="optimization_plan_queued",
-            fields={"optimization_plan_job_id": job_id, "optimization_plan_job": job, "optimization_plan_error": None},
+            fields={
+                **self._batch_draft_artifact_reset_fields(),
+                "optimization_plan": None,
+                "optimization_plan_job_id": job_id,
+                "optimization_plan_job": job,
+                "optimization_plan_error": None,
+            },
         )
         return job
 
@@ -239,43 +261,6 @@ class FeedbackBatchPlanStoreMixin:
                 )
         self._cleanup_job_tmp(job_id)
         return self.get_job(job_id)
-
-    def approve_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[JsonObject]:
-        batch = self.find_optimization_batch(batch_id)
-        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
-        if not batch or not plan or plan.get("status") != "pending_approval":
-            return None
-        target_path = self._string(plan.get("target_path"))
-        if not target_path or not self._target_allowed(target_path):
-            raise ConflictError("Optimization plan target is not actionable")
-        task = self.create_task_from_optimization_plan(
-            batch=batch,
-            plan=plan,
-            execution_mode="manual_or_patch",
-            comment=comment or f"由优化批次 {batch_id} 执行创建。",
-        )
-        if not task:
-            return None
-        approved_plan = {**plan, "status": "approved", "approved_at": utc_now(), "approval_comment": comment}
-        updated_batch = self._update_batch(
-            batch_id,
-            status="execution_planning",
-            fields={
-                "optimization_plan": approved_plan,
-                "optimization_task_id": task["optimization_task_id"],
-                "optimization_task_ids": self._unique_strings([*(batch.get("optimization_task_ids") or []), task["optimization_task_id"]]),
-                "optimization_task": task,
-            },
-        )
-        return {"batch": updated_batch, "optimization_task": task}
-
-    def reject_batch_optimization_plan(self, batch_id: str, *, comment: Optional[str] = None) -> Optional[JsonObject]:
-        batch = self.find_optimization_batch(batch_id)
-        plan = batch.get("optimization_plan") if isinstance((batch or {}).get("optimization_plan"), dict) else None
-        if not batch or not plan:
-            return None
-        rejected_plan = {**plan, "status": "rejected", "rejected_at": utc_now(), "rejection_comment": comment}
-        return self._update_batch(batch_id, status="rejected", fields={"optimization_plan": rejected_plan})
 
     def prepare_batch_plan_task_execution(
         self,
@@ -365,7 +350,7 @@ class FeedbackBatchPlanStoreMixin:
                 "latest_webhook_alias": notified.get("latest_webhook_alias"),
                 "latest_notification": notified.get("latest_notification"),
             },
-            batch_status=str(batch.get("status") or "pending_approval"),
+            batch_status=str(batch.get("status") or "pending_execution"),
         )
         return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
 
@@ -408,7 +393,7 @@ class FeedbackBatchPlanStoreMixin:
                     "status": "completed",
                     "internal_action_result": result,
                 },
-                batch_status=str(batch.get("status") or "pending_approval"),
+                batch_status=str(batch.get("status") or "pending_execution"),
             ):
                 raise BusinessRuleViolation("Optimization plan task not found")
 
@@ -623,7 +608,7 @@ class FeedbackBatchPlanStoreMixin:
         target_path = self._string(primary.get("target_path")) or self._plan_target_path(target_type)
         problem_types = self._unique_strings([self._string(item.get("problem_type")) or "" for item in attributions])
         confidence_values = self._unique_strings([self._string(item.get("confidence")) or "" for item in attributions])
-        status = "pending_approval" if executable_tasks else "needs_human_review"
+        status = "pending_execution" if executable_tasks else "needs_human_review"
         actionability = self._string(primary.get("actionability")) or "needs_human_analysis"
         rationale_lines = [self._string(item.get("rationale")) for item in attributions if self._string(item.get("rationale"))]
         evidence_refs = [ref for item in attributions for ref in self._normalize_plan_evidence_refs(item.get("evidence_refs"))][:20]

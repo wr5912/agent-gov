@@ -1,6 +1,7 @@
 from app.runtime.errors import BusinessRuleViolation, ConflictError
 from app.runtime.feedback_schemas import FeedbackOptimizationPlanFormatterOutput
 from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
+from app.runtime.runtime_db import FeedbackOptimizationBatchModel
 from pydantic import ValidationError
 from sqlalchemy import text
 
@@ -35,10 +36,64 @@ def test_batch_plan_regeneration_records_instruction_and_replaces_plan(tmp_path)
     first_plan = first["optimization_plan"]
     second_plan = second["optimization_plan"]
     assert first_plan["optimization_plan_id"] != second_plan["optimization_plan_id"]
-    assert second_plan["status"] == "pending_approval"
+    assert second_plan["status"] == "pending_execution"
     assert second_plan["regeneration_instruction"] == "避免改动无关 MCP 配置"
     assert "避免改动无关 MCP 配置" in second_plan["recommendation"]
     assert "避免改动无关 MCP 配置" in second_plan["rationale"]
+
+
+def _batch_with_unapplied_pending_execution_task(store):
+    batch = store.generate_batch_optimization_plan(_create_batch_with_completed_attribution(store)["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])
+    task_id = prepared["optimization_task"]["optimization_task_id"]
+    updated = store.update_batch_plan_task(
+        batch["batch_id"],
+        plan_task["plan_task_id"],
+        {"description": "人工修订后仍等待执行。"},
+    )
+    assert updated is not None
+    batch = updated.batch
+    assert batch["status"] == "pending_execution"
+    assert store.find_task(task_id) is not None
+    return batch, task_id
+
+
+def test_batch_plan_store_does_not_expose_reject_review_action(tmp_path):
+    store, _ = _store(tmp_path)
+    assert not hasattr(store, "approve_batch_optimization_plan")
+    assert not hasattr(store, "reject_batch_optimization_plan")
+
+
+def test_regenerate_unapplied_pending_execution_batch_plan_requeues_and_cleans_draft_task(tmp_path):
+    store, _ = _store(tmp_path)
+    batch, task_id = _batch_with_unapplied_pending_execution_task(store)
+
+    job = store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新聚焦 MCP 配置")
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert job["job_type"] == "batch_plan"
+    assert updated["status"] == "optimization_plan_queued"
+    assert updated["optimization_plan"] is None
+    assert updated["optimization_task_id"] is None
+    assert updated["optimization_task_ids"] == []
+    assert store.find_task(task_id) is None
+
+
+def test_reset_attribution_from_unapplied_pending_execution_cleans_downstream_drafts(tmp_path):
+    store, _ = _store(tmp_path)
+    batch, task_id = _batch_with_unapplied_pending_execution_task(store)
+
+    reset = store.reset_batch_attribution(batch["batch_id"])
+
+    assert reset["status"] == "draft"
+    assert reset["attribution_job_ids"] == []
+    assert reset["optimization_plan"] is None
+    assert reset["optimization_plan_job_id"] is None
+    assert reset["optimization_task_id"] is None
+    assert reset["optimization_task_ids"] == []
+    assert reset["latest_execution_run"] is None
+    assert store.find_task(task_id) is None
 
 
 def test_batch_plan_running_job_is_reused_and_failed_job_is_replaced_on_retry(tmp_path):
@@ -138,7 +193,7 @@ def test_batch_plan_output_context_fields_are_backend_authoritative(tmp_path):
         feedback_case_ids=["fbc-agent-wrong"],
         eval_case_ids=["evc-agent-wrong"],
         attribution_job_ids=["fba-agent-wrong"],
-        status="pending_approval",
+        status="pending_execution",
         actionability="direct_workspace_change",
         target_type="main_agent_claude_md",
         target_path="CLAUDE.md",
@@ -198,7 +253,7 @@ def test_feedback_optimization_plan_output_requires_actionable_external_context(
     validated, error = validate_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "外部服务优化方案",
             "summary": "统筹归因结果生成任务。",
             "confidence": "high",
@@ -240,7 +295,7 @@ def test_feedback_optimization_plan_output_promotes_actionable_blocked_external_
     validated, error = validate_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "漏洞数据源优化方案",
             "summary": "统筹归因结果生成任务。",
             "confidence": "high",
@@ -292,7 +347,7 @@ def test_feedback_optimization_plan_output_promotes_blocked_item_with_plan_conte
     validated, error = validate_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "漏洞数据查询优化方案",
             "summary": ("归因确认 sec-ops-data MCP 的 list_vulnerabilities_api_v1_vulnerabilities_get 返回的漏洞记录缺少 2026 年 CVE 数据。"),
             "confidence": "medium",
@@ -329,7 +384,7 @@ def test_feedback_optimization_plan_output_keeps_generic_blocked_external_item()
     validated, error = validate_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "外部问题优化方案",
             "summary": "统筹归因结果生成任务。",
             "confidence": "medium",
@@ -446,7 +501,7 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
         job_input = kwargs["job_input"]
         return FeedbackOptimizationPlanFormatterOutput.model_validate(
             {
-                "status": "pending_approval",
+                "status": "pending_execution",
                 "title": "补强工作区配置核查",
                 "summary": "根据归因结果生成一个 workspace 优化任务。",
                 "problem_types": ["tool_misuse"],
@@ -510,7 +565,7 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert job["profile_name"] == "proposal-generator"
     assert job["status"] == "completed"
     assert plan.generated_by == "proposal-generator"
-    assert plan.status == "pending_approval"
+    assert plan.status == "pending_execution"
     assert plan_task.title == "补充工作区配置核查指令"
     assert plan_task.target_path == "CLAUDE.md"
     assert plan_task.task_context.target_file == "CLAUDE.md"
@@ -523,7 +578,7 @@ def test_complete_batch_plan_job_projects_incomplete_formatter_task_as_blocked_i
     job = store.create_batch_plan_job(batch["batch_id"])
     formatter_output = FeedbackOptimizationPlanFormatterOutput.model_validate(
         {
-            "status": "pending_approval",
+            "status": "pending_execution",
             "title": "统筹优化 sec-ops 数据源问题",
             "tasks": [
                 {
@@ -701,6 +756,8 @@ def test_batch_plan_external_task_notifies_selected_webhook(tmp_path):
     assert result["external_item"]["status"] == "notified"
     assert result["plan_task"]["external_item_id"] == result["external_item"]["external_item_id"]
     assert result["plan_task"]["latest_webhook_alias"] == "kb"
+    with pytest.raises(ConflictError, match="已有外部通知结果"):
+        store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新生成外部任务")
 
 
 def test_batch_plan_internal_action_promotes_batch_eval_cases(tmp_path):
@@ -717,7 +774,7 @@ def test_batch_plan_internal_action_promotes_batch_eval_cases(tmp_path):
         plan_job["job_id"],
         _batch_plan_output(
             plan_job,
-            status="pending_approval",
+            status="pending_execution",
             actionability="regression_asset_governance",
             target_type="eval_case",
             recommendation="晋级本批次候选评估用例。",
@@ -786,6 +843,8 @@ def test_batch_plan_internal_action_promotes_batch_eval_cases(tmp_path):
     assert events[0]["role"] == "system"
     assert events[0]["before"]["status"] == "draft"
     assert events[0]["after"]["status"] == "active"
+    with pytest.raises(ConflictError, match="已有内部执行结果"):
+        store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新生成内部任务")
 
 
 def test_batch_plan_internal_action_rejects_eval_cases_outside_batch(tmp_path):
@@ -801,7 +860,7 @@ def test_batch_plan_internal_action_rejects_eval_cases_outside_batch(tmp_path):
         "optimization_plan_id": "fop-invalid-internal-action",
         "batch_id": batch["batch_id"],
         "created_at": batch["created_at"],
-        "status": "pending_approval",
+        "status": "pending_execution",
         "title": "非法内部动作方案",
         "actionability": "regression_asset_governance",
         "target_type": "eval_case",
@@ -829,7 +888,7 @@ def test_batch_plan_internal_action_rejects_eval_cases_outside_batch(tmp_path):
         ],
         "blocked_items": [],
     }
-    store._update_batch(batch["batch_id"], status="pending_approval", fields={"optimization_plan": plan})  # noqa: SLF001
+    store._update_batch(batch["batch_id"], status="pending_execution", fields={"optimization_plan": plan})  # noqa: SLF001
 
     with pytest.raises(BusinessRuleViolation, match="must belong"):
         store._execute_batch_plan_task_internal_action(batch["batch_id"], "fopt-invalid-internal-action")  # noqa: SLF001
@@ -938,13 +997,20 @@ def test_legacy_manual_plan_is_exposed_as_blocked_item_not_task(tmp_path):
     assert plan["blocked_items"][0]["reason"] == "历史方案需要人工分析。"
 
 
-def test_batch_plan_regeneration_rejects_approved_plan(tmp_path):
+def test_batch_plan_regeneration_allows_legacy_approved_unapplied_plan(tmp_path):
     store, _ = _store(tmp_path)
-    batch = _create_batch_with_completed_attribution(store)
-    batch = store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="优先保留现有技能入口")
-    approved = store.approve_batch_optimization_plan(batch["batch_id"], comment="同意执行")
-    assert approved["batch"].get("internal_proposal_id") is None
-    task = approved["optimization_task"]
-    assert task["proposal"]["regeneration_instruction"] == "优先保留现有技能入口"
-    with pytest.raises(ConflictError, match="已执行或进入执行链路"):
-        store.generate_batch_optimization_plan(batch["batch_id"], regeneration_instruction="重新改写目标")
+    batch, task_id = _batch_with_unapplied_pending_execution_task(store)
+    legacy_plan = {**batch["optimization_plan"], "status": "approved"}
+    with store.Session.begin() as db:
+        row = db.get(FeedbackOptimizationBatchModel, batch["batch_id"])
+        assert row is not None
+        row.status = "approved"
+        row.payload_json = {**batch, "status": "approved", "optimization_plan": legacy_plan}
+
+    job = store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新改写目标")
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert job["job_type"] == "batch_plan"
+    assert updated["status"] == "optimization_plan_queued"
+    assert updated["optimization_plan"] is None
+    assert store.find_task(task_id) is None

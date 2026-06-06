@@ -448,7 +448,9 @@ export function batchStatusTone(status?: string | null): Tone {
   if (status === "completed" || status === "applied_pending_regression" || status === "passed") return "green";
   if (status === "failed" || status === "rejected" || status === "execution_failed") return "red";
   if (status === "pending_approval" || status === "needs_human_review" || status === "execution_ready") return "orange";
-  if (status === "draft" || status === "attribution_running" || status === "execution_planning" || status === "regression_running") return "blue";
+  if (status === "draft" || status === "attribution_running" || status === "pending_execution" || status === "execution_planning" || status === "regression_running") {
+    return "blue";
+  }
   return "gray";
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronRight, FileText, FolderKanban, Loader2, MessageSquare, PlayCircle, ShieldCheck, XCircle } from "lucide-react";
+import { ChevronRight, FileText, FolderKanban, Loader2, MessageSquare, PlayCircle, ShieldCheck } from "lucide-react";
 import {
   BatchEvalCaseGenerationIcon,
   batchEvalCaseGenerationState,
@@ -60,7 +60,6 @@ export function BatchesPanel({
   onExecutePlanTask,
   onGeneratePlan,
   onRemoveEvalCase,
-  onRejectPlan,
   onRunAttribution,
   onRunRegression,
   onRollbackBatchExecution,
@@ -85,7 +84,6 @@ export function BatchesPanel({
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
-  onRejectPlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
   onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
@@ -107,11 +105,20 @@ export function BatchesPanel({
   const attributionJobs = useMemo(() => buildBatchAttributionJobs(selectedBatch), [selectedBatch]);
   const hasBatchAttribution = Boolean(attributionJobs.length || selectedBatch?.attribution_job_ids?.length);
   const planGenerationFailed = Boolean(selectedBatch?.optimization_plan_error || selectedBatch?.optimization_plan_job?.error_json);
+  const planTasks = selectedBatch?.optimization_plan?.tasks || [];
+  const hasAppliedPlanTask = planTasks.some((task) => Boolean(task.applied_agent_version_id || task.internal_action_result));
+  const hasActivePlanTaskExecution = planTasks.some((task) => {
+    const latestExecutionJob = task.latest_execution_job as { status?: string | null } | null | undefined;
+    return ["created", "queued", "running", "schema_validating", "evidence_packaging"].includes(latestExecutionJob?.status || "");
+  });
+  const latestExecutionRunStatus = selectedBatch?.latest_execution_run?.status || "";
+  const hasLockedExecutionRun = ["running", "completed", "partial_failed", "rollback_failed"].includes(latestExecutionRunStatus);
   const planLocked = Boolean(
-    selectedBatch?.optimization_plan?.status === "approved" ||
-      selectedBatch?.optimization_task_id ||
-      selectedBatch?.execution_job_id ||
-      selectedBatch?.execution_apply_result,
+    selectedBatch?.execution_apply_result ||
+      selectedBatch?.applied_agent_version_id ||
+      hasAppliedPlanTask ||
+      hasActivePlanTaskExecution ||
+      hasLockedExecutionRun,
   );
   const canRunBatchRegression = Boolean(selectedBatch?.latest_execution_run?.applied_agent_version_id || selectedBatch?.optimization_task?.applied_agent_version_id);
   const regressionDisabledReason = selectedBatch?.optimization_task
@@ -190,7 +197,7 @@ export function BatchesPanel({
                 className="fw-small-secondary"
                 type="button"
                 disabled={Boolean(actionId) || !hasBatchAttribution || planLocked}
-                title={planLocked ? "当前优化方案已执行或进入执行链路，请创建新批次后重新生成。" : undefined}
+                title={planLocked ? "当前优化方案已有执行结果或正在执行，请先处理执行结果，或创建新批次后重新生成。" : undefined}
                 onClick={() => {
                   setActiveBatchDetail("plan");
                   onGeneratePlan(selectedBatch);
@@ -198,18 +205,6 @@ export function BatchesPanel({
               >
                 {actionId === `batch-plan:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <MessageSquare size={16} />}
                 {selectedBatch.optimization_plan || planGenerationFailed ? "重新生成优化方案" : "生成优化方案"}
-              </button>
-              <button
-                className="fw-small-secondary"
-                type="button"
-                disabled={Boolean(actionId) || !selectedBatch.optimization_plan || selectedBatch.optimization_plan.status !== "pending_approval"}
-                onClick={() => {
-                  setActiveBatchDetail("plan");
-                  onRejectPlan(selectedBatch);
-                }}
-              >
-                <XCircle size={16} />
-                拒绝方案
               </button>
               <button
                 className="fw-small-primary"

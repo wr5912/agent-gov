@@ -394,7 +394,7 @@ class FeedbackTaskStoreMixin:
             fields["applied_agent_version_id"] = job.get("applied_agent_version_id")
             fields["applied_agent_version"] = job.get("applied_agent_version")
             fields["applied_at"] = job.get("completed_at") or utc_now()
-            fields["application_note"] = f"execution-optimizer 应用执行方案 {job.get('execution_job_id')}。"
+            fields["application_note"] = f"execution-optimizer 应用执行变更 {job.get('execution_job_id')}。"
         return self._update_task_payload_row(db, str(task["optimization_task_id"]), status=status, fields=fields)
 
 

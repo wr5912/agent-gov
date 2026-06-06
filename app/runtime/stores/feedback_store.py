@@ -26,6 +26,7 @@ from ..runtime_db import (
     make_session_factory,
     runtime_db_path_from_data_dir,
 )
+from ..state_machines import JOB_IN_PROGRESS_STATES
 from .agent_job_queue_store import AgentJobQueueStoreMixin
 from .agent_job_store import AgentJobStoreMixin
 from .feedback_batch_execution_store import FeedbackBatchExecutionStoreMixin
@@ -195,11 +196,91 @@ class FeedbackStore(
         for job_id in cleanup_job_ids:
             self._cleanup_job_tmp(job_id)
 
+    def _batch_draft_artifact_task_ids(self, batch: JsonObject) -> list[str]:
+        task_ids: list[str] = []
+        for value in [batch.get("optimization_task_id"), *self._string_list(batch.get("optimization_task_ids"))]:
+            task_id = self._string(value)
+            if task_id:
+                task_ids.append(task_id)
+        plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
+        for item in (plan or {}).get("tasks") or []:
+            if not isinstance(item, dict):
+                continue
+            task_id = self._string(item.get("optimization_task_id"))
+            if task_id:
+                task_ids.append(task_id)
+        return self._unique_strings(task_ids)
+
+    def _batch_draft_artifact_reset_fields(self) -> JsonObject:
+        return {
+            "internal_proposal_id": None,
+            "optimization_task_id": None,
+            "optimization_task_ids": [],
+            "optimization_task": None,
+            "execution_job_id": None,
+            "execution_job": None,
+            "execution_apply_result": None,
+            "execution_runs": [],
+            "latest_execution_run": None,
+            "applied_agent_version_id": None,
+        }
+
+    def _batch_execution_lock_reason(self, batch: JsonObject) -> Optional[str]:
+        if batch.get("execution_apply_result") or self._string(batch.get("applied_agent_version_id")):
+            return "已应用并产生执行结果"
+        plan = batch.get("optimization_plan") if isinstance(batch.get("optimization_plan"), dict) else None
+        for item in (plan or {}).get("tasks") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("internal_action_result"):
+                return "已有内部执行结果"
+            if item.get("applied_agent_version_id"):
+                return "已产生 Agent 版本"
+            latest_notification = item.get("latest_notification") if isinstance(item.get("latest_notification"), dict) else None
+            if self._string(item.get("status")) == "notified" or self._string((latest_notification or {}).get("status")) == "sent":
+                return "已有外部通知结果"
+        runs = []
+        latest_run = batch.get("latest_execution_run") if isinstance(batch.get("latest_execution_run"), dict) else None
+        if latest_run:
+            runs.append(latest_run)
+        runs.extend(item for item in batch.get("execution_runs") or [] if isinstance(item, dict))
+        for run in runs:
+            status = self._string(run.get("status"))
+            if run.get("applied_agent_version_id"):
+                return "已产生 Agent 版本"
+            if status == "running":
+                return "正在一键执行"
+            if status in {"completed", "partial_failed", "rollback_failed"}:
+                return "已有一键执行记录"
+        task_ids = self._batch_draft_artifact_task_ids(batch)
+        with self.Session() as db:
+            for task_id in task_ids:
+                task = db.get(OptimizationTaskModel, task_id)
+                if task and OptimizationTaskRecord.from_row(task).applied_agent_version_id:
+                    return "已应用并产生 Agent 版本"
+            if task_ids:
+                active_execution = db.scalars(
+                    select(AgentJobModel).where(
+                        AgentJobModel.job_type == "execution",
+                        AgentJobModel.scope_kind == "optimization_task",
+                        AgentJobModel.scope_id.in_(task_ids),
+                        AgentJobModel.status.in_(JOB_IN_PROGRESS_STATES),
+                    )
+                ).first()
+                if active_execution:
+                    return "正在生成执行结果"
+            execution_job_id = self._string(batch.get("execution_job_id"))
+            if execution_job_id:
+                job = db.get(AgentJobModel, execution_job_id)
+                if job and job.status in JOB_IN_PROGRESS_STATES:
+                    return "正在生成执行结果"
+        return None
+
     def _discard_batch_draft_artifacts_row(self, db: Any, batch: JsonObject, cleanup_job_ids: list[str]) -> None:
-        task_id = self._string(batch.get("optimization_task_id"))
+        task_ids = self._batch_draft_artifact_task_ids(batch)
         execution_job_id = self._string(batch.get("execution_job_id"))
         internal_proposal_id = self._string(batch.get("internal_proposal_id"))
-        if task_id:
+        for task_id in task_ids:
             db.execute(delete(ExecutionApplicationModel).where(ExecutionApplicationModel.optimization_task_id == task_id))
             execution_rows = db.scalars(
                 select(AgentJobModel).where(

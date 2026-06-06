@@ -9,7 +9,6 @@ import {
   generateFeedbackSourceEvalCases,
   getAgentJob,
   removeFeedbackOptimizationBatchEvalCase,
-  rejectFeedbackOptimizationBatchPlan,
   rollbackFeedbackOptimizationBatchExecution,
   runFeedbackOptimizationBatchAttribution,
   runFeedbackOptimizationBatchRegression,
@@ -295,21 +294,6 @@ export function useFeedbackWorkspaceActions({
     }
   }
 
-  async function rejectBatchPlan(batch: FeedbackOptimizationBatchRecord) {
-    setActionId(`batch-reject:${batch.batch_id}`);
-    try {
-      const updated = await rejectFeedbackOptimizationBatchPlan(clientConfig, batch.batch_id, `拒绝优化批次 ${batch.batch_id}`);
-      setToast("已拒绝优化方案");
-      setSelectedBatchId(updated.batch_id);
-      await refreshWorkbench();
-      onFeedbackChanged?.();
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : "拒绝优化方案失败");
-    } finally {
-      setActionId(null);
-    }
-  }
-
   async function runBatchRegression(batch: FeedbackOptimizationBatchRecord) {
     setActionId(`batch-regression:${batch.batch_id}`);
     try {
@@ -406,7 +390,6 @@ export function useFeedbackWorkspaceActions({
     rollbackBatchExecution,
     executePlanTask,
     updatePlanTask,
-    rejectBatchPlan,
     runBatchRegression,
     createBatchEvalCase,
     updateBatchEvalCase,

@@ -4,7 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from scripts.export_openapi import CONTAINER_RUNTIME_VOLUME_ROOT, LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, _local_default_volume_root
+from scripts.export_openapi import CONTAINER_RUNTIME_VOLUME_ROOT, LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, _apply_local_defaults, _local_default_volume_root
 
 
 def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(monkeypatch):
@@ -18,6 +18,43 @@ def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(mo
 
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", "/tmp/custom-runtime-root")
     assert _local_default_volume_root() == Path("/tmp/custom-runtime-root")
+
+
+def test_export_openapi_applies_local_debug_env_file_mode(monkeypatch):
+    original = os.environ.copy()
+    for key in (
+        "RUNTIME_VOLUME_MODE",
+        "HOST_RUNTIME_VOLUME_ROOT",
+        "WORKSPACE_DIR",
+        "MAIN_WORKSPACE_DIR",
+        "ATTRIBUTION_ANALYZER_WORKSPACE_DIR",
+        "PROPOSAL_GENERATOR_WORKSPACE_DIR",
+        "EXECUTION_OPTIMIZER_WORKSPACE_DIR",
+        "EVAL_CASE_GOVERNOR_WORKSPACE_DIR",
+        "REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR",
+        "DATA_DIR",
+        "CLAUDE_ROOT",
+        "MAIN_CLAUDE_ROOT",
+        "ATTRIBUTION_ANALYZER_CLAUDE_ROOT",
+        "PROPOSAL_GENERATOR_CLAUDE_ROOT",
+        "EXECUTION_OPTIMIZER_CLAUDE_ROOT",
+        "EVAL_CASE_GOVERNOR_CLAUDE_ROOT",
+        "REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT",
+        "CLAUDE_HOME",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+    try:
+        _apply_local_defaults(Path.cwd())
+
+        assert os.environ["RUNTIME_VOLUME_MODE"] == "local-debug"
+        assert os.environ["HOST_RUNTIME_VOLUME_ROOT"] == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT.as_posix()
+        assert os.environ["WORKSPACE_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "main-workspace").as_posix()
+        assert os.environ["DATA_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "data").as_posix()
+        assert os.environ["CLAUDE_ROOT"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "claude-roots" / "main").as_posix()
+    finally:
+        os.environ.clear()
+        os.environ.update(original)
 
 
 def test_export_openapi_script_writes_schema(tmp_path):

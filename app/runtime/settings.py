@@ -50,6 +50,10 @@ _DEFAULT_REGRESSION_IMPACT_CLAUDE_ROOT = Path("/claude-roots/regression-impact-a
 _DEFAULT_CLAUDE_HOME = Path("/claude-roots/main/.claude")
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
+_SETTINGS_ENV_FILES = {
+    "container": Path("docker/.env"),
+    "local-debug": Path("docker/.env.local-debug"),
+}
 
 _WORKSPACE_PROFILE_DIR_DEFAULTS = (
     ("ATTRIBUTION_ANALYZER_WORKSPACE_DIR", "attribution_analyzer_workspace_dir", _DEFAULT_ATTRIBUTION_WORKSPACE_DIR, "attribution-analyzer-workspace"),
@@ -93,10 +97,22 @@ def _derive_child_dirs(settings: Any, explicit_env: Mapping[str, str], parent: P
             setattr(settings, attr_name, parent / child_name)
 
 
+def settings_env_file_for_mode(mode: str | None = None) -> Path:
+    normalized = (mode or os.environ.get("RUNTIME_VOLUME_MODE") or "container").strip()
+    env_file = _SETTINGS_ENV_FILES.get(normalized)
+    if env_file is None:
+        raise ValueError(f"Unsupported RUNTIME_VOLUME_MODE={normalized!r}; expected container or local-debug")
+    return env_file
+
+
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=("docker/.env", "docker/.env.local", "docker/.env.local-debug"), extra="ignore")
+    model_config = SettingsConfigDict(env_file=None, extra="ignore")
+
+    def __init__(self, **values: Any) -> None:
+        values.setdefault("_env_file", settings_env_file_for_mode())
+        super().__init__(**values)
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
@@ -206,7 +222,7 @@ class AppSettings(BaseSettings):
     langfuse_enabled: bool = Field(default=False, alias="LANGFUSE_ENABLED")
     langfuse_public_key: Optional[str] = Field(default=None, alias="LANGFUSE_PUBLIC_KEY")
     langfuse_secret_key: Optional[str] = Field(default=None, alias="LANGFUSE_SECRET_KEY")
-    langfuse_base_url: str = Field(default="https://cloud.langfuse.com", alias="LANGFUSE_BASE_URL")
+    langfuse_base_url: str = Field(default="http://langfuse-web:3000", alias="LANGFUSE_BASE_URL")
     langfuse_otel_endpoint: Optional[str] = Field(default=None, alias="LANGFUSE_OTEL_ENDPOINT")
     langfuse_otel_signals_raw: str = Field(default="traces,metrics,logs", alias="LANGFUSE_OTEL_SIGNALS")
     langfuse_service_name: str = Field(default="claude-agent-runtime-api", alias="LANGFUSE_SERVICE_NAME")

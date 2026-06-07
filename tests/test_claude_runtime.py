@@ -422,7 +422,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
-        LANGFUSE_BASE_URL="https://us.cloud.langfuse.com",
+        LANGFUSE_BASE_URL="http://langfuse-web:3000",
         LANGFUSE_OTEL_SIGNALS="traces,metrics,logs",
         LANGFUSE_SERVICE_NAME="runtime-test",
         LANGFUSE_DEPLOYMENT_ENVIRONMENT="test",
@@ -443,10 +443,8 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
     assert env["OTEL_METRICS_EXPORTER"] == "otlp"
     assert env["OTEL_LOGS_EXPORTER"] == "otlp"
     assert env["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
-    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://us.cloud.langfuse.com/api/public/otel"
-    assert env["OTEL_EXPORTER_OTLP_HEADERS"] == (
-        f"Authorization=Basic {expected_auth},x-langfuse-ingestion-version=4"
-    )
+    assert env["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://langfuse-web:3000/api/public/otel"
+    assert env["OTEL_EXPORTER_OTLP_HEADERS"] == (f"Authorization=Basic {expected_auth},x-langfuse-ingestion-version=4")
     assert env["OTEL_SERVICE_NAME"] == "runtime-test"
     assert env["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=test,service.version=0.1.0"
     assert env["OTEL_TRACES_EXPORT_INTERVAL"] == "500"
@@ -494,7 +492,7 @@ def test_langfuse_dspy_instrumentation_uses_current_process_otel_env(tmp_path, m
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
-        LANGFUSE_BASE_URL="https://us.cloud.langfuse.com",
+        LANGFUSE_BASE_URL="http://langfuse-web:3000",
         LANGFUSE_OTEL_SIGNALS="traces",
         LANGFUSE_SERVICE_NAME="runtime-test",
         LANGFUSE_DEPLOYMENT_ENVIRONMENT="test",
@@ -506,7 +504,7 @@ def test_langfuse_dspy_instrumentation_uses_current_process_otel_env(tmp_path, m
     assert client.instrument_dspy() is True
     assert calls == ["instrument"]
     assert os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] == "http/protobuf"
-    assert os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] == "https://us.cloud.langfuse.com/api/public/otel"
+    assert os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://langfuse-web:3000/api/public/otel"
     assert os.environ["OTEL_SERVICE_NAME"] == "runtime-test"
     assert os.environ["OTEL_RESOURCE_ATTRIBUTES"] == "deployment.environment=test"
     assert os.environ["OTEL_TRACES_EXPORTER"] == "otlp"
@@ -545,9 +543,7 @@ def test_langfuse_requires_keys_when_enabled(tmp_path):
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
     assert result.answer == ""
-    assert result.errors == [
-        "ValueError: LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"
-    ]
+    assert result.errors == ["ValueError: LANGFUSE_ENABLED=true requires LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY"]
 
 
 def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
@@ -661,8 +657,8 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
 
 
 def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
-    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     from app.runtime.agent_job_runner import ClaudeCodeResultError
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
@@ -804,9 +800,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     ]
     assert result.agent_activity["skill_calls"][0]["name"] == "trace-debugger"
     assert result.agent_activity["tool_results"][0]["tool_use_id"] == "toolu-read"
-    assert result.agent_activity["tool_results"][1]["name"] == (
-        "mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get"
-    )
+    assert result.agent_activity["tool_results"][1]["name"] == ("mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get")
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
         "runtime.main_agent",

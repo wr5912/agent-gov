@@ -11,7 +11,7 @@
 - 查看模板备份：`make runtime-template-restore-list`
 - 恢复模板备份：`make runtime-template-restore BACKUP=<backup-file>`
 
-`runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地覆盖文件。
+`runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
 ## 占位符
 

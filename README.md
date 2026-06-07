@@ -178,26 +178,19 @@ pnpm --dir frontend generate:api-types
 
 本项目优先通过 Claude Code 内置 OpenTelemetry 导出能力接入 Langfuse。开启后，API 运行时会把 `docker/.env` 中的 Langfuse 配置转换为 Claude Code 子进程可识别的 `CLAUDE_CODE_*` 和 `OTEL_*` 环境变量。
 
-接入 Langfuse Cloud 或既有自托管实例时，最小配置为：
+本系统的 Langfuse 只按本地 Docker profile 部署。容器内 API/worker 通过
+Compose 服务名访问 Langfuse Web，宿主机和浏览器通过映射端口访问。
+`docker/.env.example` 已内置默认值；启用 telemetry 时只需要补齐本地
+Langfuse 初始化出的项目 key：
 
 ```bash
 LANGFUSE_ENABLED=true
-LANGFUSE_PUBLIC_KEY=pk-lf-xxxx
-LANGFUSE_SECRET_KEY=sk-lf-xxxx
-LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_PUBLIC_KEY=pk-lf-local-dev
+LANGFUSE_SECRET_KEY=sk-lf-local-dev
+LANGFUSE_BASE_URL=http://langfuse-web:3000
+LANGFUSE_NEXTAUTH_URL=http://localhost:53000
+FRONTEND_LANGFUSE_URL=http://localhost:53000
 LANGFUSE_OTEL_SIGNALS=traces,metrics,logs
-```
-
-其他区域或自托管环境：
-
-```bash
-# US Cloud
-LANGFUSE_BASE_URL=https://us.cloud.langfuse.com
-
-# 自托管
-LANGFUSE_BASE_URL=http://langfuse.example.com
-# 或显式指定 OTLP endpoint
-LANGFUSE_OTEL_ENDPOINT=http://langfuse.example.com/api/public/otel
 ```
 
 ### Runtime enrich 与 input/output
@@ -499,16 +492,16 @@ ${HOME}/volume-agent-runtime/data/runtime.sqlite3
 
 首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。本项目 Makefile 中的 Python 脚本入口统一使用 `.venv/bin/python`，不要直接依赖宿主机 `python3`。
 
-Docker Compose 部署读取 `docker/.env`，并可额外读取不提交的 `docker/.env.local` 作为容器部署私有覆盖。Compose 模式保持 `RUNTIME_VOLUME_MODE=container`，默认宿主机运行态根目录是 `${HOME}/volume-agent-runtime`。
+Docker Compose 部署只读取 `docker/.env`。Compose 模式保持 `RUNTIME_VOLUME_MODE=container`，默认宿主机运行态根目录是 `${HOME}/volume-agent-runtime`。
 
-本机 host/PyCharm 调试读取额外的 `docker/.env.local-debug`。该文件不会被 Docker Compose 加载，默认把全部 workspace、data 和 claude-root 指向 `/tmp/local-debug-volume-agent-runtime`：
+本机 host/PyCharm 调试只读取 `docker/.env.local-debug`。该文件不会被 Docker Compose 加载，默认把全部 workspace、data 和 claude-root 指向 `/tmp/local-debug-volume-agent-runtime`：
 
 ```bash
 make local-debug-env
 make local-debug-bootstrap
 ```
 
-需要调整本机调试路径时编辑 `docker/.env.local-debug`；需要调整容器部署路径时编辑 `docker/.env.local` 或部署系统注入的 `HOST_RUNTIME_VOLUME_ROOT`。不要把 host 调试路径写进 `docker/.env.local`，否则 Compose 会挂载调试数据。需要显式沿用旧目录时，可以在对应模式中把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
+需要调整本机调试路径时编辑 `docker/.env.local-debug`；需要调整容器部署路径时编辑 `docker/.env` 或部署系统注入的 `HOST_RUNTIME_VOLUME_ROOT`。需要显式沿用旧目录时，可以在对应模式中把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 
 本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置。main profile 的 MCP 配置优先级是：显式 `CLAUDE_MCP_CONFIG_PATH`、`/main-workspace/.mcp.local.json`、`/main-workspace/.mcp.json`；feedback profiles 始终使用各自 workspace 的 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
 
@@ -522,10 +515,10 @@ PyCharm 后端调试建议使用 Python run configuration：
 
 ```text
 Module name: uvicorn
-Parameters: app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8080
+Parameters: app.main:app --reload --reload-dir app --host 0.0.0.0 --port 8080
 Working directory: <repo root>
 Python interpreter: <repo root>/.venv/bin/python
-Environment variables: 留空即可；如 PyCharm 已配置同名变量，会覆盖 docker/.env.local-debug
+Environment variables: RUNTIME_VOLUME_MODE=local-debug
 ```
 
 异步反馈闭环、优化任务和评估生成依赖 `agent_jobs` worker。需要调试这些流程时，另建一个 PyCharm configuration：
@@ -535,6 +528,7 @@ Module name: app.worker.agent_jobs
 Parameters: 留空
 Working directory: <repo root>
 Python interpreter: <repo root>/.venv/bin/python
+Environment variables: RUNTIME_VOLUME_MODE=local-debug
 ```
 
 前端本机启动使用 Vite 自己的本地环境文件：

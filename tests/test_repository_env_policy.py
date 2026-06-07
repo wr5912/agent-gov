@@ -20,7 +20,11 @@ RUNTIME_ENV_KEYS = (
 def test_project_root_env_file_is_forbidden() -> None:
     root_env = REPO_ROOT / ".env"
 
-    assert not root_env.exists(), "Project root .env is forbidden; use docker/.env.local, docker/.env.local-debug, or frontend/.env.local."
+    assert not root_env.exists(), "Project root .env is forbidden; use docker/.env, docker/.env.local-debug, or frontend/.env.local."
+
+
+def test_docker_env_local_example_is_not_an_official_entrypoint() -> None:
+    assert not (REPO_ROOT / "docker/.env.local.example").exists()
 
 
 def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:

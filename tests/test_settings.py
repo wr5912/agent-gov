@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from app.runtime.settings import AppSettings
+from app.runtime.settings import AppSettings, settings_env_file_for_mode
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,16 +41,20 @@ _PROFILE_ENV_KEYS = (
 )
 
 
-def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
+def test_settings_selects_container_env_file_by_default(tmp_path, monkeypatch):
     for key in _PROFILE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.chdir(tmp_path)
 
-    base_env = tmp_path / "docker.env"
-    local_env = tmp_path / "docker.env.local"
-    base_env.write_text(
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    container_env = docker_dir / ".env"
+    local_debug_env = docker_dir / ".env.local-debug"
+    container_env.write_text(
         "\n".join(
             [
                 "API_PORT=58080",
+                "RUNTIME_VOLUME_MODE=container",
                 "WORKSPACE_DIR=/main-workspace",
                 "MAIN_WORKSPACE_DIR=/main-workspace",
                 "ATTRIBUTION_ANALYZER_WORKSPACE_DIR=/attribution-analyzer-workspace",
@@ -64,10 +68,74 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    local_env.write_text(
+    local_debug_env.write_text(
         "\n".join(
             [
-                f"HOST_RUNTIME_VOLUME_ROOT={(tmp_path / 'volume-agent-runtime').as_posix()}",
+                "RUNTIME_VOLUME_MODE=local-debug",
+                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
+                "API_PORT=9090",
+                "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
+                "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
+                "CLAUDE_ROOT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main",
+                "LANGFUSE_BASE_URL=http://localhost:53000",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    settings = AppSettings()
+
+    assert settings_env_file_for_mode() == Path("docker/.env")
+    assert AppSettings.model_config["env_file"] is None
+    assert settings.runtime_volume_mode == "container"
+    assert settings.api_port == 58080
+    assert settings.workspace_dir == Path("/main-workspace")
+    assert settings.main_workspace_dir == settings.workspace_dir
+    assert settings.attribution_analyzer_workspace_dir == Path("/attribution-analyzer-workspace")
+    assert settings.proposal_generator_workspace_dir == Path("/proposal-generator-workspace")
+    assert settings.execution_optimizer_workspace_dir == Path("/execution-optimizer-workspace")
+    assert settings.eval_case_governor_workspace_dir == Path("/eval-case-governor-workspace")
+    assert settings.regression_impact_analyzer_workspace_dir == Path("/regression-impact-analyzer-workspace")
+    assert settings.data_dir == Path("/data")
+    assert settings.claude_root == Path("/claude-roots/main")
+    assert settings.main_claude_root == settings.claude_root
+    assert settings.attribution_analyzer_claude_root == Path("/claude-roots/attribution-analyzer")
+    assert settings.proposal_generator_claude_root == Path("/claude-roots/proposal-generator")
+    assert settings.execution_optimizer_claude_root == Path("/claude-roots/execution-optimizer")
+    assert settings.eval_case_governor_claude_root == Path("/claude-roots/eval-case-governor")
+    assert settings.regression_impact_analyzer_claude_root == Path("/claude-roots/regression-impact-analyzer")
+    assert settings.claude_home == settings.claude_root / ".claude"
+    assert settings.langfuse_base_url == "http://langfuse-web:3000"
+
+
+def test_settings_selects_local_debug_env_file_when_mode_is_explicit(tmp_path, monkeypatch):
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    monkeypatch.chdir(tmp_path)
+
+    docker_dir = tmp_path / "docker"
+    docker_dir.mkdir()
+    (docker_dir / ".env").write_text(
+        "\n".join(
+            [
+                "RUNTIME_VOLUME_MODE=container",
+                "API_PORT=58080",
+                "WORKSPACE_DIR=/main-workspace",
+                "DATA_DIR=/data",
+                "CLAUDE_ROOT=/claude-roots/main",
+                "LANGFUSE_BASE_URL=http://langfuse-web:3000",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (docker_dir / ".env.local-debug").write_text(
+        "\n".join(
+            [
+                "RUNTIME_VOLUME_MODE=local-debug",
+                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
                 "API_PORT=8080",
                 "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
                 "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
@@ -79,26 +147,14 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
         encoding="utf-8",
     )
 
-    settings = AppSettings(_env_file=(base_env, local_env))
+    settings = AppSettings()
 
-    assert AppSettings.model_config["env_file"] == ("docker/.env", "docker/.env.local", "docker/.env.local-debug")
+    assert settings_env_file_for_mode() == Path("docker/.env.local-debug")
+    assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_port == 8080
-    assert settings.workspace_dir == tmp_path / "volume-agent-runtime" / "main-workspace"
-    assert settings.main_workspace_dir == settings.workspace_dir
-    assert settings.attribution_analyzer_workspace_dir == tmp_path / "volume-agent-runtime" / "attribution-analyzer-workspace"
-    assert settings.proposal_generator_workspace_dir == tmp_path / "volume-agent-runtime" / "proposal-generator-workspace"
-    assert settings.execution_optimizer_workspace_dir == tmp_path / "volume-agent-runtime" / "execution-optimizer-workspace"
-    assert settings.eval_case_governor_workspace_dir == tmp_path / "volume-agent-runtime" / "eval-case-governor-workspace"
-    assert settings.regression_impact_analyzer_workspace_dir == tmp_path / "volume-agent-runtime" / "regression-impact-analyzer-workspace"
-    assert settings.data_dir == tmp_path / "volume-agent-runtime" / "data"
-    assert settings.claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "main"
-    assert settings.main_claude_root == settings.claude_root
-    assert settings.attribution_analyzer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "attribution-analyzer"
-    assert settings.proposal_generator_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "proposal-generator"
-    assert settings.execution_optimizer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "execution-optimizer"
-    assert settings.eval_case_governor_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"
-    assert settings.regression_impact_analyzer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"
-    assert settings.claude_home == settings.claude_root / ".claude"
+    assert settings.workspace_dir == Path("/tmp/local-debug-volume-agent-runtime/main-workspace")
+    assert settings.data_dir == Path("/tmp/local-debug-volume-agent-runtime/data")
+    assert settings.claude_root == Path("/tmp/local-debug-volume-agent-runtime/claude-roots/main")
     assert settings.langfuse_base_url == "http://localhost:53000"
 
 
@@ -107,14 +163,12 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
         monkeypatch.delenv(key, raising=False)
 
     settings = AppSettings(
-        _env_file=(
-            REPO_ROOT / "docker/.env.example",
-            REPO_ROOT / "docker/.env.local-debug.example",
-        )
+        _env_file=REPO_ROOT / "docker/.env.local-debug.example",
     )
 
     local_debug_root = Path("/tmp/local-debug-volume-agent-runtime")
     assert settings.runtime_volume_mode == "local-debug"
+    assert settings.api_host == "0.0.0.0"
     assert settings.host_runtime_volume_root == local_debug_root.as_posix()
     assert settings.workspace_dir == local_debug_root / "main-workspace"
     assert settings.main_workspace_dir == local_debug_root / "main-workspace"

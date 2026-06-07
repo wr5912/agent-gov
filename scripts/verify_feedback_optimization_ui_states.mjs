@@ -444,11 +444,20 @@ async function verifyWorkspaceDirtyPreflight(page, stateRef) {
   }
   await page.getByRole("button", { name: "丢弃未提交改动" }).click();
   await page.getByText("MAIN_WORKSPACE_DIRTY").waitFor({ state: "detached", timeout: 15_000 });
+  await waitForButtonEnabled(page, oneClick, 15_000);
   if (await oneClick.isDisabled()) {
     throw new Error("One-click execution should be enabled after discarding dirty workspace changes");
   }
   if (stateRef.discardCount !== 1) {
     throw new Error(`Expected one discard request, got ${stateRef.discardCount}`);
+  }
+}
+
+async function waitForButtonEnabled(page, locator, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await locator.isDisabled())) return;
+    await page.waitForTimeout(100);
   }
 }
 

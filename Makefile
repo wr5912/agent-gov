@@ -3,11 +3,7 @@ PYTHON ?= $(VENV)/bin/python
 UV ?= uv
 LITELLM_LOCAL_MODEL_COST_MAP ?= True
 PYTHON_RUN ?= LITELLM_LOCAL_MODEL_COST_MAP=$(LITELLM_LOCAL_MODEL_COST_MAP) $(PYTHON)
-COMPOSE_ENV_FILES := --env-file docker/.env
-ifneq ($(wildcard docker/.env.local),)
-COMPOSE_ENV_FILES += --env-file docker/.env.local
-endif
-COMPOSE ?= docker compose $(COMPOSE_ENV_FILES) -f docker/docker-compose.yml
+COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/agent_job_types.py \
 	app/runtime/output_formatter.py \

@@ -42,6 +42,8 @@ def _local_default_volume_root() -> Path:
 
 def _apply_local_defaults(_project_root: Path) -> None:
     volume_root = _local_default_volume_root()
+    os.environ.setdefault("RUNTIME_VOLUME_MODE", "local-debug")
+    os.environ.setdefault("HOST_RUNTIME_VOLUME_ROOT", str(volume_root))
     defaults = {
         "WORKSPACE_DIR": volume_root / "main-workspace",
         "MAIN_WORKSPACE_DIR": volume_root / "main-workspace",

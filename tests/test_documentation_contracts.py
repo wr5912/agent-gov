@@ -33,6 +33,33 @@ def test_readme_api_index_uses_current_feedback_and_agent_routes():
         assert route in readme
 
 
+def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
+    readme = _read_repo_text("README.md")
+
+    outdated_phrases = [
+        "Langfuse Cloud",
+        "https://cloud.langfuse.com",
+        "https://us.cloud.langfuse.com",
+        "http://langfuse.example.com",
+        "额外读取不提交的 `docker/.env.local`",
+        "容器部署私有覆盖",
+        "不要把 host 调试路径写进 `docker/.env.local`",
+    ]
+    for phrase in outdated_phrases:
+        assert phrase not in readme
+
+    current_phrases = [
+        "Docker Compose 部署只读取 `docker/.env`",
+        "本机 host/PyCharm 调试只读取 `docker/.env.local-debug`",
+        "LANGFUSE_BASE_URL=http://langfuse-web:3000",
+        "LANGFUSE_NEXTAUTH_URL=http://localhost:53000",
+        "FRONTEND_LANGFUSE_URL=http://localhost:53000",
+        "Environment variables: RUNTIME_VOLUME_MODE=local-debug",
+    ]
+    for phrase in current_phrases:
+        assert phrase in readme
+
+
 def test_feedback_product_test_requirements_match_task_execution_flow():
     doc = _read_repo_text("docs/反馈优化产品调整方案.md")
 

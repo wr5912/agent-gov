@@ -13,6 +13,7 @@ from app.runtime.state_machines import validate_transition
 from app.runtime.stores.feedback_store import FeedbackStore
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
+PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "pending_approval", "approved", "regression_passed"}
 
 
 class AgentGovernanceError(FeedbackStoreError):
@@ -240,11 +241,14 @@ class AgentGovernanceService:
             raise AgentGovernanceError(404, "Agent change set not found")
         if not change_set.get("candidate_commit_sha"):
             raise AgentGovernanceError(409, "Agent change set has no candidate commit")
-        if change_set["status"] not in {"approved", "regression_passed"}:
-            raise AgentGovernanceError(409, "Agent change set must be approved or pass regression before publish")
+        status = str(change_set["status"])
+        if status not in PUBLISHABLE_CHANGE_SET_STATES:
+            raise AgentGovernanceError(409, f"Agent change set cannot be published from status {status}")
         tag_name = tag_name or f"agent-release-{utc_now().replace(':', '').replace('+', 'Z')}-{change_set_id[-8:]}"
         try:
-            result = self.agent_version_store.publish_commit(str(change_set["candidate_commit_sha"]), tag_name=tag_name, message=note or f"Publish {change_set_id}")
+            result = self.agent_version_store.publish_commit(
+                str(change_set["candidate_commit_sha"]), tag_name=tag_name, message=note or f"Publish {change_set_id}"
+            )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Agent publish failed: {exc}") from exc
         release = self._create_release(

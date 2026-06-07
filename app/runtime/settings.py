@@ -1,11 +1,12 @@
 import base64
 import json
 import os
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Mapping, Optional, cast
+from typing import Any, Literal, Optional, cast
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .json_types import JsonObject
@@ -53,7 +54,12 @@ _WORKSPACE_PROFILE_DIR_DEFAULTS = (
     ("PROPOSAL_GENERATOR_WORKSPACE_DIR", "proposal_generator_workspace_dir", _DEFAULT_PROPOSAL_WORKSPACE_DIR, "proposal-generator-workspace"),
     ("EXECUTION_OPTIMIZER_WORKSPACE_DIR", "execution_optimizer_workspace_dir", _DEFAULT_EXECUTION_WORKSPACE_DIR, "execution-optimizer-workspace"),
     ("EVAL_CASE_GOVERNOR_WORKSPACE_DIR", "eval_case_governor_workspace_dir", _DEFAULT_EVAL_CASE_GOVERNOR_WORKSPACE_DIR, "eval-case-governor-workspace"),
-    ("REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR", "regression_impact_analyzer_workspace_dir", _DEFAULT_REGRESSION_IMPACT_WORKSPACE_DIR, "regression-impact-analyzer-workspace"),
+    (
+        "REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR",
+        "regression_impact_analyzer_workspace_dir",
+        _DEFAULT_REGRESSION_IMPACT_WORKSPACE_DIR,
+        "regression-impact-analyzer-workspace",
+    ),
 )
 _CLAUDE_ROOT_PROFILE_DIR_DEFAULTS = (
     ("ATTRIBUTION_ANALYZER_CLAUDE_ROOT", "attribution_analyzer_claude_root", _DEFAULT_ATTRIBUTION_CLAUDE_ROOT, "attribution-analyzer"),
@@ -71,11 +77,7 @@ def _derive_profile_dirs(settings: Any, explicit_env: Mapping[str, str] = os.env
         and settings.workspace_dir != _DEFAULT_MAIN_WORKSPACE_DIR
     ):
         settings.main_workspace_dir = settings.workspace_dir
-    if (
-        "MAIN_CLAUDE_ROOT" not in explicit_env
-        and settings.main_claude_root == _DEFAULT_MAIN_CLAUDE_ROOT
-        and settings.claude_root != _DEFAULT_MAIN_CLAUDE_ROOT
-    ):
+    if "MAIN_CLAUDE_ROOT" not in explicit_env and settings.main_claude_root == _DEFAULT_MAIN_CLAUDE_ROOT and settings.claude_root != _DEFAULT_MAIN_CLAUDE_ROOT:
         settings.main_claude_root = settings.claude_root
     _derive_child_dirs(settings, explicit_env, settings.main_workspace_dir.parent, _WORKSPACE_PROFILE_DIR_DEFAULTS)
     _derive_child_dirs(settings, explicit_env, settings.main_claude_root.parent, _CLAUDE_ROOT_PROFILE_DIR_DEFAULTS)
@@ -101,10 +103,19 @@ class AppSettings(BaseSettings):
     host_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
     host_data_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "data"), alias="HOST_DATA_MOUNT")
     host_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "main"), alias="HOST_CLAUDE_ROOT_MOUNT")
-    host_eval_case_governor_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "eval-case-governor-workspace"), alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT")
-    host_regression_impact_analyzer_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "regression-impact-analyzer-workspace"), alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT")
-    host_eval_case_governor_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"), alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT")
-    host_regression_impact_analyzer_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"), alias="HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT")
+    host_eval_case_governor_workspace_mount: str = Field(
+        default=str(Path.home() / "volume-agent-runtime" / "eval-case-governor-workspace"), alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT"
+    )
+    host_regression_impact_analyzer_workspace_mount: str = Field(
+        default=str(Path.home() / "volume-agent-runtime" / "regression-impact-analyzer-workspace"), alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT"
+    )
+    host_eval_case_governor_claude_root_mount: str = Field(
+        default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"), alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT"
+    )
+    host_regression_impact_analyzer_claude_root_mount: str = Field(
+        default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"),
+        alias="HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT",
+    )
 
     workspace_dir: Path = Field(default=Path("/main-workspace"), alias="WORKSPACE_DIR")
     main_workspace_dir: Path = Field(default=Path("/main-workspace"), alias="MAIN_WORKSPACE_DIR")
@@ -112,7 +123,9 @@ class AppSettings(BaseSettings):
     proposal_generator_workspace_dir: Path = Field(default=Path("/proposal-generator-workspace"), alias="PROPOSAL_GENERATOR_WORKSPACE_DIR")
     execution_optimizer_workspace_dir: Path = Field(default=Path("/execution-optimizer-workspace"), alias="EXECUTION_OPTIMIZER_WORKSPACE_DIR")
     eval_case_governor_workspace_dir: Path = Field(default=Path("/eval-case-governor-workspace"), alias="EVAL_CASE_GOVERNOR_WORKSPACE_DIR")
-    regression_impact_analyzer_workspace_dir: Path = Field(default=Path("/regression-impact-analyzer-workspace"), alias="REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR")
+    regression_impact_analyzer_workspace_dir: Path = Field(
+        default=Path("/regression-impact-analyzer-workspace"), alias="REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR"
+    )
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
     claude_root: Path = Field(default=Path("/claude-roots/main"), alias="CLAUDE_ROOT")
     main_claude_root: Path = Field(default=Path("/claude-roots/main"), alias="MAIN_CLAUDE_ROOT")
@@ -120,7 +133,9 @@ class AppSettings(BaseSettings):
     proposal_generator_claude_root: Path = Field(default=Path("/claude-roots/proposal-generator"), alias="PROPOSAL_GENERATOR_CLAUDE_ROOT")
     execution_optimizer_claude_root: Path = Field(default=Path("/claude-roots/execution-optimizer"), alias="EXECUTION_OPTIMIZER_CLAUDE_ROOT")
     eval_case_governor_claude_root: Path = Field(default=Path("/claude-roots/eval-case-governor"), alias="EVAL_CASE_GOVERNOR_CLAUDE_ROOT")
-    regression_impact_analyzer_claude_root: Path = Field(default=Path("/claude-roots/regression-impact-analyzer"), alias="REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT")
+    regression_impact_analyzer_claude_root: Path = Field(
+        default=Path("/claude-roots/regression-impact-analyzer"), alias="REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT"
+    )
     claude_home: Path = Field(default=Path("/claude-roots/main/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
@@ -195,6 +210,22 @@ class AppSettings(BaseSettings):
     langfuse_deployment_environment: str = Field(default="local", alias="LANGFUSE_DEPLOYMENT_ENVIRONMENT")
     langfuse_resource_attributes_raw: Optional[str] = Field(default=None, alias="LANGFUSE_RESOURCE_ATTRIBUTES")
     langfuse_export_interval_ms: int = Field(default=1000, alias="LANGFUSE_EXPORT_INTERVAL_MS")
+
+    @field_validator(
+        "claude_config_dir",
+        "claude_settings_path",
+        "claude_mcp_config_path",
+        "claude_cli_path",
+        "agent_git_repository_dir_override",
+        "agent_git_worktrees_dir_override",
+        "agent_release_archives_dir_override",
+        mode="before",
+    )
+    @classmethod
+    def _blank_optional_path(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
 
     def model_post_init(self, __context: Any) -> None:
         _derive_profile_dirs(self)

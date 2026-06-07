@@ -334,8 +334,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "abandoned", "failed"},
-        "candidate_committed": {"pending_approval", "regression_running", "approved", "rejected", "abandoned", "failed"},
-        "pending_approval": {"approved", "rejected", "regression_running", "abandoned", "failed"},
+        "candidate_committed": {"pending_approval", "regression_running", "approved", "published", "rejected", "abandoned", "failed"},
+        "pending_approval": {"approved", "published", "rejected", "regression_running", "abandoned", "failed"},
         "approved": {"regression_running", "regression_passed", "published", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
         "regression_running": {"regression_passed", "regression_failed", "failed"},

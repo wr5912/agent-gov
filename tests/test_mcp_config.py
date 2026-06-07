@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from app.runtime.agent_profiles import MAIN_AGENT_PROFILE, build_profiles
 from app.runtime.mcp_config import McpConfigError, filtered_mcp_servers, resolve_main_mcp_config_path
 from app.runtime.settings import AppSettings
@@ -100,3 +99,21 @@ def test_main_profile_uses_local_mcp_without_polluting_feedback_profiles(tmp_pat
 
     assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.local.json"
     assert profiles["attribution-analyzer"].mcp_config_path.name == ".mcp.json"
+
+
+def test_blank_optional_mcp_config_path_uses_workspace_resolution(tmp_path: Path) -> None:
+    workspace = tmp_path / "main-workspace"
+    workspace.mkdir()
+    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
+    settings = AppSettings(
+        _env_file=None,
+        DATA_DIR=tmp_path / "data",
+        MAIN_WORKSPACE_DIR=workspace,
+        MAIN_CLAUDE_ROOT=tmp_path / "claude-roots" / "main",
+        CLAUDE_MCP_CONFIG_PATH="",
+    )
+
+    profiles = build_profiles(settings)
+
+    assert settings.claude_mcp_config_path is None
+    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.local.json"

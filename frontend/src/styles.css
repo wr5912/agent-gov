@@ -972,13 +972,17 @@ button:disabled {
   width: 100%;
   min-height: 72px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, 0.42fr);
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: stretch;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: rgba(255, 253, 248, 0.88);
   padding: 10px 12px;
+}
+.version-release-row {
+  background: rgba(255, 253, 248, 0.72);
 }
 .version-window.embedded .version-list-row {
   min-height: 64px;
@@ -987,6 +991,24 @@ button:disabled {
 .version-list-row.active {
   border-color: rgba(201, 100, 66, 0.52);
   background: rgba(201, 100, 66, 0.08);
+}
+.version-row-select {
+  min-width: 0;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.72fr);
+  gap: 12px;
+  align-items: start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.version-row-static {
+  cursor: default;
 }
 .version-row-main {
   min-width: 0;
@@ -1007,17 +1029,53 @@ button:disabled {
 }
 .version-row-tags,
 .version-context-grid {
-  display: flex;
-  flex-wrap: wrap;
   gap: 6px;
 }
 .version-row-tags {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-content: flex-start;
-  justify-content: flex-end;
+  gap: 6px 10px;
+}
+.version-context-grid {
+  display: flex;
+  flex-wrap: wrap;
 }
 .version-row-tags span,
 .version-context-grid span {
   max-width: 100%;
+}
+.version-row-tags span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.3;
+}
+.version-row-tags span small {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+.version-row-tags span strong {
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.version-row-tags span.mono strong {
+  color: var(--brand-2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+.version-context-grid span {
   padding: 4px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
@@ -1026,6 +1084,51 @@ button:disabled {
   font-size: 11px;
   line-height: 1.3;
   overflow-wrap: anywhere;
+}
+.version-row-actions {
+  min-width: 96px;
+  display: grid;
+  justify-items: end;
+  align-content: start;
+  gap: 6px;
+}
+.version-action-trigger {
+  min-width: 88px;
+  justify-content: center;
+}
+.version-action-menu {
+  width: 132px;
+  display: grid;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 253, 248, 0.98);
+  box-shadow: 0 12px 28px rgba(27, 35, 55, 0.12);
+}
+.version-action-menu-item {
+  width: 100%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+  text-align: left;
+}
+.version-action-menu-item:hover:not(:disabled) {
+  background: rgba(22, 101, 242, 0.08);
+}
+.version-action-menu-item.danger {
+  color: var(--danger);
+}
+.version-action-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
 }
 .version-status {
   display: inline-flex;
@@ -1133,6 +1236,13 @@ button:disabled {
   overflow: auto;
   margin-top: 8px;
 }
+.version-file-list .version-list-row {
+  min-height: 64px;
+  padding: 8px;
+}
+.version-file-list .version-row-select {
+  grid-template-columns: minmax(0, 1fr);
+}
 .version-window.embedded .version-file-list {
   max-height: min(360px, 46vh);
 }
@@ -1170,6 +1280,9 @@ button:disabled {
   flex-direction: column;
   overflow-x: hidden;
   overflow-y: auto;
+}
+.version-confirm-modal {
+  width: min(480px, calc(100vw - 36px));
 }
 .detail-summary {
   display: flex;
@@ -1407,6 +1520,17 @@ button:disabled {
   .version-list-row {
     grid-template-columns: 1fr;
   }
+  .version-row-select,
+  .version-row-tags {
+    grid-template-columns: 1fr;
+  }
+  .version-row-actions {
+    justify-items: stretch;
+  }
+  .version-action-trigger,
+  .version-action-menu {
+    width: 100%;
+  }
   .version-list-head {
     flex-direction: column;
   }
@@ -1421,9 +1545,6 @@ button:disabled {
   }
   .version-toggle {
     flex: 1 1 auto;
-  }
-  .version-row-tags {
-    justify-content: flex-start;
   }
   .version-detail-panel {
     position: static;

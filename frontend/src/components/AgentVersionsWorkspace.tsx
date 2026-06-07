@@ -1,13 +1,10 @@
-import { ArrowLeft, CheckCircle2, GitBranch, PlayCircle, RefreshCw, RotateCcw, Search, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowLeft, GitBranch, MoreHorizontal, RefreshCw, RotateCcw, Search, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  approveAgentChangeSet,
   diffAgentChangeSet,
   getAgentChangeSetEvents,
   publishAgentChangeSet,
-  rejectAgentChangeSet,
   rollbackAgentRelease,
-  runAgentChangeSetRegression,
 } from "../api/runtime";
 import type {
   AgentChangeSet,
@@ -33,7 +30,9 @@ interface AgentVersionsWorkspaceProps {
   embedded?: boolean;
 }
 
-type BusyAction = "approve" | "reject" | "regression" | "publish" | "rollback";
+type BusyAction = "publish" | "rollback";
+type ActionMenuTarget = { kind: "changeSet" | "release"; id: string };
+type ConfirmAction = { kind: "publish"; changeSet: AgentChangeSet } | { kind: "rollback"; release: AgentRelease };
 
 export function AgentVersionsWorkspace({
   clientConfig,
@@ -53,6 +52,8 @@ export function AgentVersionsWorkspace({
   const [diff, setDiff] = useState<AgentGitDiff | null>(null);
   const [busy, setBusy] = useState<BusyAction | undefined>();
   const [localError, setLocalError] = useState<string | undefined>();
+  const [openActionMenu, setOpenActionMenu] = useState<ActionMenuTarget | null>(null);
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
 
   const filteredChangeSets = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -95,6 +96,15 @@ export function AgentVersionsWorkspace({
     };
   }, [clientConfig, selected]);
 
+  useEffect(() => {
+    if (!openActionMenu) return undefined;
+    function closeMenu() {
+      setOpenActionMenu(null);
+    }
+    document.addEventListener("click", closeMenu);
+    return () => document.removeEventListener("click", closeMenu);
+  }, [openActionMenu]);
+
   async function runAction(action: BusyAction, fn: () => Promise<unknown>) {
     setBusy(action);
     setLocalError(undefined);
@@ -108,10 +118,16 @@ export function AgentVersionsWorkspace({
     }
   }
 
-  const canApprove = Boolean(selected?.candidate_commit_sha) && ["candidate_committed", "pending_approval", "regression_passed"].includes(selected?.status || "");
-  const canRunRegression = Boolean(selected?.candidate_commit_sha) && !["regression_running", "published", "abandoned", "rejected"].includes(selected?.status || "");
-  const canPublish = Boolean(selected?.candidate_commit_sha) && ["approved", "regression_passed"].includes(selected?.status || "");
-  const canReject = Boolean(selected) && !["published", "abandoned", "rejected"].includes(selected?.status || "");
+  async function confirmPendingAction() {
+    if (!confirmAction) return;
+    const action = confirmAction;
+    setConfirmAction(null);
+    if (action.kind === "publish") {
+      await runAction("publish", () => publishAgentChangeSet(clientConfig, action.changeSet.change_set_id, { operator: "ui" }));
+      return;
+    }
+    await runAction("rollback", () => rollbackAgentRelease(clientConfig, action.release.release_id, { operator: "ui" }));
+  }
 
   return (
     <main className={`version-window ${embedded ? "embedded" : ""}`}>
@@ -123,7 +139,7 @@ export function AgentVersionsWorkspace({
             </button> : null}
             <span className="eyebrow">Agent 版本治理</span>
             <h1>Agent 版本治理</h1>
-            <p>基于 Git change set、候选回归、发布归档和回滚管理 Agent 配置。</p>
+            <p>基于 Git change set、发布归档和回滚管理 Agent 配置。</p>
           </div>
           <div className="version-window-actions">
             <button className="ghost-button" type="button" onClick={() => onRefresh()} disabled={loading || Boolean(busy)}>
@@ -147,7 +163,7 @@ export function AgentVersionsWorkspace({
           <div className="version-list-head">
             <div>
               <span className="section-title">Change sets</span>
-              <p>执行优化只写入候选 worktree；审批、回归通过后才能发布到主 Agent workspace。</p>
+              <p>执行优化只写入候选 worktree；候选提交确认后可通过行内操作发布到主 Agent workspace。</p>
             </div>
             <div className="version-list-tools">
               <label className="version-search">
@@ -162,25 +178,56 @@ export function AgentVersionsWorkspace({
 
           <div className="version-unified-list">
             {filteredChangeSets.map((item) => (
-              <button
+              <div
                 className={`version-list-row ${selected?.change_set_id === item.change_set_id ? "active" : ""}`}
                 key={item.change_set_id}
-                type="button"
-                onClick={() => setSelectedId(item.change_set_id)}
               >
-                <div className="version-row-main">
-                  <span className={`version-status ${statusTone(item.status)}`}>{statusText(item.status)}</span>
-                  <strong>{changeSetDisplayTitle()}</strong>
-                  <p>{changeSetSubtitle(item)}</p>
+                <button className="version-row-select" type="button" onClick={() => setSelectedId(item.change_set_id)}>
+                  <div className="version-row-main">
+                    <span className={`version-status ${statusTone(item.status)}`}>{statusText(item.status)}</span>
+                    <strong>{changeSetDisplayTitle()}</strong>
+                    <p>{changeSetSubtitle(item)}</p>
+                  </div>
+                  <div className="version-row-tags">
+                    <VersionRowField label="任务" value={shortId(item.optimization_task_id)} mono />
+                    <VersionRowField label="base" value={shortId(item.base_commit_sha)} mono />
+                    <VersionRowField label="candidate" value={shortId(item.candidate_commit_sha)} mono />
+                    <VersionRowField label="更新" value={formatDate(item.updated_at)} />
+                  </div>
+                </button>
+                <div className="version-row-actions" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    className="ghost-button version-action-trigger"
+                    type="button"
+                    aria-haspopup="menu"
+                    aria-expanded={isMenuOpen(openActionMenu, "changeSet", item.change_set_id)}
+                    disabled={Boolean(busy)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setOpenActionMenu((current) => isMenuOpen(current, "changeSet", item.change_set_id) ? null : { kind: "changeSet", id: item.change_set_id });
+                    }}
+                  >
+                    <MoreHorizontal size={15} /> 操作
+                  </button>
+                  {isMenuOpen(openActionMenu, "changeSet", item.change_set_id) ? (
+                    <div className="version-action-menu" role="menu">
+                      <button
+                        className="version-action-menu-item"
+                        type="button"
+                        role="menuitem"
+                        disabled={!isChangeSetPublishable(item) || Boolean(busy)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setOpenActionMenu(null);
+                          setConfirmAction({ kind: "publish", changeSet: item });
+                        }}
+                      >
+                        <ShieldCheck size={14} /> 发布
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
-                <div className="version-row-tags">
-                  <span>变更单：{shortId(item.change_set_id)}</span>
-                  <span>任务：{shortId(item.optimization_task_id)}</span>
-                  <span>base：{shortId(item.base_commit_sha)}</span>
-                  {item.candidate_commit_sha ? <span>candidate：{shortId(item.candidate_commit_sha)}</span> : null}
-                  <span>{formatDate(item.updated_at)}</span>
-                </div>
-              </button>
+              </div>
             ))}
             {!filteredChangeSets.length ? <div className="empty-state">暂无 change set。</div> : null}
           </div>
@@ -207,44 +254,6 @@ export function AgentVersionsWorkspace({
                 <span>worktree：{selected.worktree_path}</span>
                 {releaseForSelected ? <span>release：{releaseForSelected.tag_name}</span> : null}
               </div>
-
-              <section className="version-detail-section">
-                <span className="section-title">治理操作</span>
-                <div className="version-action-row">
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    disabled={!canRunRegression || Boolean(busy)}
-                    onClick={() => runAction("regression", () => runAgentChangeSetRegression(clientConfig, selected.change_set_id))}
-                  >
-                    <PlayCircle size={15} /> {busy === "regression" ? "回归中..." : "候选回归"}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    type="button"
-                    disabled={!canApprove || Boolean(busy)}
-                    onClick={() => runAction("approve", () => approveAgentChangeSet(clientConfig, selected.change_set_id, { operator: "ui" }))}
-                  >
-                    <CheckCircle2 size={15} /> {busy === "approve" ? "审批中..." : "批准"}
-                  </button>
-                  <button
-                    className="primary-button"
-                    type="button"
-                    disabled={!canPublish || Boolean(busy)}
-                    onClick={() => runAction("publish", () => publishAgentChangeSet(clientConfig, selected.change_set_id, { operator: "ui" }))}
-                  >
-                    <ShieldCheck size={15} /> {busy === "publish" ? "发布中..." : "发布"}
-                  </button>
-                  <button
-                    className="ghost-button danger"
-                    type="button"
-                    disabled={!canReject || Boolean(busy)}
-                    onClick={() => runAction("reject", () => rejectAgentChangeSet(clientConfig, selected.change_set_id, { operator: "ui" }))}
-                  >
-                    <XCircle size={15} /> 拒绝
-                  </button>
-                </div>
-              </section>
 
               <section className="version-detail-section">
                 <span className="section-title">候选 Diff</span>
@@ -286,19 +295,55 @@ export function AgentVersionsWorkspace({
                 <span className="section-title">发布记录</span>
                 <div className="version-file-list">
                   {releases.slice(0, 20).map((release) => (
-                    <div className="version-file-row" key={release.release_id}>
-                      <GitBranch size={13} />
-                      <span>{release.tag_name}</span>
-                      <em>{release.status}</em>
-                      <button
-                        className="mini-icon-button"
-                        type="button"
-                        aria-label="回滚发布"
-                        disabled={Boolean(busy)}
-                        onClick={() => runAction("rollback", () => rollbackAgentRelease(clientConfig, release.release_id, { operator: "ui" }))}
-                      >
-                        <RotateCcw size={14} />
-                      </button>
+                    <div
+                      className={`version-list-row version-release-row ${selected?.latest_release_id === release.release_id ? "active" : ""}`}
+                      key={release.release_id}
+                    >
+                      <div className="version-row-select version-row-static">
+                        <div className="version-row-main">
+                          <span className={`version-status ${statusTone(release.status)}`}>{statusText(release.status)}</span>
+                          <strong>{release.tag_name}</strong>
+                          <p>{release.note || "发布归档"}</p>
+                        </div>
+                        <div className="version-row-tags">
+                          <VersionRowField label="提交" value={shortId(release.commit_sha)} mono />
+                          <VersionRowField label="变更单" value={shortId(release.change_set_id)} mono />
+                          <VersionRowField label="来源" value={release.rollback_of_release_id ? "回滚发布" : "候选发布"} />
+                          <VersionRowField label="时间" value={formatDate(release.updated_at)} />
+                        </div>
+                      </div>
+                      <div className="version-row-actions" onClick={(event) => event.stopPropagation()}>
+                        <button
+                          className="ghost-button version-action-trigger"
+                          type="button"
+                          aria-haspopup="menu"
+                          aria-expanded={isMenuOpen(openActionMenu, "release", release.release_id)}
+                          disabled={Boolean(busy)}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setOpenActionMenu((current) => isMenuOpen(current, "release", release.release_id) ? null : { kind: "release", id: release.release_id });
+                          }}
+                        >
+                          <MoreHorizontal size={15} /> 操作
+                        </button>
+                        {isMenuOpen(openActionMenu, "release", release.release_id) ? (
+                          <div className="version-action-menu" role="menu">
+                            <button
+                              className="version-action-menu-item danger"
+                              type="button"
+                              role="menuitem"
+                              disabled={!isReleaseRollbackable(release, currentRef) || Boolean(busy)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setOpenActionMenu(null);
+                                setConfirmAction({ kind: "rollback", release });
+                              }}
+                            >
+                              <RotateCcw size={14} /> 回滚
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </div>
                   ))}
                   {!releases.length ? <p className="version-note">暂无发布记录。</p> : null}
@@ -310,7 +355,63 @@ export function AgentVersionsWorkspace({
           )}
         </aside>
       </section>
+      {confirmAction ? (
+        <VersionActionConfirmModal
+          action={confirmAction}
+          busy={Boolean(busy)}
+          onCancel={() => setConfirmAction(null)}
+          onConfirm={confirmPendingAction}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function VersionRowField({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <span className={mono ? "mono" : undefined}>
+      <small>{label}</small>
+      <strong>{value}</strong>
+    </span>
+  );
+}
+
+function VersionActionConfirmModal({
+  action,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  action: ConfirmAction;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  const isPublish = action.kind === "publish";
+  const title = isPublish ? "发布候选变更" : "回滚发布版本";
+  const target = isPublish ? changeSetSubtitle(action.changeSet) : action.release.tag_name;
+  const detail = isPublish
+    ? `将候选提交 ${shortId(action.changeSet.candidate_commit_sha)} 发布到主 Agent workspace。`
+    : `将主 Agent workspace 回滚到 ${action.release.tag_name}（${shortId(action.release.commit_sha)}）。`;
+
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={() => !busy && onCancel()}>
+      <section className="modal-card version-confirm-modal" role="dialog" aria-modal="true" aria-label={title} onClick={(event) => event.stopPropagation()}>
+        <header className="modal-head">
+          <div>
+            <h3>{title}</h3>
+            <p>{target}</p>
+          </div>
+        </header>
+        <div className="fw-modal-warning">{detail}</div>
+        <div className="modal-actions">
+          <button className="ghost-button" type="button" disabled={busy} onClick={onCancel}>取消</button>
+          <button className={isPublish ? "primary-button" : "fw-danger-button"} type="button" disabled={busy} onClick={onConfirm}>
+            {busy ? "处理中..." : isPublish ? "确认发布" : "确认回滚"}
+          </button>
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -359,6 +460,19 @@ function changedDiffRows(diff: AgentGitDiff | null): Array<{ path: string; statu
   ];
 }
 
+function isMenuOpen(target: ActionMenuTarget | null, kind: ActionMenuTarget["kind"], id: string): boolean {
+  return target?.kind === kind && target.id === id;
+}
+
+function isChangeSetPublishable(item: AgentChangeSet): boolean {
+  return Boolean(item.candidate_commit_sha) && ["candidate_committed", "pending_approval", "approved", "regression_passed"].includes(item.status);
+}
+
+function isReleaseRollbackable(release: AgentRelease, currentRef: AgentGitRef | null): boolean {
+  const currentCommit = currentRef?.commit_sha || currentRef?.agent_version_id;
+  return ["published", "archived", "rollback_failed"].includes(release.status) && release.commit_sha !== currentCommit;
+}
+
 function diffRows(diff: AgentGitDiff, key: "added" | "modified" | "deleted") {
   const rows = diff[key];
   return Array.isArray(rows) ? rows : [];
@@ -366,8 +480,8 @@ function diffRows(diff: AgentGitDiff, key: "added" | "modified" | "deleted") {
 
 function statusTone(value?: string): "good" | "warn" | "danger" | "neutral" {
   if (value === "published" || value === "regression_passed" || value === "approved") return "good";
-  if (value === "regression_failed" || value === "rejected" || value === "failed") return "danger";
-  if (value === "regression_running" || value === "candidate_committed" || value === "pending_approval") return "warn";
+  if (value === "regression_failed" || value === "rejected" || value === "failed" || value === "rollback_failed") return "danger";
+  if (value === "regression_running" || value === "candidate_committed" || value === "pending_approval" || value === "rolled_back") return "warn";
   return "neutral";
 }
 
@@ -383,6 +497,9 @@ function statusText(value?: string): string {
     regression_passed: "回归通过",
     regression_failed: "回归失败",
     published: "已发布",
+    archived: "已归档",
+    rolled_back: "已回滚",
+    rollback_failed: "回滚失败",
     abandoned: "已放弃",
     failed: "失败",
   } as Record<string, string>)[value] || value : "-";

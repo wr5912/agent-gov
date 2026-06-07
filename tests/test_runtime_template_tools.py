@@ -4,16 +4,15 @@ import json
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from bootstrap_runtime_volume import bootstrap_runtime_volume
-from export_runtime_template import export_runtime_template
-from restore_runtime_template_backup import restore_backup
-from runtime_template_safety import sanitize_path, scan_path
+from bootstrap_runtime_volume import LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, bootstrap_runtime_volume, resolve_runtime_root  # noqa: E402
+from export_runtime_template import export_runtime_template  # noqa: E402
+from restore_runtime_template_backup import restore_backup  # noqa: E402
+from runtime_template_safety import sanitize_path, scan_path  # noqa: E402
 
 
 def test_runtime_template_safety_sanitizes_network_and_secret_values(tmp_path):
@@ -106,6 +105,13 @@ def test_bootstrap_runtime_volume_fills_missing_without_overwrite(tmp_path):
     assert (runtime_root / "data" / "outputs" / "reports").is_dir()
     assert (runtime_root / "data" / "agent-governance" / "worktrees").is_dir()
     assert result["skipped_existing"]
+
+
+def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
+    env_file = tmp_path / "local-debug.env"
+    env_file.write_text("RUNTIME_VOLUME_MODE=local-debug\n", encoding="utf-8")
+
+    assert resolve_runtime_root(None, env_file) == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 
 
 def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):

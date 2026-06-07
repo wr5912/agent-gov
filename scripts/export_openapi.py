@@ -6,6 +6,9 @@ import os
 import sys
 from pathlib import Path
 
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Export the FastAPI OpenAPI schema to a JSON file.")
@@ -29,8 +32,16 @@ def main() -> None:
     print(str(output_path))
 
 
+def _local_default_volume_root() -> Path:
+    if root := os.environ.get("HOST_RUNTIME_VOLUME_ROOT"):
+        return Path(root)
+    if os.environ.get("RUNTIME_VOLUME_MODE") == "container":
+        return CONTAINER_RUNTIME_VOLUME_ROOT
+    return LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
+
+
 def _apply_local_defaults(_project_root: Path) -> None:
-    volume_root = Path(os.environ.get("HOST_RUNTIME_VOLUME_ROOT") or Path.home() / "volume-agent-runtime")
+    volume_root = _local_default_volume_root()
     defaults = {
         "WORKSPACE_DIR": volume_root / "main-workspace",
         "MAIN_WORKSPACE_DIR": volume_root / "main-workspace",

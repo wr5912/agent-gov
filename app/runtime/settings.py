@@ -48,6 +48,8 @@ _DEFAULT_EXECUTION_CLAUDE_ROOT = Path("/claude-roots/execution-optimizer")
 _DEFAULT_EVAL_CASE_GOVERNOR_CLAUDE_ROOT = Path("/claude-roots/eval-case-governor")
 _DEFAULT_REGRESSION_IMPACT_CLAUDE_ROOT = Path("/claude-roots/regression-impact-analyzer")
 _DEFAULT_CLAUDE_HOME = Path("/claude-roots/main/.claude")
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
 
 _WORKSPACE_PROFILE_DIR_DEFAULTS = (
     ("ATTRIBUTION_ANALYZER_WORKSPACE_DIR", "attribution_analyzer_workspace_dir", _DEFAULT_ATTRIBUTION_WORKSPACE_DIR, "attribution-analyzer-workspace"),
@@ -94,26 +96,27 @@ def _derive_child_dirs(settings: Any, explicit_env: Mapping[str, str], parent: P
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
-    model_config = SettingsConfigDict(env_file=("docker/.env", "docker/.env.local"), extra="ignore")
+    model_config = SettingsConfigDict(env_file=("docker/.env", "docker/.env.local", "docker/.env.local-debug"), extra="ignore")
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     host_port: int = Field(default=58080, alias="HOST_PORT")
-    host_runtime_volume_root: str = Field(default=str(Path.home() / "volume-agent-runtime"), alias="HOST_RUNTIME_VOLUME_ROOT")
-    host_workspace_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
-    host_data_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "data"), alias="HOST_DATA_MOUNT")
-    host_claude_root_mount: str = Field(default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "main"), alias="HOST_CLAUDE_ROOT_MOUNT")
+    runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
+    host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
+    host_workspace_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
+    host_data_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "data"), alias="HOST_DATA_MOUNT")
+    host_claude_root_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "main"), alias="HOST_CLAUDE_ROOT_MOUNT")
     host_eval_case_governor_workspace_mount: str = Field(
-        default=str(Path.home() / "volume-agent-runtime" / "eval-case-governor-workspace"), alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT"
+        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "eval-case-governor-workspace"), alias="HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT"
     )
     host_regression_impact_analyzer_workspace_mount: str = Field(
-        default=str(Path.home() / "volume-agent-runtime" / "regression-impact-analyzer-workspace"), alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT"
+        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "regression-impact-analyzer-workspace"), alias="HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT"
     )
     host_eval_case_governor_claude_root_mount: str = Field(
-        default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "eval-case-governor"), alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT"
+        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "eval-case-governor"), alias="HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT"
     )
     host_regression_impact_analyzer_claude_root_mount: str = Field(
-        default=str(Path.home() / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"),
+        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "regression-impact-analyzer"),
         alias="HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT",
     )
 

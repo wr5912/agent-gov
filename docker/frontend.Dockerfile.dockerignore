@@ -3,4 +3,5 @@ frontend/dist
 frontend/.env
 frontend/.env.local
 docker/.env.local
+docker/.env.local-debug
 frontend/tsconfig.tsbuildinfo

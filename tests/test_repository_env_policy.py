@@ -6,7 +6,6 @@ import sys
 import textwrap
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ENV_KEYS = (
     "CLAUDE_HOME",
@@ -21,7 +20,7 @@ RUNTIME_ENV_KEYS = (
 def test_project_root_env_file_is_forbidden() -> None:
     root_env = REPO_ROOT / ".env"
 
-    assert not root_env.exists(), "Project root .env is forbidden; use docker/.env.local or frontend/.env.local."
+    assert not root_env.exists(), "Project root .env is forbidden; use docker/.env.local, docker/.env.local-debug, or frontend/.env.local."
 
 
 def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:
@@ -59,11 +58,7 @@ def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:
 
 
 def test_project_dspy_entrypoint_suppresses_known_litellm_import_warnings() -> None:
-    env = {
-        key: value
-        for key, value in os.environ.items()
-        if key not in {*RUNTIME_ENV_KEYS, "LITELLM_LOCAL_MODEL_COST_MAP", "LITELLM_LOG"}
-    }
+    env = {key: value for key, value in os.environ.items() if key not in {*RUNTIME_ENV_KEYS, "LITELLM_LOCAL_MODEL_COST_MAP", "LITELLM_LOG"}}
     script = textwrap.dedent(
         """
         import os

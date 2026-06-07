@@ -4,6 +4,21 @@ import subprocess
 import sys
 from pathlib import Path
 
+from scripts.export_openapi import CONTAINER_RUNTIME_VOLUME_ROOT, LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, _local_default_volume_root
+
+
+def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(monkeypatch):
+    monkeypatch.delenv("HOST_RUNTIME_VOLUME_ROOT", raising=False)
+    monkeypatch.delenv("RUNTIME_VOLUME_MODE", raising=False)
+
+    assert _local_default_volume_root() == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
+
+    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "container")
+    assert _local_default_volume_root() == CONTAINER_RUNTIME_VOLUME_ROOT
+
+    monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", "/tmp/custom-runtime-root")
+    assert _local_default_volume_root() == Path("/tmp/custom-runtime-root")
+
 
 def test_export_openapi_script_writes_schema(tmp_path):
     root = tmp_path / "docker" / "volume"

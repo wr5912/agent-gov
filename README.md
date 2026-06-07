@@ -347,7 +347,7 @@ curl -H "Authorization: Bearer $API_KEY" "$API_BASE/api/sessions"
 
 ## 配置挂载说明
 
-`docker/docker-compose.yml` 默认从 `HOST_RUNTIME_VOLUME_ROOT` 派生运行态目录。`docker/.env.example` 默认值为 `${HOME}/volume-agent-runtime`：
+`docker/docker-compose.yml` 默认以 `RUNTIME_VOLUME_MODE=container` 运行，并从 `HOST_RUNTIME_VOLUME_ROOT` 派生运行态目录。`docker/.env.example` 默认值为 `${HOME}/volume-agent-runtime`；本机 PyCharm/uvicorn 调试使用单独的 `RUNTIME_VOLUME_MODE=local-debug` 和 `/tmp/local-debug-volume-agent-runtime`，避免调试数据与容器部署数据混用：
 
 ```yaml
 volumes:
@@ -366,12 +366,14 @@ volumes:
   - ${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/regression-impact-analyzer:/claude-roots/regression-impact-analyzer
 ```
 
-可复用模板保存在 `docker/runtime-template/`，实际运行目录由 `make runtime-bootstrap` 或容器 entrypoint 从模板补齐。真实运行态文件默认不提交到 git；其中 `runtime.sqlite3`、临时 job、Agent 版本仓库、候选 worktree、发布归档和 Langfuse 运行数据都属于本地运行态。
+可复用模板保存在 `docker/runtime-template/`，实际运行目录由 `make runtime-bootstrap`、`make local-debug-bootstrap` 或容器 entrypoint 从模板补齐。真实运行态文件默认不提交到 git；其中 `runtime.sqlite3`、临时 job、Agent 版本仓库、候选 worktree、发布归档和 Langfuse 运行数据都属于本地运行态。
 
 常用模板命令：
 
 ```bash
 make runtime-bootstrap
+make local-debug-env
+make local-debug-bootstrap
 make runtime-template-scan
 make runtime-template-export
 make runtime-template-restore-list
@@ -495,13 +497,18 @@ ${HOME}/volume-agent-runtime/data/runtime.sqlite3
 
 ## 本地开发
 
-首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。本项目 Makefile 中的 Python 脚本入口统一使用 `.venv/bin/python`，不要直接依赖宿主机 `python3`。后端配置默认读取 `docker/.env`，本机调试时可再放一个不提交的 `docker/.env.local` 覆盖容器路径和本机端口：
+首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。本项目 Makefile 中的 Python 脚本入口统一使用 `.venv/bin/python`，不要直接依赖宿主机 `python3`。
+
+Docker Compose 部署读取 `docker/.env`，并可额外读取不提交的 `docker/.env.local` 作为容器部署私有覆盖。Compose 模式保持 `RUNTIME_VOLUME_MODE=container`，默认宿主机运行态根目录是 `${HOME}/volume-agent-runtime`。
+
+本机 host/PyCharm 调试读取额外的 `docker/.env.local-debug`。该文件不会被 Docker Compose 加载，默认把全部 workspace、data 和 claude-root 指向 `/tmp/local-debug-volume-agent-runtime`：
 
 ```bash
-cp docker/.env.local.example docker/.env.local
+make local-debug-env
+make local-debug-bootstrap
 ```
 
-编辑 `docker/.env.local`，按需调整 `HOST_RUNTIME_VOLUME_ROOT` 即可。`make up` 会在 `docker/.env` 之后加载 `docker/.env.local`，用于本地私有覆盖。用于 Docker Compose 时请保留容器内路径 `/main-workspace`、`/data` 和 `/claude-roots/main`；只有直接在宿主机运行后端时，才把 `WORKSPACE_DIR`、`DATA_DIR` 和 `CLAUDE_ROOT` 改成 `${HOST_RUNTIME_VOLUME_ROOT}` 下的宿主机路径。需要显式沿用旧目录时，可以把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
+需要调整本机调试路径时编辑 `docker/.env.local-debug`；需要调整容器部署路径时编辑 `docker/.env.local` 或部署系统注入的 `HOST_RUNTIME_VOLUME_ROOT`。不要把 host 调试路径写进 `docker/.env.local`，否则 Compose 会挂载调试数据。需要显式沿用旧目录时，可以在对应模式中把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 
 本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置。main profile 的 MCP 配置优先级是：显式 `CLAUDE_MCP_CONFIG_PATH`、`/main-workspace/.mcp.local.json`、`/main-workspace/.mcp.json`；feedback profiles 始终使用各自 workspace 的 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
 
@@ -518,7 +525,7 @@ Module name: uvicorn
 Parameters: app.main:app --reload --reload-dir app --host 127.0.0.1 --port 8080
 Working directory: <repo root>
 Python interpreter: <repo root>/.venv/bin/python
-Environment variables: 留空即可；如 PyCharm 已配置同名变量，会覆盖 docker/.env.local
+Environment variables: 留空即可；如 PyCharm 已配置同名变量，会覆盖 docker/.env.local-debug
 ```
 
 异步反馈闭环、优化任务和评估生成依赖 `agent_jobs` worker。需要调试这些流程时，另建一个 PyCharm configuration：

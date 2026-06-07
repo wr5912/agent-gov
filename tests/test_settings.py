@@ -1,8 +1,26 @@
+from pathlib import Path
+
 from app.runtime.settings import AppSettings
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _PROFILE_ENV_KEYS = (
     "API_PORT",
+    "RUNTIME_VOLUME_MODE",
+    "HOST_RUNTIME_VOLUME_ROOT",
+    "HOST_WORKSPACE_MOUNT",
+    "HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT",
+    "HOST_PROPOSAL_GENERATOR_WORKSPACE_MOUNT",
+    "HOST_EXECUTION_OPTIMIZER_WORKSPACE_MOUNT",
+    "HOST_EVAL_CASE_GOVERNOR_WORKSPACE_MOUNT",
+    "HOST_REGRESSION_IMPACT_ANALYZER_WORKSPACE_MOUNT",
+    "HOST_DATA_MOUNT",
+    "HOST_CLAUDE_ROOT_MOUNT",
+    "HOST_ATTRIBUTION_ANALYZER_CLAUDE_ROOT_MOUNT",
+    "HOST_PROPOSAL_GENERATOR_CLAUDE_ROOT_MOUNT",
+    "HOST_EXECUTION_OPTIMIZER_CLAUDE_ROOT_MOUNT",
+    "HOST_EVAL_CASE_GOVERNOR_CLAUDE_ROOT_MOUNT",
+    "HOST_REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT_MOUNT",
     "WORKSPACE_DIR",
     "MAIN_WORKSPACE_DIR",
     "ATTRIBUTION_ANALYZER_WORKSPACE_DIR",
@@ -63,7 +81,7 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
 
     settings = AppSettings(_env_file=(base_env, local_env))
 
-    assert AppSettings.model_config["env_file"] == ("docker/.env", "docker/.env.local")
+    assert AppSettings.model_config["env_file"] == ("docker/.env", "docker/.env.local", "docker/.env.local-debug")
     assert settings.api_port == 8080
     assert settings.workspace_dir == tmp_path / "volume-agent-runtime" / "main-workspace"
     assert settings.main_workspace_dir == settings.workspace_dir
@@ -82,6 +100,35 @@ def test_settings_loads_local_env_after_base_env(tmp_path, monkeypatch):
     assert settings.regression_impact_analyzer_claude_root == tmp_path / "volume-agent-runtime" / "claude-roots" / "regression-impact-analyzer"
     assert settings.claude_home == settings.claude_root / ".claude"
     assert settings.langfuse_base_url == "http://localhost:53000"
+
+
+def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = AppSettings(
+        _env_file=(
+            REPO_ROOT / "docker/.env.example",
+            REPO_ROOT / "docker/.env.local-debug.example",
+        )
+    )
+
+    local_debug_root = Path("/tmp/local-debug-volume-agent-runtime")
+    assert settings.runtime_volume_mode == "local-debug"
+    assert settings.host_runtime_volume_root == local_debug_root.as_posix()
+    assert settings.workspace_dir == local_debug_root / "main-workspace"
+    assert settings.main_workspace_dir == local_debug_root / "main-workspace"
+    assert settings.attribution_analyzer_workspace_dir == local_debug_root / "attribution-analyzer-workspace"
+    assert settings.proposal_generator_workspace_dir == local_debug_root / "proposal-generator-workspace"
+    assert settings.execution_optimizer_workspace_dir == local_debug_root / "execution-optimizer-workspace"
+    assert settings.eval_case_governor_workspace_dir == local_debug_root / "eval-case-governor-workspace"
+    assert settings.regression_impact_analyzer_workspace_dir == local_debug_root / "regression-impact-analyzer-workspace"
+    assert settings.data_dir == local_debug_root / "data"
+    assert settings.claude_root == local_debug_root / "claude-roots" / "main"
+    assert settings.main_claude_root == local_debug_root / "claude-roots" / "main"
+    assert settings.claude_home == local_debug_root / "claude-roots" / "main" / ".claude"
+    assert settings.agent_git_worktrees_dir == local_debug_root / "data" / "agent-governance" / "worktrees"
+    assert settings.agent_release_archives_dir == local_debug_root / "data" / "agent-governance" / "releases"
 
 
 def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):

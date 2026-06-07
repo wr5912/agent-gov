@@ -27,7 +27,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/claude-agent-runtime-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
+.PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap local-debug-env local-debug-bootstrap runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -101,6 +101,12 @@ langfuse-smoke:
 
 runtime-bootstrap:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py
+
+local-debug-env:
+	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
+
+local-debug-bootstrap: local-debug-env
+	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug
 
 runtime-template-scan:
 	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-template

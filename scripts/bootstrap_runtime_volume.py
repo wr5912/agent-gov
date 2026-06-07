@@ -6,12 +6,15 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Iterable, MutableMapping
 from pathlib import Path
-from typing import Iterable, MutableMapping, TypedDict
-
+from typing import TypedDict
 
 DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
 DEFAULT_ENV_FILE = Path("docker/.env")
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+RUNTIME_VOLUME_MODES = {"container", "local-debug"}
 PROFILE_NAMES = (
     "main",
     "attribution-analyzer",
@@ -79,14 +82,23 @@ def _load_env_file(path: Path) -> MutableMapping[str, str]:
     return env
 
 
-def resolve_runtime_root(cli_value: str | None, env_file: Path) -> Path:
+def _runtime_root_for_mode(mode: str | None) -> Path:
+    normalized = (mode or "container").strip()
+    if normalized not in RUNTIME_VOLUME_MODES:
+        raise ValueError(f"Unsupported RUNTIME_VOLUME_MODE={normalized!r}; expected container or local-debug")
+    if normalized == "local-debug":
+        return LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
+    return CONTAINER_RUNTIME_VOLUME_ROOT
+
+
+def resolve_runtime_root(cli_value: str | None, env_file: Path, runtime_volume_mode: str | None = None) -> Path:
     if cli_value:
         return Path(os.path.expandvars(os.path.expanduser(cli_value))).resolve()
     env = _load_env_file(env_file)
     value = env.get("HOST_RUNTIME_VOLUME_ROOT")
     if value:
         return Path(value).expanduser().resolve()
-    return (Path.home() / "volume-agent-runtime").resolve()
+    return _runtime_root_for_mode(runtime_volume_mode or env.get("RUNTIME_VOLUME_MODE") or os.environ.get("RUNTIME_VOLUME_MODE")).resolve()
 
 
 def _iter_template_entries(template_dir: Path) -> Iterable[Path]:
@@ -151,7 +163,12 @@ def bootstrap_runtime_volume(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bootstrap runtime volume from docker/runtime-template.")
-    parser.add_argument("--runtime-root", help="Host runtime root. Defaults to HOST_RUNTIME_VOLUME_ROOT or ~/volume-agent-runtime.")
+    parser.add_argument("--runtime-root", help="Host runtime root. Defaults to HOST_RUNTIME_VOLUME_ROOT or the selected runtime volume mode.")
+    parser.add_argument(
+        "--runtime-volume-mode",
+        choices=sorted(RUNTIME_VOLUME_MODES),
+        help="Default runtime root mode when HOST_RUNTIME_VOLUME_ROOT is not set: container=~/volume-agent-runtime, local-debug=/tmp/local-debug-volume-agent-runtime.",
+    )
     parser.add_argument("--template-dir", type=Path, default=_repo_root() / DEFAULT_TEMPLATE_DIR)
     parser.add_argument("--env-file", type=Path, default=_repo_root() / DEFAULT_ENV_FILE)
     parser.add_argument("--overwrite", action="store_true", help="Overwrite existing runtime files. Default is fill-missing only.")
@@ -159,7 +176,7 @@ def main() -> int:
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
-    runtime_root = resolve_runtime_root(args.runtime_root, args.env_file)
+    runtime_root = resolve_runtime_root(args.runtime_root, args.env_file, args.runtime_volume_mode)
     template_dir = args.template_dir.resolve()
     result = bootstrap_runtime_volume(
         runtime_root=runtime_root,

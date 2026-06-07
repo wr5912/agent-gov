@@ -2,6 +2,7 @@
 /.env
 docker/.env
 docker/.env.local
+docker/.env.local-debug
 .venv/
 __pycache__/
 *.pyc

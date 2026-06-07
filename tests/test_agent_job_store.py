@@ -2,6 +2,7 @@ import asyncio
 import logging
 
 import pytest
+from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
 from app.runtime.agent_job_types import agent_job_spec
 from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
 from app.runtime.runtime_db import AgentJobModel
@@ -123,6 +124,48 @@ def test_agent_job_worker_logs_claim_and_runtime_failure(tmp_path, caplog):
     assert "worker_instance=test-worker" in messages
     assert "input_json" not in messages
     assert "raw_output" not in messages
+
+
+def test_agent_job_worker_maps_auth_required_failure(tmp_path, caplog):
+    store, _ = _store(tmp_path)
+    spec = agent_job_spec("eval_case_generation")
+    store.create_agent_job(
+        job_id="evg-worker-auth-required",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
+    )
+
+    async def fail_auth(**_kwargs):
+        raise AgentAuthenticationRequiredError(
+            profile_name="eval-case-governor",
+            runtime_volume_mode="local-debug",
+            settings_env_file="docker/.env.local-debug",
+            missing=["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"],
+        )
+
+    caplog.set_level(logging.INFO, logger="app.services.agent_job_worker")
+    worker = AgentJobWorker(
+        feedback_store=store,
+        run_profile_json=fail_auth,
+        poll_interval_seconds=0,
+        worker_instance="test-worker",
+    )
+
+    result = asyncio.run(worker.run_once())
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert result is not None
+    assert result.status == "failed"
+    assert result.error_json is not None
+    assert result.error_json.error_code == AGENT_AUTH_REQUIRED
+    assert result.raw_output_json is not None
+    assert result.raw_output_json["error_type"] == "agent_auth_required"
+    assert result.raw_output_json["settings_env_file"] == "docker/.env.local-debug"
+    assert "error_code=AGENT_AUTH_REQUIRED" in messages
+    assert "MODEL_PROVIDER_API_KEY" not in messages
 
 
 def test_agent_job_worker_logs_stale_timeout(tmp_path, caplog):

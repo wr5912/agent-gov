@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from typing import Optional, cast
 
+from app.runtime.agent_job_errors import agent_error_code, agent_error_message, exception_raw_output_json
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
 from app.runtime.agent_profile_versions import profile_version_snapshot
 from app.runtime.agent_profiles import PROFILE_VERSION_IDS, AgentRuntimeProfile
@@ -24,15 +25,6 @@ JobResult = JsonObject | None
 
 def _job_input(job: JsonObject) -> JsonObject:
     return cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
-
-
-def _agent_error_message(exc: Exception) -> str:
-    return f"{exc.__class__.__name__}: {exc}"
-
-
-def _exception_raw_output_json(exc: Exception) -> JsonObject | None:
-    raw_output = getattr(exc, "raw_output_json", None)
-    return raw_output if isinstance(raw_output, dict) else None
 
 
 def _agent_job_response(payload: JsonObject | None) -> AgentJobResponse | None:
@@ -156,7 +148,9 @@ class FeedbackJobOrchestrator:
                     job["execution_job_id"],
                     cast(ExecutionPlanFormatterOutput, formatter_output),
                 ),
-                fail=lambda code, message, raw_output=None: self.feedback_store.fail_execution_job(job["execution_job_id"], error_code=code, message=message),
+                fail=lambda code, message, raw_output=None: self.feedback_store.fail_execution_job(
+                    job["execution_job_id"], error_code=code, message=message, raw_output_json=raw_output
+                ),
                 final_result=lambda: self.feedback_store.get_execution_job(job["execution_job_id"]),
             )
         )
@@ -181,7 +175,7 @@ class FeedbackJobOrchestrator:
             )
             complete(formatter_output)
         except asyncio.TimeoutError as exc:
-            fail("AGENT_TIMEOUT", _agent_error_message(exc), None)
+            fail("AGENT_TIMEOUT", agent_error_message(exc), None)
         except Exception as exc:
-            fail("AGENT_RUNTIME_ERROR", _agent_error_message(exc), _exception_raw_output_json(exc))
+            fail(agent_error_code(exc), agent_error_message(exc), exception_raw_output_json(exc))
         return final_result()

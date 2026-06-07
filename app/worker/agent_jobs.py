@@ -7,7 +7,7 @@ import os
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.session_store import LocalSessionStore
-from app.runtime.settings import get_settings
+from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_job_worker import AgentJobWorker
 from app.version import APP_VERSION
@@ -48,6 +48,9 @@ def build_worker() -> AgentJobWorker:
     runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
     feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
     poll_interval = float(os.getenv("AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS", "2"))
+    logger.info(
+        runtime_settings_log_message(settings),
+    )
     logger.info(
         "agent job worker configured data_dir=%s poll_interval_seconds=%s",
         settings.data_dir,

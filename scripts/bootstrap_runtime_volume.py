@@ -15,6 +15,12 @@ DEFAULT_ENV_FILE = Path("docker/.env")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
 RUNTIME_VOLUME_MODES = {"container", "local-debug"}
+_RUNTIME_ENV_FILE_MODES = {
+    ".env": "container",
+    ".env.example": "container",
+    ".env.local-debug": "local-debug",
+    ".env.local-debug.example": "local-debug",
+}
 PROFILE_NAMES = (
     "main",
     "attribution-analyzer",
@@ -85,10 +91,14 @@ def _load_env_file(path: Path) -> MutableMapping[str, str]:
 def _runtime_root_for_mode(mode: str | None) -> Path:
     normalized = (mode or "container").strip()
     if normalized not in RUNTIME_VOLUME_MODES:
-        raise ValueError(f"Unsupported RUNTIME_VOLUME_MODE={normalized!r}; expected container or local-debug")
+        raise ValueError(f"Unsupported runtime volume mode={normalized!r}; expected container or local-debug")
     if normalized == "local-debug":
         return LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
     return CONTAINER_RUNTIME_VOLUME_ROOT
+
+
+def _runtime_volume_mode_for_env_file(env_file: Path) -> str | None:
+    return _RUNTIME_ENV_FILE_MODES.get(env_file.name)
 
 
 def resolve_runtime_root(cli_value: str | None, env_file: Path, runtime_volume_mode: str | None = None) -> Path:
@@ -98,7 +108,9 @@ def resolve_runtime_root(cli_value: str | None, env_file: Path, runtime_volume_m
     value = env.get("HOST_RUNTIME_VOLUME_ROOT")
     if value:
         return Path(value).expanduser().resolve()
-    return _runtime_root_for_mode(runtime_volume_mode or env.get("RUNTIME_VOLUME_MODE") or os.environ.get("RUNTIME_VOLUME_MODE")).resolve()
+    # Legacy compatibility only; official env files derive the mode from their filename.
+    mode = runtime_volume_mode or env.get("RUNTIME_VOLUME_MODE") or os.environ.get("RUNTIME_VOLUME_MODE") or _runtime_volume_mode_for_env_file(env_file)
+    return _runtime_root_for_mode(mode).resolve()
 
 
 def _iter_template_entries(template_dir: Path) -> Iterable[Path]:

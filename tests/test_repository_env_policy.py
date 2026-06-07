@@ -15,6 +15,67 @@ RUNTIME_ENV_KEYS = (
     "MODEL_PROVIDER_API_KEY",
     "MODEL_PROVIDER_API_URL",
 )
+CONTAINER_ONLY_ENV_KEYS = {
+    "COMPOSE_PROJECT_NAME",
+    "FRONTEND_BIND_IP",
+    "FRONTEND_HOST_PORT",
+    "FRONTEND_PORT",
+    "LANGFUSE_BIND_IP",
+    "LANGFUSE_CLICKHOUSE_CLUSTER_ENABLED",
+    "LANGFUSE_CLICKHOUSE_DATA_MOUNT",
+    "LANGFUSE_CLICKHOUSE_DB",
+    "LANGFUSE_CLICKHOUSE_IMAGE",
+    "LANGFUSE_CLICKHOUSE_LOGS_MOUNT",
+    "LANGFUSE_CLICKHOUSE_PASSWORD",
+    "LANGFUSE_CLICKHOUSE_USER",
+    "LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES",
+    "LANGFUSE_ENCRYPTION_KEY",
+    "LANGFUSE_HOST_PORT",
+    "LANGFUSE_INIT_ORG_ID",
+    "LANGFUSE_INIT_ORG_NAME",
+    "LANGFUSE_INIT_PROJECT_ID",
+    "LANGFUSE_INIT_PROJECT_NAME",
+    "LANGFUSE_INIT_PROJECT_PUBLIC_KEY",
+    "LANGFUSE_INIT_PROJECT_SECRET_KEY",
+    "LANGFUSE_INIT_USER_EMAIL",
+    "LANGFUSE_INIT_USER_NAME",
+    "LANGFUSE_INIT_USER_PASSWORD",
+    "LANGFUSE_MINIO_CONSOLE_HOST_PORT",
+    "LANGFUSE_MINIO_DATA_MOUNT",
+    "LANGFUSE_MINIO_HOME",
+    "LANGFUSE_MINIO_HOST_PORT",
+    "LANGFUSE_MINIO_IMAGE",
+    "LANGFUSE_MINIO_ROOT_PASSWORD",
+    "LANGFUSE_MINIO_ROOT_USER",
+    "LANGFUSE_NEXTAUTH_SECRET",
+    "LANGFUSE_NEXTAUTH_URL",
+    "LANGFUSE_POSTGRES_DATA_MOUNT",
+    "LANGFUSE_POSTGRES_DB",
+    "LANGFUSE_POSTGRES_IMAGE",
+    "LANGFUSE_POSTGRES_PASSWORD",
+    "LANGFUSE_POSTGRES_USER",
+    "LANGFUSE_REDIS_AUTH",
+    "LANGFUSE_REDIS_DATA_MOUNT",
+    "LANGFUSE_REDIS_IMAGE",
+    "LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT",
+    "LANGFUSE_S3_BUCKET",
+    "LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT",
+    "LANGFUSE_S3_REGION",
+    "LANGFUSE_SALT",
+    "LANGFUSE_TELEMETRY_ENABLED",
+    "LANGFUSE_WEB_IMAGE",
+    "LANGFUSE_WORKER_IMAGE",
+}
+
+
+def _env_keys(path: Path) -> set[str]:
+    keys: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        keys.add(stripped.split("=", 1)[0].strip())
+    return keys
 
 
 def test_project_root_env_file_is_forbidden() -> None:
@@ -25,6 +86,30 @@ def test_project_root_env_file_is_forbidden() -> None:
 
 def test_docker_env_local_example_is_not_an_official_entrypoint() -> None:
     assert not (REPO_ROOT / "docker/.env.local.example").exists()
+
+
+def test_official_docker_env_examples_do_not_define_runtime_volume_mode() -> None:
+    container_example = (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8")
+    local_debug_example = (REPO_ROOT / "docker/.env.local-debug.example").read_text(encoding="utf-8")
+
+    assert "RUNTIME_VOLUME_MODE=" not in container_example
+    assert "RUNTIME_VOLUME_MODE=" not in local_debug_example
+
+
+def test_local_debug_env_example_keeps_runtime_keys_in_sync() -> None:
+    container_keys = _env_keys(REPO_ROOT / "docker/.env.example")
+    local_debug_keys = _env_keys(REPO_ROOT / "docker/.env.local-debug.example")
+
+    assert local_debug_keys - container_keys == set()
+    assert container_keys - local_debug_keys == CONTAINER_ONLY_ENV_KEYS
+
+
+def test_official_env_examples_do_not_ship_configured_model_provider_key() -> None:
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        text = (REPO_ROOT / env_file).read_text(encoding="utf-8")
+
+        assert "MODEL_PROVIDER_API_KEY=sk-" not in text
+        assert "ANTHROPIC_API_KEY=sk-" not in text
 
 
 def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:

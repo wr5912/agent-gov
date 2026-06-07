@@ -3,15 +3,12 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
-
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.feedback_schemas import (
     validate_execution_plan_output,
     validate_feedback_optimization_plan_output,
 )
-from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.schemas import (
     FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackSignalCreateRequest,
@@ -19,17 +16,38 @@ from app.runtime.schemas import (
 )
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
+from app.runtime.stores.feedback_store import FeedbackStore
+from pydantic import ValidationError
 
 
 def _settings(tmp_path):
     workspace = tmp_path / "docker" / "volume" / "main-workspace"
     attribution_workspace = tmp_path / "docker" / "volume" / "attribution-analyzer-workspace"
     proposal_workspace = tmp_path / "docker" / "volume" / "proposal-generator-workspace"
+    execution_workspace = tmp_path / "docker" / "volume" / "execution-optimizer-workspace"
+    eval_case_governor_workspace = tmp_path / "docker" / "volume" / "eval-case-governor-workspace"
+    regression_impact_workspace = tmp_path / "docker" / "volume" / "regression-impact-analyzer-workspace"
     data = tmp_path / "docker" / "volume" / "data"
     claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
     attribution_root = tmp_path / "docker" / "volume" / "claude-roots" / "attribution-analyzer"
     proposal_root = tmp_path / "docker" / "volume" / "claude-roots" / "proposal-generator"
-    for path in (workspace, attribution_workspace, proposal_workspace, claude_root / ".claude", attribution_root / ".claude", proposal_root / ".claude"):
+    execution_root = tmp_path / "docker" / "volume" / "claude-roots" / "execution-optimizer"
+    eval_case_governor_root = tmp_path / "docker" / "volume" / "claude-roots" / "eval-case-governor"
+    regression_impact_root = tmp_path / "docker" / "volume" / "claude-roots" / "regression-impact-analyzer"
+    for path in (
+        workspace,
+        attribution_workspace,
+        proposal_workspace,
+        execution_workspace,
+        eval_case_governor_workspace,
+        regression_impact_workspace,
+        claude_root / ".claude",
+        attribution_root / ".claude",
+        proposal_root / ".claude",
+        execution_root / ".claude",
+        eval_case_governor_root / ".claude",
+        regression_impact_root / ".claude",
+    ):
         path.mkdir(parents=True, exist_ok=True)
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
     (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
@@ -39,12 +57,19 @@ def _settings(tmp_path):
         MAIN_WORKSPACE_DIR=workspace,
         ATTRIBUTION_ANALYZER_WORKSPACE_DIR=attribution_workspace,
         PROPOSAL_GENERATOR_WORKSPACE_DIR=proposal_workspace,
+        EXECUTION_OPTIMIZER_WORKSPACE_DIR=execution_workspace,
+        EVAL_CASE_GOVERNOR_WORKSPACE_DIR=eval_case_governor_workspace,
+        REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR=regression_impact_workspace,
         DATA_DIR=data,
         CLAUDE_ROOT=claude_root,
         MAIN_CLAUDE_ROOT=claude_root,
         ATTRIBUTION_ANALYZER_CLAUDE_ROOT=attribution_root,
         PROPOSAL_GENERATOR_CLAUDE_ROOT=proposal_root,
+        EXECUTION_OPTIMIZER_CLAUDE_ROOT=execution_root,
+        EVAL_CASE_GOVERNOR_CLAUDE_ROOT=eval_case_governor_root,
+        REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT=regression_impact_root,
         CLAUDE_HOME=claude_root / ".claude",
+        MODEL_PROVIDER_API_KEY="sk-test-provider",
         ENABLE_POLICY_HOOKS=True,
     )
 
@@ -310,6 +335,7 @@ def _create_approved_task_for_target(
     plan_task = plan["tasks"][0]
     prepared = store.prepare_batch_plan_task_execution(batch["batch_id"], plan_task["plan_task_id"])
     return prepared["optimization_task"]
+
 
 __all__ = [
     "asyncio",

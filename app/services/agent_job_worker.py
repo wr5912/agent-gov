@@ -7,6 +7,7 @@ import socket
 from collections.abc import Awaitable, Callable
 from typing import cast
 
+from app.runtime.agent_job_errors import agent_error_code, agent_error_message, exception_raw_output_json
 from app.runtime.agent_job_logging import log_agent_job_event
 from app.runtime.agent_job_types import (
     AgentJobType,
@@ -21,15 +22,6 @@ from app.runtime.stores.feedback_store import FeedbackStore
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 logger = logging.getLogger(__name__)
-
-
-def _agent_error_message(exc: Exception) -> str:
-    return f"{exc.__class__.__name__}: {exc}"
-
-
-def _exception_raw_output_json(exc: Exception) -> JsonObject | None:
-    raw_output = getattr(exc, "raw_output_json", None)
-    return raw_output if isinstance(raw_output, dict) else None
 
 
 class AgentJobWorker:
@@ -64,16 +56,17 @@ class AgentJobWorker:
             failed = self.feedback_store.fail_projected_agent_job(
                 job,
                 error_code="AGENT_TIMEOUT",
-                message=_agent_error_message(exc),
+                message=agent_error_message(exc),
             )
             log_agent_job_event(logger, logging.WARNING, "agent_job.timeout", failed or job, worker_instance=self.worker_instance, error_code="AGENT_TIMEOUT")
             return self._job_response(failed)
         except Exception as exc:
+            error_code = agent_error_code(exc)
             failed = self.feedback_store.fail_projected_agent_job(
                 job,
-                error_code="AGENT_RUNTIME_ERROR",
-                message=_agent_error_message(exc),
-                raw_output_json=_exception_raw_output_json(exc),
+                error_code=error_code,
+                message=agent_error_message(exc),
+                raw_output_json=exception_raw_output_json(exc),
             )
             log_agent_job_event(
                 logger,
@@ -81,7 +74,7 @@ class AgentJobWorker:
                 "agent_job.failed",
                 failed or job,
                 worker_instance=self.worker_instance,
-                error_code="AGENT_RUNTIME_ERROR",
+                error_code=error_code,
                 exc_info=True,
             )
             return self._job_response(failed)

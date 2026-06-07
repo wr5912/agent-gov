@@ -2,14 +2,18 @@ import base64
 import json
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Literal, Optional, TypedDict, cast
 
-from pydantic import Field, field_validator
+from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .agent_job_errors import provider_api_key_configured
 from .json_types import JsonObject
+
+RuntimeVolumeMode = Literal["container", "local-debug"]
 
 
 def _csv(value: str | None) -> list[str]:
@@ -54,6 +58,29 @@ _SETTINGS_ENV_FILES = {
     "container": Path("docker/.env"),
     "local-debug": Path("docker/.env.local-debug"),
 }
+_CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
+_TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
+
+
+@dataclass(frozen=True)
+class SettingsEnvSelection:
+    runtime_volume_mode: RuntimeVolumeMode
+    env_file: Path
+
+
+class RuntimeSettingsLogFields(TypedDict):
+    runtime_volume_mode: RuntimeVolumeMode
+    settings_env_file: str | None
+    settings_env_file_exists: bool | None
+    provider_api_key_configured: bool
+    provider_api_url_configured: bool
+    api_host: str
+    api_port: int
+    workspace_dir: str
+    data_dir: str
+    claude_root: str
+    langfuse_base_url: str
+
 
 _WORKSPACE_PROFILE_DIR_DEFAULTS = (
     ("ATTRIBUTION_ANALYZER_WORKSPACE_DIR", "attribution_analyzer_workspace_dir", _DEFAULT_ATTRIBUTION_WORKSPACE_DIR, "attribution-analyzer-workspace"),
@@ -97,22 +124,66 @@ def _derive_child_dirs(settings: Any, explicit_env: Mapping[str, str], parent: P
             setattr(settings, attr_name, parent / child_name)
 
 
+def running_in_container(environ: Mapping[str, str] = os.environ, *, dockerenv_path: Path = Path("/.dockerenv")) -> bool:
+    marker = environ.get(_CONTAINER_MARKER_ENV)
+    if marker is not None:
+        return marker.strip().lower() in _TRUTHY_CONTAINER_MARKERS
+    return dockerenv_path.exists()
+
+
+def settings_env_selection(environ: Mapping[str, str] = os.environ) -> SettingsEnvSelection:
+    mode: RuntimeVolumeMode = "container" if running_in_container(environ) else "local-debug"
+    return SettingsEnvSelection(runtime_volume_mode=mode, env_file=_SETTINGS_ENV_FILES[mode])
+
+
 def settings_env_file_for_mode(mode: str | None = None) -> Path:
-    normalized = (mode or os.environ.get("RUNTIME_VOLUME_MODE") or "container").strip()
+    if mode is None:
+        return settings_env_selection().env_file
+    normalized = mode.strip()
     env_file = _SETTINGS_ENV_FILES.get(normalized)
     if env_file is None:
         raise ValueError(f"Unsupported RUNTIME_VOLUME_MODE={normalized!r}; expected container or local-debug")
     return env_file
 
 
+def _runtime_volume_mode_for_env_file(value: object) -> RuntimeVolumeMode | None:
+    if value is None:
+        return None
+    candidates: tuple[object, ...]
+    if isinstance(value, (tuple, list)):
+        candidates = tuple(value)
+    else:
+        candidates = (value,)
+    for candidate in reversed(candidates):
+        path = Path(candidate) if isinstance(candidate, (str, Path)) else None
+        if path is None:
+            continue
+        for mode, env_file in _SETTINGS_ENV_FILES.items():
+            if path.name in {env_file.name, f"{env_file.name}.example"}:
+                return cast(RuntimeVolumeMode, mode)
+    return None
+
+
 class AppSettings(BaseSettings):
     """Runtime settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
+    _settings_env_file: Path | None = PrivateAttr(default=None)
 
     def __init__(self, **values: Any) -> None:
-        values.setdefault("_env_file", settings_env_file_for_mode())
+        env_file_was_explicit = "_env_file" in values
+        env_file = values.get("_env_file")
+        if env_file_was_explicit:
+            mode = _runtime_volume_mode_for_env_file(env_file)
+            if mode is not None:
+                values.setdefault("RUNTIME_VOLUME_MODE", mode)
+        else:
+            selection = settings_env_selection()
+            env_file = selection.env_file
+            values["_env_file"] = selection.env_file
+            values.setdefault("RUNTIME_VOLUME_MODE", selection.runtime_volume_mode)
         super().__init__(**values)
+        self._settings_env_file = Path(env_file) if isinstance(env_file, (str, Path)) else None
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
@@ -250,6 +321,10 @@ class AppSettings(BaseSettings):
         _derive_profile_dirs(self)
 
     @property
+    def settings_env_file(self) -> Path | None:
+        return self._settings_env_file
+
+    @property
     def provider_api_key(self) -> Optional[str]:
         return self.model_provider_api_key or self.anthropic_api_key
 
@@ -383,3 +458,25 @@ def get_settings() -> AppSettings:
     settings.agent_git_worktrees_dir.mkdir(parents=True, exist_ok=True)
     settings.agent_release_archives_dir.mkdir(parents=True, exist_ok=True)
     return settings
+
+
+def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFields:
+    env_file = settings.settings_env_file
+    return {
+        "runtime_volume_mode": settings.runtime_volume_mode,
+        "settings_env_file": env_file.as_posix() if env_file else None,
+        "settings_env_file_exists": env_file.exists() if env_file else None,
+        "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
+        "provider_api_url_configured": bool(settings.provider_api_url),
+        "api_host": settings.api_host,
+        "api_port": settings.api_port,
+        "workspace_dir": settings.workspace_dir.as_posix(),
+        "data_dir": settings.data_dir.as_posix(),
+        "claude_root": settings.claude_root.as_posix(),
+        "langfuse_base_url": settings.langfuse_base_url,
+    }
+
+
+def runtime_settings_log_message(settings: AppSettings) -> str:
+    fields = runtime_settings_log_fields(settings)
+    return "runtime settings configured " + " ".join(f"{key}={value}" for key, value in fields.items())

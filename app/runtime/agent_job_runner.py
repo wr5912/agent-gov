@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from .agent_job_errors import AgentAuthenticationRequiredError, provider_api_key_configured
 from .agent_job_types import AgentJobType, FormatterOutputModel
 from .agent_profiles import AgentRuntimeProfile
 from .json_types import JsonObject
@@ -88,6 +89,7 @@ class AgentJobRunner:
         from claude_agent_sdk import ResultMessage, query
 
         profile = self.profiles[profile_name]
+        self.raise_if_missing_model_credentials(profile)
         answer_parts: list[str] = []
         errors: list[str] = []
         options = self.build_options(profile)
@@ -130,6 +132,20 @@ class AgentJobRunner:
             timeout=self.settings.dspy_output_formatter_timeout_seconds,
         )
         return result.output
+
+    def raise_if_missing_model_credentials(self, profile: AgentRuntimeProfile) -> None:
+        if self.provider_api_key_configured():
+            return
+        env_file = self.settings.settings_env_file
+        raise AgentAuthenticationRequiredError(
+            profile_name=profile.name,
+            runtime_volume_mode=self.settings.runtime_volume_mode,
+            settings_env_file=env_file.as_posix() if env_file else None,
+            missing=["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"],
+        )
+
+    def provider_api_key_configured(self) -> bool:
+        return provider_api_key_configured(self.settings.provider_api_key)
 
     @staticmethod
     async def single_prompt_stream(prompt: str) -> AsyncIterator[JsonObject]:

@@ -108,8 +108,8 @@ def test_bootstrap_runtime_volume_fills_missing_without_overwrite(tmp_path):
 
 
 def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
-    env_file = tmp_path / "local-debug.env"
-    env_file.write_text("RUNTIME_VOLUME_MODE=local-debug\n", encoding="utf-8")
+    env_file = tmp_path / ".env.local-debug"
+    env_file.write_text("", encoding="utf-8")
 
     assert resolve_runtime_root(None, env_file) == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 

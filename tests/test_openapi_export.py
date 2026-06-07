@@ -10,10 +10,11 @@ from scripts.export_openapi import CONTAINER_RUNTIME_VOLUME_ROOT, LOCAL_DEBUG_RU
 def test_export_openapi_local_defaults_use_debug_volume_unless_container_mode(monkeypatch):
     monkeypatch.delenv("HOST_RUNTIME_VOLUME_ROOT", raising=False)
     monkeypatch.delenv("RUNTIME_VOLUME_MODE", raising=False)
+    monkeypatch.delenv("RUNTIME_CONTAINER", raising=False)
 
     assert _local_default_volume_root() == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 
-    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "container")
+    monkeypatch.setenv("RUNTIME_CONTAINER", "1")
     assert _local_default_volume_root() == CONTAINER_RUNTIME_VOLUME_ROOT
 
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", "/tmp/custom-runtime-root")
@@ -24,6 +25,7 @@ def test_export_openapi_applies_local_debug_env_file_mode(monkeypatch):
     original = os.environ.copy()
     for key in (
         "RUNTIME_VOLUME_MODE",
+        "RUNTIME_CONTAINER",
         "HOST_RUNTIME_VOLUME_ROOT",
         "WORKSPACE_DIR",
         "MAIN_WORKSPACE_DIR",
@@ -47,7 +49,8 @@ def test_export_openapi_applies_local_debug_env_file_mode(monkeypatch):
     try:
         _apply_local_defaults(Path.cwd())
 
-        assert os.environ["RUNTIME_VOLUME_MODE"] == "local-debug"
+        assert "RUNTIME_VOLUME_MODE" not in os.environ
+        assert os.environ["RUNTIME_CONTAINER"] == "0"
         assert os.environ["HOST_RUNTIME_VOLUME_ROOT"] == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT.as_posix()
         assert os.environ["WORKSPACE_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "main-workspace").as_posix()
         assert os.environ["DATA_DIR"] == (LOCAL_DEBUG_RUNTIME_VOLUME_ROOT / "data").as_posix()

@@ -1,12 +1,13 @@
 from pathlib import Path
 
-from app.runtime.settings import AppSettings, settings_env_file_for_mode
+from app.runtime.settings import AppSettings, runtime_settings_log_fields, settings_env_file_for_mode
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _PROFILE_ENV_KEYS = (
     "API_PORT",
     "RUNTIME_VOLUME_MODE",
+    "RUNTIME_CONTAINER",
     "HOST_RUNTIME_VOLUME_ROOT",
     "HOST_WORKSPACE_MOUNT",
     "HOST_ATTRIBUTION_ANALYZER_WORKSPACE_MOUNT",
@@ -41,9 +42,10 @@ _PROFILE_ENV_KEYS = (
 )
 
 
-def test_settings_selects_container_env_file_by_default(tmp_path, monkeypatch):
+def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, monkeypatch):
     for key in _PROFILE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("RUNTIME_CONTAINER", "1")
     monkeypatch.chdir(tmp_path)
 
     docker_dir = tmp_path / "docker"
@@ -54,7 +56,6 @@ def test_settings_selects_container_env_file_by_default(tmp_path, monkeypatch):
         "\n".join(
             [
                 "API_PORT=58080",
-                "RUNTIME_VOLUME_MODE=container",
                 "WORKSPACE_DIR=/main-workspace",
                 "MAIN_WORKSPACE_DIR=/main-workspace",
                 "ATTRIBUTION_ANALYZER_WORKSPACE_DIR=/attribution-analyzer-workspace",
@@ -71,7 +72,6 @@ def test_settings_selects_container_env_file_by_default(tmp_path, monkeypatch):
     local_debug_env.write_text(
         "\n".join(
             [
-                "RUNTIME_VOLUME_MODE=local-debug",
                 "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
                 "API_PORT=9090",
                 "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
@@ -109,10 +109,10 @@ def test_settings_selects_container_env_file_by_default(tmp_path, monkeypatch):
     assert settings.langfuse_base_url == "http://langfuse-web:3000"
 
 
-def test_settings_selects_local_debug_env_file_when_mode_is_explicit(tmp_path, monkeypatch):
+def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkeypatch):
     for key in _PROFILE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
-    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    monkeypatch.setenv("RUNTIME_CONTAINER", "0")
     monkeypatch.chdir(tmp_path)
 
     docker_dir = tmp_path / "docker"
@@ -120,7 +120,6 @@ def test_settings_selects_local_debug_env_file_when_mode_is_explicit(tmp_path, m
     (docker_dir / ".env").write_text(
         "\n".join(
             [
-                "RUNTIME_VOLUME_MODE=container",
                 "API_PORT=58080",
                 "WORKSPACE_DIR=/main-workspace",
                 "DATA_DIR=/data",
@@ -134,7 +133,6 @@ def test_settings_selects_local_debug_env_file_when_mode_is_explicit(tmp_path, m
     (docker_dir / ".env.local-debug").write_text(
         "\n".join(
             [
-                "RUNTIME_VOLUME_MODE=local-debug",
                 "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
                 "API_PORT=8080",
                 "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
@@ -183,6 +181,32 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
     assert settings.claude_home == local_debug_root / "claude-roots" / "main" / ".claude"
     assert settings.agent_git_worktrees_dir == local_debug_root / "data" / "agent-governance" / "worktrees"
     assert settings.agent_release_archives_dir == local_debug_root / "data" / "agent-governance" / "releases"
+
+
+def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    settings = AppSettings(
+        _env_file=REPO_ROOT / "docker/.env.local-debug.example",
+    )
+    fields = runtime_settings_log_fields(settings)
+
+    assert fields == {
+        "runtime_volume_mode": "local-debug",
+        "settings_env_file": (REPO_ROOT / "docker/.env.local-debug.example").as_posix(),
+        "settings_env_file_exists": True,
+        "provider_api_key_configured": False,
+        "provider_api_url_configured": False,
+        "api_host": "0.0.0.0",
+        "api_port": 8080,
+        "workspace_dir": "/tmp/local-debug-volume-agent-runtime/main-workspace",
+        "data_dir": "/tmp/local-debug-volume-agent-runtime/data",
+        "claude_root": "/tmp/local-debug-volume-agent-runtime/claude-roots/main",
+        "langfuse_base_url": "http://localhost:53000",
+    }
+    assert fields["provider_api_key_configured"] is False
+    assert not any("secret" in name.lower() for name in fields)
 
 
 def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):

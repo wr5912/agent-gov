@@ -6,6 +6,8 @@ import sys
 import types
 from contextlib import nullcontext
 
+import pytest
+from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.policy import build_profile_pre_tool_use_hook
@@ -215,6 +217,59 @@ def test_feedback_job_profile_filters_mcp_servers(tmp_path):
     options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
 
     assert set(options.mcp_servers) == {"feedback-evidence", "readonly-trace"}
+
+
+def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        MODEL_PROVIDER_API_KEY="sk-test-provider",
+        MODEL_PROVIDER_API_URL="https://model-gateway.example.test/anthropic",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime.job_runner.build_options(runtime.profiles["eval-case-governor"])
+
+    assert options.env["ANTHROPIC_API_KEY"] == "sk-test-provider"
+    assert options.env["ANTHROPIC_BASE_URL"] == "https://model-gateway.example.test/anthropic"
+
+
+def test_background_agent_job_requires_model_credentials_before_query(tmp_path, monkeypatch):
+    called = False
+
+    async def fake_query(*, prompt, options, transport=None):
+        nonlocal called
+        called = True
+        async for _ in prompt:
+            pass
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    with pytest.raises(AgentAuthenticationRequiredError) as exc_info:
+        asyncio.run(
+            runtime._run_profile_json(
+                profile_name="eval-case-governor",
+                prompt="generate eval cases",
+                job_type="eval_case_generation",
+                job_input={},
+            )
+        )
+
+    assert called is False
+    assert exc_info.value.error_code == AGENT_AUTH_REQUIRED
+    assert exc_info.value.raw_output_json is not None
+    assert exc_info.value.raw_output_json["profile_name"] == "eval-case-governor"
+    assert exc_info.value.raw_output_json["missing"] == ["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"]
 
 
 def test_profile_path_hook_blocks_denied_read_path(tmp_path):

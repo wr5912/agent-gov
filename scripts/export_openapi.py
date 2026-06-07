@@ -8,6 +8,8 @@ from pathlib import Path
 
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+_CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
+_TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
 
 
 def main() -> None:
@@ -35,14 +37,14 @@ def main() -> None:
 def _local_default_volume_root() -> Path:
     if root := os.environ.get("HOST_RUNTIME_VOLUME_ROOT"):
         return Path(root)
-    if os.environ.get("RUNTIME_VOLUME_MODE") == "container":
+    if os.environ.get(_CONTAINER_MARKER_ENV, "").strip().lower() in _TRUTHY_CONTAINER_MARKERS:
         return CONTAINER_RUNTIME_VOLUME_ROOT
     return LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 
 
 def _apply_local_defaults(_project_root: Path) -> None:
     volume_root = _local_default_volume_root()
-    os.environ.setdefault("RUNTIME_VOLUME_MODE", "local-debug")
+    os.environ.setdefault(_CONTAINER_MARKER_ENV, "0")
     os.environ.setdefault("HOST_RUNTIME_VOLUME_ROOT", str(volume_root))
     defaults = {
         "WORKSPACE_DIR": volume_root / "main-workspace",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Security, status
@@ -12,8 +13,8 @@ from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
 from app.routers.core import create_core_router
-from app.routers.eval import create_eval_router
 from app.routers.error_handlers import register_error_handlers
+from app.routers.eval import create_eval_router
 from app.routers.feedback_batches import create_feedback_batches_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
@@ -21,15 +22,16 @@ from app.routers.openai import create_openai_router
 from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
 from app.routers.sessions import create_sessions_router
-from app.services.agent_governance import AgentGovernanceService
-from app.services.execution_application import ExecutionApplicationService
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.session_store import LocalSessionStore
-from app.runtime.settings import get_settings
+from app.runtime.settings import get_settings, runtime_settings_log_message
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_governance import AgentGovernanceService
+from app.services.execution_application import ExecutionApplicationService
 from app.version import APP_VERSION
 
+logger = logging.getLogger("uvicorn.error")
 settings = get_settings()
 session_store = LocalSessionStore(settings.session_dir)
 agent_version_store = GitAgentVersionStore(
@@ -63,10 +65,12 @@ execution_application = ExecutionApplicationService(
     agent_governance=agent_governance,
 )
 bearer_auth = HTTPBearer(auto_error=False)
+api_key_credentials = Security(bearer_auth)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    logger.info(runtime_settings_log_message(settings))
     agent_version_store.ensure_bootstrap()
     yield
 
@@ -102,7 +106,7 @@ app.add_middleware(
 register_error_handlers(app)
 
 
-def require_api_key(credentials: HTTPAuthorizationCredentials | None = Security(bearer_auth)) -> None:
+def require_api_key(credentials: HTTPAuthorizationCredentials | None = api_key_credentials) -> None:
     if not settings.api_key:
         return
     if not credentials or credentials.scheme.lower() != "bearer" or credentials.credentials != settings.api_key:

@@ -44,17 +44,24 @@ def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
         "额外读取不提交的 `docker/.env.local`",
         "容器部署私有覆盖",
         "不要把 host 调试路径写进 `docker/.env.local`",
+        "Environment variables: RUNTIME_VOLUME_MODE=local-debug",
+        "本机 PyCharm/uvicorn 调试使用单独的 `RUNTIME_VOLUME_MODE=local-debug`",
     ]
     for phrase in outdated_phrases:
         assert phrase not in readme
 
     current_phrases = [
         "Docker Compose 部署只读取 `docker/.env`",
-        "本机 host/PyCharm 调试只读取 `docker/.env.local-debug`",
+        "本机 host/PyCharm 调试无需额外设置 `RUNTIME_VOLUME_MODE`",
+        "宿主机 Python 进程会自动读取 `docker/.env.local-debug`",
+        "应与 `docker/.env` 保持 Runtime/API/worker 应用配置同构",
+        "AGENT_AUTH_REQUIRED",
+        "Environment variables: 留空即可",
+        "启动日志会打印 `runtime_volume_mode`",
+        "`provider_api_key_configured`",
         "LANGFUSE_BASE_URL=http://langfuse-web:3000",
         "LANGFUSE_NEXTAUTH_URL=http://localhost:53000",
         "FRONTEND_LANGFUSE_URL=http://localhost:53000",
-        "Environment variables: RUNTIME_VOLUME_MODE=local-debug",
     ]
     for phrase in current_phrases:
         assert phrase in readme

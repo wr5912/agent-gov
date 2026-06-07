@@ -24,6 +24,7 @@
 - 候选回归使用 candidate worktree 上下文，publish 后才推进主 workspace。
 - 前端版本治理工作台、OpenAPI、生成类型和任务 diff 消费者已迁移到新 change set / release API。
 - 旧 `/api/agent-versions/main/*` router、前端 helper、旧 restore/manifest API schema 和旧运行时 `current.json` payload 字段已删除。
+- 当前前端主路径只把“发布”和“回滚”暴露在行级“操作”菜单中；approve、reject 和 change set regression API 保留为后端治理能力、自动化或后续门禁扩展，不再作为默认用户操作按钮。
 
 保留的 `AgentVersionStore` 仅用于历史快照能力和对应单元测试，不再作为运行时 HTTP API 主流程。
 
@@ -82,11 +83,11 @@
 Agent 配置文件仍是源码
 后端受控 Git provider 负责 refs、Tag、Diff、分支、worktree、发布归档和回滚执行
 SQLite 负责业务治理元数据
-前端负责 Diff 审查、审批、回归门禁和发布操作
+前端负责 Diff 审查、发布和回滚主操作；审批、拒绝和候选回归作为后台治理能力保留，不作为默认用户决策点
 归档包作为发布产物保留
 ```
 
-本轮默认采用 `local` Git provider：主 Agent workspace 本身是 Git 仓库，候选变更通过本地 worktree 隔离。`AGENT_GIT_SERVICE_PROVIDER=gitea`、`AGENT_GIT_SERVICE_URL` 和 `AGENT_GIT_SERVICE_PUBLIC_URL` 仅作为后续外部 Git 服务展示/发现配置，不作为本轮阶段 1-5 的硬完成条件。主审批、回归门禁、发布和回滚仍必须通过产品 API。
+本轮默认采用 `local` Git provider：主 Agent workspace 本身是 Git 仓库，候选变更通过本地 worktree 隔离。`AGENT_GIT_SERVICE_PROVIDER=gitea`、`AGENT_GIT_SERVICE_URL` 和 `AGENT_GIT_SERVICE_PUBLIC_URL` 仅作为后续外部 Git 服务展示/发现配置，不作为本轮阶段 1-5 的硬完成条件。发布、回滚、后台候选回归和治理状态变更仍必须通过产品 API。
 
 本轮只覆盖：
 
@@ -400,34 +401,30 @@ rg "/api/agent-versions/main" app frontend tests docs
 ### 9.2 仓库与 release API
 
 ```text
-GET  /api/agent-repositories/main/status
-GET  /api/agent-repositories/main/refs
-GET  /api/agent-repositories/main/diff?from_ref=&to_ref=
-GET  /api/agent-repositories/main/file-diff?from_ref=&to_ref=&path=
+GET  /api/agent-repository
+POST /api/agent-repository/discard-changes
+POST /api/agent-repository/snapshot
+GET  /api/agent-repository/current
 
-GET  /api/agent-releases/main
-GET  /api/agent-releases/main/{release_id}
-GET  /api/agent-releases/main/{release_id}/archive
-POST /api/agent-releases/main/{release_id}/rollback
+GET  /api/agent-releases
+GET  /api/agent-releases/{release_id}
+POST /api/agent-releases/{release_id}/rollback
 ```
 
 ### 9.3 Change set API
 
 ```text
-POST /api/optimization-tasks/{task_id}/change-set
-GET  /api/optimization-tasks/{task_id}/change-set
-
-GET  /api/agent-change-sets?status=&batch_id=&task_id=&limit=
+POST /api/agent-change-sets
+GET  /api/agent-change-sets?status=&optimization_task_id=&limit=
 GET  /api/agent-change-sets/{change_set_id}
 GET  /api/agent-change-sets/{change_set_id}/events
-GET  /api/agent-change-sets/{change_set_id}/regression-runs
 GET  /api/agent-change-sets/{change_set_id}/diff
 GET  /api/agent-change-sets/{change_set_id}/file-diff?path=
 POST /api/agent-change-sets/{change_set_id}/approve
 POST /api/agent-change-sets/{change_set_id}/reject
+POST /api/agent-change-sets/{change_set_id}/abandon
 POST /api/agent-change-sets/{change_set_id}/regression-runs
 POST /api/agent-change-sets/{change_set_id}/publish
-POST /api/agent-change-sets/{change_set_id}/abandon
 ```
 
 治理写操作请求体：
@@ -449,7 +446,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 ```text
 左侧：change set / release / rollback 列表
 中间：文件列表 + 单栏/双栏 Diff
-右侧：反馈、Trace、归因、建议、审批、回归、发布、回滚
+右侧：反馈、Trace、归因、建议、回归记录、发布记录、回滚记录
 ```
 
 前端实现约束：
@@ -583,7 +580,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 验收：
 
 - `rg "/api/agent-versions/main" app frontend tests docs` 仅命中废弃说明或迁移测试。
-- 浏览器中可完成候选 diff 审查、审批、回归、发布和回滚。
+- 浏览器中可完成候选 diff 审查、发布和回滚；审批、拒绝和候选回归不作为默认用户入口。
 - TypeScript build 通过。
 - feedback browser smoke 无 console error、failed request 和 4xx/5xx。
 

@@ -63,7 +63,7 @@ observability:
   report_dir: /data/outputs/reports
 
 extension_points:
-  add_mcp_server: docs/MCP_REPLACEMENT_GUIDE.md
+  add_mcp_server: .mcp.json
   add_skill: .claude/skills/<skill-name>/SKILL.md
   add_subagent: .claude/agents/<agent-name>.md
   add_command: .claude/commands/<command-name>.md

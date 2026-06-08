@@ -55,6 +55,30 @@ def test_batch_state_machine_allows_main_lifecycle():
     validate_transition("batch", "regression_running", "completed")
 
 
+def test_batch_state_machine_allows_completed_attribution_rerun_reset():
+    validate_transition("batch", "attribution_completed", "draft")
+
+
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("attribution_failed", "draft"),
+        ("optimization_plan_queued", "draft"),
+        ("blocked", "draft"),
+        ("execution_planning", "draft"),
+        ("execution_ready", "draft"),
+        ("execution_failed", "draft"),
+        ("execution_planning", "optimization_plan_queued"),
+        ("execution_ready", "optimization_plan_queued"),
+        ("execution_failed", "optimization_plan_queued"),
+        ("notification_failed", "draft"),
+        ("notification_failed", "optimization_plan_queued"),
+    ],
+)
+def test_batch_state_machine_allows_rerun_before_external_side_effects(current, target):
+    validate_transition("batch", current, target)
+
+
 def test_batch_and_task_state_machine_allow_execution_rollback_to_pending():
     validate_transition("batch", "execution_planning", "completed")
     validate_transition("batch", "execution_ready", "execution_planning")
@@ -72,6 +96,20 @@ def test_batch_state_machine_rejects_pending_execution_to_rejected():
 def test_batch_state_machine_rejects_terminal_reopen():
     with pytest.raises(StateTransitionError, match="completed -> draft"):
         validate_transition("batch", "completed", "draft")
+
+
+@pytest.mark.parametrize(
+    ("current", "target"),
+    [
+        ("sent", "draft"),
+        ("sent", "optimization_plan_queued"),
+        ("applied_pending_regression", "draft"),
+        ("completed", "optimization_plan_queued"),
+    ],
+)
+def test_batch_state_machine_rejects_rerun_after_external_side_effects(current, target):
+    with pytest.raises(StateTransitionError, match=f"{current} -> {target}"):
+        validate_transition("batch", current, target)
 
 
 def test_batch_state_machine_rejects_rejected_to_approved():

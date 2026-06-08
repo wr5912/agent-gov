@@ -5,11 +5,10 @@ import argparse
 import ipaddress
 import json
 import re
-import sys
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable, TypedDict
-
+from typing import TypedDict
 
 TEXT_SUFFIXES = {
     "",
@@ -79,7 +78,7 @@ ENDPOINT_KEY_RE = re.compile(
     r"(^|[_-])(url|uri|endpoint|host|hostname|ip|bind[_-]?ip|port|connection[_-]?url|base[_-]?url)($|[_-])",
     re.IGNORECASE,
 )
-URL_RE = re.compile(r"\bhttps?://[^\s\"'<>),}]+")
+URL_RE = re.compile(r"\bhttps?://[^\s\"'`<>),}]+")
 IPV4_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 INTERNAL_DOMAIN_RE = re.compile(r"\b(?:[A-Za-z0-9_-]+\.)+(?:internal|corp)\b|(?<!\S)\*\.(?:internal|corp)\b")
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
@@ -99,6 +98,7 @@ ALLOWED_URL_PREFIXES = (
 )
 
 PLACEHOLDER_RE = re.compile(r"(\$\{[A-Z0-9_]+\}|<REPLACE_WITH_[A-Z0-9_]+>|replace-me|change-me|placeholder)", re.IGNORECASE)
+UNRENDERABLE_PLACEHOLDERS = {"${HOST_PATH}"}
 DOC_IPV4_NETWORKS = tuple(ipaddress.ip_network(value) for value in ("192.0.2.0/24", "198.51.100.0/24", "203.0.113.0/24"))
 
 
@@ -265,6 +265,18 @@ def scan_path(root: Path) -> list[Finding]:
 
 def _scan_line(rel_path: str, line_number: int, line: str) -> list[Finding]:
     findings: list[Finding] = []
+    for placeholder in sorted(UNRENDERABLE_PLACEHOLDERS):
+        if placeholder in line:
+            findings.append(
+                Finding(
+                    rel_path,
+                    line_number,
+                    "unrenderable_placeholder",
+                    "high",
+                    f"{placeholder} is a sanitization fallback, not a deployable runtime-template placeholder",
+                    _redact_snippet(line),
+                )
+            )
     for match in URL_RE.finditer(line):
         value = match.group(0)
         if _is_allowed_url(value):

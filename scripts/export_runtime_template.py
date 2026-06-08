@@ -24,6 +24,22 @@ WORKSPACE_DIR_NAMES = {
     "eval-case-governor-workspace",
     "regression-impact-analyzer-workspace",
 }
+WORKSPACE_CONTAINER_PATHS = {
+    "main-workspace": "/main-workspace",
+    "attribution-analyzer-workspace": "/attribution-analyzer-workspace",
+    "proposal-generator-workspace": "/proposal-generator-workspace",
+    "execution-optimizer-workspace": "/execution-optimizer-workspace",
+    "eval-case-governor-workspace": "/eval-case-governor-workspace",
+    "regression-impact-analyzer-workspace": "/regression-impact-analyzer-workspace",
+}
+CLAUDE_ROOT_CONTAINER_PATHS = {
+    "main": "/claude-roots/main",
+    "attribution-analyzer": "/claude-roots/attribution-analyzer",
+    "proposal-generator": "/claude-roots/proposal-generator",
+    "execution-optimizer": "/claude-roots/execution-optimizer",
+    "eval-case-governor": "/claude-roots/eval-case-governor",
+    "regression-impact-analyzer": "/claude-roots/regression-impact-analyzer",
+}
 EXCLUDED_DIR_NAMES = {
     ".git",
     "__pycache__",
@@ -102,6 +118,7 @@ class ExportResult(TypedDict, total=False):
     backup: str | None
     staging_dir: str
     copied: list[str]
+    canonicalized: list[str]
     sanitize: SanitizeResult
     findings: list[FindingResult]
 
@@ -172,6 +189,36 @@ def _write_template_docs(staging_dir: Path, *, runtime_root: Path, copied: list[
     (staging_dir / ".template-sanitization.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
+def _runtime_path_replacements(runtime_root: Path) -> list[tuple[str, str]]:
+    replacements: list[tuple[str, str]] = []
+    for workspace_name, container_path in WORKSPACE_CONTAINER_PATHS.items():
+        replacements.append(((runtime_root / workspace_name).as_posix(), container_path))
+    for claude_root_name, container_path in CLAUDE_ROOT_CONTAINER_PATHS.items():
+        replacements.append(((runtime_root / "claude-roots" / claude_root_name).as_posix(), container_path))
+    replacements.append(((runtime_root / "data").as_posix(), "/data"))
+    return sorted(replacements, key=lambda item: len(item[0]), reverse=True)
+
+
+def _canonicalize_runtime_paths(staging_dir: Path, *, runtime_root: Path) -> list[str]:
+    replacements = _runtime_path_replacements(runtime_root)
+    changed: list[str] = []
+    for path in sorted(staging_dir.rglob("*")):
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        new_text = text
+        for source, target in replacements:
+            new_text = new_text.replace(source, target)
+        if new_text == text:
+            continue
+        path.write_text(new_text, encoding="utf-8")
+        changed.append(path.relative_to(staging_dir).as_posix())
+    return changed
+
+
 def _create_backup(template_dir: Path, backup_dir: Path, prefix: str = "runtime-template") -> Path | None:
     if not template_dir.exists():
         return None
@@ -226,6 +273,7 @@ def export_runtime_template(
 
     copied = _copy_allowed_config(runtime_root, staging_dir)
     _write_template_docs(staging_dir, runtime_root=runtime_root, copied=copied)
+    canonicalized = _canonicalize_runtime_paths(staging_dir, runtime_root=runtime_root)
     sanitize_result = sanitize_path(staging_dir)
     findings = scan_path(staging_dir)
     high_findings = [finding for finding in findings if finding.severity == "high"]
@@ -234,6 +282,7 @@ def export_runtime_template(
             "ok": False,
             "staging_dir": staging_dir.as_posix(),
             "copied": copied,
+            "canonicalized": canonicalized,
             "sanitize": sanitize_result,
             "findings": [_finding_result(finding) for finding in findings],
         }
@@ -246,6 +295,7 @@ def export_runtime_template(
         "template_dir": template_dir.as_posix(),
         "backup": backup_path.as_posix() if backup_path else None,
         "copied": copied,
+        "canonicalized": canonicalized,
         "sanitize": sanitize_result,
     }
 

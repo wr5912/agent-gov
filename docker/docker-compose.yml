@@ -53,7 +53,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.49
+    image: claude-agent-runtime-api:0.3.0
     container_name: claude-agent-runtime-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
@@ -96,7 +96,6 @@ services:
       EVAL_CASE_GOVERNOR_CLAUDE_ROOT: ${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
       REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT: ${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
-      CLAUDE_MCP_CONFIG_PATH: ${CLAUDE_MCP_CONFIG_PATH:-}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
@@ -127,7 +126,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: claude-agent-runtime-api:0.2.49
+    image: claude-agent-runtime-api:0.3.0
     container_name: claude-agent-runtime-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
@@ -162,7 +161,6 @@ services:
       EVAL_CASE_GOVERNOR_CLAUDE_ROOT: ${EVAL_CASE_GOVERNOR_CLAUDE_ROOT:-/claude-roots/eval-case-governor}
       REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT: ${REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT:-/claude-roots/regression-impact-analyzer}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
-      CLAUDE_MCP_CONFIG_PATH: ${CLAUDE_MCP_CONFIG_PATH:-}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
@@ -196,7 +194,7 @@ services:
     build:
       context: ..
       dockerfile: docker/frontend.Dockerfile
-    image: claude-agent-runtime-ui:0.2.49
+    image: claude-agent-runtime-ui:0.3.0
     container_name: claude-agent-runtime-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"

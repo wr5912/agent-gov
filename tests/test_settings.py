@@ -6,6 +6,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _PROFILE_ENV_KEYS = (
     "API_PORT",
+    "LOG_LEVEL",
     "RUNTIME_VOLUME_MODE",
     "RUNTIME_CONTAINER",
     "HOST_RUNTIME_VOLUME_ROOT",
@@ -107,6 +108,7 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     assert settings.regression_impact_analyzer_claude_root == Path("/claude-roots/regression-impact-analyzer")
     assert settings.claude_home == settings.claude_root / ".claude"
     assert settings.langfuse_base_url == "http://langfuse-web:3000"
+    assert settings.log_level == "info"
 
 
 def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkeypatch):
@@ -194,6 +196,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
 
     assert fields == {
         "runtime_volume_mode": "local-debug",
+        "log_level": "debug",
         "settings_env_file": (REPO_ROOT / "docker/.env.local-debug.example").as_posix(),
         "settings_env_file_exists": True,
         "provider_api_key_configured": False,

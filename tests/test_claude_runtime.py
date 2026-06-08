@@ -66,7 +66,6 @@ def _settings(tmp_path):
         CLAUDE_ROOT=claude_root,
         MAIN_CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
-        ENABLE_POLICY_HOOKS=True,
     )
 
 
@@ -129,11 +128,13 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     options = seen["options"]
 
     assert result.errors == []
-    assert options.setting_sources == ["user", "project", "local"]
-    assert options.settings is None
-    assert options.mcp_servers == {}
-    assert options.agents is None
-    assert "Skill" in options.allowed_tools
+    assert getattr(options, "setting_sources", None) is None
+    assert getattr(options, "settings", None) is None
+    assert getattr(options, "mcp_servers", None) in (None, {})
+    assert getattr(options, "agents", None) is None
+    assert getattr(options, "allowed_tools", None) in (None, [])
+    assert getattr(options, "disallowed_tools", None) in (None, [])
+    assert getattr(options, "permission_mode", None) is None
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
@@ -143,7 +144,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
 
 
-def test_main_runtime_profile_filters_mcp_servers(tmp_path, monkeypatch):
+def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -175,7 +176,7 @@ def test_main_runtime_profile_filters_mcp_servers(tmp_path, monkeypatch):
     result = asyncio.run(runtime.run(ChatRequest(message="hello")))
 
     assert result.errors == []
-    assert set(seen["options"].mcp_servers) == {"sec-ops-data", "security-kb"}
+    assert getattr(seen["options"], "mcp_servers", None) in (None, {})
 
 
 def test_feedback_attribution_job_options_use_profile_minimum_max_turns(tmp_path):
@@ -197,7 +198,7 @@ def test_feedback_attribution_job_options_allow_global_max_turn_override(tmp_pat
     assert options.max_turns == 20
 
 
-def test_feedback_job_profile_filters_mcp_servers(tmp_path):
+def test_feedback_job_profile_does_not_inject_mcp_servers(tmp_path):
     settings = _settings(tmp_path)
     settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
     (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
@@ -216,7 +217,7 @@ def test_feedback_job_profile_filters_mcp_servers(tmp_path):
 
     options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
 
-    assert set(options.mcp_servers) == {"feedback-evidence", "readonly-trace"}
+    assert getattr(options, "mcp_servers", None) in (None, {})
 
 
 def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
@@ -343,8 +344,8 @@ def test_feedback_batch_plan_job_options_use_proposal_generator_profile_minimum_
     options = runtime.job_runner.build_options(runtime.profiles["proposal-generator"])
 
     assert options.max_turns == 16
-    assert options.allowed_tools == []
-    assert set(options.disallowed_tools) >= {"Read", "Grep", "Glob"}
+    assert getattr(options, "allowed_tools", None) in (None, [])
+    assert getattr(options, "disallowed_tools", None) in (None, [])
 
 
 def test_feedback_batch_plan_job_options_allow_global_max_turn_override(tmp_path):
@@ -357,7 +358,7 @@ def test_feedback_batch_plan_job_options_allow_global_max_turn_override(tmp_path
     assert options.max_turns == 20
 
 
-def test_explicit_main_mcp_config_override_is_used_by_main_profile(tmp_path, monkeypatch):
+def test_explicit_main_mcp_config_override_is_not_injected_into_options(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
@@ -397,7 +398,6 @@ def test_explicit_main_mcp_config_override_is_used_by_main_profile(tmp_path, mon
         CLAUDE_SETTINGS_PATH=settings_path,
         CLAUDE_MCP_CONFIG_PATH=mcp_path,
         CLAUDE_CONFIG_DIR=config_dir,
-        ENABLE_POLICY_HOOKS=True,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
@@ -406,12 +406,12 @@ def test_explicit_main_mcp_config_override_is_used_by_main_profile(tmp_path, mon
     options = seen["options"]
 
     assert result.errors == []
-    assert options.settings is None
-    assert set(options.mcp_servers) == {"sec-ops-data"}
+    assert getattr(options, "settings", None) is None
+    assert getattr(options, "mcp_servers", None) in (None, {})
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
 
 
-def test_main_mcp_override_does_not_replace_feedback_job_profile_mcp(tmp_path):
+def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
     base = _settings(tmp_path)
     main_mcp_path = tmp_path / "main.mcp.override.json"
     main_mcp_path.write_text(
@@ -431,7 +431,6 @@ def test_main_mcp_override_does_not_replace_feedback_job_profile_mcp(tmp_path):
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
         CLAUDE_MCP_CONFIG_PATH=main_mcp_path,
-        ENABLE_POLICY_HOOKS=True,
     )
     settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
     (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
@@ -449,7 +448,7 @@ def test_main_mcp_override_does_not_replace_feedback_job_profile_mcp(tmp_path):
 
     options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
 
-    assert set(options.mcp_servers) == {"feedback-evidence"}
+    assert getattr(options, "mcp_servers", None) in (None, {})
 
 
 def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
@@ -473,7 +472,6 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
-        ENABLE_POLICY_HOOKS=True,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -622,7 +620,6 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
-        ENABLE_POLICY_HOOKS=True,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -650,7 +647,6 @@ def test_settings_derives_profile_dirs_from_custom_main_paths(tmp_path):
         WORKSPACE_DIR=main_workspace,
         CLAUDE_ROOT=main_root,
         PROPOSAL_GENERATOR_WORKSPACE_DIR=explicit_proposal_workspace,
-        ENABLE_POLICY_HOOKS=True,
     )
 
     assert settings.main_workspace_dir == main_workspace
@@ -822,7 +818,6 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
-        ENABLE_POLICY_HOOKS=True,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
@@ -947,7 +942,6 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
-        ENABLE_POLICY_HOOKS=True,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()

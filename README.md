@@ -296,9 +296,7 @@ curl -X POST "$API_BASE/api/chat" \
   -d '{
     "agent": "soc-analyst",
     "skills": ["alert-triage"],
-    "message": "分析这个告警：rundll32.exe 加载 WININET.dll，父进程为 EdgeUpdate，命令行为 DispatchAPICall 1",
-    "allowed_tools": ["Read", "Grep", "Glob"],
-    "permission_mode": "dontAsk"
+    "message": "分析这个告警：rundll32.exe 加载 WININET.dll，父进程为 EdgeUpdate，命令行为 DispatchAPICall 1"
   }'
 ```
 
@@ -327,7 +325,7 @@ curl -X POST "$API_BASE/v1/chat/completions" \
   }'
 ```
 
-注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现；真正的 Agent 参数，如 `agent`、`skills`、`allowed_tools`，建议使用 `/api/chat`。
+注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现；真正的 Agent 偏好参数，如 `agent`、`skills`，建议使用 `/api/chat`。工具权限、MCP 和 hooks 以 Claude Code 官方配置文件为准。
 
 ## 管理 API
 
@@ -365,8 +363,10 @@ volumes:
 
 ```bash
 make runtime-bootstrap
+make runtime-repair-managed-config
 make local-debug-env
 make local-debug-bootstrap
+make local-debug-repair-managed-config
 make runtime-template-scan
 make runtime-template-export
 make runtime-template-restore-list
@@ -395,7 +395,7 @@ model: inherit
 你是 SOC 告警研判专家。工作目标是快速判断告警是否值得升级，并给出证据链。
 ```
 
-默认情况下，项目依赖 Claude Code 原生发现机制加载 `.claude/agents/*.md`。如需 SDK-only 显式注入，可把 `docker/.env` 中的 `ENABLE_PROGRAMMATIC_AGENTS` 改为 `true`。
+项目依赖 Claude Code 原生发现机制加载 `.claude/agents/*.md`。后端不会通过 SDK Options 显式注入 agents。
 
 ## skill 文件格式
 
@@ -428,21 +428,23 @@ agent: soc-analyst
 
 ## 权限与安全
 
-`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界以请求中的 `allowed_tools` 和 `docker/.env` 的 `DEFAULT_ALLOWED_TOOLS` 为准。
+`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界仍以 Claude Code 官方配置为准：`.claude/settings.json`、subagent/skill frontmatter 和 Claude Code 自身发现规则共同生效，后端不通过 Options 注入 allow/deny 列表、permission mode 或 hooks。
 
-默认 `docker/.env.example` 中设置：
+默认 `docker/runtime-template/main-workspace/.claude/settings.json` 中设置：
 
-```bash
-DEFAULT_ALLOWED_TOOLS=Read,Grep,Glob,Skill,Write,mcp__sec-ops-data__*
-DEFAULT_DISALLOWED_TOOLS=Bash,WebFetch,WebSearch
-PERMISSION_MODE=dontAsk
-ENABLE_POLICY_HOOKS=true
-MAX_TURNS=16
+```json
+{
+  "permissions": {
+    "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Write(/data/outputs/**)", "mcp__sec-ops-data__*"],
+    "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
+    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(/claude-roots/main/.claude.json)"]
+  }
+}
 ```
 
 这意味着：
 
-- 默认允许读文件、搜索文件、调用 `sec-ops-data` MCP，以及把报告类产物写入 profile 声明的输出目录。
+- 默认允许读文件、搜索文件、调用 `sec-ops-data` MCP，以及把报告类产物写入运行态输出目录。
 - 默认不允许 Bash、WebFetch、WebSearch。
 - 任何未预先允许的工具不会弹交互式确认，而是拒绝。
 
@@ -507,9 +509,9 @@ make local-debug-bootstrap
 
 本机后台 Agent job 不复用交互式 Claude `/login` 状态。运行“重新生成回归用例”等 worker 任务前，必须在私有 `docker/.env.local-debug` 配置 `MODEL_PROVIDER_API_KEY`；如使用 Anthropic 兼容网关，同时配置 `MODEL_PROVIDER_API_URL`。缺少模型凭据时，job 会以 `AGENT_AUTH_REQUIRED` 失败，并提示当前 profile 和 env 文件。
 
-API 和 worker 启动日志会打印 `runtime_volume_mode`、`settings_env_file`、`provider_api_key_configured`、`provider_api_url_configured`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
+API 和 worker 统一使用 `LOG_LEVEL` 控制应用日志级别：容器部署的 `docker/.env` 默认 `LOG_LEVEL=info`，本机调试的 `docker/.env.local-debug` 默认 `LOG_LEVEL=debug`。API 和 worker 启动日志会打印 `log_level`、`runtime_volume_mode`、`settings_env_file`、`provider_api_key_configured`、`provider_api_url_configured`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
 
-本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，可在 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.local.json` 放置本地私有 MCP 配置。main profile 的 MCP 配置优先级是：显式 `CLAUDE_MCP_CONFIG_PATH`、`/main-workspace/.mcp.local.json`、`/main-workspace/.mcp.json`；feedback profiles 始终使用各自 workspace 的 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。生产环境应由部署配置重新注入 MCP 地址，不依赖本地 IP。
+本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，在 `docker/.env.local-debug` 中设置 `MCP_SERVER_URL=http://localhost:58001/mcp`，然后执行 `make local-debug-repair-managed-config` 修复 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.json`。main profile 和 feedback profiles 都只使用各自 workspace 的官方 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。
 
 如果刚从 Docker API/worker 切换到 PyCharm 本机调试，先修复后端共享 volume 的宿主机权限。该脚本只处理 API/worker 共享的 workspace、data 和 `claude-roots/*`，不处理 Langfuse 数据卷：
 

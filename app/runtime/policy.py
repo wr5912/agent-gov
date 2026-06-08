@@ -86,11 +86,7 @@ def _path_policy_denial(tool_name: str, tool_input: JsonObject, profile: AgentRu
 
 
 async def guard_tool_use(tool_name: str, tool_input: JsonObject, context: object) -> object:
-    """SDK can_use_tool callback.
-
-    This is only invoked when a tool would otherwise ask for permission. Tools already
-    allowed by settings/allowed_tools do not hit this callback; use hooks for full audit.
-    """
+    """Standalone SDK can_use_tool guard for direct unit-level policy checks."""
     if tool_name == "Bash":
         command = str(tool_input.get("command") or "")
         matched = _is_dangerous_bash(command)

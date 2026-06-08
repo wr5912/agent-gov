@@ -18,15 +18,12 @@ class ChatRequest(BaseModel):
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
     agent: Optional[str] = Field(default=None, description="Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.")
     skills: Optional[list[str]] = Field(default=None, description="Skill names to enable. Omit to use DEFAULT_SKILLS.")
-    skills_mode: Optional[Literal["all", "default", "none"]] = Field(
-        default=None,
-        description="Skill loading mode. Omit to use DEFAULT_SKILLS_MODE from docker/.env.",
-    )
-    allowed_tools: Optional[list[str]] = Field(default=None, description="Per-request allow list. Defaults to DEFAULT_ALLOWED_TOOLS.")
-    disallowed_tools: Optional[list[str]] = Field(default=None, description="Per-request deny list. Defaults to DEFAULT_DISALLOWED_TOOLS.")
+    skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated for SDK execution; configure skills in Claude Code official files.")
+    allowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated for SDK execution; configure tool permissions in .claude/settings.json.")
+    disallowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated for SDK execution; configure tool permissions in .claude/settings.json.")
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
-    permission_mode: Optional[str] = Field(default=None, description="Per-request permission mode override. Defaults to PERMISSION_MODE.")
+    permission_mode: Optional[str] = Field(default=None, description="Deprecated for SDK execution; configure permission mode in .claude/settings.json.")
     system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
     metadata: JsonObject = Field(default_factory=dict)
 
@@ -35,8 +32,7 @@ class ChatRequest(BaseModel):
             "examples": [
                 {
                     "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-                    "skills_mode": "all",
-                    "allowed_tools": ["Read", "Grep", "Glob"],
+                    "max_turns": 8,
                 }
             ]
         }

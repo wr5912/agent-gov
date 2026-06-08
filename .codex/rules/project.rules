@@ -25,6 +25,10 @@
 # - 任务涉及 Codex 配置治理、skill 优化、AGENTS/rules/hooks/project-skill 噪声或规则重复时，
 #   Analyze 阶段必须使用 `.codex/skills/codex-config-optimizer/SKILL.md`，先做删重、迁移和脚本化判断，
 #   不得默认继续追加常驻配置。
+# - 任务涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、`.env`、`.env.local-debug`、Langfuse、
+#   Docker volume、PyCharm 本机调试或 Agent job 模型凭据时，Analyze 阶段必须使用
+#   `.codex/skills/runtime-env-governance/SKILL.md`，先列 Consumer x Mode x Boundary 矩阵；
+#   不得把“被选择的 env 文件”描述成“覆盖”。
 # - 任务涉及 Agent、结构化输出框架或 LLM 输出契约时，Analyze 阶段必须先做字段所有权判断：
 #   后端已能从 job input、DB row、route 参数、store context 或调度上下文确定的字段，
 #   不得进入 Agent 输出契约，也不得让 LLM 复述后再作为权威值。

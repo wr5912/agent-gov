@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -8,11 +9,11 @@ from .agent_job_errors import AgentAuthenticationRequiredError, provider_api_key
 from .agent_job_types import AgentJobType, FormatterOutputModel
 from .agent_profiles import AgentRuntimeProfile
 from .json_types import JsonObject
-from .mcp_config import filtered_mcp_servers
 from .message_utils import extract_text
 from .output_formatter import DSPyOutputFormatter
-from .policy import build_default_hooks, guard_tool_use
 from .settings import AppSettings
+
+logger = logging.getLogger(__name__)
 
 
 class ClaudeCodeResultError(RuntimeError):
@@ -48,26 +49,17 @@ class AgentJobRunner:
             "cwd": profile.workspace_dir,
             "model": self.settings.agent_model,
             "fallback_model": self.settings.fallback_model,
-            "allowed_tools": list(profile.allowed_tools),
-            "disallowed_tools": list(profile.disallowed_tools),
-            "permission_mode": profile.permission_mode,
             "max_turns": max(self.settings.max_turns, profile.max_turns or 0),
             "max_budget_usd": self.settings.max_budget_usd,
             "env": env,
-            "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers, env),
-            "strict_mcp_config": True,
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": False,
-            "hooks": build_default_hooks(profile) if self.settings.enable_policy_hooks else None,
-            "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
             "cli_path": self.settings.claude_cli_path,
             "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
             "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
-            "setting_sources": ["user", "project"],
             "extra_args": self.settings.claude_extra_args,
             "max_thinking_tokens": self.settings.max_thinking_tokens,
             "effort": self.settings.effort,
@@ -98,6 +90,12 @@ class AgentJobRunner:
             async for msg in query(prompt=self.single_prompt_stream(prompt), options=options):
                 text = extract_text(msg)
                 if text:
+                    logger.debug(
+                        "agent profile stream text profile_name=%s job_type=%s text=%s",
+                        profile_name,
+                        getattr(job_type, "value", job_type),
+                        text,
+                    )
                     answer_parts.append(text)
                     output_bytes = len("".join(answer_parts).encode("utf-8"))
                     if output_bytes > profile.max_output_bytes:

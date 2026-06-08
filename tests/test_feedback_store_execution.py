@@ -668,8 +668,8 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
         text = json.dumps(output, ensure_ascii=False)
         seen["prompt_text"] = prompt_text
         seen["input_path"] = input_path
-        seen["allowed_tools"] = options.allowed_tools
-        seen["disallowed_tools"] = options.disallowed_tools
+        seen["allowed_tools"] = getattr(options, "allowed_tools", None)
+        seen["disallowed_tools"] = getattr(options, "disallowed_tools", None)
         yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-execution-session")
         yield ResultMessage(
             subtype="success",
@@ -704,8 +704,8 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     assert seen["input_path"] == job.input_path
     assert str(seen["input_path"]).endswith("/execution/input.json")
     assert "execution-input.json" not in str(seen["input_path"])
-    assert seen["allowed_tools"] == []
-    assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob", "Bash", "Edit", "Write"}
+    assert seen["allowed_tools"] in (None, [])
+    assert seen["disallowed_tools"] in (None, [])
     assert updated_task["latest_execution_job_id"] == job_payload["execution_job_id"]
     assert updated_task["latest_execution_job"]["validated_output_json"]["operations"][0]["path"] == "CLAUDE.md"
 

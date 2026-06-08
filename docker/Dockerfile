@@ -82,6 +82,7 @@ ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
 COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
+COPY scripts/runtime_template_renderer.py /app/scripts/runtime_template_renderer.py
 COPY docker/runtime-template /app/docker/runtime-template
 COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
 
@@ -93,4 +94,4 @@ RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
         /claude-roots/regression-impact-analyzer/.claude /data
 
 ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
-CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080} --log-level ${LOG_LEVEL:-info}"]

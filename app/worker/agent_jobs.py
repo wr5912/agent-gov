@@ -6,8 +6,9 @@ import os
 
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.session_store import LocalSessionStore
-from app.runtime.settings import get_settings, runtime_settings_log_message
+from app.runtime.settings import AppSettings, get_settings, runtime_settings_log_message
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_job_worker import AgentJobWorker
 from app.version import APP_VERSION
@@ -15,16 +16,8 @@ from app.version import APP_VERSION
 logger = logging.getLogger(__name__)
 
 
-def configure_logging() -> None:
-    level_name = os.getenv("AGENT_JOB_WORKER_LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
-
-
-def build_worker() -> AgentJobWorker:
-    settings = get_settings()
+def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
+    settings = settings or get_settings()
     session_store = LocalSessionStore(settings.session_dir)
     agent_version_store = GitAgentVersionStore(
         repository_dir=settings.agent_git_repository_dir,
@@ -64,9 +57,10 @@ def build_worker() -> AgentJobWorker:
 
 
 async def main() -> None:
-    configure_logging()
+    settings = get_settings()
+    configure_runtime_logging(settings.log_level)
     logger.info("agent job worker starting")
-    await build_worker().run_forever()
+    await build_worker(settings).run_forever()
 
 
 if __name__ == "__main__":

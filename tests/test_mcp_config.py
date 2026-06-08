@@ -16,18 +16,18 @@ def _write_mcp(path: Path, url: str) -> None:
     )
 
 
-def test_main_mcp_resolution_prefers_workspace_local_override(tmp_path: Path) -> None:
+def test_main_mcp_resolution_uses_workspace_project_config(tmp_path: Path) -> None:
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
-    _write_mcp(workspace / ".mcp.json", "${MCP_SERVER_URL}")
+    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     resolution = resolve_main_mcp_config_path(workspace, None)
     servers = filtered_mcp_servers(resolution.path, ("sec-ops-data",), {})
 
-    assert resolution.path == workspace / ".mcp.local.json"
-    assert resolution.source == "workspace_local"
-    assert servers == {"sec-ops-data": {"type": "http", "url": "http://127.0.0.1:58001/mcp"}}
+    assert resolution.path == workspace / ".mcp.json"
+    assert resolution.source == "workspace_project"
+    assert servers == {"sec-ops-data": {"type": "http", "url": "http://project.example/mcp"}}
 
 
 def test_filtered_mcp_servers_expands_env_and_rejects_unresolved_placeholder(tmp_path: Path) -> None:
@@ -70,9 +70,10 @@ def test_unresolved_mcp_config_path_fails_before_sdk_options(tmp_path: Path) -> 
         filtered_mcp_servers(Path("${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.json"), ("sec-ops-data",), {})
 
 
-def test_explicit_host_workspace_path_maps_to_container_workspace(tmp_path: Path) -> None:
+def test_explicit_mcp_config_path_is_ignored_by_project_resolution(tmp_path: Path) -> None:
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
+    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     resolution = resolve_main_mcp_config_path(
@@ -80,13 +81,14 @@ def test_explicit_host_workspace_path_maps_to_container_workspace(tmp_path: Path
         Path("/host/runtime-root/main-workspace/.mcp.local.json"),
     )
 
-    assert resolution.path == workspace / ".mcp.local.json"
-    assert resolution.source == "explicit_env_workspace_mount"
+    assert resolution.path == workspace / ".mcp.json"
+    assert resolution.source == "workspace_project"
 
 
-def test_main_profile_uses_local_mcp_without_polluting_feedback_profiles(tmp_path: Path) -> None:
+def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_path: Path) -> None:
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
+    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
     settings = AppSettings(
         _env_file=None,
@@ -97,13 +99,14 @@ def test_main_profile_uses_local_mcp_without_polluting_feedback_profiles(tmp_pat
 
     profiles = build_profiles(settings)
 
-    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.local.json"
+    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.json"
     assert profiles["attribution-analyzer"].mcp_config_path.name == ".mcp.json"
 
 
-def test_blank_optional_mcp_config_path_uses_workspace_resolution(tmp_path: Path) -> None:
+def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
+    _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
     settings = AppSettings(
         _env_file=None,
@@ -115,5 +118,4 @@ def test_blank_optional_mcp_config_path_uses_workspace_resolution(tmp_path: Path
 
     profiles = build_profiles(settings)
 
-    assert settings.claude_mcp_config_path is None
-    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.local.json"
+    assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.json"

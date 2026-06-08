@@ -15,14 +15,11 @@ from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
 _MAIN_MCP_SERVERS = ("sec-ops-data", "security-kb")
 _RUNTIME_ENV_SNAPSHOT_KEYS = (
-    "CLAUDE_MCP_CONFIG_PATH",
     "MCP_SERVER_URL",
     "NO_PROXY",
     "no_proxy",
     "CLAUDE_ENV_JSON",
     "MAX_TURNS",
-    "DEFAULT_ALLOWED_TOOLS",
-    "DEFAULT_DISALLOWED_TOOLS",
 )
 _PLACEHOLDER_RE = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _PLACEHOLDER_SCAN_EXTENSIONS = {".json", ".md", ".sh", ".txt", ".yaml", ".yml"}
@@ -234,25 +231,20 @@ class FeedbackEvidenceStoreMixin:
             "report_output_dir": str(self.data_dir / "outputs" / "reports"),
             "main_profile_writable_paths": [str(self.data_dir / "outputs")],
             "default_max_turns_env": self._safe_env_value("MAX_TURNS"),
-            "default_allowed_tools_env": self._safe_env_value("DEFAULT_ALLOWED_TOOLS"),
-            "default_disallowed_tools_env": self._safe_env_value("DEFAULT_DISALLOWED_TOOLS"),
+            "claude_config_source": "official_files",
             "effective_mcp_config_source": effective_mcp_config.get("source"),
             "effective_mcp_config_path": effective_mcp_config.get("path"),
         }
 
     def _effective_mcp_config(self) -> JsonObject:
         env = self._mcp_expansion_env()
-        explicit = Path(env["CLAUDE_MCP_CONFIG_PATH"]) if env.get("CLAUDE_MCP_CONFIG_PATH") else None
-        resolution = resolve_main_mcp_config_path(self.main_workspace_dir, explicit)
+        resolution = resolve_main_mcp_config_path(self.main_workspace_dir)
         summary = build_mcp_config_summary(resolution.path, _MAIN_MCP_SERVERS, env)
         return {
             "profile": "main-agent",
             "source": resolution.source,
-            "explicit_env_present": explicit is not None,
-            "workspace_local_path": str(self.main_workspace_dir / ".mcp.local.json"),
-            "workspace_local_exists": (self.main_workspace_dir / ".mcp.local.json").exists(),
-            "workspace_template_path": str(self.main_workspace_dir / ".mcp.json"),
-            "workspace_template_exists": (self.main_workspace_dir / ".mcp.json").exists(),
+            "workspace_project_path": str(self.main_workspace_dir / ".mcp.json"),
+            "workspace_project_exists": (self.main_workspace_dir / ".mcp.json").exists(),
             **summary,
         }
 
@@ -335,7 +327,7 @@ class FeedbackEvidenceStoreMixin:
             payload["json_keys"] = sorted(parsed)
             payload["json_error"] = error
             return payload
-        if key.endswith("_PATH") or key in {"MAX_TURNS", "DEFAULT_ALLOWED_TOOLS", "DEFAULT_DISALLOWED_TOOLS"}:
+        if key.endswith("_PATH") or key == "MAX_TURNS":
             payload["value_preview"] = value[:160]
         return payload
 
@@ -376,7 +368,7 @@ class FeedbackEvidenceStoreMixin:
             return False
 
     def _placeholder_category(self, rel_path: str) -> str:
-        if rel_path in {".mcp.json", ".mcp.local.json"}:
+        if rel_path == ".mcp.json":
             return "mcp_config"
         if rel_path == ".claude/settings.json":
             return "claude_project_settings"

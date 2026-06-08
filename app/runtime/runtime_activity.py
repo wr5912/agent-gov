@@ -17,12 +17,6 @@ class RuntimeActivityExtractor:
         self.settings = settings
 
     def agent_activity_payload(self, req: ChatRequest, messages: list[JsonObject]) -> JsonObject:
-        allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
-        disallowed_tools = (
-            req.disallowed_tools
-            if req.disallowed_tools is not None
-            else self.settings.default_disallowed_tools
-        )
         requested_skills = req.skills if req.skills is not None else self.settings.default_skills
         tool_calls: list[JsonObject] = []
         tool_results: list[JsonObject] = []
@@ -52,8 +46,9 @@ class RuntimeActivityExtractor:
         return {
             "requested_skills": list(requested_skills or []),
             "skills_mode": req.skills_mode or self.settings.default_skills_mode,
-            "allowed_tools": allowed_tools,
-            "disallowed_tools": disallowed_tools,
+            "allowed_tools": None,
+            "disallowed_tools": None,
+            "claude_config_source": "official_files",
             "tool_names": tool_names,
             "tool_calls": tool_calls,
             "tool_results": tool_results,

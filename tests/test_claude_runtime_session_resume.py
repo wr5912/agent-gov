@@ -21,7 +21,6 @@ def _settings(tmp_path):
         CLAUDE_ROOT=claude_root,
         MAIN_CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
-        ENABLE_POLICY_HOOKS=True,
     )
 
 

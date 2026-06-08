@@ -22,17 +22,15 @@ class McpConfigError(RuntimeError):
     """Raised when the selected MCP config cannot be passed to Claude Code."""
 
 
-def resolve_main_mcp_config_path(workspace_dir: Path, explicit_path: Path | None) -> McpConfigResolution:
-    if explicit_path is not None:
-        path = _expand_path(explicit_path, os.environ)
-        mapped_path = _map_to_workspace_path(path, workspace_dir)
-        if mapped_path is not None:
-            return McpConfigResolution(path=mapped_path, source="explicit_env_workspace_mount")
-        return McpConfigResolution(path=path, source="explicit_env")
-    local_path = workspace_dir / ".mcp.local.json"
-    if local_path.exists():
-        return McpConfigResolution(path=local_path, source="workspace_local")
-    return McpConfigResolution(path=workspace_dir / ".mcp.json", source="workspace_template")
+def resolve_main_mcp_config_path(workspace_dir: Path, explicit_path: Path | None = None) -> McpConfigResolution:
+    """Return the Claude Code project MCP config.
+
+    ``explicit_path`` is accepted only for compatibility with older callers. The
+    runtime no longer injects MCP config through SDK Options; Claude Code should
+    discover the official project file from the workspace.
+    """
+
+    return McpConfigResolution(path=workspace_dir / ".mcp.json", source="workspace_project")
 
 
 def filtered_mcp_servers(

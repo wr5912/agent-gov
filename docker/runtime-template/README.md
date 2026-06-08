@@ -2,7 +2,7 @@
 
 本目录保存可复用的 Agent Runtime 初始配置模板，用于从零部署时填充运行态目录。
 
-模板只保存结构、说明和安全默认值。真实环境里的 API key、token、Authorization header、数据库凭据、MCP 地址、IP、端口、URL、邮箱、账号、本机路径和 Claude 本地状态都不能进入模板。
+模板只保存结构、说明和安全默认值；真实环境里的 API key、token、Authorization header、数据库凭据、MCP 地址、IP、端口、URL、邮箱、账号、本机路径和 Claude 本地状态都不能进入模板。
 
 ## 使用方式
 

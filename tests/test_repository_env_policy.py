@@ -10,8 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ENV_KEYS = (
     "CLAUDE_HOME",
     "DATA_DIR",
-    "DEFAULT_ALLOWED_TOOLS",
-    "DEFAULT_DISALLOWED_TOOLS",
+    "LOG_LEVEL",
     "MODEL_PROVIDER_API_KEY",
     "MODEL_PROVIDER_API_URL",
 )
@@ -104,12 +103,59 @@ def test_local_debug_env_example_keeps_runtime_keys_in_sync() -> None:
     assert container_keys - local_debug_keys == CONTAINER_ONLY_ENV_KEYS
 
 
+def test_official_env_examples_define_mode_specific_log_level_defaults() -> None:
+    container_example = (REPO_ROOT / "docker/.env.example").read_text(encoding="utf-8")
+    local_debug_example = (REPO_ROOT / "docker/.env.local-debug.example").read_text(encoding="utf-8")
+
+    assert "LOG_LEVEL=info" in container_example
+    assert "LOG_LEVEL=debug" in local_debug_example
+    assert "AGENT_JOB_WORKER_LOG_LEVEL" not in container_example
+    assert "AGENT_JOB_WORKER_LOG_LEVEL" not in local_debug_example
+
+
+def test_official_env_examples_do_not_define_claude_config_takeover_keys() -> None:
+    forbidden = {
+        "CLAUDE_MCP_CONFIG_PATH=",
+        "CLAUDE_SETTINGS_PATH=",
+        "CLAUDE_TOOLS=",
+        "DEFAULT_ALLOWED_TOOLS=",
+        "DEFAULT_DISALLOWED_TOOLS=",
+        "PERMISSION_MODE=",
+        "STRICT_MCP_CONFIG=",
+        "ENABLE_POLICY_HOOKS=",
+        "ENABLE_PROGRAMMATIC_AGENTS=",
+        "CLAUDE_SETTING_SOURCES=",
+    }
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        text = (REPO_ROOT / env_file).read_text(encoding="utf-8")
+        for item in forbidden:
+            assert item not in text
+
+
 def test_official_env_examples_do_not_ship_configured_model_provider_key() -> None:
     for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
         text = (REPO_ROOT / env_file).read_text(encoding="utf-8")
 
         assert "MODEL_PROVIDER_API_KEY=sk-" not in text
         assert "ANTHROPIC_API_KEY=sk-" not in text
+
+
+def test_runtime_env_governance_skill_keeps_required_boundary_terms() -> None:
+    skill = (REPO_ROOT / ".codex/skills/runtime-env-governance/SKILL.md").read_text(encoding="utf-8")
+
+    required_terms = [
+        "Consumer x Mode x Boundary",
+        "`RUNTIME_VOLUME_MODE` 不应出现在官方 env 示例中",
+        "本机后台 Agent job 不复用交互式 Claude `/login`",
+        "`MODEL_PROVIDER_API_KEY` required privately",
+        "docker/.env.local-debug",
+        "/tmp/local-debug-volume-agent-runtime",
+        "${HOME}/volume-agent-runtime",
+    ]
+    for term in required_terms:
+        assert term in skill
+
+    assert "不要写“覆盖文件”“私有覆盖”“覆盖配置”" in skill
 
 
 def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:
@@ -123,8 +169,6 @@ def test_bare_dspy_import_does_not_load_project_root_runtime_env() -> None:
         keys = (
             "CLAUDE_HOME",
             "DATA_DIR",
-            "DEFAULT_ALLOWED_TOOLS",
-            "DEFAULT_DISALLOWED_TOOLS",
             "MODEL_PROVIDER_API_KEY",
             "MODEL_PROVIDER_API_URL",
         )

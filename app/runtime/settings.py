@@ -69,6 +69,7 @@ class SettingsEnvSelection:
 
 
 class RuntimeSettingsLogFields(TypedDict):
+    log_level: str
     runtime_volume_mode: RuntimeVolumeMode
     settings_env_file: str | None
     settings_env_file_exists: bool | None
@@ -188,6 +189,7 @@ class AppSettings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
     host_port: int = Field(default=58080, alias="HOST_PORT")
+    log_level: str = Field(default="info", alias="LOG_LEVEL")
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
     host_workspace_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
@@ -237,22 +239,13 @@ class AppSettings(BaseSettings):
 
     agent_model: Optional[str] = Field(default="claude-sonnet-4-5", alias="AGENT_MODEL")
     fallback_model: Optional[str] = Field(default=None, alias="FALLBACK_MODEL")
-    permission_mode: Optional[str] = Field(default="dontAsk", alias="PERMISSION_MODE")
     default_agent: Optional[str] = Field(default=None, alias="DEFAULT_AGENT")
 
-    claude_tools_raw: Optional[str] = Field(default=None, alias="CLAUDE_TOOLS")
     default_skills_raw: Optional[str] = Field(default=None, alias="DEFAULT_SKILLS")
-    default_allowed_tools_raw: str = Field(default="Read,Grep,Glob,Skill,Write", alias="DEFAULT_ALLOWED_TOOLS")
-    default_disallowed_tools_raw: str = Field(default="Bash,WebFetch,WebSearch", alias="DEFAULT_DISALLOWED_TOOLS")
     default_skills_mode: Literal["all", "default", "none"] = Field(default="default", alias="DEFAULT_SKILLS_MODE")
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")
-    claude_settings_path: Optional[Path] = Field(default=None, alias="CLAUDE_SETTINGS_PATH")
-    claude_mcp_config_path: Optional[Path] = Field(default=None, alias="CLAUDE_MCP_CONFIG_PATH")
-    strict_mcp_config: bool = Field(default=False, alias="STRICT_MCP_CONFIG")
 
-    enable_programmatic_agents: bool = Field(default=False, alias="ENABLE_PROGRAMMATIC_AGENTS")
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
-    enable_policy_hooks: bool = Field(default=True, alias="ENABLE_POLICY_HOOKS")
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
     dspy_output_formatter_model: Optional[str] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_MODEL")
@@ -270,7 +263,6 @@ class AppSettings(BaseSettings):
     claude_betas_raw: Optional[str] = Field(default=None, alias="CLAUDE_BETAS")
     permission_prompt_tool_name: Optional[str] = Field(default=None, alias="PERMISSION_PROMPT_TOOL_NAME")
     claude_user: Optional[str] = Field(default=None, alias="CLAUDE_USER")
-    setting_sources_raw: Optional[str] = Field(default="user,project,local", alias="CLAUDE_SETTING_SOURCES")
     max_thinking_tokens: Optional[int] = Field(default=None, alias="MAX_THINKING_TOKENS")
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(default=None, alias="EFFORT")
     enable_file_checkpointing: bool = Field(default=False, alias="ENABLE_FILE_CHECKPOINTING")
@@ -303,8 +295,6 @@ class AppSettings(BaseSettings):
 
     @field_validator(
         "claude_config_dir",
-        "claude_settings_path",
-        "claude_mcp_config_path",
         "claude_cli_path",
         "agent_git_repository_dir_override",
         "agent_git_worktrees_dir_override",
@@ -351,22 +341,9 @@ class AppSettings(BaseSettings):
         return (self.claude_config_dir or self.claude_home) / "projects"
 
     @property
-    def claude_tools(self) -> Optional[list[str]]:
-        tools = _csv(self.claude_tools_raw)
-        return tools or None
-
-    @property
     def default_skills(self) -> Optional[list[str]]:
         skills = _csv(self.default_skills_raw)
         return skills or None
-
-    @property
-    def default_allowed_tools(self) -> list[str]:
-        return _csv(self.default_allowed_tools_raw)
-
-    @property
-    def default_disallowed_tools(self) -> list[str]:
-        return _csv(self.default_disallowed_tools_raw)
 
     @property
     def claude_add_dirs(self) -> list[str]:
@@ -378,9 +355,7 @@ class AppSettings(BaseSettings):
 
     @property
     def setting_sources(self) -> Optional[list[str]]:
-        if self.setting_sources_raw is None:
-            return None
-        return _csv(self.setting_sources_raw)
+        return None
 
     @property
     def claude_env(self) -> dict[str, str]:
@@ -463,6 +438,7 @@ def get_settings() -> AppSettings:
 def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFields:
     env_file = settings.settings_env_file
     return {
+        "log_level": settings.log_level,
         "runtime_volume_mode": settings.runtime_volume_mode,
         "settings_env_file": env_file.as_posix() if env_file else None,
         "settings_env_file_exists": env_file.exists() if env_file else None,

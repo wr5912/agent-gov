@@ -7,7 +7,6 @@ from feedback_store_test_utils import FeedbackSignalCreateRequest, FeedbackStore
 
 def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch) -> None:
     settings = _settings(tmp_path)
-    monkeypatch.delenv("CLAUDE_MCP_CONFIG_PATH", raising=False)
     monkeypatch.delenv("MCP_SERVER_URL", raising=False)
     (settings.main_workspace_dir / ".mcp.json").write_text(
         json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
@@ -72,7 +71,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     effective_mcp = store.get_evidence_package_file(manifest["evidence_package_id"], "effective_mcp_config.json")["content"]
     connection_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "mcp_connection_summary.json")["content"]
     placeholder_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "workspace_placeholder_summary.json")["content"]
-    assert effective_mcp["source"] == "workspace_template"
+    assert effective_mcp["source"] == "workspace_project"
     assert effective_mcp["unresolved_placeholders"] == [{"path": "$.sec-ops-data.url", "placeholder": "MCP_SERVER_URL"}]
     assert connection_summary["failed_server_names"] == ["sec-ops-data"]
     categories = {item["path"]: item["category"] for item in placeholder_summary["items"]}

@@ -70,7 +70,6 @@ def _settings(tmp_path):
         REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT=regression_impact_root,
         CLAUDE_HOME=claude_root / ".claude",
         MODEL_PROVIDER_API_KEY="sk-test-provider",
-        ENABLE_POLICY_HOOKS=True,
     )
 
 

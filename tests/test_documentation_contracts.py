@@ -57,7 +57,8 @@ def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
         "应与 `docker/.env` 保持 Runtime/API/worker 应用配置同构",
         "AGENT_AUTH_REQUIRED",
         "Environment variables: 留空即可",
-        "启动日志会打印 `runtime_volume_mode`",
+        "统一使用 `LOG_LEVEL` 控制应用日志级别",
+        "启动日志会打印 `log_level`、`runtime_volume_mode`",
         "`provider_api_key_configured`",
         "LANGFUSE_BASE_URL=http://langfuse-web:3000",
         "LANGFUSE_NEXTAUTH_URL=http://localhost:53000",
@@ -65,6 +66,25 @@ def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
     ]
     for phrase in current_phrases:
         assert phrase in readme
+
+
+def test_codex_runtime_env_governance_routes_to_project_skill():
+    override = _read_repo_text("AGENTS.override.md")
+    project_rules = _read_repo_text(".codex/rules/project.rules")
+    verify_rules = _read_repo_text(".codex/rules/verify.rules")
+    codex_readme = _read_repo_text(".codex/README.md")
+    skill = _read_repo_text(".codex/skills/runtime-env-governance/SKILL.md")
+    optimizer_ref = _read_repo_text(".codex/skills/codex-config-optimizer/references/failure-analysis.md")
+
+    for text in (override, project_rules, skill):
+        assert "Consumer x Mode x Boundary" in text
+        assert "runtime-env-governance" in text
+
+    assert "不要把上述文件关系描述成“覆盖”" in override
+    assert "不得把“被选择的 env 文件”描述成“覆盖”" in project_rules
+    assert "Runtime/env 相关变更必须验证 settings 模式选择" in verify_rules
+    assert "skills/runtime-env-governance/SKILL.md" in codex_readme
+    assert "env-drift + surface-mismatch + execution-gap" in optimizer_ref
 
 
 def test_feedback_product_test_requirements_match_task_execution_flow():

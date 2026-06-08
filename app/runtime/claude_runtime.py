@@ -13,7 +13,6 @@ from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
 from .agent_git_store import AgentVersionProvider
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
 from .agent_job_types import FormatterOutputModel
-from .agent_loader import load_programmatic_agents
 from .agent_profile_versions import profile_version_snapshot
 from .agent_profiles import (
     MAIN_AGENT_PROFILE,
@@ -26,10 +25,8 @@ from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
-from .mcp_config import filtered_mcp_servers
 from .message_utils import extract_text, message_event_name, to_plain
 from .output_formatter import DSPyOutputFormatter
-from .policy import build_default_hooks, guard_tool_use
 from .runtime_activity import RuntimeActivityExtractor
 from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
@@ -191,8 +188,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         run_id: str,
         agent_version_id: Optional[str],
     ) -> JsonObject:
-        allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
-        disallowed_tools = req.disallowed_tools if req.disallowed_tools is not None else self.settings.default_disallowed_tools
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -205,11 +200,12 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "agent": req.agent or self.settings.default_agent,
             "skills": req.skills if req.skills is not None else self.settings.default_skills,
             "skills_mode": req.skills_mode or self.settings.default_skills_mode,
-            "allowed_tools": allowed_tools,
-            "disallowed_tools": disallowed_tools,
+            "allowed_tools": None,
+            "disallowed_tools": None,
             "max_turns": req.max_turns or self.settings.max_turns,
             "model": req.model or self.settings.agent_model,
-            "permission_mode": req.permission_mode or self.settings.permission_mode,
+            "permission_mode": None,
+            "claude_config_source": "official_files",
             "system_append": req.system_append,
             "metadata": req.metadata,
         }
@@ -356,37 +352,22 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if system_append:
             system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
 
-        allowed_tools = req.allowed_tools if req.allowed_tools is not None else self.settings.default_allowed_tools
-        disallowed_tools = req.disallowed_tools if req.disallowed_tools is not None else self.settings.default_disallowed_tools
-
         kwargs: dict[str, object] = {
-            "tools": self.settings.claude_tools,
             "cwd": profile.workspace_dir,
             "model": req.model or self.settings.agent_model,
             "fallback_model": self.settings.fallback_model,
-            "allowed_tools": allowed_tools,
-            "disallowed_tools": disallowed_tools,
-            "permission_mode": req.permission_mode or self.settings.permission_mode,
             "max_turns": req.max_turns or self.settings.max_turns,
             "max_budget_usd": self.settings.max_budget_usd,
             "system_prompt": system_prompt,
             "env": env,
-            "settings": str(profile.project_settings_path) if profile.project_settings_path.exists() else None,
-            "mcp_servers": filtered_mcp_servers(profile.mcp_config_path, profile.allowed_mcp_servers, env),
-            "strict_mcp_config": self.settings.strict_mcp_config,
-            "skills": self._skills_option(req),
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": self.settings.include_partial_messages,
-            "hooks": build_default_hooks(profile) if self.settings.enable_policy_hooks else None,
-            "can_use_tool": guard_tool_use if self.settings.enable_policy_hooks else None,
-            "agents": self._load_main_profile_agents(profile),
             "cli_path": self.settings.claude_cli_path,
             "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
             "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
-            "setting_sources": self.settings.setting_sources,
             "extra_args": self.settings.claude_extra_args,
             "max_thinking_tokens": self.settings.max_thinking_tokens,
             "effort": self.settings.effort,
@@ -411,15 +392,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         # Remove None values because older SDK versions may not accept them everywhere.
         kwargs = {k: v for k, v in kwargs.items() if v is not None}
         return ClaudeAgentOptions(**kwargs)
-
-    def _load_main_profile_agents(self, profile: AgentRuntimeProfile) -> Any | None:
-        if not self.settings.enable_programmatic_agents:
-            return None
-        try:
-            return load_programmatic_agents(profile.workspace_dir, profile.claude_config_dir)
-        except Exception as exc:  # Do not prevent service use because of malformed agent file.
-            print(f"[WARN] failed to load programmatic agents: {exc}", flush=True)
-            return None
 
     async def _run_profile_json(
         self,

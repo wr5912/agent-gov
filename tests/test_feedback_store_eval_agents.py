@@ -811,8 +811,8 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
         seen["formatted_payload"] = output
         text = '{"permissions":{"allow":["Bash(npm *)"]}}\n' + json.dumps(output, ensure_ascii=False)
         seen["prompt_text"] = prompt_text
-        seen["allowed_tools"] = options.allowed_tools
-        seen["disallowed_tools"] = options.disallowed_tools
+        seen["allowed_tools"] = getattr(options, "allowed_tools", None)
+        seen["disallowed_tools"] = getattr(options, "disallowed_tools", None)
         yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-proposal-session")
         yield ResultMessage(
             subtype="success",
@@ -842,8 +842,8 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
     assert "optimization_plan_input_json" not in str(seen["prompt_text"])
     assert "schema_version" not in str(seen["prompt_text"])
     assert "job_id" not in str(seen["prompt_text"])
-    assert seen["allowed_tools"] == []
-    assert set(seen["disallowed_tools"]) >= {"Read", "Grep", "Glob"}
+    assert seen["allowed_tools"] in (None, [])
+    assert seen["disallowed_tools"] in (None, [])
     assert seen["formatter_job_type"] == "batch_plan"
     assert '"permissions"' in str(seen["formatter_raw_text"])
     assert updated.optimization_plan_job.status == "completed"

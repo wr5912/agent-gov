@@ -75,7 +75,7 @@ def build_health_payload(
         default_skills_mode=settings.default_skills_mode,
         provider_api_url_configured=bool(settings.provider_api_url),
         provider_api_key_configured=bool(settings.provider_api_key),
-        programmatic_agents=settings.enable_programmatic_agents,
+        programmatic_agents=False,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),
         runtime_dependency_versions=runtime_dependency_versions(),

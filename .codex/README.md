@@ -14,6 +14,7 @@
 ## 本仓库专项技能
 
 - `skills/codex-config-optimizer/SKILL.md`：治理 Codex 配置、AGENTS/rules/hooks 和 skill 膨胀问题；首版为本仓库本地技能，验证稳定并泛化后再考虑提取为团队通用 skill。
+- `skills/runtime-env-governance/SKILL.md`：治理本仓库 runtime/env、本机调试、容器部署、Langfuse 和后台 Agent job 模型凭据边界；这是项目专项技能，不应作为团队通用模板直接复制。
 
 ## 通用入口配置
 

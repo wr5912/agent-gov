@@ -59,6 +59,73 @@ def _batch_with_unapplied_pending_execution_task(store):
     return batch, task_id
 
 
+def _batch_with_failed_execution_task(store):
+    batch, task_id = _batch_with_unapplied_pending_execution_task(store)
+    job = store.create_execution_job(task_id, force=True)
+    assert job is not None
+    store.start_execution_job(job["execution_job_id"])
+    failed = store.fail_execution_job(
+        job["execution_job_id"],
+        error_code="AGENT_RUNTIME_ERROR",
+        message="execution optimizer failed",
+    )
+    batch = store.find_optimization_batch(batch["batch_id"])
+    assert failed is not None
+    assert batch["status"] == "execution_failed"
+    return batch, task_id, job
+
+
+def _batch_with_external_plan_task(store):
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["external_mcp_service"], comment="alert-0002 事件数据不全"))
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="外部通知失败批次")
+    attribution_job = store.create_attribution_job(batch["feedback_case_ids"][0])
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "feedback_case_id": batch["feedback_case_ids"][0],
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "tool_data_quality",
+            "optimization_object_type": "external_mcp_service",
+            "actionability": "external_guidance",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "tool_calls.json", "reason": "list_events 查询 alert-0002 时 event_time 与告警窗口不匹配"}],
+            "responsibility_boundary": {"owner": "sec-ops-data", "reason": "sec-ops-data 的 list_events 接口需要支持按告警上下文返回事件"},
+            "rationale": (
+                "sec-ops-data MCP 工具 mcp__sec-ops-data__local_api__list_events_api_v1_events_get 查询 alert-0002 时，"
+                "返回事件的 event_time 全部是 2026-02-11，无法支撑 2026-05-25 的告警研判。"
+                "需要修复 list_events 接口或底层数据源，按 alert_id 和告警时间窗口返回完整事件。"
+            ),
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+    batch = store.generate_batch_optimization_plan(batch["batch_id"])
+    plan_task = batch["optimization_plan"]["tasks"][0]
+    return batch, plan_task
+
+
+def _batch_with_failed_external_notification(store, settings):
+    batch, plan_task = _batch_with_external_plan_task(store)
+    settings.data_dir.joinpath("external-governance-webhooks.yaml").write_text(
+        "webhooks:\n  - alias: kb\n    name: 知识库\n    url: http://example.invalid/kb\n",
+        encoding="utf-8",
+    )
+    failed = store.notify_batch_plan_task_external(
+        batch["batch_id"],
+        plan_task["plan_task_id"],
+        webhook_alias="kb",
+        sender=lambda webhook, payload: {"http_status": 500, "response_body": "failed"},
+    )
+    batch = failed["batch"]
+    assert batch["status"] == "pending_execution"
+    assert failed["plan_task"]["status"] == "notification_failed"
+    assert failed["external_item"]["status"] == "notification_failed"
+    return batch, failed["external_item"]
+
+
 def test_batch_plan_store_does_not_expose_reject_review_action(tmp_path):
     store, _ = _store(tmp_path)
     assert not hasattr(store, "approve_batch_optimization_plan")
@@ -78,6 +145,95 @@ def test_regenerate_unapplied_pending_execution_batch_plan_requeues_and_cleans_d
     assert updated["optimization_task_id"] is None
     assert updated["optimization_task_ids"] == []
     assert store.find_task(task_id) is None
+
+
+def test_reset_attribution_from_active_batch_plan_job_discards_stale_plan_job(tmp_path):
+    store, _ = _store(tmp_path)
+    batch = _create_batch_with_completed_attribution(store)
+    plan_job = store.create_batch_plan_job(batch["batch_id"], force=True)
+    queued = store.find_optimization_batch(batch["batch_id"])
+
+    reset = store.reset_batch_attribution(batch["batch_id"])
+
+    assert queued["status"] == "optimization_plan_queued"
+    assert reset["status"] == "draft"
+    assert reset["optimization_plan"] is None
+    assert reset["optimization_plan_job_id"] is None
+    assert store.get_job(plan_job["job_id"]) is None
+
+
+def test_regenerate_failed_execution_batch_plan_requeues_and_cleans_draft_task(tmp_path):
+    store, _ = _store(tmp_path)
+    batch, task_id, execution_job = _batch_with_failed_execution_task(store)
+
+    job = store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="执行失败后重新生成")
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert job["job_type"] == "batch_plan"
+    assert updated["status"] == "optimization_plan_queued"
+    assert updated["optimization_plan"] is None
+    assert updated["optimization_task_id"] is None
+    assert updated["optimization_task_ids"] == []
+    assert store.find_task(task_id) is None
+    assert store.get_execution_job(execution_job["execution_job_id"]) is None
+
+
+def test_reset_attribution_from_failed_execution_cleans_downstream_drafts(tmp_path):
+    store, _ = _store(tmp_path)
+    batch, task_id, execution_job = _batch_with_failed_execution_task(store)
+
+    reset = store.reset_batch_attribution(batch["batch_id"])
+
+    assert reset["status"] == "draft"
+    assert reset["attribution_job_ids"] == []
+    assert reset["optimization_plan"] is None
+    assert reset["optimization_task_id"] is None
+    assert reset["optimization_task_ids"] == []
+    assert store.find_task(task_id) is None
+    assert store.get_execution_job(execution_job["execution_job_id"]) is None
+
+
+def test_regenerate_batch_plan_after_failed_external_notification_cleans_external_item(tmp_path):
+    store, settings = _store(tmp_path)
+    batch, external_item = _batch_with_failed_external_notification(store, settings)
+
+    job = store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="通知失败后重新生成")
+    updated = store.find_optimization_batch(batch["batch_id"])
+
+    assert job["job_type"] == "batch_plan"
+    assert updated["status"] == "optimization_plan_queued"
+    assert updated["optimization_plan"] is None
+    assert store.find_external_governance_item(external_item["external_item_id"]) is None
+
+
+def test_regenerate_batch_plan_blocks_sent_external_notification_when_batch_projection_failed(tmp_path, monkeypatch):
+    store, settings = _store(tmp_path)
+    batch, plan_task = _batch_with_external_plan_task(store)
+    settings.data_dir.joinpath("external-governance-webhooks.yaml").write_text(
+        "webhooks:\n  - alias: kb\n    name: 知识库\n    url: http://example.invalid/kb\n",
+        encoding="utf-8",
+    )
+
+    def fail_plan_task_projection(*args, **kwargs):
+        raise RuntimeError("batch plan task projection failed")
+
+    monkeypatch.setattr(store, "_update_batch_plan_task", fail_plan_task_projection)
+    with pytest.raises(RuntimeError, match="batch plan task projection failed"):
+        store.notify_batch_plan_task_external(
+            batch["batch_id"],
+            plan_task["plan_task_id"],
+            webhook_alias="kb",
+            sender=lambda webhook, payload: {"http_status": 202, "response_body": "accepted"},
+        )
+
+    notified_items = store.list_external_governance_items(status="notified")
+    unchanged = store.find_optimization_batch(batch["batch_id"])
+    with pytest.raises(ConflictError, match="已有外部通知结果"):
+        store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="不应覆盖已通知任务")
+
+    assert len(notified_items) == 1
+    assert unchanged["optimization_plan"]["tasks"][0]["status"] == "pending_notification"
+    assert store.find_external_governance_item(notified_items[0]["external_item_id"]) is not None
 
 
 def test_reset_attribution_from_unapplied_pending_execution_cleans_downstream_drafts(tmp_path):

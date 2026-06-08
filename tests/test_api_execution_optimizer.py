@@ -178,6 +178,63 @@ def _ready_execution_job(module, task):
     )
 
 
+def test_batch_attribution_force_rerun_allows_completed_attribution_batch(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    store = module.feedback_store
+    store.record_run(
+        {
+            "run_id": "run-force-attribution",
+            "session_id": "sess-force-attribution",
+            "message": "日报文件没有写入",
+            "answer_summary": "需要重新归因。",
+            "agent_activity": {"tool_calls": []},
+        }
+    )
+    signal = store.create_signal(
+        FeedbackSignalCreateRequest(
+            run_id="run-force-attribution",
+            labels=["tool_data_incomplete"],
+            comment="重新归因 API 测试",
+        )
+    )
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}], title="重新归因 API 测试")
+    feedback_case_id = batch["feedback_case_ids"][0]
+    attribution_job = store.create_attribution_job(feedback_case_id)
+    completed = store.complete_attribution_job(
+        attribution_job["job_id"],
+        {
+            "feedback_case_id": feedback_case_id,
+            "attribution_job_id": attribution_job["job_id"],
+            "status": "completed",
+            "problem_type": "instruction_gap",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "direct_workspace_change",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "evidence_file", "id": "messages.json", "reason": "回答没有完成用户要求。"}],
+            "responsibility_boundary": {"owner": "main_agent_workspace", "reason": "主智能体指令需要补强。"},
+            "rationale": "回答前应确认文件写入结果。",
+            "recommended_next_step": "generate_proposal",
+        },
+    )
+    completed_batch = store.record_batch_attribution_jobs(batch["batch_id"], [completed])
+
+    with TestClient(module.app) as client:
+        response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/attribution-jobs",
+            json={"force": True},
+        )
+
+    assert completed_batch["status"] == "attribution_completed"
+    assert response.status_code == 200, response.json()
+    payload = response.json()
+    assert payload["batch"]["status"] == "attribution_running"
+    assert len(payload["jobs"]) == 1
+    assert payload["jobs"][0]["job_id"] != attribution_job["job_id"]
+    assert payload["batch"]["attribution_job_ids"] == [payload["jobs"][0]["job_id"]]
+    assert store.get_job(attribution_job["job_id"]) is None
+
+
 def _run_one_agent_job(module):
     worker = AgentJobWorker(feedback_store=module.feedback_store, run_profile_json=module.runtime._run_profile_json)
     return asyncio.run(worker.run_once())

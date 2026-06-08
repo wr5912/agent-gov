@@ -20,6 +20,8 @@ from ..records.optimization_task_records import OptimizationTaskRecord
 from ..runtime_db import (
     AgentJobModel,
     ExecutionApplicationModel,
+    ExternalGovernanceItemModel,
+    ExternalNotificationModel,
     OptimizationProposalModel,
     OptimizationTaskModel,
     ProposalReviewModel,
@@ -253,7 +255,22 @@ class FeedbackStore(
             if status in {"completed", "partial_failed", "rollback_failed"}:
                 return "已有一键执行记录"
         task_ids = self._batch_draft_artifact_task_ids(batch)
+        batch_id = self._string(batch.get("batch_id"))
         with self.Session() as db:
+            if batch_id:
+                external_items = db.scalars(
+                    select(ExternalGovernanceItemModel).where(ExternalGovernanceItemModel.proposal_job_id.like(f"batch-plan-task-{batch_id}-%"))
+                ).all()
+                for external_item in external_items:
+                    payload = external_item.payload_json if isinstance(external_item.payload_json, dict) else {}
+                    latest_notification = payload.get("latest_notification") if isinstance(payload.get("latest_notification"), dict) else None
+                    notification = db.get(ExternalNotificationModel, external_item.latest_notification_id) if external_item.latest_notification_id else None
+                    if (
+                        self._string(external_item.status) == "notified"
+                        or self._string((latest_notification or {}).get("status")) == "sent"
+                        or (notification and self._string(notification.status) == "sent")
+                    ):
+                        return "已有外部通知结果"
             for task_id in task_ids:
                 task = db.get(OptimizationTaskModel, task_id)
                 if task and OptimizationTaskRecord.from_row(task).applied_agent_version_id:
@@ -280,6 +297,27 @@ class FeedbackStore(
         task_ids = self._batch_draft_artifact_task_ids(batch)
         execution_job_id = self._string(batch.get("execution_job_id"))
         internal_proposal_id = self._string(batch.get("internal_proposal_id"))
+        batch_id = self._string(batch.get("batch_id"))
+        if batch_id:
+            plan_jobs = db.scalars(
+                select(AgentJobModel).where(
+                    AgentJobModel.job_type == "batch_plan",
+                    AgentJobModel.scope_kind == "optimization_batch",
+                    AgentJobModel.scope_id == batch_id,
+                )
+            ).all()
+            for plan_job in plan_jobs:
+                db.delete(plan_job)
+                self._append_cleanup_job_id(cleanup_job_ids, plan_job.job_id)
+            external_items = db.scalars(
+                select(ExternalGovernanceItemModel).where(
+                    ExternalGovernanceItemModel.proposal_job_id.like(f"batch-plan-task-{batch_id}-%"),
+                    ExternalGovernanceItemModel.status.in_(("pending_notification", "notification_failed")),
+                )
+            ).all()
+            for external_item in external_items:
+                db.execute(delete(ExternalNotificationModel).where(ExternalNotificationModel.external_item_id == external_item.external_item_id))
+                db.delete(external_item)
         for task_id in task_ids:
             db.execute(delete(ExecutionApplicationModel).where(ExecutionApplicationModel.optimization_task_id == task_id))
             execution_rows = db.scalars(

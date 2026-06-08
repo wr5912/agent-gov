@@ -82,6 +82,16 @@
 - 环境变量放在 `docker/.env`；应用配置放在 `config/*.yaml` 或 `config/*.json`。
 - 不得将 API key、MCP header、数据库凭据或本机私有路径写入仓库。
 
+## Runtime / Env 治理专项
+
+涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、`docker/.env`、`docker/.env.local-debug`、`frontend/.env.local`、Docker volume、Langfuse、本机 PyCharm 调试或后台 Agent job 模型凭据的改动，必须先按 `.codex/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵，再执行。
+
+- `docker/.env` 是 Compose/API/worker 容器部署环境文件；`docker/.env.local-debug` 是宿主机 Python/PyCharm 调试环境文件；`frontend/.env.local` 只服务 Vite 本机前端。
+- `docker/.env.local-debug` 不参与“选择模式”；宿主机进程通过非容器环境自动选择它，容器进程由 Compose 注入 `RUNTIME_CONTAINER=1` 自动选择 `docker/.env`。
+- 不要把上述文件关系描述成“覆盖”。除非代码真实实现 layered override，否则文档、计划和提交说明都应使用“选择 env 文件”“私有 env 文件”或“本机调试 env 文件”。
+- 本机后台 Agent job 不复用交互式 Claude `/login` 状态；调试或生成回归用例前必须确认私有 `docker/.env.local-debug` 配置了 `MODEL_PROVIDER_API_KEY`，但真实 key 不得进入仓库。
+- 修改 runtime/env 选择、默认路径、模型凭据或 Langfuse 地址时，必须同步 README、env 示例、settings/env policy 测试和启动日志字段验证。
+
 ## 本仓库专属边界
 
 - 不要把 `claude-agent-runtime` 的脚本名、CI workflow 或 hook 命令硬编码回 `AGENTS.md`、通用 `.codex/rules/` 或通用 skill 文本。

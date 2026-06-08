@@ -47,10 +47,6 @@ class AgentRuntimeProfile:
     readable_paths: tuple[Path, ...]
     writable_paths: tuple[Path, ...]
     denied_paths: tuple[Path, ...]
-    allowed_mcp_servers: tuple[str, ...]
-    permission_mode: str = "default"
-    allowed_tools: tuple[str, ...] = ("Read", "Grep", "Glob")
-    disallowed_tools: tuple[str, ...] = ("Bash", "Edit", "Write", "WebFetch", "WebSearch")
     max_turns: int | None = None
     max_runtime_seconds: int = 300
     max_output_bytes: int = 2_000_000
@@ -83,10 +79,6 @@ def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candid
         readable_paths=(workspace_dir, settings.data_dir),
         writable_paths=profile.writable_paths,
         denied_paths=profile.denied_paths,
-        allowed_mcp_servers=profile.allowed_mcp_servers,
-        permission_mode=profile.permission_mode,
-        allowed_tools=profile.allowed_tools,
-        disallowed_tools=profile.disallowed_tools,
         max_turns=profile.max_turns,
         max_runtime_seconds=profile.max_runtime_seconds,
         max_output_bytes=profile.max_output_bytes,
@@ -94,7 +86,7 @@ def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candid
 
 
 def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
-    mcp_resolution = resolve_main_mcp_config_path(settings.main_workspace_dir, settings.claude_mcp_config_path)
+    mcp_resolution = resolve_main_mcp_config_path(settings.main_workspace_dir)
     return AgentRuntimeProfile(
         name=MAIN_AGENT_PROFILE,
         role=MAIN_AGENT_PROFILE,
@@ -114,8 +106,6 @@ def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
             settings.eval_case_governor_claude_root,
             settings.regression_impact_analyzer_claude_root,
         ),
-        allowed_mcp_servers=("sec-ops-data", "security-kb"),
-        permission_mode=settings.permission_mode or "default",
     )
 
 
@@ -133,7 +123,6 @@ def _attribution_profile(settings: AppSettings) -> AgentRuntimeProfile:
         readable_paths=(settings.data_dir,),
         writable_paths=(settings.data_dir / ".runtime-tmp" / "jobs",),
         denied_paths=(settings.main_workspace_dir, settings.main_claude_root),
-        allowed_mcp_servers=("feedback-evidence", "readonly-trace"),
         max_turns=16,
     )
 
@@ -144,7 +133,6 @@ def _proposal_profile(settings: AppSettings) -> AgentRuntimeProfile:
         workspace_dir=settings.proposal_generator_workspace_dir,
         claude_root=settings.proposal_generator_claude_root,
         observation="runtime.proposal_generator",
-        allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
         max_turns=16,
         settings=settings,
     )
@@ -157,7 +145,6 @@ def _execution_profile(settings: AppSettings) -> AgentRuntimeProfile:
             workspace_dir=settings.execution_optimizer_workspace_dir,
             claude_root=settings.execution_optimizer_claude_root,
             observation="runtime.execution_optimizer_agent",
-            allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
             readable_paths=(settings.data_dir, settings.main_workspace_dir),
             denied_paths=(settings.main_claude_root,),
             max_turns=12,
@@ -172,7 +159,6 @@ def _eval_case_governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
         workspace_dir=settings.eval_case_governor_workspace_dir,
         claude_root=settings.eval_case_governor_claude_root,
         observation="runtime.eval_case_governor",
-        allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
         max_turns=10,
         settings=settings,
     )
@@ -184,7 +170,6 @@ def _regression_impact_profile(settings: AppSettings) -> AgentRuntimeProfile:
         workspace_dir=settings.regression_impact_analyzer_workspace_dir,
         claude_root=settings.regression_impact_analyzer_claude_root,
         observation="runtime.regression_impact_analyzer",
-        allowed_mcp_servers=("feedback-evidence", "agent-version-store"),
         max_turns=10,
         settings=settings,
     )
@@ -196,7 +181,6 @@ def _readonly_feedback_profile(
     workspace_dir: Path,
     claude_root: Path,
     observation: str,
-    allowed_mcp_servers: tuple[str, ...],
     max_turns: int | None,
     settings: AppSettings,
 ) -> AgentRuntimeProfile:
@@ -206,7 +190,6 @@ def _readonly_feedback_profile(
             workspace_dir=workspace_dir,
             claude_root=claude_root,
             observation=observation,
-            allowed_mcp_servers=allowed_mcp_servers,
             max_turns=max_turns,
             settings=settings,
         )
@@ -219,7 +202,6 @@ def _readonly_feedback_kwargs(
     workspace_dir: Path,
     claude_root: Path,
     observation: str,
-    allowed_mcp_servers: tuple[str, ...],
     max_turns: int | None,
     settings: AppSettings,
     readable_paths: tuple[Path, ...] | None = None,
@@ -238,8 +220,5 @@ def _readonly_feedback_kwargs(
         "readable_paths": readable_paths or (settings.data_dir,),
         "writable_paths": (settings.data_dir / ".runtime-tmp" / "jobs",),
         "denied_paths": denied_paths or (settings.main_workspace_dir, settings.main_claude_root),
-        "allowed_mcp_servers": allowed_mcp_servers,
-        "allowed_tools": (),
-        "disallowed_tools": ("Read", "Grep", "Glob", "Bash", "Edit", "Write", "WebFetch", "WebSearch"),
         "max_turns": max_turns,
     }

@@ -2012,13 +2012,8 @@ export interface components {
         /**
          * ChatRequest
          * @example {
-         *       "allowed_tools": [
-         *         "Read",
-         *         "Grep",
-         *         "Glob"
-         *       ],
-         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-         *       "skills_mode": "all"
+         *       "max_turns": 8,
+         *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
          *     }
          */
         ChatRequest: {
@@ -2034,7 +2029,7 @@ export interface components {
             alert_id?: string | null;
             /**
              * Allowed Tools
-             * @description Per-request allow list. Defaults to DEFAULT_ALLOWED_TOOLS.
+             * @description Deprecated for SDK execution; configure tool permissions in .claude/settings.json.
              */
             allowed_tools?: string[] | null;
             /**
@@ -2044,7 +2039,7 @@ export interface components {
             case_id?: string | null;
             /**
              * Disallowed Tools
-             * @description Per-request deny list. Defaults to DEFAULT_DISALLOWED_TOOLS.
+             * @description Deprecated for SDK execution; configure tool permissions in .claude/settings.json.
              */
             disallowed_tools?: string[] | null;
             /**
@@ -2068,7 +2063,7 @@ export interface components {
             model?: string | null;
             /**
              * Permission Mode
-             * @description Per-request permission mode override. Defaults to PERMISSION_MODE.
+             * @description Deprecated for SDK execution; configure permission mode in .claude/settings.json.
              */
             permission_mode?: string | null;
             /**
@@ -2083,7 +2078,7 @@ export interface components {
             skills?: string[] | null;
             /**
              * Skills Mode
-             * @description Skill loading mode. Omit to use DEFAULT_SKILLS_MODE from docker/.env.
+             * @description Deprecated for SDK execution; configure skills in Claude Code official files.
              */
             skills_mode?: ("all" | "default" | "none") | null;
             /**

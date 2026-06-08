@@ -154,6 +154,30 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
         ),
         encoding="utf-8",
     )
+    agents_dir = settings_template / "agents"
+    commands_dir = settings_template / "commands"
+    skill_dir = settings_template / "skills" / "report-generation"
+    agents_dir.mkdir(parents=True)
+    commands_dir.mkdir(parents=True)
+    skill_dir.mkdir(parents=True)
+    (agents_dir / "report-writer.md").write_text(
+        "日报写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。\n",
+        encoding="utf-8",
+    )
+    (commands_dir / "generate-report.md").write_text(
+        "生成报告到 `/data/outputs/reports`。\n",
+        encoding="utf-8",
+    )
+    (skill_dir / "SKILL.md").write_text(
+        "报告输出目录：`/data/outputs/reports`。\n",
+        encoding="utf-8",
+    )
+    server_dir = workspace_template / "mcp_servers" / "report_template_mcp"
+    server_dir.mkdir(parents=True)
+    (server_dir / "server.py").write_text(
+        'REPORT_TEMPLATE_DIR = "/main-workspace/templates/reports"\nREPORT_OUTPUT_DIR = "/data/outputs/reports"\n',
+        encoding="utf-8",
+    )
     (workspace_template / "agent.yaml").write_text("paths:\n  workspace: /main-workspace\n  data_root: /data\n", encoding="utf-8")
     runtime_root = tmp_path / "local-debug-runtime"
     env = {
@@ -173,6 +197,10 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     mcp = json.loads((runtime_root / "main-workspace" / ".mcp.json").read_text(encoding="utf-8"))
     settings = json.loads((runtime_root / "main-workspace" / ".claude" / "settings.json").read_text(encoding="utf-8"))
     agent = (runtime_root / "main-workspace" / "agent.yaml").read_text(encoding="utf-8")
+    report_writer = (runtime_root / "main-workspace" / ".claude" / "agents" / "report-writer.md").read_text(encoding="utf-8")
+    report_command = (runtime_root / "main-workspace" / ".claude" / "commands" / "generate-report.md").read_text(encoding="utf-8")
+    report_skill = (runtime_root / "main-workspace" / ".claude" / "skills" / "report-generation" / "SKILL.md").read_text(encoding="utf-8")
+    report_server = (runtime_root / "main-workspace" / "mcp_servers" / "report_template_mcp" / "server.py").read_text(encoding="utf-8")
     assert result["validation_errors"] == []
     assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
     assert str(runtime_root / "data" / "outputs") in settings["permissions"]["allow"][0]
@@ -181,6 +209,29 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     assert settings["sandbox"]["network"]["allowedDomains"] == ["localhost", "127.0.0.1", "host.docker.internal", "*.internal", "*.corp"]
     assert f"workspace: {runtime_root / 'main-workspace'}" in agent
     assert "data_root: /data\n" not in agent
+    assert f"`{runtime_root / 'data' / 'outputs' / 'reports' / 'daily-secops-report-YYYY-MM-DD.md'}`" in report_writer
+    assert f"`{runtime_root / 'data' / 'outputs' / 'reports'}`" in report_command
+    assert f"`{runtime_root / 'data' / 'outputs' / 'reports'}`" in report_skill
+    assert f'"{runtime_root / "main-workspace" / "templates" / "reports"}"' in report_server
+    assert f'"{runtime_root / "data" / "outputs" / "reports"}"' in report_server
+
+
+def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_path):
+    template = tmp_path / "template"
+    workspace_template = template / "main-workspace"
+    agents_dir = workspace_template / ".claude" / "agents"
+    agents_dir.mkdir(parents=True)
+    (agents_dir / "report-writer.md").write_text(
+        "日报写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。\n",
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "container-runtime"
+
+    result = bootstrap_runtime_volume(runtime_root=runtime_root, template_dir=template, runtime_volume_mode="container", env={})
+
+    report_writer = (runtime_root / "main-workspace" / ".claude" / "agents" / "report-writer.md").read_text(encoding="utf-8")
+    assert result["validation_errors"] == []
+    assert "`/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`" in report_writer
 
 
 def test_bootstrap_runtime_volume_repairs_managed_config_with_backup(tmp_path):
@@ -212,6 +263,51 @@ def test_bootstrap_runtime_volume_repairs_managed_config_with_backup(tmp_path):
     assert result["repaired"] == [(runtime_workspace / ".mcp.json").as_posix()]
     assert result["backups"]
     assert Path(result["backups"][0]).exists()
+    assert ".runtime-template-backups" in result["backups"][0]
+
+
+def test_repair_managed_config_removes_stale_template_docs_without_runtime_data(tmp_path):
+    template = tmp_path / "template"
+    workspace_template = template / "main-workspace"
+    workspace_template.mkdir(parents=True)
+    (workspace_template / "CLAUDE.md").write_text("当前模板\n", encoding="utf-8")
+    runtime_root = tmp_path / "runtime"
+    runtime_workspace = runtime_root / "main-workspace"
+    runtime_workspace.mkdir(parents=True)
+    stale_readme = runtime_workspace / "README.md"
+    stale_doc = runtime_workspace / "docs" / "MCP_REPLACEMENT_GUIDE.md"
+    stale_hook_readme = runtime_workspace / "hooks" / "README.md"
+    runtime_data = runtime_root / "data" / "runtime.sqlite3"
+    private_mcp = runtime_workspace / ".mcp.local.json"
+    git_file = runtime_workspace / ".git" / "config"
+    stale_readme.write_text("旧说明\n", encoding="utf-8")
+    stale_doc.parent.mkdir(parents=True)
+    stale_doc.write_text("旧 docs\n", encoding="utf-8")
+    stale_hook_readme.parent.mkdir(parents=True)
+    stale_hook_readme.write_text("旧 hook 说明\n", encoding="utf-8")
+    runtime_data.parent.mkdir(parents=True)
+    runtime_data.write_text("sqlite", encoding="utf-8")
+    private_mcp.write_text("{}\n", encoding="utf-8")
+    git_file.parent.mkdir(parents=True)
+    git_file.write_text("[core]\n", encoding="utf-8")
+
+    result = bootstrap_runtime_volume(
+        runtime_root=runtime_root,
+        template_dir=template,
+        runtime_volume_mode="local-debug",
+        env={},
+        repair_managed_config=True,
+    )
+
+    assert not stale_readme.exists()
+    assert not stale_doc.exists()
+    assert not stale_hook_readme.exists()
+    assert runtime_data.exists()
+    assert private_mcp.exists()
+    assert git_file.exists()
+    assert result["removed"] == [stale_readme.as_posix(), stale_doc.as_posix(), stale_hook_readme.as_posix()]
+    assert len(result["backups"]) == 3
+    assert all(Path(path).exists() for path in result["backups"])
 
 
 def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):

@@ -15,7 +15,7 @@ try:
     from scripts.runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
-        is_managed_active_config,
+        is_template_managed_text_file,
         render_template_file,
         validate_rendered_config,
     )
@@ -23,7 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
-        is_managed_active_config,
+        is_template_managed_text_file,
         render_template_file,
         validate_rendered_config,
     )
@@ -71,6 +71,8 @@ RUNTIME_DATA_DIRS = (
     "langfuse/minio",
 )
 SKIP_TEMPLATE_ROOT_FILES = {"README.md", ".template-sanitization.json"}
+PRIVATE_RUNTIME_FILENAMES = {".env", ".mcp.local.json", "CLAUDE.local.md", "settings.local.json"}
+PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-template-backups", "data", "langfuse"}
 
 
 class BootstrapResult(TypedDict):
@@ -78,6 +80,7 @@ class BootstrapResult(TypedDict):
     copied: list[str]
     skipped_existing: list[str]
     repaired: list[str]
+    removed: list[str]
     backups: list[str]
     validation_errors: list[str]
 
@@ -187,7 +190,7 @@ def _copy_missing(
             )
         return
     content: str | None = None
-    if is_managed_active_config(rel_path):
+    if is_template_managed_text_file(rel_path):
         content = render_template_file(src.read_text(encoding="utf-8"), rel_path=rel_path, context=render_context)
         validation_errors.extend(validate_rendered_config(content, rel_path=rel_path, context=render_context))
     if dest.exists() and not overwrite:
@@ -195,10 +198,11 @@ def _copy_missing(
             existing = dest.read_text(encoding="utf-8")
             if existing != content:
                 repaired.append(dest.as_posix())
-                backup = _backup_path(dest)
+                backup = _backup_path(dest, runtime_root=render_context.runtime_root)
                 backups.append(backup.as_posix())
                 if not dry_run:
                     dest.parent.mkdir(parents=True, exist_ok=True)
+                    backup.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copy2(dest, backup)
                     dest.write_text(content, encoding="utf-8")
             else:
@@ -216,9 +220,89 @@ def _copy_missing(
         dest.write_text(content, encoding="utf-8")
 
 
-def _backup_path(path: Path) -> Path:
+def _backup_path(path: Path, *, runtime_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return path.with_name(f"{path.name}.bak-{timestamp}")
+    try:
+        rel_path = path.relative_to(runtime_root)
+    except ValueError:
+        return path.with_name(f"{path.name}.bak-{timestamp}")
+    return runtime_root / ".runtime-template-backups" / timestamp / rel_path
+
+
+def _template_file_set(template_dir: Path) -> set[Path]:
+    if not template_dir.exists():
+        return set()
+    return {path.relative_to(template_dir) for path in template_dir.rglob("*") if path.is_file()}
+
+
+def _is_stale_template_doc_candidate(rel_path: Path, template_files: set[Path]) -> bool:
+    if rel_path in template_files:
+        return False
+    parts = rel_path.parts
+    if len(parts) < 2:
+        return False
+    if parts[0] not in _workspace_dir_names():
+        return False
+    if any(part in PRIVATE_RUNTIME_DIR_NAMES for part in parts):
+        return False
+    if rel_path.name in PRIVATE_RUNTIME_FILENAMES or ".bak-" in rel_path.name:
+        return False
+    if rel_path.suffix != ".md":
+        return False
+    if len(parts) == 2 and rel_path.name == "README.md":
+        return True
+    if len(parts) >= 3 and parts[1] == "docs":
+        return True
+    return len(parts) >= 3 and parts[1] in {"hooks", "mcp_servers"} and rel_path.name == "README.md"
+
+
+def _workspace_dir_names() -> set[str]:
+    return {
+        "main-workspace",
+        "attribution-analyzer-workspace",
+        "proposal-generator-workspace",
+        "execution-optimizer-workspace",
+        "eval-case-governor-workspace",
+        "regression-impact-analyzer-workspace",
+    }
+
+
+def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
+    current = path
+    while current != stop_at and stop_at in current.parents:
+        try:
+            current.rmdir()
+        except OSError:
+            return
+        current = current.parent
+
+
+def _remove_stale_template_docs(
+    *,
+    runtime_root: Path,
+    template_dir: Path,
+    dry_run: bool,
+    removed: list[str],
+    backups: list[str],
+) -> None:
+    template_files = _template_file_set(template_dir)
+    if not runtime_root.exists():
+        return
+    for path in sorted(runtime_root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_path = path.relative_to(runtime_root)
+        if not _is_stale_template_doc_candidate(rel_path, template_files):
+            continue
+        removed.append(path.as_posix())
+        backup = _backup_path(path, runtime_root=runtime_root)
+        backups.append(backup.as_posix())
+        if dry_run:
+            continue
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, backup)
+        path.unlink()
+        _remove_empty_parents(path.parent, stop_at=runtime_root / rel_path.parts[0])
 
 
 def bootstrap_runtime_volume(
@@ -234,6 +318,7 @@ def bootstrap_runtime_volume(
     copied: list[str] = []
     skipped: list[str] = []
     repaired: list[str] = []
+    removed: list[str] = []
     backups: list[str] = []
     validation_errors: list[str] = []
     created_dirs: list[str] = []
@@ -270,12 +355,21 @@ def bootstrap_runtime_volume(
                 backups=backups,
                 validation_errors=validation_errors,
             )
+        if repair_managed_config:
+            _remove_stale_template_docs(
+                runtime_root=runtime_root,
+                template_dir=template_dir,
+                dry_run=dry_run,
+                removed=removed,
+                backups=backups,
+            )
 
     return {
         "created_dirs": created_dirs,
         "copied": copied,
         "skipped_existing": skipped,
         "repaired": repaired,
+        "removed": removed,
         "backups": backups,
         "validation_errors": validation_errors,
     }
@@ -295,7 +389,7 @@ def main() -> int:
     parser.add_argument(
         "--repair-managed-config",
         action="store_true",
-        help="Re-render existing managed Claude config files (.mcp.json, .claude/settings.json, agent.yaml) after backing them up.",
+        help="Re-render existing runtime-template managed text files after backing them up; also remove stale template README/docs files.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet", action="store_true")

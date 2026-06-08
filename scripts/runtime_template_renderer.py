@@ -28,11 +28,25 @@ _PROFILE_CLAUDE_ROOT_DEFAULTS = {
     "regression-impact-analyzer": ("REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT", "/claude-roots/regression-impact-analyzer"),
 }
 _MANAGED_ACTIVE_FILENAMES = {".mcp.json", "agent.yaml"}
+_MANAGED_JSON_FILENAMES = {".mcp.json", "settings.json"}
+_TEMPLATE_TEXT_FILENAMES = {".mcp.json", ".worktreeinclude", ".gitignore", "requirements.txt"}
+_TEMPLATE_TEXT_SUFFIXES = {
+    "",
+    ".example",
+    ".json",
+    ".md",
+    ".py",
+    ".sh",
+    ".txt",
+    ".yaml",
+    ".yml",
+}
 
 
 @dataclass(frozen=True)
 class RuntimeTemplateRenderContext:
     mode: str
+    runtime_root: Path
     data_dir: Path
     mcp_server_url: str
     allowed_network_domains: tuple[str, ...]
@@ -46,9 +60,11 @@ def build_render_context(*, mode: str, env: Mapping[str, str], runtime_root: Pat
 
     container_path_map: dict[str, Path] = {}
     for workspace_name, (env_name, default_path) in _PROFILE_WORKSPACE_DEFAULTS.items():
-        container_path_map[default_path] = _path_from_env(env, env_name, runtime_root / workspace_name)
+        default = Path(default_path) if normalized == "container" else runtime_root / workspace_name
+        container_path_map[default_path] = _path_from_env(env, env_name, default)
     for claude_root_name, (env_name, default_path) in _PROFILE_CLAUDE_ROOT_DEFAULTS.items():
-        container_path_map[default_path] = _path_from_env(env, env_name, runtime_root / "claude-roots" / claude_root_name)
+        default = Path(default_path) if normalized == "container" else runtime_root / "claude-roots" / claude_root_name
+        container_path_map[default_path] = _path_from_env(env, env_name, default)
 
     data_default = runtime_root / "data" if normalized == "local-debug" else Path("/data")
     data_dir = _path_from_env(env, "DATA_DIR", data_default)
@@ -59,6 +75,7 @@ def build_render_context(*, mode: str, env: Mapping[str, str], runtime_root: Pat
     domains = _allowed_network_domains(normalized, env)
     return RuntimeTemplateRenderContext(
         mode=normalized,
+        runtime_root=runtime_root,
         data_dir=data_dir,
         mcp_server_url=mcp_server_url,
         allowed_network_domains=domains,
@@ -72,10 +89,14 @@ def is_managed_active_config(rel_path: Path) -> bool:
     return len(rel_path.parts) >= 2 and rel_path.parts[-2:] == (".claude", "settings.json")
 
 
+def is_template_managed_text_file(rel_path: Path) -> bool:
+    return rel_path.name in _TEMPLATE_TEXT_FILENAMES or rel_path.suffix in _TEMPLATE_TEXT_SUFFIXES or rel_path.name.endswith(".example")
+
+
 def render_template_file(text: str, *, rel_path: Path, context: RuntimeTemplateRenderContext) -> str:
-    if not is_managed_active_config(rel_path):
+    if not is_template_managed_text_file(rel_path):
         return text
-    if rel_path.name in {".mcp.json", "settings.json"}:
+    if rel_path.name in _MANAGED_JSON_FILENAMES:
         loaded = json.loads(text)
         rendered = _render_json_value(loaded, rel_path=rel_path, context=context)
         return json.dumps(rendered, ensure_ascii=False, indent=2) + "\n"
@@ -83,12 +104,13 @@ def render_template_file(text: str, *, rel_path: Path, context: RuntimeTemplateR
 
 
 def validate_rendered_config(text: str, *, rel_path: Path, context: RuntimeTemplateRenderContext) -> list[str]:
-    if not is_managed_active_config(rel_path):
+    if not is_template_managed_text_file(rel_path):
         return []
     errors: list[str] = []
-    unresolved = sorted(set(UNRESOLVED_TEMPLATE_RE.findall(text)))
-    if unresolved:
-        errors.append(f"{rel_path.as_posix()} contains unresolved template placeholder(s): {', '.join(unresolved)}")
+    if is_managed_active_config(rel_path):
+        unresolved = sorted(set(UNRESOLVED_TEMPLATE_RE.findall(text)))
+        if unresolved:
+            errors.append(f"{rel_path.as_posix()} contains unresolved template placeholder(s): {', '.join(unresolved)}")
     if context.mode == "local-debug":
         for container_path in _container_path_markers():
             if _contains_container_path_marker(text, container_path):

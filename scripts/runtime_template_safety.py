@@ -33,6 +33,8 @@ FORBIDDEN_DIR_NAMES = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
+    ".runtime-template-backups",
+    ".runtime-template-staging",
     "agent-governance",
     "agent-releases",
     "agent-versions",
@@ -234,7 +236,7 @@ def _forbidden_reason(rel: Path) -> str | None:
         return "env override files are forbidden in templates"
     if ".local." in name and not name.endswith(".example"):
         return "local override files are forbidden in templates"
-    if any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES):
+    if ".bak-" in name or any(name.endswith(suffix) for suffix in FORBIDDEN_SUFFIXES):
         return "database, key, backup, and log files are forbidden in templates"
     return None
 

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from export_runtime_template import DEFAULT_BACKUP_DIR, DEFAULT_TEMPLATE_DIR, _create_backup
+from runtime_cleanup import cleanup_runtime_artifacts
 
 
 class RestoreResult(TypedDict):
@@ -17,6 +18,7 @@ class RestoreResult(TypedDict):
     restored_from: str
     template_dir: str
     pre_restore_backup: str | None
+    cleanup_removed: list[str]
 
 
 def _repo_root() -> Path:
@@ -46,13 +48,13 @@ def _safe_extract(archive: tarfile.TarFile, dest: Path) -> None:
         resolved = member_path.resolve()
         try:
             resolved.relative_to(dest_resolved)
-        except ValueError:
-            raise ValueError(f"unsafe tar member path: {member.name}")
+        except ValueError as exc:
+            raise ValueError(f"unsafe tar member path: {member.name}") from exc
     archive.extractall(dest)
 
 
 def restore_backup(*, backup_path: Path, template_dir: Path, backup_dir: Path) -> RestoreResult:
-    pre_restore_backup = _create_backup(template_dir, backup_dir, prefix="pre-restore-runtime-template")
+    _create_backup(template_dir, backup_dir, prefix="pre-restore-runtime-template")
     with tempfile.TemporaryDirectory(prefix="runtime-template-restore-") as tmp:
         tmp_path = Path(tmp)
         with tarfile.open(backup_path, "r:gz") as archive:
@@ -82,11 +84,13 @@ def restore_backup(*, backup_path: Path, template_dir: Path, backup_dir: Path) -
             raise
         if old.exists():
             shutil.rmtree(old)
+    cleanup_result = cleanup_runtime_artifacts(template_dir=template_dir, extra_paths=[backup_dir])
     return {
         "ok": True,
         "restored_from": backup_path.as_posix(),
         "template_dir": template_dir.as_posix(),
-        "pre_restore_backup": pre_restore_backup.as_posix() if pre_restore_backup else None,
+        "pre_restore_backup": None,
+        "cleanup_removed": cleanup_result["removed"],
     }
 
 

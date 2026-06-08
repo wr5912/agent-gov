@@ -369,11 +369,15 @@ make local-debug-bootstrap
 make local-debug-repair-managed-config
 make runtime-template-scan
 make runtime-template-export
-make runtime-template-restore-list
-make runtime-template-restore BACKUP=<backup-file>
+make runtime-clean
+make local-debug-clean
+make runtime-template-clean
+make clean-runtime-artifacts
 ```
 
-`runtime-template-export` 会先备份当前 `docker/runtime-template/`，再把 `${HOME}/volume-agent-runtime` 中允许导出的配置复制到 staging，完成脱敏和校验后才替换模板。API key、MCP header、数据库凭据、IP、PORT、URL、本机路径、`.mcp.local.json`、`.env`、SQLite、日志、transcripts、uploads、worktrees 和 release archives 都不会进入模板。
+当前开发阶段默认保持目录清爽：`runtime-repair-managed-config`、`local-debug-repair-managed-config`、`runtime-template-export` 和 `runtime-template-restore` 成功后会自动清理 `.runtime-template-backups`、`.runtime-template-staging`、旧式 `*.bak-*` 和模板替换临时目录。运行态配置回滚依赖 Git、runtime-template 重新渲染和 Agent version/release 机制，不依赖散落备份文件。
+
+`runtime-template-export` 会把 `${HOME}/volume-agent-runtime` 中允许导出的配置复制到 staging，完成脱敏和校验后才替换模板，并在成功后清理 staging 和临时备份。API key、MCP header、数据库凭据、IP、PORT、URL、本机路径、`.mcp.local.json`、`.env`、SQLite、日志、transcripts、uploads、worktrees 和 release archives 都不会进入模板。
 
 ## subagent 文件格式
 

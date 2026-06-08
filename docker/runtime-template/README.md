@@ -8,8 +8,7 @@
 
 - 初始化运行态目录：`make runtime-bootstrap`
 - 从当前运行态保存模板：`make runtime-template-export`
-- 查看模板备份：`make runtime-template-restore-list`
-- 恢复模板备份：`make runtime-template-restore BACKUP=<backup-file>`
+- 清理运行态备份和模板临时产物：`make clean-runtime-artifacts`
 
 `runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
@@ -19,4 +18,4 @@
 
 ## 安全规则
 
-保存模板会先进入 staging 目录，执行脱敏和校验，通过后才替换本目录。无法判断是否安全的内容会阻断导出，正式模板保持不变。
+保存模板会先进入 staging 目录，执行脱敏和校验，通过后才替换本目录。成功后会自动清理 staging、临时备份和旧式 `.bak-*` 文件；无法判断是否安全的内容会阻断导出，正式模板保持不变。

@@ -20,12 +20,14 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
 	scripts/runtime_template_renderer.py \
+	scripts/runtime_cleanup.py \
+	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py
 
 COVERAGE_JSON ?= /tmp/claude-agent-runtime-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config local-debug-env local-debug-bootstrap local-debug-repair-managed-config runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list
+.PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list runtime-template-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -103,6 +105,9 @@ runtime-bootstrap:
 runtime-repair-managed-config:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --repair-managed-config
 
+runtime-clean:
+	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --runtime-artifacts
+
 local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
 
@@ -112,11 +117,19 @@ local-debug-bootstrap: local-debug-env
 local-debug-repair-managed-config: local-debug-env
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --repair-managed-config
 
+local-debug-clean: local-debug-env
+	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --runtime-artifacts
+
 runtime-template-scan:
 	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-template
 
 runtime-template-export:
 	$(PYTHON_RUN) scripts/export_runtime_template.py
+
+runtime-template-clean:
+	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --template-artifacts
+
+clean-runtime-artifacts: runtime-clean local-debug-clean runtime-template-clean
 
 runtime-template-restore:
 	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi

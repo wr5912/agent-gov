@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TypedDict
 
 try:
+    from scripts.runtime_cleanup import cleanup_runtime_artifacts
     from scripts.runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
@@ -20,6 +21,7 @@ try:
         validate_rendered_config,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
+    from runtime_cleanup import cleanup_runtime_artifacts
     from runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
@@ -82,6 +84,7 @@ class BootstrapResult(TypedDict):
     repaired: list[str]
     removed: list[str]
     backups: list[str]
+    cleanup_removed: list[str]
     validation_errors: list[str]
 
 
@@ -224,8 +227,8 @@ def _backup_path(path: Path, *, runtime_root: Path) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     try:
         rel_path = path.relative_to(runtime_root)
-    except ValueError:
-        return path.with_name(f"{path.name}.bak-{timestamp}")
+    except ValueError as exc:
+        raise ValueError(f"Refusing to create runtime backup outside runtime root: {path}") from exc
     return runtime_root / ".runtime-template-backups" / timestamp / rel_path
 
 
@@ -320,6 +323,7 @@ def bootstrap_runtime_volume(
     repaired: list[str] = []
     removed: list[str] = []
     backups: list[str] = []
+    cleanup_removed: list[str] = []
     validation_errors: list[str] = []
     created_dirs: list[str] = []
     render_context = build_render_context(
@@ -363,6 +367,9 @@ def bootstrap_runtime_volume(
                 removed=removed,
                 backups=backups,
             )
+            if not validation_errors:
+                cleanup_result = cleanup_runtime_artifacts(runtime_root=runtime_root, dry_run=dry_run)
+                cleanup_removed.extend(cleanup_result["removed"])
 
     return {
         "created_dirs": created_dirs,
@@ -371,6 +378,7 @@ def bootstrap_runtime_volume(
         "repaired": repaired,
         "removed": removed,
         "backups": backups,
+        "cleanup_removed": cleanup_removed,
         "validation_errors": validation_errors,
     }
 
@@ -389,7 +397,7 @@ def main() -> int:
     parser.add_argument(
         "--repair-managed-config",
         action="store_true",
-        help="Re-render existing runtime-template managed text files after backing them up; also remove stale template README/docs files.",
+        help="Re-render existing runtime-template managed text files; remove transient backups and stale template README/docs files after successful validation.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet", action="store_true")

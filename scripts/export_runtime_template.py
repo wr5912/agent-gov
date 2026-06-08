@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TypedDict
 
 from bootstrap_runtime_volume import resolve_runtime_root
+from runtime_cleanup import cleanup_runtime_artifacts
 from runtime_template_safety import Finding, SanitizeResult, sanitize_path, scan_path
 
 DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
@@ -87,8 +88,7 @@ README = """# Runtime Template
 
 - 初始化运行态目录：`make runtime-bootstrap`
 - 从当前运行态保存模板：`make runtime-template-export`
-- 查看模板备份：`make runtime-template-restore-list`
-- 恢复模板备份：`make runtime-template-restore BACKUP=<backup-file>`
+- 清理运行态备份和模板临时产物：`make clean-runtime-artifacts`
 
 `runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
@@ -119,6 +119,7 @@ class ExportResult(TypedDict, total=False):
     staging_dir: str
     copied: list[str]
     canonicalized: list[str]
+    cleanup_removed: list[str]
     sanitize: SanitizeResult
     findings: list[FindingResult]
 
@@ -278,24 +279,31 @@ def export_runtime_template(
     findings = scan_path(staging_dir)
     high_findings = [finding for finding in findings if finding.severity == "high"]
     if high_findings:
+        cleanup_result = cleanup_runtime_artifacts(extra_paths=[staging_dir, staging_root])
         return {
             "ok": False,
             "staging_dir": staging_dir.as_posix(),
             "copied": copied,
             "canonicalized": canonicalized,
+            "cleanup_removed": cleanup_result["removed"],
             "sanitize": sanitize_result,
             "findings": [_finding_result(finding) for finding in findings],
         }
 
-    backup_path = _create_backup(template_dir, backup_dir)
+    _create_backup(template_dir, backup_dir)
     _replace_template(staging_dir, template_dir)
+    cleanup_result = cleanup_runtime_artifacts(
+        template_dir=template_dir,
+        extra_paths=[backup_dir, staging_root],
+    )
     return {
         "ok": True,
         "runtime_root": runtime_root.as_posix(),
         "template_dir": template_dir.as_posix(),
-        "backup": backup_path.as_posix() if backup_path else None,
+        "backup": None,
         "copied": copied,
         "canonicalized": canonicalized,
+        "cleanup_removed": cleanup_result["removed"],
         "sanitize": sanitize_result,
     }
 

@@ -75,6 +75,7 @@ export default function App() {
   const [maxTurns, setMaxTurns] = useState(16);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
+  const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string | undefined>();
   const [streamEvents, setStreamEvents] = useState<StreamLogEvent[]>([]);
   const [lastError, setLastError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
@@ -255,6 +256,7 @@ export default function App() {
     setActiveSessionId(sessionId);
     setInput("");
     setStreaming(true);
+    setStreamingAssistantMessageId(undefined);
     setLastError(undefined);
     setStreamEvents([]);
 
@@ -274,6 +276,7 @@ export default function App() {
       caseId: caseId.trim() || undefined,
       events: [],
     };
+    setStreamingAssistantMessageId(assistantMessage.id);
 
     updateSessionMessages(sessionId, (prev) => [...prev, userMessage, assistantMessage]);
 
@@ -389,7 +392,7 @@ export default function App() {
         controller.signal,
       );
     } catch (error) {
-      if ((error as Error).name !== "AbortError") {
+      if (!controller.signal.aborted && (error as Error).name !== "AbortError") {
         const messageText = error instanceof Error ? error.message : String(error);
         appendAssistantEvent({
           id: newId("evt"),
@@ -409,6 +412,7 @@ export default function App() {
       }
     } finally {
       setStreaming(false);
+      setStreamingAssistantMessageId(undefined);
       abortRef.current = null;
     }
   }
@@ -417,6 +421,7 @@ export default function App() {
     abortRef.current?.abort();
     abortRef.current = null;
     setStreaming(false);
+    setStreamingAssistantMessageId(undefined);
   }
 
   async function submitFeedback(payload: FeedbackSignalCreateRequest): Promise<FeedbackSignalRecord> {
@@ -481,6 +486,7 @@ export default function App() {
             messages={activeMessages}
             input={input}
             streaming={streaming}
+            streamingAssistantMessageId={streamingAssistantMessageId}
             activeSessionId={activeSessionId}
             alertId={alertId}
             caseId={caseId}

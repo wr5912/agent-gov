@@ -7,6 +7,7 @@ interface ChatPanelProps {
   messages: ChatMessage[];
   input: string;
   streaming: boolean;
+  streamingAssistantMessageId?: string;
   activeSessionId?: string;
   alertId: string;
   caseId: string;
@@ -30,6 +31,7 @@ export function ChatPanel({
   messages,
   input,
   streaming,
+  streamingAssistantMessageId,
   activeSessionId,
   alertId,
   caseId,
@@ -106,6 +108,7 @@ export function ChatPanel({
             <MessageBubble
               message={message}
               key={message.id}
+              isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
               onCreateFeedback={onCreateFeedback}
             />
           ))

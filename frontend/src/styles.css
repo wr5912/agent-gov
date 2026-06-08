@@ -392,6 +392,15 @@ button:disabled {
 }
 .message-user .message-meta { color: rgba(255, 250, 243, 0.78); }
 .message-content { line-height: 1.65; }
+.message-stream-indicator {
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  color: rgba(92, 70, 56, 0.76);
+}
+.message-content + .message-stream-indicator {
+  margin-top: 8px;
+}
 .plain-text, .code-block {
   margin: 0;
   white-space: pre-wrap;

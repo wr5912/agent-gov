@@ -1,4 +1,4 @@
-import { ListTree, MessageSquare, Plus, Search, X } from "lucide-react";
+import { ListTree, Loader2, MessageSquare, Plus, Search, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
 import type { AgentActivity, ChatMessage, StreamLogEvent } from "../types/runtime";
@@ -6,6 +6,7 @@ import { isRecord } from "../utils/records";
 
 interface Props {
   message: ChatMessage;
+  isActiveStreaming?: boolean;
   onCreateFeedback?: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
 }
 
@@ -30,22 +31,30 @@ function feedbackLabelDisplay(value: string): string {
   return feedbackLabelOptions.find((option) => option.value === value)?.label || value;
 }
 
-export function MessageBubble({ message, onCreateFeedback }: Props) {
+export function MessageBubble({ message, isActiveStreaming = false, onCreateFeedback }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackResult, setFeedbackResult] = useState<FeedbackSignalRecord | null>(null);
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
+  const hasContent = message.content.length > 0;
   const detailEvents = message.role === "assistant" ? message.events || [] : [];
   const canSubmitFeedback = Boolean(message.role === "assistant" && message.runId && message.sessionId && onCreateFeedback);
+  const roleClass = isUser ? "message-user" : isSystem ? "message-system" : "message-assistant";
+  const streamingClass = isActiveStreaming ? "message-assistant-streaming" : "";
   return (
     <article className={`message-row ${isUser ? "message-row-user" : ""}`}>
-      <div className={`message-bubble ${isUser ? "message-user" : isSystem ? "message-system" : "message-assistant"}`}>
+      <div className={`message-bubble ${roleClass} ${streamingClass}`.trim()}>
         <div className="message-meta">
           <span>{isUser ? "You" : isSystem ? "System" : "Claude Agent"}</span>
           <time>{formatTime(message.createdAt)}</time>
         </div>
-        <FormattedText text={message.content || (message.role === "assistant" ? "正在等待响应..." : "")} />
+        {hasContent ? <FormattedText text={message.content} /> : null}
+        {isActiveStreaming ? (
+          <div className="message-stream-indicator" role="status" aria-label="正在生成">
+            <Loader2 size={16} className="spin" />
+          </div>
+        ) : null}
         {detailEvents.length > 0 || canSubmitFeedback ? (
           <div className="message-detail-actions">
             {detailEvents.length > 0 ? (

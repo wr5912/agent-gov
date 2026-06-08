@@ -21,6 +21,18 @@ function json(route, payload, status = 200) {
   });
 }
 
+function sse(route, events, status = 200) {
+  return route.fulfill({
+    status,
+    contentType: "text/event-stream; charset=utf-8",
+    body: events.map(({ event, data }) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`).join(""),
+  });
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function timestamp() {
   return "2026-06-05T00:00:00Z";
 }
@@ -332,6 +344,56 @@ async function openPlanTab(page, title) {
   await page.getByRole("tab", { name: /优化方案/ }).click();
 }
 
+async function resetPlayground(page) {
+  await page.goto(uiBase, { waitUntil: "domcontentloaded" });
+  await page.evaluate(() => {
+    window.localStorage.removeItem("playground-session-messages");
+    window.localStorage.removeItem("playground-active-session");
+  });
+  await page.reload({ waitUntil: "domcontentloaded" });
+}
+
+async function verifyPlaygroundAssistantStreamingBubble(page, stateRef) {
+  stateRef.chatStreamMode = "text";
+  stateRef.chatStreamDelayMs = 800;
+  stateRef.chatStreamCount = 0;
+  await resetPlayground(page);
+  await page.getByPlaceholder("输入任务或问题，Ctrl/⌘ + Enter 发送...").fill("验证消息气泡等待态");
+  await page.getByRole("button", { name: "发送" }).click();
+  await page.locator(".message-assistant-streaming .message-stream-indicator .spin").waitFor({ timeout: 10_000 });
+  if (await page.getByText("正在连接 Claude Agent...").count()) {
+    throw new Error("Streaming bubble should only show the spinner, not waiting copy");
+  }
+  if (await page.getByText("等待首个响应片段...").count()) {
+    throw new Error("Streaming bubble should only show the spinner, not progress copy");
+  }
+  if (await page.getByText("停止生成").count()) {
+    throw new Error("Streaming bubble should not duplicate the stop action inside the message");
+  }
+  await page.getByText("第一段回答").waitFor({ timeout: 15_000 });
+  await page.locator(".message-assistant-streaming").waitFor({ state: "detached", timeout: 15_000 });
+  if (stateRef.chatStreamCount !== 1) {
+    throw new Error(`Expected one chat stream request, got ${stateRef.chatStreamCount}`);
+  }
+}
+
+async function verifyPlaygroundAssistantEmptyResult(page, stateRef) {
+  stateRef.chatStreamMode = "empty";
+  stateRef.chatStreamDelayMs = 300;
+  stateRef.chatStreamCount = 0;
+  await resetPlayground(page);
+  await page.getByPlaceholder("输入任务或问题，Ctrl/⌘ + Enter 发送...").fill("验证空文本结果");
+  await page.getByRole("button", { name: "发送" }).click();
+  await page.locator(".message-assistant-streaming .message-stream-indicator .spin").waitFor({ timeout: 10_000 });
+  await page.locator(".message-assistant-streaming").waitFor({ state: "detached", timeout: 15_000 });
+  if (await page.getByText("本次运行未返回文本结果。").count()) {
+    throw new Error("Empty assistant result should not show extra placeholder copy");
+  }
+  if (stateRef.chatStreamCount !== 1) {
+    throw new Error(`Expected one empty chat stream request, got ${stateRef.chatStreamCount}`);
+  }
+}
+
 async function verifyInitialEmptyState(page, stateRef) {
   stateRef.value = "empty";
   await openPlanTab(page, batchTitle);
@@ -490,6 +552,9 @@ async function main() {
       repositoryDirty: false,
       discardCount: 0,
       snapshotCount: 0,
+      chatStreamMode: "text",
+      chatStreamDelayMs: 0,
+      chatStreamCount: 0,
     };
     await page.addInitScript(
       ({ apiBaseValue }) => {
@@ -500,6 +565,17 @@ async function main() {
     await page.route("**/*", async (route) => {
       const url = new URL(route.request().url());
       if (url.origin === uiBase) return route.continue();
+      if (route.request().method() === "POST" && url.pathname === "/api/chat/stream") {
+        stateRef.chatStreamCount += 1;
+        await delay(stateRef.chatStreamDelayMs);
+        const events = [];
+        if (stateRef.chatStreamMode !== "empty") {
+          events.push({ event: "message", data: { text: "第一段回答", event: "AssistantMessage" } });
+        }
+        events.push({ event: "result", data: { run_id: "run-ui-chat" } });
+        events.push({ event: "done", data: {} });
+        return sse(route, events);
+      }
       if (route.request().method() === "POST" && url.pathname === "/api/feedback-optimization-batches/fob-ui-state/optimization-plan") {
         stateRef.value = stateRef.next;
         return json(route, agentJob(stateRef.value));
@@ -549,6 +625,8 @@ async function main() {
       return route.continue();
     });
     try {
+      await verifyPlaygroundAssistantStreamingBubble(page, stateRef);
+      await verifyPlaygroundAssistantEmptyResult(page, stateRef);
       await verifyInitialEmptyState(page, stateRef);
       await verifyGenerationTransition(page, stateRef, "success");
       await verifyGenerationTransition(page, stateRef, "failed");
@@ -565,7 +643,7 @@ async function main() {
   } finally {
     await stopChild(server);
   }
-  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["empty", "success", "failed", "background_failed_refresh", "timeout_refresh", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "workspace_dirty_preflight", "execute_all", "rollback"] }, null, 2));
+  console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["playground_spinner_only", "playground_empty_result", "empty", "success", "failed", "background_failed_refresh", "timeout_refresh", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "workspace_dirty_preflight", "execute_all", "rollback"] }, null, 2));
 }
 
 main().catch((error) => {

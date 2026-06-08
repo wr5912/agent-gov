@@ -11,6 +11,20 @@ MAX_PROMPT_FILE_TEXT_CHARS = 20_000
 MAX_PROMPT_NESTED_TEXT_CHARS = 1_000
 
 
+def build_attribution_prompt_context(input_json: JsonObject) -> JsonObject:
+    evidence_files = _json_dict(input_json.get("evidence_files"))
+    return _json_object(
+        {
+            "feedback_case": _compact_json_object(input_json.get("feedback_case"), MAX_PROMPT_NESTED_TEXT_CHARS),
+            "evidence_package": _evidence_package_summary(_json_dict(input_json.get("evidence_package"))),
+            "evidence_files": _compact_json_object(evidence_files, MAX_PROMPT_FILE_TEXT_CHARS),
+            "langfuse_trace_details": _compact_json_object(input_json.get("langfuse_trace_details"), MAX_PROMPT_FILE_TEXT_CHARS),
+            "main_agent_version_id": _text(input_json.get("main_agent_version_id"), 300),
+            "task": _text(input_json.get("task"), 200),
+        }
+    )
+
+
 def build_proposal_prompt_context(input_json: JsonObject) -> JsonObject:
     """Return the business context needed by proposal-generator.
 
@@ -98,6 +112,30 @@ def _evidence_ref_summary(source: JsonObject) -> JsonObject:
             "type": _text(source.get("type"), 100),
             "id": _text(source.get("id"), 300),
             "reason": _text(source.get("reason"), MAX_PROMPT_NESTED_TEXT_CHARS),
+        }
+    )
+
+
+def _evidence_package_summary(source: JsonObject) -> JsonObject:
+    completeness = _json_dict(source.get("completeness"))
+    source_refs = _json_dict(source.get("source_refs"))
+    return _json_object(
+        {
+            "evidence_package_id": _text(source.get("evidence_package_id"), 300),
+            "main_agent_version_id": _text(source.get("main_agent_version_id"), 300),
+            "source_refs": _compact_json_object(source_refs, MAX_PROMPT_NESTED_TEXT_CHARS),
+            "included_files": _limited_objects(_json_list(source.get("included_files")), _included_file_summary, limit=20),
+            "completeness": _compact_json_object(completeness, MAX_PROMPT_NESTED_TEXT_CHARS),
+        }
+    )
+
+
+def _included_file_summary(source: JsonObject) -> JsonObject:
+    return _json_object(
+        {
+            "path": _text(source.get("path"), 300),
+            "type": _text(source.get("type"), 100),
+            "sha256": _text(source.get("sha256"), 100),
         }
     )
 

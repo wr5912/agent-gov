@@ -17,14 +17,13 @@ from app.runtime.prompts.feedback_prompts import (
 
 def test_proposal_generator_prompt_embeds_pruned_context_when_available():
     prompt = proposal_generator_prompt(
-        "/tmp/input.json",
         prompt_context={
             "regeneration_instruction": "优先修改 triage-alert skill。",
         },
     )
 
     assert "optimization_plan_prompt_context" in prompt
-    assert "不需要调用工具读取完整输入文件" in prompt
+    assert "不需要调用工具读取 job 输入文件" in prompt
     assert "regeneration_instruction" in prompt
     assert "optimization_plan_input_json" not in prompt
     assert "schema_version" not in prompt
@@ -35,7 +34,6 @@ def test_proposal_generator_prompt_embeds_pruned_context_when_available():
 
 def test_proposal_generator_prompt_delegates_wire_format_to_dspy():
     prompt = proposal_generator_prompt(
-        "/tmp/batch-plan.json",
         prompt_context={"feedback_case_count": 1},
     )
 
@@ -186,11 +184,11 @@ def test_eval_case_generation_prompt_context_keeps_business_grounding_without_fu
 
 def test_feedback_prompts_do_not_expose_formatter_implementation_details():
     prompts = [
-        attribution_prompt("/tmp/attribution.json"),
-        proposal_generator_prompt("/tmp/batch-plan.json"),
-        execution_plan_prompt("/tmp/execution.json"),
-        eval_case_generation_prompt("/tmp/eval-case.json"),
-        regression_impact_analysis_prompt("/tmp/regression-impact.json"),
+        attribution_prompt(),
+        proposal_generator_prompt(),
+        execution_plan_prompt(),
+        eval_case_generation_prompt(),
+        regression_impact_analysis_prompt(),
     ]
 
     forbidden = (
@@ -211,11 +209,11 @@ def test_feedback_prompts_do_not_expose_formatter_implementation_details():
 
 def test_feedback_prompts_are_structured():
     prompts = [
-        attribution_prompt("/tmp/attribution.json"),
-        proposal_generator_prompt("/tmp/batch-plan.json"),
-        execution_plan_prompt("/tmp/execution.json"),
-        eval_case_generation_prompt("/tmp/eval-case.json"),
-        regression_impact_analysis_prompt("/tmp/regression-impact.json"),
+        attribution_prompt(),
+        proposal_generator_prompt(),
+        execution_plan_prompt(),
+        eval_case_generation_prompt(),
+        regression_impact_analysis_prompt(),
     ]
 
     for prompt in prompts:
@@ -227,14 +225,15 @@ def test_feedback_prompts_are_structured():
         assert "必须包含足够清晰的业务信息" not in prompt
         assert "请提供足够清晰的任务语义" not in prompt
         assert "请输出足够清晰" not in prompt
+        assert "输入文件：" not in prompt
 
 
 def test_feedback_prompts_do_not_require_agents_to_repeat_backend_context_fields():
-    attribution = attribution_prompt("/tmp/attribution.json")
-    proposal = proposal_generator_prompt("/tmp/batch-plan.json")
-    execution = execution_plan_prompt("/tmp/execution.json")
-    eval_case_generation = eval_case_generation_prompt("/tmp/eval-case.json")
-    regression_impact = regression_impact_analysis_prompt("/tmp/regression-impact.json")
+    attribution = attribution_prompt()
+    proposal = proposal_generator_prompt()
+    execution = execution_plan_prompt()
+    eval_case_generation = eval_case_generation_prompt()
+    regression_impact = regression_impact_analysis_prompt()
 
     assert "feedback_case_id 和 attribution_job_id 对应的反馈与归因任务" not in attribution
     assert "顶层方案必须能直接读出：title、summary、problem_types、confidence、actionability、target_type、target_path、recommendation、expected_effect、validation、risk、source_refs" not in proposal
@@ -251,11 +250,11 @@ def test_feedback_prompts_do_not_require_agents_to_repeat_backend_context_fields
 
 def test_feedback_prompts_spell_out_business_information_points():
     prompts = {
-        "attribution": attribution_prompt("/tmp/attribution.json"),
-        "optimization_plan": proposal_generator_prompt("/tmp/batch-plan.json"),
-        "execution": execution_plan_prompt("/tmp/execution.json"),
-        "eval_case_generation": eval_case_generation_prompt("/tmp/eval-case.json"),
-        "regression_impact_analysis": regression_impact_analysis_prompt("/tmp/regression-impact.json"),
+        "attribution": attribution_prompt(),
+        "optimization_plan": proposal_generator_prompt(),
+        "execution": execution_plan_prompt(),
+        "eval_case_generation": eval_case_generation_prompt(),
+        "regression_impact_analysis": regression_impact_analysis_prompt(),
     }
 
     expected = {
@@ -309,8 +308,8 @@ def test_feedback_prompts_spell_out_business_information_points():
 
 
 def test_attribution_and_proposal_generator_prompts_require_chinese_user_facing_text():
-    attribution = attribution_prompt("/tmp/attribution.json")
-    proposal = proposal_generator_prompt("/tmp/batch-plan.json")
+    attribution = attribution_prompt()
+    proposal = proposal_generator_prompt()
 
     assert "所有面向人的说明文本必须使用简体中文" in attribution
     assert "证据引用原因" in attribution

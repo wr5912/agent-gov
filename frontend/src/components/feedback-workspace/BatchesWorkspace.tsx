@@ -21,6 +21,7 @@ import {
   attributionStatusTone,
   batchRegressionStatusText,
   batchStatusTone,
+  buildBatchRegressionEligibility,
   buildBatchAttributionJobs,
   buildBatchSourceRows,
   defaultBatchDetail,
@@ -29,6 +30,7 @@ import {
   jobStatusTone,
   profileDisplayName,
   shortId,
+  type BatchRegressionEligibility,
   type BatchDetailView,
 } from "./selectors";
 import type {
@@ -62,6 +64,7 @@ export function BatchesPanel({
   onExecutePlanTask,
   onGeneratePlan,
   onRemoveEvalCase,
+  onPromoteEvalCases,
   onRunAttribution,
   onRunRegression,
   onRollbackBatchExecution,
@@ -89,6 +92,7 @@ export function BatchesPanel({
   onExecutePlanTask: (batch: FeedbackOptimizationBatchRecord, planTask: FeedbackOptimizationPlanTaskRecord, webhookAlias?: string) => void;
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
+  onPromoteEvalCases: (batch: FeedbackOptimizationBatchRecord) => Promise<boolean>;
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
   onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
@@ -112,6 +116,10 @@ export function BatchesPanel({
   const hasBatchAttribution = Boolean(attributionJobs.length || selectedBatch?.attribution_job_ids?.length);
   const planGenerationFailed = Boolean(selectedBatch?.optimization_plan_error || selectedBatch?.optimization_plan_job?.error_json);
   const planTasks = selectedBatch?.optimization_plan?.tasks || [];
+  const regressionEligibility = useMemo(
+    () => buildBatchRegressionEligibility(selectedBatch, evalCases),
+    [selectedBatch, evalCases],
+  );
   const hasAppliedPlanTask = planTasks.some((task) => Boolean(task.applied_agent_version_id || task.internal_action_result));
   const hasActivePlanTaskExecution = planTasks.some((task) => {
     const latestExecutionJob = task.latest_execution_job as { status?: string | null } | null | undefined;
@@ -126,10 +134,13 @@ export function BatchesPanel({
       hasActivePlanTaskExecution ||
       hasLockedExecutionRun,
   );
-  const canRunBatchRegression = Boolean(selectedBatch?.latest_execution_run?.applied_agent_version_id || selectedBatch?.optimization_task?.applied_agent_version_id);
-  const regressionDisabledReason = selectedBatch?.optimization_task
-    ? "优化任务尚未应用，未产生 Agent 版本，不能运行回归测试。"
-    : "尚未执行优化方案，不能运行回归测试。";
+  const hasAppliedOptimization = Boolean(selectedBatch?.latest_execution_run?.applied_agent_version_id || selectedBatch?.optimization_task?.applied_agent_version_id);
+  const canRunBatchRegression = hasAppliedOptimization && regressionEligibility.eligibleTotal > 0;
+  const regressionDisabledReason = batchRegressionDisabledReason(
+    selectedBatch,
+    hasAppliedOptimization,
+    regressionEligibility,
+  );
 
   useEffect(() => {
     setActiveBatchDetail(defaultBatchDetail(selectedBatch));
@@ -250,6 +261,7 @@ export function BatchesPanel({
                 evalCases={evalCases}
                 onArchiveEvalCase={onArchiveEvalCase}
                 onCreateEvalCase={onCreateEvalCase}
+                onPromoteEvalCases={onPromoteEvalCases}
                 onRemoveEvalCase={onRemoveEvalCase}
                 onUpdateEvalCase={onUpdateEvalCase}
               />
@@ -375,6 +387,22 @@ function batchEvalCaseGenerationTabValue(state: EvalCaseGenerationState): string
   if (state.status === "failed") return "生成失败";
   if (state.status === "timeout") return "生成超时";
   return state.label;
+}
+
+function batchRegressionDisabledReason(
+  batch: FeedbackOptimizationBatchRecord | null,
+  hasAppliedOptimization: boolean,
+  eligibility: BatchRegressionEligibility,
+): string {
+  if (!hasAppliedOptimization) {
+    return batch?.optimization_task
+      ? "优化任务尚未应用，未产生 Agent 版本，不能运行回归测试。"
+      : "尚未执行优化方案，不能运行回归测试。";
+  }
+  if (eligibility.promotableLinked) {
+    return "当前批次候选用例需先晋级为批次专用回归资产。";
+  }
+  return "当前批次没有 active/approved 回归资产，不能运行回归测试。";
 }
 
 function BatchAttributionDetails({

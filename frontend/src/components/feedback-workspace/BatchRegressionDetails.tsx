@@ -1,14 +1,23 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Archive, Link2Off, Pencil, Plus, Save, XCircle } from "lucide-react";
-import { DetailJsonPreview, DetailMetricGrid, FormattedText, FormattedTextFields, Pill } from "./common";
+import { Archive, CheckCircle2, Link2Off, Loader2, Pencil, Plus, Save, XCircle } from "lucide-react";
+import { DetailJsonPreview, DetailMetricGrid, FormattedText, FormattedTextFields, Pill, type PillTone } from "./common";
 import {
+  buildBatchRegressionEligibility,
+  evalCaseEntersRegressionPlan,
   evalCaseEditDraft,
   evalItemSummary,
+  evalCasePromotableForBatch,
   evalStatusTone,
   formatDate,
   parseEvalCaseLabels,
   shortId,
 } from "./selectors";
+import {
+  formatEvalCaseAssetLayer,
+  formatEvalCaseBlockingPolicy,
+  formatEvalCaseFlakyStatus,
+  formatEvalCasePromotionStatus,
+} from "../../utils/domainLabels";
 import type {
   EvalCaseRecord,
   EvalCaseUpdateRequest,
@@ -51,6 +60,7 @@ export function BatchRegressionDetails({
   evalCases,
   onArchiveEvalCase,
   onCreateEvalCase,
+  onPromoteEvalCases,
   onRemoveEvalCase,
   onUpdateEvalCase,
 }: {
@@ -62,6 +72,7 @@ export function BatchRegressionDetails({
     batch: FeedbackOptimizationBatchRecord,
     payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
   ) => Promise<boolean>;
+  onPromoteEvalCases: (batch: FeedbackOptimizationBatchRecord) => Promise<boolean>;
   onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
   onUpdateEvalCase: (
     batch: FeedbackOptimizationBatchRecord,
@@ -72,8 +83,9 @@ export function BatchRegressionDetails({
   const [draft, setDraft] = useState<EvalCaseDraft | null>(null);
   const run = batch.latest_eval_run || null;
   const linkedCases = useMemo(() => batchEvalCaseEntries(batch, evalCases, run), [batch, evalCases, run]);
-  const activeCount = linkedCases.filter((entry) => entry.evalCase?.status === "active").length;
+  const eligibility = useMemo(() => buildBatchRegressionEligibility(batch, evalCases), [batch, evalCases]);
   const busy = Boolean(actionId?.startsWith("batch-eval-"));
+  const promoting = actionId === `batch-eval-promote:${batch.batch_id}`;
 
   async function submitDraft(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -98,15 +110,24 @@ export function BatchRegressionDetails({
           <h4>回归测试</h4>
           <small>本批次关联用例用于后续批次回归，历史运行结果保持只读。</small>
         </div>
-        <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => setDraft(newEvalCaseDraft())}>
-          <Plus size={16} />
-          新增用例
-        </button>
+        <div className="fw-detail-action-row">
+          {eligibility.promotableLinked ? (
+            <button className="fw-small-primary" type="button" disabled={busy} onClick={() => onPromoteEvalCases(batch)}>
+              {promoting ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
+              晋级候选用例
+            </button>
+          ) : null}
+          <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => setDraft(newEvalCaseDraft())}>
+            <Plus size={16} />
+            新增用例
+          </button>
+        </div>
       </div>
       <DetailMetricGrid
         items={[
           ["关联用例", linkedCases.length],
-          ["Active", activeCount],
+          ["可运行", eligibility.eligibleTotal],
+          ["待晋级", eligibility.promotableLinked],
           ["回归计划", regressionPlanTotal(batch)],
           ["门禁", String(batch.latest_regression_gate?.status || run?.gate_result?.status || "-")],
           ["最近运行", run?.result_status || run?.status || "未运行"],
@@ -126,7 +147,7 @@ export function BatchRegressionDetails({
           ]}
         />
       ) : (
-        <p className="fw-note-box">尚未运行批次回归测试。优化应用后可运行当前 active 用例。</p>
+        <p className="fw-note-box">{batchRegressionReadinessNote(eligibility.eligibleTotal, eligibility.promotableLinked)}</p>
       )}
       {draft?.mode === "create" ? (
         <EvalCaseForm busy={busy} draft={draft} onCancel={() => setDraft(null)} onChange={(nextDraft) => setDraft(nextDraft)} onSubmit={submitDraft} />
@@ -160,6 +181,18 @@ function regressionPlanTotal(batch: FeedbackOptimizationBatchRecord): string | n
     if (typeof total === "number" || typeof total === "string") return total;
   }
   return batch.latest_regression_plan?.eval_case_ids?.length ?? "-";
+}
+
+function batchRegressionReadinessNote(eligibleTotal: number, promotableLinked: number): string {
+  if (eligibleTotal) return `尚未运行批次回归测试。当前有 ${eligibleTotal} 条 active/approved 回归资产可参与。`;
+  if (promotableLinked) return `尚未运行批次回归测试。当前 ${promotableLinked} 条候选用例需先晋级为批次专用回归资产。`;
+  return "尚未运行批次回归测试。当前没有 active/approved 回归资产。";
+}
+
+function evalCaseRegressionReadiness(evalCase: EvalCaseRecord): { label: string; tone: PillTone } {
+  if (evalCaseEntersRegressionPlan(evalCase)) return { label: "可运行", tone: "green" };
+  if (evalCasePromotableForBatch(evalCase)) return { label: "需晋级", tone: "orange" };
+  return { label: "不参与", tone: "gray" };
 }
 
 function BatchEvalCaseCard({
@@ -211,11 +244,13 @@ function BatchEvalCaseCard({
       </article>
     );
   }
+  const readiness = evalCaseRegressionReadiness(evalCase);
   return (
     <article className="fw-eval-card fw-batch-eval-card">
       <div className="fw-batch-eval-card-head">
         <div>
           <Pill tone={evalCaseStatusTone(evalCase.status)}>{evalCase.status}</Pill>
+          <Pill tone={readiness.tone}>{readiness.label}</Pill>
           {runItem ? <Pill tone={evalStatusTone(runItem.status)}>最近 {runItem.status}</Pill> : <Pill tone="gray">未运行</Pill>}
         </div>
         <h4 title={evalCase.eval_case_id}>{shortId(evalCase.eval_case_id)}</h4>
@@ -242,8 +277,11 @@ function BatchEvalCaseCard({
       <DetailMetricGrid
         items={[
           ["更新", formatDate(evalCase.updated_at)],
+          ["资产层", formatEvalCaseAssetLayer(evalCase.asset_layer)],
+          ["晋级", formatEvalCasePromotionStatus(evalCase.promotion_status)],
+          ["门禁", formatEvalCaseBlockingPolicy(evalCase.blocking_policy)],
+          ["稳定性", formatEvalCaseFlakyStatus(evalCase.flaky_status || "stable")],
           ["来源", evalCase.source || evalCase.source_kind || "-"],
-          ["反馈单", shortId(evalCase.source_feedback_case_id)],
           ["标签", evalCase.labels?.length || 0],
         ]}
       />

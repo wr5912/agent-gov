@@ -65,7 +65,7 @@ class FeedbackJobOrchestrator:
         return _agent_job_response(
             await self._run_profile_json_job(
                 profile_name=spec.profile_name,
-                prompt=spec.prompt_builder(str(job["input_path"]), _job_input(job)),
+                prompt=spec.prompt_builder(_job_input(job)),
                 job_type=spec.job_type,
                 job_input=_job_input(job),
                 complete=lambda formatter_output: self.feedback_store.complete_attribution_job(
@@ -103,7 +103,7 @@ class FeedbackJobOrchestrator:
         return _batch_response(
             await self._run_profile_json_job(
                 profile_name=spec.profile_name,
-                prompt=spec.prompt_builder(str(job["input_path"]), input_payload),
+                prompt=spec.prompt_builder(input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
                 complete=lambda formatter_output: self.feedback_store.complete_batch_plan_job(
@@ -134,14 +134,11 @@ class FeedbackJobOrchestrator:
         if deterministic_plan:
             self.feedback_store.complete_execution_job(job["execution_job_id"], deterministic_plan)
             return _agent_job_response(self.feedback_store.get_execution_job(job["execution_job_id"]))
-        input_path = job.get("input_path")
-        if not isinstance(input_path, str) or not input_path:
-            input_path = str(self.feedback_store.tmp_jobs_dir / job["execution_job_id"] / "execution" / "input.json")
         input_payload = _job_input(job)
         return _agent_job_response(
             await self._run_profile_json_job(
                 profile_name=spec.profile_name,
-                prompt=spec.prompt_builder(input_path, input_payload),
+                prompt=spec.prompt_builder(input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
                 complete=lambda formatter_output: self.feedback_store.complete_execution_job(

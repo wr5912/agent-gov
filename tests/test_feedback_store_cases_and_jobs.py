@@ -130,10 +130,14 @@ def test_case_evidence_and_job_outputs(tmp_path):
     assert evidence["source_refs"]["trace_ids"] == ["trace-1"]
     assert evidence["completeness"]["has_messages"] is True
     assert evidence["completeness"]["has_langfuse_trace_refs"] is True
-    assert evidence["completeness"]["has_langfuse_trace_details"] is False
+    assert evidence["completeness"]["has_langfuse_trace_details"] is True
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "messages.json")["content"][0]["messages"]
     trace_refs = store.get_evidence_package_file(evidence["evidence_package_id"], "langfuse_trace_refs.json")["content"]
     assert trace_refs[0]["trace_url"] == "http://langfuse.local/project/traces/trace-1"
+    trace_details = store.get_evidence_package_file(evidence["evidence_package_id"], "langfuse_trace_details.json")["content"]
+    assert trace_details[0]["trace_id"] == "trace-1"
+    assert trace_details[0]["fetch_status"] == "completed"
+    assert trace_details[0]["trace"]["id"] == "trace-1"
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "langfuse_traces.json") is None
 
     attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
@@ -162,6 +166,27 @@ def test_case_evidence_and_job_outputs(tmp_path):
     assert completed_plan["status"] == "completed"
     assert plan_output["blocked_items"]
     assert store.find_optimization_batch(batch["batch_id"])["optimization_plan"]["optimization_plan_job_id"] == plan_job["job_id"]
+
+
+def test_langfuse_trace_fetch_failure_is_non_blocking_evidence_context(tmp_path):
+    store, _ = _store(tmp_path)
+
+    def fail_trace_fetch(trace_id: str):
+        raise RuntimeError(f"langfuse unavailable: {trace_id}")
+
+    store.set_langfuse_trace_fetcher(fail_trace_fetch)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"], comment="证据不足"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+
+    evidence = store.create_evidence_package(feedback_case["feedback_case_id"])
+    attribution_job = store.create_attribution_job(feedback_case["feedback_case_id"])
+
+    trace_details = store.get_evidence_package_file(evidence["evidence_package_id"], "langfuse_trace_details.json")["content"]
+    assert trace_details[0]["trace_id"] == "trace-1"
+    assert trace_details[0]["fetch_status"] == "failed"
+    assert "langfuse unavailable" in trace_details[0]["error"]
+    assert attribution_job["input_json"]["langfuse_trace_details"][0]["fetch_status"] == "failed"
 
 
 def test_attribution_output_context_fields_are_backend_authoritative(tmp_path):
@@ -209,10 +234,9 @@ def test_regenerated_single_case_plan_job_records_single_use_instruction(tmp_pat
         force=True,
         regeneration_instruction="  请优先考虑修改 triage-alert skill。  ",
     )
-    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
 
     assert job["input_json"]["regeneration_instruction"] == "请优先考虑修改 triage-alert skill。"
-    assert input_payload["regeneration_instruction"] == "请优先考虑修改 triage-alert skill。"
+    assert job["input_path"] == ""
 
 
 def _create_external_plan_task(store, feedback_case, attribution_job, *, owner="knowledge-base"):
@@ -548,7 +572,7 @@ def test_create_attribution_job_cleans_record_and_tmp_when_case_attach_fails(tmp
 
     with store.Session() as db:
         assert db.scalars(select(AgentJobModel)).all() == []
-    assert list((settings.data_dir / ".runtime-tmp" / "jobs").iterdir()) == []
+    assert not (settings.data_dir / ".runtime-tmp" / "jobs").exists()
     assert store.find_case(feedback_case["feedback_case_id"])["attribution_job_ids"] == []
 
 

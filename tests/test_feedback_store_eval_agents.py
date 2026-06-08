@@ -611,11 +611,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
         async for item in prompt:
             prompt_items.append(item)
         prompt_text = prompt_items[0]["message"]["content"]
-        input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
-        input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
         output = {
-            "feedback_case_id": input_payload["feedback_case_id"],
-            "attribution_job_id": input_payload["job_id"],
             "status": "needs_human_review",
             "problem_type": "tool_data_quality",
             "optimization_object_type": "main_agent_claude_md",
@@ -629,7 +625,6 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
         }
         seen["formatted_payload"] = output
         seen["prompt_text"] = prompt_text
-        seen["input_path"] = input_path
         seen["cwd"] = options.cwd
         seen["max_turns"] = options.max_turns
         text = json.dumps(output, ensure_ascii=False)
@@ -661,6 +656,9 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert evidence["completeness"]["has_tool_calls"] is False
     assert store.get_evidence_package_file(evidence["evidence_package_id"], "tool_calls.json")["content"] == []
     assert "归因分析智能体" in str(seen["prompt_text"])
+    assert "attribution_prompt_context" in str(seen["prompt_text"])
+    assert "输入文件：" not in str(seen["prompt_text"])
+    assert "tool_calls.json" in str(seen["prompt_text"])
     assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
     assert seen["max_turns"] == 16
     assert seen["formatter_job_type"] == "attribution"
@@ -866,4 +864,5 @@ def test_sqlite_store_does_not_create_legacy_runtime_dirs(tmp_path):
     assert not (settings.data_dir / "feedback-cases").exists()
     assert not (settings.data_dir / "feedback-analysis").exists()
     assert not (settings.data_dir / "evidence-packages").exists()
+    assert not (settings.data_dir / ".runtime-tmp" / "jobs").exists()
     assert not (settings.data_dir / ".runtime-tmp" / "jobs" / job["job_id"]).exists()

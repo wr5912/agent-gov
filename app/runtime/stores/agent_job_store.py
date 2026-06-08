@@ -50,7 +50,7 @@ class AgentJobStoreMixin:
         profile_version: Optional[JsonObject] = None,
         status: str = "queued",
     ) -> JsonObject:
-        input_path = input_path or self._write_agent_job_input(job_id, job_type, input_payload)
+        input_path = input_path or ""
         now = utc_now()
         row = AgentJobModel(
             job_id=job_id,
@@ -661,8 +661,3 @@ class AgentJobStoreMixin:
     def _agent_job_to_dict(self, row: AgentJobModel) -> JsonObject:
         compensations = self._execution_compensations_for_job(row.job_id) if row.job_type == "execution" else None
         return AgentJobRecord.from_row(row, compensations=compensations).to_payload()
-
-    def _write_agent_job_input(self, job_id: str, job_type: str, payload: JsonObject) -> str:
-        path = self.tmp_jobs_dir / job_id / job_type / "input.json"
-        self._write_json(path, payload)
-        return str(path)

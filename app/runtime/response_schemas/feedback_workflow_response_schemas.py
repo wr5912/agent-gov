@@ -356,6 +356,13 @@ class FeedbackOptimizationBatchAttributionResponse(BaseModel):
     jobs: list[AgentJobResponse] = Field(default_factory=list)
 
 
+class FeedbackOptimizationBatchEvalCasePromotionResponse(BaseModel):
+    batch: Optional[FeedbackOptimizationBatchResponse] = None
+    promoted_eval_cases: list[EvalCaseResponse] = Field(default_factory=list)
+    skipped_eval_cases: list[JsonObject] = Field(default_factory=list)
+    eligibility_summary: JsonObject = Field(default_factory=dict)
+
+
 class FeedbackOptimizationBatchExecuteAllResponse(BaseModel):
     batch: Optional[FeedbackOptimizationBatchResponse] = None
     execution_run: FeedbackBatchExecutionRunResponse

@@ -9,6 +9,7 @@ import {
   generateFeedbackOptimizationBatchPlan,
   generateFeedbackSourceEvalCases,
   getAgentJob,
+  promoteFeedbackOptimizationBatchEvalCases,
   removeFeedbackOptimizationBatchEvalCase,
   rollbackFeedbackOptimizationBatchExecution,
   runFeedbackOptimizationBatchAttribution,
@@ -413,6 +414,30 @@ export function useFeedbackWorkspaceActions({
     return updateBatchEvalCase(batch, evalCase, { status: "archived" });
   }
 
+  async function promoteBatchEvalCases(batch: FeedbackOptimizationBatchRecord) {
+    setActionId(`batch-eval-promote:${batch.batch_id}`);
+    try {
+      const result = await promoteFeedbackOptimizationBatchEvalCases(clientConfig, batch.batch_id, {
+        operator: "ui",
+        role: "developer",
+        reason: "批次回归前晋级候选用例",
+        asset_layer: "batch_specific",
+        blocking_policy: "blocking",
+      });
+      const promotedCount = result.promoted_eval_cases?.length || 0;
+      setToast(promotedCount ? `已晋级 ${promotedCount} 条批次回归用例` : "当前批次没有可晋级的候选用例");
+      setSelectedBatchId(result.batch?.batch_id || batch.batch_id);
+      await refreshWorkbench();
+      onFeedbackChanged?.();
+      return promotedCount > 0;
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "晋级批次回归用例失败");
+      return false;
+    } finally {
+      setActionId(null);
+    }
+  }
+
   async function removeBatchEvalCase(batch: FeedbackOptimizationBatchRecord, evalCaseId: string) {
     setActionId(`batch-eval-remove:${evalCaseId}`);
     try {
@@ -451,6 +476,7 @@ export function useFeedbackWorkspaceActions({
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,
+    promoteBatchEvalCases,
     removeBatchEvalCase,
   };
 }

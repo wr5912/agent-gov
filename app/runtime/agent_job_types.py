@@ -32,6 +32,7 @@ from .feedback_schemas import (
 )
 from .json_types import JsonObject
 from .prompts.feedback_prompt_contexts import (
+    build_attribution_prompt_context,
     build_eval_case_generation_prompt_context,
     build_execution_prompt_context,
     build_proposal_prompt_context,
@@ -46,7 +47,7 @@ from .prompts.feedback_prompts import (
 )
 
 
-PromptBuilder = Callable[[str, JsonObject], str]
+PromptBuilder = Callable[[JsonObject], str]
 
 FormatterOutputModel: TypeAlias = (
     AttributionFormatterOutput
@@ -151,24 +152,24 @@ class AgentJobSpec:
     formatter_signature: type[dspy.Signature]
 
 
-def _attribution_prompt_builder(input_path: str, _job_input: JsonObject) -> str:
-    return attribution_prompt(input_path)
+def _attribution_prompt_builder(job_input: JsonObject) -> str:
+    return attribution_prompt(prompt_context=build_attribution_prompt_context(job_input))
 
 
-def _proposal_prompt_builder(input_path: str, job_input: JsonObject) -> str:
-    return proposal_generator_prompt(input_path, prompt_context=build_proposal_prompt_context(job_input))
+def _proposal_prompt_builder(job_input: JsonObject) -> str:
+    return proposal_generator_prompt(prompt_context=build_proposal_prompt_context(job_input))
 
 
-def _execution_prompt_builder(input_path: str, job_input: JsonObject) -> str:
-    return execution_plan_prompt(input_path, prompt_context=build_execution_prompt_context(job_input))
+def _execution_prompt_builder(job_input: JsonObject) -> str:
+    return execution_plan_prompt(prompt_context=build_execution_prompt_context(job_input))
 
 
-def _eval_case_prompt_builder(input_path: str, job_input: JsonObject) -> str:
-    return eval_case_generation_prompt(input_path, prompt_context=build_eval_case_generation_prompt_context(job_input))
+def _eval_case_prompt_builder(job_input: JsonObject) -> str:
+    return eval_case_generation_prompt(prompt_context=build_eval_case_generation_prompt_context(job_input))
 
 
-def _regression_impact_prompt_builder(input_path: str, job_input: JsonObject) -> str:
-    return regression_impact_analysis_prompt(input_path, prompt_context=build_regression_impact_prompt_context(job_input))
+def _regression_impact_prompt_builder(job_input: JsonObject) -> str:
+    return regression_impact_analysis_prompt(prompt_context=build_regression_impact_prompt_context(job_input))
 
 
 AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {

@@ -3,9 +3,6 @@
   "permissions": {
     "defaultMode": "default",
     "allow": [
-      "Read(/data/evidence-packages/**)",
-      "Read(/data/feedback-analysis/jobs/**)",
-      "Read(/data/agent-versions/main/**)",
       "Glob",
       "Grep"
     ],

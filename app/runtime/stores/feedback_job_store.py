@@ -59,34 +59,17 @@ class FeedbackJobStoreMixin:
                 return None
 
             job_id = f"fba-{uuid.uuid4()}"
-            allowed_evidence_paths = self._materialize_evidence_files(
-                job_id,
-                "attribution",
-                evidence_package_id,
-                (
-                    "feedback.json",
-                    "tool_calls.json",
-                    "trace_summary.json",
-                    "runtime_config_summary.json",
-                    "effective_mcp_config.json",
-                    "mcp_connection_summary.json",
-                    "runtime_env_snapshot.json",
-                    "workspace_placeholder_summary.json",
-                    "soc_events.json",
-                    "main_agent_version.json",
-                    "messages.json",
-                    "agent_activity.json",
-                    "langfuse_trace_refs.json",
-                ),
-            )
+            evidence_package, evidence_files = self._evidence_package_context(evidence_package_id)
             input_payload = {
                 "schema_version": "attribution-input/v1",
                 "job_id": job_id,
                 "feedback_case_id": feedback_case_id,
+                "feedback_case": feedback_case,
                 "evidence_package_id": evidence_package_id,
+                "evidence_package": evidence_package,
+                "evidence_files": evidence_files,
+                "langfuse_trace_details": evidence_files.get("langfuse_trace_details.json") or self._langfuse_trace_details_for_evidence(evidence_package),
                 "main_agent_version_id": self._current_agent_version_id(),
-                "evidence_manifest_path": self._materialize_manifest(job_id, "attribution", evidence_package_id),
-                "allowed_evidence_paths": allowed_evidence_paths,
                 "task": "analyze_feedback_attribution",
             }
             try:
@@ -397,15 +380,36 @@ class FeedbackJobStoreMixin:
         timeout_seconds = int(job.get("timeout_seconds") or 300)
         return datetime.now(timezone.utc) >= base + timedelta(seconds=timeout_seconds)
 
-    def _materialize_extra_json(self, job_id: str, job_type: str, file_name: str, payload: JsonObject) -> str:
-        path = self.tmp_jobs_dir / job_id / job_type / file_name
-        self._write_json(path, payload)
-        return str(path)
+    def _evidence_package_context(self, evidence_package_id: str) -> tuple[JsonObject, JsonObject]:
+        manifest = self.get_evidence_package(evidence_package_id) or {}
+        files: JsonObject = {}
+        for item in manifest.get("included_files") or []:
+            if not isinstance(item, dict):
+                continue
+            name = self._string(item.get("path"))
+            if not name:
+                continue
+            evidence_file = self.get_evidence_package_file(evidence_package_id, name)
+            if evidence_file:
+                files[name] = evidence_file.get("content")
+        return manifest, files
 
-    def _write_job_input(self, job_id: str, job_type: str, payload: JsonObject) -> str:
-        path = self.tmp_jobs_dir / job_id / job_type / "input.json"
-        self._write_json(path, payload)
-        return str(path)
+    def _langfuse_trace_details_for_evidence(self, evidence_package: JsonObject) -> list[JsonObject]:
+        source_refs = evidence_package.get("source_refs") if isinstance(evidence_package.get("source_refs"), dict) else {}
+        trace_ids = self._string_list(source_refs.get("trace_ids")) if isinstance(source_refs, dict) else []
+        fetcher = getattr(self, "langfuse_trace_fetcher", None)
+        details: list[JsonObject] = []
+        for trace_id in trace_ids:
+            if not fetcher:
+                details.append({"trace_id": trace_id, "fetch_status": "skipped", "reason": "langfuse_trace_fetcher_unavailable"})
+                continue
+            try:
+                payload = fetcher(trace_id)
+            except Exception as exc:
+                details.append({"trace_id": trace_id, "fetch_status": "failed", "error": str(exc)})
+                continue
+            details.append({"trace_id": trace_id, "fetch_status": "completed" if payload else "empty", "trace": payload})
+        return details
 
     def _cleanup_job_tmp(self, job_id: str) -> None:
         shutil.rmtree(self.tmp_jobs_dir / job_id, ignore_errors=True)

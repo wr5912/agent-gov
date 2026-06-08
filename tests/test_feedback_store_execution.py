@@ -18,15 +18,13 @@ from pydantic import ValidationError
 from sqlalchemy import select, text
 
 from app.runtime.records.execution_records import ExecutionApplicationRecord
-from app.runtime.feedback_schemas import coerce_execution_plan_output_model
+from app.runtime.feedback_schemas import ExecutionPlanFormatterOutput, coerce_execution_plan_output_model
 from app.runtime.output_formatter import OutputFormatterResult
 from app.runtime.runtime_db import AgentJobModel
 
 
 def _execution_formatter_result(payload: dict) -> OutputFormatterResult:
-    output, error = coerce_execution_plan_output_model(payload)
-    assert output is not None, error
-    return OutputFormatterResult(output=output)
+    return OutputFormatterResult(output=ExecutionPlanFormatterOutput.model_validate(payload))
 
 
 def test_plan_task_target_policy_and_task_deduplicates(tmp_path):
@@ -69,8 +67,8 @@ def test_execution_job_lifecycle_updates_task(tmp_path):
     )
 
     job = store.create_execution_job(task["optimization_task_id"])
-    assert job["input_path"].endswith("/execution/input.json")
-    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    assert job["input_path"] == ""
+    input_payload = job["input_json"]
     assert input_payload["execution_job_id"] == job["execution_job_id"]
     assert input_payload["target_paths"] == ["CLAUDE.md"]
 
@@ -482,7 +480,7 @@ def test_execution_job_accepts_any_managed_workspace_file(tmp_path):
     task = _create_approved_task_for_target(store, "mcp_servers/security_kb_mcp/kb.yaml")
 
     job = store.create_execution_job(task["optimization_task_id"])
-    input_payload = json.loads(Path(job["input_path"]).read_text(encoding="utf-8"))
+    input_payload = job["input_json"]
     context = input_payload["target_file_contexts"][0]
 
     assert input_payload["allowed_target_paths"] == ["mcp_servers/security_kb_mcp/kb.yaml"]
@@ -556,7 +554,7 @@ def test_create_execution_job_cleans_record_and_tmp_when_task_attach_fails(tmp_p
 
     with store.Session() as db:
         assert db.scalars(select(AgentJobModel).where(AgentJobModel.job_type == "execution")).all() == []
-    assert [path for path in (settings.data_dir / ".runtime-tmp" / "jobs").iterdir() if path.name.startswith("fbe-")] == []
+    assert not (settings.data_dir / ".runtime-tmp" / "jobs").exists()
     assert store.find_task(task_id).get("latest_execution_job_id") is None
 
 
@@ -624,7 +622,7 @@ def test_execution_plan_rejects_non_text_or_skipped_target(tmp_path):
     assert "not safely editable" in failed["error_json"]["message"]
 
 
-def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch):
+def test_execution_optimizer_uses_embedded_prompt_context(tmp_path, monkeypatch):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
     import claude_agent_sdk
 
@@ -644,13 +642,8 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
         async for item in prompt:
             prompt_items.append(item)
         prompt_text = prompt_items[0]["message"]["content"]
-        input_path = prompt_text.split("输入文件：", 1)[1].splitlines()[0]
-        input_payload = json.loads(Path(input_path).read_text(encoding="utf-8"))
         output = {
-            "optimization_task_id": input_payload["optimization_task_id"],
-            "execution_job_id": input_payload["execution_job_id"],
             "status": "ready",
-            "baseline_agent_version_id": input_payload["baseline_agent_version_id"],
             "summary": "追加配置读取要求。",
             "operations": [
                 {
@@ -667,7 +660,6 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
         seen["formatted_payload"] = output
         text = json.dumps(output, ensure_ascii=False)
         seen["prompt_text"] = prompt_text
-        seen["input_path"] = input_path
         seen["allowed_tools"] = getattr(options, "allowed_tools", None)
         seen["disallowed_tools"] = getattr(options, "disallowed_tools", None)
         yield AssistantMessage(content=[TextBlock(text=text)], model="<synthetic>", session_id="sdk-execution-session")
@@ -701,9 +693,9 @@ def test_execution_optimizer_uses_materialized_input_path(tmp_path, monkeypatch)
     assert job.status == "completed"
     assert job.validated_output_json is not None
     assert job.validated_output_json["status"] == "ready"
-    assert seen["input_path"] == job.input_path
-    assert str(seen["input_path"]).endswith("/execution/input.json")
-    assert "execution-input.json" not in str(seen["input_path"])
+    assert "execution_prompt_context" in str(seen["prompt_text"])
+    assert "输入文件：" not in str(seen["prompt_text"])
+    assert job.input_path == ""
     assert seen["allowed_tools"] in (None, [])
     assert seen["disallowed_tools"] in (None, [])
     assert updated_task["latest_execution_job_id"] == job_payload["execution_job_id"]

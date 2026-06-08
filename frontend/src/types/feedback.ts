@@ -21,6 +21,7 @@ type OpenApiFeedbackOptimizationBatchAttributionResponse = components["schemas"]
 type OpenApiFeedbackOptimizationBatchCreateRequest = components["schemas"]["FeedbackOptimizationBatchCreateRequest"];
 type OpenApiFeedbackOptimizationBatchExecuteAllRequest = components["schemas"]["FeedbackOptimizationBatchExecuteAllRequest"];
 type OpenApiFeedbackOptimizationBatchExecuteAllResponse = components["schemas"]["FeedbackOptimizationBatchExecuteAllResponse"];
+type OpenApiFeedbackOptimizationBatchEvalCasePromotionResponse = components["schemas"]["FeedbackOptimizationBatchEvalCasePromotionResponse"];
 type OpenApiFeedbackOptimizationBatchExecutionRollbackRequest = components["schemas"]["FeedbackOptimizationBatchExecutionRollbackRequest"];
 type OpenApiFeedbackOptimizationBatchExecutionRollbackResponse = components["schemas"]["FeedbackOptimizationBatchExecutionRollbackResponse"];
 type OpenApiFeedbackOptimizationBatchRegressionResponse = components["schemas"]["FeedbackOptimizationBatchRegressionResponse"];
@@ -461,6 +462,11 @@ export type FeedbackOptimizationBatchRecord = OpenApiFeedbackOptimizationBatchRe
 export type FeedbackOptimizationBatchAttributionResponse = OpenApiFeedbackOptimizationBatchAttributionResponse & {
   batch?: FeedbackOptimizationBatchRecord | null;
   jobs: AgentJobRecord[];
+};
+
+export type FeedbackOptimizationBatchEvalCasePromotionResponse = OpenApiFeedbackOptimizationBatchEvalCasePromotionResponse & {
+  batch?: FeedbackOptimizationBatchRecord | null;
+  promoted_eval_cases: EvalCaseRecord[];
 };
 
 export type FeedbackOptimizationBatchRegressionResponse = OpenApiFeedbackOptimizationBatchRegressionResponse & {

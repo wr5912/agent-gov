@@ -837,8 +837,9 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
         batch = batch_response.json()
         eval_generation_job = _run_one_agent_job(module)
         batch = client.get(f"/api/feedback-optimization-batches/{batch['batch_id']}").json()
+        empty_regression_plan_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-plan")
         promote_response = client.post(
-            f"/api/regression-assets/{batch['eval_case_ids'][0]}/promote",
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/promote",
             json={"operator": "tester", "reason": "E2E 批次回归用例晋级", "asset_layer": "batch_specific", "blocking_policy": "blocking"},
         )
         attribution_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/attribution-jobs", json={"force": True})
@@ -880,7 +881,13 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
 
     assert signal_response.status_code == 200
     assert batch_response.status_code == 200
+    assert empty_regression_plan_response.status_code == 400
+    assert empty_regression_plan_response.json()["suggested_action"] == "promote_batch_eval_cases"
+    assert empty_regression_plan_response.json()["regression_asset_eligibility"]["summary"]["promotable_linked"] == 1
     assert promote_response.status_code == 200
+    assert promote_response.json()["promoted_eval_cases"][0]["status"] == "active"
+    assert promote_response.json()["promoted_eval_cases"][0]["asset_layer"] == "batch_specific"
+    assert promote_response.json()["promoted_eval_cases"][0]["promotion_status"] == "approved"
     assert attribution_response.status_code == 200
     assert plan_response.status_code == 200
     assert execute_response.status_code == 200
@@ -963,3 +970,73 @@ def test_batch_eval_case_management_api(monkeypatch, tmp_path):
     assert invalid_patch_response.status_code == 404
     assert remove_response.status_code == 200
     assert eval_case["eval_case_id"] not in remove_response.json()["eval_case_ids"]
+
+
+def test_batch_eval_case_promotion_api_skips_non_promotable_cases(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+
+    with TestClient(module.app) as client:
+        signal_response = client.post(
+            "/api/feedback-signals",
+            json={
+                "session_id": "sess-batch-eval-promotion",
+                "labels": ["tool_data_incomplete"],
+                "comment": "需要批次回归用例晋级",
+            },
+        )
+        batch_response = client.post(
+            "/api/feedback-optimization-batches",
+            json={
+                "title": "批次用例晋级",
+                "source_refs": [{"source_kind": "signal", "source_id": signal_response.json()["signal_id"]}],
+            },
+        )
+        batch = batch_response.json()
+        eligible_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases",
+            json={
+                "prompt": "复测：已批准用例。",
+                "expected_behavior": "必须通过。",
+                "checks_json": {"requires_non_empty_answer": True},
+            },
+        )
+        draft_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases",
+            json={
+                "prompt": "复测：草稿用例。",
+                "expected_behavior": "晋级后参与回归。",
+                "checks_json": {"requires_non_empty_answer": True},
+                "status": "draft",
+            },
+        )
+        archived_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases",
+            json={
+                "prompt": "复测：归档用例。",
+                "expected_behavior": "不应复活。",
+                "checks_json": {"requires_non_empty_answer": True},
+            },
+        )
+        archived_case_id = archived_response.json()["eval_case_id"]
+        client.patch(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/{archived_case_id}",
+            json={"status": "archived"},
+        )
+        promote_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/promote",
+            json={"operator": "tester", "reason": "批次回归前晋级", "asset_layer": "batch_specific", "blocking_policy": "blocking"},
+        )
+
+    assert signal_response.status_code == 200
+    assert batch_response.status_code == 200
+    assert eligible_response.status_code == 200
+    assert draft_response.status_code == 200
+    assert archived_response.status_code == 200
+    assert promote_response.status_code == 200, promote_response.json()
+    promoted_ids = {item["eval_case_id"] for item in promote_response.json()["promoted_eval_cases"]}
+    skipped = {item["eval_case_id"]: item["reasons"] for item in promote_response.json()["skipped_eval_cases"]}
+    assert promoted_ids == {draft_response.json()["eval_case_id"]}
+    assert skipped[eligible_response.json()["eval_case_id"]] == ["already_eligible"]
+    assert "status:archived" in skipped[archived_case_id]
+    governance_events = module.feedback_store.list_eval_case_governance_events(draft_response.json()["eval_case_id"])
+    assert governance_events[0]["action"] == "promote"

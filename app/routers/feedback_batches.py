@@ -17,6 +17,7 @@ from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResp
 from app.runtime.response_schemas.feedback_plan_response_schemas import FeedbackOptimizationPlanTaskResponse
 from app.runtime.response_schemas.feedback_workflow_response_schemas import (
     FeedbackOptimizationBatchAttributionResponse,
+    FeedbackOptimizationBatchEvalCasePromotionResponse,
     FeedbackOptimizationBatchExecuteAllResponse,
     FeedbackOptimizationBatchExecutionRollbackResponse,
     FeedbackOptimizationBatchResponse,
@@ -31,6 +32,7 @@ from app.runtime.schemas import (
     FeedbackOptimizationBatchEvalCaseCreateRequest,
     FeedbackOptimizationBatchPlanGenerateRequest,
     FeedbackOptimizationPlanTaskExecuteRequest,
+    RegressionAssetGovernanceActionRequest,
 )
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
@@ -128,6 +130,18 @@ def _register_batch_eval_case_routes(router: APIRouter, feedback_store: Feedback
     ) -> EvalCaseResponse:
         eval_case = feedback_store.create_batch_eval_case(batch_id, req.model_dump())
         return ensure_found(eval_case, "Feedback optimization batch not found")
+
+    @router.post(
+        "/feedback-optimization-batches/{batch_id}/eval-cases/promote",
+        response_model=FeedbackOptimizationBatchEvalCasePromotionResponse,
+        summary="Promote candidate regression eval cases associated with one optimization batch",
+    )
+    async def promote_feedback_optimization_batch_eval_cases(
+        batch_id: str,
+        req: RegressionAssetGovernanceActionRequest,
+    ) -> FeedbackOptimizationBatchEvalCasePromotionResponse:
+        result = feedback_store._promote_batch_eval_cases(batch_id, req.model_dump(exclude_none=True))  # noqa: SLF001 - route-scoped store helper.
+        return FeedbackOptimizationBatchEvalCasePromotionResponse.model_validate(ensure_found(result, "Feedback optimization batch not found"))
 
     @router.patch(
         "/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}",

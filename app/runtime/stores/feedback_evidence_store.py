@@ -100,6 +100,7 @@ class FeedbackEvidenceStoreMixin:
             for run in runs_clean
         ]
         langfuse_trace_refs = self._langfuse_trace_refs(runs_clean)
+        langfuse_trace_details = self._fetch_langfuse_trace_details(langfuse_trace_refs)
         trace_summary = [
             {
                 "run_id": run.get("run_id"),
@@ -123,6 +124,7 @@ class FeedbackEvidenceStoreMixin:
             "messages": messages,
             "agent_activity": agent_activity,
             "langfuse_trace_refs": langfuse_trace_refs,
+            "langfuse_trace_details": langfuse_trace_details,
             "trace_summary": trace_summary,
             "runtime_config_summary": self._runtime_config_summary(effective_mcp_config),
             "effective_mcp_config": effective_mcp_config,
@@ -150,6 +152,7 @@ class FeedbackEvidenceStoreMixin:
             "runtime_env_snapshot.json": context["runtime_env_snapshot"],
             "workspace_placeholder_summary.json": context["workspace_placeholder_summary"],
             "main_agent_version.json": main_agent_version,
+            "langfuse_trace_details.json": context["langfuse_trace_details"],
             "redaction_report.json": redaction_report,
         }
         if self.enable_debug_evidence:
@@ -218,7 +221,7 @@ class FeedbackEvidenceStoreMixin:
                     "has_messages": bool(context["messages"] and any(item.get("messages") for item in context["messages"])),
                     "has_agent_activity": bool(context["agent_activity"] and any(item.get("agent_activity") for item in context["agent_activity"])),
                     "has_langfuse_trace_refs": bool(context["langfuse_trace_refs"]),
-                    "has_langfuse_trace_details": False,
+                    "has_langfuse_trace_details": bool(context["langfuse_trace_details"]),
                 },
             }
         )
@@ -454,21 +457,22 @@ class FeedbackEvidenceStoreMixin:
             refs.append({"run_id": run.get("run_id"), "session_id": run.get("session_id"), "trace_id": trace_id, "trace_url": trace_url})
         return refs
 
-    def _materialize_evidence_files(self, job_id: str, job_type: str, evidence_package_id: str, names: Iterable[str]) -> list[str]:
-        paths: list[str] = []
-        evidence_dir = self.tmp_jobs_dir / job_id / job_type / "evidence"
-        evidence_dir.mkdir(parents=True, exist_ok=True)
-        for name in names:
-            evidence_file = self.get_evidence_package_file(evidence_package_id, name)
-            if not evidence_file:
+    def _fetch_langfuse_trace_details(self, refs: list[JsonObject]) -> list[JsonObject]:
+        fetcher = self.langfuse_trace_fetcher
+        details: list[JsonObject] = []
+        seen: set[str] = set()
+        for ref in refs:
+            trace_id = self._string(ref.get("trace_id"))
+            if not trace_id or trace_id in seen:
                 continue
-            path = evidence_dir / name
-            self._write_json(path, evidence_file["content"])
-            paths.append(str(path))
-        return paths
-
-    def _materialize_manifest(self, job_id: str, job_type: str, evidence_package_id: str) -> str:
-        manifest = self.get_evidence_package(evidence_package_id) or {}
-        path = self.tmp_jobs_dir / job_id / job_type / "evidence" / "manifest.json"
-        self._write_json(path, manifest)
-        return str(path)
+            seen.add(trace_id)
+            if not fetcher:
+                details.append({"trace_id": trace_id, "fetch_status": "skipped", "reason": "langfuse_trace_fetcher_unavailable"})
+                continue
+            try:
+                payload = fetcher(trace_id)
+            except Exception as exc:
+                details.append({"trace_id": trace_id, "fetch_status": "failed", "error": str(exc)})
+                continue
+            details.append({"trace_id": trace_id, "fetch_status": "completed" if payload else "empty", "trace": payload})
+        return details

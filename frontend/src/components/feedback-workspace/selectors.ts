@@ -41,6 +41,16 @@ export interface EvalCaseEditDraft {
   checksText: string;
 }
 
+export interface BatchRegressionEligibility {
+  linkedTotal: number;
+  eligibleLinked: number;
+  eligibleGlobal: number;
+  eligibleTotal: number;
+  promotableLinked: number;
+  ineligibleLinked: number;
+  missingLinked: number;
+}
+
 export interface SourceRow {
   id: string;
   kind: FeedbackSourceKind;
@@ -404,6 +414,58 @@ export function evalCaseEditDraft(evalCase: EvalCaseRecord): EvalCaseEditDraft {
     labelsText: (evalCase.labels || []).join(", "),
     status,
     checksText: JSON.stringify(evalCase.checks_json || {}, null, 2),
+  };
+}
+
+const ACTIVE_REGRESSION_ASSET_LAYERS = new Set([
+  "batch_specific",
+  "smoke",
+  "core_regression",
+  "scenario_pack",
+  "safety",
+  "historical_bug",
+]);
+
+export function evalCaseEntersRegressionPlan(evalCase: EvalCaseRecord | null | undefined): boolean {
+  return Boolean(
+    evalCase &&
+      evalCase.status === "active" &&
+      evalCase.promotion_status === "approved" &&
+      ACTIVE_REGRESSION_ASSET_LAYERS.has(String(evalCase.asset_layer || "")) &&
+      evalCase.flaky_status !== "flaky",
+  );
+}
+
+export function evalCasePromotableForBatch(evalCase: EvalCaseRecord | null | undefined): boolean {
+  if (!evalCase || evalCaseEntersRegressionPlan(evalCase)) return false;
+  return (
+    (evalCase.status === "draft" || evalCase.status === "active") &&
+    (evalCase.promotion_status === "candidate" || evalCase.promotion_status === "needs_review" || evalCase.promotion_status === "approved") &&
+    (evalCase.asset_layer === "candidate" || evalCase.asset_layer === "batch_specific") &&
+    evalCase.flaky_status !== "flaky"
+  );
+}
+
+export function buildBatchRegressionEligibility(
+  batch: FeedbackOptimizationBatchRecord | null | undefined,
+  evalCases: EvalCaseRecord[],
+): BatchRegressionEligibility {
+  const evalCaseById = new Map(evalCases.map((evalCase) => [evalCase.eval_case_id, evalCase]));
+  const linkedIds = batch?.eval_case_ids || [];
+  const linkedCases = linkedIds.map((evalCaseId) => evalCaseById.get(evalCaseId) || null);
+  const eligibleLinkedIds = new Set(linkedCases.filter(evalCaseEntersRegressionPlan).map((evalCase) => evalCase?.eval_case_id || ""));
+  const eligibleGlobalIds = new Set(evalCases.filter(evalCaseEntersRegressionPlan).map((evalCase) => evalCase.eval_case_id));
+  for (const evalCaseId of eligibleLinkedIds) {
+    if (evalCaseId) eligibleGlobalIds.delete(evalCaseId);
+  }
+  return {
+    linkedTotal: linkedIds.length,
+    eligibleLinked: eligibleLinkedIds.size,
+    eligibleGlobal: eligibleGlobalIds.size,
+    eligibleTotal: eligibleLinkedIds.size + eligibleGlobalIds.size,
+    promotableLinked: linkedCases.filter(evalCasePromotableForBatch).length,
+    ineligibleLinked: linkedIds.length - eligibleLinkedIds.size,
+    missingLinked: linkedCases.filter((evalCase) => !evalCase).length,
   };
 }
 

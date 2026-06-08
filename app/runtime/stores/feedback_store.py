@@ -31,6 +31,7 @@ from ..runtime_db import (
 from ..state_machines import JOB_IN_PROGRESS_STATES
 from .agent_job_queue_store import AgentJobQueueStoreMixin
 from .agent_job_store import AgentJobStoreMixin
+from .feedback_batch_eval_case_governance_store import FeedbackBatchEvalCaseGovernanceStoreMixin
 from .feedback_batch_execution_store import FeedbackBatchExecutionStoreMixin
 from .feedback_batch_plan_store import FeedbackBatchPlanStoreMixin
 from .feedback_batch_store import FeedbackBatchStoreMixin
@@ -56,6 +57,7 @@ class FeedbackStore(
     FeedbackCompensationStoreMixin,
     FeedbackBatchExecutionStoreMixin,
     FeedbackBatchPlanStoreMixin,
+    FeedbackBatchEvalCaseGovernanceStoreMixin,
     FeedbackInternalActionStoreMixin,
     FeedbackPlanTaskEditStoreMixin,
     FeedbackPlanTaskStoreMixin,
@@ -96,13 +98,13 @@ class FeedbackStore(
         self.runtime_version = runtime_version
         self.enable_debug_evidence = enable_debug_evidence
         self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[JsonObject]]] = None
+        # Legacy cleanup anchor only. New Agent jobs keep input/output/error in SQLite.
         self.tmp_jobs_dir = data_dir / ".runtime-tmp" / "jobs"
-        self.tmp_jobs_dir.mkdir(parents=True, exist_ok=True)
         self._job_create_lock = RLock()
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[JsonObject]]) -> None:
-        # Trace details are intentionally not persisted in SQLite; keep the setter
-        # for runtime wiring compatibility and possible live trace lookups.
+        # The fetcher is owned by the backend so Langfuse credentials never enter
+        # internal Agent prompts or Claude Code tool configuration.
         self.langfuse_trace_fetcher = fetcher
 
     def _current_agent_version_id(self) -> Optional[str]:

@@ -13,5 +13,3 @@ paths:
 
 outputs:
   schema: proposal-output/v1
-  job_root: /data/feedback-analysis/jobs
-  proposal_root: /data/optimization-proposals

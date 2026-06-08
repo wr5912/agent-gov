@@ -13,4 +13,3 @@ paths:
 
 outputs:
   schema: eval-case-governance/v1
-  job_root: /data/.runtime-tmp/jobs

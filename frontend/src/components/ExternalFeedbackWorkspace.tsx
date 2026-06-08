@@ -74,6 +74,7 @@ export function ExternalFeedbackWorkspace({
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,
+    promoteBatchEvalCases,
     removeBatchEvalCase,
   } = useFeedbackWorkspaceActions({
     clientConfig,
@@ -151,6 +152,7 @@ export function ExternalFeedbackWorkspace({
             onExecutePlanTask={executePlanTask}
             onGeneratePlan={openBatchPlanGeneration}
             onRemoveEvalCase={removeBatchEvalCase}
+            onPromoteEvalCases={promoteBatchEvalCases}
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
             onRollbackBatchExecution={rollbackBatchExecution}

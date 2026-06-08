@@ -14,19 +14,19 @@ def _structured_prompt(*sections: tuple[str, str]) -> str:
     return "\n\n".join(f"## {title}\n{body.strip()}" for title, body in sections if body.strip())
 
 
-def attribution_prompt(input_path: str) -> str:
+def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
-            "你是反馈闭环中的归因分析智能体。你的职责是基于 attribution input 指定的证据路径，判断反馈问题归因。",
+            "你是反馈闭环中的归因分析智能体。你的职责是基于后端提供的 attribution context 判断反馈问题归因。",
         ),
         (
             "输入",
-            f"输入文件：{input_path}\n只读取 attribution input 指定的证据路径，不读取未列出的路径。",
+            "输入上下文由后端从 SQLite、证据包和 Langfuse 观测数据构造；不需要读取 job 输入文件或临时目录。",
         ),
         (
             "工作方式",
-            "先读取反馈、运行轨迹、工具调用、配置快照和证据文件，再判断问题类型、责任边界和下一步。"
+            "先阅读反馈、运行轨迹、工具调用、配置快照和证据内容，再判断问题类型、责任边界和下一步。"
             "证据不足时明确说明需要人工复核，不要为了凑结论而补充证据中没有的信息。",
         ),
         (
@@ -57,23 +57,24 @@ def attribution_prompt(input_path: str) -> str:
             "MAX_TURNS 达上限若伴随 MCP failed 或 MCP 配置未解析占位符，应视为放大器，不要把 turns 默认值当作唯一根因。",
         ),
         ("约束", NATURAL_LANGUAGE_CHINESE_RULE),
+        ("输入上下文", _prompt_context_section("attribution_prompt_context", prompt_context)),
     )
 
 
 def _prompt_context_section(context_name: str, prompt_context: JsonObject | None) -> str:
     if prompt_context is None:
         return ""
-    return f"以下是精简输入上下文，不需要调用工具读取完整输入文件。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
+    return f"以下是后端构造的输入上下文，不需要调用工具读取 job 输入文件。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
 
 
-def proposal_generator_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
+def proposal_generator_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
             "你是反馈闭环中的优化方案生成智能体 proposal-generator。你的职责是统筹输入中的所有已校验归因结果，"
             "直接生成可供开发人员阅读并点击执行的优化任务列表。",
         ),
-        ("输入", f"输入文件：{input_path}"),
+        ("输入", "输入上下文由后端从 SQLite 中的归因、评估用例和批次状态构造；不需要读取 job 输入文件或临时目录。"),
         (
             "工作方式",
             "围绕输入中的反馈、归因输出、回归用例和 target_policy 生成任务。单条反馈也会以 size=1 优化批次输入。"
@@ -127,13 +128,13 @@ def proposal_generator_prompt(input_path: str, *, prompt_context: JsonObject | N
     )
 
 
-def execution_plan_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
+def execution_plan_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
             "你是反馈闭环中的执行优化智能体。你不能直接修改主智能体 workspace，只能输出受控执行方案。",
         ),
-        ("输入", f"输入文件：{input_path}"),
+        ("输入", "输入上下文由后端从 SQLite 和受管 workspace 文件快照构造；不需要读取 job 输入文件或临时目录。"),
         (
             "工作方式",
             "基于 input 中的 proposal、target_paths 和 target_file_contexts 生成操作方案。"
@@ -164,13 +165,13 @@ def execution_plan_prompt(input_path: str, *, prompt_context: JsonObject | None 
     )
 
 
-def eval_case_generation_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
+def eval_case_generation_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
             "你是反馈闭环中的评估用例治理智能体 eval-case-governor。你的职责是基于反馈来源、已校验归因和优化建议，生成可复测原问题的评估用例草案。",
         ),
-        ("输入", f"输入文件：{input_path}"),
+        ("输入", "输入上下文由后端从 SQLite 中的反馈、归因、优化方案和历史评估用例构造；不需要读取 job 输入文件或临时目录。"),
         (
             "工作方式",
             "先定位反馈原始场景、应复测的问题、修复后应满足的行为，再生成可放入回归资产候选层的 eval cases。",
@@ -195,14 +196,14 @@ def eval_case_generation_prompt(input_path: str, *, prompt_context: JsonObject |
     )
 
 
-def regression_impact_analysis_prompt(input_path: str, *, prompt_context: JsonObject | None = None) -> str:
+def regression_impact_analysis_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
             "你是反馈闭环中的回归影响分析智能体 regression-impact-analyzer。你的职责是根据 eval_run、gate_result "
             "和每个 eval item 的结果，判断本次变更对长期回归资产的影响。",
         ),
-        ("输入", f"输入文件：{input_path}"),
+        ("输入", "输入上下文由后端从 SQLite 中的 eval_run、gate_result 和 eval item 构造；不需要读取 job 输入文件或临时目录。"),
         (
             "工作方式",
             "先阅读 eval_run、gate_result 和 item 快照，再判断本次变更是否影响现有回归资产、是否需要新增或调整资产、以及是否需要人工复核。",

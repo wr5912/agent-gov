@@ -835,6 +835,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback-optimization-batches/{batch_id}/eval-cases/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote candidate regression eval cases associated with one optimization batch */
+        post: operations["promote_feedback_optimization_batch_eval_cases_api_feedback_optimization_batches__batch_id__eval_cases_promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}": {
         parameters: {
             query?: never;
@@ -3174,6 +3191,20 @@ export interface components {
              * @enum {string}
              */
             status: "active" | "draft" | "archived";
+        };
+        /** FeedbackOptimizationBatchEvalCasePromotionResponse */
+        FeedbackOptimizationBatchEvalCasePromotionResponse: {
+            batch?: components["schemas"]["FeedbackOptimizationBatchResponse"] | null;
+            /** Eligibility Summary */
+            eligibility_summary?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Promoted Eval Cases */
+            promoted_eval_cases?: components["schemas"]["EvalCaseResponse"][];
+            /** Skipped Eval Cases */
+            skipped_eval_cases?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
         };
         /** FeedbackOptimizationBatchExecuteAllRequest */
         FeedbackOptimizationBatchExecuteAllRequest: {
@@ -6422,6 +6453,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_feedback_optimization_batch_eval_cases_api_feedback_optimization_batches__batch_id__eval_cases_promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegressionAssetGovernanceActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackOptimizationBatchEvalCasePromotionResponse"];
                 };
             };
             /** @description Validation Error */

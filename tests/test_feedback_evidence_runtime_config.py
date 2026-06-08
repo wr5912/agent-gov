@@ -78,11 +78,11 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     assert categories[".claude/settings.json"] == "claude_project_settings"
     assert categories[".mcp.json"] == "mcp_config"
     assert categories["mcp_servers/soc_data_mcp/sample_alerts.json"] == "mcp_sample_data"
-    materialized_names = {path.rsplit("/", 1)[-1] for path in attribution_job["input_json"]["allowed_evidence_paths"]}
+    evidence_file_names = set(attribution_job["input_json"]["evidence_files"])
     assert {
         "runtime_config_summary.json",
         "effective_mcp_config.json",
         "mcp_connection_summary.json",
         "runtime_env_snapshot.json",
         "workspace_placeholder_summary.json",
-    } <= materialized_names
+    } <= evidence_file_names

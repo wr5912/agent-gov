@@ -4,7 +4,7 @@ from app.runtime.prompts.feedback_prompts import attribution_prompt
 
 
 def test_attribution_prompt_scopes_placeholder_attribution_to_effective_mcp_config() -> None:
-    prompt = attribution_prompt("/tmp/input.json")
+    prompt = attribution_prompt()
 
     assert "只有 effective_mcp_config.json 显示选中的 MCP config 或 MCP config path" in prompt
     assert ".claude/settings.json 若影响权限、sandbox 或网络域名" in prompt

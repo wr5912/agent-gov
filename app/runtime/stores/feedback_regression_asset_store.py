@@ -8,6 +8,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from ..errors import BusinessRuleViolation
+from ..json_types import JsonObject
 from ..records.eval_case_records import (
     ACTIVE_ASSET_LAYERS,
     ASSET_LAYERS,
@@ -20,7 +21,6 @@ from ..records.eval_case_records import (
     apply_eval_case_record,
 )
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
-from ..json_types import JsonObject
 from ..records.regression_impact_records import RegressionImpactAnalysisRecord, RegressionImpactedAssetRecord
 from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
@@ -104,9 +104,7 @@ class FeedbackRegressionAssetStoreMixin:
                 row = db.get(EvalCaseModel, eval_case_id)
             elif source_feedback_case_id:
                 row = db.scalars(
-                    select(EvalCaseModel)
-                    .where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id)
-                    .order_by(EvalCaseModel.updated_at.desc())
+                    select(EvalCaseModel).where(EvalCaseModel.source_feedback_case_id == source_feedback_case_id).order_by(EvalCaseModel.updated_at.desc())
                 ).first()
             return self._eval_case_to_dict(row) if row else None
 
@@ -188,9 +186,7 @@ class FeedbackRegressionAssetStoreMixin:
     def list_eval_case_revisions(self, eval_case_id: str) -> list[JsonObject]:
         with self.Session() as db:
             rows = db.scalars(
-                select(EvalCaseRevisionModel)
-                .where(EvalCaseRevisionModel.eval_case_id == eval_case_id)
-                .order_by(EvalCaseRevisionModel.revision_number.desc())
+                select(EvalCaseRevisionModel).where(EvalCaseRevisionModel.eval_case_id == eval_case_id).order_by(EvalCaseRevisionModel.revision_number.desc())
             ).all()
             return [self._eval_case_revision_to_dict(row) for row in rows]
 
@@ -209,7 +205,8 @@ class FeedbackRegressionAssetStoreMixin:
             return None
         selected_cases = self._selected_regression_cases_for_batch(batch)
         if not selected_cases:
-            raise BusinessRuleViolation("No approved active regression assets found")
+            detail, error_details = self._batch_regression_asset_empty_error(batch)
+            raise BusinessRuleViolation(detail, error_details=error_details)
         created_at = utc_now()
         base_fingerprint = self._regression_plan_fingerprint(batch, selected_cases)
         if not force:
@@ -262,25 +259,25 @@ class FeedbackRegressionAssetStoreMixin:
         with self.Session() as db:
             row = db.get(RegressionPlanModel, regression_plan_id)
             return self._regression_plan_to_dict(row) if row else None
+
     def get_latest_regression_plan(self, batch_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
-                select(RegressionPlanModel)
-                .where(RegressionPlanModel.batch_id == batch_id)
-                .order_by(RegressionPlanModel.created_at.desc())
+                select(RegressionPlanModel).where(RegressionPlanModel.batch_id == batch_id).order_by(RegressionPlanModel.created_at.desc())
             ).first()
             return self._regression_plan_to_dict(row) if row else None
+
     def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
         job = self.queue_regression_impact_agent_job(eval_run_id)
         if not job:
             return None
         return self.get_regression_impact_analysis(eval_run_id)
+
     def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
-            row = db.scalars(
-                select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)
-            ).first()
+            row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
             return self._impact_analysis_to_dict(row) if row else None
+
     def record_regression_gate_override(self, batch_id: str, eval_run_id: str, fields: JsonObject) -> Optional[JsonObject]:
         eval_run = self.get_eval_run(eval_run_id)
         if not eval_run:
@@ -333,6 +330,7 @@ class FeedbackRegressionAssetStoreMixin:
             )
         self.record_batch_regression_result(batch_id, after)
         return self.get_regression_gate_override(override_id)
+
     def get_regression_gate_override(self, override_id: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.get(RegressionGateOverrideModel, override_id)
@@ -429,9 +427,7 @@ class FeedbackRegressionAssetStoreMixin:
     def _add_eval_case_revision_row(self, db: Any, payload: JsonObject, *, created_by: str, reason: str) -> None:
         eval_case_id = str(payload["eval_case_id"])
         latest = db.scalars(
-            select(EvalCaseRevisionModel)
-            .where(EvalCaseRevisionModel.eval_case_id == eval_case_id)
-            .order_by(EvalCaseRevisionModel.revision_number.desc())
+            select(EvalCaseRevisionModel).where(EvalCaseRevisionModel.eval_case_id == eval_case_id).order_by(EvalCaseRevisionModel.revision_number.desc())
         ).first()
         record = EvalCaseRevisionRecord.model_validate(
             {
@@ -560,9 +556,7 @@ class FeedbackRegressionAssetStoreMixin:
     def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[JsonObject]:
         with self.Session() as db:
             row = db.scalars(
-                select(RegressionPlanModel)
-                .where(RegressionPlanModel.batch_id == batch_id)
-                .where(RegressionPlanModel.selection_fingerprint == fingerprint)
+                select(RegressionPlanModel).where(RegressionPlanModel.batch_id == batch_id).where(RegressionPlanModel.selection_fingerprint == fingerprint)
             ).first()
             return self._regression_plan_to_dict(row) if row else None
 
@@ -612,7 +606,7 @@ class FeedbackRegressionAssetStoreMixin:
         return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _forced_regression_plan_fingerprint(self, base_fingerprint: str) -> str:
-        return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode("utf-8")).hexdigest()
+        return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode()).hexdigest()
 
     def _regression_case_snapshot(self, case: JsonObject) -> JsonObject:
         return {

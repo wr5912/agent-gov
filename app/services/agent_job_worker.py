@@ -101,8 +101,7 @@ class AgentJobWorker:
         )
 
     def _prompt(self, job_type: AgentJobType, job: JsonObject, job_input: JsonObject) -> str:
-        input_path = str(job.get("input_path") or "")
-        return agent_job_spec(job_type).prompt_builder(input_path, job_input)
+        return agent_job_spec(job_type).prompt_builder(job_input)
 
     @staticmethod
     def _job_response(payload: JsonObject | None) -> AgentJobResponse | None:

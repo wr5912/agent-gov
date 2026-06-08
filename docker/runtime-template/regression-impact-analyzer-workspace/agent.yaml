@@ -13,4 +13,3 @@ paths:
 
 outputs:
   schema: regression-impact-analysis/v1
-  job_root: /data/.runtime-tmp/jobs

@@ -13,4 +13,3 @@ paths:
 
 outputs:
   schema: execution-plan-output/v1
-  job_root: /data/optimization-executions

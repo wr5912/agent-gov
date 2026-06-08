@@ -12,9 +12,10 @@ import type {
   FeedbackCaseRecord,
   FeedbackEvalCaseGenerateRequest,
   FeedbackFilters,
-  FeedbackOptimizationBatchEvalCaseCreateRequest,
   FeedbackOptimizationBatchAttributionResponse,
   FeedbackOptimizationBatchCreateRequest,
+  FeedbackOptimizationBatchEvalCaseCreateRequest,
+  FeedbackOptimizationBatchEvalCasePromotionResponse,
   FeedbackOptimizationBatchExecuteAllRequest,
   FeedbackOptimizationBatchExecuteAllResponse,
   FeedbackOptimizationBatchExecutionRollbackRequest,
@@ -34,6 +35,7 @@ import type {
   OptimizationTaskRecord,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
+  RegressionAssetGovernanceActionRequest,
   SocEventCreateRequest,
   SocEventCreateResponse,
   SocEventRecord,
@@ -286,6 +288,22 @@ export function createFeedbackOptimizationBatchEvalCase(
   return requestJson<EvalCaseRecord>(
     config,
     `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function promoteFeedbackOptimizationBatchEvalCases(
+  config: RuntimeClientConfig,
+  batchId: string,
+  payload: RegressionAssetGovernanceActionRequest,
+) {
+  return requestJson<FeedbackOptimizationBatchEvalCasePromotionResponse>(
+    config,
+    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/promote`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

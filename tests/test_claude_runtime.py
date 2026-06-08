@@ -295,7 +295,7 @@ def test_profile_path_hook_blocks_denied_read_path(tmp_path):
     assert "denied for profile attribution-analyzer" in output["permissionDecisionReason"]
 
 
-def test_profile_path_hook_allows_declared_read_path(tmp_path):
+def test_profile_path_hook_blocks_internal_agent_data_read_path(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     profile = runtime.profiles["attribution-analyzer"]
@@ -312,7 +312,9 @@ def test_profile_path_hook_allows_declared_read_path(tmp_path):
         )
     )
 
-    assert result == {}
+    output = result["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "outside allowed paths for profile attribution-analyzer" in output["permissionDecisionReason"]
 
 
 def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):

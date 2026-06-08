@@ -19,6 +19,14 @@
           ]
         },
         {
+          "id": "fob_da60_candidate_regression_assets",
+          "description": "fob-da60-like batch generated candidate eval cases must be promoted before regression, then the optimization loop runs through execution, regression, impact analysis, and publish.",
+          "pytest": [
+            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression",
+            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion"
+          ]
+        },
+        {
           "id": "duplicate_click_reuses_running_job_and_replaces_failed_job",
           "description": "Repeated plan generation does not leave duplicate active jobs and failed jobs are replaced.",
           "pytest": [

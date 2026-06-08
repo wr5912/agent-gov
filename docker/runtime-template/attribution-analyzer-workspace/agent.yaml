@@ -13,4 +13,3 @@ paths:
 
 outputs:
   schema: attribution-output/v1
-  job_root: /data/feedback-analysis/jobs

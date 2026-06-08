@@ -27,6 +27,7 @@ description: "治理和优化 Codex 配置、AGENTS.md、.codex/rules、hooks、
 - 从失败轨迹归因：读 [failure-analysis.md](references/failure-analysis.md)。
 - 从历史经验沉淀、个性化、泛化：读 [config-lifecycle.md](references/config-lifecycle.md)。
 - 判断优化是否真的变好：读 [eval-rubric.md](references/eval-rubric.md)。
+- 反馈闭环、runtime/env 或 Agent job 问题反复出现，需要执行前短预检：读 [feedback-runtime-preflight.md](references/feedback-runtime-preflight.md)。
 
 ## 输出格式
 

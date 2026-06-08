@@ -31,6 +31,18 @@ HOT_TERMS = (
     "check_codex_governance.py",
 )
 
+TERM_GUIDANCE = {
+    "字段所有权矩阵": ("merge", "按需 skill/reference 保留模板；常驻 rules 只保留触发入口", "专项任务开始前能产出字段所有权矩阵，审计重复词下降"),
+    "执行动作矩阵": ("move-to-skill", "按需预检模板", "用户可见工作流改动前能列出动作与用户任务映射"),
+    "治理硬门": ("merge", "项目覆盖层保留命令；skill/reference 保留解释", "审计报告仍能定位硬门命令，但常驻说明不重复展开"),
+    "JsonObject": ("move-to-skill", "typed-output / Agent 契约预检", "新增主流程不增加弱 JsonObject 边界"),
+    "schema_version": ("move-to-skill", "typed-output / Agent 契约预检", "无外部协议或迁移需求时不新增输出 schema version"),
+    "coverage policy": ("keep", "测试覆盖清单", "主流程场景绑定到 pytest nodeid 或 UI verification script"),
+    "main-flow": ("keep", "测试覆盖清单与验证规则", "主流程改动运行 make main-flow-test"),
+    "make main-flow-test": ("keep", "项目覆盖层验证入口", "主流程验证命令可执行"),
+    "check_codex_governance.py": ("keep", "项目覆盖层治理硬门", "fail 模式治理检查可执行"),
+}
+
 TRIGGER_WORDS = (
     "当",
     "提到",
@@ -48,6 +60,36 @@ TRIGGER_WORDS = (
     "Codex",
 )
 
+ENV_CONTEXT_TERMS = (
+    ".env",
+    "env",
+    "环境变量",
+    "RUNTIME",
+    "local-debug",
+    "PyCharm",
+    "Compose",
+    "Docker",
+    "settings_env_file",
+    "MODEL_PROVIDER_API_KEY",
+    "Langfuse",
+)
+
+ENV_OVERRIDE_TERMS = (
+    "本地私有覆盖",
+    "私有覆盖",
+    "覆盖文件",
+    "覆盖配置",
+    "覆盖 env",
+    "覆盖环境",
+    "覆盖关系",
+    "local override",
+    "local overrides",
+    "override file",
+)
+
+ENV_TERMINOLOGY_NEGATIONS = ("不要", "不得", "不是", "不应", "不能", "除非", "禁止")
+ENV_TERMINOLOGY_COVERAGE_CONTEXTS = ("测试覆盖", "覆盖 env 文件选择", "覆盖清单", "覆盖率", "覆盖策略", "coverage policy")
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -56,6 +98,15 @@ class Issue:
     line: int | None
     message: str
     action: str
+
+
+@dataclass(frozen=True)
+class TerminologyRisk:
+    path: str
+    line: int
+    term: str
+    excerpt: str
+    suggestion: str
 
 
 def _iter_files(root: Path) -> list[Path]:
@@ -182,6 +233,40 @@ def _term_report(root: Path, files: list[Path]) -> list[tuple[str, list[str], in
     return report
 
 
+def _term_guidance(term: str) -> tuple[str, str, str]:
+    return TERM_GUIDANCE.get(term, ("merge", "按需 skill 或 reference", "审计后确认重复配置已减少"))
+
+
+def _terminology_risks(root: Path, files: list[Path]) -> list[TerminologyRisk]:
+    risks: list[TerminologyRisk] = []
+    for path in files:
+        rel = _relative(root, path)
+        text = _read(path)
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            if any(coverage_context in line for coverage_context in ENV_TERMINOLOGY_COVERAGE_CONTEXTS):
+                continue
+            if any(negation in line for negation in ENV_TERMINOLOGY_NEGATIONS):
+                continue
+            if not any(context in line for context in ENV_CONTEXT_TERMS):
+                continue
+            matched_term = next((term for term in ENV_OVERRIDE_TERMS if term in line), None)
+            if not matched_term:
+                continue
+            excerpt = line.strip()
+            if len(excerpt) > 140:
+                excerpt = f"{excerpt[:137]}..."
+            risks.append(
+                TerminologyRisk(
+                    path=rel,
+                    line=line_number,
+                    term=matched_term,
+                    excerpt=excerpt,
+                    suggestion="如果代码没有 layered override，请改成“选择 env 文件”“私有 env 文件”或“本机调试 env 文件”。",
+                )
+            )
+    return risks
+
+
 def _collect_issues(root: Path, files: list[Path]) -> list[Issue]:
     issues: list[Issue] = []
     for path in files:
@@ -226,7 +311,23 @@ def _print_report(root: Path) -> None:
         print("- 未发现跨多配置面的高频治理词。")
     for term, paths, total in term_report:
         path_list = ", ".join(f"`{path}`" for path in paths)
-        print(f"- `{term}` 出现 {total} 次，涉及 {path_list}。建议检查是否可 `merge` 或 `move-to-skill`。")
+        action, target_surface, verification = _term_guidance(term)
+        print(
+            f"- `{term}` 出现 {total} 次，涉及 {path_list}。"
+            f"建议动作：`{action}`；目标配置面：{target_surface}；验证：{verification}。"
+        )
+
+    terminology_risks = _terminology_risks(root, files)
+    print()
+    print("## 术语风险")
+    print()
+    if not terminology_risks:
+        print("- 未发现 env/runtime 语境下的“覆盖”术语风险。")
+    for risk in terminology_risks:
+        print(
+            f"- `{risk.path}:{risk.line}` 命中 `{risk.term}`：{risk.excerpt} "
+            f"建议：{risk.suggestion}"
+        )
 
 
 def main() -> int:

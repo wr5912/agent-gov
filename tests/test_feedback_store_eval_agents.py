@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from app.runtime.errors import BusinessRuleViolation
 from app.runtime.feedback_schemas import AttributionFormatterOutput, FeedbackOptimizationPlanFormatterOutput
@@ -235,7 +234,7 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     assert eval_run.result_status == "failed"
     assert regression_run["items"][0]["status"] == "failed"
     assert regression_run["items"][0]["check_results"]
-    assert updated_task["status"] == "failed"
+    assert updated_task["status"] == "regression_failed"
     assert updated_task["latest_regression_run_id"] == eval_run.eval_run_id
     assert eval_agent_run["metadata"]["source"] == "regression_eval"
 

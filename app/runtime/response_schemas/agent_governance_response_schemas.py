@@ -100,7 +100,9 @@ class AgentChangeSetResponse(ExtensibleResponse):
     note: Optional[str] = None
     diff_summary: JsonObject = Field(default_factory=dict)
     latest_eval_run_id: Optional[str] = None
+    latest_eval_run: Optional[JsonObject] = None
     latest_release_id: Optional[str] = None
+    publication_blocker: Optional[str] = None
 
 
 class AgentReleaseResponse(ExtensibleResponse):
@@ -143,6 +145,17 @@ class AgentChangeSetPublishRequest(BaseModel):
 class AgentReleaseRollbackRequest(BaseModel):
     operator: str = "runtime"
     note: Optional[str] = None
+
+
+class AgentReleaseRestoreRequest(BaseModel):
+    operator: str = "runtime"
+    note: Optional[str] = None
+
+
+class AgentReleaseRestoreResponse(ExtensibleResponse):
+    schema_version: str = "agent-release-restore/v1"
+    release: AgentReleaseResponse
+    restore_result: JsonObject = Field(default_factory=dict)
 
 
 class AgentRepositoryDiscardChangesRequest(BaseModel):

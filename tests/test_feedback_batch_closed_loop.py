@@ -140,6 +140,68 @@ def test_fob_da60_optimization_closed_loop_runs_regression_after_promotion(monke
     assert "Write(/data/reports/**)" in candidate_settings
 
 
+def test_fob_da60_failed_batch_regression_blocks_publish(monkeypatch, tmp_path):
+    module = _load_app(monkeypatch, tmp_path)
+    _prepare_settings_file(module)
+    calls: list[str] = []
+    _install_fob_da60_agent_fakes(monkeypatch, module, calls, failed_eval_prompts={FOB_DA60_DAILY_REPORT_PROMPTS[0]})
+
+    with TestClient(module.app) as client:
+        batch = _create_fob_da60_like_batch(client)
+        eval_generation_job = _run_one_agent_job(module)
+        promote_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/eval-cases/promote",
+            json={"operator": "tester", "reason": "fob-da60 批次回归前晋级", "asset_layer": "batch_specific", "blocking_policy": "blocking"},
+        )
+        attribution_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/attribution-jobs", json={"force": True})
+        attribution_job = _run_one_agent_job(module)
+        plan_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan",
+            json={"regeneration_instruction": "保持权限规则收敛，仅修复日报输出路径写入权限。"},
+        )
+        plan_job = _run_one_agent_job(module)
+        batch = client.get(f"/api/feedback-optimization-batches/{batch['batch_id']}").json()
+        plan_task = batch["optimization_plan"]["tasks"][0]
+        execute_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/optimization-plan/tasks/{plan_task['plan_task_id']}/execute",
+            json={"force": True},
+        )
+        execution_job = _run_one_agent_job(module)
+        apply_response = client.post(
+            f"/api/optimization-tasks/{execute_response.json()['optimization_task']['optimization_task_id']}"
+            f"/execution-jobs/{execute_response.json()['execution_job']['execution_job_id']}/apply",
+            json={"confirm": True},
+        )
+        regression_plan_response = client.post(f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-plan")
+        regression_response = client.post(
+            f"/api/feedback-optimization-batches/{batch['batch_id']}/regression-runs",
+            json={"regression_plan_id": regression_plan_response.json()["regression_plan_id"]},
+        )
+        change_set = apply_response.json()["optimization_task"]["latest_change_set"]
+        publish_response = client.post(f"/api/agent-change-sets/{change_set['change_set_id']}/publish", json={"operator": "tester"})
+
+    assert eval_generation_job.status == "completed"
+    assert attribution_job.status == "completed"
+    assert plan_job.status == "completed"
+    assert execution_job.status == "completed"
+    assert calls == ["eval_case_generation", "attribution", "batch_plan", "execution"]
+    assert promote_response.status_code == 200
+    assert attribution_response.status_code == 200
+    assert plan_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert apply_response.status_code == 200
+    assert regression_plan_response.status_code == 200
+    assert regression_response.status_code == 200, regression_response.json()
+    assert regression_response.json()["eval_run"]["result_status"] == "blocked"
+    assert regression_response.json()["eval_run"]["summary"]["failed"] == 1
+    assert regression_response.json()["batch"]["status"] == "blocked"
+    persisted_change_set = module.agent_governance.get_change_set(change_set["change_set_id"])
+    assert persisted_change_set["status"] == "regression_failed"
+    assert "批次回归存在失败用例" in persisted_change_set["publication_blocker"]
+    assert publish_response.status_code == 409
+    assert "批次回归存在失败用例" in publish_response.json()["detail"]
+
+
 def _prepare_settings_file(module) -> Path:
     settings_path = module.settings.main_workspace_dir / ".claude" / "settings.json"
     settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,7 +231,9 @@ def _create_fob_da60_like_batch(client: TestClient) -> dict:
     return batch_response.json()
 
 
-def _install_fob_da60_agent_fakes(monkeypatch, module, calls: list[str]) -> None:
+def _install_fob_da60_agent_fakes(monkeypatch, module, calls: list[str], *, failed_eval_prompts: set[str] | None = None) -> None:
+    failed_eval_prompts = failed_eval_prompts or set()
+
     async def fake_run_profile_json(**kwargs):
         job_type = kwargs["job_type"]
         calls.append(job_type)
@@ -258,19 +322,21 @@ def _install_fob_da60_agent_fakes(monkeypatch, module, calls: list[str]) -> None
         )
         for eval_case_id in eval_case_ids:
             eval_case = module.feedback_store.find_eval_case(eval_case_id)
+            prompt = str((eval_case or {}).get("prompt") or "")
+            failed = prompt in failed_eval_prompts
             module.feedback_store.append_eval_run_item(
                 run["eval_run_id"],
                 eval_case=eval_case,
                 agent_result={
                     "run_id": f"run-regression-{eval_case_id}",
                     "agent_version_id": module.agent_version_store.current_version_id(),
-                    "answer": "日报已生成，输出路径写入成功。",
+                    "answer": "" if failed else "日报已生成，输出路径写入成功。",
                 },
-                status="passed",
-                score=1.0,
+                status="failed" if failed else "passed",
+                score=0.0 if failed else 1.0,
                 check_results=[
-                    {"name": "requires_non_empty_answer", "passed": True},
-                    {"name": "requires_no_runtime_errors", "passed": True},
+                    {"name": "requires_non_empty_answer", "passed": not failed},
+                    {"name": "requires_no_runtime_errors", "passed": not failed},
                 ],
             )
         return module.feedback_store.finish_eval_run(run["eval_run_id"])

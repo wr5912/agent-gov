@@ -23,7 +23,6 @@ export function ExternalFeedbackWorkspace({
   monitoringConfig,
   agentRepository,
   currentAgentRef,
-  agentChangeSets = [],
   agentReleases = [],
   versionLoading = false,
   versionError,
@@ -71,6 +70,7 @@ export function ExternalFeedbackWorkspace({
     executePlanTask,
     updatePlanTask,
     runBatchRegression,
+    publishBatchChangeSet,
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,
@@ -95,7 +95,7 @@ export function ExternalFeedbackWorkspace({
         {visibleMenuItems.map((item) => (
           <button className={activeMenu === item.key ? "active" : ""} key={item.key} onClick={() => setActiveMenu(item.key)} type="button">
             {item.label}
-            {item.key === "versions" && agentChangeSets.length > 0 ? <span className="fw-menu-badge">{agentChangeSets.length}</span> : null}
+            {item.key === "versions" && agentReleases.length > 0 ? <span className="fw-menu-badge">{agentReleases.length}</span> : null}
           </button>
         ))}
       </aside>
@@ -153,6 +153,7 @@ export function ExternalFeedbackWorkspace({
             onGeneratePlan={openBatchPlanGeneration}
             onRemoveEvalCase={removeBatchEvalCase}
             onPromoteEvalCases={promoteBatchEvalCases}
+            onPublishBatchChangeSet={publishBatchChangeSet}
             onRunAttribution={runBatchAttribution}
             onRunRegression={runBatchRegression}
             onRollbackBatchExecution={rollbackBatchExecution}
@@ -179,7 +180,6 @@ export function ExternalFeedbackWorkspace({
             clientConfig={clientConfig}
             repository={agentRepository || null}
             currentRef={currentAgentRef || null}
-            changeSets={agentChangeSets}
             releases={agentReleases}
             loading={versionLoading}
             lastError={versionError}

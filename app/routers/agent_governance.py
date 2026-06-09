@@ -18,6 +18,8 @@ from app.runtime.response_schemas.agent_governance_response_schemas import (
     AgentGitFileDiffResponse,
     AgentGitRefResponse,
     AgentReleaseResponse,
+    AgentReleaseRestoreRequest,
+    AgentReleaseRestoreResponse,
     AgentReleaseRollbackRequest,
     AgentRepositoryDiscardChangesRequest,
     AgentRepositorySnapshotRequest,
@@ -223,6 +225,14 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
     )
     async def get_agent_release(release_id: str) -> AgentReleaseResponse:
         return ensure_found(agent_governance.get_release(release_id), "Agent release not found")
+
+    @router.post(
+        "/agent-releases/{release_id}/restore",
+        response_model=AgentReleaseRestoreResponse,
+        summary="Restore the main Agent workspace to one release",
+    )
+    async def restore_agent_release(release_id: str, req: AgentReleaseRestoreRequest) -> AgentReleaseRestoreResponse:
+        return agent_governance.restore_release(release_id, operator=req.operator, note=req.note)
 
     @router.post(
         "/agent-releases/{release_id}/rollback",

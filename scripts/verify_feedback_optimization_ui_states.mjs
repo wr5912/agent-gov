@@ -478,6 +478,11 @@ async function verifyOneClickExecutionAndRollback(page, stateRef) {
   await page.getByRole("button", { name: "一键执行" }).click();
   await page.getByText("Agent 优化结果").first().waitFor({ timeout: 15_000 });
   await page.getByText("completed").first().waitFor({ timeout: 15_000 });
+  const publishButton = page.getByRole("button", { name: "发布" });
+  await publishButton.waitFor({ timeout: 15_000 });
+  if (!(await publishButton.isDisabled())) {
+    throw new Error("Batch publish should stay disabled before batch regression passes");
+  }
   await page.getByText("查看快照和原始记录", { exact: true }).click();
   await page.getByText("agent-after-ui").first().waitFor({ timeout: 15_000 });
   await page.getByText("CLAUDE.md").first().waitFor({ timeout: 15_000 });

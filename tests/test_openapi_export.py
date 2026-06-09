@@ -121,6 +121,7 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/regression-runs", "post", "EvalRunResponse")
     assert_schema_ref(schema, "/api/agent-change-sets/{change_set_id}/publish", "post", "AgentReleaseResponse")
     assert_schema_ref(schema, "/api/agent-releases", "get", "AgentReleaseResponse", array=True)
+    assert_schema_ref(schema, "/api/agent-releases/{release_id}/restore", "post", "AgentReleaseRestoreResponse")
     assert_schema_ref(schema, "/api/agent-releases/{release_id}/rollback", "post", "AgentReleaseResponse")
     assert_schema_ref(schema, "/api/soc-events", "get", "SocEventResponse", array=True)
     assert_schema_ref(schema, "/api/pending-correlations", "get", "PendingCorrelationResponse", array=True)

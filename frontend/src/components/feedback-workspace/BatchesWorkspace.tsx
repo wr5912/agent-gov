@@ -46,7 +46,7 @@ import type {
   FeedbackSourceRecord,
   EvalCaseUpdateRequest,
 } from "../../types/feedback";
-import type { AgentRepositoryStatus, RuntimeClientConfig } from "../../types/runtime";
+import type { AgentChangeSet, AgentRepositoryStatus, RuntimeClientConfig } from "../../types/runtime";
 
 export function BatchesPanel({
   actionId,
@@ -65,6 +65,7 @@ export function BatchesPanel({
   onGeneratePlan,
   onRemoveEvalCase,
   onPromoteEvalCases,
+  onPublishBatchChangeSet,
   onRunAttribution,
   onRunRegression,
   onRollbackBatchExecution,
@@ -93,6 +94,7 @@ export function BatchesPanel({
   onGeneratePlan: (batch: FeedbackOptimizationBatchRecord) => void;
   onRemoveEvalCase: (batch: FeedbackOptimizationBatchRecord, evalCaseId: string) => Promise<boolean>;
   onPromoteEvalCases: (batch: FeedbackOptimizationBatchRecord) => Promise<boolean>;
+  onPublishBatchChangeSet: (batch: FeedbackOptimizationBatchRecord) => void;
   onRunAttribution: (batch: FeedbackOptimizationBatchRecord, force?: boolean) => void;
   onRunRegression: (batch: FeedbackOptimizationBatchRecord) => void;
   onRollbackBatchExecution: (batch: FeedbackOptimizationBatchRecord, executionRunId: string) => void;
@@ -141,6 +143,7 @@ export function BatchesPanel({
     hasAppliedOptimization,
     regressionEligibility,
   );
+  const publishAvailability = batchPublishAvailability(selectedBatch);
 
   useEffect(() => {
     setActiveBatchDetail(defaultBatchDetail(selectedBatch));
@@ -235,6 +238,16 @@ export function BatchesPanel({
               >
                 {actionId === `batch-regression:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <PlayCircle size={16} />}
                 运行回归测试
+              </button>
+              <button
+                className="fw-small-primary"
+                type="button"
+                disabled={Boolean(actionId) || !publishAvailability.canPublish}
+                title={!publishAvailability.canPublish ? publishAvailability.reason : undefined}
+                onClick={() => onPublishBatchChangeSet(selectedBatch)}
+              >
+                {actionId === `batch-publish:${selectedBatch.batch_id}` ? <Loader2 size={16} className="fw-spin" /> : <ShieldCheck size={16} />}
+                发布
               </button>
             </div>
             {activeBatchDetail === "feedback" ? <BatchFeedbackSourcesDetails rows={batchSourceRows} /> : null}
@@ -403,6 +416,32 @@ function batchRegressionDisabledReason(
     return "当前批次候选用例需先晋级为批次专用回归资产。";
   }
   return "当前批次没有 active/approved 回归资产，不能运行回归测试。";
+}
+
+function batchPublishAvailability(batch: FeedbackOptimizationBatchRecord | null): {
+  canPublish: boolean;
+  reason?: string;
+  changeSet?: AgentChangeSet;
+} {
+  if (!batch) return { canPublish: false, reason: "请选择优化批次。" };
+  const changeSet = batch.optimization_task?.latest_change_set || undefined;
+  if (!changeSet?.change_set_id || !changeSet.candidate_commit_sha) {
+    return { canPublish: false, reason: "先一键执行优化方案，生成候选版本。" };
+  }
+  const blocker = typeof changeSet.publication_blocker === "string" ? changeSet.publication_blocker.trim() : "";
+  if (blocker) return { canPublish: false, reason: blocker, changeSet };
+  const evalRunStatus = batch.latest_eval_run?.result_status || batch.latest_eval_run?.status || "";
+  if (!evalRunStatus) return { canPublish: false, reason: "先运行批次回归测试。", changeSet };
+  if (evalRunStatus !== "passed") {
+    if (["running", "created", "queued"].includes(evalRunStatus)) {
+      return { canPublish: false, reason: "等待批次回归测试完成。", changeSet };
+    }
+    return { canPublish: false, reason: "批次回归未通过，禁止发布。", changeSet };
+  }
+  if (!["regression_passed", "candidate_committed"].includes(changeSet.status)) {
+    return { canPublish: false, reason: "等待候选版本完成发布检查。", changeSet };
+  }
+  return { canPublish: true, changeSet };
 }
 
 function BatchAttributionDetails({

@@ -25,7 +25,7 @@ def test_readme_api_index_uses_current_feedback_and_agent_routes():
         "/api/feedback-optimization-batches/{batch_id}/optimization-plan/executions/{execution_run_id}/rollback",
         "/api/agent-repository/current",
         "/api/agent-change-sets/{change_set_id}/publish",
-        "/api/agent-releases/{release_id}/rollback",
+        "/api/agent-releases/{release_id}/restore",
         "/data/agent-governance/worktrees/",
         "/data/agent-governance/releases/",
     ]
@@ -118,14 +118,14 @@ def test_agent_version_plan_current_api_section_uses_actual_route_names():
 
     assert "/api/agent-repositories/main" not in doc
     assert "/api/agent-releases/main" not in doc
-    assert "浏览器中可完成候选 diff 审查、发布和回滚" in doc
+    assert "浏览器中可在批次页发布回归通过的候选版本，并在版本页切换到任意已发布版本" in doc
     assert "审批、拒绝和候选回归不作为默认用户入口" in doc
 
     current_routes = [
         "GET  /api/agent-repository",
         "GET  /api/agent-repository/current",
         "GET  /api/agent-releases",
-        "POST /api/agent-releases/{release_id}/rollback",
+        "POST /api/agent-releases/{release_id}/restore",
         "GET  /api/agent-change-sets?status=&optimization_task_id=&limit=",
         "POST /api/agent-change-sets/{change_set_id}/publish",
     ]
@@ -186,8 +186,8 @@ def test_feedback_panorama_matches_current_profiles_assets_and_version_ui():
         "| 回归影响分析智能体 | `regression-impact-analyzer` | `/regression-impact-analyzer-workspace`",
         "回归资产页已作为 `反馈信息 / 优化批次 / 回归资产 / 版本管理` 中的独立侧边菜单页落地",
         "regression plan、gate result、gate override 和回归影响分析 job",
-        "查看当前 main Agent Git ref、change set 和 release",
-        "支持发布和回滚",
+        "查看当前 main Agent Git ref 和 release",
+        "支持切换到指定已发布版本",
     ]
     for phrase in current_phrases:
         assert phrase in doc

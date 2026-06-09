@@ -34,7 +34,9 @@ class AgentChangeSetProjectionRecord(StrictRuntimeRecord):
     note: Optional[str] = None
     diff_summary: AgentChangeSetDiffSummaryRecord = Field(default_factory=AgentChangeSetDiffSummaryRecord)
     latest_eval_run_id: Optional[str] = None
+    latest_eval_run: Optional[dict] = None
     latest_release_id: Optional[str] = None
+    publication_blocker: Optional[str] = None
 
     @field_validator("diff_summary", mode="before")
     @classmethod

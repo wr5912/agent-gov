@@ -243,6 +243,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-releases/{release_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore the main Agent workspace to one release */
+        post: operations["restore_agent_release_api_agent_releases__release_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-releases/{release_id}/rollback": {
         parameters: {
             query?: never;
@@ -1608,6 +1625,10 @@ export interface components {
             };
             /** Execution Job Id */
             execution_job_id?: string | null;
+            /** Latest Eval Run */
+            latest_eval_run?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
             /** Latest Eval Run Id */
             latest_eval_run_id?: string | null;
             /** Latest Release Id */
@@ -1616,6 +1637,8 @@ export interface components {
             note?: string | null;
             /** Optimization Task Id */
             optimization_task_id?: string | null;
+            /** Publication Blocker */
+            publication_blocker?: string | null;
             /**
              * Schema Version
              * @default agent-change-set/v1
@@ -1833,6 +1856,31 @@ export interface components {
             tag_name: string;
             /** Updated At */
             updated_at: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentReleaseRestoreRequest */
+        AgentReleaseRestoreRequest: {
+            /** Note */
+            note?: string | null;
+            /**
+             * Operator
+             * @default runtime
+             */
+            operator: string;
+        };
+        /** AgentReleaseRestoreResponse */
+        AgentReleaseRestoreResponse: {
+            release: components["schemas"]["AgentReleaseResponse"];
+            /** Restore Result */
+            restore_result?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Schema Version
+             * @default agent-release-restore/v1
+             */
+            schema_version: string;
         } & {
             [key: string]: unknown;
         };
@@ -5234,6 +5282,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentReleaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_agent_release_api_agent_releases__release_id__restore_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                release_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentReleaseRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentReleaseRestoreResponse"];
                 };
             };
             /** @description Validation Error */

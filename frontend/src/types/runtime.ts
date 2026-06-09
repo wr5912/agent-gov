@@ -14,6 +14,8 @@ type OpenApiAgentGitFileEntryResponse = components["schemas"]["AgentGitFileEntry
 type OpenApiAgentGitRefResponse = components["schemas"]["AgentGitRefResponse"];
 type OpenApiAgentReleaseResponse = components["schemas"]["AgentReleaseResponse"];
 type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRollbackRequest"];
+type OpenApiAgentReleaseRestoreRequest = components["schemas"]["AgentReleaseRestoreRequest"];
+type OpenApiAgentReleaseRestoreResponse = components["schemas"]["AgentReleaseRestoreResponse"];
 type OpenApiAgentRepositoryDiscardChangesRequest = components["schemas"]["AgentRepositoryDiscardChangesRequest"];
 type OpenApiAgentRepositorySnapshotRequest = components["schemas"]["AgentRepositorySnapshotRequest"];
 type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentRepositoryStatusResponse"];
@@ -64,11 +66,13 @@ export type AgentGitFileDiff = Omit<OpenApiAgentGitFileDiffResponse, "status" | 
 export type AgentChangeSet = OpenApiAgentChangeSetResponse;
 export type AgentChangeSetEvent = OpenApiAgentChangeSetEventResponse;
 export type AgentRelease = OpenApiAgentReleaseResponse;
+export type AgentReleaseRestoreResponse = OpenApiAgentReleaseRestoreResponse;
 export type AgentChangeSetCreateRequest = OpenApiAgentChangeSetCreateRequest;
 export type AgentChangeSetActionRequest = OpenApiAgentChangeSetActionRequest;
 export type AgentChangeSetRegressionRunRequest = OpenApiAgentChangeSetRegressionRunRequest;
 export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
+export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
 
 export type ChatRequest = OpenApiChatRequest;
 

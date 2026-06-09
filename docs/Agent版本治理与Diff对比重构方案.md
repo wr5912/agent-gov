@@ -19,12 +19,12 @@
 
 截至本轮整改，阶段 1-5 已按本方案完成主链路落地：
 
-- 后端新增 Git-backed Agent repository、change set、event、release 和 rollback 治理链路。
+- 后端新增 Git-backed Agent repository、change set、event、release 和 restore 切换链路。
 - 执行应用先写候选 worktree 并提交 candidate commit，不再直接修改主 workspace。
 - 候选回归使用 candidate worktree 上下文，publish 后才推进主 workspace。
 - 前端版本治理工作台、OpenAPI、生成类型和任务 diff 消费者已迁移到新 change set / release API。
 - 旧 `/api/agent-versions/main/*` router、前端 helper、旧 restore/manifest API schema 和旧运行时 `current.json` payload 字段已删除。
-- 当前前端主路径只把“发布”和“回滚”暴露在行级“操作”菜单中；approve、reject 和 change set regression API 保留为后端治理能力、自动化或后续门禁扩展，不再作为默认用户操作按钮。
+- 当前前端主路径把“发布”放在优化批次动作区，把“切换到版本”放在版本列表行级“操作”菜单中；approve、reject 和 change set regression API 保留为后端治理能力、自动化或后续门禁扩展，不再作为默认用户操作按钮。
 
 保留的 `AgentVersionStore` 仅用于历史快照能力和对应单元测试，不再作为运行时 HTTP API 主流程。
 
@@ -83,7 +83,7 @@
 Agent 配置文件仍是源码
 后端受控 Git provider 负责 refs、Tag、Diff、分支、worktree、发布归档和回滚执行
 SQLite 负责业务治理元数据
-前端负责 Diff 审查、发布和回滚主操作；审批、拒绝和候选回归作为后台治理能力保留，不作为默认用户决策点
+前端负责优化批次发布和已发布版本切换主操作；审批、拒绝和候选回归作为后台治理能力保留，不作为默认用户决策点
 归档包作为发布产物保留
 ```
 
@@ -408,7 +408,7 @@ GET  /api/agent-repository/current
 
 GET  /api/agent-releases
 GET  /api/agent-releases/{release_id}
-POST /api/agent-releases/{release_id}/rollback
+POST /api/agent-releases/{release_id}/restore
 ```
 
 ### 9.3 Change set API
@@ -580,7 +580,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 验收：
 
 - `rg "/api/agent-versions/main" app frontend tests docs` 仅命中废弃说明或迁移测试。
-- 浏览器中可完成候选 diff 审查、发布和回滚；审批、拒绝和候选回归不作为默认用户入口。
+- 浏览器中可在批次页发布回归通过的候选版本，并在版本页切换到任意已发布版本；审批、拒绝和候选回归不作为默认用户入口。
 - TypeScript build 通过。
 - feedback browser smoke 无 console error、failed request 和 4xx/5xx。
 

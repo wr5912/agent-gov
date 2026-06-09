@@ -14,6 +14,8 @@ import type {
   AgentGitRef,
   AgentRelease,
   AgentReleaseRollbackRequest,
+  AgentReleaseRestoreRequest,
+  AgentReleaseRestoreResponse,
   AgentRepositoryDiscardChangesRequest,
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
@@ -174,6 +176,18 @@ export function rollbackAgentRelease(config: RuntimeClientConfig, releaseId: str
   return requestJson<AgentRelease>(
     config,
     `/api/agent-releases/${encodeURIComponent(releaseId)}/rollback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function restoreAgentRelease(config: RuntimeClientConfig, releaseId: string, payload: AgentReleaseRestoreRequest = { operator: "ui" }) {
+  return requestJson<AgentReleaseRestoreResponse>(
+    config,
+    `/api/agent-releases/${encodeURIComponent(releaseId)}/restore`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

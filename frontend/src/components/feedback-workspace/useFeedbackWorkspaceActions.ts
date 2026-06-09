@@ -10,6 +10,7 @@ import {
   generateFeedbackSourceEvalCases,
   getAgentJob,
   promoteFeedbackOptimizationBatchEvalCases,
+  publishAgentChangeSet,
   removeFeedbackOptimizationBatchEvalCase,
   rollbackFeedbackOptimizationBatchExecution,
   runFeedbackOptimizationBatchAttribution,
@@ -369,6 +370,31 @@ export function useFeedbackWorkspaceActions({
     }
   }
 
+  async function publishBatchChangeSet(batch: FeedbackOptimizationBatchRecord) {
+    const changeSetId = batch.optimization_task?.latest_change_set?.change_set_id;
+    if (!changeSetId) {
+      setToast("当前批次还没有可发布的候选版本");
+      return;
+    }
+    setActionId(`batch-publish:${batch.batch_id}`);
+    try {
+      const release = await publishAgentChangeSet(clientConfig, changeSetId, {
+        operator: "ui",
+        note: `发布优化批次 ${batch.batch_id} 的回归通过候选版本`,
+      });
+      setToast(`已发布版本 ${release.tag_name || shortId(release.commit_sha)}`);
+      setSelectedBatchId(batch.batch_id);
+      await refreshWorkbench();
+      await onRefreshVersions?.();
+      onFeedbackChanged?.();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "发布批次候选版本失败");
+      await refreshWorkbench();
+    } finally {
+      setActionId(null);
+    }
+  }
+
   async function createBatchEvalCase(
     batch: FeedbackOptimizationBatchRecord,
     payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
@@ -473,6 +499,7 @@ export function useFeedbackWorkspaceActions({
     executePlanTask,
     updatePlanTask,
     runBatchRegression,
+    publishBatchChangeSet,
     createBatchEvalCase,
     updateBatchEvalCase,
     archiveBatchEvalCase,

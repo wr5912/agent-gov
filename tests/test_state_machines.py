@@ -122,6 +122,7 @@ def test_task_state_machine_allows_execution_and_regression_lifecycle():
     validate_transition("task", "execution_planning", "execution_ready")
     validate_transition("task", "execution_ready", "applied_pending_regression")
     validate_transition("task", "applied_pending_regression", "regression_running")
+    validate_transition("task", "regression_running", "regression_failed")
     validate_transition("task", "regression_running", "completed")
 
 

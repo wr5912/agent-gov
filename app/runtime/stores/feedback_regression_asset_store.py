@@ -546,8 +546,8 @@ class FeedbackRegressionAssetStoreMixin:
             return "completed"
         if result_status == "review_required":
             return "needs_human_review"
-        if result_status == "blocked":
-            return "failed"
+        if result_status in {"blocked", "failed"}:
+            return "regression_failed"
         return result_status or "needs_human_review"
 
     def _regression_plan_to_dict(self, row: RegressionPlanModel) -> JsonObject:

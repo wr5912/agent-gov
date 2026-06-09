@@ -23,7 +23,8 @@
           "description": "fob-da60-like batch generated candidate eval cases must be promoted before regression, then the optimization loop runs through execution, regression, impact analysis, and publish.",
           "pytest": [
             "tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression",
-            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion"
+            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion",
+            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish"
           ]
         },
         {

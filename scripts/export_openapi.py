@@ -6,8 +6,8 @@ import os
 import sys
 from pathlib import Path
 
-CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
-LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
 _CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
 _TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
 
@@ -16,7 +16,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Export the FastAPI OpenAPI schema to a JSON file.")
     parser.add_argument(
         "--output",
-        default="/tmp/claude-agent-runtime-openapi.json",
+        default="/tmp/agent-gov-openapi.json",
         help="Output path for the generated OpenAPI JSON.",
     )
     args = parser.parse_args()

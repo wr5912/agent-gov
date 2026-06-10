@@ -95,7 +95,7 @@ export function ChatPanel({
         {messages.length === 0 ? (
           <div className="welcome-card">
             <div className="welcome-mark">⌘</div>
-            <h3>开始测试 Claude Agent Runtime</h3>
+            <h3>开始测试 AgentGov</h3>
             <p>左侧选择 subagent / skills，中间输入任务。前端只调用你的 runtime API，不接管 Claude Code 进程。</p>
             <div className="prompt-examples">
               <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>

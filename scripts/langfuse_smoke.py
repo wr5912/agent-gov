@@ -105,7 +105,7 @@ def print_runtime_versions(env: Mapping[str, str]) -> None:
 
 
 def check_queues(env: Mapping[str, str]) -> list[str]:
-    redis_container = env.get("LANGFUSE_REDIS_CONTAINER") or "claude-agent-runtime-langfuse-redis"
+    redis_container = env.get("LANGFUSE_REDIS_CONTAINER") or "agent-gov-langfuse-redis"
     if not container_running(redis_container):
         print(f"Langfuse Redis queue check skipped: container {redis_container} is not running")
         return []

@@ -25,6 +25,6 @@
 
 ## 本仓库注意点
 
-- `claude-agent-runtime` 的治理命令、CI、Docker 卷路径和反馈闭环产品不变量属于项目覆盖层。
+- `agent-gov` 的治理命令、CI、Docker 卷路径和反馈闭环产品不变量属于项目覆盖层。
 - 团队通用层不得硬编码本仓库脚本名和路径。
 - `.codex/rules` 当前承载注释型治理入口，但 `.rules` 文件仍会被 Starlark 解析，正文必须保持注释格式。

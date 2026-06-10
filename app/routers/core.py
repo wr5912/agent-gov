@@ -24,7 +24,7 @@ def create_core_router(
     @router.get("/", include_in_schema=False)
     async def root() -> RuntimeRootResponse:
         return RuntimeRootResponse(
-            name="Claude Agent Runtime API",
+            name="AgentGov API",
             health="/health",
             docs=app.docs_url,
             redoc=app.redoc_url,

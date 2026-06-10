@@ -31,7 +31,7 @@
 - 旧版本 id 不再提供旧 HTTP API；既有任务/eval 字段保留解释，不在本轮物理删除历史目录。
 - 旧 `/api/agent-versions/main/*` 最后阶段原子删除，不在基础设施阶段提前删除。
 - 候选执行和候选回归必须运行在 candidate worktree。
-- 默认 host runtime root 改为 `${HOME}/volume-agent-runtime`。
+- 默认 host runtime root 改为 `${HOME}/volume-agent-gov`。
 - 本轮默认采用 local Git provider；Gitea 只作为后续可选外部服务展示/发现能力，产品 API 仍是审批和发布主入口。
 - v1 不做多用户 RBAC，使用声明式 `operator`，但必须记录 request source、API key alias 或部署身份。
 
@@ -47,5 +47,5 @@
 
 - 方案文档采纳 GV-1 到 GV-19。
 - `.planning` 中存在项目、路线图和本 phase 的 context/plan。
-- 项目不变量与 `${HOME}/volume-agent-runtime` 默认路径一致。
+- 项目不变量与 `${HOME}/volume-agent-gov` 默认路径一致。
 - 治理硬门 fail 模式通过。

@@ -46,7 +46,7 @@
 
 ## 2. 整改前实现与已验证问题
 
-整改前主 Agent 配置位于容器内 `/main-workspace`。本地默认宿主机目录仍是 `docker/volume/main-workspace`，后续默认将迁到 `${HOME}/volume-agent-runtime/main-workspace`。
+整改前主 Agent 配置位于容器内 `/main-workspace`。本地默认宿主机目录仍是 `docker/volume/main-workspace`，后续默认将迁到 `${HOME}/volume-agent-gov/main-workspace`。
 
 整改前 `AgentVersionStore` 以 tar 包和 manifest 管理版本：
 
@@ -120,7 +120,7 @@ regression-impact-analyzer
 | GV-6 Change set 缺状态转移、并发锁和唯一性 | 采纳 | 新增完整状态转移表、唯一约束、状态前置条件和并发测试。 |
 | GV-7 API 草案不足以支撑三栏工作台 | 采纳 | 补 change set 列表、events、regression-runs、release archive 下载接口。 |
 | GV-8 operator/reason 未对齐认证现实 | 采纳 | v1 使用声明式 operator，同时记录 request source、API key alias 或部署身份，reason 必填。 |
-| GV-9 host volume 迁移影响本地调试和脚本 | 采纳 | 默认迁到 `${HOME}/volume-agent-runtime`，同步 Makefile、Compose、README、PyCharm 说明和迁移脚本。 |
+| GV-9 host volume 迁移影响本地调试和脚本 | 采纳 | 默认迁到 `${HOME}/volume-agent-gov`，同步 Makefile、Compose、README、PyCharm 说明和迁移脚本。 |
 | GV-10 `.worktreeinclude` overlay 可能污染候选回归 | 采纳 | 本轮候选回归绑定 candidate worktree；overlay manifest 自动检测列为后续增强。 |
 | GV-11 `reset --hard` 缺场景保护 | 采纳 | Git 白名单拆成命令、场景、目标 worktree，`reset --hard` 只允许受控 cleanup/rollback。 |
 | GV-12 验证矩阵缺旧数据、degraded 和 reconciliation | 采纳 | 增加旧 API 删除、Git provider、候选执行/回归、publish/rollback、浏览器 smoke 验证；reconciliation 压入后续增强。 |
@@ -137,7 +137,7 @@ regression-impact-analyzer
 宿主机默认运行态根改为：
 
 ```text
-${HOME}/volume-agent-runtime
+${HOME}/volume-agent-gov
 ```
 
 容器内路径保持不变：
@@ -156,7 +156,7 @@ ${HOME}/volume-agent-runtime
 Compose 变量必须由单根派生：
 
 ```text
-HOST_RUNTIME_VOLUME_ROOT=${HOME}/volume-agent-runtime
+HOST_RUNTIME_VOLUME_ROOT=${HOME}/volume-agent-gov
 HOST_WORKSPACE_MOUNT=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace
 HOST_DATA_MOUNT=${HOST_RUNTIME_VOLUME_ROOT}/data
 HOST_CLAUDE_ROOT_MOUNT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main
@@ -473,7 +473,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 - `pre_execution_agent_version_id` 语义迁移为 base commit。
 - `applied_diff` 来源迁移为 Git diff。
 - OpenAPI 和前端生成类型迁移到新治理 API。
-- Docker host volume 默认从 `docker/volume` 迁移到 `${HOME}/volume-agent-runtime`。
+- Docker host volume 默认从 `docker/volume` 迁移到 `${HOME}/volume-agent-gov`。
 
 ### 11.3 保留
 
@@ -610,7 +610,7 @@ v1 不引入多用户 RBAC。后端必须记录声明式 `operator`、request so
 - 候选回归读取 candidate worktree。
 - `FeedbackStore` 在版本治理写路径中不再吞掉 provider 异常。
 - Git provider 不可用时，change set/publish/rollback 写接口阻断，仓库状态只读接口不崩溃。
-- `HOST_RUNTIME_VOLUME_ROOT` 未设置时使用 `${HOME}/volume-agent-runtime`；显式设置后所有挂载统一指向该根。
+- `HOST_RUNTIME_VOLUME_ROOT` 未设置时使用 `${HOME}/volume-agent-gov`；显式设置后所有挂载统一指向该根。
 - `.venv/bin/python scripts/check_codex_governance.py --mode fail`、`make test`、OpenAPI export、前端类型生成、前端 build、browser smoke 全部通过。
 
 ## 15. 仍需后续实现确认的问题

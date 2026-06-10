@@ -16,14 +16,14 @@
 | Publish lifecycle | publish/rollback 状态机 | 线性不可恢复流程不采用 | publish/tag/archive/rollback 测试 |
 | Public API | 新 agent governance API | 旧 `/api/agent-versions/main/*` 最后阶段原子删除 | OpenAPI 导出、`rg` 验收 |
 | Frontend types/UI | OpenAPI generated types | 删除旧 snapshot helper 和手写漂移字段 | type generation、build、browser smoke |
-| Docker paths | `HOST_RUNTIME_VOLUME_ROOT` | 默认迁到 `${HOME}/volume-agent-runtime`，旧 `docker/volume` 为兼容路径 | Compose 配置测试、README 检查 |
+| Docker paths | `HOST_RUNTIME_VOLUME_ROOT` | 默认迁到 `${HOME}/volume-agent-gov`，旧 `docker/volume` 为兼容路径 | Compose 配置测试、README 检查 |
 
 ## 阶段 0 任务
 
 1. 将 `docs/Agent版本治理与Diff对比重构方案.md` 改为评审采纳后的权威方案。
 2. 新增 `.planning/PROJECT.md` 和 `.planning/ROADMAP.md`。
 3. 新增本阶段 `CONTEXT.md` 和 `PLAN.md`。
-4. 更新项目专属说明，使 Docker 持久化默认路径变为 `${HOME}/volume-agent-runtime`。
+4. 更新项目专属说明，使 Docker 持久化默认路径变为 `${HOME}/volume-agent-gov`。
 5. 运行 `git diff --check` 和 `.venv/bin/python scripts/check_codex_governance.py --mode fail`。
 
 ## 后续实现任务

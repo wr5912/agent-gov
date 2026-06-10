@@ -24,7 +24,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py
 
-COVERAGE_JSON ?= /tmp/claude-agent-runtime-coverage.json
+COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
 .PHONY: setup build up down logs test coverage main-flow-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list runtime-template-clean clean-runtime-artifacts

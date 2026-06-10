@@ -313,7 +313,7 @@ export default function App() {
           disallowed_tools: parseOptionalCsv(disallowedTools),
           max_turns: maxTurns,
           metadata: {
-            client: "claude-agent-playground-ui",
+            client: "agent-gov-ui",
           },
         },
         {

@@ -3,15 +3,15 @@ set -euo pipefail
 
 HOST_UID_VALUE="${HOST_UID:-$(id -u)}"
 HOST_GID_VALUE="${HOST_GID:-$(id -g)}"
-IMAGE="${CLAUDE_AGENT_RUNTIME_FIX_IMAGE:-}"
-TARGET_ROOT="${HOST_RUNTIME_VOLUME_ROOT:-${RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-runtime}}"
+IMAGE="${AGENT_GOV_FIX_IMAGE:-}"
+TARGET_ROOT="${HOST_RUNTIME_VOLUME_ROOT:-${RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}}"
 
 if [[ -z "$IMAGE" ]]; then
-  IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | awk -F: '$1=="claude-agent-runtime-api" {print; exit}')"
+  IMAGE="$(docker images --format '{{.Repository}}:{{.Tag}}' | awk -F: '$1=="agent-gov-api" {print; exit}')"
 fi
 
 if [[ -z "$IMAGE" ]]; then
-  echo "No claude-agent-runtime-api image found. Build the backend image first." >&2
+  echo "No agent-gov-api image found. Build the backend image first." >&2
   exit 1
 fi
 

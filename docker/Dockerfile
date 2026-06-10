@@ -85,14 +85,14 @@ COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.p
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
 COPY scripts/runtime_template_renderer.py /app/scripts/runtime_template_renderer.py
 COPY docker/runtime-template /app/docker/runtime-template
-COPY docker/entrypoint.sh /usr/local/bin/claude-agent-runtime-entrypoint
+COPY docker/entrypoint.sh /usr/local/bin/agent-gov-entrypoint
 
-RUN chmod +x /usr/local/bin/claude-agent-runtime-entrypoint \
+RUN chmod +x /usr/local/bin/agent-gov-entrypoint \
     && mkdir -p /main-workspace /attribution-analyzer-workspace /proposal-generator-workspace \
         /execution-optimizer-workspace /eval-case-governor-workspace /regression-impact-analyzer-workspace \
         /claude-roots/main/.claude /claude-roots/attribution-analyzer/.claude /claude-roots/proposal-generator/.claude \
         /claude-roots/execution-optimizer/.claude /claude-roots/eval-case-governor/.claude \
         /claude-roots/regression-impact-analyzer/.claude /data
 
-ENTRYPOINT ["/usr/local/bin/claude-agent-runtime-entrypoint"]
+ENTRYPOINT ["/usr/local/bin/agent-gov-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080} --log-level ${LOG_LEVEL:-info}"]

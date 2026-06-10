@@ -1,12 +1,12 @@
 {
-  "name": "claude-agent-playground-ui",
+  "name": "agent-gov-ui",
   "private": true,
   "version": "0.3.3",
   "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173",
-    "generate:api-types": "../.venv/bin/python ../scripts/export_openapi.py --output /tmp/claude-agent-runtime-openapi.json && openapi-typescript /tmp/claude-agent-runtime-openapi.json -o src/types/api.ts",
+    "generate:api-types": "../.venv/bin/python ../scripts/export_openapi.py --output /tmp/agent-gov-openapi.json && openapi-typescript /tmp/agent-gov-openapi.json -o src/types/api.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "verify:feedback-browser": "cd .. && node scripts/verify_feedback_optimization_browser.mjs",

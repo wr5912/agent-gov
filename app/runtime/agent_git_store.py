@@ -60,7 +60,7 @@ class GitAgentVersionStore:
         service_url: str | None = None,
         service_public_url: str | None = None,
         repository_name: str = "main-agent-config",
-        git_user_name: str = "Claude Agent Runtime",
+        git_user_name: str = "AgentGov",
         git_user_email: str = "agent-runtime@example.local",
     ) -> None:
         self.repository_dir = repository_dir

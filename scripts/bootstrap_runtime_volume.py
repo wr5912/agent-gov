@@ -32,8 +32,8 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
 
 DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
 DEFAULT_ENV_FILE = Path("docker/.env")
-CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
-LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
 RUNTIME_VOLUME_MODES = {"container", "local-debug"}
 _RUNTIME_ENV_FILE_MODES = {
     ".env": "container",
@@ -389,7 +389,7 @@ def main() -> int:
     parser.add_argument(
         "--runtime-volume-mode",
         choices=sorted(RUNTIME_VOLUME_MODES),
-        help="Default runtime root mode when HOST_RUNTIME_VOLUME_ROOT is not set: container=~/volume-agent-runtime, local-debug=/tmp/local-debug-volume-agent-runtime.",
+        help="Default runtime root mode when HOST_RUNTIME_VOLUME_ROOT is not set: container=~/volume-agent-gov, local-debug=/tmp/local-debug-volume-agent-gov.",
     )
     parser.add_argument("--template-dir", type=Path, default=_repo_root() / DEFAULT_TEMPLATE_DIR)
     parser.add_argument("--env-file", type=Path, default=_repo_root() / DEFAULT_ENV_FILE)

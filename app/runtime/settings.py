@@ -52,8 +52,8 @@ _DEFAULT_EXECUTION_CLAUDE_ROOT = Path("/claude-roots/execution-optimizer")
 _DEFAULT_EVAL_CASE_GOVERNOR_CLAUDE_ROOT = Path("/claude-roots/eval-case-governor")
 _DEFAULT_REGRESSION_IMPACT_CLAUDE_ROOT = Path("/claude-roots/regression-impact-analyzer")
 _DEFAULT_CLAUDE_HOME = Path("/claude-roots/main/.claude")
-LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-runtime")
-CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-runtime"
+LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
+CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
 _SETTINGS_ENV_FILES = {
     "container": Path("docker/.env"),
     "local-debug": Path("docker/.env.local-debug"),
@@ -279,7 +279,7 @@ class AppSettings(BaseSettings):
     agent_git_repository_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_REPOSITORY_DIR")
     agent_git_worktrees_dir_override: Optional[Path] = Field(default=None, alias="AGENT_GIT_WORKTREES_DIR")
     agent_release_archives_dir_override: Optional[Path] = Field(default=None, alias="AGENT_RELEASE_ARCHIVES_DIR")
-    agent_git_user_name: str = Field(default="Claude Agent Runtime", alias="AGENT_GIT_USER_NAME")
+    agent_git_user_name: str = Field(default="AgentGov", alias="AGENT_GIT_USER_NAME")
     agent_git_user_email: str = Field(default="agent-runtime@example.local", alias="AGENT_GIT_USER_EMAIL")
 
     langfuse_enabled: bool = Field(default=False, alias="LANGFUSE_ENABLED")
@@ -288,7 +288,7 @@ class AppSettings(BaseSettings):
     langfuse_base_url: str = Field(default="http://langfuse-web:3000", alias="LANGFUSE_BASE_URL")
     langfuse_otel_endpoint: Optional[str] = Field(default=None, alias="LANGFUSE_OTEL_ENDPOINT")
     langfuse_otel_signals_raw: str = Field(default="traces,metrics,logs", alias="LANGFUSE_OTEL_SIGNALS")
-    langfuse_service_name: str = Field(default="claude-agent-runtime-api", alias="LANGFUSE_SERVICE_NAME")
+    langfuse_service_name: str = Field(default="agent-gov-api", alias="LANGFUSE_SERVICE_NAME")
     langfuse_deployment_environment: str = Field(default="local", alias="LANGFUSE_DEPLOYMENT_ENVIRONMENT")
     langfuse_resource_attributes_raw: Optional[str] = Field(default=None, alias="LANGFUSE_RESOURCE_ATTRIBUTES")
     langfuse_export_interval_ms: int = Field(default=1000, alias="LANGFUSE_EXPORT_INTERVAL_MS")

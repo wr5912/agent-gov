@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(
-    title="Claude Agent Runtime API",
+    title="AgentGov API",
     version=APP_VERSION,
     description="A thin Dockerized API control plane for Claude Agent SDK / Claude Code configurations.",
     docs_url="/docs",

@@ -89,7 +89,7 @@
 
 ### [GV-9] host volume 默认迁移会影响 Makefile、本地调试和权限脚本
 
-方案把默认宿主机运行态根从 `docker/volume` 改为 `${HOME}/volume-agent-runtime`（行 760-772、953-969）。当前 Makefile、README、`.env.example`、Compose、PyCharm 调试说明和权限修复脚本都围绕 `docker/volume`（`Makefile:10-15`、`docker/.env.example:36-52`、`README.md:514-521`）。方案只列出需要更新文档和配置，没有把本地调试兼容作为验收。
+方案把默认宿主机运行态根从 `docker/volume` 改为 `${HOME}/volume-agent-gov`（行 760-772、953-969）。当前 Makefile、README、`.env.example`、Compose、PyCharm 调试说明和权限修复脚本都围绕 `docker/volume`（`Makefile:10-15`、`docker/.env.example:36-52`、`README.md:514-521`）。方案只列出需要更新文档和配置，没有把本地调试兼容作为验收。
 
 建议：新增迁移验收：`make setup` 不再创建旧主路径或会按新变量创建；`docker/.env.local` / PyCharm 调试说明使用同一个 `HOST_RUNTIME_VOLUME_ROOT`；权限修复脚本支持新根目录；用户可以显式设置 `HOST_RUNTIME_VOLUME_ROOT=./volume` 继续旧路径。还要验证 Docker Compose 对 `.env` 中 `${HOME}` 的展开行为，避免不同环境空展开。
 

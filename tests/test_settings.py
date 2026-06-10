@@ -73,7 +73,7 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     local_debug_env.write_text(
         "\n".join(
             [
-                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
+                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-gov",
                 "API_PORT=9090",
                 "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
                 "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
@@ -135,7 +135,7 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
     (docker_dir / ".env.local-debug").write_text(
         "\n".join(
             [
-                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-runtime",
+                "HOST_RUNTIME_VOLUME_ROOT=/tmp/local-debug-volume-agent-gov",
                 "API_PORT=8080",
                 "WORKSPACE_DIR=${HOST_RUNTIME_VOLUME_ROOT}/main-workspace",
                 "DATA_DIR=${HOST_RUNTIME_VOLUME_ROOT}/data",
@@ -152,9 +152,9 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
     assert settings_env_file_for_mode() == Path("docker/.env.local-debug")
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_port == 8080
-    assert settings.workspace_dir == Path("/tmp/local-debug-volume-agent-runtime/main-workspace")
-    assert settings.data_dir == Path("/tmp/local-debug-volume-agent-runtime/data")
-    assert settings.claude_root == Path("/tmp/local-debug-volume-agent-runtime/claude-roots/main")
+    assert settings.workspace_dir == Path("/tmp/local-debug-volume-agent-gov/main-workspace")
+    assert settings.data_dir == Path("/tmp/local-debug-volume-agent-gov/data")
+    assert settings.claude_root == Path("/tmp/local-debug-volume-agent-gov/claude-roots/main")
     assert settings.langfuse_base_url == "http://localhost:53000"
 
 
@@ -166,7 +166,7 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
         _env_file=REPO_ROOT / "docker/.env.local-debug.example",
     )
 
-    local_debug_root = Path("/tmp/local-debug-volume-agent-runtime")
+    local_debug_root = Path("/tmp/local-debug-volume-agent-gov")
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_host == "0.0.0.0"
     assert settings.host_runtime_volume_root == local_debug_root.as_posix()
@@ -203,9 +203,9 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "provider_api_url_configured": False,
         "api_host": "0.0.0.0",
         "api_port": 8080,
-        "workspace_dir": "/tmp/local-debug-volume-agent-runtime/main-workspace",
-        "data_dir": "/tmp/local-debug-volume-agent-runtime/data",
-        "claude_root": "/tmp/local-debug-volume-agent-runtime/claude-roots/main",
+        "workspace_dir": "/tmp/local-debug-volume-agent-gov/main-workspace",
+        "data_dir": "/tmp/local-debug-volume-agent-gov/data",
+        "claude_root": "/tmp/local-debug-volume-agent-gov/claude-roots/main",
         "langfuse_base_url": "http://localhost:53000",
     }
     assert fields["provider_api_key_configured"] is False

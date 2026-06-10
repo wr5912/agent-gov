@@ -116,7 +116,7 @@ def validate_rendered_config(text: str, *, rel_path: Path, context: RuntimeTempl
             if _contains_container_path_marker(text, container_path):
                 errors.append(f"{rel_path.as_posix()} contains container-only path {container_path!r} in local-debug mode")
                 break
-    if context.mode == "container" and "/tmp/local-debug-volume-agent-runtime" in text:
+    if context.mode == "container" and "/tmp/local-debug-volume-agent-gov" in text:
         errors.append(f"{rel_path.as_posix()} contains local-debug runtime path in container mode")
     return errors
 

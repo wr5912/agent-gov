@@ -149,8 +149,8 @@ def test_runtime_env_governance_skill_keeps_required_boundary_terms() -> None:
         "本机后台 Agent job 不复用交互式 Claude `/login`",
         "`MODEL_PROVIDER_API_KEY` required privately",
         "docker/.env.local-debug",
-        "/tmp/local-debug-volume-agent-runtime",
-        "${HOME}/volume-agent-runtime",
+        "/tmp/local-debug-volume-agent-gov",
+        "${HOME}/volume-agent-gov",
     ]
     for term in required_terms:
         assert term in skill

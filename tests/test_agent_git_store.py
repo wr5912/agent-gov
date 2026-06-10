@@ -28,4 +28,4 @@ def test_git_store_marks_repository_as_safe_before_local_config(tmp_path, monkey
         repo,
         False,
     )
-    assert calls[2][0] == ["config", "user.name", "Claude Agent Runtime"]
+    assert calls[2][0] == ["config", "user.name", "AgentGov"]

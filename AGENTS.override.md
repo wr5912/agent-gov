@@ -92,6 +92,10 @@
 - 本机后台 Agent job 不复用交互式 Claude `/login` 状态；调试或生成回归用例前必须确认私有 `docker/.env.local-debug` 配置了 `MODEL_PROVIDER_API_KEY`，但真实 key 不得进入仓库。
 - 修改 runtime/env 选择、默认路径、模型凭据或 Langfuse 地址时，必须同步 README、env 示例、settings/env policy 测试和启动日志字段验证。
 
+## AgentGov 产品治理预检
+
+涉及 AgentGov 产品定位、目标愿景使命、反馈闭环治理方案、多业务 Agent 创建与治理、prompt/skill/SOP/eval 资产沉淀类任务时，Analyze 阶段先按 `.codex/skills/agentgov-governance-preflight/SKILL.md` 做治理对象预检：区分业务 Agent 与治理 Agent、资产类型、反馈归属、生命周期、当前实现边界和目标能力边界，先给治理对象矩阵和闭环链路，再写文档或方案正文。普通代码实现、bug 修复、单文件改动不触发。
+
 ## 本仓库专属边界
 
 - 不要把 `agent-gov` 的脚本名、CI workflow 或 hook 命令硬编码回 `AGENTS.md`、通用 `.codex/rules/` 或通用 skill 文本。

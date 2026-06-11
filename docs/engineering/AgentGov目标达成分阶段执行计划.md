@@ -120,3 +120,7 @@
 | 日期 | AGV | 动作 | 结果 | 状态变更 | 证据 |
 | --- | --- | --- | --- | --- | --- |
 | 2026-06-11 | — | 建立本执行计划 | 计划成文并入索引 | — | `docs/engineering/AgentGov目标达成分阶段执行计划.md` |
+| 2026-06-11 | AGV-001 | 阶段0固本：定位口径建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_001_governance_platform_positioning` |
+| 2026-06-11 | AGV-003 | 阶段0固本：前端边界建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary` |
+| 2026-06-11 | AGV-046 | 阶段0固本：安全运营可替换建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_046_security_ops_is_replaceable_example_scenario` |
+| 2026-06-11 | AGV-048 | 阶段0固本：前端非生产控制台建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary` |

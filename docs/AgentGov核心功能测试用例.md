@@ -64,6 +64,8 @@
 
 证据要求：文档截图、文本检索结果或 PR diff。
 
+自动验收：`tests/test_agv_acceptance.py::test_agv_001_governance_platform_positioning`。
+
 ### AGV-002 Agent Runtime、Feedback Loop、Version Governance 形成治理链路
 
 状态：`current`
@@ -108,6 +110,8 @@
 - 高风险业务动作不由 AgentGov 前端绕过外部系统审批。
 
 证据要求：README、前端页面或用户流程截图。
+
+自动验收：`tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary`。
 
 ### AGV-004 Agent 创建与配置能力
 
@@ -1062,6 +1066,8 @@
 
 证据要求：文档和模板说明。
 
+自动验收：`tests/test_agv_acceptance.py::test_agv_046_security_ops_is_replaceable_example_scenario`。
+
 ### AGV-047 AgentGov 职责边界不侵入外部业务系统
 
 状态：`gap`
@@ -1105,6 +1111,8 @@
 - 聊天、反馈、评估和版本管理通过后端 Runtime API 完成。
 
 证据要求：前端页面、代码检索或手工验证记录。
+
+自动验收：`tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary`。
 
 ## 开发推进规则
 

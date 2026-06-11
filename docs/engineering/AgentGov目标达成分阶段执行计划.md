@@ -132,3 +132,4 @@
 | 2026-06-11 | AGV-002/007/008/011/014/015/016/019/030/033/035/036/038/039/043 | 阶段0固本批量：15 个 current 用例绑定既有回归（10 full、5 partial） | 通过（12 既有 nodeid 全绿） | current 已锚定 | 见用例文档各 `自动验收` 绑定 |
 | 2026-06-11 | AGV-018 | 阶段0固本：main agent 样板不变量新增文档测试 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_018_main_agent_is_sample_not_long_term_boundary` |
 | 2026-06-11 | AGV-005 | 阶段1：把业务/治理 Agent 隐含区分固化为显式 category（单一真相来源）+ 权限边界断言 | 通过 | `gap` → `current` | `app/runtime/agent_profiles.py`、`tests/test_agent_profiles_category.py`（4 测试） |
+| 2026-06-11 | AGV-004/024/028 | 阶段1：剩余 gap 多阻塞于多 Agent 基座，先做基座设计（preflight + 最小架构增量 B1-B5） | 设计成文待评审 | 无（设计，零产品代码） | `docs/多业务Agent治理基座设计.md` |

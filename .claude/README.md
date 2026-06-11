@@ -11,6 +11,14 @@
 - `skills/project-skill/SKILL.md`: 团队开发通用技能。
 - `agents/project-worker.md`: 可选项目 worker 子代理。
 
+## 本仓库专项技能镜像
+
+以下技能是本仓库项目专项能力的 Claude 侧镜像，修改时需与 `.codex/skills/` 中的同名技能同步：
+
+- `skills/agentgov-governance-preflight/SKILL.md`: AgentGov 产品定位、目标愿景使命、反馈闭环治理、多业务 Agent 和 prompt/skill/SOP/eval 资产沉淀的治理对象预检。
+- `skills/runtime-env-governance/SKILL.md`: 治理本仓库 runtime/env、本机调试、容器部署、Langfuse 和后台 Agent job 模型凭据边界。
+- `skills/docs-governance/SKILL.md`: 治理本仓库 `docs/` 文档新增、迁移、归档、入口索引和 Codex/Claude skill 镜像同步；只处理文档容器治理，产品内容建模仍走 `agentgov-governance-preflight`。
+
 ## 复用要求
 
 - 新项目应重新填写自己的 `CLAUDE.project.md`。

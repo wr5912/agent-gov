@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "check_codex_governance.py"
 
@@ -16,6 +15,11 @@ SCRIPT = REPO_ROOT / "scripts" / "check_codex_governance.py"
 def _write_lines(path: Path, count: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("x = 1\n" * count, encoding="utf-8")
+
+
+def _write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
 
 
 def _git(root: Path, *args: str) -> None:
@@ -639,3 +643,105 @@ def test_default_scan_includes_scripts(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "FAIL: scripts/large.py" in result.stdout
+
+
+def test_new_active_docs_file_requires_docs_index(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "new-plan.md", "# New Plan\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/README.md: docs index is required when adding active docs" in result.stdout
+
+
+def test_new_active_docs_file_must_be_linked_from_docs_index(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "new-plan.md", "# New Plan\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/new-plan.md: new active docs file is not linked from docs/README.md" in result.stdout
+
+
+def test_new_active_docs_file_linked_from_docs_index_passes(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "new-plan.md", "# New Plan\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "docs/new-plan.md" not in result.stdout
+
+
+def test_new_archive_docs_file_requires_archive_index(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "archive" / "old-plan.md", "# Old Plan\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/archive/README.md: archive index is required when adding archived docs" in result.stdout
+
+
+def test_new_archive_docs_file_listed_in_archive_index_passes(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| docs/old-plan.md | docs/archive/old-plan.md | docs/new-plan.md | 2026-06-11 |\n",
+    )
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "archive" / "old-plan.md", "# Old Plan\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "docs/archive/old-plan.md" not in result.stdout
+
+
+def test_docs_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    codex_skill = "---\nname: \"docs-governance\"\ndescription: \"docs\"\n---\n\n# Docs\n\nKeep synced.\n"
+    claude_skill = (
+        "---\nname: \"docs-governance\"\ndescription: \"docs\"\n---\n\n# Docs\n\n"
+        "> 本技能与 `.codex/skills/docs-governance/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
+    )
+    _write_text(tmp_path / ".codex" / "skills" / "docs-governance" / "SKILL.md", codex_skill)
+    _write_text(tmp_path / ".claude" / "skills" / "docs-governance" / "SKILL.md", claude_skill)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / ".claude" / "skills" / "docs-governance" / "SKILL.md", f"{claude_skill}\nDrift.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "mirrored skill differs from .claude/skills/docs-governance/SKILL.md" in result.stdout
+
+
+def test_new_docs_file_with_unfinished_marker_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "new-plan.md", "# New Plan\n\nTODO: fill this later.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/new-plan.md: unfinished marker `TODO` at line 3" in result.stdout

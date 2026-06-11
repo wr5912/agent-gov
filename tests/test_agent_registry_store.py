@@ -12,6 +12,9 @@ from app.runtime.agent_profiles import build_profiles
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from fastapi.testclient import TestClient
+
+from test_api_execution_optimizer import _load_app
 
 
 def _store(tmp_path: Path) -> tuple[AgentRegistryStore, dict]:
@@ -46,3 +49,14 @@ def test_get_agent_returns_stable_identity(tmp_path: Path) -> None:
     assert record.name == "main-agent"
     assert record.workspace_dir  # 非空 workspace，作为归属锚点
     assert record.created_at
+
+
+def test_lifespan_seeds_business_agent_registry(monkeypatch, tmp_path: Path) -> None:
+    """应用启动（lifespan）幂等登记业务 Agent，使注册表在运行态被真实消费。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app):
+        pass
+
+    agents = module.agent_registry_store.list_agents()
+    assert [agent.agent_id for agent in agents] == ["main-agent"]
+    assert agents[0].category == "business"

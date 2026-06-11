@@ -23,10 +23,13 @@ from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
 from app.routers.sessions import create_sessions_router
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_profiles import build_profiles
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
+from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
@@ -60,6 +63,7 @@ agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
     agent_version_store=agent_version_store,
 )
+agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
@@ -74,6 +78,7 @@ api_key_credentials = Security(bearer_auth)
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
     agent_version_store.ensure_bootstrap()
+    agent_registry_store.sync_business_agents(build_profiles(settings))
     yield
 
 

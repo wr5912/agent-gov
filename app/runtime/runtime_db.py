@@ -13,7 +13,10 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
-from .runtime_db_migrations import migrate_0006_remove_agent_job_output_contract_column
+from .runtime_db_migrations import (
+    migrate_0006_remove_agent_job_output_contract_column,
+    migrate_0007_agent_registry,
+)
 
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -546,6 +549,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
         ("0005_agent_governance", _migrate_0005_agent_governance),
         ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
+        ("0007_agent_registry", migrate_0007_agent_registry),
     ):
         if version in applied:
             continue

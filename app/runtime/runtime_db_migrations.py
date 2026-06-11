@@ -87,3 +87,19 @@ def _create_agent_jobs_indexes(connection: Connection) -> None:
 def _table_columns(connection: Connection, table_name: str) -> set[str]:
     rows = connection.exec_driver_sql(f"PRAGMA table_info({table_name})").fetchall()
     return {str(row[1]) for row in rows}
+
+
+def migrate_0007_agent_registry(connection: Connection) -> None:
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS agent_registry (
+            agent_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            name VARCHAR(256) NOT NULL,
+            category VARCHAR(32) NOT NULL,
+            workspace_dir VARCHAR(2048) NOT NULL,
+            created_at VARCHAR(64) NOT NULL
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_category ON agent_registry (category)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_created_at ON agent_registry (created_at)")

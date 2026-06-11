@@ -133,3 +133,4 @@
 | 2026-06-11 | AGV-018 | 阶段0固本：main agent 样板不变量新增文档测试 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_018_main_agent_is_sample_not_long_term_boundary` |
 | 2026-06-11 | AGV-005 | 阶段1：把业务/治理 Agent 隐含区分固化为显式 category（单一真相来源）+ 权限边界断言 | 通过 | `gap` → `current` | `app/runtime/agent_profiles.py`、`tests/test_agent_profiles_category.py`（4 测试） |
 | 2026-06-11 | AGV-004/024/028 | 阶段1：剩余 gap 多阻塞于多 Agent 基座，先做基座设计（preflight + 最小架构增量 B1-B5） | 设计成文待评审 | 无（设计，零产品代码） | `docs/多业务Agent治理基座设计.md` |
+| 2026-06-11 | AGV-004/022 | 基座 B1：持久化业务 Agent 身份注册表（model + 迁移0007 + store + 幂等 sync），main-agent 种子 | 通过 | AGV-004 基座就绪（仍 gap，待创建入口 B4） | `app/runtime/agent_registry_db.py`、`app/runtime/stores/agent_registry_store.py`、`tests/test_agent_registry_store.py`（3 测试） |

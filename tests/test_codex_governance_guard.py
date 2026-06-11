@@ -790,3 +790,61 @@ def test_runtime_env_governance_skill_mirror_drift_fails(tmp_path: Path) -> None
 
     assert result.returncode == 1
     assert "mirrored skill differs from .claude/skills/runtime-env-governance/SKILL.md" in result.stdout
+
+
+def test_orphan_test_importing_deleted_symbol_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "app" / "mod.py", "def kept():\n    return 1\n")
+    _write_text(tmp_path / "tests" / "test_mod.py", "from app.mod import gone\n")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: tests/test_mod.py: imports `gone` not defined in `app.mod`" in result.stdout
+
+
+def test_orphan_test_importing_missing_module_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "tests" / "test_removed.py", "import scripts.removed\n")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: tests/test_removed.py: imports missing module `scripts.removed`" in result.stdout
+
+
+def test_orphan_check_passes_for_valid_import(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "app" / "mod.py", "def kept():\n    return 1\n")
+    _write_text(tmp_path / "tests" / "test_mod.py", "from app.mod import kept\n")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "not defined in" not in result.stdout
+    assert "imports missing module" not in result.stdout
+
+
+def test_test_sync_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    codex_skill = '---\nname: "test-sync-governance"\ndescription: "tests"\n---\n\n# Tests\n\nKeep synced.\n'
+    claude_skill = (
+        '---\nname: "test-sync-governance"\ndescription: "tests"\n---\n\n# Tests\n\n'
+        "> 本技能与 `.codex/skills/test-sync-governance/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
+    )
+    _write_text(tmp_path / ".codex" / "skills" / "test-sync-governance" / "SKILL.md", codex_skill)
+    _write_text(tmp_path / ".claude" / "skills" / "test-sync-governance" / "SKILL.md", claude_skill)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / ".claude" / "skills" / "test-sync-governance" / "SKILL.md", f"{claude_skill}\nDrift.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "mirrored skill differs from .claude/skills/test-sync-governance/SKILL.md" in result.stdout

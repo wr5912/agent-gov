@@ -18,6 +18,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/bootstrap_runtime_volume.py \
 	scripts/check_codex_governance.py \
 	scripts/check_docs_governance.py \
+	scripts/check_orphan_tests.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
 	scripts/runtime_template_renderer.py \

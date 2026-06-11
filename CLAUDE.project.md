@@ -41,7 +41,7 @@
 
 ## Claude Code 专项
 
-- 必须按需使用的项目 skill：`.claude/skills/runtime-env-governance/SKILL.md`（runtime/env 治理）、`.claude/skills/agentgov-governance-preflight/SKILL.md`（AgentGov 产品/治理方案预检；产品定位、愿景使命、反馈闭环治理、多 Agent 创建治理、prompt/skill/SOP/eval 沉淀类任务先做治理对象建模）。两者与 `.codex/skills/` 同名 skill 同源镜像，修改需两侧同步。
+- 必须按需使用的项目 skill：`.claude/skills/runtime-env-governance/SKILL.md`（runtime/env 治理）、`.claude/skills/agentgov-governance-preflight/SKILL.md`（AgentGov 产品/治理方案预检；产品定位、愿景使命、反馈闭环治理、多 Agent 创建治理、prompt/skill/SOP/eval 沉淀类任务先做治理对象建模）、`.claude/skills/docs-governance/SKILL.md`（`docs/` 文档容器治理）、`.claude/skills/test-sync-governance/SKILL.md`（迭代功能时测试增删改判断；删功能同步删测，配合 `scripts/check_orphan_tests.py` 孤儿检测）。这些 skill 与 `.codex/skills/` 同名 skill 同源镜像，修改需两侧同步。
 - 推荐子代理：`.claude/agents/project-worker.md`。
 - 项目 MCP：未配置（无 `.mcp.json`）。
 - 本地私有说明：个人偏好放 `CLAUDE.local.md`，模型等本机设置放 `.claude/settings.local.json`，二者已被 git ignore。

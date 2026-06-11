@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from check_docs_governance import collect_docs_governance_issues
+from check_orphan_tests import collect_orphan_issues
 from codex_governance_json import (
     annotation_contains_name,
     is_allowed_jsonobject_field,
@@ -780,10 +781,8 @@ def main(argv: list[str] | None = None) -> int:
             route_path_parts,
         )
         issues = collect_issues(current, base, thresholds)
-        issues.extend(
-            GovernanceIssue(issue.path, issue.message, issue.blocking)
-            for issue in collect_docs_governance_issues(root, base_ref)
-        )
+        issues.extend(GovernanceIssue(issue.path, issue.message, issue.blocking) for issue in collect_docs_governance_issues(root, base_ref))
+        issues.extend(GovernanceIssue(issue.path, issue.message, True) for issue in collect_orphan_issues(root))
         issues = sorted(issues, key=lambda issue: (not issue.blocking, issue.path, issue.message))
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

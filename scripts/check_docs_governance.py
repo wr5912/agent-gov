@@ -27,6 +27,7 @@ MIRRORED_SKILLS = (
     (".codex/skills/docs-governance/SKILL.md", ".claude/skills/docs-governance/SKILL.md"),
     (".codex/skills/runtime-env-governance/SKILL.md", ".claude/skills/runtime-env-governance/SKILL.md"),
     (".codex/skills/agentgov-governance-preflight/SKILL.md", ".claude/skills/agentgov-governance-preflight/SKILL.md"),
+    (".codex/skills/test-sync-governance/SKILL.md", ".claude/skills/test-sync-governance/SKILL.md"),
 )
 
 

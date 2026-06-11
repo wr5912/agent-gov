@@ -934,6 +934,8 @@
 
 证据要求：env 配置摘要、job 结果、健康检查。
 
+自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`。
+
 ### AGV-041 高风险动作需要审批
 
 状态：`gap`
@@ -977,6 +979,8 @@
 - 脱敏字段仍能支撑诊断。
 
 证据要求：脱敏检查结果和 401 响应。
+
+自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`；日志/trace 脱敏与错误凭据拒绝由运行时测试与人工验收覆盖。
 
 ### AGV-043 第一阶段 main agent 样板闭环
 

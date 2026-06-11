@@ -124,3 +124,5 @@
 | 2026-06-11 | AGV-003 | 阶段0固本：前端边界建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary` |
 | 2026-06-11 | AGV-046 | 阶段0固本：安全运营可替换建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_046_security_ops_is_replaceable_example_scenario` |
 | 2026-06-11 | AGV-048 | 阶段0固本：前端非生产控制台建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary` |
+| 2026-06-11 | AGV-040 | 阶段0固本：示例凭据边界绑定既有回归（不新增冗测） | 通过 | `current` 部分自动化 | `tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key` |
+| 2026-06-11 | AGV-042 | 阶段0固本：敏感信息示例边界绑定既有回归（运行时脱敏/拒绝凭据由运行时测试覆盖） | 通过 | `current` 部分自动化 | `tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key` |

@@ -1,6 +1,6 @@
-# 智能体开发平台 AgentGov
+# 智能体治理平台 AgentGov
 
-一个 **Docker 化的智能体开发平台 AgentGov** 项目（统一智体治理平台 AgentGov——Agent Runtime · Feedback Loop · Version Governance）。
+一个 **Docker 化的智能体治理平台 AgentGov** 项目（Agent Runtime · Feedback Loop · Version Governance）。
 
 目标：
 

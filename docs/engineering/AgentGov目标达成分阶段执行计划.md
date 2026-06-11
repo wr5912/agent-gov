@@ -35,9 +35,11 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 22 | 当前应具备 | 回归锚点，任何阶段不得退化 |
-| `gap` | 14 | 目标明确、能力不足 | 第一阶段主战场 |
+| `current` | 23 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `gap` | 13 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 12 | 长期愿景/成熟度 | 第二至四阶段路线 |
+
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理 Agent 结构化边界）补到 `current`。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界。
 
@@ -129,3 +131,4 @@
 | 2026-06-11 | AGV-042 | 阶段0固本：敏感信息示例边界绑定既有回归（运行时脱敏/拒绝凭据由运行时测试覆盖） | 通过 | `current` 部分自动化 | `tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key` |
 | 2026-06-11 | AGV-002/007/008/011/014/015/016/019/030/033/035/036/038/039/043 | 阶段0固本批量：15 个 current 用例绑定既有回归（10 full、5 partial） | 通过（12 既有 nodeid 全绿） | current 已锚定 | 见用例文档各 `自动验收` 绑定 |
 | 2026-06-11 | AGV-018 | 阶段0固本：main agent 样板不变量新增文档测试 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_018_main_agent_is_sample_not_long_term_boundary` |
+| 2026-06-11 | AGV-005 | 阶段1：把业务/治理 Agent 隐含区分固化为显式 category（单一真相来源）+ 权限边界断言 | 通过 | `gap` → `current` | `app/runtime/agent_profiles.py`、`tests/test_agent_profiles_category.py`（4 测试） |

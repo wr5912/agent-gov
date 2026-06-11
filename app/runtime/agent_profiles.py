@@ -17,6 +17,25 @@ AgentRole = Literal[
     "regression-impact-analyzer",
 ]
 
+# 业务 Agent 是被治理对象，治理 Agent 是闭环执行者（AGV-005）。
+AgentCategory = Literal["business", "governance"]
+
+# 治理 Agent 角色的单一真相来源；其余角色（当前为 main-agent）归为业务 Agent。
+GOVERNANCE_AGENT_ROLES: frozenset[AgentRole] = frozenset(
+    {
+        "attribution-analyzer",
+        "proposal-generator",
+        "execution-optimizer",
+        "eval-case-governor",
+        "regression-impact-analyzer",
+    }
+)
+
+
+def agent_category(role: AgentRole) -> AgentCategory:
+    """把 Agent 角色映射为业务/治理分类（AGV-005 结构化身份边界）。"""
+    return "governance" if role in GOVERNANCE_AGENT_ROLES else "business"
+
 MAIN_AGENT_PROFILE = "main-agent"
 ATTRIBUTION_ANALYZER_PROFILE = "attribution-analyzer"
 PROPOSAL_GENERATOR_PROFILE = "proposal-generator"
@@ -50,6 +69,11 @@ class AgentRuntimeProfile:
     max_turns: int | None = None
     max_runtime_seconds: int = 300
     max_output_bytes: int = 2_000_000
+
+    @property
+    def category(self) -> AgentCategory:
+        """业务 Agent（被治理对象）或治理 Agent（闭环执行者），由角色派生。"""
+        return agent_category(self.role)
 
 
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:

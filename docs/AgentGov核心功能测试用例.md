@@ -139,7 +139,7 @@
 
 ### AGV-005 业务 Agent 与治理 Agent 边界清晰
 
-状态：`gap`
+状态：`current`
 
 目标来源：多 Agent 治理对象。
 
@@ -158,6 +158,8 @@
 - 治理 Agent 的输出不直接变成生产事实，必须经过后端校验、评估和版本治理。
 
 证据要求：agent job 的 profile、输入输出和最终投影记录。
+
+自动验收：`tests/test_agent_profiles_category.py`（业务/治理身份与权限边界）；治理 Agent 输出经后端投影校验由 `tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure` 覆盖。
 
 ### AGV-006 治理闭环产物覆盖数据、方法论和执行资产
 

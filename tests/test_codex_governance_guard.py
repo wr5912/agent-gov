@@ -745,3 +745,48 @@ def test_new_docs_file_with_unfinished_marker_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "FAIL: docs/new-plan.md: unfinished marker `TODO` at line 3" in result.stdout
+
+
+def test_new_docs_file_with_cjk_unfinished_marker_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "new-plan.md", "# 新方案\n\n细节待补充。\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/new-plan.md: unfinished marker `待补充` at line 3" in result.stdout
+
+
+def test_docs_file_with_test_path_is_not_flagged_as_marker(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/guide.md\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "guide.md", "# Guide\n\n运行 tests/test_xxx.py::test_xxx 验证。\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "unfinished marker" not in result.stdout
+
+
+def test_runtime_env_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    codex_skill = '---\nname: "runtime-env-governance"\ndescription: "runtime"\n---\n\n# Runtime\n\nKeep synced.\n'
+    claude_skill = (
+        '---\nname: "runtime-env-governance"\ndescription: "runtime"\n---\n\n# Runtime\n\n'
+        "> 本技能与 `.codex/skills/runtime-env-governance/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
+    )
+    _write_text(tmp_path / ".codex" / "skills" / "runtime-env-governance" / "SKILL.md", codex_skill)
+    _write_text(tmp_path / ".claude" / "skills" / "runtime-env-governance" / "SKILL.md", claude_skill)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / ".claude" / "skills" / "runtime-env-governance" / "SKILL.md", f"{claude_skill}\nDrift.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "mirrored skill differs from .claude/skills/runtime-env-governance/SKILL.md" in result.stdout

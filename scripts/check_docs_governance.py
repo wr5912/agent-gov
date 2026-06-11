@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
+"""docs/skill 容器治理硬门。
+
+除 `docs/` 文档入口索引与归档索引外，也治理 `.codex/skills/` 与 `.claude/skills/`
+下 Markdown 的未完成标记和镜像同步（见 TEXT_GOVERNANCE_ROOTS / MIRRORED_SKILLS）；
+产品内容是否正确仍由 agentgov-governance-preflight 负责，本脚本只做容器治理。
+"""
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 from collections.abc import Iterable
@@ -12,9 +19,14 @@ DOCS_INDEX = "docs/README.md"
 ARCHIVE_INDEX = "docs/archive/README.md"
 ARCHIVE_INDEX_HEADERS = ("原路径", "归档路径", "替代文档", "归档日期")
 TEXT_GOVERNANCE_ROOTS = ("docs/", ".codex/skills/", ".claude/skills/")
-UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "待" "补充", "占" "位", "place" "holder", "x" "xx", "X" "XX")
+# CJK 标记按子串匹配；ASCII 标记按整词匹配，避免 `test_xxx.py`、掩码值等误报。
+_CJK_UNFINISHED_MARKERS = ("待" "补充", "占" "位")
+_WORD_UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "place" "holder", "x" "xx", "X" "XX")
+_WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
 MIRRORED_SKILLS = (
     (".codex/skills/docs-governance/SKILL.md", ".claude/skills/docs-governance/SKILL.md"),
+    (".codex/skills/runtime-env-governance/SKILL.md", ".claude/skills/runtime-env-governance/SKILL.md"),
+    (".codex/skills/agentgov-governance-preflight/SKILL.md", ".claude/skills/agentgov-governance-preflight/SKILL.md"),
 )
 
 
@@ -143,12 +155,20 @@ def _text_governed_path(rel_path: str) -> bool:
     return rel_path.endswith(".md") and rel_path.startswith(TEXT_GOVERNANCE_ROOTS)
 
 
+def _find_unfinished_marker(line: str) -> str | None:
+    for marker in _CJK_UNFINISHED_MARKERS:
+        if marker in line:
+            return marker
+    match = _WORD_UNFINISHED_PATTERN.search(line)
+    return match.group(0) if match else None
+
+
 def _unfinished_marker_issues(root: Path, base_ref: str | None, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
     issues: list[DocsGovernanceIssue] = []
     changed_paths = sorted(path for path in paths if _text_governed_path(path) and _is_changed_path(root, base_ref, path))
     for rel_path in changed_paths:
         for line_number, line in enumerate(_read_existing(root, rel_path).splitlines(), start=1):
-            marker = next((value for value in UNFINISHED_MARKERS if value in line), None)
+            marker = _find_unfinished_marker(line)
             if marker is not None:
                 issues.append(DocsGovernanceIssue(rel_path, f"unfinished marker `{marker}` at line {line_number}"))
     return issues

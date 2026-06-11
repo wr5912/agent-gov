@@ -784,7 +784,7 @@ def main(argv: list[str] | None = None) -> int:
             GovernanceIssue(issue.path, issue.message, issue.blocking)
             for issue in collect_docs_governance_issues(root, base_ref)
         )
-        issues = sorted(issues, key=lambda issue: (issue.blocking, issue.path, issue.message), reverse=True)
+        issues = sorted(issues, key=lambda issue: (not issue.blocking, issue.path, issue.message))
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

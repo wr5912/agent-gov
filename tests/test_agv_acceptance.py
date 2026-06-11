@@ -49,3 +49,15 @@ def test_agv_046_security_ops_is_replaceable_example_scenario() -> None:
     for scenario in ("安全运营", "客服", "研发助手", "知识管理", "企业流程自动化"):
         assert scenario in scene
     assert "不定义 AgentGov 的全部产品边界" in scene
+
+
+def test_agv_018_main_agent_is_sample_not_long_term_boundary() -> None:
+    """AGV-018 main agent 作为样板而非长期边界：文档保留多业务 Agent 扩展目标。"""
+    vision = _read("docs/项目目标愿景使命.md")
+    cases = _read("docs/AgentGov核心功能测试用例.md")
+
+    assert "main agent 是第一阶段样板，不是 AgentGov 的长期产品边界" in vision
+    assert "面向更多业务 Agent 扩展" in vision
+    # 用例文档持续保留多业务 Agent 治理对象要求。
+    assert "多 Agent 治理对象" in cases
+    assert "AGV-017" in cases

@@ -63,6 +63,7 @@
 - 目标：把 22 个 `current` 用例各建立一条可重复验收路径（自动测试、smoke 或人工三类至少其一），形成不退化基线。
 - 覆盖用例：AGV-001、AGV-002、AGV-003、AGV-007、AGV-008、AGV-011、AGV-014、AGV-015、AGV-016、AGV-018、AGV-019、AGV-030、AGV-033、AGV-035、AGV-036、AGV-038、AGV-039、AGV-040、AGV-042、AGV-043、AGV-046、AGV-048。
 - 退出标准：每个 `current` 用例有登记的验收方式，并纳入回归；后续阶段每次 `make test` 即守住该基线。
+- 进度：22/22 个 `current` 用例已登记自动验收（焦点 acceptance 测试或绑定既有回归），见用例文档各 `自动验收` 行与迭代日志；其中 5 个为 `partial`，运行态/人工子标准已标注。
 - 验证：自动测试绑定 `tests/coverage_policy.json` 主流程项；非自动项在迭代日志登记人工/smoke 路径。
 
 ### 阶段 1：单 Agent 闭环补齐（gap → current，对应 stage 1 main agent 样板）
@@ -126,3 +127,5 @@
 | 2026-06-11 | AGV-048 | 阶段0固本：前端非生产控制台建自动回归 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary` |
 | 2026-06-11 | AGV-040 | 阶段0固本：示例凭据边界绑定既有回归（不新增冗测） | 通过 | `current` 部分自动化 | `tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key` |
 | 2026-06-11 | AGV-042 | 阶段0固本：敏感信息示例边界绑定既有回归（运行时脱敏/拒绝凭据由运行时测试覆盖） | 通过 | `current` 部分自动化 | `tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key` |
+| 2026-06-11 | AGV-002/007/008/011/014/015/016/019/030/033/035/036/038/039/043 | 阶段0固本批量：15 个 current 用例绑定既有回归（10 full、5 partial） | 通过（12 既有 nodeid 全绿） | current 已锚定 | 见用例文档各 `自动验收` 绑定 |
+| 2026-06-11 | AGV-018 | 阶段0固本：main agent 样板不变量新增文档测试 | 通过 | `current` 已自动化 | `tests/test_agv_acceptance.py::test_agv_018_main_agent_is_sample_not_long_term_boundary` |

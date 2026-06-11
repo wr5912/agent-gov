@@ -89,6 +89,8 @@
 
 证据要求：run、feedback、eval 或 release 的关联记录。
 
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`。
+
 ### AGV-003 当前前端边界不越界为最终业务门户
 
 状态：`current`
@@ -202,6 +204,8 @@
 
 证据要求：curl 记录、API 响应或 OpenAPI 路径检查。
 
+自动验收（部分）：`tests/test_api_error_handlers.py::test_api_key_authentication_returns_structured_401`。返回体可续流转的完整性部分需运行态验收。
+
 ### AGV-008 真实业务运行轨迹可持续沉淀
 
 状态：`current`
@@ -223,6 +227,8 @@
 - 运行记录可作为反馈闭环的事实基础。
 
 证据要求：运行记录 API 响应、trace 链接或 SQLite 投影。
+
+自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
 
 ### AGV-009 失败案例可转化为组织级治理知识
 
@@ -290,6 +296,8 @@
 
 证据要求：API 响应、数据库投影或 UI 详情页。
 
+自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
+
 ### AGV-012 方法论资产可被治理流程复用
 
 状态：`gap`
@@ -356,6 +364,8 @@
 
 证据要求：UI 详情截图或 API JSON。
 
+自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
+
 ### AGV-015 Feedback Loop 形成标准化归因链路
 
 状态：`current`
@@ -378,6 +388,8 @@
 
 证据要求：feedback case、evidence package、attribution job 输出。
 
+自动验收（部分）：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。证据不足需人工复核的提示部分需运行态/人工验收。
+
 ### AGV-016 Version Governance 固化能力演进
 
 状态：`current`
@@ -399,6 +411,8 @@
 - 发布、恢复、回滚都有审计事件和版本记录。
 
 证据要求：change set、release、rollback API 响应。
+
+自动验收：`tests/test_agent_governance_publish.py::test_candidate_committed_change_set_can_publish_directly`、`tests/test_agent_version_store.py::test_agent_version_file_diff_returns_unified_diff`。
 
 ### AGV-017 多业务 Agent 接入统一治理闭环
 
@@ -444,6 +458,8 @@
 
 证据要求：文档检索结果。
 
+自动验收：`tests/test_agv_acceptance.py::test_agv_018_main_agent_is_sample_not_long_term_boundary`。
+
 ### AGV-019 治理 Agent 只输出建议和治理产物
 
 状态：`current`
@@ -465,6 +481,8 @@
 - 失败会写入 error_json 并投影到用户可见状态。
 
 证据要求：job 输入、validated output、error_json 或投影记录。
+
+自动验收（部分）：`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`。权限边界部分由运行时测试与人工验收覆盖。
 
 ### AGV-020 业务 Agent 生命周期状态可治理
 
@@ -712,6 +730,8 @@
 
 证据要求：eval case、eval run、regression impact analysis。
 
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`。
+
 ### AGV-031 Agent 创建、配置、运行、治理统一入口
 
 状态：`future`
@@ -779,6 +799,8 @@
 
 证据要求：attribution output 和 evidence references。
 
+自动验收（部分）：`tests/test_feedback_store_cases_and_jobs.py::test_soc_event_idempotency_and_pending_correlation`。标准化分类与人工复核提示部分需运行态/人工验收。
+
 ### AGV-034 优化形成可执行资产而非一次性建议
 
 状态：`gap`
@@ -823,6 +845,8 @@
 
 证据要求：eval run、gate result、publish decision。
 
+自动验收：`tests/test_agent_governance_publish.py::test_batch_regression_failed_cases_block_publish`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`。
+
 ### AGV-036 版本治理提供 diff、发布、恢复和回滚
 
 状态：`current`
@@ -845,6 +869,8 @@
 - restore/rollback 可审计，且不会删除历史 release。
 
 证据要求：agent governance API 响应。
+
+自动验收：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`、`tests/test_agent_version_store.py::test_agent_version_file_diff_returns_unified_diff`。
 
 ### AGV-037 外部业务系统责任边界清晰
 
@@ -890,6 +916,8 @@
 
 证据要求：错误响应、job record、UI 失败态。
 
+自动验收：`tests/test_api_error_handlers.py::test_feedback_store_error_handler_returns_structured_error`、`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`。
+
 ### AGV-039 当前调试前端可观察核心治理链路
 
 状态：`current`
@@ -911,6 +939,8 @@
 - 前端不要求用户必须在 AgentGov 内完成所有业务操作。
 
 证据要求：浏览器截图、console error 记录、API request 结果。
+
+自动验收（部分）：`tests/test_agv_acceptance.py::test_agv_003_048_frontend_is_debug_observation_boundary`。运行态状态观察与错误展示需前端/运行态验收。
 
 ### AGV-040 离线或内网部署不破坏必需闭环
 
@@ -1003,6 +1033,8 @@
 - 文档不把样板误写成长期边界。
 
 证据要求：main agent 端到端闭环记录。
+
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`。
 
 ### AGV-044 第二阶段多业务 Agent 扩展
 

@@ -572,7 +572,7 @@
 
 ### AGV-023 Registry 防止资产散落和重复沉淀
 
-状态：`future`
+状态：`current`
 
 目标来源：Agent 资产 Registry、能力域与场景包。
 
@@ -591,6 +591,8 @@
 - 引用关系不会因资产合并而丢失。
 
 证据要求：资产治理事件和引用关系。
+
+自动验收（按三条成功标准）：①重复资产检测+治理建议——`tests/test_scenario_pack_store.py::test_scenario_pack_dedup_detect_and_merge`（`GET /api/scenario-packs/duplicates` 按规范化名检测重复并建议主资产）；②合并/废弃可审计——`POST /api/scenario-packs/{primary}/merge` 把重复并入主资产、重复包标记 `merged_into`/`merged_at` 保留不物理删除（可查=可审计）；③引用不丢失——合并并入各包关联（agent_ids/eval_case_ids/asset_refs 去重并集），重复包经 `merged_into` 重定向到主资产。
 
 ### AGV-024 反馈可归属到 Agent、version、run 和场景
 

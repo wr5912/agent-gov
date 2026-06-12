@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
+from typing import Optional
 
 from sqlalchemy.orm import sessionmaker
 
@@ -25,6 +26,16 @@ class ScenarioPackRecord:
     agent_ids: list[str] = field(default_factory=list)
     eval_case_ids: list[str] = field(default_factory=list)
     asset_refs: list[str] = field(default_factory=list)
+    merged_into: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class DuplicateScenarioPackGroup:
+    """一组重名（规范化后）的疑似重复场景包及合并建议（AGV-023）。"""
+
+    normalized_name: str
+    scenario_pack_ids: list[str]
+    suggested_primary_id: str
 
 
 def _record(row: ScenarioPackModel) -> ScenarioPackRecord:
@@ -39,6 +50,7 @@ def _record(row: ScenarioPackModel) -> ScenarioPackRecord:
         agent_ids=list(payload.get("agent_ids") or []),
         eval_case_ids=list(payload.get("eval_case_ids") or []),
         asset_refs=list(payload.get("asset_refs") or []),
+        merged_into=payload.get("merged_into"),
     )
 
 
@@ -69,6 +81,60 @@ class ScenarioPackStore:
             )
             db.add(row)
             return _record(row)
+
+    def detect_duplicate_scenario_packs(self) -> list[DuplicateScenarioPackGroup]:
+        """按规范化名称检测重复场景包，给出合并治理建议（AGV-023 criterion 1）。
+
+        已合并（merged_into 非空）的包不再参与检测；每组建议以最早创建者为主资产。
+        """
+        groups: dict[str, list[ScenarioPackRecord]] = {}
+        for record in self.list_scenario_packs():
+            if record.merged_into:
+                continue
+            key = record.name.strip().lower()
+            groups.setdefault(key, []).append(record)
+        duplicates: list[DuplicateScenarioPackGroup] = []
+        for key, records in groups.items():
+            if len(records) < 2:
+                continue
+            ordered = sorted(records, key=lambda r: (r.created_at, r.scenario_pack_id))
+            duplicates.append(
+                DuplicateScenarioPackGroup(
+                    normalized_name=key,
+                    scenario_pack_ids=[r.scenario_pack_id for r in ordered],
+                    suggested_primary_id=ordered[0].scenario_pack_id,
+                )
+            )
+        return duplicates
+
+    def merge_scenario_packs(self, primary_id: str, *, duplicate_ids: list[str]) -> ScenarioPackRecord:
+        """把重复场景包并入主资产（AGV-023 criterion 2/3）。
+
+        主资产并入各重复包的关联（agent_ids/eval_case_ids/asset_refs，去重并集），重复包标记
+        merged_into=主资产并保留（不物理删除，可审计；引用经 merged_into 重定向到主资产，不丢失）。
+        """
+        unique_dups = [d for d in dict.fromkeys(duplicate_ids) if d and d != primary_id]
+        if not unique_dups:
+            raise BusinessRuleViolation("merge requires at least one duplicate distinct from the primary")
+        with self._session_factory.begin() as db:
+            primary = db.get(ScenarioPackModel, primary_id)
+            if primary is None:
+                raise NotFoundError(f"Scenario pack not found: {primary_id}")
+            primary_payload = dict(primary.payload_json or {})
+            for dup_id in unique_dups:
+                dup = db.get(ScenarioPackModel, dup_id)
+                if dup is None:
+                    raise NotFoundError(f"Scenario pack not found: {dup_id}")
+                dup_payload = dict(dup.payload_json or {})
+                for key in ("agent_ids", "eval_case_ids", "asset_refs"):
+                    primary_payload[key] = list(
+                        dict.fromkeys([*(primary_payload.get(key) or []), *(dup_payload.get(key) or [])])
+                    )
+                dup_payload["merged_into"] = primary_id
+                dup_payload["merged_at"] = utc_now()
+                dup.payload_json = dup_payload
+            primary.payload_json = primary_payload
+            return _record(primary)
 
     def get_scenario_pack(self, scenario_pack_id: str) -> ScenarioPackRecord:
         with self._session_factory.begin() as db:

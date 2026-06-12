@@ -5,9 +5,11 @@ from collections.abc import Callable
 from fastapi import APIRouter, Depends
 
 from app.runtime.agent_governance_schemas import (
+    DuplicateScenarioPackGroupResponse,
     ScenarioPackAssociateRequest,
     ScenarioPackCopyRequest,
     ScenarioPackCreateRequest,
+    ScenarioPackMergeRequest,
     ScenarioPackResponse,
 )
 from app.runtime.stores.scenario_pack_store import ScenarioPackRecord, ScenarioPackStore
@@ -24,6 +26,7 @@ def _summary(record: ScenarioPackRecord) -> ScenarioPackResponse:
         agent_ids=record.agent_ids,
         eval_case_ids=record.eval_case_ids,
         asset_refs=record.asset_refs,
+        merged_into=record.merged_into,
     )
 
 
@@ -48,12 +51,37 @@ def create_scenario_packs_router(*, scenario_pack_store: ScenarioPackStore, requ
         return [_summary(record) for record in scenario_pack_store.list_scenario_packs()]
 
     @router.get(
+        "/scenario-packs/duplicates",
+        response_model=list[DuplicateScenarioPackGroupResponse],
+        summary="Detect duplicate scenario packs (by normalized name) with merge suggestions",
+    )
+    async def detect_duplicates() -> list[DuplicateScenarioPackGroupResponse]:
+        # AGV-023 criterion 1：重复资产检测与治理建议。
+        return [
+            DuplicateScenarioPackGroupResponse(
+                normalized_name=group.normalized_name,
+                scenario_pack_ids=group.scenario_pack_ids,
+                suggested_primary_id=group.suggested_primary_id,
+            )
+            for group in scenario_pack_store.detect_duplicate_scenario_packs()
+        ]
+
+    @router.get(
         "/scenario-packs/{scenario_pack_id}",
         response_model=ScenarioPackResponse,
         summary="Get one scenario pack with its asset relationships",
     )
     async def get_pack(scenario_pack_id: str) -> ScenarioPackResponse:
         return _summary(scenario_pack_store.get_scenario_pack(scenario_pack_id))
+
+    @router.post(
+        "/scenario-packs/{primary_id}/merge",
+        response_model=ScenarioPackResponse,
+        summary="Merge duplicate scenario packs into a primary (references preserved, auditable)",
+    )
+    async def merge_packs(primary_id: str, req: ScenarioPackMergeRequest) -> ScenarioPackResponse:
+        # AGV-023 criterion 2/3：合并并入主资产、重复包标记 merged_into 保留可审计、引用不丢失。
+        return _summary(scenario_pack_store.merge_scenario_packs(primary_id, duplicate_ids=req.duplicate_ids))
 
     @router.post(
         "/scenario-packs/{scenario_pack_id}/assets",

@@ -70,6 +70,37 @@ def test_scenario_pack_associate_and_copy(monkeypatch, tmp_path: Path) -> None:
         assert client.post("/api/scenario-packs/nope/copy", json={"name": "x"}).status_code == 404
 
 
+def test_scenario_pack_dedup_detect_and_merge(monkeypatch, tmp_path: Path) -> None:
+    """AGV-023：重复场景包可检测、可合并并入主资产、引用经 merged_into 保留、可审计。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        p1 = client.post("/api/scenario-packs", json={"name": "告警研判"}).json()["scenario_pack_id"]
+        p2 = client.post("/api/scenario-packs", json={"name": " 告警研判 "}).json()["scenario_pack_id"]  # 规范化后同名
+        client.post(f"/api/scenario-packs/{p1}/assets", json={"eval_case_ids": ["ec-1"]})
+        client.post(f"/api/scenario-packs/{p2}/assets", json={"eval_case_ids": ["ec-2"], "agent_ids": ["soc-ops"]})
+
+        # 检测重复 + 治理建议（主资产）。
+        dups = client.get("/api/scenario-packs/duplicates").json()
+        assert len(dups) == 1
+        assert set(dups[0]["scenario_pack_ids"]) == {p1, p2}
+        primary = dups[0]["suggested_primary_id"]
+        secondary = p2 if primary == p1 else p1
+
+        # 合并：主资产并入重复包关联，引用不丢失。
+        merged = client.post(f"/api/scenario-packs/{primary}/merge", json={"duplicate_ids": [secondary]})
+        assert merged.status_code == 200
+        assert set(merged.json()["eval_case_ids"]) == {"ec-1", "ec-2"}
+        assert "soc-ops" in merged.json()["agent_ids"]
+        # 重复包保留可审计且指向主资产（引用重定向，不物理删除）。
+        sec = client.get(f"/api/scenario-packs/{secondary}").json()
+        assert sec["merged_into"] == primary
+        # 已合并不再被检测为重复。
+        assert client.get("/api/scenario-packs/duplicates").json() == []
+        # 非法合并（无 duplicate）400，未知主资产 404。
+        assert client.post(f"/api/scenario-packs/{primary}/merge", json={"duplicate_ids": []}).status_code == 400
+        assert client.post("/api/scenario-packs/nope/merge", json={"duplicate_ids": [secondary]}).status_code == 404
+
+
 def test_create_and_query_scenario_pack(tmp_path: Path) -> None:
     """AGV-026 criterion 1：场景包表达业务目标、适用范围和风险等级，并可查询。"""
     store = _store(tmp_path)

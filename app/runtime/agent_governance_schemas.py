@@ -81,6 +81,19 @@ class ScenarioPackResponse(BaseModel):
     agent_ids: list[str] = Field(default_factory=list, description="装配了该场景包能力的 Agent。")
     eval_case_ids: list[str] = Field(default_factory=list)
     asset_refs: list[str] = Field(default_factory=list, description="关联的 prompt/skill/SOP/发布准入规则等资产引用。")
+    merged_into: Optional[str] = Field(default=None, description="若被合并，指向主资产场景包 id（引用经此重定向，不丢失）。")
+
+
+class DuplicateScenarioPackGroupResponse(BaseModel):
+    """一组规范化重名的疑似重复场景包及合并建议（AGV-023）。"""
+
+    normalized_name: str
+    scenario_pack_ids: list[str]
+    suggested_primary_id: str
+
+
+class ScenarioPackMergeRequest(BaseModel):
+    duplicate_ids: list[str] = Field(description="并入主资产的重复场景包 id 列表。")
 
 
 class ScenarioPackAssociateRequest(BaseModel):

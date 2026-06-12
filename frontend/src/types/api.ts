@@ -1523,6 +1523,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scenario-packs/duplicates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Detect duplicate scenario packs (by normalized name) with merge suggestions */
+        get: operations["detect_duplicates_api_scenario_packs_duplicates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenario-packs/{primary_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge duplicate scenario packs into a primary (references preserved, auditable) */
+        post: operations["merge_packs_api_scenario_packs__primary_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/scenario-packs/{scenario_pack_id}": {
         parameters: {
             query?: never;
@@ -2467,6 +2501,18 @@ export interface components {
             mappings: components["schemas"]["ConfigMappingItem"][];
             /** Setting Sources Effective */
             setting_sources_effective?: string[] | null;
+        };
+        /**
+         * DuplicateScenarioPackGroupResponse
+         * @description 一组规范化重名的疑似重复场景包及合并建议（AGV-023）。
+         */
+        DuplicateScenarioPackGroupResponse: {
+            /** Normalized Name */
+            normalized_name: string;
+            /** Scenario Pack Ids */
+            scenario_pack_ids: string[];
+            /** Suggested Primary Id */
+            suggested_primary_id: string;
         };
         /** EvalCaseAttributionSummaryResponse */
         EvalCaseAttributionSummaryResponse: {
@@ -4935,6 +4981,14 @@ export interface components {
              */
             scope: string;
         };
+        /** ScenarioPackMergeRequest */
+        ScenarioPackMergeRequest: {
+            /**
+             * Duplicate Ids
+             * @description 并入主资产的重复场景包 id 列表。
+             */
+            duplicate_ids: string[];
+        };
         /**
          * ScenarioPackResponse
          * @description 场景包/能力域（AGV-026/027）：业务目标+适用范围+风险等级，关联 Agent/eval/资产。
@@ -4959,6 +5013,11 @@ export interface components {
             created_at: string;
             /** Eval Case Ids */
             eval_case_ids?: string[];
+            /**
+             * Merged Into
+             * @description 若被合并，指向主资产场景包 id（引用经此重定向，不丢失）。
+             */
+            merged_into?: string | null;
             /** Name */
             name: string;
             /**
@@ -8457,6 +8516,61 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detect_duplicates_api_scenario_packs_duplicates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DuplicateScenarioPackGroupResponse"][];
+                };
+            };
+        };
+    };
+    merge_packs_api_scenario_packs__primary_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                primary_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioPackMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

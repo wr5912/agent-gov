@@ -61,7 +61,7 @@
 
 每步独立成迭代：先 preflight、再最小实现、过 `make test` 与治理硬门、绑定/升级 AGV 状态、回写迭代日志。B1–B3 为向后兼容加法，风险可控；B4 涉及用户可见入口，落地前需按产品化翻译门确认。
 
-> 进度（2026-06-12）：B1（注册表）、B2（feedback/run agent_id 贯通）、B4（创建/配置/运行入口 + 删除影响面）、B5（生命周期状态机，AGV-020）已落地；场景包/去重（AGV-026/023）作为独立子系统已落地。B3 keystone 推进中：B3.1（change set/release agent_id 维度）、B3.2（per-agent 版本 store 工厂）、B3.3（按 agent_id 选 store 落候选/发布/回滚，与 main 物理隔离）已落地并过 `make test`；剩余 B3.4（优化执行流水线 per-agent 参数化 + 版本图/archive 按 Agent）→ B3.5 关闭 AGV-010/017/021/027/031/044。
+> 进度（2026-06-12）：B1（注册表）、B2（feedback/run agent_id 贯通）、B4（创建/配置/运行入口 + 删除影响面）、B5（生命周期状态机，AGV-020）已落地；场景包/去重（AGV-026/023）作为独立子系统已落地。B3 keystone 推进中：B3.1（change set/release agent_id 维度）、B3.2（per-agent 版本 store 工厂）、B3.3（按 agent_id 选 store 落候选/发布/回滚，与 main 物理隔离）、B3.4-eval（eval run agent_id 归属，四维一致）已落地并过 `make test`，AGV-021 已关闭；剩余 B3.4-exec（task agent_id 传播 + 执行流水线 per-agent store 选择，耦合一次性落地，蓝图见下）→ B3.5 关闭 AGV-010/017/027/031/044。
 
 ## B3 详细架构（per-agent 版本治理，最终 keystone）
 
@@ -79,8 +79,13 @@
 1. **B3.1**（已落地）change set/release 加可空 `agent_id`（迁移默认 main）+ 按 agent 查询/过滤。
 2. **B3.2**（已落地）per-agent 版本 store 工厂 `_store_for(agent_id)` + 业务 Agent 版本 store 懒初始化（根 `data_dir/business-agents/{agent_id}/version`），main-agent 复用主 store 行为不变；agent_id 路径段做安全字符校验防穿越。
 3. **B3.3**（已落地）`create_change_set(agent_id=...)` 按目标 Agent 选版本 store 落 worktree/候选/发布/回滚/恢复，产出该 Agent 独立 change set/release（闭环非空，与 main 物理隔离）。
-4. **B3.4** 优化执行流水线（execution-optimizer）把业务 Agent 反馈批次的归因/方案/执行作用于该 Agent 的 workspace + 版本 store；版本图/release archive 列表按 Agent 维度。
-5. **B3.5** 据此关闭 AGV-017/021/027/031/010/044（各自成功标准 + per-agent 版本/审计边界）。
+   - **B3.4-eval（已落地）** eval run 加 `agent_id`（迁移 0012），归属随其 change set 继承、无锚点回退 main、按 Agent 过滤；至此 run/feedback/eval/version 四维 agent_id 一致。
+4. **B3.4-exec（执行就绪蓝图，待 deliberate 一次性落地）** 把 main-centric 优化执行流水线参数化为 per-agent。两部分耦合（task agent_id 是执行重构可测的前提，单做 task agent_id 会让业务执行落到 main store 报错=latent break），必须同片落地：
+   - **归属传播链**：`signal.agent_id`（已 B2）→ 按 `feedback_case_id` 查信号派生 → `OptimizationTask.agent_id`（新增列，迁移 0013，在 `create_task`/`create_task_from_optimization_plan` 落、`list_tasks` 加过滤、投影）→ `create_change_set(optimization_task_id)` 已从 task 派生 agent_id（B3.3 现成）→ `change_set.agent_id` → eval 继承（已落地）。
+   - **执行流水线 store 选择**：`ExecutionApplicationService` 由 task/change_set 的 agent_id 经 `agent_governance._store_for(agent_id)` 取 per-agent store，替换以下对 `self.agent_version_store` 的直用——单任务路径 `_prepare_candidate_change_set`（repository_status/current_version_id/version_summary）、`_commit_candidate_and_record_application`（commit_worktree/version_summary/diff_versions）；批次路径 `_batch_execution_baseline`（repository_status/current_version_id）、`_prepare_batch_candidate_change_set`（version_summary）、`_commit_batch_candidate_and_record_applications`（commit_worktree/version_summary/diff_versions）。main-agent → `_store_for` 返回主 store，主路径字节级不变（live 批次闭环测试不动）。
+   - **安全建序**：task agent_id + 执行 store 选择同片改 → 加业务 Agent 执行端到端测试（业务反馈→task 带 agent_id→候选落业务 store→与 main 隔离）→ `make test` 全绿才推；中途不推半成品（避免 critical 执行路径残缺态）。
+   - 版本图/release archive 列表按 Agent 维度（list_releases 已支持 agent_id 过滤，版本图按需补 agent_id 入参）。
+5. **B3.5** 据此关闭 AGV-017/027/031/010/044（AGV-021 已由 B3.2/3.3 关闭；各自成功标准 + per-agent 版本/审计边界）。
 
 风险与门槛：critical 数据版本子系统——以 additive 迁移 + per-agent store 隔离（不改 main 路径）+ 每片 make test + 版本历史不物理删除控制；B3.3 是把 main-centric 执行流水线参数化的核心难点，需深读 `agent_git_store`/`agent_governance`/execution 路径后再动。建议作为带 preflight 的 deliberate effort 一次性推进 B3.1→B3.4，避免中间 inert 态长期滞留。
 

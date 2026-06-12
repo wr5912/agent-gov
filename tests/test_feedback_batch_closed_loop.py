@@ -124,6 +124,11 @@ def test_fob_da60_optimization_closed_loop_runs_regression_after_promotion(monke
     assert plan_task["target_path"] == ".claude/settings.json"
     assert execute_response.status_code == 200
     assert apply_response.status_code == 200
+    # AGV-028 criterion 3：发布成功后，可从优化任务（change set/release 的来源）反查
+    # 源反馈与评估证据，构成 release -> 反馈/归因/优化/评估的 provenance 链路。
+    published_task = apply_response.json()["optimization_task"]
+    assert published_task["feedback_case_ids"], "应可从优化任务反查源反馈 case"
+    assert published_task["eval_case_ids"], "应可从优化任务反查关联 eval case"
     assert regression_plan_response.status_code == 200
     assert regression_plan_response.json()["selection_summary"]["total"] == 2
     assert regression_response.status_code == 200, regression_response.json()

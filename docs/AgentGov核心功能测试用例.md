@@ -672,7 +672,7 @@
 
 ### AGV-028 反馈到资产闭环完整
 
-状态：`gap`
+状态：`current`
 
 目标来源：反馈到资产的闭环链路。
 
@@ -693,6 +693,8 @@
 - 成功后能从 release 反查反馈、归因、优化和评估证据。
 
 证据要求：端到端链路记录。
+
+自动验收（按三条成功标准）：① 每步持久化/可审计——`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（反馈→eval case 生成→归因→优化方案→执行→change set→回归→发布每步有记录与状态）；② 任一步失败投影状态+错误——`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`（回归失败阻断发布）、AGV-029 的 error_json 回归；③ release 反查证据——同闭环测试断言发布的优化任务携带 `feedback_case_ids`+`eval_case_ids`，构成 release→change set→优化→反馈/评估的 provenance 反查链路。前置「业务 Agent 运行+反馈归属」由 AGV-004 运行时与 AGV-024 归属链路提供。
 
 ### AGV-029 闭环失败可恢复
 

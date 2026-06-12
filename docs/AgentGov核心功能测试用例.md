@@ -328,7 +328,7 @@
 
 ### AGV-013 执行资产可被 Agent 或系统调用
 
-状态：`gap`
+状态：`current`
 
 目标来源：三层资产模型。
 
@@ -347,6 +347,8 @@
 - 修改执行资产会进入版本治理或审计记录。
 
 证据要求：调用记录、资产版本和评估结果。
+
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（eval case 执行资产经晋级后被 regression-run 在受控流程调用，impact-analysis 评估其结果）、`tests/test_api_execution_optimizer.py::test_apply_execution_job_endpoint_writes_file_and_creates_versions`（修改执行资产/workspace 配置创建 Agent 版本，进版本治理）、`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`（执行资产版本可回滚且不污染历史）。
 
 ### AGV-014 Runtime 运行可复盘
 

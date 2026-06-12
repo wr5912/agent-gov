@@ -61,7 +61,7 @@
 
 每步独立成迭代：先 preflight、再最小实现、过 `make test` 与治理硬门、绑定/升级 AGV 状态、回写迭代日志。B1–B3 为向后兼容加法，风险可控；B4 涉及用户可见入口，落地前需按产品化翻译门确认。
 
-> 进度（2026-06-12）：B1（注册表）、B2（feedback/run agent_id 贯通）、B4（创建/配置/运行入口 + 删除影响面）、B5（生命周期状态机，AGV-020）已落地；场景包/去重（AGV-026/023）作为独立子系统已落地。剩余 B3（按 agent_id 的版本链）是解锁 AGV-010/017/021/027/031/044 的最终 keystone。
+> 进度（2026-06-12）：B1（注册表）、B2（feedback/run agent_id 贯通）、B4（创建/配置/运行入口 + 删除影响面）、B5（生命周期状态机，AGV-020）已落地；场景包/去重（AGV-026/023）作为独立子系统已落地。B3 keystone 推进中：B3.1（change set/release agent_id 维度）、B3.2（per-agent 版本 store 工厂）、B3.3（按 agent_id 选 store 落候选/发布/回滚，与 main 物理隔离）已落地并过 `make test`；剩余 B3.4（优化执行流水线 per-agent 参数化 + 版本图/archive 按 Agent）→ B3.5 关闭 AGV-010/017/021/027/031/044。
 
 ## B3 详细架构（per-agent 版本治理，最终 keystone）
 
@@ -76,10 +76,10 @@
 
 增量切片（每片过 `make test` + 治理硬门；中间态对业务 Agent 为空版本链=queryable-but-empty，B3.3 起非空）：
 
-1. **B3.1** change set/release 加可空 `agent_id`（迁移默认 main）+ 按 agent 查询/过滤。
-2. **B3.2** per-agent 版本 store 工厂 + 业务 Agent 版本 store 懒初始化。
-3. **B3.3** 执行流水线按目标 agent_id 选 workspace + 版本 store，产出业务 Agent change set（闭环非空）。
-4. **B3.4** 发布/回滚/版本图/release archive 按 Agent 维度。
+1. **B3.1**（已落地）change set/release 加可空 `agent_id`（迁移默认 main）+ 按 agent 查询/过滤。
+2. **B3.2**（已落地）per-agent 版本 store 工厂 `_store_for(agent_id)` + 业务 Agent 版本 store 懒初始化（根 `data_dir/business-agents/{agent_id}/version`），main-agent 复用主 store 行为不变；agent_id 路径段做安全字符校验防穿越。
+3. **B3.3**（已落地）`create_change_set(agent_id=...)` 按目标 Agent 选版本 store 落 worktree/候选/发布/回滚/恢复，产出该 Agent 独立 change set/release（闭环非空，与 main 物理隔离）。
+4. **B3.4** 优化执行流水线（execution-optimizer）把业务 Agent 反馈批次的归因/方案/执行作用于该 Agent 的 workspace + 版本 store；版本图/release archive 列表按 Agent 维度。
 5. **B3.5** 据此关闭 AGV-017/021/027/031/010/044（各自成功标准 + per-agent 版本/审计边界）。
 
 风险与门槛：critical 数据版本子系统——以 additive 迁移 + per-agent store 隔离（不改 main 路径）+ 每片 make test + 版本历史不物理删除控制；B3.3 是把 main-centric 执行流水线参数化的核心难点，需深读 `agent_git_store`/`agent_governance`/execution 路径后再动。建议作为带 preflight 的 deliberate effort 一次性推进 B3.1→B3.4，避免中间 inert 态长期滞留。

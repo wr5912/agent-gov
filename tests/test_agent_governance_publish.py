@@ -31,11 +31,14 @@ def _candidate_change_set(
     agent_store: GitAgentVersionStore,
     *,
     content: str = "# Test Agent\n\n发布候选变更。\n",
+    agent_id: str | None = None,
 ):
-    change_set = governance.create_change_set(title="候选发布测试", operator="tester")
+    change_set = governance.create_change_set(title="候选发布测试", operator="tester", agent_id=agent_id)
     worktree_path = Path(str(change_set["worktree_path"]))
     worktree_path.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
-    candidate_commit = agent_store.commit_worktree(worktree_path, message="Commit candidate change")
+    # 候选提交必须落在该 change set 归属 Agent 自己的版本 store（per-agent 隔离）。
+    commit_store = governance._store_for(change_set.get("agent_id"))
+    candidate_commit = commit_store.commit_worktree(worktree_path, message="Commit candidate change")
     return governance.mark_candidate_committed(
         str(change_set["change_set_id"]),
         candidate_commit_sha=candidate_commit,
@@ -60,6 +63,55 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert all(rel["agent_id"] == "main-agent" for rel in governance.list_releases())
     assert governance.list_releases(agent_id="main-agent")
     assert governance.list_releases(agent_id="biz-other") == []
+
+
+def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
+    """B3.2/B3.3（AGV-017 per-agent 版本隔离）：业务 Agent 的 change set/release 落在自己独立的版本 store，与 main 互不混淆。"""
+    governance, main_store = _governance(tmp_path)
+    main_head_before = main_store.current_commit_sha()
+
+    # 为业务 Agent 创建 → 提交 → 发布一条独立版本记录。
+    biz_change_set = _candidate_change_set(
+        governance, main_store, content="# Biz Agent\n\n业务 Agent 候选。\n", agent_id="biz-agent-001"
+    )
+    assert biz_change_set["agent_id"] == "biz-agent-001"
+    biz_release = governance.publish_change_set(str(biz_change_set["change_set_id"]), operator="tester")
+    assert biz_release["agent_id"] == "biz-agent-001"
+
+    # 隔离性：发布业务 Agent 版本不改动 main 版本链（main HEAD 不变）。
+    assert main_store.current_commit_sha() == main_head_before
+    biz_store = governance._store_for("biz-agent-001")
+    assert biz_store is not main_store
+    assert biz_store.current_commit_sha() == biz_release["commit_sha"]
+    assert biz_store.repository_dir != main_store.repository_dir
+
+    # 按 Agent 过滤互不串扰：各自只看到自己的 change set/release。
+    assert [cs["change_set_id"] for cs in governance.list_change_sets(agent_id="biz-agent-001")] == [
+        biz_change_set["change_set_id"]
+    ]
+    assert governance.list_change_sets(agent_id="main-agent") == []
+    assert [rel["release_id"] for rel in governance.list_releases(agent_id="biz-agent-001")] == [
+        biz_release["release_id"]
+    ]
+    assert governance.list_releases(agent_id="main-agent") == []
+
+    # main 路径不受影响：仍可独立创建并发布 main 版本，且与业务 Agent 链不混淆。
+    main_change_set = _candidate_change_set(governance, main_store, content="# Main Agent\n\nmain 候选。\n")
+    assert main_change_set["agent_id"] == "main-agent"
+    main_release = governance.publish_change_set(str(main_change_set["change_set_id"]), operator="tester")
+    assert main_release["agent_id"] == "main-agent"
+    assert main_store.current_commit_sha() == main_release["commit_sha"]
+    # 业务 Agent 链未被 main 发布污染。
+    assert biz_store.current_commit_sha() == biz_release["commit_sha"]
+
+
+def test_create_change_set_rejects_path_traversal_agent_id(tmp_path):
+    """B3.2 越权输入：恶意 agent_id（路径穿越）不得用于版本 store 落地路径。"""
+    governance, _ = _governance(tmp_path)
+    for hostile in ["../evil", "biz/../../etc", ".", "..", "a/b", "with space"]:
+        with pytest.raises(AgentGovernanceError) as exc:
+            governance.create_change_set(title="恶意归属", operator="attacker", agent_id=hostile)
+        assert exc.value.status_code == 400
 
 
 def test_candidate_committed_change_set_can_publish_directly(tmp_path):

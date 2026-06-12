@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from pathlib import Path
 
@@ -24,6 +25,9 @@ TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
 PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved", "regression_passed"}
 BATCH_REGRESSION_SOURCE = "optimization_batch_regression"
 BATCH_REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "passed_with_notes", "failed", "needs_human_review"}
+MAIN_AGENT_ID = "main-agent"
+# 业务 Agent 版本 store 在 data_dir 下落地，agent_id 直接作为路径段；限制为安全字符防目录穿越。
+_SAFE_AGENT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class AgentGovernanceError(FeedbackStoreError):
@@ -52,6 +56,39 @@ class AgentGovernanceService:
     ) -> None:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
+        # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
+        # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
+        self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
+
+    def _normalize_agent_id(self, agent_id: str | None) -> str:
+        normalized = (agent_id or MAIN_AGENT_ID).strip()
+        if normalized == MAIN_AGENT_ID:
+            return MAIN_AGENT_ID
+        if normalized in {".", ".."} or not _SAFE_AGENT_ID.match(normalized):
+            raise AgentGovernanceError(400, f"Invalid agent_id for version governance: {agent_id!r}")
+        return normalized
+
+    def _store_for(self, agent_id: str | None) -> GitAgentVersionStore:
+        """按 agent_id 选版本 store。
+
+        main-agent 复用主 store，保证既有 main 路径字节级不变；业务 Agent 在
+        ``data_dir/business-agents/{agent_id}/version`` 下各自独立 git 版本链，
+        懒初始化并缓存，实现 per-agent 版本治理隔离。
+        """
+        normalized = self._normalize_agent_id(agent_id)
+        existing = self._agent_stores.get(normalized)
+        if existing is not None:
+            return existing
+        base = self.feedback_store.data_dir / "business-agents" / normalized / "version"
+        store = GitAgentVersionStore(
+            repository_dir=base / "repo",
+            worktrees_dir=base / "worktrees",
+            releases_dir=base / "releases",
+            repository_name=f"{normalized}-config",
+        )
+        store.ensure_bootstrap()
+        self._agent_stores[normalized] = store
+        return store
 
     def repository_status(self) -> JsonObject:
         return self.agent_version_store.repository_status()
@@ -111,6 +148,32 @@ class AgentGovernanceService:
             ).all()
             return [self._event_to_payload(row) for row in rows]
 
+    def _resolve_optimization_context(
+        self,
+        optimization_task_id: str | None,
+        base_commit_sha: str | None,
+        title: str | None,
+        agent_id: str | None,
+    ) -> tuple[JsonObject | None, str | None, str | None, str | None]:
+        """解析优化任务上下文，回填 base_commit/title/agent_id。
+
+        返回 ``(existing_change_set, base_commit_sha, title, agent_id)``；
+        命中既有活跃 change set 时 existing 非空，调用方应直接返回它。
+        """
+        if not optimization_task_id:
+            return None, base_commit_sha, title, agent_id
+        existing = self.latest_active_change_set_for_task(optimization_task_id)
+        if existing:
+            return existing, base_commit_sha, title, agent_id
+        task = self.feedback_store.find_task(optimization_task_id)
+        if not task:
+            raise AgentGovernanceError(404, "Optimization task not found")
+        base_commit_sha = base_commit_sha or str(task.get("baseline_agent_version_id") or "")
+        title = title or str(task.get("proposal_id") or optimization_task_id)
+        # 优化任务已 agent-scoped：未显式传入时归属随任务，缺失回退 main-agent。
+        agent_id = agent_id or task.get("agent_id")
+        return None, base_commit_sha, title, agent_id
+
     def create_change_set(
         self,
         *,
@@ -119,29 +182,29 @@ class AgentGovernanceService:
         base_commit_sha: str | None = None,
         title: str | None = None,
         note: str | None = None,
+        agent_id: str | None = None,
         operator: str = "runtime",
     ) -> JsonObject:
-        if optimization_task_id:
-            existing = self.latest_active_change_set_for_task(optimization_task_id)
-            if existing:
-                return existing
-            task = self.feedback_store.find_task(optimization_task_id)
-            if not task:
-                raise AgentGovernanceError(404, "Optimization task not found")
-            base_commit_sha = base_commit_sha or str(task.get("baseline_agent_version_id") or "")
-            title = title or str(task.get("proposal_id") or optimization_task_id)
-        base_commit_sha = base_commit_sha or self.agent_version_store.current_commit_sha()
+        existing, base_commit_sha, title, agent_id = self._resolve_optimization_context(
+            optimization_task_id, base_commit_sha, title, agent_id
+        )
+        if existing:
+            return existing
+        agent_id = self._normalize_agent_id(agent_id)
+        store = self._store_for(agent_id)
+        base_commit_sha = base_commit_sha or store.current_commit_sha()
         if not base_commit_sha:
             raise AgentGovernanceError(409, "Agent Git repository has no base commit")
         change_set_id = f"agc-{uuid.uuid4()}"
         try:
-            worktree = self.agent_version_store.create_worktree(change_set_id, base_ref=base_commit_sha)
+            worktree = store.create_worktree(change_set_id, base_ref=base_commit_sha)
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Failed to create Agent change set worktree: {exc}") from exc
         now = utc_now()
         payload = {
             "schema_version": "agent-change-set/v1",
             "change_set_id": change_set_id,
+            "agent_id": agent_id,
             "created_at": now,
             "updated_at": now,
             "status": "draft",
@@ -160,6 +223,7 @@ class AgentGovernanceService:
         with self.feedback_store.Session.begin() as db:
             row = AgentChangeSetModel(
                 change_set_id=change_set_id,
+                agent_id=agent_id,
                 created_at=now,
                 updated_at=now,
                 status="draft",
@@ -210,7 +274,8 @@ class AgentGovernanceService:
         change_set = self.get_change_set(change_set_id)
         if not change_set:
             raise AgentGovernanceError(404, "Agent change set not found")
-        diff = self.agent_version_store.diff_versions(change_set["base_commit_sha"], candidate_commit_sha) or {}
+        store = self._store_for(change_set.get("agent_id"))
+        diff = store.diff_versions(change_set["base_commit_sha"], candidate_commit_sha) or {}
         fields = {
             "candidate_commit_sha": candidate_commit_sha,
             "execution_job_id": execution_job_id or change_set.get("execution_job_id"),
@@ -291,15 +356,18 @@ class AgentGovernanceService:
             raise AgentGovernanceError(409, publication_blocker)
         if status not in PUBLISHABLE_CHANGE_SET_STATES:
             raise AgentGovernanceError(409, f"Agent change set cannot be published from status {status}")
+        agent_id = self._normalize_agent_id(change_set.get("agent_id"))
+        store = self._store_for(agent_id)
         tag_name = tag_name or f"agent-release-{utc_now().replace(':', '').replace('+', 'Z')}-{change_set_id[-8:]}"
         try:
-            result = self.agent_version_store.publish_commit(
+            result = store.publish_commit(
                 str(change_set["candidate_commit_sha"]), tag_name=tag_name, message=note or f"Publish {change_set_id}"
             )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Agent publish failed: {exc}") from exc
         release = self._create_release(
             change_set_id=change_set_id,
+            agent_id=agent_id,
             tag_name=tag_name,
             commit_sha=str(result["published_commit_sha"]),
             archive=result.get("archive") if isinstance(result.get("archive"), dict) else {},
@@ -334,8 +402,9 @@ class AgentGovernanceService:
         release = self.get_release(release_id)
         if not release:
             raise AgentGovernanceError(404, "Agent release not found")
+        store = self._store_for(release.get("agent_id"))
         try:
-            result = self.agent_version_store.rollback_to_ref(str(release["commit_sha"]))
+            result = store.rollback_to_ref(str(release["commit_sha"]))
         except AgentGitError as exc:
             self._transition_release(release_id, "rollback_failed", fields={"rollback_error": str(exc)}, operator=operator)
             raise AgentGovernanceError(409, f"Agent rollback failed: {exc}") from exc
@@ -351,8 +420,9 @@ class AgentGovernanceService:
         release = self.get_release(release_id)
         if not release:
             raise AgentGovernanceError(404, "Agent release not found")
+        store = self._store_for(release.get("agent_id"))
         try:
-            result = self.agent_version_store.rollback_to_ref(str(release["commit_sha"]))
+            result = store.rollback_to_ref(str(release["commit_sha"]))
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Agent release restore failed: {exc}") from exc
         return {
@@ -434,12 +504,14 @@ class AgentGovernanceService:
         archive: JsonObject,
         note: str | None,
         operator: str,
+        agent_id: str = MAIN_AGENT_ID,
     ) -> JsonObject:
         now = utc_now()
         release_id = f"agr-{uuid.uuid4()}"
         payload = {
             "schema_version": "agent-release/v1",
             "release_id": release_id,
+            "agent_id": agent_id,
             "created_at": now,
             "updated_at": now,
             "status": "published",
@@ -456,6 +528,7 @@ class AgentGovernanceService:
             db.add(
                 AgentReleaseModel(
                     release_id=release_id,
+                    agent_id=agent_id,
                     created_at=now,
                     updated_at=now,
                     status="published",

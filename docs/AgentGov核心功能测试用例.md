@@ -584,7 +584,7 @@
 
 ### AGV-024 反馈可归属到 Agent、version、run 和场景
 
-状态：`gap`
+状态：`current`
 
 目标来源：反馈路由与归属。
 
@@ -604,7 +604,7 @@
 
 证据要求：feedback signal、feedback case 和 optimization task 关联字段。
 
-### AGV-025 反馈路由错误不会污染其他 Agent
+自动验收（按三条成功标准）：① 不进无归属全局池——`tests/test_feedback_store_sources.py::test_create_signal_records_business_agent_attribution`（信号恒有 agent_id 归属）；② 同一归属链路——`tests/test_feedback_store_sources.py::test_create_signal_attributes_to_run_business_agent`（反馈据匹配 run 的 agent_id 归属到产生它的业务 Agent，归因/优化经 case→signal 继承）；③ 无法归属→人工/补充上下文——`tests/test_feedback_store_sources.py::test_feedback_signal_requires_source_locator`（无锚点反馈被拒、需补充上下文）、`::test_implicit_signal_defaults_to_review`（隐式反馈标记 requires_review）。归属维度：Agent(`agent_id`)、version(`agent_version_id`)、run(`run_id`)、session(`session_id`) 均为一等字段；场景经 signal `metadata` 携带（成功标准不要求专用场景字段，场景包组织为 future AGV-026/027）。
 
 状态：`future`
 

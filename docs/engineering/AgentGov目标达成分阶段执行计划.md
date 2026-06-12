@@ -15,7 +15,7 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 34 `current` 已应具备并需回归；2 `gap`、13 `future` 尚未完整 |
+| 当前实现边界 | 35 `current` 已应具备并需回归；1 `gap`、13 `future` 尚未完整 |
 | 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
@@ -35,11 +35,11 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 34 | 当前应具备 | 回归锚点，任何阶段不得退化 |
-| `gap` | 2 | 目标明确、能力不足 | 第一阶段主战场 |
+| `current` | 35 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `gap` | 1 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 13 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（34/2/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`，且业务 Agent 已可经 `/api/chat?agent_id=` 真实运行（live 实测采用自身 workspace 身份作答），为 AGV-024/028 多 Agent 闭环奠定运行时基础。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（35/1/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`，且业务 Agent 已可经 `/api/chat?agent_id=` 真实运行（live 实测采用自身 workspace 身份作答），其反馈沿 run.agent_id 链路归属到该业务 Agent，AGV-024（反馈归属 Agent/version/run + 无法归属人工兜底）随之补到 `current`；仅余 AGV-028（闭环完整）。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界、外部协作生态集成。
 
@@ -70,7 +70,7 @@
 
 ### 阶段 1：单 Agent 闭环补齐（gap → current，对应 stage 1 main agent 样板）
 
-把剩余 2 个 `gap`（AGV-024/028，均需多 Agent 基座，详见迭代日志 scoping） 全部推进到 `current`，做实 main agent 样板闭环。
+把剩余 1 个 `gap`（AGV-028 闭环完整，依赖 per-agent 归属，详见迭代日志） 全部推进到 `current`，做实 main agent 样板闭环。
 
 | 子主题 | 覆盖用例 | 退出标准 |
 | --- | --- | --- |
@@ -188,3 +188,4 @@
 | 2026-06-12 | AGV-004/024/028 | 多 Agent 运行时基座：`/api/chat` 新增可选 `agent_id`，路由到 `build_business_agent_profile`（缺省 main、未知 404、治理 Agent 400），创建的业务 Agent 可经其 workspace 配置真实运行；OpenAPI/前端类型同步；live DeepSeek 实测业务 Agent 采用自身身份作答 | 通过 | 无（补完 AGV-004 运行维度，奠定 AGV-024/028 基础；后者仍需 per-agent 反馈链路+场景） | `app/routers/chat.py`、`app/runtime/schemas.py`、`app/main.py`、`frontend/src/types/api.ts`、`tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent` |
 | 2026-06-12 | AGV-024/028 | 只读 scoping：确定 per-agent 反馈归属传播的可执行设计（免迁移，payload-based）——身份源为 `profile.name`（业务=agent_id、main=main-agent）；1) `RuntimeRequestContext` 加 `agent_id`（默认 main）；2) `run/stream` 设 `context.agent_id=profile.name`；3) `_complete_runtime_request`→`_record_feedback_run` 把 agent_id 写入 `record_run` payload（经 `payload_json` 持久化、`find_run` 回读）；4) `create_signal` 改为从匹配 run 的 agent_id 派生（未匹配→main 并标记待人工=无法归属兜底）；5) 场景=signal 轻量 scenario 标签；6) 测试：业务 Agent run→反馈归属该业务 Agent、未匹配→人工标记 | 设计就绪 | 无（下一连贯增量，含场景+人工兜底方能关闭 AGV-024/028） | `app/runtime/claude_runtime.py`、`feedback_source_store.py`、`records/source_records.py` |
 | 2026-06-12 | AGV-024 | 反馈归属传播落地（步骤1-4，免迁移）：run 经 `profile.name` 记录 agent_id 至 payload，`create_signal` 从匹配 run 派生 agent_id（业务 Agent run→归该业务 Agent、未匹配→回退 main）；反馈链路据 run 真实归属 | 通过 | 无（AGV-024 仍需场景维度+无法归属人工标记方关闭） | `app/runtime/claude_runtime.py`、`app/runtime/stores/feedback_source_store.py`、`tests/test_feedback_store_sources.py::test_create_signal_attributes_to_run_business_agent` |
+| 2026-06-12 | AGV-024 | 关闭：三条成功标准全部满足——①恒有 agent_id 归属、②反馈据 run.agent_id 归属到产生它的业务 Agent（归因/优化经 case→signal 继承）、③无锚点反馈被拒+隐式反馈 requires_review（无法归属→补充上下文/人工）。Agent/version/run/session 为一等归属字段，场景经 signal metadata 携带（场景包组织为 future AGV-026/027） | 通过 | `gap` → `current` | 用例文档 AGV-024 `自动验收`（4 测试，分别对应三条成功标准） |

@@ -59,6 +59,7 @@ class EvalRunRecord(StrictRuntimeRecord):
     completed_at: Optional[str] = None
     status: EvalRunStatus
     result_status: EvalRunResultStatus = "running"
+    agent_id: str = "main-agent"
     agent_version_id: Optional[str] = None
     optimization_task_id: Optional[str] = None
     source: str
@@ -148,6 +149,7 @@ class EvalRunRecord(StrictRuntimeRecord):
                 "created_at": row.created_at,
                 "completed_at": row.completed_at,
                 "status": row.status,
+                "agent_id": row.agent_id or "main-agent",
                 "agent_version_id": row.agent_version_id,
                 "optimization_task_id": row.optimization_task_id,
                 "source": row.source,

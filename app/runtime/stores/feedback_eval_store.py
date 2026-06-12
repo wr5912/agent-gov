@@ -9,6 +9,7 @@ from ..errors import BusinessRuleViolation
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..json_types import JsonObject
 from ..runtime_db import (
+    AgentChangeSetModel,
     EvalRunItemModel,
     EvalRunModel,
     utc_now,
@@ -85,14 +86,19 @@ class FeedbackEvalStoreMixin:
         change_set_id: Optional[str] = None,
         candidate_commit_sha: Optional[str] = None,
         candidate_worktree_path: Optional[str] = None,
+        agent_id: Optional[str] = None,
     ) -> JsonObject:
         created_at = utc_now()
+        # eval run 归属随其 change set（已 agent-scoped）；无锚点回退 main-agent，
+        # 保证 run/feedback/eval/version 四维 agent_id 一致（AGV-031/017）。
+        resolved_agent_id = agent_id or self._resolve_eval_run_agent_id(change_set_id)
         payload = {
             "eval_run_id": f"evr-{uuid.uuid4()}",
             "created_at": created_at,
             "completed_at": None,
             "status": "running",
             "result_status": "running",
+            "agent_id": resolved_agent_id,
             "agent_version_id": agent_version_id,
             "optimization_task_id": optimization_task_id,
             "source": source,
@@ -113,6 +119,7 @@ class FeedbackEvalStoreMixin:
                     created_at=created_at,
                     completed_at=None,
                     status=record.status,
+                    agent_id=record.agent_id,
                     agent_version_id=record.agent_version_id,
                     optimization_task_id=record.optimization_task_id,
                     source=record.source,
@@ -121,6 +128,14 @@ class FeedbackEvalStoreMixin:
                 )
             )
         return record.to_payload()
+
+    def _resolve_eval_run_agent_id(self, change_set_id: Optional[str]) -> str:
+        """从 eval run 的 change set 派生归属 Agent；无锚点回退 main-agent。"""
+        if not change_set_id:
+            return "main-agent"
+        with self.Session() as db:
+            row = db.get(AgentChangeSetModel, change_set_id)
+        return (row.agent_id or "main-agent") if row else "main-agent"
 
     def append_eval_run_item(
         self,
@@ -242,6 +257,7 @@ class FeedbackEvalStoreMixin:
         *,
         optimization_task_id: Optional[str] = None,
         agent_version_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
     ) -> list[JsonObject]:
@@ -250,6 +266,8 @@ class FeedbackEvalStoreMixin:
             stmt = stmt.where(EvalRunModel.optimization_task_id == optimization_task_id)
         if agent_version_id:
             stmt = stmt.where(EvalRunModel.agent_version_id == agent_version_id)
+        if agent_id:
+            stmt = stmt.where(EvalRunModel.agent_id == agent_id)
         if status:
             stmt = stmt.where(EvalRunModel.status == status)
         with self.Session() as db:

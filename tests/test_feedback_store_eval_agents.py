@@ -4,7 +4,7 @@ from app.runtime.errors import BusinessRuleViolation
 from app.runtime.feedback_schemas import AttributionFormatterOutput, FeedbackOptimizationPlanFormatterOutput
 from app.runtime.json_types import JsonObject
 from app.runtime.output_formatter import OutputFormatterResult
-from app.runtime.runtime_db import EvalRunItemModel
+from app.runtime.runtime_db import AgentChangeSetModel, EvalRunItemModel
 from app.runtime.schemas import ChatResponse
 from app.services.feedback_eval_runner import FeedbackEvalRunner
 from pydantic import ValidationError
@@ -327,6 +327,40 @@ def test_feedback_eval_runner_scores_no_required_checks_as_full_pass(tmp_path):
     assert status == "passed"
     assert score == 1.0
     assert check_results == []
+
+
+def test_eval_run_agent_id_derives_from_change_set_and_filters(tmp_path):
+    """B3.4 eval 维度归属（AGV-031/017）：eval run 的 agent_id 随其 change set（已 agent-scoped）继承，无锚点回退 main-agent，且可按 Agent 过滤、投影回读保留。"""
+    store, _ = _store(tmp_path)
+    # 业务 Agent 的 change set 锚定 eval run → 归属继承该业务 Agent。
+    with store.Session.begin() as db:
+        db.add(
+            AgentChangeSetModel(
+                change_set_id="agc-biz",
+                agent_id="biz-agent-eval",
+                status="candidate_committed",
+                base_commit_sha="base-sha",
+                branch_name="change-set/agc-biz",
+                worktree_path="/tmp/agc-biz",
+                payload_json={},
+            )
+        )
+    biz_eval = store.create_eval_run(eval_case_ids=[], agent_version_id="biz-v", change_set_id="agc-biz")
+    assert biz_eval["agent_id"] == "biz-agent-eval"
+    # 无锚点 change set → 回退 main-agent（main 路径不变）。
+    main_eval = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v")
+    assert main_eval["agent_id"] == "main-agent"
+    # 未知 change set 也回退 main-agent，不抛错。
+    orphan_eval = store.create_eval_run(eval_case_ids=[], agent_version_id="x", change_set_id="agc-missing")
+    assert orphan_eval["agent_id"] == "main-agent"
+    # 按 Agent 维度过滤互不串扰。
+    assert [r["eval_run_id"] for r in store.list_eval_runs(agent_id="biz-agent-eval")] == [biz_eval["eval_run_id"]]
+    assert {r["eval_run_id"] for r in store.list_eval_runs(agent_id="main-agent")} == {
+        main_eval["eval_run_id"],
+        orphan_eval["eval_run_id"],
+    }
+    # 投影回读保留 agent_id。
+    assert store.get_eval_run(biz_eval["eval_run_id"])["agent_id"] == "biz-agent-eval"
 
 
 def test_eval_run_projection_rejects_invalid_persisted_status(tmp_path):

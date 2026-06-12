@@ -21,6 +21,7 @@ from .runtime_db_migrations import (
     migrate_0009_agent_registry_status,
     migrate_0010_scenario_packs,
     migrate_0011_change_set_release_agent_id,
+    migrate_0012_eval_run_agent_id,
 )
 
 
@@ -434,6 +435,7 @@ class EvalRunModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
     agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
@@ -562,6 +564,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0009_agent_registry_status", migrate_0009_agent_registry_status),
         ("0010_scenario_packs", migrate_0010_scenario_packs),
         ("0011_change_set_release_agent_id", migrate_0011_change_set_release_agent_id),
+        ("0012_eval_run_agent_id", migrate_0012_eval_run_agent_id),
     ):
         if version in applied:
             continue

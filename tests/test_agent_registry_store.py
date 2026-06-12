@@ -91,6 +91,24 @@ def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_pat
     assert {item["agent_id"] for item in listed.json()} == {"main-agent", "soc-ops"}
     assert duplicate.status_code == 409  # 重复身份被拒绝，不污染既有 Agent
     assert empty_name.status_code == 400  # 空名校验
+    # 运行态前提：创建即初始化 workspace 与起始 CLAUDE.md。
+    claude_md = Path(created.json()["workspace_dir"]) / "CLAUDE.md"
+    assert claude_md.is_file()
+    assert "客服助手" in claude_md.read_text(encoding="utf-8")
+
+
+def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(tmp_path: Path) -> None:
+    from app.runtime.business_agent_workspace import initialize_business_agent_workspace
+
+    workspace = tmp_path / "business-agents" / "soc-ops"
+    initialize_business_agent_workspace(workspace, agent_id="soc-ops", name="客服助手")
+    edited = "# 客服助手\n\n用户自定义行为配置\n"
+    (workspace / "CLAUDE.md").write_text(edited, encoding="utf-8")
+
+    # 重复初始化不得覆盖用户编辑，且目录结构保持。
+    initialize_business_agent_workspace(workspace, agent_id="soc-ops", name="客服助手")
+    assert (workspace / "CLAUDE.md").read_text(encoding="utf-8") == edited
+    assert (workspace / ".claude").is_dir()
 
 
 def test_create_business_agent_generates_id_when_omitted(monkeypatch, tmp_path: Path) -> None:

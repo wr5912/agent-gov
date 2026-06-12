@@ -430,7 +430,7 @@
 
 ### AGV-017 多业务 Agent 接入统一治理闭环
 
-状态：`future`
+状态：`current`
 
 目标来源：多 Agent 治理对象、核心目标。
 
@@ -449,6 +449,8 @@
 - 查询时能按 Agent 维度过滤 run、feedback、eval、release。
 
 证据要求：两个 Agent 的独立闭环记录。
+
+自动验收：`tests/test_agent_governance_publish.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops`（两个业务 Agent 各建 run→反馈→优化批次→评估→change set→release 独立闭环：①各维度按 Agent 过滤只见自身记录、版本链落各自独立 store 物理隔离=互不混淆；②单一 `AgentGovernanceService` 为两个 Agent 各自管理版本 store=治理 Agent 服务不同业务 Agent；③run/feedback/eval/change set/release 均可按 Agent 维度过滤）。归属沿 run.agent_id→signal→case→batch→task→change set→eval 全链路传播（B2 + B3.1~B3.4），优化执行流水线已 per-agent 参数化（B3.4-exec）。
 
 ### AGV-018 main agent 作为样板而非长期边界
 

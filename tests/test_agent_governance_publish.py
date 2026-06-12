@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
 
@@ -103,6 +104,50 @@ def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     assert main_store.current_commit_sha() == main_release["commit_sha"]
     # 业务 Agent 链未被 main 发布污染。
     assert biz_store.current_commit_sha() == biz_release["commit_sha"]
+
+
+def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(tmp_path):
+    """AGV-017：治理 Agent 服务多个业务 Agent，每个 Agent 的 run/反馈/优化/评估/版本记录互不混淆，可按 Agent 维度过滤。"""
+    governance, main_store = _governance(tmp_path)
+    store = governance.feedback_store
+    agents = ("agent-alpha", "agent-beta")
+
+    records: dict[str, dict] = {}
+    for agent_id in agents:
+        # 每个业务 Agent 一条独立闭环记录：run→signal→case→batch(优化) + change set/release(版本) + eval(评估)。
+        store.record_run({"run_id": f"run-{agent_id}", "agent_id": agent_id, "created_at": "2026-06-12T00:00:00Z"})
+        signal = store.create_signal(FeedbackSignalCreateRequest(run_id=f"run-{agent_id}", labels=["tool_data_incomplete"]))
+        case = store.create_case(source_ids=[signal["signal_id"]], title=f"{agent_id} 反馈")
+        batch = store.ensure_single_case_optimization_batch(case["feedback_case_id"])
+        change_set = _candidate_change_set(governance, main_store, content=f"# {agent_id}\n\n候选\n", agent_id=agent_id)
+        release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
+        eval_run = store.create_eval_run(
+            eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"])
+        )
+        records[agent_id] = {"signal": signal, "batch": batch, "change_set": change_set, "release": release, "eval": eval_run}
+
+    # 治理 Agent（单一 governance 实例）为不同业务 Agent 各自管理独立版本 store（物理隔离）。
+    assert governance._store_for("agent-alpha") is not governance._store_for("agent-beta")
+
+    # 每个维度按 Agent 过滤只见自身记录，不被另一个 Agent 串扰。
+    for agent_id in agents:
+        assert {r["agent_id"] for r in store.list_runs(agent_id=agent_id)} == {agent_id}
+        assert {s["agent_id"] for s in store.list_signals(agent_id=agent_id)} == {agent_id}
+        assert records[agent_id]["batch"]["agent_id"] == agent_id
+        assert {e["agent_id"] for e in store.list_eval_runs(agent_id=agent_id)} == {agent_id}
+        assert {c["agent_id"] for c in governance.list_change_sets(agent_id=agent_id)} == {agent_id}
+        assert {rel["agent_id"] for rel in governance.list_releases(agent_id=agent_id)} == {agent_id}
+
+    # 跨 Agent 隔离：alpha 的版本/评估记录不出现在 beta 的过滤视图。
+    alpha_cs = {c["change_set_id"] for c in governance.list_change_sets(agent_id="agent-alpha")}
+    beta_cs = {c["change_set_id"] for c in governance.list_change_sets(agent_id="agent-beta")}
+    assert alpha_cs and beta_cs and alpha_cs.isdisjoint(beta_cs)
+    alpha_evals = {e["eval_run_id"] for e in store.list_eval_runs(agent_id="agent-alpha")}
+    beta_evals = {e["eval_run_id"] for e in store.list_eval_runs(agent_id="agent-beta")}
+    assert alpha_evals and beta_evals and alpha_evals.isdisjoint(beta_evals)
+    # 各 Agent 版本链落在各自 store，互不污染。
+    assert governance._store_for("agent-alpha").current_commit_sha() == records["agent-alpha"]["release"]["commit_sha"]
+    assert governance._store_for("agent-beta").current_commit_sha() == records["agent-beta"]["release"]["commit_sha"]
 
 
 def test_business_agent_version_lifecycle_preserves_history_through_rollback(tmp_path):

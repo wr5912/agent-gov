@@ -3818,6 +3818,8 @@ export interface components {
         };
         /** FeedbackSignalResponse */
         FeedbackSignalResponse: {
+            /** Agent Id */
+            agent_id?: string | null;
             /** Alert Id */
             alert_id?: string | null;
             /**

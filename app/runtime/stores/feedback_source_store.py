@@ -132,6 +132,7 @@ class FeedbackSourceStoreMixin:
             "signal_id": payload.get("signal_id") or f"fbs-{uuid.uuid4()}",
             "created_at": utc_now(),
             "matched_run_id": run.get("run_id") if run else None,
+            "agent_id": MAIN_AGENT_PROFILE,
         }
         record = FeedbackSignalRecord.model_validate(signal)
         with self.Session.begin() as db:
@@ -139,7 +140,7 @@ class FeedbackSourceStoreMixin:
                 FeedbackSignalModel(
                     signal_id=record.signal_id,
                     source_type=record.source_type,
-                    agent_id=MAIN_AGENT_PROFILE,
+                    agent_id=record.agent_id,
                     run_id=record.run_id,
                     matched_run_id=record.matched_run_id,
                     session_id=record.session_id,

@@ -369,13 +369,13 @@ def test_batch_eval_case_rejects_invalid_manual_payload(tmp_path):
 
 
 def test_create_signal_records_business_agent_attribution(tmp_path):
-    """AGV-024 数据层归属：反馈信号记录其业务 Agent，公开 payload 不暴露内部 agent_id。"""
+    """AGV-024 反馈归属可查：信号 agent_id 后端派生为活跃业务 Agent 并暴露于记录。"""
     store, _ = _store(tmp_path)
 
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
 
-    # 契约安全：agent_id 后端派生、内部归属，不进公开响应。
-    assert "agent_id" not in signal
+    # 反馈不进无归属全局问题池：归属可从信号记录直接查到。
+    assert signal["agent_id"] == "main-agent"
     # 数据层归属：信号行 agent_id = 活跃业务 Agent。
     with store.Session.begin() as db:
         row = db.get(FeedbackSignalModel, signal["signal_id"])

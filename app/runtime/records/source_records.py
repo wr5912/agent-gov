@@ -120,6 +120,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
     signal_id: str
     created_at: str
     source_type: FeedbackSignalSourceType = "explicit_feedback"
+    agent_id: Optional[str] = None
     timestamp: Optional[str] = None
     run_id: Optional[str] = None
     matched_run_id: Optional[str] = None
@@ -158,6 +159,7 @@ class FeedbackSignalRecord(StrictRuntimeRecord):
             {
                 "signal_id": row.signal_id,
                 "source_type": row.source_type,
+                "agent_id": row.agent_id,
                 "run_id": row.run_id,
                 "matched_run_id": row.matched_run_id,
                 "session_id": row.session_id,

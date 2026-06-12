@@ -181,6 +181,7 @@ class FeedbackSignalResponse(BaseModel):
     signal_id: str
     created_at: str
     source_type: str
+    agent_id: Optional[str] = None
     timestamp: Optional[str] = None
     run_id: Optional[str] = None
     matched_run_id: Optional[str] = None

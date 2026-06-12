@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from test_api_execution_optimizer import _load_app
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -61,3 +63,26 @@ def test_agv_018_main_agent_is_sample_not_long_term_boundary() -> None:
     # 用例文档持续保留多业务 Agent 治理对象要求。
     assert "多 Agent 治理对象" in cases
     assert "AGV-017" in cases
+
+
+def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_path: Path) -> None:
+    """AGV-037/047：AgentGov 只暴露治理端点，不复制外部业务系统信息架构与生产责任。"""
+    module = _load_app(monkeypatch, tmp_path)
+    paths = {r.path for r in module.app.routes if getattr(r, "path", "").startswith(("/api", "/v1"))}
+
+    # 不接管用户/角色/租户/权限/生产处置等外部业务系统所有权（不复制信息架构）。
+    forbidden = ("user", "role", "tenant", "permission", "account", "workorder", "ticket", "deploy", "production")
+    offending = sorted(p for p in paths for token in forbidden if token in p.lower())
+    assert offending == [], f"AgentGov 不应暴露业务系统所有权端点: {offending}"
+
+    # AgentGov 确实拥有治理面：被治理对象、审批门、审计事件、运行记录可追踪。
+    assert "/api/agent-registry" in paths
+    assert "/api/agent-change-sets/{change_set_id}/approve" in paths  # 高风险审批入口（AGV-041 背书）
+    assert "/api/agent-change-sets/{change_set_id}/events" in paths  # 审计事件可追踪
+    assert "/api/agent-runs" in paths  # 运行记录可被外部系统追踪
+
+    # 产品边界文档明确职责划分：AgentGov 负责治理，外部系统负责业务/权限/生产。
+    boundary = _read("docs/项目目标愿景使命.md").split("## 产品边界", 1)[1]
+    assert "AgentGov 负责" in boundary
+    assert "外部业务系统负责" in boundary
+    assert "高风险动作的人工确认" in boundary

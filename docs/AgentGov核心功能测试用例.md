@@ -876,7 +876,7 @@
 
 ### AGV-037 外部业务系统责任边界清晰
 
-状态：`gap`
+状态：`current`
 
 目标来源：核心目标 7、产品边界。
 
@@ -895,6 +895,8 @@
 - 高风险动作不会由 Agent 自动绕过审批执行。
 
 证据要求：API 调用、external governance item 或审批记录。
+
+自动验收：`tests/test_agv_acceptance.py::test_agv_037_047_governance_scope_not_business_ownership`；高风险不绕过审批由 AGV-041 背书。
 
 ### AGV-038 API 错误和 job 失败可见
 
@@ -1110,7 +1112,7 @@
 
 ### AGV-047 AgentGov 职责边界不侵入外部业务系统
 
-状态：`gap`
+状态：`current`
 
 目标来源：产品边界。
 
@@ -1129,6 +1131,8 @@
 - 外部系统可以审计 AgentGov 的建议和运行记录。
 
 证据要求：集成流程图、API 记录或外部治理项。
+
+自动验收：`tests/test_agv_acceptance.py::test_agv_037_047_governance_scope_not_business_ownership`；生产处置不由 AgentGov 承担、外部可审计运行与建议。
 
 ### AGV-048 开发调试前端不成为隐藏生产控制台
 

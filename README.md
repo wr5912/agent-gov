@@ -2,6 +2,8 @@
 
 一个 **Docker 化的智能体治理平台 AgentGov** 项目（Agent Runtime · Feedback Loop · Version Governance）。
 
+AgentGov 不提供通用协作看板，也不替代 Multica、Jira、GitHub Issues 等协作平台。外部协作平台可以在长期生态集成阶段把任务分配给 AgentGov 管理下的受治理业务 Agent；当前重点是打磨 AgentGov 自身的 Runtime、反馈闭环、归因优化、评估回归、版本治理和多业务 Agent 治理能力。
+
 目标：
 
 - 不重写 Claude Agent loop。

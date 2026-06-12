@@ -15,8 +15,8 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 22 `current` 已应具备并需回归；14 `gap`、12 `future` 尚未完整 |
-| 目标能力边界 | 全部 48 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
+| 当前实现边界 | 24 `current` 已应具备并需回归；12 `gap`、13 `future` 尚未完整 |
+| 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
 
@@ -27,7 +27,7 @@
 -> 回写用例状态与迭代日志
 ```
 
-风险自检：不把 `future` 误当已实现；不为追状态升级造脆测/冗测；不在调试前端塞生产控制台；补 `gap` 前先做用户旅程，不直接堆按钮/job/schema。
+风险自检：不把 `future` 误当已实现；不为追状态升级造脆测/冗测；不在调试前端塞生产控制台；补 `gap` 前先做用户旅程，不直接堆按钮/job/schema；不把 Multica 等外部协作平台对接提前成前三个产品大版本的近期目标。
 
 ## 现状基线
 
@@ -37,11 +37,11 @@
 | --- | --- | --- | --- |
 | `current` | 24 | 当前应具备 | 回归锚点，任何阶段不得退化 |
 | `gap` | 12 | 目标明确、能力不足 | 第一阶段主战场 |
-| `future` | 12 | 长期愿景/成熟度 | 第二至四阶段路线 |
+| `future` | 13 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理 Agent 结构化边界）、AGV-041（高风险动作审批门）补到 `current`。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理 Agent 结构化边界）、AGV-041（高风险动作审批门）补到 `current`；新增 AGV-049 后为 24/12/13。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
 
-`gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界。
+`gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界、外部协作生态集成。
 
 ## 单次迭代闭环（最小推进单元）
 
@@ -58,7 +58,7 @@
 
 ## 分阶段路线
 
-阶段对齐愿景「治理成熟度路径」（AGV-043 至 AGV-045），阶段内可按用例并行，阶段间以「上一阶段目标用例全部达 `current`」为推进前提。
+阶段对齐愿景「治理成熟度路径」（AGV-043 至 AGV-045），并把外部协作平台深度对接作为长期生态集成阶段（AGV-049）。阶段内可按用例并行，阶段间以「上一阶段目标用例全部达 `current`」为推进前提。
 
 ### 阶段 0：固本（current 回归基线）
 
@@ -70,7 +70,7 @@
 
 ### 阶段 1：单 Agent 闭环补齐（gap → current，对应 stage 1 main agent 样板）
 
-把 14 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
+把剩余 12 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
 
 | 子主题 | 覆盖用例 | 退出标准 |
 | --- | --- | --- |
@@ -79,7 +79,7 @@
 | 反馈路由与闭环 | AGV-009、AGV-024、AGV-028、AGV-029 | 反馈可归属到 Agent/version/run/场景；失败案例转化为治理知识；闭环完整且失败可恢复 |
 | 审批与责任边界 | AGV-037、AGV-041、AGV-047 | 高风险动作需审批；外部系统责任边界清晰且 AgentGov 不越界 |
 
-退出标准：上述 14 个用例状态升级为 `current`，且阶段 0 基线无退化。
+退出标准：阶段 1 目标用例状态升级为 `current`，且阶段 0 基线无退化。
 
 ### 阶段 2：多业务 Agent 扩展（future，对应 stage 2，AGV-044）
 
@@ -95,6 +95,12 @@
 
 - 覆盖用例：AGV-010（跨 Agent 共享已验证经验）、AGV-044 与 AGV-045 收尾。
 - 退出标准：不同业务 Agent 可复用其他 Agent 已验证的优化经验与方法论资产，形成组织级治理知识库。
+
+### 阶段 5：外部协作生态集成（future，对应 AGV-049）
+
+- 覆盖用例：AGV-049（外部协作平台对接晚于核心治理稳定）。
+- 启动条件：AgentGov 至少完成三个产品大版本，且受治理 Runtime、反馈闭环、归因优化、评估回归、版本治理、多业务 Agent 治理和资产 Registry 已稳定运行。
+- 退出标准：Multica、Jira、GitHub Issues 等外部协作平台可以把任务分配给受治理业务 Agent，并接收 AgentGov 返回的运行状态、治理结果和版本化交付物；AgentGov 不复制通用协作看板、issue 生命周期、assignee/squad 管理或外部平台的协作状态流转。
 
 ## 分支与跟踪
 
@@ -116,7 +122,7 @@
 
 - 计划自身：进入 `docs/README.md` 工程治理入口，通过文档治理硬门，可从愿景与用例文档追溯。
 - 阶段验收：阶段覆盖的 AGV 用例从 `gap`/`future` 升级为 `current`，且全部既有 `current` 不退化。
-- 总体达成：48 个用例全部 `current` 且互不退化，即愿景在可验收意义上落地。
+- 总体达成：49 个用例全部 `current` 且互不退化，即愿景在可验收意义上落地。
 
 ## 迭代日志
 
@@ -142,3 +148,4 @@
 | 2026-06-12 | AGV-004 | B4 运行态原语：build_business_agent_profile 为任意注册业务 Agent 动态构造 profile（role=business-agent，被治理对象权限边界）；新增 business-agent 角色 | 通过 | AGV-004 运行态原语就绪（待接入 chat 运行时） | `app/runtime/agent_profiles.py::build_business_agent_profile`、`tests/test_agent_profiles_category.py::test_build_business_agent_profile_is_governed_business_object` |
 | 2026-06-12 | AGV-004 | B4 运行态：创建即幂等初始化业务 Agent workspace 与起始 CLAUDE.md（保留用户编辑），为运行提供配置容器 | 通过 | AGV-004 配置容器就绪（运行执行仍待 chat 运行时接入，需 live SDK） | `app/runtime/business_agent_workspace.py`、`app/routers/agents.py`、`tests/test_agent_registry_store.py`（+2） |
 | 2026-06-12 | AGV-041 | 高风险审批门：request_change_set_approval 标记待审批（记操作人/原因/影响/回滚），pending_approval 不可直接发布，approve 后方可；reject/abandon 有审计事件 | 通过 | `gap` → `current` | `app/services/agent_governance.py`、`app/runtime/state_machines.py`、`tests/test_agent_governance_publish.py`（+2） |
+| 2026-06-12 | AGV-049 | 将 Multica 等外部协作平台对接定位为长期生态集成，排在三个产品大版本和核心治理能力稳定之后 | 文档边界成文 | 新增 `future` 用例 | `docs/项目目标愿景使命.md`、`docs/AgentGov核心功能测试用例.md`、`README.md` |

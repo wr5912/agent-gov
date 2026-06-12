@@ -16,6 +16,7 @@ from .json_types import JsonObject
 from .runtime_db_migrations import (
     migrate_0006_remove_agent_job_output_contract_column,
     migrate_0007_agent_registry,
+    migrate_0008_feedback_signal_agent_id,
 )
 
 
@@ -71,6 +72,7 @@ class FeedbackSignalModel(Base):
 
     signal_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     source_type: Mapped[str] = mapped_column(String(64), index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     matched_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
@@ -550,6 +552,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0005_agent_governance", _migrate_0005_agent_governance),
         ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
         ("0007_agent_registry", migrate_0007_agent_registry),
+        ("0008_feedback_signal_agent_id", migrate_0008_feedback_signal_agent_id),
     ):
         if version in applied:
             continue

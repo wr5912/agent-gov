@@ -103,3 +103,10 @@ def migrate_0007_agent_registry(connection: Connection) -> None:
     )
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_category ON agent_registry (category)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_created_at ON agent_registry (created_at)")
+
+
+def migrate_0008_feedback_signal_agent_id(connection: Connection) -> None:
+    if "agent_id" not in _table_columns(connection, "feedback_signals"):
+        connection.exec_driver_sql("ALTER TABLE feedback_signals ADD COLUMN agent_id VARCHAR(128)")
+    connection.exec_driver_sql("UPDATE feedback_signals SET agent_id = 'main-agent' WHERE agent_id IS NULL")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_feedback_signals_agent_id ON feedback_signals (agent_id)")

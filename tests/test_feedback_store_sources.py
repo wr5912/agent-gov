@@ -366,3 +366,17 @@ def test_batch_eval_case_rejects_invalid_manual_payload(tmp_path):
         store.create_batch_eval_case(batch["batch_id"], {"prompt": "   "})
     with pytest.raises(BusinessRuleViolation, match="checks_json"):
         store.create_batch_eval_case(batch["batch_id"], {"prompt": "有效 prompt", "checks_json": []})
+
+
+def test_create_signal_records_business_agent_attribution(tmp_path):
+    """AGV-024 数据层归属：反馈信号记录其业务 Agent，公开 payload 不暴露内部 agent_id。"""
+    store, _ = _store(tmp_path)
+
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+
+    # 契约安全：agent_id 后端派生、内部归属，不进公开响应。
+    assert "agent_id" not in signal
+    # 数据层归属：信号行 agent_id = 活跃业务 Agent。
+    with store.Session.begin() as db:
+        row = db.get(FeedbackSignalModel, signal["signal_id"])
+        assert row.agent_id == "main-agent"

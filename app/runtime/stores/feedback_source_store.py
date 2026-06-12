@@ -6,6 +6,7 @@ from typing import Any, Optional
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
+from ..agent_profiles import MAIN_AGENT_PROFILE
 from ..errors import BusinessRuleViolation
 from ..records.agent_job_records import AgentJobRecord
 from ..records.case_records import FeedbackCaseRecord
@@ -138,6 +139,7 @@ class FeedbackSourceStoreMixin:
                 FeedbackSignalModel(
                     signal_id=record.signal_id,
                     source_type=record.source_type,
+                    agent_id=MAIN_AGENT_PROFILE,
                     run_id=record.run_id,
                     matched_run_id=record.matched_run_id,
                     session_id=record.session_id,

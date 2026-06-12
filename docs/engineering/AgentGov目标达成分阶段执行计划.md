@@ -135,3 +135,4 @@
 | 2026-06-11 | AGV-004/024/028 | 阶段1：剩余 gap 多阻塞于多 Agent 基座，先做基座设计（preflight + 最小架构增量 B1-B5） | 设计成文待评审 | 无（设计，零产品代码） | `docs/多业务Agent治理基座设计.md` |
 | 2026-06-11 | AGV-004/022 | 基座 B1：持久化业务 Agent 身份注册表（model + 迁移0007 + store + 幂等 sync），main-agent 种子 | 通过 | AGV-004 基座就绪（仍 gap，待创建入口 B4） | `app/runtime/agent_registry_db.py`、`app/runtime/stores/agent_registry_store.py`、`tests/test_agent_registry_store.py`（3 测试） |
 | 2026-06-11 | AGV-004/022 | 基座 B1 接入：应用 lifespan 幂等 seed 业务 Agent 注册表，使其在运行态被真实消费（非仅测试） | 通过 | 基座转为运行态真实消费 | `app/main.py`、`tests/test_agent_registry_store.py::test_lifespan_seeds_business_agent_registry` |
+| 2026-06-12 | AGV-024 | 基座 B2 slice1：feedback_signals 增后端派生 agent_id（默认活跃业务 Agent），数据层归属；契约安全不改公开 schema/前端 | 通过 | AGV-024 数据层归属就绪（仍 gap，待 version/场景 路由与公开暴露） | `app/runtime/runtime_db.py`、迁移0008、`app/runtime/stores/feedback_source_store.py`、`tests/test_feedback_store_sources.py::test_create_signal_records_business_agent_attribution` |

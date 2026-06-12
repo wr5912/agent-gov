@@ -1608,6 +1608,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scenario-packs/{scenario_pack_id}/reuse-provenance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Cross-agent reuse provenance: source, scope, risk, methodology assets and per-agent eval report */
+        get: operations["reuse_provenance_api_scenario_packs__scenario_pack_id__reuse_provenance_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -4956,6 +4973,31 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * ScenarioPackAgentValidation
+         * @description 跨 Agent 复用的单 Agent 验证结果（评估报告）。
+         */
+        ScenarioPackAgentValidation: {
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Eval Runs
+             * @description 该 Agent 已完成的评估运行数。
+             * @default 0
+             */
+            eval_runs: number;
+            /**
+             * Latest Result Status
+             * @description 最近一次完成评估的结果状态。
+             */
+            latest_result_status?: string | null;
+            /**
+             * Passed Eval Runs
+             * @description 其中通过（passed/passed_with_notes）的评估运行数。
+             * @default 0
+             */
+            passed_eval_runs: number;
+        };
         /** ScenarioPackAssociateRequest */
         ScenarioPackAssociateRequest: {
             /**
@@ -5056,6 +5098,44 @@ export interface components {
              * @default
              */
             scope: string;
+        };
+        /**
+         * ScenarioPackReuseProvenanceResponse
+         * @description 场景包跨 Agent 复用记录（AGV-010/045）：来源、适用范围、风险、方法论资产与跨 Agent 评估报告。
+         */
+        ScenarioPackReuseProvenanceResponse: {
+            /**
+             * Methodology Asset Refs
+             * @description 可复用方法论资产引用（prompt/skill/SOP/发布策略）。
+             */
+            methodology_asset_refs?: string[];
+            /**
+             * Methodology Eval Case Ids
+             * @description 可复用评估用例（方法论资产）。
+             */
+            methodology_eval_case_ids?: string[];
+            /**
+             * Risk Level
+             * @description 复用风险等级。
+             */
+            risk_level: string;
+            /** Scenario Pack Id */
+            scenario_pack_id: string;
+            /**
+             * Scope Agent Ids
+             * @description 复用范围：装配该场景包的业务 Agent。
+             */
+            scope_agent_ids?: string[];
+            /**
+             * Source Pack Id
+             * @description 复用来源场景包（copied_from）；原创为 null。
+             */
+            source_pack_id?: string | null;
+            /**
+             * Validation
+             * @description 跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。
+             */
+            validation?: components["schemas"]["ScenarioPackAgentValidation"][];
         };
         /** SessionDeleteResponse */
         SessionDeleteResponse: {
@@ -8701,6 +8781,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reuse_provenance_api_scenario_packs__scenario_pack_id__reuse_provenance_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackReuseProvenanceResponse"];
                 };
             };
             /** @description Validation Error */

@@ -27,6 +27,7 @@ class ScenarioPackRecord:
     eval_case_ids: list[str] = field(default_factory=list)
     asset_refs: list[str] = field(default_factory=list)
     merged_into: Optional[str] = None
+    copied_from: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ def _record(row: ScenarioPackModel) -> ScenarioPackRecord:
         eval_case_ids=list(payload.get("eval_case_ids") or []),
         asset_refs=list(payload.get("asset_refs") or []),
         merged_into=payload.get("merged_into"),
+        copied_from=payload.get("copied_from"),
     )
 
 

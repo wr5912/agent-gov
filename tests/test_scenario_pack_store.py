@@ -197,3 +197,70 @@ def test_scenario_pack_cross_agent_reuse_keeps_boundary_and_eval_gate_to_active(
         # 评估门按 Agent 隔离：agent-a 无通过评估，其 evaluating→active 仍被拒。
         client.post("/api/agent-registry/agent-a/lifecycle", json={"status": "evaluating"})
         assert client.post("/api/agent-registry/agent-a/lifecycle", json={"status": "active"}).status_code == 409
+
+
+def test_scenario_pack_reuse_provenance_records_source_scope_risk_and_per_agent_validation(monkeypatch, tmp_path: Path) -> None:
+    """AGV-010/045：跨 Agent 复用已验证方法论资产——复用记录留存来源/适用范围/风险/方法论资产与跨 Agent 评估报告，各 Agent 保留独立验证与审计边界。"""
+    from app.runtime.records.eval_run_records import EvalRunRecord
+    from app.runtime.runtime_db import EvalRunModel
+
+    module = _load_app(monkeypatch, tmp_path)
+    fs = module.feedback_store
+    with TestClient(module.app) as client:
+        client.post("/api/agent-registry", json={"name": "客服A", "agent_id": "agent-a"})
+        client.post("/api/agent-registry", json={"name": "客服B", "agent_id": "agent-b"})
+        # 一个已验证的方法论资产场景包（组织 prompt/SOP=asset_refs、eval 用例=eval_case_ids、风险等级）。
+        src = client.post(
+            "/api/scenario-packs",
+            json={"name": "告警研判方法论", "business_goal": "提升研判准确率", "risk_level": "high"},
+        ).json()
+        client.post(
+            f"/api/scenario-packs/{src['scenario_pack_id']}/assets",
+            json={"asset_refs": ["sop/triage.md", "prompts/triage.md"], "eval_case_ids": ["ec-triage"]},
+        )
+        # 复用到相近能力域：复制为模板（留存来源 copied_from），再跨 Agent 装配（适用范围）。
+        copied = client.post(
+            f"/api/scenario-packs/{src['scenario_pack_id']}/copy", json={"name": "告警研判方法论副本"}
+        ).json()
+        pid = copied["scenario_pack_id"]
+        client.post(f"/api/scenario-packs/{pid}/assets", json={"agent_ids": ["agent-a", "agent-b"]})
+
+        # 各 Agent 独立验证结果（评估报告按 Agent 隔离）：A 通过、B 仍需人工复核。
+        for agent_id, result in (("agent-a", "passed"), ("agent-b", "needs_human_review")):
+            record = EvalRunRecord(
+                eval_run_id=f"evr-{agent_id}",
+                created_at="2026-06-12T00:00:00Z",
+                completed_at="2026-06-12T00:01:00Z",
+                status="completed",
+                result_status=result,
+                agent_id=agent_id,
+                source="manual_feedback_dataset",
+            )
+            with fs.Session.begin() as db:
+                db.add(
+                    EvalRunModel(
+                        eval_run_id=record.eval_run_id,
+                        created_at=record.created_at,
+                        completed_at=record.completed_at,
+                        status=record.status,
+                        agent_id=record.agent_id,
+                        source=record.source,
+                        payload_json=record.to_payload(),
+                    )
+                )
+
+        prov = client.get(f"/api/scenario-packs/{pid}/reuse-provenance")
+        assert prov.status_code == 200
+        body = prov.json()
+        # 复用记录：来源、适用范围、风险、方法论资产。
+        assert body["source_pack_id"] == src["scenario_pack_id"]  # 来源（copied_from）
+        assert set(body["scope_agent_ids"]) == {"agent-a", "agent-b"}  # 适用范围（跨 Agent 复用）
+        assert body["risk_level"] == "high"  # 风险
+        assert set(body["methodology_asset_refs"]) == {"sop/triage.md", "prompts/triage.md"}  # SOP/prompt 方法论资产
+        assert body["methodology_eval_case_ids"] == ["ec-triage"]  # eval 方法论资产
+        # 跨 Agent 评估报告：每个复用 Agent 保留独立验证结果（审计边界不混淆）。
+        validation = {v["agent_id"]: v for v in body["validation"]}
+        assert validation["agent-a"]["passed_eval_runs"] == 1 and validation["agent-a"]["latest_result_status"] == "passed"
+        assert validation["agent-b"]["passed_eval_runs"] == 0 and validation["agent-b"]["latest_result_status"] == "needs_human_review"
+        # 未知场景包 404。
+        assert client.get("/api/scenario-packs/nope/reuse-provenance").status_code == 404

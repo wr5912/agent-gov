@@ -108,3 +108,26 @@ class ScenarioPackAssociateRequest(BaseModel):
 
 class ScenarioPackCopyRequest(BaseModel):
     name: str = Field(description="复制出的新场景包名称。")
+
+
+class ScenarioPackAgentValidation(BaseModel):
+    """跨 Agent 复用的单 Agent 验证结果（评估报告）。"""
+
+    agent_id: str
+    eval_runs: int = Field(default=0, description="该 Agent 已完成的评估运行数。")
+    passed_eval_runs: int = Field(default=0, description="其中通过（passed/passed_with_notes）的评估运行数。")
+    latest_result_status: Optional[str] = Field(default=None, description="最近一次完成评估的结果状态。")
+
+
+class ScenarioPackReuseProvenanceResponse(BaseModel):
+    """场景包跨 Agent 复用记录（AGV-010/045）：来源、适用范围、风险、方法论资产与跨 Agent 评估报告。"""
+
+    scenario_pack_id: str
+    source_pack_id: Optional[str] = Field(default=None, description="复用来源场景包（copied_from）；原创为 null。")
+    risk_level: str = Field(description="复用风险等级。")
+    scope_agent_ids: list[str] = Field(default_factory=list, description="复用范围：装配该场景包的业务 Agent。")
+    methodology_asset_refs: list[str] = Field(default_factory=list, description="可复用方法论资产引用（prompt/skill/SOP/发布策略）。")
+    methodology_eval_case_ids: list[str] = Field(default_factory=list, description="可复用评估用例（方法论资产）。")
+    validation: list[ScenarioPackAgentValidation] = Field(
+        default_factory=list, description="跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。"
+    )

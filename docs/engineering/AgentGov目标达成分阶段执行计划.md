@@ -15,7 +15,7 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 46 `current` 已应具备并需回归；0 `gap`、3 `future`（阶段1清零；stage-2 已补 025/020/022/026/023；B3 per-agent 版本链补 021；B3.4 per-agent 闭环补 017/031；stage-2 里程碑补 044；stage-3 场景包跨 Agent 复用补 027）|
+| 当前实现边界 | 48 `current` 已应具备并需回归；0 `gap`、1 `future`（阶段1清零；stage-2 补 025/020/022/026/023/017/031/044；stage-3/4 补 027/010/045 场景包与跨 Agent 方法论复用；仅余 AGV-049 外部协作平台集成 deferred）|
 | 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
@@ -35,9 +35,9 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 46 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `current` | 48 | 当前应具备 | 回归锚点，任何阶段不得退化 |
 | `gap` | 0 | 目标明确、能力不足 | 阶段1已清零 |
-| `future` | 3 | 长期愿景/成熟度 | 第三至五阶段路线 |
+| `future` | 1 | 长期愿景/成熟度 | 仅余 AGV-049 外部协作平台集成（deferred） |
 
 > 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（36/0/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`，且业务 Agent 已可经 `/api/chat?agent_id=` 真实运行（live 实测采用自身 workspace 身份作答），其反馈沿 run.agent_id 链路归属到该业务 Agent，AGV-024（反馈归属 Agent/version/run + 无法归属人工兜底）随之补到 `current`；AGV-028（反馈到资产闭环完整，含 release→证据 provenance 反查）随之补到 `current`，至此阶段1全部 gap 清零（36/0/13）。
 
@@ -200,6 +200,7 @@
 | 2026-06-12 | B3.1 | per-agent 版本治理基础：change set/release 加可空 `agent_id`（迁移0011 默认 main-agent）+ 按 Agent 查询/过滤；main 路径不变 | 通过 | 无（B3 keystone 切片1） | `tests/test_agent_governance_publish.py::test_change_set_and_release_carry_agent_id_and_filter` |
 | 2026-06-12 | B3.2/B3.3 | per-agent 版本 store 工厂 `_store_for(agent_id)`（main 复用主 store 行为不变；业务 Agent 独立 git 版本链根 `data_dir/business-agents/{agent_id}/version`，路径段安全校验防穿越）；create/commit/publish/rollback/restore 按 agent_id 选 store，业务 Agent 版本链与 main 物理隔离 | 通过 | 无（B3 keystone 切片2-3；剩 B3.4 优化流水线 per-agent + B3.5 关闭 AGV-017 等） | `test_business_agent_version_chain_is_isolated_from_main`、`test_create_change_set_rejects_path_traversal_agent_id` |
 | 2026-06-12 | B3.4-exec | 优化执行流水线 per-agent 参数化：OptimizationTask agent_id(迁移0013)+批次 payload agent_id(派生源)+ExecutionApplicationService 按 agent_id 选 per-agent 版本 store；归属沿 run→signal→case→batch→task→change set→eval 全链路传播 | 通过 | 无（余 baseline per-agent 子片做端到端 apply） | `test_optimization_batch_and_task_inherit_agent_id_from_feedback`、`app/services/execution_application.py` |
+| 2026-06-12 | AGV-010/045 | 关闭（stage-3/4 跨 Agent 方法论沉淀）：新增 `GET /api/scenario-packs/{id}/reuse-provenance` 跨 Agent 复用记录——来源(copied_from)/适用范围(agent_ids)/风险(risk_level)/方法论资产(asset_refs+eval_case_ids)/跨 Agent 评估报告(per-agent validation)；已验证资产经 copy+装配跨 Agent 复用且各 Agent 保留独立审计/评估边界 | 通过 | `future` → `current` | 用例文档 AGV-010/045 `自动验收`、`app/routers/scenario_packs.py`、`frontend/src/types/api.ts` |
 | 2026-06-12 | AGV-027 | 关闭（stage-3 首个用例）：场景包跨 Agent 复用——一个场景包装配到两个 Agent（复用不强制相同）、各自独立 change set/release 与版本 store 物理隔离（保留版本/审计边界）、新增 eval 门（evaluating→active 须有该 Agent 通过的评估运行，按 Agent 隔离） | 通过 | `future` → `current` | 用例文档 AGV-027 `自动验收`、`app/routers/agents.py`（_has_passed_eval 激活门） |
 | 2026-06-12 | AGV-044 | 关闭（stage-2 里程碑）：第二阶段多业务 Agent 扩展——main 范式抽象为通用治理模型（main 是注册表首条记录），新 Agent 经同一入口/agent_id/_store_for 抽象复用 run/feedback/eval/version 能力，反馈/版本/评估按 Agent 隔离、不复制 main 硬编码路径 | 通过 | `future` → `current` | 用例文档 AGV-044 `自动验收`、`test_main_agent_paradigm_generalizes_to_new_business_agent` |
 | 2026-06-12 | AGV-031 | 关闭：Agent 创建/配置/运行/治理统一入口——agent_id 在 run/feedback/eval/version 一致；删除影响面提示扩展到优化/评估/版本维度（change_sets/releases/eval_runs/optimization_tasks）；main 不可删、未知 404；OpenAPI/前端类型同步 | 通过 | `future` → `current` | 用例文档 AGV-031 `自动验收`、`app/routers/agents.py`、`frontend/src/types/api.ts` |

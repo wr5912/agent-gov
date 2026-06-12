@@ -264,7 +264,7 @@
 
 ### AGV-010 跨 Agent 共享已验证的治理经验
 
-状态：`future`
+状态：`current`
 
 目标来源：愿景、治理成熟度路径。
 
@@ -283,6 +283,8 @@
 - 不同 Agent 共享方法论资产时仍保留各自版本和审计边界。
 
 证据要求：资产复用记录、目标 Agent change set、评估结果。
+
+自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_reuse_provenance_records_source_scope_risk_and_per_agent_validation`（已验证方法论资产场景包经 copy（留存来源 copied_from）+ 跨 Agent 装配复用到 agent-a/agent-b；`GET /api/scenario-packs/{id}/reuse-provenance` 返回复用记录：来源 `source_pack_id`、适用范围 `scope_agent_ids`、风险 `risk_level`、方法论资产 `methodology_asset_refs/eval_case_ids`、跨 Agent 评估报告 `validation`——每个复用 Agent 保留独立验证结果，A passed/B needs_human_review 不混淆）。各 Agent 版本/审计边界由 B3 per-agent store 与 per-agent eval 归属保留。
 
 ### AGV-011 数据资产完整记录事实基础
 
@@ -1109,7 +1111,7 @@
 
 ### AGV-045 第三与第四阶段场景包和跨 Agent 方法论沉淀
 
-状态：`future`
+状态：`current`
 
 目标来源：治理成熟度路径、能力域与场景包。
 
@@ -1128,6 +1130,8 @@
 - 跨 Agent 复用后仍保留独立审计和评估结果。
 
 证据要求：场景包、方法论资产和跨 Agent 评估报告。
+
+自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_reuse_provenance_records_source_scope_risk_and_per_agent_validation`（方法论资产 SOP/prompt/eval 绑定到场景包 `asset_refs/eval_case_ids` 并经 copy+装配在多个 Agent 复用=非单 Agent 私有；场景包组织 prompt/skill/SOP/eval 与复用/风险策略；`reuse-provenance` 的 `validation` 字段给出跨 Agent 评估报告，每个 Agent 保留独立审计与评估结果）。与 AGV-010 共享 `GET /api/scenario-packs/{id}/reuse-provenance` 跨 Agent 复用记录能力。
 
 ### AGV-046 安全运营作为示例场景可被替换
 

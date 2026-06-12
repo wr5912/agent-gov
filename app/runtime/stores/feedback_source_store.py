@@ -76,9 +76,13 @@ class FeedbackSourceStoreMixin:
         session_id: Optional[str] = None,
         alert_id: Optional[str] = None,
         case_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
         limit: int = 100,
     ) -> list[JsonObject]:
         stmt = select(AgentRunModel).order_by(AgentRunModel.created_at.desc()).limit(limit)
+        if agent_id:
+            # run 的 agent_id 存于 payload_json，按 Agent 维度过滤运行（business Agent 间不串扰）。
+            stmt = stmt.where(AgentRunModel.payload_json["agent_id"].as_string() == agent_id)
         if run_id:
             stmt = stmt.where(AgentRunModel.run_id == run_id)
         if session_id:

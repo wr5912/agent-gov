@@ -50,9 +50,12 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         session_id: str | None = None,
         alert_id: str | None = None,
         case_id: str | None = None,
+        agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentRunResponse]:
-        return feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, limit=limit)
+        return feedback_store.list_runs(
+            run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit
+        )
 
 
 def _register_feedback_signal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

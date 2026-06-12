@@ -5576,6 +5576,7 @@ export interface operations {
                 session_id?: string | null;
                 alert_id?: string | null;
                 case_id?: string | null;
+                agent_id?: string | null;
                 limit?: number;
             };
             header?: never;

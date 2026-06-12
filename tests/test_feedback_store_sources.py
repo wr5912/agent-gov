@@ -415,3 +415,15 @@ def test_list_signals_filters_by_agent_dimension(tmp_path):
     assert {s["run_id"] for s in a_signals} == {"run-a"}
     assert {s["agent_id"] for s in b_signals} == {"agent-b"}
     assert {s["run_id"] for s in b_signals} == {"run-b"}
+
+
+def test_list_runs_filters_by_agent_dimension(tmp_path):
+    """AGV-017：运行记录可按 Agent 维度过滤——business Agent 间运行互不串扰。"""
+    store, _ = _store(tmp_path)
+    store.record_run({"run_id": "run-a", "agent_id": "agent-a", "created_at": "2026-06-12T00:00:00Z"})
+    store.record_run({"run_id": "run-b", "agent_id": "agent-b", "created_at": "2026-06-12T00:00:01Z"})
+
+    assert [r["run_id"] for r in store.list_runs(agent_id="agent-a")] == ["run-a"]
+    assert [r["run_id"] for r in store.list_runs(agent_id="agent-b")] == ["run-b"]
+    # 不带 agent_id 时返回全部（向后兼容）。
+    assert {r["run_id"] for r in store.list_runs()} == {"run-a", "run-b"}

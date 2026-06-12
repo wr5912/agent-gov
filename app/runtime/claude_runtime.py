@@ -63,6 +63,7 @@ class RuntimeRequestContext:
     telemetry_input: JsonObject
     langfuse_trace_id: Optional[str] = None
     langfuse_trace_url: Optional[str] = None
+    agent_id: str = MAIN_AGENT_PROFILE
 
 
 @dataclass
@@ -247,6 +248,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self,
         *,
         run_id: str,
+        agent_id: str,
         agent_version_id: Optional[str],
         session: LocalSession,
         sdk_session_id: Optional[str],
@@ -269,6 +271,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.feedback_store.record_run(
             {
                 "run_id": run_id,
+                "agent_id": agent_id,
                 "agent_version_id": agent_version_id,
                 "session_id": session.session_id,
                 "sdk_session_id": sdk_session_id,
@@ -587,6 +590,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.session_store.save(context.session)
         self._record_feedback_run(
             run_id=context.run_id,
+            agent_id=context.agent_id,
             agent_version_id=context.agent_version_id,
             session=context.session,
             sdk_session_id=state.sdk_session_id,
@@ -630,6 +634,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override)
+        context.agent_id = profile.name  # 业务 Agent run 的反馈据此归属到该 Agent（profile.name=agent_id）
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
         propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)

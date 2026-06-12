@@ -380,3 +380,21 @@ def test_create_signal_records_business_agent_attribution(tmp_path):
     with store.Session.begin() as db:
         row = db.get(FeedbackSignalModel, signal["signal_id"])
         assert row.agent_id == "main-agent"
+
+
+def test_create_signal_attributes_to_run_business_agent(tmp_path):
+    """AGV-024：业务 Agent 的 run 产生的反馈归属到该业务 Agent，沿 run.agent_id 链路传播。"""
+    store, _ = _store(tmp_path)
+    # 业务 Agent 与 main agent 各记录一次运行（agent_id 经 run payload 持久化）。
+    store.record_run({"run_id": "run-biz", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+    store.record_run({"run_id": "run-main", "agent_id": "main-agent", "created_at": "2026-06-12T00:00:00Z"})
+
+    biz_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-biz", labels=["tool_data_incomplete"]))
+    main_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-main", labels=["tool_data_incomplete"]))
+    orphan_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-none", labels=["tool_data_incomplete"]))
+
+    # 业务 Agent 的反馈归属到该业务 Agent，不串扰、不进无归属全局池。
+    assert biz_signal["agent_id"] == "soc-ops"
+    assert main_signal["agent_id"] == "main-agent"
+    # 无匹配 run 时回退 main（不破坏无 run 历史反馈）。
+    assert orphan_signal["agent_id"] == "main-agent"

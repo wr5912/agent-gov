@@ -132,7 +132,9 @@ class FeedbackSourceStoreMixin:
             "signal_id": payload.get("signal_id") or f"fbs-{uuid.uuid4()}",
             "created_at": utc_now(),
             "matched_run_id": run.get("run_id") if run else None,
-            "agent_id": MAIN_AGENT_PROFILE,
+            # 反馈归属到产生该 run 的 Agent（业务 Agent 的 run 携带其 agent_id）；
+            # 无匹配 run 时回退 main，保持单 Agent 历史与无 run 反馈不破坏。
+            "agent_id": (self._string(run.get("agent_id")) if run else "") or MAIN_AGENT_PROFILE,
         }
         record = FeedbackSignalRecord.model_validate(signal)
         with self.Session.begin() as db:

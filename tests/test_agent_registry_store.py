@@ -60,3 +60,16 @@ def test_lifespan_seeds_business_agent_registry(monkeypatch, tmp_path: Path) -> 
     agents = module.agent_registry_store.list_agents()
     assert [agent.agent_id for agent in agents] == ["main-agent"]
     assert agents[0].category == "business"
+
+
+def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tmp_path: Path) -> None:
+    """AGV-004/007：注册的业务 Agent 定义可经 API 查询，作为外部接入与归属对象的可见入口。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        response = client.get("/api/agent-registry")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item["agent_id"] for item in body] == ["main-agent"]
+    assert body[0]["category"] == "business"
+    assert body[0]["workspace_dir"]

@@ -177,6 +177,14 @@ class FeedbackSignalCreateRequest(BaseModel):
     metadata: JsonObject = Field(default_factory=dict)
 
 
+class AgentSummaryResponse(BaseModel):
+    agent_id: str
+    name: str
+    category: str
+    workspace_dir: str
+    created_at: str
+
+
 class FeedbackSignalResponse(BaseModel):
     signal_id: str
     created_at: str

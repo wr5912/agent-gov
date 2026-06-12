@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
+from app.routers.agents import create_agents_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
@@ -93,6 +94,7 @@ app = FastAPI(
         {"name": "health", "description": "Service status and documentation discovery."},
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
+        {"name": "agents", "description": "List registered business agents (governance objects)."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
@@ -134,6 +136,7 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
+app.include_router(create_agents_router(agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))

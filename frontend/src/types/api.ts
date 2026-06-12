@@ -209,6 +209,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List registered business agents (governance objects) */
+        get: operations["list_agents_api_agent_registry_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-releases": {
         parameters: {
             query?: never;
@@ -1990,6 +2007,19 @@ export interface components {
             sdk_session_id?: string | null;
             /** Session Id */
             session_id?: string | null;
+        };
+        /** AgentSummaryResponse */
+        AgentSummaryResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Category */
+            category: string;
+            /** Created At */
+            created_at: string;
+            /** Name */
+            name: string;
+            /** Workspace Dir */
+            workspace_dir: string;
         };
         /** AgentVersionDiffEntryResponse */
         AgentVersionDiffEntryResponse: {
@@ -5230,6 +5260,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_agents_api_agent_registry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSummaryResponse"][];
                 };
             };
         };

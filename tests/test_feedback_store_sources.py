@@ -448,3 +448,30 @@ def test_create_optimization_batch_rejects_cross_agent_misroute(tmp_path):
     # 同一 Agent -> 正常创建（不误伤单 Agent 批次）。
     batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": sig_a["signal_id"]}])
     assert batch is not None
+
+
+def test_reassign_signal_agent_corrects_attribution_with_audit(tmp_path):
+    """AGV-025 criterion 3：管理员可修正反馈归属，并保留审计记录。"""
+    from app.runtime.errors import NotFoundError
+
+    store, _ = _store(tmp_path)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"]))
+    assert signal["agent_id"] == "main-agent"
+
+    corrected = store.reassign_signal_agent(
+        signal["signal_id"], agent_id="agent-x", operator="admin", reason="误归属"
+    ).to_payload()
+    assert corrected["agent_id"] == "agent-x"
+    # 审计记录保留 from/to/operator/reason，可追溯。
+    corrections = (corrected.get("metadata") or {}).get("attribution_corrections") or []
+    assert corrections[-1]["from"] == "main-agent"
+    assert corrections[-1]["to"] == "agent-x"
+    assert corrections[-1]["operator"] == "admin"
+    assert corrections[-1]["reason"] == "误归属"
+    # 修正后按新归属可过滤到。
+    assert {s["signal_id"] for s in store.list_signals(agent_id="agent-x")} == {signal["signal_id"]}
+    # 空目标/操作人拒绝；未知信号 404。
+    with pytest.raises(BusinessRuleViolation):
+        store.reassign_signal_agent(signal["signal_id"], agent_id="  ", operator="admin")
+    with pytest.raises(NotFoundError):
+        store.reassign_signal_agent("nope", agent_id="agent-x", operator="admin")

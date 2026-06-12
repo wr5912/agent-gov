@@ -1111,6 +1111,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/feedback-signals/{signal_id}/reassign-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reassign a feedback signal's owning agent (records an audit correction) */
+        post: operations["reassign_feedback_signal_agent_api_feedback_signals__signal_id__reassign_agent_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/feedback-sources": {
         parameters: {
             query?: never;
@@ -3894,6 +3911,24 @@ export interface components {
             source_type: "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
             /** Timestamp */
             timestamp?: string | null;
+        };
+        /** FeedbackSignalReassignRequest */
+        FeedbackSignalReassignRequest: {
+            /**
+             * Agent Id
+             * @description 修正后的归属业务 Agent。
+             */
+            agent_id: string;
+            /**
+             * Operator
+             * @description 执行修正的操作人，用于审计。
+             */
+            operator: string;
+            /**
+             * Reason
+             * @description 修正原因（可选），写入审计记录。
+             */
+            reason?: string | null;
         };
         /** FeedbackSignalResponse */
         FeedbackSignalResponse: {
@@ -7247,6 +7282,41 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FeedbackSignalResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reassign_feedback_signal_agent_api_feedback_signals__signal_id__reassign_agent_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                signal_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FeedbackSignalReassignRequest"];
+            };
+        };
         responses: {
             /** @description Successful Response */
             200: {

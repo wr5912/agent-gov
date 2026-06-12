@@ -614,7 +614,7 @@
 
 ### AGV-025 反馈路由错误不会污染其他 Agent
 
-状态：`future`
+状态：`current`
 
 目标来源：反馈路由与归属、多业务 Agent 治理。
 
@@ -633,6 +633,8 @@
 - 管理员可以修正反馈归属并保留审计记录。
 
 证据要求：错误响应、审计事件和修正记录。
+
+自动验收（按三条成功标准）：① 跨 Agent 误路由被阻止——`tests/test_feedback_store_sources.py::test_create_optimization_batch_rejects_cross_agent_misroute`（优化批次混入跨 Agent 反馈被显式拒绝）；② Agent 评估/版本不受他 Agent 反馈污染——同上误路由防护 + `::test_list_signals_filters_by_agent_dimension`（反馈按 Agent 维度隔离），使每个 Agent 的批次/评估只含自身反馈；③ 管理员可修正反馈归属并保留审计——`::test_reassign_signal_agent_corrects_attribution_with_audit`（reassign 改写 agent_id 并在 metadata.attribution_corrections 保留 from/to/operator/reason 审计）。API：POST `/api/feedback-signals/{signal_id}/reassign-agent`。
 
 ### AGV-026 能力域或场景包可组织治理资产
 

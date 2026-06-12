@@ -191,6 +191,12 @@ class AgentSummaryResponse(BaseModel):
     created_at: str
 
 
+class FeedbackSignalReassignRequest(BaseModel):
+    agent_id: str = Field(description="修正后的归属业务 Agent。")
+    operator: str = Field(description="执行修正的操作人，用于审计。")
+    reason: Optional[str] = Field(default=None, description="修正原因（可选），写入审计记录。")
+
+
 class AgentDeletionImpact(BaseModel):
     runs: int = Field(description="该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。")
     feedback_signals: int = Field(description="该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。")

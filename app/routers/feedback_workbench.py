@@ -12,6 +12,7 @@ from app.runtime.schemas import (
     AgentRunResponse,
     FeedbackEvalCaseGenerateRequest,
     FeedbackSignalCreateRequest,
+    FeedbackSignalReassignRequest,
     FeedbackSignalResponse,
     FeedbackSourceResponse,
     FeedbackSourceUpdateRequest,
@@ -100,6 +101,17 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
     async def get_feedback_signal(signal_id: str) -> FeedbackSignalResponse:
         signal = feedback_store.find_signal(signal_id)
         return ensure_found(signal, "Feedback signal not found")
+
+    @router.post(
+        "/feedback-signals/{signal_id}/reassign-agent",
+        response_model=FeedbackSignalResponse,
+        summary="Reassign a feedback signal's owning agent (records an audit correction)",
+    )
+    async def reassign_feedback_signal_agent(signal_id: str, req: FeedbackSignalReassignRequest) -> FeedbackSignalResponse:
+        # 管理员修正反馈归属；改写 agent_id 并保留 from/to/operator/reason 审计记录（AGV-025）。
+        return feedback_store.reassign_signal_agent(
+            signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason
+        ).to_payload()
 
 
 def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

@@ -7,7 +7,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
 from ..agent_profiles import MAIN_AGENT_PROFILE
-from ..errors import BusinessRuleViolation
+from ..errors import BusinessRuleViolation, NotFoundError
 from ..records.agent_job_records import AgentJobRecord
 from ..records.case_records import FeedbackCaseRecord
 from ..records.eval_case_records import EvalCaseRecord
@@ -157,6 +157,33 @@ class FeedbackSourceStoreMixin:
                 )
             )
         return record.to_payload()
+
+    def reassign_signal_agent(
+        self, signal_id: str, *, agent_id: str, operator: str, reason: Optional[str] = None
+    ) -> FeedbackSignalRecord:
+        """管理员修正反馈归属：改写信号 agent_id，并把修正记录（from/to/operator/reason/at）
+        写入 payload_json.attribution_corrections 审计列表，保留可追溯历史（AGV-025 criterion 3）。"""
+        target = (agent_id or "").strip()
+        if not target:
+            raise BusinessRuleViolation("Reassign target agent_id cannot be empty")
+        if not (operator or "").strip():
+            raise BusinessRuleViolation("Reassign requires an operator for audit")
+        with self.Session.begin() as db:
+            row = db.get(FeedbackSignalModel, signal_id)
+            if row is None:
+                raise NotFoundError(f"Feedback signal not found: {signal_id}")
+            payload = dict(row.payload_json or {})
+            metadata = dict(payload.get("metadata") or {})
+            corrections = list(metadata.get("attribution_corrections") or [])
+            corrections.append(
+                {"from": row.agent_id, "to": target, "operator": operator, "reason": reason, "at": utc_now()}
+            )
+            metadata["attribution_corrections"] = corrections
+            payload["metadata"] = metadata
+            payload["agent_id"] = target
+            row.agent_id = target
+            row.payload_json = payload
+            return FeedbackSignalRecord.from_row(row)
 
     def list_signals(
         self,

@@ -970,7 +970,7 @@
 
 ### AGV-041 高风险动作需要审批
 
-状态：`gap`
+状态：`current`
 
 目标来源：治理边界与审批。
 
@@ -989,6 +989,8 @@
 - 拒绝或放弃变更有审计事件。
 
 证据要求：approval、reject、abandon 或 external confirmation 记录。
+
+自动验收：`tests/test_agent_governance_publish.py::test_high_risk_change_set_requires_approval_before_publish`、`tests/test_agent_governance_publish.py::test_rejected_change_set_records_audit_event`。
 
 ### AGV-042 权限和敏感信息边界
 

@@ -20,7 +20,8 @@ from app.runtime.state_machines import validate_transition
 from app.runtime.stores.feedback_store import FeedbackStore
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
-PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "pending_approval", "approved", "regression_passed"}
+# pending_approval 不可直接发布：高风险变更必须先经 approve_change_set 转为 approved（AGV-041）。
+PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved", "regression_passed"}
 BATCH_REGRESSION_SOURCE = "optimization_batch_regression"
 BATCH_REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "passed_with_notes", "failed", "needs_human_review"}
 
@@ -212,6 +213,27 @@ class AgentGovernanceService:
             "candidate_committed",
             fields=fields,
             action="candidate_committed",
+            operator=operator,
+        )
+
+    def request_change_set_approval(
+        self,
+        change_set_id: str,
+        *,
+        operator: str = "runtime",
+        reason: str,
+        impact_scope: str,
+        rollback_plan: str,
+    ) -> JsonObject:
+        """把高风险变更标记为待审批：不经 approve 不得发布（AGV-041）。
+
+        审批请求记录操作人、原因、影响范围和回滚方案，作为审批决策依据。
+        """
+        return self._transition_change_set(
+            change_set_id,
+            "pending_approval",
+            fields={"approval_reason": reason, "impact_scope": impact_scope, "rollback_plan": rollback_plan},
+            action="approval_requested",
             operator=operator,
         )
 

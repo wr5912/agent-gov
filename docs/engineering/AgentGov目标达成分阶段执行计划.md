@@ -35,11 +35,11 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 23 | 当前应具备 | 回归锚点，任何阶段不得退化 |
-| `gap` | 13 | 目标明确、能力不足 | 第一阶段主战场 |
+| `current` | 24 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `gap` | 12 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 12 | 长期愿景/成熟度 | 第二至四阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理 Agent 结构化边界）补到 `current`。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理 Agent 结构化边界）、AGV-041（高风险动作审批门）补到 `current`。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界。
 
@@ -141,3 +141,4 @@
 | 2026-06-12 | AGV-004 | B4 create：POST /api/agent-registry 注册业务 Agent，创建即得稳定身份与归属对象；重复 409、空名 400、省略 id 自动生成；不泄露密钥 | 通过 | AGV-004 创建能力就绪（仍 gap，运行态需动态 profile） | `app/routers/agents.py`、`app/runtime/stores/agent_registry_store.py::create_business_agent`、`app/runtime/schemas.py::AgentCreateRequest`、`tests/test_agent_registry_store.py`（+2） |
 | 2026-06-12 | AGV-004 | B4 运行态原语：build_business_agent_profile 为任意注册业务 Agent 动态构造 profile（role=business-agent，被治理对象权限边界）；新增 business-agent 角色 | 通过 | AGV-004 运行态原语就绪（待接入 chat 运行时） | `app/runtime/agent_profiles.py::build_business_agent_profile`、`tests/test_agent_profiles_category.py::test_build_business_agent_profile_is_governed_business_object` |
 | 2026-06-12 | AGV-004 | B4 运行态：创建即幂等初始化业务 Agent workspace 与起始 CLAUDE.md（保留用户编辑），为运行提供配置容器 | 通过 | AGV-004 配置容器就绪（运行执行仍待 chat 运行时接入，需 live SDK） | `app/runtime/business_agent_workspace.py`、`app/routers/agents.py`、`tests/test_agent_registry_store.py`（+2） |
+| 2026-06-12 | AGV-041 | 高风险审批门：request_change_set_approval 标记待审批（记操作人/原因/影响/回滚），pending_approval 不可直接发布，approve 后方可；reject/abandon 有审计事件 | 通过 | `gap` → `current` | `app/services/agent_governance.py`、`app/runtime/state_machines.py`、`tests/test_agent_governance_publish.py`（+2） |

@@ -111,3 +111,45 @@ def test_batch_regression_failed_cases_block_publish(tmp_path):
 
     assert exc.value.status_code == 409
     assert agent_store.current_commit_sha() != change_set["candidate_commit_sha"]
+
+
+def test_high_risk_change_set_requires_approval_before_publish(tmp_path):
+    """AGV-041：标记为待审批的高风险变更不经审批不得发布；审批后可发布。"""
+    governance, agent_store = _governance(tmp_path)
+    change_set = _candidate_change_set(governance, agent_store)
+    change_set_id = str(change_set["change_set_id"])
+
+    pending = governance.request_change_set_approval(
+        change_set_id,
+        operator="reviewer",
+        reason="改动生产策略 prompt",
+        impact_scope="main agent 全量输出",
+        rollback_plan="回滚到上一个 release",
+    )
+    assert pending["status"] == "pending_approval"
+    assert pending["impact_scope"] == "main agent 全量输出"
+    assert pending["rollback_plan"] == "回滚到上一个 release"
+
+    with pytest.raises(AgentGovernanceError) as exc:
+        governance.publish_change_set(change_set_id, operator="tester")
+    assert exc.value.status_code == 409
+
+    governance.approve_change_set(change_set_id, operator="reviewer", note="审批通过")
+    release = governance.publish_change_set(change_set_id, operator="tester")
+    assert release["status"] == "published"
+
+
+def test_rejected_change_set_records_audit_event(tmp_path):
+    """AGV-041：拒绝高风险变更产生审计事件，且变更不发布。"""
+    governance, agent_store = _governance(tmp_path)
+    change_set = _candidate_change_set(governance, agent_store)
+    change_set_id = str(change_set["change_set_id"])
+
+    governance.request_change_set_approval(
+        change_set_id, operator="reviewer", reason="风险过高", impact_scope="工具配置", rollback_plan="撤销变更"
+    )
+    rejected = governance.reject_change_set(change_set_id, operator="reviewer", note="不通过")
+
+    assert rejected["status"] == "rejected"
+    actions = {str(event.get("action")) for event in governance.list_change_set_events(change_set_id)}
+    assert {"approval_requested", "rejected"} <= actions

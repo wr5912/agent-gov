@@ -77,12 +77,21 @@ class AgentGovernanceService:
             raise AgentGovernanceError(409, "Agent Git repository is not initialized")
         return self.agent_version_store.version_summary(current, reason="current")
 
-    def list_change_sets(self, *, status: str | None = None, optimization_task_id: str | None = None, limit: int = 100) -> list[JsonObject]:
+    def list_change_sets(
+        self,
+        *,
+        status: str | None = None,
+        optimization_task_id: str | None = None,
+        agent_id: str | None = None,
+        limit: int = 100,
+    ) -> list[JsonObject]:
         stmt = select(AgentChangeSetModel).order_by(AgentChangeSetModel.created_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(AgentChangeSetModel.status == status)
         if optimization_task_id:
             stmt = stmt.where(AgentChangeSetModel.optimization_task_id == optimization_task_id)
+        if agent_id:
+            stmt = stmt.where(AgentChangeSetModel.agent_id == agent_id)
         with self.feedback_store.Session() as db:
             return [self._change_set_to_payload(row) for row in db.scalars(stmt).all()]
 
@@ -307,10 +316,12 @@ class AgentGovernanceService:
         release["change_set"] = updated
         return release
 
-    def list_releases(self, *, status: str | None = None, limit: int = 100) -> list[JsonObject]:
+    def list_releases(self, *, status: str | None = None, agent_id: str | None = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(AgentReleaseModel).order_by(AgentReleaseModel.created_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(AgentReleaseModel.status == status)
+        if agent_id:
+            stmt = stmt.where(AgentReleaseModel.agent_id == agent_id)
         with self.feedback_store.Session() as db:
             return [self._release_to_payload(row) for row in db.scalars(stmt).all()]
 
@@ -477,6 +488,7 @@ class AgentGovernanceService:
         payload.update(
             {
                 "change_set_id": row.change_set_id,
+                "agent_id": row.agent_id or "main-agent",
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,
@@ -564,6 +576,7 @@ class AgentGovernanceService:
         payload.update(
             {
                 "release_id": row.release_id,
+                "agent_id": row.agent_id or "main-agent",
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,

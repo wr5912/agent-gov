@@ -44,6 +44,24 @@ def _candidate_change_set(
     )
 
 
+def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
+    """B3.1（AGV-017 版本维度基础）：change set/release 带 agent_id（默认 main-agent）且可按 Agent 过滤。"""
+    governance, agent_store = _governance(tmp_path)
+    candidate = _candidate_change_set(governance, agent_store)
+    # change set 带 agent_id，默认归 main-agent（main 路径不变）。
+    assert candidate["agent_id"] == "main-agent"
+    assert all(cs["agent_id"] == "main-agent" for cs in governance.list_change_sets())
+    # 按 Agent 维度过滤 change set：main 命中、其他 Agent 为空（不串扰）。
+    assert governance.list_change_sets(agent_id="main-agent")
+    assert governance.list_change_sets(agent_id="biz-other") == []
+    # 发布后 release 同样带 agent_id 且可按 Agent 过滤。
+    published = governance.publish_change_set(str(candidate["change_set_id"]), operator="tester")
+    assert published is not None
+    assert all(rel["agent_id"] == "main-agent" for rel in governance.list_releases())
+    assert governance.list_releases(agent_id="main-agent")
+    assert governance.list_releases(agent_id="biz-other") == []
+
+
 def test_candidate_committed_change_set_can_publish_directly(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)

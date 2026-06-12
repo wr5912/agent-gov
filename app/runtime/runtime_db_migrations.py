@@ -119,6 +119,14 @@ def migrate_0009_agent_registry_status(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_status ON agent_registry (status)")
 
 
+def migrate_0011_change_set_release_agent_id(connection: Connection) -> None:
+    for table in ("agent_change_sets", "agent_releases"):
+        if "agent_id" not in _table_columns(connection, table):
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN agent_id VARCHAR(128)")
+        connection.exec_driver_sql(f"UPDATE {table} SET agent_id = 'main-agent' WHERE agent_id IS NULL")
+        connection.exec_driver_sql(f"CREATE INDEX IF NOT EXISTS ix_{table}_agent_id ON {table} (agent_id)")
+
+
 def migrate_0010_scenario_packs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

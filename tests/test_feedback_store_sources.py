@@ -427,3 +427,24 @@ def test_list_runs_filters_by_agent_dimension(tmp_path):
     assert [r["run_id"] for r in store.list_runs(agent_id="agent-b")] == ["run-b"]
     # 不带 agent_id 时返回全部（向后兼容）。
     assert {r["run_id"] for r in store.list_runs()} == {"run-a", "run-b"}
+
+
+def test_create_optimization_batch_rejects_cross_agent_misroute(tmp_path):
+    """AGV-025 criterion 1：跨 Agent 反馈混入同一优化批次被拒（误路由防护，不污染他 Agent）。"""
+    store, _ = _store(tmp_path)
+    store.record_run({"run_id": "run-a", "agent_id": "agent-a", "created_at": "2026-06-12T00:00:00Z"})
+    store.record_run({"run_id": "run-b", "agent_id": "agent-b", "created_at": "2026-06-12T00:00:01Z"})
+    sig_a = store.create_signal(FeedbackSignalCreateRequest(run_id="run-a", labels=["tool_data_incomplete"]))
+    sig_b = store.create_signal(FeedbackSignalCreateRequest(run_id="run-b", labels=["tool_data_incomplete"]))
+
+    # 跨 Agent 混入 -> 显式拒绝。
+    with pytest.raises(BusinessRuleViolation, match="Cross-agent"):
+        store.create_optimization_batch(
+            [
+                {"source_kind": "signal", "source_id": sig_a["signal_id"]},
+                {"source_kind": "signal", "source_id": sig_b["signal_id"]},
+            ]
+        )
+    # 同一 Agent -> 正常创建（不误伤单 Agent 批次）。
+    batch = store.create_optimization_batch([{"source_kind": "signal", "source_id": sig_a["signal_id"]}])
+    assert batch is not None

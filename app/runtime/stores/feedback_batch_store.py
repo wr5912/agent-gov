@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from ..errors import ConflictError
+from ..errors import BusinessRuleViolation, ConflictError
 from ..json_types import JsonObject
 from ..records.batch_records import FeedbackOptimizationBatchRecord
 from ..records.optimization_task_records import OptimizationTaskRecord
@@ -32,17 +32,28 @@ class FeedbackBatchStoreMixin:
         cases_to_create: list[JsonObject] = []
         refs_to_mark: list[dict[str, str]] = []
         skipped: list[JsonObject] = []
+        source_agent_ids: set[str] = set()
         for ref in refs:
             feedback_case, should_create = self._prepare_feedback_case_for_source(ref, priority=priority)
             if not feedback_case:
                 skipped.append({**ref, "reason": "source cannot create feedback case"})
                 continue
+            agent_id = self._source_agent_id(ref)
+            if agent_id:
+                source_agent_ids.add(agent_id)
             feedback_cases.append(feedback_case)
             if should_create:
                 cases_to_create.append(feedback_case)
             refs_to_mark.append(ref)
         if not feedback_cases:
             return None
+        # AGV-025 误路由防护：一个优化批次只服务单个 Agent；混入跨 Agent 反馈直接拒绝，
+        # 避免 Agent A 的反馈污染 Agent B 的评估与版本治理。
+        if len(source_agent_ids) > 1:
+            raise BusinessRuleViolation(
+                f"Cross-agent optimization batch rejected: feedback spans agents {sorted(source_agent_ids)};"
+                " create one batch per agent"
+            )
         now = utc_now()
         feedback_case_ids = self._unique_strings([item.get("feedback_case_id") for item in feedback_cases])
         batch_id = f"fob-{uuid.uuid4()}"
@@ -74,6 +85,16 @@ class FeedbackBatchStoreMixin:
             db.add(self._batch_model_from_payload(payload))
         self.queue_feedback_eval_case_generation_agent_job(batch_id=batch_id)
         return self.find_optimization_batch(batch_id)
+
+    def _source_agent_id(self, ref: dict[str, str]) -> Optional[str]:
+        """取 signal 类来源的归属 Agent，用于优化批次的跨 Agent 误路由防护。
+
+        signal 携带 agent_id；soc_event/pending 等非 Agent 专属来源返回 None，不参与一致性判定。
+        """
+        if self._normalize_source_kind(ref.get("source_kind", "")) != "signal":
+            return None
+        signal = self.find_signal(ref.get("source_id", ""))
+        return (self._string(signal.get("agent_id")) or None) if signal else None
 
     def ensure_single_case_optimization_batch(self, feedback_case_id: str) -> Optional[FeedbackOptimizationBatchPayload]:
         feedback_case = self.find_case(feedback_case_id)

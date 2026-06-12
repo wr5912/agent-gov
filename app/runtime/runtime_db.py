@@ -19,6 +19,7 @@ from .runtime_db_migrations import (
     migrate_0007_agent_registry,
     migrate_0008_feedback_signal_agent_id,
     migrate_0009_agent_registry_status,
+    migrate_0010_scenario_packs,
 )
 
 
@@ -556,6 +557,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0007_agent_registry", migrate_0007_agent_registry),
         ("0008_feedback_signal_agent_id", migrate_0008_feedback_signal_agent_id),
         ("0009_agent_registry_status", migrate_0009_agent_registry_status),
+        ("0010_scenario_packs", migrate_0010_scenario_packs),
     ):
         if version in applied:
             continue

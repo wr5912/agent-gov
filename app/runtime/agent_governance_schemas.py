@@ -60,3 +60,24 @@ class AgentDeletionImpact(BaseModel):
 class AgentDeleteResponse(BaseModel):
     deleted: AgentSummaryResponse
     impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
+
+
+class ScenarioPackCreateRequest(BaseModel):
+    name: str
+    business_goal: str = Field(default="", description="场景包的业务目标。")
+    scope: str = Field(default="", description="适用范围。")
+    risk_level: str = Field(default="medium", description="风险等级：low/medium/high。")
+
+
+class ScenarioPackResponse(BaseModel):
+    """场景包/能力域（AGV-026/027）：业务目标+适用范围+风险等级，关联 Agent/eval/资产。"""
+
+    scenario_pack_id: str
+    name: str
+    business_goal: str = ""
+    scope: str = ""
+    risk_level: str = "medium"
+    created_at: str
+    agent_ids: list[str] = Field(default_factory=list, description="装配了该场景包能力的 Agent。")
+    eval_case_ids: list[str] = Field(default_factory=list)
+    asset_refs: list[str] = Field(default_factory=list, description="关联的 prompt/skill/SOP/发布准入规则等资产引用。")

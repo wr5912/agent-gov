@@ -10,6 +10,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agents import create_agents_router
+from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
@@ -31,6 +32,7 @@ from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_da
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime.stores.scenario_pack_store import ScenarioPackStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
@@ -65,6 +67,7 @@ agent_governance = AgentGovernanceService(
     agent_version_store=agent_version_store,
 )
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
@@ -151,6 +154,7 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
+app.include_router(create_scenario_packs_router(scenario_pack_store=scenario_pack_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))

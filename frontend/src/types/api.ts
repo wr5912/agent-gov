@@ -1505,6 +1505,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scenario-packs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List scenario packs */
+        get: operations["list_packs_api_scenario_packs_get"];
+        put?: never;
+        /** Create a scenario pack (capability domain) organizing governance assets */
+        post: operations["create_pack_api_scenario_packs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenario-packs/{scenario_pack_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one scenario pack with its asset relationships */
+        get: operations["get_pack_api_scenario_packs__scenario_pack_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -4816,6 +4851,68 @@ export interface components {
             workspace_dir: string;
         } & {
             [key: string]: unknown;
+        };
+        /** ScenarioPackCreateRequest */
+        ScenarioPackCreateRequest: {
+            /**
+             * Business Goal
+             * @description 场景包的业务目标。
+             * @default
+             */
+            business_goal: string;
+            /** Name */
+            name: string;
+            /**
+             * Risk Level
+             * @description 风险等级：low/medium/high。
+             * @default medium
+             */
+            risk_level: string;
+            /**
+             * Scope
+             * @description 适用范围。
+             * @default
+             */
+            scope: string;
+        };
+        /**
+         * ScenarioPackResponse
+         * @description 场景包/能力域（AGV-026/027）：业务目标+适用范围+风险等级，关联 Agent/eval/资产。
+         */
+        ScenarioPackResponse: {
+            /**
+             * Agent Ids
+             * @description 装配了该场景包能力的 Agent。
+             */
+            agent_ids?: string[];
+            /**
+             * Asset Refs
+             * @description 关联的 prompt/skill/SOP/发布准入规则等资产引用。
+             */
+            asset_refs?: string[];
+            /**
+             * Business Goal
+             * @default
+             */
+            business_goal: string;
+            /** Created At */
+            created_at: string;
+            /** Eval Case Ids */
+            eval_case_ids?: string[];
+            /** Name */
+            name: string;
+            /**
+             * Risk Level
+             * @default medium
+             */
+            risk_level: string;
+            /** Scenario Pack Id */
+            scenario_pack_id: string;
+            /**
+             * Scope
+             * @default
+             */
+            scope: string;
         };
         /** SessionDeleteResponse */
         SessionDeleteResponse: {
@@ -8252,6 +8349,90 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvalCaseResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_packs_api_scenario_packs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"][];
+                };
+            };
+        };
+    };
+    create_pack_api_scenario_packs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioPackCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_pack_api_scenario_packs__scenario_pack_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"];
                 };
             };
             /** @description Validation Error */

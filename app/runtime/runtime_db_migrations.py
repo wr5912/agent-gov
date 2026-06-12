@@ -119,6 +119,24 @@ def migrate_0009_agent_registry_status(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_status ON agent_registry (status)")
 
 
+def migrate_0010_scenario_packs(connection: Connection) -> None:
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS scenario_packs (
+            scenario_pack_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            name VARCHAR(256) NOT NULL,
+            business_goal VARCHAR(2048) NOT NULL DEFAULT '',
+            scope VARCHAR(2048) NOT NULL DEFAULT '',
+            risk_level VARCHAR(32) NOT NULL DEFAULT 'medium',
+            created_at VARCHAR(64) NOT NULL,
+            payload_json JSON NOT NULL
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_scenario_packs_created_at ON scenario_packs (created_at)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_scenario_packs_risk_level ON scenario_packs (risk_level)")
+
+
 def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

@@ -118,6 +118,31 @@
 - 测试增删改按 `test-sync-governance`；runtime/env 改动按 `runtime-env-governance`；产品方案按 `agentgov-governance-preflight`。
 - 状态升级触及主流程时同步 `tests/coverage_policy.json` 的 nodeid 绑定。
 
+## 离线编排测试与 live 验收的边界（诚实性声明）
+
+离线 `make test` 是产品不变量守护门，**不打真实模型网络**。闭环类测试（归因、优化、评估、回归）
+通过 `monkeypatch` 把模型输出层（`runtime._run_profile_json`、`runtime.run_feedback_eval`、
+`claude_agent_sdk.query`）替换为 fake，因此它们只证明**编排、状态机、store 投影、回归门**正确，
+**不**证明真实模型输出能被结构化契约消费。这是离线产品不变量的取舍，不是缺陷，但必须显式声明，
+避免把"离线编排通过"误读为"端到端闭环已用真实模型验证"。
+
+为补齐"模型那一环"的真实验证，新增 env-gated live 验收（`tests/test_live_runtime_acceptance.py`）：
+
+- 凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），测试在导入时按白名单
+  （`MODEL_PROVIDER_API_KEY`/`MODEL_PROVIDER_API_URL`/`AGENT_MODEL`）读入进程环境，
+  **绝不写入仓库、绝不出现在命令行**；真实 key 仅存在于本机 gitignored 文件，验收后应在模型厂商控制台 revoke。
+- 门控行为：`docker/.env` 缺失或未配 key（如 CI）时整文件 skip，不打网络；本机配置 `docker/.env` 后，
+  `make test` 会把这两条 live 用例纳入并真实打模型。即"离线 fake 守护编排正确性"与"本地 live 守护模型契约成立"
+  互补，CI 默认仍纯离线。
+- 覆盖两条离线 fake 永远证明不了的路径：
+  - 真实运行时 chat（`profile -> claude_agent_sdk -> live model -> ChatResponse`，`errors==[]`）。
+  - 真实结构化输出（原始归因文本经 DSPy formatter 产出合法 `AttributionFormatterOutput`，
+    且 backend-owned 字段不被模型回填）。
+
+已用 `deepseek-v4-flash`（Anthropic 兼容端点）实测通过：无凭据 2 skipped、配置 `docker/.env` 后 live 2 passed。
+此门验证"闭环对真实模型成立"，但因 CI 默认不带凭据、不进离线硬门覆盖率基线，故**不作为任何 AGV 用例的离线 `current` 依据**，
+只作为 live 环境下的端到端可用性证据。
+
 ## 验收标准
 
 - 计划自身：进入 `docs/README.md` 工程治理入口，通过文档治理硬门，可从愿景与用例文档追溯。
@@ -152,3 +177,4 @@
 | 2026-06-12 | AGV-049 | 将 Multica 等外部协作平台对接定位为长期生态集成，排在三个产品大版本和核心治理能力稳定之后 | 文档边界成文 | 新增 `future` 用例 | `docs/项目目标愿景使命.md`、`docs/AgentGov核心功能测试用例.md`、`README.md` |
 | 2026-06-12 | AGV-009 | 失败→治理知识：失败反馈经闭环沉淀为候选 eval case 并晋级为回归资产，捕获同类问题；绑定既有闭环回归（不新增冗测） | 通过 | `gap` → `current` | `tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression` |
 | 2026-06-12 | AGV-029 | 闭环失败可恢复：失败写 error_json（不止日志）、回归失败投影为 blocked 并阻断下一步、回滚不改 release 历史（无重复不一致资产）；绑定三条既有机制回归 | 通过 | `gap` → `current` | `test_agent_job_worker_logs_claim_and_runtime_failure`、`test_batch_regression_failed_cases_block_publish`、`test_restore_release_switches_current_workspace_without_mutating_release_history` |
+| 2026-06-12 | — | 诚实性核查：确认闭环"验收"测试离线 fake 掉模型层，不打 live model；用 `deepseek-v4-flash`（Anthropic 兼容端点）实测真实运行时 chat 与 DSPy 结构化输出均通；新增 env-gated live 验收门补齐缺口 | 离线 2 skipped / live 2 passed | 无 AGV 升级（live 门不进离线硬门，不作 `current` 依据） | `tests/test_live_runtime_acceptance.py`、本文档「离线编排测试与 live 验收的边界」节 |

@@ -9,5 +9,17 @@
       "Read(./**/*credentials*.json)",
       "Read(./**/*.pem)"
     ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"中文优先：所有对话、文档、代码注释和提交说明默认使用中文；代码标识符、命令、日志关键字和第三方 API 名称保留原文。\"}}'"
+          }
+        ]
+      }
+    ]
   }
 }

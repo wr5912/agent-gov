@@ -140,6 +140,8 @@
 
 自动验收：`tests/test_agent_registry_store.py::test_create_business_agent_endpoint_registers_and_lists`（POST 创建得稳定身份并进注册表归属对象集合）、`tests/test_agent_registry_store.py::test_business_agent_workspace_scaffolds_safe_config_container`（创建即得完整可编辑配置面 CLAUDE.md/system prompt + .claude/settings.json/skills·tools + .mcp.json/MCP，且不泄露 API key/MCP header/本机私有路径）、`tests/test_agent_registry_store.py::test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits`（配置幂等保留用户编辑）。边界说明：配置面采用与 main agent 一致的 SDK 原生文件（运行业务 Agent 时 cwd=workspace 真实加载）；模型参数用平台默认模型（离线不变量提供本地化模型），暂不做 per-agent 模型凭据配置以免引入凭据泄露面。
 
+### AGV-005 业务 Agent 与治理 Agent 边界清晰
+
 状态：`current`
 
 目标来源：多 Agent 治理对象。
@@ -187,6 +189,8 @@
 证据要求：反馈 case、归因输出、优化方案、执行资产记录。
 
 自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（一次闭环同时产出并可追溯三类资产：数据资产=feedback/eval/run 记录，方法论资产=归因/优化/评估方法契约被应用，执行资产=eval case/change set）、`tests/test_methodology_assets.py`（方法论资产层为命名+版本化+结构化契约）。三层映射：数据资产由 SQLite 记录承载、方法论资产由 `AGENT_JOB_SPECS` 治理方法的结构化 Pydantic 契约+受版本治理的治理 Agent profile 承载、执行资产由 eval case/change set/workspace 配置容器承载。
+
+### AGV-007 外部业务系统可通过 API 接入治理能力
 
 状态：`current`
 
@@ -327,6 +331,8 @@
 证据要求：方法论资产记录、引用关系和复用结果。
 
 自动验收：`tests/test_methodology_assets.py::test_methodology_registry_is_single_source_named_and_structured`（每个治理方法有命名 profile + 独立结构化 Pydantic 契约，单一来源复用、非散落 NL）、`tests/test_methodology_assets.py::test_methodology_assets_are_carried_by_version_governed_governance_agents`（方法论由受版本治理的治理 Agent 承载，提供版本/修订记录）。复用证据：`AGENT_JOB_SPECS` 单一来源被每个反馈 case 的同类方法应用，非每次重新发明（见闭环回归 `test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`）。
+
+### AGV-013 执行资产可被 Agent 或系统调用
 
 状态：`current`
 
@@ -606,6 +612,8 @@
 
 自动验收（按三条成功标准）：① 不进无归属全局池——`tests/test_feedback_store_sources.py::test_create_signal_records_business_agent_attribution`（信号恒有 agent_id 归属）；② 同一归属链路——`tests/test_feedback_store_sources.py::test_create_signal_attributes_to_run_business_agent`（反馈据匹配 run 的 agent_id 归属到产生它的业务 Agent，归因/优化经 case→signal 继承）；③ 无法归属→人工/补充上下文——`tests/test_feedback_store_sources.py::test_feedback_signal_requires_source_locator`（无锚点反馈被拒、需补充上下文）、`::test_implicit_signal_defaults_to_review`（隐式反馈标记 requires_review）。归属维度：Agent(`agent_id`)、version(`agent_version_id`)、run(`run_id`)、session(`session_id`) 均为一等字段；场景经 signal `metadata` 携带（成功标准不要求专用场景字段，场景包组织为 future AGV-026/027）。
 
+### AGV-025 反馈路由错误不会污染其他 Agent
+
 状态：`future`
 
 目标来源：反馈路由与归属、多业务 Agent 治理。
@@ -790,6 +798,8 @@
 证据要求：输出详情和归因结果。
 
 自动验收：`tests/test_feedback_output_normalizers.py::test_attribution_distinguishes_reasoning_error_from_data_and_tool_problems`（归因把推理问题 `reasoning_error` 独立于数据缺口/工具/执行资产分类）、`tests/test_feedback_output_normalizers.py::test_attribution_formatter_output_drops_backend_owned_fields_on_reasoning_error`（字段所有权边界）。字段层面：归因输出 `evidence_refs`（事实）与 `rationale`（推断）分离、`recommended_next_step`（建议）独立，结构上不把推断伪装成事实；反馈侧 `SocEventType` 以 `evidence.*`/`case.verdict_changed`（事实/推断）与 `recommendation.*`（建议）定向具体问题。本轮新增 `reasoning_error` 类目补齐"数据/推理/工具/执行资产"四分，并经 live DeepSeek 实测：数据与工具齐全但推断出错的场景被准确归为 `reasoning_error`。
+
+### AGV-033 反馈进入问题分类和证据链
 
 状态：`current`
 

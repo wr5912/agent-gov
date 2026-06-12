@@ -236,7 +236,7 @@
 
 ### AGV-009 失败案例可转化为组织级治理知识
 
-状态：`gap`
+状态：`current`
 
 目标来源：愿景、方法论资产。
 
@@ -255,6 +255,8 @@
 - 后续同类问题可以被评估用例或治理规则捕获。
 
 证据要求：失败 case、归因输出、沉淀资产和后续回归结果。
+
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`（失败反馈沉淀为 eval case/回归资产，捕获同类问题）。
 
 ### AGV-010 跨 Agent 共享已验证的治理经验
 
@@ -692,7 +694,7 @@
 
 ### AGV-029 闭环失败可恢复
 
-状态：`gap`
+状态：`current`
 
 目标来源：反馈到资产闭环、治理边界。
 
@@ -711,6 +713,8 @@
 - 重试或回滚不会生成重复不一致资产。
 
 证据要求：error_json、状态机事件、补偿或回滚记录。
+
+自动验收：`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`（失败写 error_json，不止日志）、`tests/test_agent_governance_publish.py::test_batch_regression_failed_cases_block_publish`（回归失败投影为 blocked 状态+下一步阻断）、`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`（回滚不改历史、无重复不一致资产）。
 
 ### AGV-030 闭环结果能防止历史问题复发
 

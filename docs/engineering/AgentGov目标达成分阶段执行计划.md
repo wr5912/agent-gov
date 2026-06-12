@@ -15,7 +15,7 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 26 `current` 已应具备并需回归；10 `gap`、13 `future` 尚未完整 |
+| 当前实现边界 | 28 `current` 已应具备并需回归；8 `gap`、13 `future` 尚未完整 |
 | 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
@@ -35,11 +35,11 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 26 | 当前应具备 | 回归锚点，任何阶段不得退化 |
-| `gap` | 10 | 目标明确、能力不足 | 第一阶段主战场 |
+| `current` | 28 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `gap` | 8 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 13 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（26/10/13）。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（28/8/13）。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界、外部协作生态集成。
 
@@ -70,7 +70,7 @@
 
 ### 阶段 1：单 Agent 闭环补齐（gap → current，对应 stage 1 main agent 样板）
 
-把剩余 10 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
+把剩余 8 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
 
 | 子主题 | 覆盖用例 | 退出标准 |
 | --- | --- | --- |
@@ -150,3 +150,5 @@
 | 2026-06-12 | AGV-041 | 高风险审批门：request_change_set_approval 标记待审批（记操作人/原因/影响/回滚），pending_approval 不可直接发布，approve 后方可；reject/abandon 有审计事件 | 通过 | `gap` → `current` | `app/services/agent_governance.py`、`app/runtime/state_machines.py`、`tests/test_agent_governance_publish.py`（+2） |
 | 2026-06-12 | AGV-037/047 | 外部系统/职责边界：路由面无用户/角色/租户/权限/生产所有权端点（不复制信息架构），治理面有审批门+审计事件+运行记录，产品边界文档明确职责 | 通过 | 双双 `gap` → `current` | `tests/test_agv_acceptance.py::test_agv_037_047_governance_scope_not_business_ownership` |
 | 2026-06-12 | AGV-049 | 将 Multica 等外部协作平台对接定位为长期生态集成，排在三个产品大版本和核心治理能力稳定之后 | 文档边界成文 | 新增 `future` 用例 | `docs/项目目标愿景使命.md`、`docs/AgentGov核心功能测试用例.md`、`README.md` |
+| 2026-06-12 | AGV-009 | 失败→治理知识：失败反馈经闭环沉淀为候选 eval case 并晋级为回归资产，捕获同类问题；绑定既有闭环回归（不新增冗测） | 通过 | `gap` → `current` | `tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression` |
+| 2026-06-12 | AGV-029 | 闭环失败可恢复：失败写 error_json（不止日志）、回归失败投影为 blocked 并阻断下一步、回滚不改 release 历史（无重复不一致资产）；绑定三条既有机制回归 | 通过 | `gap` → `current` | `test_agent_job_worker_logs_claim_and_runtime_failure`、`test_batch_regression_failed_cases_block_publish`、`test_restore_release_switches_current_workspace_without_mutating_release_history` |

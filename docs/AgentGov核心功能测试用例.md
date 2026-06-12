@@ -118,7 +118,7 @@
 
 ### AGV-004 Agent 创建与配置能力
 
-状态：`gap`
+状态：`current`
 
 目标来源：使命、核心目标、多 Agent 治理对象。
 
@@ -138,7 +138,7 @@
 
 证据要求：Agent 定义记录、配置摘要和安全脱敏检查结果。
 
-### AGV-005 业务 Agent 与治理 Agent 边界清晰
+自动验收：`tests/test_agent_registry_store.py::test_create_business_agent_endpoint_registers_and_lists`（POST 创建得稳定身份并进注册表归属对象集合）、`tests/test_agent_registry_store.py::test_business_agent_workspace_scaffolds_safe_config_container`（创建即得完整可编辑配置面 CLAUDE.md/system prompt + .claude/settings.json/skills·tools + .mcp.json/MCP，且不泄露 API key/MCP header/本机私有路径）、`tests/test_agent_registry_store.py::test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits`（配置幂等保留用户编辑）。边界说明：配置面采用与 main agent 一致的 SDK 原生文件（运行业务 Agent 时 cwd=workspace 真实加载）；模型参数用平台默认模型（离线不变量提供本地化模型），暂不做 per-agent 模型凭据配置以免引入凭据泄露面。
 
 状态：`current`
 

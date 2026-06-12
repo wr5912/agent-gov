@@ -105,10 +105,45 @@ def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(t
     edited = "# 客服助手\n\n用户自定义行为配置\n"
     (workspace / "CLAUDE.md").write_text(edited, encoding="utf-8")
 
+    edited_settings = '{"permissions": {"allow": ["Read(./**)"]}}\n'
+    (workspace / ".claude" / "settings.json").write_text(edited_settings, encoding="utf-8")
+
     # 重复初始化不得覆盖用户编辑，且目录结构保持。
     initialize_business_agent_workspace(workspace, agent_id="soc-ops", name="客服助手")
     assert (workspace / "CLAUDE.md").read_text(encoding="utf-8") == edited
+    assert (workspace / ".claude" / "settings.json").read_text(encoding="utf-8") == edited_settings
     assert (workspace / ".claude").is_dir()
+
+
+def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path) -> None:
+    """AGV-004：创建即得完整可编辑配置面（system prompt/skills/tools/MCP），且不泄露任何凭据。"""
+    import json
+
+    from app.runtime.business_agent_workspace import initialize_business_agent_workspace
+
+    workspace = tmp_path / "business-agents" / "biz-1"
+    initialize_business_agent_workspace(workspace, agent_id="biz-1", name="客服助手")
+
+    # SDK 原生配置文件齐备：CLAUDE.md(system prompt) + settings.json(技能/工具) + .mcp.json(MCP)。
+    claude_md = workspace / "CLAUDE.md"
+    settings_path = workspace / ".claude" / "settings.json"
+    mcp_path = workspace / ".mcp.json"
+    assert claude_md.exists() and settings_path.exists() and mcp_path.exists()
+
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+    # 起始权限保守：默认只读自身工作区、写/执行需确认、拒读 env/密钥。
+    assert "Read(./.env)" in settings["permissions"]["deny"]
+    assert settings["permissions"]["defaultMode"] == "default"
+    # 起始 MCP 为空，不预置任何 server/header/凭据。
+    assert mcp == {"mcpServers": {}}
+
+    # 安全：配置容器任何文件都不得含 API key / MCP header / 本机私有路径（AGV-004 criterion 3）。
+    # 注意区分"凭据值泄露"与 settings 里 Read(./secrets/**)、Read(./.env) 这类保护性 deny 规则——
+    # 后者是防泄露规则而非泄露本身，故只校验凭据值模式与本机绝对路径。
+    blob = "\n".join(p.read_text(encoding="utf-8") for p in (claude_md, settings_path, mcp_path)).lower()
+    for forbidden in ("api_key", "apikey", "authorization", "sk-", "bearer ", "ghp_", str(tmp_path).lower()):
+        assert forbidden not in blob, f"配置容器泄露了 {forbidden!r}"
 
 
 def test_create_business_agent_generates_id_when_omitted(monkeypatch, tmp_path: Path) -> None:

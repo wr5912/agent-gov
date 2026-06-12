@@ -811,7 +811,7 @@
 
 ### AGV-034 优化形成可执行资产而非一次性建议
 
-状态：`gap`
+状态：`current`
 
 目标来源：核心目标 4。
 
@@ -830,6 +830,8 @@
 - 可执行资产进入版本治理或 Registry。
 
 证据要求：optimization task、change set 或资产记录。
+
+自动验收：`tests/test_api_execution_optimizer.py::test_apply_execution_job_endpoint_writes_file_and_creates_versions`（优化方案落为文件写操作并创建 Agent 版本，可执行资产进入版本治理，非一次性 NL 建议）、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（优化方案进闭环并触发回归）。优化方案结构化字段（`target_summary`/`target_path` 目标对象、`acceptance_criteria` 预期效果与验证方式）由 `FeedbackOptimizationPlanFormatterOutput` 承载；任务级风险以 `confidence` + `human_review_required` 表达，执行级风险以 `ExecutionPlanFormatterOutput.risk` 承载。
 
 ### AGV-035 评估成为发布前质量闸门
 

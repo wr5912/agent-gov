@@ -143,7 +143,14 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
-app.include_router(create_agents_router(settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
+app.include_router(
+    create_agents_router(
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        feedback_store=feedback_store,
+        require_api_key=require_api_key,
+    )
+)
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))

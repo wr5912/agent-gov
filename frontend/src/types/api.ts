@@ -227,6 +227,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a business agent and report its governance impact */
+        delete: operations["delete_agent_api_agent_registry__agent_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-releases": {
         parameters: {
             query?: never;
@@ -1679,6 +1696,25 @@ export interface components {
             agent_id?: string | null;
             /** Name */
             name: string;
+        };
+        /** AgentDeleteResponse */
+        AgentDeleteResponse: {
+            deleted: components["schemas"]["AgentSummaryResponse"];
+            /** @description 删除前的治理影响面提示，避免无声删除治理对象。 */
+            impact: components["schemas"]["AgentDeletionImpact"];
+        };
+        /** AgentDeletionImpact */
+        AgentDeletionImpact: {
+            /**
+             * Feedback Signals
+             * @description 该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。
+             */
+            feedback_signals: number;
+            /**
+             * Runs
+             * @description 该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。
+             */
+            runs: number;
         };
         /** AgentGitDiffEntryResponse */
         AgentGitDiffEntryResponse: {
@@ -5317,6 +5353,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_agent_api_agent_registry__agent_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentDeleteResponse"];
                 };
             };
             /** @description Validation Error */

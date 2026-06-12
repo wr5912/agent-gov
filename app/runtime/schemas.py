@@ -191,6 +191,16 @@ class AgentSummaryResponse(BaseModel):
     created_at: str
 
 
+class AgentDeletionImpact(BaseModel):
+    runs: int = Field(description="该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。")
+    feedback_signals: int = Field(description="该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。")
+
+
+class AgentDeleteResponse(BaseModel):
+    deleted: AgentSummaryResponse
+    impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
+
+
 class FeedbackSignalResponse(BaseModel):
     signal_id: str
     created_at: str

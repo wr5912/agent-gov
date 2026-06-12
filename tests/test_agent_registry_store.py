@@ -147,6 +147,29 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         assert client.post("/api/chat", json={"message": "hi", "agent_id": "biz-unknown"}).status_code == 404
 
 
+def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp_path: Path) -> None:
+    """AGV-031：删除业务 Agent 给出治理影响面提示；main-agent 样板不可删，未知 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})
+        # 该 Agent 的运行与反馈构成删除影响面。
+        module.feedback_store.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+        client.post("/api/feedback-signals", json={"run_id": "run-x", "labels": ["tool_data_incomplete"]})
+
+        deleted = client.delete("/api/agent-registry/soc-ops")
+        assert deleted.status_code == 200
+        body = deleted.json()
+        assert body["deleted"]["agent_id"] == "soc-ops"
+        # 删除前给出影响面提示：归属该 Agent 的运行与反馈被计入。
+        assert body["impact"]["runs"] >= 1
+        assert body["impact"]["feedback_signals"] >= 1
+        # 删除后不再出现在注册表。
+        assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
+        # main-agent 样板不可删（400），未知 agent_id 报 404。
+        assert client.delete("/api/agent-registry/main-agent").status_code == 400
+        assert client.delete("/api/agent-registry/biz-unknown").status_code == 404
+
+
 def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path) -> None:
     """AGV-004：创建即得完整可编辑配置面（system prompt/skills/tools/MCP），且不泄露任何凭据。"""
     import json

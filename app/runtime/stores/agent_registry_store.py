@@ -4,9 +4,9 @@ from dataclasses import dataclass
 
 from sqlalchemy.orm import sessionmaker
 
-from ..agent_profiles import AgentRuntimeProfile
+from ..agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
 from ..agent_registry_db import AgentRegistryModel
-from ..errors import BusinessRuleViolation, ConflictError
+from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
 from ..runtime_db import utc_now
 
 
@@ -83,6 +83,21 @@ class AgentRegistryStore:
             workspace_dir=workspace_dir,
             created_at=created_at,
         )
+
+    def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
+        """删除一个注册业务 Agent；main-agent 样板不可删，未知 agent_id 报 404。
+
+        删除前的影响面提示由路由层基于 agent_id 归属计数给出，避免无声删除治理对象。
+        """
+        if agent_id == MAIN_AGENT_PROFILE:
+            raise BusinessRuleViolation("Main agent is the sample baseline and cannot be deleted")
+        with self._session_factory.begin() as db:
+            row = db.get(AgentRegistryModel, agent_id)
+            if row is None:
+                raise NotFoundError(f"Business agent not found: {agent_id}")
+            record = _record(row)
+            db.delete(row)
+        return record
 
 
 def _record(row: AgentRegistryModel) -> AgentRegistryRecord:

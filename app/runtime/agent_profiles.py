@@ -10,12 +10,16 @@ from .settings import AppSettings
 
 AgentRole = Literal[
     "main-agent",
+    "business-agent",
     "attribution-analyzer",
     "proposal-generator",
     "execution-optimizer",
     "eval-case-governor",
     "regression-impact-analyzer",
 ]
+
+# 动态注册业务 Agent 的通用角色（main-agent 是内置首个业务 Agent）。
+BUSINESS_AGENT_ROLE = "business-agent"
 
 # 业务 Agent 是被治理对象，治理 Agent 是闭环执行者（AGV-005）。
 AgentCategory = Literal["business", "governance"]
@@ -106,6 +110,35 @@ def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candid
         max_turns=profile.max_turns,
         max_runtime_seconds=profile.max_runtime_seconds,
         max_output_bytes=profile.max_output_bytes,
+    )
+
+
+def build_business_agent_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Path) -> AgentRuntimeProfile:
+    """为一个注册业务 Agent 动态构造运行时 profile（AGV-004 运行态）。
+
+    业务 Agent 是被治理对象：可读自身 workspace 与 data_dir、可写输出目录，
+    但不得写入任何治理 Agent 根目录。role 统一为 business-agent，name 为 agent_id。
+    """
+    claude_root = settings.data_dir / "business-agents" / agent_id / "claude-root"
+    return AgentRuntimeProfile(
+        name=agent_id,
+        role=BUSINESS_AGENT_ROLE,
+        workspace_dir=workspace_dir,
+        claude_root=claude_root,
+        claude_config_dir=claude_root / ".claude",
+        data_dir=settings.data_dir,
+        mcp_config_path=workspace_dir / ".mcp.json",
+        project_settings_path=workspace_dir / ".claude" / "settings.json",
+        langfuse_observation_name=f"runtime.business_agent.{agent_id}",
+        readable_paths=(workspace_dir, settings.data_dir),
+        writable_paths=(settings.data_dir / "outputs",),
+        denied_paths=(
+            settings.attribution_analyzer_claude_root,
+            settings.proposal_generator_claude_root,
+            settings.execution_optimizer_claude_root,
+            settings.eval_case_governor_claude_root,
+            settings.regression_impact_analyzer_claude_root,
+        ),
     )
 
 

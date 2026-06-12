@@ -6,12 +6,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import get_args
 
 from app.runtime.agent_profiles import (
     GOVERNANCE_AGENT_ROLES,
     AgentRole,
     agent_category,
+    build_business_agent_profile,
     build_profiles,
 )
 from app.runtime.settings import AppSettings
@@ -23,14 +25,37 @@ def _settings() -> AppSettings:
 
 def test_governance_roles_are_single_source_of_truth() -> None:
     all_roles = set(get_args(AgentRole))
-    assert all_roles - {"main-agent"} == GOVERNANCE_AGENT_ROLES
-    assert "main-agent" not in GOVERNANCE_AGENT_ROLES
+    # 业务角色（内置 main-agent 与动态 business-agent）之外即治理角色。
+    assert all_roles - {"main-agent", "business-agent"} == GOVERNANCE_AGENT_ROLES
+    assert GOVERNANCE_AGENT_ROLES.isdisjoint({"main-agent", "business-agent"})
 
 
 def test_main_agent_is_business_others_are_governance() -> None:
     assert agent_category("main-agent") == "business"
+    assert agent_category("business-agent") == "business"
     for role in GOVERNANCE_AGENT_ROLES:
         assert agent_category(role) == "governance"
+
+
+def test_build_business_agent_profile_is_governed_business_object() -> None:
+    """AGV-004 运行态：动态业务 Agent profile 可构造，且不可写治理 Agent 根目录。"""
+    settings = _settings()
+    workspace = settings.data_dir / "business-agents" / "soc-ops"
+    profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
+
+    assert profile.role == "business-agent"
+    assert profile.category == "business"
+    assert profile.name == "soc-ops"
+    assert profile.workspace_dir == workspace
+    governance_roots = {
+        settings.attribution_analyzer_claude_root,
+        settings.proposal_generator_claude_root,
+        settings.execution_optimizer_claude_root,
+        settings.eval_case_governor_claude_root,
+        settings.regression_impact_analyzer_claude_root,
+    }
+    assert governance_roots <= set(profile.denied_paths)
+    assert isinstance(profile.workspace_dir, Path)
 
 
 def test_build_profiles_expose_category() -> None:

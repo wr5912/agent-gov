@@ -165,7 +165,7 @@
 
 ### AGV-006 治理闭环产物覆盖数据、方法论和执行资产
 
-状态：`gap`
+状态：`current`
 
 目标来源：使命、三层资产模型。
 
@@ -186,7 +186,7 @@
 
 证据要求：反馈 case、归因输出、优化方案、执行资产记录。
 
-### AGV-007 外部业务系统可通过 API 接入治理能力
+自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（一次闭环同时产出并可追溯三类资产：数据资产=feedback/eval/run 记录，方法论资产=归因/优化/评估方法契约被应用，执行资产=eval case/change set）、`tests/test_methodology_assets.py`（方法论资产层为命名+版本化+结构化契约）。三层映射：数据资产由 SQLite 记录承载、方法论资产由 `AGENT_JOB_SPECS` 治理方法的结构化 Pydantic 契约+受版本治理的治理 Agent profile 承载、执行资产由 eval case/change set/workspace 配置容器承载。
 
 状态：`current`
 
@@ -306,7 +306,7 @@
 
 ### AGV-012 方法论资产可被治理流程复用
 
-状态：`gap`
+状态：`current`
 
 目标来源：三层资产模型。
 
@@ -326,7 +326,7 @@
 
 证据要求：方法论资产记录、引用关系和复用结果。
 
-### AGV-013 执行资产可被 Agent 或系统调用
+自动验收：`tests/test_methodology_assets.py::test_methodology_registry_is_single_source_named_and_structured`（每个治理方法有命名 profile + 独立结构化 Pydantic 契约，单一来源复用、非散落 NL）、`tests/test_methodology_assets.py::test_methodology_assets_are_carried_by_version_governed_governance_agents`（方法论由受版本治理的治理 Agent 承载，提供版本/修订记录）。复用证据：`AGENT_JOB_SPECS` 单一来源被每个反馈 case 的同类方法应用，非每次重新发明（见闭环回归 `test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`）。
 
 状态：`current`
 

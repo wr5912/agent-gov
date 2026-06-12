@@ -398,3 +398,20 @@ def test_create_signal_attributes_to_run_business_agent(tmp_path):
     assert main_signal["agent_id"] == "main-agent"
     # 无匹配 run 时回退 main（不破坏无 run 历史反馈）。
     assert orphan_signal["agent_id"] == "main-agent"
+
+
+def test_list_signals_filters_by_agent_dimension(tmp_path):
+    """AGV-017/025：反馈可按 Agent 维度过滤——业务 Agent 间反馈互不串扰。"""
+    store, _ = _store(tmp_path)
+    store.record_run({"run_id": "run-a", "agent_id": "agent-a", "created_at": "2026-06-12T00:00:00Z"})
+    store.record_run({"run_id": "run-b", "agent_id": "agent-b", "created_at": "2026-06-12T00:00:00Z"})
+    store.create_signal(FeedbackSignalCreateRequest(run_id="run-a", labels=["tool_data_incomplete"]))
+    store.create_signal(FeedbackSignalCreateRequest(run_id="run-b", labels=["tool_data_incomplete"]))
+
+    a_signals = store.list_signals(agent_id="agent-a")
+    b_signals = store.list_signals(agent_id="agent-b")
+    # 每个 Agent 视图只含自身反馈，不被另一个 Agent 的反馈污染。
+    assert {s["agent_id"] for s in a_signals} == {"agent-a"}
+    assert {s["run_id"] for s in a_signals} == {"run-a"}
+    assert {s["agent_id"] for s in b_signals} == {"agent-b"}
+    assert {s["run_id"] for s in b_signals} == {"run-b"}

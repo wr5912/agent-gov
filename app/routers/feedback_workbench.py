@@ -76,6 +76,7 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
         alert_id: str | None = None,
         case_id: str | None = None,
         source_type: str | None = None,
+        agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[FeedbackSignalResponse]:
         return feedback_store.list_signals(
@@ -84,6 +85,7 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
             alert_id=alert_id,
             case_id=case_id,
             source_type=source_type,
+            agent_id=agent_id,
             limit=limit,
         )
 

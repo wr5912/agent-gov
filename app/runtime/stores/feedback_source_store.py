@@ -162,9 +162,13 @@ class FeedbackSourceStoreMixin:
         alert_id: Optional[str] = None,
         case_id: Optional[str] = None,
         source_type: Optional[str] = None,
+        agent_id: Optional[str] = None,
         limit: int = 100,
     ) -> list[JsonObject]:
         stmt = select(FeedbackSignalModel).order_by(FeedbackSignalModel.created_at.desc()).limit(limit)
+        if agent_id:
+            # 按 Agent 维度过滤反馈：只返回归属该 Agent 的信号，业务 Agent 间反馈不串扰。
+            stmt = stmt.where(FeedbackSignalModel.agent_id == agent_id)
         if run_id:
             stmt = stmt.where(or_(FeedbackSignalModel.run_id == run_id, FeedbackSignalModel.matched_run_id == run_id))
         if session_id:

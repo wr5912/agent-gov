@@ -39,7 +39,7 @@
 | `gap` | 2 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 13 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（34/2/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`；运行执行待 live 环境。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（34/2/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`，且业务 Agent 已可经 `/api/chat?agent_id=` 真实运行（live 实测采用自身 workspace 身份作答），为 AGV-024/028 多 Agent 闭环奠定运行时基础。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界、外部协作生态集成。
 
@@ -185,3 +185,4 @@
 | 2026-06-12 | AGV-004 | Agent 创建与配置：业务 Agent workspace 初始化补完整 SDK 原生配置容器（CLAUDE.md/system prompt + .claude/settings.json/技能·工具·保守权限 + .mcp.json/空 MCP），运行时 cwd=workspace 真实加载、非 inert；起始模板无 API key/MCP header/本机私有路径，幂等保留用户编辑 | 通过 | `gap` → `current` | `app/runtime/business_agent_workspace.py`、`tests/test_agent_registry_store.py`（+1 配置容器+脱敏测试，扩展幂等测试） |
 | 2026-06-12 | AGV-012 | 方法论资产可复用：`AGENT_JOB_SPECS` 是治理方法单一来源（方法→命名 profile+独立结构化 Pydantic 契约），由受版本治理的治理 Agent 承载（提供版本/修订记录），被每个反馈 case 同类方法复用、非散落 NL；新增 invariant 测试 | 通过 | `gap` → `current` | `tests/test_methodology_assets.py`（+2） |
 | 2026-06-12 | AGV-006 | 三层资产覆盖：一次闭环同时产出可追溯三类资产——数据资产(feedback/eval/run 记录)、方法论资产(治理方法结构化契约+版本治理 profile)、执行资产(eval case/change set/配置容器)；绑定闭环回归+方法论 invariant | 通过 | `gap` → `current` | `test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`、`tests/test_methodology_assets.py` |
+| 2026-06-12 | AGV-004/024/028 | 多 Agent 运行时基座：`/api/chat` 新增可选 `agent_id`，路由到 `build_business_agent_profile`（缺省 main、未知 404、治理 Agent 400），创建的业务 Agent 可经其 workspace 配置真实运行；OpenAPI/前端类型同步；live DeepSeek 实测业务 Agent 采用自身身份作答 | 通过 | 无（补完 AGV-004 运行维度，奠定 AGV-024/028 基础；后者仍需 per-agent 反馈链路+场景） | `app/routers/chat.py`、`app/runtime/schemas.py`、`app/main.py`、`frontend/src/types/api.ts`、`tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent` |

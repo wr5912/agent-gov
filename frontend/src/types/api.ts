@@ -408,7 +408,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task and return the full result
-         * @description Runs one Claude Agent SDK query using defaults from docker/.env and optional per-request overrides.
+         * @description Runs one Claude Agent SDK query. Set agent_id to run a registered business agent; omit it to run the main agent.
          */
         post: operations["chat_api_chat_post"];
         delete?: never;
@@ -428,7 +428,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task as server-sent events
-         * @description Streams session, message, result, error, and done events as text/event-stream.
+         * @description Streams session, message, result, error, and done events as text/event-stream. Runs the main agent; for business agents use POST /chat.
          */
         post: operations["chat_stream_api_chat_stream_post"];
         delete?: never;
@@ -2125,6 +2125,11 @@ export interface components {
              * @description Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.
              */
             agent?: string | null;
+            /**
+             * Agent Id
+             * @description Registered business agent to run (from /api/agent-registry). Omit to run the main agent.
+             */
+            agent_id?: string | null;
             /**
              * Alert Id
              * @description Optional SOC alert id used by the feedback loop.

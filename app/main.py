@@ -123,7 +123,14 @@ def require_api_key(credentials: HTTPAuthorizationCredentials | None = api_key_c
 
 
 app.include_router(create_core_router(settings=settings, app=app, agent_version_store=agent_version_store))
-app.include_router(create_chat_router(runtime=runtime, require_api_key=require_api_key))
+app.include_router(
+    create_chat_router(
+        runtime=runtime,
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
 app.include_router(create_config_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_openai_router(settings=settings, runtime=runtime, require_api_key=require_api_key))

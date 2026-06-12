@@ -115,6 +115,38 @@ def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(t
     assert (workspace / ".claude").is_dir()
 
 
+def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
+    """AGV-024 基座：/api/chat 带 agent_id 路由到业务 Agent profile；缺省走 main；未知 404。"""
+    from app.runtime.schemas import ChatResponse
+
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+
+    async def fake_run(req, *, profile=None, **kwargs):
+        captured["profile"] = profile
+        return ChatResponse(run_id="r", session_id="s", answer="ok")
+
+    monkeypatch.setattr(module.runtime, "run", fake_run)
+    with TestClient(module.app) as client:
+        created = client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})
+        assert created.status_code == 201
+
+        # 带 agent_id -> 路由到该业务 Agent 的 profile（被治理对象，cwd=其 workspace）。
+        routed = client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"})
+        assert routed.status_code == 200
+        assert captured["profile"] is not None
+        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops")
+        assert captured["profile"].category == "business"
+
+        # 缺省 agent_id -> 运行时默认 main agent（profile=None）。
+        captured.clear()
+        assert client.post("/api/chat", json={"message": "hi"}).status_code == 200
+        assert captured.get("profile") is None
+
+        # 未知 agent_id -> 404，不静默回退到 main（避免错误归属）。
+        assert client.post("/api/chat", json={"message": "hi", "agent_id": "biz-unknown"}).status_code == 404
+
+
 def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path) -> None:
     """AGV-004：创建即得完整可编辑配置面（system prompt/skills/tools/MCP），且不泄露任何凭据。"""
     import json

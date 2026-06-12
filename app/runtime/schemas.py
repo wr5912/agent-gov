@@ -17,6 +17,7 @@ class ChatRequest(BaseModel):
     alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
     agent: Optional[str] = Field(default=None, description="Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.")
+    agent_id: Optional[str] = Field(default=None, description="Registered business agent to run (from /api/agent-registry). Omit to run the main agent.")
     skills: Optional[list[str]] = Field(default=None, description="Skill names to enable. Omit to use DEFAULT_SKILLS.")
     skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated for SDK execution; configure skills in Claude Code official files.")
     allowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated for SDK execution; configure tool permissions in .claude/settings.json.")

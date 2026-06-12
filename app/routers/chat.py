@@ -17,6 +17,7 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.schemas import ChatRequest, ChatResponse
 from app.runtime.settings import AppSettings
+from app.runtime.state_machines import AGENT_RUNNABLE_LIFECYCLE_STATES
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 
@@ -43,6 +44,9 @@ def create_chat_router(
             raise NotFoundError(f"Business agent not found: {agent_id}")
         if agent.category != "business":
             raise BusinessRuleViolation(f"Agent is not a runnable business agent: {agent_id}")
+        # AGV-020 criterion 3：archived/deprecated/draft 等非活跃 Agent 不参与新运行（仍可审计）。
+        if agent.status not in AGENT_RUNNABLE_LIFECYCLE_STATES:
+            raise BusinessRuleViolation(f"Agent {agent_id} is {agent.status}; not available for new runs")
         workspace = Path(agent.workspace_dir)
         initialize_business_agent_workspace(workspace, agent_id=agent.agent_id, name=agent.name)
         return build_business_agent_profile(settings, agent_id=agent.agent_id, workspace_dir=workspace)

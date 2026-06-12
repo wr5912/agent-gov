@@ -500,7 +500,7 @@
 
 ### AGV-020 业务 Agent 生命周期状态可治理
 
-状态：`future`
+状态：`current`
 
 目标来源：Agent 生命周期。
 
@@ -520,6 +520,8 @@
 - archived Agent 仍可审计，但不参与新运行选择。
 
 证据要求：状态转移记录和非法转移测试。
+
+自动验收（按三条成功标准）：①明确合法转移——`agent_lifecycle` 状态机（draft→active→evaluating→deprecated→archived，archived 终态）+ API `POST /api/agent-registry/{id}/lifecycle`；②非法转移被拒并返回可理解错误——`tests/test_agent_registry_store.py::test_business_agent_lifecycle_transitions_and_archived_excluded_from_run`（archived→active 被 StateTransitionError 拒绝，409 带转移说明）；③archived 仍可审计但不参与新运行——同测试断言 archived Agent 仍在注册表可查、但 `/api/chat?agent_id=` 拒绝运行（`AGENT_RUNNABLE_LIFECYCLE_STATES`）。状态列由迁移 0009 持久化；main-agent 样板生命周期固定。
 
 ### AGV-021 Agent 生命周期围绕版本治理运转
 

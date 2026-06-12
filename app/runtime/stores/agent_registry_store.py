@@ -8,6 +8,7 @@ from ..agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
 from ..agent_registry_db import AgentRegistryModel
 from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
 from ..runtime_db import utc_now
+from ..state_machines import validate_transition
 
 
 @dataclass(frozen=True)
@@ -84,6 +85,22 @@ class AgentRegistryStore:
             workspace_dir=workspace_dir,
             created_at=created_at,
         )
+
+    def transition_business_agent(self, agent_id: str, *, status: str) -> AgentRegistryRecord:
+        """业务 Agent 生命周期状态转移（AGV-020）。
+
+        合法转移由 `agent_lifecycle` 状态机判定，非法转移抛 StateTransitionError（可理解错误）。
+        main-agent 是样板基线，其生命周期固定为 active，不接受转移。
+        """
+        if agent_id == MAIN_AGENT_PROFILE:
+            raise BusinessRuleViolation("Main agent lifecycle is fixed (sample baseline)")
+        with self._session_factory.begin() as db:
+            row = db.get(AgentRegistryModel, agent_id)
+            if row is None:
+                raise NotFoundError(f"Business agent not found: {agent_id}")
+            validate_transition("agent_lifecycle", row.status or "active", status)
+            row.status = status
+            return _record(row)
 
     def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
         """删除一个注册业务 Agent；main-agent 样板不可删，未知 agent_id 报 404。

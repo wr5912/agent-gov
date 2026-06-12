@@ -11,6 +11,7 @@ from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
     AgentDeletionImpact,
+    AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
 )
 from app.runtime.settings import AppSettings
@@ -60,6 +61,15 @@ def create_agents_router(
         record = agent_registry_store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
         initialize_business_agent_workspace(Path(record.workspace_dir), agent_id=record.agent_id, name=record.name)
         return _summary(record)
+
+    @router.post(
+        "/agent-registry/{agent_id}/lifecycle",
+        response_model=AgentSummaryResponse,
+        summary="Transition a business agent's lifecycle status (rejects illegal transitions)",
+    )
+    async def transition_agent(agent_id: str, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
+        # 生命周期转移（AGV-020）；非法转移由状态机拒绝并返回可理解错误（409）。
+        return _summary(agent_registry_store.transition_business_agent(agent_id, status=req.status))
 
     @router.delete(
         "/agent-registry/{agent_id}",

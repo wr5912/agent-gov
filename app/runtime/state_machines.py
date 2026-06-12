@@ -170,6 +170,26 @@ AGENT_RELEASE_STATES = {
     "rollback_failed",
 }
 
+# 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
+AGENT_LIFECYCLE_STATES = {
+    "draft",
+    "active",
+    "evaluating",
+    "deprecated",
+    "archived",
+}
+
+AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
+    "draft": {"active", "archived"},
+    "active": {"evaluating", "deprecated", "archived"},
+    "evaluating": {"active", "deprecated", "archived"},
+    "deprecated": {"active", "archived"},
+    "archived": set(),
+}
+
+# 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
+AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "job": {
         "created": {"queued", "running", "failed"},
@@ -362,6 +382,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rolled_back": set(),
         "rollback_failed": {"rolled_back"},
     },
+    "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
 }
 
 _KNOWN_STATES = {
@@ -381,6 +402,7 @@ _KNOWN_STATES = {
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
+    "agent_lifecycle": AGENT_LIFECYCLE_STATES,
 }
 
 

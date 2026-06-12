@@ -192,6 +192,10 @@ class AgentSummaryResponse(BaseModel):
     status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
 
 
+class AgentLifecycleTransitionRequest(BaseModel):
+    status: str = Field(description="目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。")
+
+
 class FeedbackSignalReassignRequest(BaseModel):
     agent_id: str = Field(description="修正后的归属业务 Agent。")
     operator: str = Field(description="执行修正的操作人，用于审计。")

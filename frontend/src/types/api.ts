@@ -244,6 +244,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/{agent_id}/lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transition a business agent's lifecycle status (rejects illegal transitions) */
+        post: operations["transition_agent_api_agent_registry__agent_id__lifecycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-releases": {
         parameters: {
             query?: never;
@@ -1904,6 +1921,14 @@ export interface components {
             validated_output_path: string;
         } & {
             [key: string]: unknown;
+        };
+        /** AgentLifecycleTransitionRequest */
+        AgentLifecycleTransitionRequest: {
+            /**
+             * Status
+             * @description 目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。
+             */
+            status: string;
         };
         /** AgentReleaseResponse */
         AgentReleaseResponse: {
@@ -5425,6 +5450,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_agent_api_agent_registry__agent_id__lifecycle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentLifecycleTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSummaryResponse"];
                 };
             };
             /** @description Validation Error */

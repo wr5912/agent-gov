@@ -160,6 +160,33 @@ def test_business_agent_has_active_lifecycle_status_by_default(monkeypatch, tmp_
         assert listed["main-agent"] == "active"
 
 
+def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(monkeypatch, tmp_path: Path) -> None:
+    """AGV-020：合法生命周期转移被接受、非法转移被拒（可理解错误）、archived 不参与新运行。"""
+    from app.runtime.schemas import ChatResponse
+
+    module = _load_app(monkeypatch, tmp_path)
+
+    async def fake_run(req, *, profile=None, **kwargs):
+        return ChatResponse(run_id="r", session_id="s", answer="ok")
+
+    monkeypatch.setattr(module.runtime, "run", fake_run)
+    with TestClient(module.app) as client:
+        client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})  # 默认 active
+        # 合法转移：active -> deprecated -> archived。
+        assert client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "deprecated"}).status_code == 200
+        archived = client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "archived"})
+        assert archived.status_code == 200 and archived.json()["status"] == "archived"
+        # 非法转移：archived 为终态，archived -> active 被拒绝并返回可理解的状态机错误（409）。
+        rejected = client.post("/api/agent-registry/soc-ops/lifecycle", json={"status": "active"})
+        assert rejected.status_code == 409
+        assert "transition" in rejected.json()["detail"].lower()
+        # archived Agent 仍可查询（审计）但不参与新运行（400）。
+        assert any(a["agent_id"] == "soc-ops" for a in client.get("/api/agent-registry").json())
+        assert client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"}).status_code == 400
+        # main-agent 样板生命周期固定，不接受转移。
+        assert client.post("/api/agent-registry/main-agent/lifecycle", json={"status": "archived"}).status_code == 400
+
+
 def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp_path: Path) -> None:
     """AGV-031：删除业务 Agent 给出治理影响面提示；main-agent 样板不可删，未知 404。"""
     module = _load_app(monkeypatch, tmp_path)

@@ -14,6 +14,7 @@ from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
 from .runtime_db_migrations import (
+    migrate_0005_agent_governance,
     migrate_0006_remove_agent_job_output_contract_column,
     migrate_0007_agent_registry,
     migrate_0008_feedback_signal_agent_id,
@@ -549,7 +550,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0002_regression_assets", _migrate_0002_regression_assets),
         ("0003_agent_jobs", _migrate_0003_agent_jobs),
         ("0004_unify_agent_jobs", _migrate_0004_unify_agent_jobs),
-        ("0005_agent_governance", _migrate_0005_agent_governance),
+        ("0005_agent_governance", migrate_0005_agent_governance),
         ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
         ("0007_agent_registry", migrate_0007_agent_registry),
         ("0008_feedback_signal_agent_id", migrate_0008_feedback_signal_agent_id),
@@ -700,81 +701,6 @@ def _migrate_0004_unify_agent_jobs(connection: Connection) -> None:
     connection.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_execution_applications_task_created ON execution_applications (optimization_task_id, created_at)"
     )
-
-
-def _migrate_0005_agent_governance(connection: Connection) -> None:
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS agent_change_sets (
-            change_set_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            created_at VARCHAR(64) NOT NULL,
-            updated_at VARCHAR(64) NOT NULL,
-            status VARCHAR(64) NOT NULL,
-            optimization_task_id VARCHAR(128),
-            execution_job_id VARCHAR(128),
-            base_commit_sha VARCHAR(64) NOT NULL,
-            candidate_commit_sha VARCHAR(64),
-            branch_name VARCHAR(256) NOT NULL,
-            worktree_path VARCHAR(2048) NOT NULL,
-            payload_json JSON NOT NULL
-        )
-        """
-    )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_created_at ON agent_change_sets (created_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_updated_at ON agent_change_sets (updated_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_status ON agent_change_sets (status)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_optimization_task_id ON agent_change_sets (optimization_task_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_execution_job_id ON agent_change_sets (execution_job_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_base_commit_sha ON agent_change_sets (base_commit_sha)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_candidate_commit_sha ON agent_change_sets (candidate_commit_sha)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_branch_name ON agent_change_sets (branch_name)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_task_created ON agent_change_sets (optimization_task_id, created_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_status_updated ON agent_change_sets (status, updated_at)")
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS agent_change_set_events (
-            event_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            change_set_id VARCHAR(128) NOT NULL,
-            action VARCHAR(64) NOT NULL,
-            operator VARCHAR(128) NOT NULL,
-            created_at VARCHAR(64) NOT NULL,
-            before_json JSON NOT NULL,
-            after_json JSON NOT NULL,
-            FOREIGN KEY(change_set_id) REFERENCES agent_change_sets (change_set_id) ON DELETE CASCADE
-        )
-        """
-    )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_change_set_id ON agent_change_set_events (change_set_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_action ON agent_change_set_events (action)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_operator ON agent_change_set_events (operator)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_created_at ON agent_change_set_events (created_at)")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_change_created ON agent_change_set_events (change_set_id, created_at)"
-    )
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS agent_releases (
-            release_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            created_at VARCHAR(64) NOT NULL,
-            updated_at VARCHAR(64) NOT NULL,
-            status VARCHAR(64) NOT NULL,
-            tag_name VARCHAR(256) NOT NULL,
-            commit_sha VARCHAR(64) NOT NULL,
-            change_set_id VARCHAR(128),
-            rollback_of_release_id VARCHAR(128),
-            archive_path VARCHAR(2048),
-            payload_json JSON NOT NULL
-        )
-        """
-    )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_created_at ON agent_releases (created_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_updated_at ON agent_releases (updated_at)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_status ON agent_releases (status)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_tag_name ON agent_releases (tag_name)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_commit_sha ON agent_releases (commit_sha)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_change_set_id ON agent_releases (change_set_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_rollback_of_release_id ON agent_releases (rollback_of_release_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_status_created ON agent_releases (status, created_at)")
 
 
 def _table_columns(connection: Connection, table_name: str) -> set[str]:

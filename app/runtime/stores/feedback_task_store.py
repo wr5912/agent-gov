@@ -37,6 +37,7 @@ class FeedbackTaskStoreMixin:
                 "optimization_task_id": f"opt-{uuid.uuid4()}",
                 "created_at": utc_now(),
                 "status": "pending_execution",
+                "agent_id": self._resolve_task_agent_id(feedback_case_id=proposal.get("feedback_case_id")),
                 "proposal_id": proposal_id,
                 "proposal_ids": [proposal_id],
                 "feedback_case_id": proposal.get("feedback_case_id"),
@@ -58,12 +59,26 @@ class FeedbackTaskStoreMixin:
                     optimization_task_id=record.optimization_task_id,
                     created_at=record.created_at,
                     status=record.status,
+                    agent_id=record.agent_id,
                     proposal_id=record.proposal_id,
                     feedback_case_id=record.feedback_case_id,
                     payload_json=record.to_payload(),
                 )
             )
         return record.to_payload()
+
+    def _resolve_task_agent_id(
+        self, *, batch: Optional[JsonObject] = None, feedback_case_id: Optional[str] = None
+    ) -> str:
+        """派生优化任务归属 Agent：批次在手时取其 agent_id（误路由防护保证单 Agent），
+        否则按反馈 case 的可复用单 case 批次回溯，缺失回退 main-agent。"""
+        if batch is not None:
+            return self._string(batch.get("agent_id")) or "main-agent"
+        if feedback_case_id:
+            existing = self._find_reusable_single_case_batch(feedback_case_id)
+            if existing:
+                return self._string(existing.get("agent_id")) or "main-agent"
+        return "main-agent"
 
     def create_task_from_optimization_plan(
         self,
@@ -100,6 +115,7 @@ class FeedbackTaskStoreMixin:
                 "optimization_task_id": f"opt-{uuid.uuid4()}",
                 "created_at": utc_now(),
                 "status": "pending_execution",
+                "agent_id": self._resolve_task_agent_id(batch=batch),
                 "proposal_id": None,
                 "proposal_ids": [],
                 "feedback_case_id": feedback_case_id,
@@ -125,6 +141,7 @@ class FeedbackTaskStoreMixin:
                     optimization_task_id=record.optimization_task_id,
                     created_at=record.created_at,
                     status=record.status,
+                    agent_id=record.agent_id,
                     proposal_id=record.proposal_id,
                     feedback_case_id=record.feedback_case_id,
                     payload_json=record.to_payload(),
@@ -201,12 +218,21 @@ class FeedbackTaskStoreMixin:
             }
         )
 
-    def list_tasks(self, *, feedback_case_id: Optional[str] = None, status: Optional[str] = None, limit: int = 100) -> list[JsonObject]:
+    def list_tasks(
+        self,
+        *,
+        feedback_case_id: Optional[str] = None,
+        status: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        limit: int = 100,
+    ) -> list[JsonObject]:
         stmt = select(OptimizationTaskModel).order_by(OptimizationTaskModel.created_at.desc()).limit(limit)
         if feedback_case_id:
             stmt = stmt.where(OptimizationTaskModel.feedback_case_id == feedback_case_id)
         if status:
             stmt = stmt.where(OptimizationTaskModel.status == status)
+        if agent_id:
+            stmt = stmt.where(OptimizationTaskModel.agent_id == agent_id)
         with self.Session() as db:
             return [self._task_to_dict(row) for row in db.scalars(stmt).all()]
 

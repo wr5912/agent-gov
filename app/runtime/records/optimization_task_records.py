@@ -69,6 +69,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
     optimization_task_id: str
     created_at: str
     status: OptimizationTaskStatus
+    agent_id: str = "main-agent"
     proposal_id: Optional[str] = None
     proposal_ids: list[str] = Field(default_factory=list)
     feedback_case_id: Optional[str] = None
@@ -154,6 +155,7 @@ class OptimizationTaskRecord(StrictRuntimeRecord):
                 "optimization_task_id": row.optimization_task_id,
                 "created_at": row.created_at,
                 "status": row.status,
+                "agent_id": row.agent_id or "main-agent",
                 "proposal_id": row.proposal_id,
                 "feedback_case_id": row.feedback_case_id,
             }

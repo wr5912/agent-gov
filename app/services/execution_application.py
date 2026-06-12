@@ -82,6 +82,11 @@ class ExecutionApplicationService:
         self.max_write_bytes = max_write_bytes
         self._apply_lock = Lock()
 
+    def _version_store(self, agent_id: str | None) -> GitAgentVersionStore:
+        """按目标 Agent 选版本 store：main-agent 复用主 store（行为不变），
+        业务 Agent 取其独立版本链，使执行候选/提交/diff 落在该 Agent 的 workspace。"""
+        return self.agent_governance._store_for(agent_id)
+
     async def run_and_apply_execution_job(
         self,
         task_id: str,
@@ -140,7 +145,7 @@ class ExecutionApplicationService:
                 title=f"Manual application for {task_id}",
                 note=note or f"优化任务 {task_id} 已人工确认，等待候选提交。",
             )
-            version = self.agent_version_store.version_summary(
+            version = self._version_store(change_set.get("agent_id")).version_summary(
                 str(change_set["base_commit_sha"]),
                 reason="manual_candidate_pending",
                 note=note,
@@ -169,11 +174,13 @@ class ExecutionApplicationService:
         note: str | None = None,
     ) -> OptimizationExecutionApplyResponse:
         _task, _job, plan, baseline_version_id = self._ready_execution_context(task_id, execution_job_id)
+        store = self._version_store(_task.get("agent_id"))
         change_set, pre_version, worktree_path = self._prepare_candidate_change_set(
             task_id=task_id,
             execution_job_id=execution_job_id,
             baseline_version_id=baseline_version_id,
             note=note,
+            store=store,
         )
         self._apply_operations_to_candidate(
             execution_job_id=execution_job_id,
@@ -189,6 +196,7 @@ class ExecutionApplicationService:
             worktree_path=worktree_path,
             pre_version=pre_version,
             note=note,
+            store=store,
         )
         execution_job = self.feedback_store.get_execution_job(execution_job_id)
         optimization_task = self.feedback_store.find_task(task_id)
@@ -209,11 +217,15 @@ class ExecutionApplicationService:
         note: str | None,
     ) -> BatchWorkspaceApplyResult:
         contexts = self._ready_batch_execution_contexts(items)
-        baseline_version_id = self._batch_execution_baseline(contexts)
+        agent_id = self._batch_agent_id(contexts)
+        store = self._version_store(agent_id)
+        baseline_version_id = self._batch_execution_baseline(contexts, store)
         change_set, pre_version, worktree_path = self._prepare_batch_candidate_change_set(
             batch_id=batch_id,
             baseline_version_id=baseline_version_id,
             note=note,
+            store=store,
+            agent_id=agent_id,
         )
         for task, job, plan, _baseline in contexts:
             self._apply_operations_to_candidate(
@@ -229,7 +241,16 @@ class ExecutionApplicationService:
             worktree_path=worktree_path,
             pre_version=pre_version,
             note=note,
+            store=store,
         )
+
+    def _batch_agent_id(self, contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]]) -> str:
+        """批次的归属 Agent：批次只服务单个 Agent（创建期误路由防护保证），
+        防御性校验所有任务 agent_id 一致，缺失回退 main-agent。"""
+        agent_ids = {str(task.get("agent_id") or "main-agent") for task, _job, _plan, _baseline in contexts}
+        if len(agent_ids) > 1:
+            raise ExecutionApplicationError(409, f"Batch execution jobs span multiple agents: {sorted(agent_ids)}")
+        return next(iter(agent_ids), "main-agent")
 
     def _ready_batch_execution_contexts(
         self,
@@ -244,11 +265,13 @@ class ExecutionApplicationService:
             contexts.append(self._ready_execution_context(item.optimization_task_id, item.execution_job_id))
         return contexts
 
-    def _batch_execution_baseline(self, contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]]) -> str:
-        repository_status = self.agent_version_store.repository_status()
+    def _batch_execution_baseline(
+        self, contexts: list[tuple[JsonObject, JsonObject, JsonObject, str]], store: GitAgentVersionStore
+    ) -> str:
+        repository_status = store.repository_status()
         if repository_status.get("dirty"):
             raise MainWorkspaceDirtyError(repository_status)
-        current_version_id = self.agent_version_store.current_version_id()
+        current_version_id = store.current_version_id()
         baselines = {baseline for _task, _job, _plan, baseline in contexts if baseline}
         if len(baselines) > 1:
             raise ExecutionApplicationError(409, "Batch execution jobs were generated from different Agent baselines")
@@ -263,15 +286,18 @@ class ExecutionApplicationService:
         batch_id: str,
         baseline_version_id: str,
         note: str | None,
+        store: GitAgentVersionStore,
+        agent_id: str,
     ) -> tuple[JsonObject, JsonObject, Path]:
         change_set = self.agent_governance.create_change_set(
             base_commit_sha=baseline_version_id or None,
             title=f"Batch execution application for {batch_id}",
             note=note or f"一键执行优化批次 {batch_id}。",
+            agent_id=agent_id,
         )
         if baseline_version_id and str(change_set.get("base_commit_sha")) != baseline_version_id:
             raise ExecutionApplicationError(409, "Agent change set base differs from execution baseline")
-        pre_version = self.agent_version_store.version_summary(
+        pre_version = store.version_summary(
             str(change_set["base_commit_sha"]),
             reason="change_set_base",
             note=note or f"一键执行优化批次 {batch_id} 的候选基线。",
@@ -286,18 +312,19 @@ class ExecutionApplicationService:
         worktree_path: Path,
         pre_version: JsonObject,
         note: str | None,
+        store: GitAgentVersionStore,
     ) -> BatchWorkspaceApplyResult:
         try:
-            candidate_commit = self.agent_version_store.commit_worktree(
+            candidate_commit = store.commit_worktree(
                 worktree_path,
                 message=note or f"Apply batch execution plan {change_set['change_set_id']}",
             )
-            applied_version = self.agent_version_store.version_summary(
+            applied_version = store.version_summary(
                 candidate_commit,
                 reason="batch_candidate_change_set",
                 note=note or "execution-optimizer 一键执行批次任务的候选提交。",
             )
-            applied_diff = self.agent_version_store.diff_versions(str(pre_version["agent_version_id"]), str(applied_version["agent_version_id"]))
+            applied_diff = store.diff_versions(str(pre_version["agent_version_id"]), str(applied_version["agent_version_id"]))
             change_set = self.agent_governance.mark_candidate_committed(
                 str(change_set["change_set_id"]),
                 candidate_commit_sha=candidate_commit,
@@ -391,11 +418,12 @@ class ExecutionApplicationService:
         execution_job_id: str,
         baseline_version_id: str,
         note: str | None,
+        store: GitAgentVersionStore,
     ) -> tuple[JsonObject, JsonObject, Path]:
-        repository_status = self.agent_version_store.repository_status()
+        repository_status = store.repository_status()
         if repository_status.get("dirty"):
             raise MainWorkspaceDirtyError(repository_status)
-        current_version_id = self.agent_version_store.current_version_id()
+        current_version_id = store.current_version_id()
         if baseline_version_id and current_version_id != baseline_version_id:
             raise ExecutionApplicationError(409, "Current Agent version differs from execution baseline")
         change_set = self.agent_governance.create_change_set(
@@ -407,7 +435,7 @@ class ExecutionApplicationService:
         )
         if baseline_version_id and str(change_set.get("base_commit_sha")) != baseline_version_id:
             raise ExecutionApplicationError(409, "Agent change set base differs from execution baseline")
-        pre_version = self.agent_version_store.version_summary(
+        pre_version = store.version_summary(
             str(change_set["base_commit_sha"]),
             reason="change_set_base",
             note=note or f"执行优化任务 {task_id} 的候选基线。",
@@ -444,18 +472,19 @@ class ExecutionApplicationService:
         worktree_path: Path,
         pre_version: JsonObject,
         note: str | None,
+        store: GitAgentVersionStore,
     ) -> tuple[JsonObject, JsonObject | None]:
         try:
-            candidate_commit = self.agent_version_store.commit_worktree(
+            candidate_commit = store.commit_worktree(
                 worktree_path,
                 message=note or f"Apply execution plan {execution_job_id} for {task_id}",
             )
-            applied_version = self.agent_version_store.version_summary(
+            applied_version = store.version_summary(
                 candidate_commit,
                 reason="candidate_change_set",
                 note=note or f"execution-optimizer 生成任务 {task_id} 的候选提交。",
             )
-            applied_diff = self.agent_version_store.diff_versions(
+            applied_diff = store.diff_versions(
                 str(pre_version["agent_version_id"]),
                 str(applied_version["agent_version_id"]),
             )
@@ -482,6 +511,7 @@ class ExecutionApplicationService:
                 execution_job_id=execution_job_id,
                 pre_version=pre_version,
                 error=exc,
+                store=store,
             )
             raise ExecutionApplicationError(409, detail) from exc
         return execution_application, applied_diff
@@ -493,12 +523,13 @@ class ExecutionApplicationService:
         execution_job_id: str,
         pre_version: JsonObject,
         error: Exception,
+        store: GitAgentVersionStore,
     ) -> str:
         pre_version_id = str(pre_version.get("agent_version_id") or "")
         restore_error: str | None = None
         restore_status = "restored"
         try:
-            restored = self.agent_version_store.restore_version(
+            restored = store.restore_version(
                 pre_version_id,
                 note=f"执行优化任务 {task_id} 后续状态同步失败，自动恢复应用前快照。",
             )
@@ -560,8 +591,10 @@ class ExecutionApplicationService:
         version_id = record.pre_execution_agent_version_id or ""
         if not version_id:
             raise ExecutionApplicationError(409, "Execution compensation has no pre-execution version")
+        compensation_task = self.feedback_store.find_task(record.optimization_task_id)
+        store = self._version_store(compensation_task.get("agent_id") if compensation_task else None)
         try:
-            restore_result = self.agent_version_store.restore_version(
+            restore_result = store.restore_version(
                 version_id,
                 note=f"人工恢复执行补偿记录 {compensation_id} 到应用前版本。",
             )

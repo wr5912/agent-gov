@@ -56,6 +56,7 @@ class FeedbackOptimizationBatchRecord(StrictRuntimeRecord):
     created_at: str
     updated_at: str
     status: FeedbackOptimizationBatchStatus
+    agent_id: str = "main-agent"
     title: str
     priority: Optional[str] = None
     source_refs: list[FeedbackSourceRefRecord] = Field(default_factory=list)

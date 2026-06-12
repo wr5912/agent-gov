@@ -22,6 +22,7 @@ from .runtime_db_migrations import (
     migrate_0010_scenario_packs,
     migrate_0011_change_set_release_agent_id,
     migrate_0012_eval_run_agent_id,
+    migrate_0013_optimization_task_agent_id,
 )
 
 
@@ -234,6 +235,7 @@ class OptimizationTaskModel(Base):
     optimization_task_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
     proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
@@ -565,6 +567,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0010_scenario_packs", migrate_0010_scenario_packs),
         ("0011_change_set_release_agent_id", migrate_0011_change_set_release_agent_id),
         ("0012_eval_run_agent_id", migrate_0012_eval_run_agent_id),
+        ("0013_optimization_task_agent_id", migrate_0013_optimization_task_agent_id),
     ):
         if version in applied:
             continue

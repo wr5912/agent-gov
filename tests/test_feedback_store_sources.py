@@ -400,6 +400,31 @@ def test_create_signal_attributes_to_run_business_agent(tmp_path):
     assert orphan_signal["agent_id"] == "main-agent"
 
 
+def test_optimization_batch_and_task_inherit_agent_id_from_feedback(tmp_path):
+    """B3.4-exec（AGV-017/031）：优化批次与任务的归属沿 run→signal→case 派生到具体 Agent，无锚点回退 main-agent。"""
+    store, _ = _store(tmp_path)
+    store.record_run({"run_id": "run-biz", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+    store.record_run({"run_id": "run-main", "agent_id": "main-agent", "created_at": "2026-06-12T00:00:00Z"})
+    biz_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-biz", labels=["tool_data_incomplete"]))
+    main_signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-main", labels=["tool_data_incomplete"]))
+    biz_case = store.create_case(source_ids=[biz_signal["signal_id"]], title="业务 Agent 反馈")
+    main_case = store.create_case(source_ids=[main_signal["signal_id"]], title="main 反馈")
+
+    # 批次归属随其反馈来源 Agent（误路由防护保证单 Agent）。
+    biz_batch = store.ensure_single_case_optimization_batch(biz_case["feedback_case_id"])
+    main_batch = store.ensure_single_case_optimization_batch(main_case["feedback_case_id"])
+    assert biz_batch["agent_id"] == "soc-ops"
+    assert main_batch["agent_id"] == "main-agent"
+
+    # 任务归属派生：批次在手取批次 agent_id；按反馈 case 回溯取其单 case 批次 agent_id。
+    assert store._resolve_task_agent_id(batch=biz_batch) == "soc-ops"
+    assert store._resolve_task_agent_id(feedback_case_id=biz_case["feedback_case_id"]) == "soc-ops"
+    assert store._resolve_task_agent_id(feedback_case_id=main_case["feedback_case_id"]) == "main-agent"
+    # 无批次、无 case 锚点 → 回退 main-agent（main 路径不变）。
+    assert store._resolve_task_agent_id() == "main-agent"
+    assert store._resolve_task_agent_id(feedback_case_id="fbc-missing") == "main-agent"
+
+
 def test_list_signals_filters_by_agent_dimension(tmp_path):
     """AGV-017/025：反馈可按 Agent 维度过滤——业务 Agent 间反馈互不串扰。"""
     store, _ = _store(tmp_path)

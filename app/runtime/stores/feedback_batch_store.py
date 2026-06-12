@@ -63,6 +63,9 @@ class FeedbackBatchStoreMixin:
             "created_at": now,
             "updated_at": now,
             "status": "draft",
+            # 批次只服务单个 Agent（上方误路由防护保证），归属用于下游 task/change set/eval 派生；
+            # 非 Agent 专属来源回退 main-agent。
+            "agent_id": next(iter(source_agent_ids), None) or "main-agent",
             "title": title or f"反馈优化批次 {len(feedback_case_ids)} 条反馈",
             "priority": priority or "medium",
             "source_refs": refs,
@@ -108,12 +111,14 @@ class FeedbackBatchStoreMixin:
             return None
         now = utc_now()
         batch_id = f"fob-{uuid.uuid4()}"
+        single_case_agent_id = next((aid for ref in refs if (aid := self._source_agent_id(ref))), None) or "main-agent"
         payload = {
             "schema_version": "feedback-optimization-batch/v1",
             "batch_id": batch_id,
             "created_at": now,
             "updated_at": now,
             "status": "draft",
+            "agent_id": single_case_agent_id,
             "title": "反馈优化批次 1 条反馈",
             "priority": feedback_case.get("priority") or "medium",
             "source_refs": refs,

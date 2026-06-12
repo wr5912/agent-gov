@@ -642,7 +642,7 @@
 
 ### AGV-026 能力域或场景包可组织治理资产
 
-状态：`future`
+状态：`current`
 
 目标来源：能力域与场景包。
 
@@ -661,6 +661,8 @@
 - Agent 可按场景包装配能力。
 
 证据要求：场景包定义和资产关联。
+
+自动验收（按三条成功标准）：①表达业务目标/适用范围/风险等级——`tests/test_scenario_pack_store.py::test_create_and_query_scenario_pack`、`::test_scenario_pack_api_create_list_get`（ScenarioPack 实体 business_goal/scope/risk_level，迁移 0010 持久化）；②资产可迁移/复制/审计——`::test_scenario_pack_associate_and_copy`（copy 生成模板复制资产引用，关联记录可查=可审计）；③Agent 可按场景包装配能力——同测试 associate agent_ids 即 Agent 装配该包。API：`POST/GET /api/scenario-packs`、`POST /{id}/assets`（装配）、`POST /{id}/copy`（复制/迁移）。
 
 ### AGV-027 场景包支持跨 Agent 复用
 

@@ -1540,6 +1540,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/scenario-packs/{scenario_pack_id}/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Associate agents/eval-cases/assets to a scenario pack (capability assembly) */
+        post: operations["associate_assets_api_scenario_packs__scenario_pack_id__assets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenario-packs/{scenario_pack_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy a scenario pack as a reusable template (assets migratable/copyable) */
+        post: operations["copy_pack_api_scenario_packs__scenario_pack_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -4851,6 +4885,32 @@ export interface components {
             workspace_dir: string;
         } & {
             [key: string]: unknown;
+        };
+        /** ScenarioPackAssociateRequest */
+        ScenarioPackAssociateRequest: {
+            /**
+             * Agent Ids
+             * @description 装配该场景包的 Agent（追加）。
+             */
+            agent_ids?: string[] | null;
+            /**
+             * Asset Refs
+             * @description 关联的资产引用（追加）。
+             */
+            asset_refs?: string[] | null;
+            /**
+             * Eval Case Ids
+             * @description 关联的 eval case（追加）。
+             */
+            eval_case_ids?: string[] | null;
+        };
+        /** ScenarioPackCopyRequest */
+        ScenarioPackCopyRequest: {
+            /**
+             * Name
+             * @description 复制出的新场景包名称。
+             */
+            name: string;
         };
         /** ScenarioPackCreateRequest */
         ScenarioPackCreateRequest: {
@@ -8428,6 +8488,76 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    associate_assets_api_scenario_packs__scenario_pack_id__assets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioPackAssociateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioPackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    copy_pack_api_scenario_packs__scenario_pack_id__copy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_pack_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ScenarioPackCopyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

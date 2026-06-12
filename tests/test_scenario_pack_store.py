@@ -37,6 +37,39 @@ def test_scenario_pack_api_create_list_get(monkeypatch, tmp_path: Path) -> None:
         assert client.post("/api/scenario-packs", json={"name": "x", "risk_level": "extreme"}).status_code == 400
 
 
+def test_scenario_pack_associate_and_copy(monkeypatch, tmp_path: Path) -> None:
+    """AGV-026 criterion 2/3：资产可关联（Agent 装配能力）、可复制为模板，关联可审计。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        pid = client.post("/api/scenario-packs", json={"name": "告警研判", "risk_level": "high"}).json()["scenario_pack_id"]
+        # 关联资产与 Agent（Agent 据此装配场景包能力）。
+        assoc = client.post(
+            f"/api/scenario-packs/{pid}/assets",
+            json={"agent_ids": ["soc-ops"], "eval_case_ids": ["ec-1"], "asset_refs": ["prompts/triage.md"]},
+        )
+        assert assoc.status_code == 200
+        assert assoc.json()["agent_ids"] == ["soc-ops"]
+        assert assoc.json()["eval_case_ids"] == ["ec-1"]
+        # 再次关联去重并集。
+        assert client.post(f"/api/scenario-packs/{pid}/assets", json={"agent_ids": ["soc-ops", "biz-2"]}).json()["agent_ids"] == [
+            "soc-ops",
+            "biz-2",
+        ]
+        # 复制为模板（资产可迁移/复制），不复制 agent_ids（各 Agent 另行装配、保留审计边界）。
+        copied = client.post(f"/api/scenario-packs/{pid}/copy", json={"name": "告警研判副本"})
+        assert copied.status_code == 201
+        cbody = copied.json()
+        assert cbody["scenario_pack_id"] != pid
+        assert cbody["name"] == "告警研判副本"
+        assert cbody["risk_level"] == "high"
+        assert cbody["eval_case_ids"] == ["ec-1"]
+        assert cbody["asset_refs"] == ["prompts/triage.md"]
+        assert cbody["agent_ids"] == []
+        # 未知 pack 关联/复制 -> 404。
+        assert client.post("/api/scenario-packs/nope/assets", json={"agent_ids": ["x"]}).status_code == 404
+        assert client.post("/api/scenario-packs/nope/copy", json={"name": "x"}).status_code == 404
+
+
 def test_create_and_query_scenario_pack(tmp_path: Path) -> None:
     """AGV-026 criterion 1：场景包表达业务目标、适用范围和风险等级，并可查询。"""
     store = _store(tmp_path)

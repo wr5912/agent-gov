@@ -81,3 +81,13 @@ class ScenarioPackResponse(BaseModel):
     agent_ids: list[str] = Field(default_factory=list, description="装配了该场景包能力的 Agent。")
     eval_case_ids: list[str] = Field(default_factory=list)
     asset_refs: list[str] = Field(default_factory=list, description="关联的 prompt/skill/SOP/发布准入规则等资产引用。")
+
+
+class ScenarioPackAssociateRequest(BaseModel):
+    agent_ids: Optional[list[str]] = Field(default=None, description="装配该场景包的 Agent（追加）。")
+    eval_case_ids: Optional[list[str]] = Field(default=None, description="关联的 eval case（追加）。")
+    asset_refs: Optional[list[str]] = Field(default=None, description="关联的资产引用（追加）。")
+
+
+class ScenarioPackCopyRequest(BaseModel):
+    name: str = Field(description="复制出的新场景包名称。")

@@ -4,7 +4,12 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends
 
-from app.runtime.agent_governance_schemas import ScenarioPackCreateRequest, ScenarioPackResponse
+from app.runtime.agent_governance_schemas import (
+    ScenarioPackAssociateRequest,
+    ScenarioPackCopyRequest,
+    ScenarioPackCreateRequest,
+    ScenarioPackResponse,
+)
 from app.runtime.stores.scenario_pack_store import ScenarioPackRecord, ScenarioPackStore
 
 
@@ -49,5 +54,28 @@ def create_scenario_packs_router(*, scenario_pack_store: ScenarioPackStore, requ
     )
     async def get_pack(scenario_pack_id: str) -> ScenarioPackResponse:
         return _summary(scenario_pack_store.get_scenario_pack(scenario_pack_id))
+
+    @router.post(
+        "/scenario-packs/{scenario_pack_id}/assets",
+        response_model=ScenarioPackResponse,
+        summary="Associate agents/eval-cases/assets to a scenario pack (capability assembly)",
+    )
+    async def associate_assets(scenario_pack_id: str, req: ScenarioPackAssociateRequest) -> ScenarioPackResponse:
+        # AGV-026 criterion 3：Agent 据此装配场景包能力；关联去重并集、可审计。
+        return _summary(
+            scenario_pack_store.associate_scenario_pack_assets(
+                scenario_pack_id, agent_ids=req.agent_ids, eval_case_ids=req.eval_case_ids, asset_refs=req.asset_refs
+            )
+        )
+
+    @router.post(
+        "/scenario-packs/{scenario_pack_id}/copy",
+        response_model=ScenarioPackResponse,
+        status_code=201,
+        summary="Copy a scenario pack as a reusable template (assets migratable/copyable)",
+    )
+    async def copy_pack(scenario_pack_id: str, req: ScenarioPackCopyRequest) -> ScenarioPackResponse:
+        # AGV-026 criterion 2：资产可复制/迁移；新包作为模板，各 Agent 另行装配保留审计边界（AGV-027）。
+        return _summary(scenario_pack_store.copy_scenario_pack(scenario_pack_id, name=req.name))
 
     return router

@@ -81,3 +81,55 @@ class ScenarioPackStore:
         with self._session_factory.begin() as db:
             rows = db.query(ScenarioPackModel).order_by(ScenarioPackModel.created_at, ScenarioPackModel.scenario_pack_id).all()
             return [_record(row) for row in rows]
+
+    def associate_scenario_pack_assets(
+        self,
+        scenario_pack_id: str,
+        *,
+        agent_ids: list[str] | None = None,
+        eval_case_ids: list[str] | None = None,
+        asset_refs: list[str] | None = None,
+    ) -> ScenarioPackRecord:
+        """把资产/Agent 关联到场景包（去重并集）。Agent 据此装配该场景包能力（AGV-026 criterion 3）。"""
+        with self._session_factory.begin() as db:
+            row = db.get(ScenarioPackModel, scenario_pack_id)
+            if row is None:
+                raise NotFoundError(f"Scenario pack not found: {scenario_pack_id}")
+            payload = dict(row.payload_json or {})
+            for key, values in (("agent_ids", agent_ids), ("eval_case_ids", eval_case_ids), ("asset_refs", asset_refs)):
+                if values:
+                    payload[key] = list(dict.fromkeys([*(payload.get(key) or []), *values]))
+            row.payload_json = payload
+            return _record(row)
+
+    def copy_scenario_pack(self, scenario_pack_id: str, *, name: str) -> ScenarioPackRecord:
+        """复制一个场景包为新包（AGV-026 criterion 2：资产可复制/迁移）。
+
+        复制业务目标、适用范围、风险等级与资产引用（eval_case_ids/asset_refs）；不复制 agent_ids，
+        新包作为模板由各 Agent 另行装配，保留各自审计边界（AGV-027）。
+        """
+        clean_name = (name or "").strip()
+        if not clean_name:
+            raise BusinessRuleViolation("Scenario pack name cannot be empty")
+        with self._session_factory.begin() as db:
+            source = db.get(ScenarioPackModel, scenario_pack_id)
+            if source is None:
+                raise NotFoundError(f"Scenario pack not found: {scenario_pack_id}")
+            source_payload = dict(source.payload_json or {})
+            new_id = f"pack-{uuid.uuid4().hex[:12]}"
+            row = ScenarioPackModel(
+                scenario_pack_id=new_id,
+                name=clean_name,
+                business_goal=source.business_goal or "",
+                scope=source.scope or "",
+                risk_level=source.risk_level or "medium",
+                created_at=utc_now(),
+                payload_json={
+                    "agent_ids": [],
+                    "eval_case_ids": list(source_payload.get("eval_case_ids") or []),
+                    "asset_refs": list(source_payload.get("asset_refs") or []),
+                    "copied_from": scenario_pack_id,
+                },
+            )
+            db.add(row)
+            return _record(row)

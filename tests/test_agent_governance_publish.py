@@ -105,6 +105,43 @@ def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     assert biz_store.current_commit_sha() == biz_release["commit_sha"]
 
 
+def test_business_agent_version_lifecycle_preserves_history_through_rollback(tmp_path):
+    """AGV-021（业务 Agent 生命周期围绕版本治理运转）：候选/已发布/回滚版本可区分，rollback 与 restore 不物理删除历史 release。"""
+    governance, main_store = _governance(tmp_path)
+    agent_id = "biz-agent-021"
+
+    # 候选 → 发布 v1。
+    cs1 = _candidate_change_set(governance, main_store, content="# Biz\n\nv1\n", agent_id=agent_id)
+    assert cs1["status"] == "candidate_committed"  # 候选版本可区分
+    release_v1 = governance.publish_change_set(str(cs1["change_set_id"]), operator="tester")
+    # 候选 → 发布 v2。
+    cs2 = _candidate_change_set(governance, main_store, content="# Biz\n\nv2\n", agent_id=agent_id)
+    release_v2 = governance.publish_change_set(str(cs2["change_set_id"]), operator="tester")
+
+    biz_store = governance._store_for(agent_id)
+    assert biz_store.current_commit_sha() == release_v2["commit_sha"]
+    assert release_v1["status"] == "published" and release_v2["status"] == "published"
+
+    # restore 到 v1：切换当前版本但不改写 release 历史（两条 release 均仍可追溯）。
+    restore = governance.restore_release(str(release_v1["release_id"]), operator="tester", note="切回 v1")
+    assert restore["restore_result"]["current_commit_sha"] == release_v1["commit_sha"]
+    assert biz_store.current_commit_sha() == release_v1["commit_sha"]
+    assert governance.get_release(str(release_v1["release_id"]))["status"] == "published"
+    assert governance.get_release(str(release_v1["release_id"]))["agent_id"] == agent_id
+
+    # rollback v2：标记为 rolled_back（与 published 可区分），但 release 记录不被物理删除、历史可解释。
+    rolled = governance.rollback_release(str(release_v2["release_id"]), operator="tester", note="回滚 v2")
+    assert rolled["status"] == "rolled_back"  # 回滚版本可区分
+    persisted_v2 = governance.get_release(str(release_v2["release_id"]))
+    assert persisted_v2 is not None  # rollback 不删除历史 release
+    assert persisted_v2["status"] == "rolled_back"
+    # v1 不受 v2 回滚影响，历史完整：两条 release 仍在 Agent 维度可查。
+    releases = {rel["release_id"]: rel["status"] for rel in governance.list_releases(agent_id=agent_id)}
+    assert releases == {release_v1["release_id"]: "published", release_v2["release_id"]: "rolled_back"}
+    # 版本链未被物理删除：v1、v2 两个 commit 在该 Agent 版本 store 中均可解析。
+    assert governance.get_release(str(release_v1["release_id"]))["commit_sha"] == release_v1["commit_sha"]
+
+
 def test_create_change_set_rejects_path_traversal_agent_id(tmp_path):
     """B3.2 越权输入：恶意 agent_id（路径穿越）不得用于版本 store 落地路径。"""
     governance, _ = _governance(tmp_path)

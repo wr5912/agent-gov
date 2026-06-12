@@ -525,7 +525,7 @@
 
 ### AGV-021 Agent 生命周期围绕版本治理运转
 
-状态：`future`
+状态：`current`
 
 目标来源：Agent 生命周期、Version Governance。
 
@@ -545,6 +545,8 @@
 - rollback 不删除历史 release。
 
 证据要求：version graph、release archive、rollback event。
+
+自动验收：`tests/test_agent_governance_publish.py::test_business_agent_version_lifecycle_preserves_history_through_rollback`（业务 Agent 经候选→发布 v1/v2→restore→rollback：候选/已发布/回滚版本状态可区分，restore 切换当前版本不改写 release 历史，rollback 仅标记 `rolled_back` 而不物理删除 release，两条 release 在 Agent 维度仍可追溯）。per-agent 版本链由 `AgentGovernanceService._store_for(agent_id)` 提供物理隔离（业务 Agent 版本 store 根 `data_dir/business-agents/{agent_id}/version`），与 main agent 版本链互不混淆。
 
 ### AGV-022 Agent 资产 Registry 记录资产关系
 

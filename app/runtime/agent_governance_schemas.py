@@ -55,6 +55,10 @@ class FeedbackSignalReassignRequest(BaseModel):
 class AgentDeletionImpact(BaseModel):
     runs: int = Field(description="该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。")
     feedback_signals: int = Field(description="该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。")
+    optimization_tasks: int = Field(default=0, description="该 Agent 归属的优化任务数（影响面提示，按 limit 截顶）。")
+    eval_runs: int = Field(default=0, description="该 Agent 归属的评估运行数（影响面提示，按 limit 截顶）。")
+    change_sets: int = Field(default=0, description="该 Agent 归属的版本 change set 数（影响面提示，按 limit 截顶）。")
+    releases: int = Field(default=0, description="该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。")
 
 
 class AgentDeleteResponse(BaseModel):

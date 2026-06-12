@@ -151,6 +151,7 @@ app.include_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         feedback_store=feedback_store,
+        agent_governance=agent_governance,
         require_api_key=require_api_key,
     )
 )

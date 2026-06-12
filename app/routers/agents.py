@@ -17,6 +17,7 @@ from app.runtime.schemas import (
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.services.agent_governance import AgentGovernanceService
 
 _IMPACT_COUNT_CAP = 1000
 
@@ -37,6 +38,7 @@ def create_agents_router(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     feedback_store: FeedbackStore,
+    agent_governance: AgentGovernanceService,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
@@ -77,10 +79,14 @@ def create_agents_router(
         summary="Delete a business agent and report its governance impact",
     )
     async def delete_agent(agent_id: str) -> AgentDeleteResponse:
-        # 删除前先给出影响面提示（该 Agent 归属的运行与反馈计数），避免无声删除治理对象。
+        # 删除前先给出影响面提示（该 Agent 归属的运行/反馈/优化/评估/版本计数），避免无声删除治理对象。
         impact = AgentDeletionImpact(
             runs=len(feedback_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
             feedback_signals=len(feedback_store.list_signals(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+            optimization_tasks=len(feedback_store.list_tasks(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+            eval_runs=len(feedback_store.list_eval_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+            change_sets=len(agent_governance.list_change_sets(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+            releases=len(agent_governance.list_releases(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
         )
         deleted = agent_registry_store.delete_business_agent(agent_id)  # main 不可删→400，未知→404
         return AgentDeleteResponse(deleted=_summary(deleted), impact=impact)

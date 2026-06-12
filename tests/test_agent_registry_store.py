@@ -212,21 +212,41 @@ def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(mon
 
 
 def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp_path: Path) -> None:
-    """AGV-031：删除业务 Agent 给出治理影响面提示；main-agent 样板不可删，未知 404。"""
+    """AGV-031：统一入口下 agent_id 在运行/反馈/评估/版本一致，删除前给出跨维度影响面提示；main-agent 样板不可删，未知 404。"""
+    from app.runtime.schemas import FeedbackSignalCreateRequest
+
     module = _load_app(monkeypatch, tmp_path)
+    fs = module.feedback_store
+    gov = module.agent_governance
     with TestClient(module.app) as client:
+        # 统一入口创建一个治理对象，后续运行/反馈/评估/版本都用同一 agent_id 串联。
         client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})
-        # 该 Agent 的运行与反馈构成删除影响面。
-        module.feedback_store.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
-        client.post("/api/feedback-signals", json={"run_id": "run-x", "labels": ["tool_data_incomplete"]})
+        fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+        signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
+        # 版本维度：该 Agent 独立 change set → release（落自己的版本 store）。
+        change_set = gov.create_change_set(title="soc-ops 候选", operator="t", agent_id="soc-ops")
+        worktree = Path(str(change_set["worktree_path"]))
+        worktree.joinpath("CLAUDE.md").write_text("# soc-ops\n", encoding="utf-8")
+        commit = gov._store_for("soc-ops").commit_worktree(worktree, message="c")
+        gov.mark_candidate_committed(str(change_set["change_set_id"]), candidate_commit_sha=commit, execution_job_id=None, operator="t")
+        release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
+        # 评估维度：eval run 锚定该 Agent 的 change set → 继承归属。
+        eval_run = fs.create_eval_run(eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"]))
+
+        # Agent ID 在运行/反馈/评估/版本中保持一致（统一治理对象，无需跨入口手工拼接）。
+        assert signal["agent_id"] == "soc-ops"
+        assert eval_run["agent_id"] == "soc-ops"
+        assert change_set["agent_id"] == "soc-ops" and release["agent_id"] == "soc-ops"
 
         deleted = client.delete("/api/agent-registry/soc-ops")
         assert deleted.status_code == 200
         body = deleted.json()
         assert body["deleted"]["agent_id"] == "soc-ops"
-        # 删除前给出影响面提示：归属该 Agent 的运行与反馈被计入。
-        assert body["impact"]["runs"] >= 1
-        assert body["impact"]["feedback_signals"] >= 1
+        # 删除前给出跨维度影响面提示：运行/反馈/评估/版本均计入，避免无声删除治理对象。
+        impact = body["impact"]
+        assert impact["runs"] >= 1 and impact["feedback_signals"] >= 1
+        assert impact["eval_runs"] >= 1
+        assert impact["change_sets"] >= 1 and impact["releases"] >= 1
         # 删除后不再出现在注册表。
         assert "soc-ops" not in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
         # main-agent 样板不可删（400），未知 agent_id 报 404。

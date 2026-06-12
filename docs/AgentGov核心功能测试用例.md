@@ -768,7 +768,7 @@
 
 ### AGV-031 Agent 创建、配置、运行、治理统一入口
 
-状态：`future`
+状态：`current`
 
 目标来源：核心目标 1。
 
@@ -788,6 +788,8 @@
 - 删除或归档 Agent 前有影响面提示。
 
 证据要求：Agent 管理 UI/API 记录。
+
+自动验收：`tests/test_agent_registry_store.py::test_delete_business_agent_reports_impact_and_protects_main`（统一入口 `POST/DELETE /api/agent-registry` 创建治理对象并删除，agent_id 在 run/feedback/eval/version 一致，删除前给出跨维度影响面提示 `runs/feedback_signals/optimization_tasks/eval_runs/change_sets/releases`，main-agent 样板不可删 400、未知 404）。配套统一入口：创建配置面 `test_business_agent_workspace_scaffolds_safe_config_container`（AGV-004 配置容器）、运行 `test_chat_routes_to_registered_business_agent`（`/api/chat?agent_id=` 路由）、生命周期归档 `test_business_agent_lifecycle_transitions_and_archived_excluded_from_run`（AGV-020 archived 拒新运行）。agent_id 全链路一致由 B2+B3.1~B3.4 归属贯通背书，无需在不相关入口间手工拼接治理对象。
 
 ### AGV-032 运行记录支持事实、推断和建议分离
 

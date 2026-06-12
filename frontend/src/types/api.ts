@@ -1860,10 +1860,34 @@ export interface components {
         /** AgentDeletionImpact */
         AgentDeletionImpact: {
             /**
+             * Change Sets
+             * @description 该 Agent 归属的版本 change set 数（影响面提示，按 limit 截顶）。
+             * @default 0
+             */
+            change_sets: number;
+            /**
+             * Eval Runs
+             * @description 该 Agent 归属的评估运行数（影响面提示，按 limit 截顶）。
+             * @default 0
+             */
+            eval_runs: number;
+            /**
              * Feedback Signals
              * @description 该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。
              */
             feedback_signals: number;
+            /**
+             * Optimization Tasks
+             * @description 该 Agent 归属的优化任务数（影响面提示，按 limit 截顶）。
+             * @default 0
+             */
+            optimization_tasks: number;
+            /**
+             * Releases
+             * @description 该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。
+             * @default 0
+             */
+            releases: number;
             /**
              * Runs
              * @description 该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。

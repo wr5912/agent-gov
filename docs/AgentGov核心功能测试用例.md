@@ -767,7 +767,7 @@
 
 ### AGV-032 运行记录支持事实、推断和建议分离
 
-状态：`gap`
+状态：`current`
 
 目标来源：核心目标 2、方法论资产。
 
@@ -787,7 +787,7 @@
 
 证据要求：输出详情和归因结果。
 
-### AGV-033 反馈进入问题分类和证据链
+自动验收：`tests/test_feedback_output_normalizers.py::test_attribution_distinguishes_reasoning_error_from_data_and_tool_problems`（归因把推理问题 `reasoning_error` 独立于数据缺口/工具/执行资产分类）、`tests/test_feedback_output_normalizers.py::test_attribution_formatter_output_drops_backend_owned_fields_on_reasoning_error`（字段所有权边界）。字段层面：归因输出 `evidence_refs`（事实）与 `rationale`（推断）分离、`recommended_next_step`（建议）独立，结构上不把推断伪装成事实；反馈侧 `SocEventType` 以 `evidence.*`/`case.verdict_changed`（事实/推断）与 `recommendation.*`（建议）定向具体问题。本轮新增 `reasoning_error` 类目补齐"数据/推理/工具/执行资产"四分，并经 live DeepSeek 实测：数据与工具齐全但推断出错的场景被准确归为 `reasoning_error`。
 
 状态：`current`
 

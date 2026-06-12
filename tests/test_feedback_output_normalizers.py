@@ -403,6 +403,58 @@ def test_normalize_attribution_output_uses_intermediate_record_for_agent_shapes(
     }
 
 
+def test_attribution_distinguishes_reasoning_error_from_data_and_tool_problems():
+    """AGV-032：归因可把"推理问题"独立于数据缺口/工具问题/执行资产问题分类。
+
+    reasoning_error 是 ProblemType 的独立类目（数据与工具充分但推断本身有误），
+    常见推理类原始措辞经 normalizer 归一到 reasoning_error，并能通过严格契约校验。
+    """
+    for raw_problem_type in ("inference_error", "flawed_reasoning", "logic_error", "reasoning_gap"):
+        normalized = normalize_attribution_output({"problem_type": raw_problem_type})
+        assert normalized["problem_type"] == "reasoning_error"
+
+    # reasoning_error 通过强类型契约校验，且与数据缺口/工具问题是并列的不同类目。
+    model = AttributionFormatterOutput.model_validate(
+        {
+            "status": "completed",
+            "problem_type": "reasoning_error",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "workspace_config_change",
+            "confidence": "high",
+            "human_review_required": False,
+            "evidence_refs": [{"type": "run_log", "id": "run-1", "reason": "数据与工具完整。"}],
+            "responsibility_boundary": {"owner": "internal", "reason": "结论与证据不一致，属推断错误。"},
+            "rationale": "证据齐全、工具可用，但 Agent 把高危误判为低危，属推理问题而非数据缺口。",
+            "recommended_next_step": "generate_proposal",
+        }
+    )
+    assert model.problem_type == "reasoning_error"
+    assert model.problem_type not in {"evidence_gap", "tool_misuse", "instruction_gap"}
+
+
+def test_attribution_formatter_output_drops_backend_owned_fields_on_reasoning_error():
+    """测试纵深：AI 输出契约变更后，backend-owned 字段污染仍被拒绝回填（字段所有权边界）。"""
+    model = AttributionFormatterOutput.model_validate(
+        {
+            "problem_type": "reasoning_error",
+            "optimization_object_type": "main_agent_claude_md",
+            "actionability": "workspace_config_change",
+            "confidence": "medium",
+            "human_review_required": False,
+            "responsibility_boundary": {"owner": "internal", "reason": "推断错误。"},
+            "rationale": "推理问题。",
+            "recommended_next_step": "generate_proposal",
+            # hostile：恶意注入 backend-owned 上下文字段，不应进入 agent-owned 输出。
+            "feedback_case_id": "fc-evil",
+            "attribution_job_id": "aj-evil",
+        }
+    )
+    dumped = model.model_dump()
+    assert "feedback_case_id" not in dumped
+    assert "attribution_job_id" not in dumped
+    assert model.problem_type == "reasoning_error"
+
+
 def test_normalize_feedback_plan_output_records_blocked_workspace_task_reason():
     normalized = normalize_feedback_optimization_plan_output(
         {

@@ -165,6 +165,7 @@ def _first_formatter_text(*values: object) -> str | None:
 
 ProblemType = Literal[
     "evidence_gap",
+    "reasoning_error",
     "tool_misuse",
     "tool_unavailable",
     "tool_data_quality",

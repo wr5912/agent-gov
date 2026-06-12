@@ -3179,7 +3179,7 @@ export interface components {
             /** Optimization Object Type */
             optimization_object_type?: ("main_agent_claude_md" | "skill" | "subagent" | "mcp_config" | "mcp_description" | "output_style" | "eval_case" | "runtime_code" | "external_mcp_service" | "soc_process" | "not_actionable") | null;
             /** Problem Type */
-            problem_type?: ("evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
+            problem_type?: ("evidence_gap" | "reasoning_error" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
             /** Rationale */
             rationale?: string | null;
         } & {
@@ -3611,7 +3611,7 @@ export interface components {
             /** Plan Task Id */
             plan_task_id: string;
             /** Problem Type */
-            problem_type?: ("evidence_gap" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
+            problem_type?: ("evidence_gap" | "reasoning_error" | "tool_misuse" | "tool_unavailable" | "tool_data_quality" | "output_style_issue" | "instruction_gap" | "skill_gap" | "mcp_description_gap" | "runtime_error" | "external_soc_process_issue" | "user_misunderstanding" | "insufficient_information") | null;
             /** Rationale */
             rationale?: string | null;
             /** Reason */

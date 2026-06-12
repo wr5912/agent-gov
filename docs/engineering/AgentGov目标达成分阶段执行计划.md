@@ -15,7 +15,7 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 30 `current` 已应具备并需回归；6 `gap`、13 `future` 尚未完整 |
+| 当前实现边界 | 31 `current` 已应具备并需回归；5 `gap`、13 `future` 尚未完整 |
 | 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
@@ -35,11 +35,11 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 30 | 当前应具备 | 回归锚点，任何阶段不得退化 |
-| `gap` | 6 | 目标明确、能力不足 | 第一阶段主战场 |
+| `current` | 31 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `gap` | 5 | 目标明确、能力不足 | 第一阶段主战场 |
 | `future` | 13 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
-> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（30/6/13）。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
+> 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（31/5/13）。AGV-004 创建/身份/profile/配置容器就绪，运行执行待 live 环境。
 
 `gap`/`future` 用例按主题聚类：Agent 创建与边界、三层资产模型完整性、反馈路由与归属、闭环可恢复、Registry、生命周期、场景包、跨 Agent 方法论、审批与责任边界、外部协作生态集成。
 
@@ -70,7 +70,7 @@
 
 ### 阶段 1：单 Agent 闭环补齐（gap → current，对应 stage 1 main agent 样板）
 
-把剩余 6 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
+把剩余 5 个 `gap` 全部推进到 `current`，做实 main agent 样板闭环。
 
 | 子主题 | 覆盖用例 | 退出标准 |
 | --- | --- | --- |
@@ -180,3 +180,4 @@
 | 2026-06-12 | — | 诚实性核查：确认闭环"验收"测试离线 fake 掉模型层，不打 live model；用 `deepseek-v4-flash`（Anthropic 兼容端点）实测真实运行时 chat 与 DSPy 结构化输出均通；新增 env-gated live 验收门补齐缺口；凭据从 gitignored `docker/.env` 白名单读取，命令行零 secret | 无凭据 2 skipped / 配置后 live 2 passed | 无 AGV 升级（live 门不进离线硬门，不作 `current` 依据） | `tests/test_live_runtime_acceptance.py`、本文档「离线编排测试与 live 验收的边界」节 |
 | 2026-06-12 | AGV-034 | 优化形成可执行资产：优化方案以结构化 task（target/acceptance_criteria）落为执行操作与文件写入并创建 Agent 版本，进版本治理而非一次性 NL 建议；绑定既有执行+闭环回归 | 通过 | `gap` → `current` | `test_apply_execution_job_endpoint_writes_file_and_creates_versions`、`test_fob_da60_optimization_closed_loop_runs_regression_after_promotion` |
 | 2026-06-12 | AGV-013 | 执行资产可被调用：eval case 经晋级后被 regression-run 在受控流程调用、impact-analysis 评估，修改执行资产创建版本进治理，版本可回滚不污染历史；绑定既有调用+版本+回滚回归（区别于 034 的资产生产，侧重调用证据） | 通过 | `gap` → `current` | `test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`、`test_apply_execution_job_endpoint_writes_file_and_creates_versions`、`test_restore_release_switches_current_workspace_without_mutating_release_history` |
+| 2026-06-12 | AGV-032 | 事实/推断/建议分离：归因 `evidence_refs`(事实)/`rationale`(推断)/`recommended_next_step`(建议) 已分离，反馈 `SocEventType` 可定向；真实实现新增 `ProblemType.reasoning_error` 类目补齐"数据/推理/工具/执行资产"四分（含 normalizer 别名、prompt 指引、OpenAPI/前端类型同步），离线契约测试+hostile 字段测试，并 live DeepSeek 实测产出 `reasoning_error` | 通过 | `gap` → `current` | `app/runtime/feedback_schemas.py`、`feedback_output_normalizers.py`、`feedback_prompts.py`、`frontend/src/types/api.ts`、`test_feedback_output_normalizers.py`（+2） |

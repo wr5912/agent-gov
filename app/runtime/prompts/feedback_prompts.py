@@ -32,7 +32,9 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
         (
             "业务信息要点",
             "输出中必须能直接读出：\n"
-            "- problem_type：反馈问题类别，说明为什么属于该类。\n"
+            "- problem_type：反馈问题类别，说明为什么属于该类；"
+            "区分数据缺口（evidence_gap/insufficient_information）、推理问题（reasoning_error：数据与工具充分但推断或结论本身有误）、"
+            "工具问题（tool_*）和执行资产问题（instruction_gap/skill_gap/mcp_description_gap）；不要把推断错误伪装成数据缺口或工具问题。\n"
             "- optimization_object_type：应优化的对象或 not_actionable，说明判断依据。\n"
             "- actionability：可执行性判断，区分 workspace 修改、配置修改、评估用例、外部处理、运行时修复、人工分析或不可行动。\n"
             "- confidence 和 human_review_required：置信度与是否需要人工复核。\n"

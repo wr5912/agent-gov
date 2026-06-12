@@ -57,6 +57,12 @@ def normalize_attribution_output(payload: JsonObject) -> JsonObject:
         "tool_usage_gap": "tool_data_quality",
         "tool_call_gap": "tool_data_quality",
         "agent_behavior": "instruction_gap",
+        "reasoning_gap": "reasoning_error",
+        "reasoning_flaw": "reasoning_error",
+        "logic_error": "reasoning_error",
+        "inference_error": "reasoning_error",
+        "flawed_reasoning": "reasoning_error",
+        "faulty_inference": "reasoning_error",
     }
     optimization_object_aliases = {
         "agent_behavior": "main_agent_claude_md",

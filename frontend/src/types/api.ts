@@ -219,7 +219,8 @@ export interface paths {
         /** List registered business agents (governance objects) */
         get: operations["list_agents_api_agent_registry_get"];
         put?: never;
-        post?: never;
+        /** Register a business agent (governance object) */
+        post: operations["create_agent_api_agent_registry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1671,6 +1672,13 @@ export interface components {
             worktree_path: string;
         } & {
             [key: string]: unknown;
+        };
+        /** AgentCreateRequest */
+        AgentCreateRequest: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Name */
+            name: string;
         };
         /** AgentGitDiffEntryResponse */
         AgentGitDiffEntryResponse: {
@@ -5280,6 +5288,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentSummaryResponse"][];
+                };
+            };
+        };
+    };
+    create_agent_api_agent_registry_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSummaryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

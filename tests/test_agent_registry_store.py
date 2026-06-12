@@ -73,3 +73,31 @@ def test_list_agents_endpoint_returns_registered_business_agents(monkeypatch, tm
     assert [item["agent_id"] for item in body] == ["main-agent"]
     assert body[0]["category"] == "business"
     assert body[0]["workspace_dir"]
+
+
+def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_path: Path) -> None:
+    """AGV-004：可经 API 创建业务 Agent，获得稳定身份并进入注册表归属对象集合。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        created = client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})
+        listed = client.get("/api/agent-registry")
+        duplicate = client.post("/api/agent-registry", json={"name": "重复", "agent_id": "soc-ops"})
+        empty_name = client.post("/api/agent-registry", json={"name": "  "})
+
+    assert created.status_code == 201
+    assert created.json()["agent_id"] == "soc-ops"
+    assert created.json()["category"] == "business"
+    assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops")
+    assert {item["agent_id"] for item in listed.json()} == {"main-agent", "soc-ops"}
+    assert duplicate.status_code == 409  # 重复身份被拒绝，不污染既有 Agent
+    assert empty_name.status_code == 400  # 空名校验
+
+
+def test_create_business_agent_generates_id_when_omitted(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        created = client.post("/api/agent-registry", json={"name": "研发助手"})
+
+    assert created.status_code == 201
+    assert created.json()["agent_id"].startswith("biz-")
+    assert created.json()["category"] == "business"

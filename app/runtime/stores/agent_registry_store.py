@@ -6,6 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from ..agent_profiles import AgentRuntimeProfile
 from ..agent_registry_db import AgentRegistryModel
+from ..errors import BusinessRuleViolation, ConflictError
 from ..runtime_db import utc_now
 
 
@@ -56,6 +57,32 @@ class AgentRegistryStore:
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
             return _record(row) if row is not None else None
+
+    def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
+        """注册一个业务 Agent 身份（被治理对象）。重复 agent_id 拒绝，空 name 拒绝。"""
+        clean_name = name.strip()
+        if not clean_name:
+            raise BusinessRuleViolation("Business agent name cannot be empty")
+        created_at = utc_now()
+        with self._session_factory.begin() as db:
+            if db.get(AgentRegistryModel, agent_id) is not None:
+                raise ConflictError(f"Business agent already exists: {agent_id}")
+            db.add(
+                AgentRegistryModel(
+                    agent_id=agent_id,
+                    name=clean_name,
+                    category="business",
+                    workspace_dir=workspace_dir,
+                    created_at=created_at,
+                )
+            )
+        return AgentRegistryRecord(
+            agent_id=agent_id,
+            name=clean_name,
+            category="business",
+            workspace_dir=workspace_dir,
+            created_at=created_at,
+        )
 
 
 def _record(row: AgentRegistryModel) -> AgentRegistryRecord:

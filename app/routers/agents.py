@@ -1,14 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 
-from app.runtime.schemas import AgentSummaryResponse
-from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.runtime.schemas import AgentCreateRequest, AgentSummaryResponse
+from app.runtime.settings import AppSettings
+from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 
 
-def create_agents_router(*, agent_registry_store: AgentRegistryStore, require_api_key: Callable) -> APIRouter:
+def _summary(record: AgentRegistryRecord) -> AgentSummaryResponse:
+    return AgentSummaryResponse(
+        agent_id=record.agent_id,
+        name=record.name,
+        category=record.category,
+        workspace_dir=record.workspace_dir,
+        created_at=record.created_at,
+    )
+
+
+def create_agents_router(*, settings: AppSettings, agent_registry_store: AgentRegistryStore, require_api_key: Callable) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
 
     @router.get(
@@ -17,15 +29,18 @@ def create_agents_router(*, agent_registry_store: AgentRegistryStore, require_ap
         summary="List registered business agents (governance objects)",
     )
     async def list_agents() -> list[AgentSummaryResponse]:
-        return [
-            AgentSummaryResponse(
-                agent_id=record.agent_id,
-                name=record.name,
-                category=record.category,
-                workspace_dir=record.workspace_dir,
-                created_at=record.created_at,
-            )
-            for record in agent_registry_store.list_agents()
-        ]
+        return [_summary(record) for record in agent_registry_store.list_agents()]
+
+    @router.post(
+        "/agent-registry",
+        response_model=AgentSummaryResponse,
+        status_code=201,
+        summary="Register a business agent (governance object)",
+    )
+    async def create_agent(req: AgentCreateRequest) -> AgentSummaryResponse:
+        agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
+        workspace_dir = str(settings.data_dir / "business-agents" / agent_id)
+        record = agent_registry_store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
+        return _summary(record)
 
     return router

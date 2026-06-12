@@ -672,7 +672,7 @@
 
 ### AGV-027 场景包支持跨 Agent 复用
 
-状态：`future`
+状态：`current`
 
 目标来源：能力域与场景包、治理成熟度路径。
 
@@ -691,6 +691,8 @@
 - 复用后仍需评估通过才能进入 active。
 
 证据要求：场景包应用记录和两个 Agent 的评估结果。
+
+自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_cross_agent_reuse_keeps_boundary_and_eval_gate_to_active`（一个场景包经 `POST /api/scenario-packs/{id}/assets` 装配到两个 Agent=复用；两个 Agent 各自独立 change set/release、版本 store 物理隔离=保留自己的版本与审计边界、不强制完全相同；agent-b 进入 evaluating 后无通过评估时 `evaluating→active` 被拒 409、落一条 passed 评估后可激活=复用后须评估通过才能进入 active；评估门按 Agent 隔离，agent-a 无通过评估其激活仍被拒）。eval 门由 `app/routers/agents.py` 在 `evaluating→active` 处校验该 Agent 是否有 completed+passed/passed_with_notes 的评估运行（`_has_passed_eval`）。
 
 ### AGV-028 反馈到资产闭环完整
 

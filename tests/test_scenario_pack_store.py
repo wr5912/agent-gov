@@ -128,3 +128,72 @@ def test_scenario_pack_validation(tmp_path: Path) -> None:
         store.create_scenario_pack(name="x", risk_level="extreme")  # 非法风险等级拒绝
     with pytest.raises(NotFoundError):
         store.get_scenario_pack("nope")  # 未知 404
+
+
+def test_scenario_pack_cross_agent_reuse_keeps_boundary_and_eval_gate_to_active(monkeypatch, tmp_path: Path) -> None:
+    """AGV-027：场景包跨 Agent 复用——可复用不强制相同、每个 Agent 保留自己的版本/审计边界、复用后须评估通过才能进入 active。"""
+    from app.runtime.records.eval_run_records import EvalRunRecord
+    from app.runtime.runtime_db import EvalRunModel
+
+    module = _load_app(monkeypatch, tmp_path)
+    gov = module.agent_governance
+    fs = module.feedback_store
+    with TestClient(module.app) as client:
+        # 两个相似业务场景的 Agent。
+        client.post("/api/agent-registry", json={"name": "客服A", "agent_id": "agent-a"})
+        client.post("/api/agent-registry", json={"name": "客服B", "agent_id": "agent-b"})
+        # 一个场景包复用（装配）到两个 Agent。
+        pid = client.post("/api/scenario-packs", json={"name": "客服场景", "risk_level": "medium"}).json()["scenario_pack_id"]
+        assoc = client.post(f"/api/scenario-packs/{pid}/assets", json={"agent_ids": ["agent-a", "agent-b"]})
+        assert assoc.status_code == 200 and set(assoc.json()["agent_ids"]) == {"agent-a", "agent-b"}
+
+        # 复用不强制相同：两个 Agent 各自独立 change set/release（可分叉配置）。
+        releases = {}
+        for agent_id, content in (("agent-a", "# A\n"), ("agent-b", "# B 分叉\n")):
+            cs = gov.create_change_set(title=f"{agent_id} 候选", operator="t", agent_id=agent_id)
+            wt = Path(str(cs["worktree_path"]))
+            wt.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
+            commit = gov._store_for(agent_id).commit_worktree(wt, message="c")
+            gov.mark_candidate_committed(str(cs["change_set_id"]), candidate_commit_sha=commit, execution_job_id=None, operator="t")
+            releases[agent_id] = gov.publish_change_set(str(cs["change_set_id"]), operator="t")
+
+        # 每个 Agent 保留自己的版本/审计边界（物理隔离、互不串扰）。
+        assert gov._store_for("agent-a") is not gov._store_for("agent-b")
+        a_cs = {c["change_set_id"] for c in gov.list_change_sets(agent_id="agent-a")}
+        b_cs = {c["change_set_id"] for c in gov.list_change_sets(agent_id="agent-b")}
+        assert a_cs and b_cs and a_cs.isdisjoint(b_cs)
+        assert gov._store_for("agent-a").current_commit_sha() == releases["agent-a"]["commit_sha"]
+        assert gov._store_for("agent-b").current_commit_sha() == releases["agent-b"]["commit_sha"]
+
+        # 复用后须评估通过才能进入 active：agent-b 进入 evaluating。
+        assert client.post("/api/agent-registry/agent-b/lifecycle", json={"status": "evaluating"}).status_code == 200
+        # 无通过评估 → 激活被拒（409），未验证配置不得上线。
+        blocked = client.post("/api/agent-registry/agent-b/lifecycle", json={"status": "active"})
+        assert blocked.status_code == 409
+        # 为 agent-b 落一条通过的评估运行。
+        with fs.Session.begin() as db:
+            record = EvalRunRecord(
+                eval_run_id="evr-b-pass",
+                created_at="2026-06-12T00:00:00Z",
+                completed_at="2026-06-12T00:01:00Z",
+                status="completed",
+                result_status="passed",
+                agent_id="agent-b",
+                source="manual_feedback_dataset",
+            )
+            db.add(
+                EvalRunModel(
+                    eval_run_id=record.eval_run_id,
+                    created_at=record.created_at,
+                    completed_at=record.completed_at,
+                    status=record.status,
+                    agent_id=record.agent_id,
+                    source=record.source,
+                    payload_json=record.to_payload(),
+                )
+            )
+        # 评估通过后 → 可进入 active。
+        assert client.post("/api/agent-registry/agent-b/lifecycle", json={"status": "active"}).status_code == 200
+        # 评估门按 Agent 隔离：agent-a 无通过评估，其 evaluating→active 仍被拒。
+        client.post("/api/agent-registry/agent-a/lifecycle", json={"status": "evaluating"})
+        assert client.post("/api/agent-registry/agent-a/lifecycle", json={"status": "active"}).status_code == 409

@@ -15,9 +15,12 @@ from app.runtime.schemas import (
     AgentSummaryResponse,
 )
 from app.runtime.settings import AppSettings
+from app.runtime.errors import ConflictError
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
+
+_PASSED_EVAL_RESULT_STATUSES = {"passed", "passed_with_notes"}
 
 _IMPACT_COUNT_CAP = 1000
 
@@ -42,6 +45,11 @@ def create_agents_router(
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["agents"], dependencies=[Depends(require_api_key)])
+
+    def _has_passed_eval(agent_id: str) -> bool:
+        """该 Agent 是否有通过的评估运行（completed + passed/passed_with_notes），用于激活门。"""
+        runs = feedback_store.list_eval_runs(agent_id=agent_id, status="completed", limit=_IMPACT_COUNT_CAP)
+        return any(str(run.get("result_status")) in _PASSED_EVAL_RESULT_STATUSES for run in runs)
 
     @router.get(
         "/agent-registry",
@@ -71,6 +79,14 @@ def create_agents_router(
     )
     async def transition_agent(agent_id: str, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
         # 生命周期转移（AGV-020）；非法转移由状态机拒绝并返回可理解错误（409）。
+        # eval 门（AGV-027）：从 evaluating 进入 active 必须有该 Agent 通过的评估运行——
+        # 复用场景包/配置变更后须评估通过才能激活，避免未验证配置直接上线。
+        if req.status == "active":
+            current = agent_registry_store.get_agent(agent_id)
+            if current is not None and current.status == "evaluating" and not _has_passed_eval(agent_id):
+                raise ConflictError(
+                    f"Agent {agent_id} cannot enter active from evaluating without a passed eval run"
+                )
         return _summary(agent_registry_store.transition_business_agent(agent_id, status=req.status))
 
     @router.delete(

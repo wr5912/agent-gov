@@ -10,6 +10,8 @@ from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResp
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentRunResponse,
+    AssetProvenanceResponse,
+    AssetProvenanceTask,
     FeedbackEvalCaseGenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalReassignRequest,
@@ -112,6 +114,33 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
         return feedback_store.reassign_signal_agent(
             signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason
         ).to_payload()
+
+    @router.get(
+        "/asset-registry/feedback/{feedback_case_id}",
+        response_model=AssetProvenanceResponse,
+        summary="Asset relationship provenance for one feedback case (agent, assets, version)",
+    )
+    async def feedback_asset_provenance(feedback_case_id: str) -> AssetProvenanceResponse:
+        # AGV-022：从某次反馈追溯资产关系——影响了哪个 Agent、改了哪些资产、进入哪个版本。
+        case = ensure_found(feedback_store.find_case(feedback_case_id), "Feedback case not found")
+        agent_ids: list[str] = []
+        for signal_id in case.get("signal_ids") or []:
+            signal = feedback_store.find_signal(signal_id)
+            agent_id = (signal or {}).get("agent_id")
+            if agent_id and agent_id not in agent_ids:
+                agent_ids.append(agent_id)
+        tasks = [
+            AssetProvenanceTask(
+                optimization_task_id=str(task.get("optimization_task_id") or ""),
+                status=task.get("status"),
+                target_paths=list(task.get("target_paths") or []),
+                eval_case_ids=list(task.get("eval_case_ids") or []),
+                latest_change_set_id=task.get("latest_change_set_id"),
+                applied_agent_version_id=task.get("applied_agent_version_id"),
+            )
+            for task in feedback_store.list_tasks(feedback_case_id=feedback_case_id)
+        ]
+        return AssetProvenanceResponse(feedback_case_id=feedback_case_id, agent_ids=agent_ids, optimization_tasks=tasks)
 
 
 def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

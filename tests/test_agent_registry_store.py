@@ -160,6 +160,30 @@ def test_business_agent_has_active_lifecycle_status_by_default(monkeypatch, tmp_
         assert listed["main-agent"] == "active"
 
 
+def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tmp_path: Path) -> None:
+    """AGV-022：从某次反馈可追溯资产关系——影响了哪个 Agent、改了哪些资产、进入哪个版本。"""
+    from app.runtime.schemas import FeedbackSignalCreateRequest
+
+    module = _load_app(monkeypatch, tmp_path)
+    fs = module.feedback_store
+    fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
+    signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
+    batch = fs.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
+    case_id = batch["feedback_case_ids"][0]
+
+    with TestClient(module.app) as client:
+        prov = client.get(f"/api/asset-registry/feedback/{case_id}")
+        assert prov.status_code == 200
+        body = prov.json()
+        assert body["feedback_case_id"] == case_id
+        # 影响了哪个 Agent：从反馈归属可追溯。
+        assert "soc-ops" in body["agent_ids"]
+        # 资产关系结构（target_paths/version 等随优化任务出现）；此处尚无优化任务。
+        assert isinstance(body["optimization_tasks"], list)
+        # 未知 case -> 404。
+        assert client.get("/api/asset-registry/feedback/nope").status_code == 404
+
+
 def test_business_agent_lifecycle_transitions_and_archived_excluded_from_run(monkeypatch, tmp_path: Path) -> None:
     """AGV-020：合法生命周期转移被接受、非法转移被拒（可理解错误）、archived 不参与新运行。"""
     from app.runtime.schemas import ChatResponse

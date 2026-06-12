@@ -431,6 +431,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/asset-registry/feedback/{feedback_case_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Asset relationship provenance for one feedback case (agent, assets, version) */
+        get: operations["feedback_asset_provenance_api_asset_registry_feedback__feedback_case_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -2195,6 +2212,42 @@ export interface components {
             total_bytes?: number | null;
         } & {
             [key: string]: unknown;
+        };
+        /**
+         * AssetProvenanceResponse
+         * @description 某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、改了哪些资产、进入哪个版本。
+         */
+        AssetProvenanceResponse: {
+            /**
+             * Agent Ids
+             * @description 该反馈归属的 Agent（影响了哪个 Agent）。
+             */
+            agent_ids?: string[];
+            /** Feedback Case Id */
+            feedback_case_id: string;
+            /** Optimization Tasks */
+            optimization_tasks?: components["schemas"]["AssetProvenanceTask"][];
+        };
+        /** AssetProvenanceTask */
+        AssetProvenanceTask: {
+            /**
+             * Applied Agent Version Id
+             * @description 改动进入的 Agent 版本（进入哪个版本）。
+             */
+            applied_agent_version_id?: string | null;
+            /** Eval Case Ids */
+            eval_case_ids?: string[];
+            /** Latest Change Set Id */
+            latest_change_set_id?: string | null;
+            /** Optimization Task Id */
+            optimization_task_id: string;
+            /** Status */
+            status?: string | null;
+            /**
+             * Target Paths
+             * @description 本次优化改动的资产路径（改了哪些资产）。
+             */
+            target_paths?: string[];
         };
         /**
          * ChatRequest
@@ -5789,6 +5842,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentInfo"][];
+                };
+            };
+        };
+    };
+    feedback_asset_provenance_api_asset_registry_feedback__feedback_case_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                feedback_case_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetProvenanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

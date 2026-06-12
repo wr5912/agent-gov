@@ -178,38 +178,28 @@ class FeedbackSignalCreateRequest(BaseModel):
     metadata: JsonObject = Field(default_factory=dict)
 
 
-class AgentCreateRequest(BaseModel):
-    name: str
-    agent_id: Optional[str] = None
+# 多业务 Agent 治理 schema 拆至 agent_governance_schemas.py（控 schemas.py 行数），此处 re-export 保持导入路径稳定。
+from app.runtime.agent_governance_schemas import (  # noqa: E402
+    AgentCreateRequest,
+    AgentDeleteResponse,
+    AgentDeletionImpact,
+    AgentLifecycleTransitionRequest,
+    AgentSummaryResponse,
+    AssetProvenanceResponse,
+    AssetProvenanceTask,
+    FeedbackSignalReassignRequest,
+)
 
-
-class AgentSummaryResponse(BaseModel):
-    agent_id: str
-    name: str
-    category: str
-    workspace_dir: str
-    created_at: str
-    status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
-
-
-class AgentLifecycleTransitionRequest(BaseModel):
-    status: str = Field(description="目标生命周期状态：active/evaluating/deprecated/archived（draft 仅创建态）。")
-
-
-class FeedbackSignalReassignRequest(BaseModel):
-    agent_id: str = Field(description="修正后的归属业务 Agent。")
-    operator: str = Field(description="执行修正的操作人，用于审计。")
-    reason: Optional[str] = Field(default=None, description="修正原因（可选），写入审计记录。")
-
-
-class AgentDeletionImpact(BaseModel):
-    runs: int = Field(description="该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。")
-    feedback_signals: int = Field(description="该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。")
-
-
-class AgentDeleteResponse(BaseModel):
-    deleted: AgentSummaryResponse
-    impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
+__all_agent_governance__ = [
+    "AgentCreateRequest",
+    "AgentDeleteResponse",
+    "AgentDeletionImpact",
+    "AgentLifecycleTransitionRequest",
+    "AgentSummaryResponse",
+    "AssetProvenanceResponse",
+    "AssetProvenanceTask",
+    "FeedbackSignalReassignRequest",
+]
 
 
 class FeedbackSignalResponse(BaseModel):

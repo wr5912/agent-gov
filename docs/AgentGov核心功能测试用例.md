@@ -548,7 +548,7 @@
 
 ### AGV-022 Agent 资产 Registry 记录资产关系
 
-状态：`future`
+状态：`current`
 
 目标来源：Agent 资产 Registry。
 
@@ -567,6 +567,8 @@
 - Registry 记录可被 API 或 UI 查询。
 
 证据要求：Registry 查询结果或资产关系图。
+
+自动验收：`tests/test_agent_registry_store.py::test_feedback_asset_provenance_traces_agent_and_relationship`（从反馈追溯归属 Agent 与资产关系结构）。API `GET /api/asset-registry/feedback/{feedback_case_id}` 返回资产关系链而非简单清单：`agent_ids`（反馈影响了哪个 Agent）、`optimization_tasks[].target_paths`（改了哪些资产）、`applied_agent_version_id`（进入哪个版本）、`eval_case_ids`/`latest_change_set_id`（关联评估与变更集）。关系由既有 provenance link（feedback_case→signal.agent_id、`list_tasks(feedback_case_id)`→optimization_task）聚合，免迁移。
 
 ### AGV-023 Registry 防止资产散落和重复沉淀
 

@@ -15,7 +15,7 @@
 | 资产类型 | 数据资产：迭代日志、run/feedback/eval 证据；方法论资产：本计划与推进规则；执行资产：测试、smoke 脚本、状态升级后的 README/OpenAPI |
 | 生命周期 | 每个 AGV 用例状态 `future` → `gap` → `current`，对应被治理能力的成熟度 |
 | 反馈归属 | 每次迭代结果归属到具体 AGV 编号、提交和版本 tag |
-| 当前实现边界 | 38 `current` 已应具备并需回归；0 `gap`、11 `future`（阶段1清零；stage-2 已补 AGV-025/AGV-020）|
+| 当前实现边界 | 39 `current` 已应具备并需回归；0 `gap`、10 `future`（阶段1清零；stage-2 已补 AGV-025/020/022）|
 | 目标能力边界 | 全部 49 个用例达到 `current` 且互不退化，即愿景在可验收意义上达成 |
 
 闭环链路（与产品自身闭环同构）：
@@ -35,9 +35,9 @@
 
 | 状态 | 数量 | 含义 | 在本计划中的角色 |
 | --- | --- | --- | --- |
-| `current` | 38 | 当前应具备 | 回归锚点，任何阶段不得退化 |
+| `current` | 39 | 当前应具备 | 回归锚点，任何阶段不得退化 |
 | `gap` | 0 | 目标明确、能力不足 | 阶段1已清零 |
-| `future` | 11 | 长期愿景/成熟度 | 第二至五阶段路线 |
+| `future` | 10 | 长期愿景/成熟度 | 第二至五阶段路线 |
 
 > 基线随迭代更新：初始 22/14/12；阶段 1 已将 AGV-005（业务/治理边界）、AGV-041（高风险审批门）、AGV-037 与 AGV-047（外部系统/职责边界，由审批门+无业务所有权端点+审计记录背书）、AGV-009（失败沉淀为 eval case/回归资产）、AGV-029（闭环失败可恢复，error_json+回归失败阻断+回滚不改历史背书）、AGV-034（优化产可执行资产并进版本治理）、AGV-013（执行资产可被调用评估回滚并进版本治理）、AGV-032（新增 reasoning_error 类目，归因区分数据/推理/工具/执行资产并 live 实测）补到 `current`；合入 AGV-049（外部协作平台集成，future）后总数 49（36/0/13）。AGV-004 已补完整配置容器（CLAUDE.md+settings.json+.mcp.json）补到 `current`，且业务 Agent 已可经 `/api/chat?agent_id=` 真实运行（live 实测采用自身 workspace 身份作答），其反馈沿 run.agent_id 链路归属到该业务 Agent，AGV-024（反馈归属 Agent/version/run + 无法归属人工兜底）随之补到 `current`；AGV-028（反馈到资产闭环完整，含 release→证据 provenance 反查）随之补到 `current`，至此阶段1全部 gap 清零（36/0/13）。
 
@@ -194,3 +194,4 @@
 | 2026-06-12 | stage-2 | 多 Agent 基础增量（免迁移）：业务 Agent 经 `/api/chat?agent_id=` 真实运行（live 实测）；反馈沿 run.agent_id 归属；feedback 与 run 支持 agent_id 维度过滤；业务 Agent 删除带影响面提示 | 通过 | 无（AGV-025 前置能力） | `app/routers/chat.py`、`feedback_source_store.py`、`agent_registry_store.py`、相关测试 |
 | 2026-06-12 | AGV-025 | 关闭（首个 stage-2 用例）：反馈路由不污染他 Agent——①优化批次跨 Agent 反馈被拒（误路由防护）、②agent_id 维度过滤+防护使各 Agent 批次只含自身反馈、③管理员 reassign 修正归属并在 metadata.attribution_corrections 留审计 | 通过 | `future` → `current` | 用例文档 AGV-025 `自动验收`（误路由防护/维度过滤/reassign 审计 3 测试），API `POST /api/feedback-signals/{id}/reassign-agent` |
 | 2026-06-12 | AGV-020 | 关闭（stage-2 第2个）：业务 Agent 生命周期可治理——`agent_lifecycle` 状态机（draft→active→evaluating→deprecated→archived 终态）+ 迁移 0009 持久化 status；非法转移 StateTransitionError 拒绝（409 可理解错误）；archived 仍可审计但 `/api/chat` 拒绝运行（runnable 状态集）；main-agent 生命周期固定 | 通过 | `future` → `current` | 用例文档 AGV-020 `自动验收`，API `POST /api/agent-registry/{id}/lifecycle` |
+| 2026-06-12 | AGV-022 | 关闭（stage-2 第3个）：资产 Registry 表达资产关系——`GET /api/asset-registry/feedback/{id}` 聚合既有 provenance link（反馈→Agent、optimization_task→target_paths/版本/eval_case），回答"某次反馈影响哪个 Agent、改了哪些资产、进入哪个版本"，非简单清单；免迁移 | 通过 | `future` → `current` | 用例文档 AGV-022 `自动验收` |

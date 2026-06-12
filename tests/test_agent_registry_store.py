@@ -254,6 +254,43 @@ def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp
         assert client.delete("/api/agent-registry/biz-unknown").status_code == 404
 
 
+def test_main_agent_paradigm_generalizes_to_new_business_agent(monkeypatch, tmp_path: Path) -> None:
+    """AGV-044：main agent 闭环范式抽象为通用治理模型——新业务 Agent 经同一注册表/版本 store/agent_id 抽象复用全部能力，无需复制 main 硬编码路径，且反馈/版本/评估按 Agent 隔离。"""
+    from app.runtime.schemas import FeedbackSignalCreateRequest
+
+    module = _load_app(monkeypatch, tmp_path)
+    fs = module.feedback_store
+    gov = module.agent_governance
+    with TestClient(module.app) as client:
+        # main agent 本身是注册表首条记录（样板=首个被注册业务 Agent，而非硬编码特例）。
+        assert "main-agent" in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
+        # 接入一个新业务 Agent，与 main 走同一创建入口（明确接入步骤）。
+        assert client.post("/api/agent-registry", json={"name": "电商助手", "agent_id": "shop-bot"}).status_code == 201
+        assert "shop-bot" in {a["agent_id"] for a in client.get("/api/agent-registry").json()}
+
+        # 复用运行/反馈/评估/版本能力，全部经 agent_id 归属（非复制 main 路径）。
+        fs.record_run({"run_id": "run-s", "agent_id": "shop-bot", "created_at": "2026-06-12T00:00:00Z"})
+        signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-s", labels=["tool_data_incomplete"]))
+        change_set = gov.create_change_set(title="shop-bot 候选", operator="t", agent_id="shop-bot")
+        worktree = Path(str(change_set["worktree_path"]))
+        worktree.joinpath("CLAUDE.md").write_text("# shop-bot\n", encoding="utf-8")
+        commit = gov._store_for("shop-bot").commit_worktree(worktree, message="c")
+        gov.mark_candidate_committed(str(change_set["change_set_id"]), candidate_commit_sha=commit, execution_job_id=None, operator="t")
+        release = gov.publish_change_set(str(change_set["change_set_id"]), operator="t")
+        eval_run = fs.create_eval_run(eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"]))
+
+        # 同一抽象、不同实例：main 与新 Agent 版本 store 经同一 _store_for 工厂取，物理隔离（非硬编码 main 路径）。
+        assert gov._store_for("shop-bot") is not gov._store_for("main-agent")
+        main_head = gov._store_for("main-agent").current_commit_sha()
+        # 反馈/版本/评估按 Agent 维度隔离，main 版本链不被新 Agent 发布污染。
+        assert signal["agent_id"] == "shop-bot" and eval_run["agent_id"] == "shop-bot"
+        shop_cs = {c["change_set_id"] for c in gov.list_change_sets(agent_id="shop-bot")}
+        assert shop_cs == {change_set["change_set_id"]}
+        assert shop_cs.isdisjoint({c["change_set_id"] for c in gov.list_change_sets(agent_id="main-agent")})
+        assert gov._store_for("shop-bot").current_commit_sha() == release["commit_sha"]
+        assert gov._store_for("main-agent").current_commit_sha() == main_head
+
+
 def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path) -> None:
     """AGV-004：创建即得完整可编辑配置面（system prompt/skills/tools/MCP），且不泄露任何凭据。"""
     import json

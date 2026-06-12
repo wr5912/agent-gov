@@ -1083,7 +1083,7 @@
 
 ### AGV-044 第二阶段多业务 Agent 扩展
 
-状态：`future`
+状态：`current`
 
 目标来源：治理成熟度路径。
 
@@ -1102,6 +1102,8 @@
 - 新 Agent 接入有明确迁移和验收步骤。
 
 证据要求：多 Agent API、配置和回归结果。
+
+自动验收：`tests/test_agent_registry_store.py::test_main_agent_paradigm_generalizes_to_new_business_agent`（main agent 本身是注册表首条记录=样板而非硬编码特例；新业务 Agent 经同一 `POST /api/agent-registry` 入口接入，复用 run/feedback/eval/version 能力且全部经 `agent_id` 归属；main 与新 Agent 版本 store 经同一 `_store_for` 工厂取得不同实例、物理隔离，main 版本链不被新 Agent 发布污染）。配套：多 Agent 独立闭环隔离 `test_governance_serves_multiple_business_agents_with_isolated_closed_loops`（AGV-017）、接入配置面 `test_business_agent_workspace_scaffolds_safe_config_container`（AGV-004）、统一入口与影响面 `test_delete_business_agent_reports_impact_and_protects_main`（AGV-031）。三条成功标准——①不复制 main 硬编码路径（同抽象不同实例）、②反馈/版本/评估按 Agent 隔离、③新 Agent 接入步骤明确（创建→配置→运行→反馈→版本）——均由 B2+B3.1~B3.4 与上述测试背书。
 
 ### AGV-045 第三与第四阶段场景包和跨 Agent 方法论沉淀
 

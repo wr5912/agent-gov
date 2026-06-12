@@ -4,12 +4,12 @@
 而是用真实模型凭据驱动真实运行时，验证「离线 fake 永远证明不了」的那一环——
 真实模型输出能否被结构化契约消费、闭环归因那一步是否真的成立。
 
-离线产品不变量不受影响：缺少 MODEL_PROVIDER_API_KEY 时整文件自动 skip，
-因此 `make test` 在 CI/离线环境保持全绿；只有显式提供 live 凭据时才真打网络。
+离线产品不变量不受影响：缺少 `docker/.env` 或其中未配 `MODEL_PROVIDER_API_KEY` 时整文件 skip，
+因此 `make test` 在 CI/无凭据环境保持全绿；只有显式提供 live 凭据时才真打网络。
 
-凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），由本测试在导入时
-按白名单读取三项 provider 变量注入进程环境，**绝不写入仓库、绝不出现在命令行**。
-缺失该文件或文件未配置 key 时整文件 skip，离线 `make test` 不打网络、产品不变量不受影响。
+凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），按白名单只取三项 provider 变量。
+关键约束：导入时**只读入一个本地 dict，绝不改写全局 `os.environ`**（否则 collection 阶段会污染
+同进程其他测试）；凭据仅在每个 live 用例内经 `monkeypatch` 临时注入、用完即还原。
 
 运行方式（凭据已在 `docker/.env` 中，命令行无需任何 secret）::
 
@@ -20,7 +20,6 @@ chat 用例额外要求已 bootstrap 的 local-debug 运行卷（`make local-deb
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import pytest
@@ -31,43 +30,57 @@ from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
 
-# live 验收凭据只允许来自私有 env 文件，且只取与模型 provider 相关的白名单键，
-# 避免把容器路径 / mode 等无关变量带进 host 测试进程。
 _LIVE_ENV_FILE = Path(__file__).resolve().parents[1] / "docker" / ".env"
 _LIVE_PROVIDER_KEYS = ("MODEL_PROVIDER_API_KEY", "MODEL_PROVIDER_API_URL", "AGENT_MODEL")
 
 
-def _load_live_provider_env() -> None:
+def _read_live_creds() -> dict[str, str]:
+    """只从私有 env 文件读取白名单 provider 变量到本地 dict，不触碰全局环境。"""
+    creds: dict[str, str] = {}
     if not _LIVE_ENV_FILE.exists():
-        return
+        return creds
     for raw in _LIVE_ENV_FILE.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
         key, _, value = line.partition("=")
         key = key.strip()
-        if key not in _LIVE_PROVIDER_KEYS:
-            continue
-        # 已显式导出的非空环境变量优先；缺失或空串（导入链路可能预置空 provider 变量）才由 env 文件补齐。
-        if os.environ.get(key):
-            continue
-        os.environ[key] = value.strip().strip('"').strip("'")
+        if key in _LIVE_PROVIDER_KEYS:
+            creds[key] = value.strip().strip('"').strip("'")
+    return creds
 
 
-_load_live_provider_env()
+_LIVE_CREDS = _read_live_creds()
 
 pytestmark = pytest.mark.skipif(
-    not os.environ.get("MODEL_PROVIDER_API_KEY"),
+    not _LIVE_CREDS.get("MODEL_PROVIDER_API_KEY"),
     reason="live 验收需 docker/.env 配置 MODEL_PROVIDER_API_KEY；缺失默认 skip，不破坏 make test 产品不变量",
 )
 
 
-def test_live_dspy_formatter_produces_typed_attribution_against_live_model():
+@pytest.fixture
+def live_settings(monkeypatch):
+    """在单个 live 用例作用域内临时注入 provider 凭据并刷新 settings 缓存。
+
+    用 monkeypatch.setenv 注入（用例结束自动还原），并在前后 `cache_clear()`，
+    既保证本用例读到带凭据的 settings，又确保凭据不泄漏到后续测试。
+    """
+    for key, value in _LIVE_CREDS.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    get_settings.cache_clear()
+    try:
+        yield get_settings()
+    finally:
+        get_settings.cache_clear()
+
+
+def test_live_dspy_formatter_produces_typed_attribution_against_live_model(live_settings):
     """闭环最关键一环：真实模型输出经 DSPy formatter 转为合法 typed 归因结果。
 
     这是离线闭环测试用 fake `_run_profile_json` 替换掉、从未真实验证的契约。
     """
-    settings = get_settings()
+    settings = live_settings
     assert settings.provider_api_key, "live 验收要求 provider_api_key 已配置"
     assert settings.enable_dspy_output_formatter, "DSPy formatter 必须启用才能验证结构化契约"
 
@@ -95,11 +108,11 @@ def test_live_dspy_formatter_produces_typed_attribution_against_live_model():
     assert output.rationale and output.rationale.strip()
 
 
-def test_live_runtime_chat_executes_against_live_model():
+def test_live_runtime_chat_executes_against_live_model(live_settings):
     """完整运行时路径（profile -> claude_agent_sdk -> live model -> ChatResponse）真实可用。"""
     import anyio
 
-    settings = get_settings()
+    settings = live_settings
     if not settings.main_workspace_dir.exists():
         pytest.skip("chat live 验收需先 make local-debug-bootstrap 准备运行卷")
 

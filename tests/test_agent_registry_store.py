@@ -147,6 +147,19 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         assert client.post("/api/chat", json={"message": "hi", "agent_id": "biz-unknown"}).status_code == 404
 
 
+def test_business_agent_has_active_lifecycle_status_by_default(monkeypatch, tmp_path: Path) -> None:
+    """AGV-020 数据层：注册业务 Agent 默认生命周期状态 active，经 API 暴露；迁移回填既有行为 active。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        created = client.post("/api/agent-registry", json={"name": "客服助手", "agent_id": "soc-ops"})
+        assert created.status_code == 201
+        assert created.json()["status"] == "active"
+        listed = {a["agent_id"]: a["status"] for a in client.get("/api/agent-registry").json()}
+        assert listed["soc-ops"] == "active"
+        # main-agent 种子也带 active 状态。
+        assert listed["main-agent"] == "active"
+
+
 def test_delete_business_agent_reports_impact_and_protects_main(monkeypatch, tmp_path: Path) -> None:
     """AGV-031：删除业务 Agent 给出治理影响面提示；main-agent 样板不可删，未知 404。"""
     module = _load_app(monkeypatch, tmp_path)

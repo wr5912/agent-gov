@@ -27,6 +27,7 @@ def _summary(record: AgentRegistryRecord) -> AgentSummaryResponse:
         category=record.category,
         workspace_dir=record.workspace_dir,
         created_at=record.created_at,
+        status=record.status,
     )
 
 

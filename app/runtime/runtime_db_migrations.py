@@ -112,6 +112,13 @@ def migrate_0008_feedback_signal_agent_id(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_feedback_signals_agent_id ON feedback_signals (agent_id)")
 
 
+def migrate_0009_agent_registry_status(connection: Connection) -> None:
+    if "status" not in _table_columns(connection, "agent_registry"):
+        connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN status VARCHAR(32)")
+    connection.exec_driver_sql("UPDATE agent_registry SET status = 'active' WHERE status IS NULL")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_status ON agent_registry (status)")
+
+
 def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

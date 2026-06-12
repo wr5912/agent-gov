@@ -21,3 +21,5 @@ class AgentRegistryModel(Base):
     category: Mapped[str] = mapped_column(String(32), index=True)
     workspace_dir: Mapped[str] = mapped_column(String(2048))
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+    # 生命周期状态（AGV-020）：draft/active/evaluating/deprecated/archived。建列由迁移 0009 保证。
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)

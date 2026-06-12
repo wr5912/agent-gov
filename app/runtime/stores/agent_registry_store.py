@@ -19,6 +19,7 @@ class AgentRegistryRecord:
     category: str
     workspace_dir: str
     created_at: str
+    status: str = "active"
 
 
 class AgentRegistryStore:
@@ -107,4 +108,5 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         category=row.category,
         workspace_dir=row.workspace_dir,
         created_at=row.created_at,
+        status=row.status or "active",
     )

@@ -189,6 +189,7 @@ class AgentSummaryResponse(BaseModel):
     category: str
     workspace_dir: str
     created_at: str
+    status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
 
 
 class FeedbackSignalReassignRequest(BaseModel):

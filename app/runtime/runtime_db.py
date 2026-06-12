@@ -18,6 +18,7 @@ from .runtime_db_migrations import (
     migrate_0006_remove_agent_job_output_contract_column,
     migrate_0007_agent_registry,
     migrate_0008_feedback_signal_agent_id,
+    migrate_0009_agent_registry_status,
 )
 
 
@@ -554,6 +555,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0006_remove_agent_job_output_contract_column", migrate_0006_remove_agent_job_output_contract_column),
         ("0007_agent_registry", migrate_0007_agent_registry),
         ("0008_feedback_signal_agent_id", migrate_0008_feedback_signal_agent_id),
+        ("0009_agent_registry_status", migrate_0009_agent_registry_status),
     ):
         if version in applied:
             continue

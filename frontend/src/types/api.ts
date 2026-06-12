@@ -2079,6 +2079,12 @@ export interface components {
             created_at: string;
             /** Name */
             name: string;
+            /**
+             * Status
+             * @description 生命周期状态：draft/active/evaluating/deprecated/archived。
+             * @default active
+             */
+            status: string;
             /** Workspace Dir */
             workspace_dir: string;
         };

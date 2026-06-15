@@ -222,9 +222,15 @@ export function RegressionAssetsPanel({
                 <Pencil size={16} />
                 编辑
               </button>
-              <button className="fw-small-primary" type="button" disabled={busy || selectedAsset.promotion_status === "approved"} onClick={() => runAssetAction("promote")}>
+              <button
+                className="fw-small-primary"
+                type="button"
+                disabled={busy || selectedAsset.promotion_status === "approved"}
+                title="由用户决定是否把候选评估用例纳入长期回归资产（不再由优化方案自动生成任务）"
+                onClick={() => runAssetAction("promote")}
+              >
                 <CheckCircle2 size={16} />
-                晋级
+                {selectedAsset.asset_layer === "candidate" ? "纳入长期回归资产" : "晋级"}
               </button>
               <button className="fw-small-secondary" type="button" disabled={busy} onClick={() => runAssetAction(selectedAsset.flaky_status === "flaky" ? "unmark-flaky" : "mark-flaky")}>
                 <Flag size={16} />

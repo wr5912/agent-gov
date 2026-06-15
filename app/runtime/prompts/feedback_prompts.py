@@ -96,7 +96,10 @@ def proposal_generator_prompt(*, prompt_context: JsonObject | None = None) -> st
         (
             "workspace 可执行任务",
             "workspace 可执行任务要求：execution_kind=workspace_execution；target_path 必须是相对 main-workspace 的受管文件路径，"
-            "并且必须来自 input.target_policy 允许范围；actionability 使用 direct_workspace_change、workspace_config_change 或 eval_only。",
+            "并且必须来自 input.target_policy 允许范围；actionability 使用 direct_workspace_change、workspace_config_change 或 eval_only。\n"
+            "优化范围严格限定在 main-workspace：任何涉及 main-workspace 之外的写入建议（绝对路径、上级目录 ..、/data、"
+            "/data/outputs、其他 *-workspace 或 claude-roots 等）都不得作为 workspace_execution 任务输出，必须写入 blocked_items "
+            "说明越界原因与缺失条件，或在能定位到外部系统/工具时改为 external_webhook 任务；后端也会对越界 target_path 拒绝执行。",
         ),
         (
             "外部系统任务",
@@ -110,11 +113,10 @@ def proposal_generator_prompt(*, prompt_context: JsonObject | None = None) -> st
             "如果无法明确到外部对象、接口、工具、ID 或受影响字段，不要生成 external_webhook 任务，改写入 blocked_items 并说明缺什么。",
         ),
         (
-            "内部治理任务",
-            "回归资产晋级任务要求：execution_kind=internal_action；internal_action=promote_eval_cases；"
-            "target_type=eval_case；actionability=regression_asset_governance。"
-            "晋级后的权威状态由后端设置为 active 和 approved，不要设计新的状态词。"
-            "这类任务用于把本批次候选评估用例纳入长期回归资产；如果候选用例业务依据不足，改写入 blocked_items 并说明缺什么。",
+            "回归用例纳入（不生成任务）",
+            "不要生成把评估用例纳入长期回归资产的任务（不得输出 execution_kind=internal_action 或 internal_action=promote_eval_cases）。"
+            "评估用例是否纳入长期回归资产由用户在“回归测试用例”界面自行决定（手动晋级），不作为优化方案任务自动产出，避免增加认知负担。"
+            "本批次生成的候选评估用例保持候选状态即可；优化方案只产出 workspace_execution、external_webhook 任务和 blocked_items。",
         ),
         (
             "约束",

@@ -47,6 +47,30 @@ def test_proposal_generator_prompt_delegates_wire_format_to_dspy():
     assert "blocked_items" in prompt
 
 
+def test_proposal_generator_prompt_constrains_optimization_scope_to_main_workspace():
+    """Issue #3：优化方案范围严格限定 main-workspace，越界路径须拒绝/转 blocked_items。"""
+    prompt = proposal_generator_prompt(prompt_context={"feedback_case_count": 1})
+
+    assert "优化范围严格限定在 main-workspace" in prompt
+    assert "main-workspace 之外的写入建议" in prompt
+    assert "blocked_items" in prompt
+    # 明确举例越界路径（含 issue 中的 /data/outputs）。
+    assert "/data/outputs" in prompt
+
+
+def test_proposal_generator_prompt_does_not_auto_generate_regression_promotion_tasks():
+    """Issue #3：评估用例纳入回归资产不再自动生成为任务，由用户在回归测试用例界面手动决定。"""
+    prompt = proposal_generator_prompt(prompt_context={"feedback_case_count": 1})
+
+    # 旧的"生成回归晋级任务"正向指示已移除（不再把纳入作为优化方案任务自动产出）。
+    assert "回归资产晋级任务要求" not in prompt
+    assert "不得输出 execution_kind=internal_action" in prompt  # 改为明确禁止生成纳入任务
+    # 明确改为用户在回归测试用例界面自行决定。
+    assert "不要生成把评估用例纳入长期回归资产的任务" in prompt
+    assert "由用户在“回归测试用例”界面自行决定" in prompt
+    assert "保持候选状态即可" in prompt
+
+
 def test_prompt_context_builders_prune_backend_and_boundary_fields():
     proposal_context = build_proposal_prompt_context(
         {

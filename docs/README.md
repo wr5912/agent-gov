@@ -23,6 +23,7 @@
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
 - [AgentGov目标达成分阶段执行计划](./engineering/AgentGov目标达成分阶段执行计划.md)：`docs/engineering/AgentGov目标达成分阶段执行计划.md`
+- [治理 Agent 合并为单一 Governor 设计](./engineering/Governor合并设计.md)：`docs/engineering/Governor合并设计.md`
 
 ## 评审与复盘
 

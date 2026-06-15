@@ -1,4 +1,12 @@
-from app.runtime.feedback_schemas import ExecutionPlanFormatterOutput, FeedbackEvalCaseGenerationFormatterOutput
+import asyncio
+
+from app.runtime.agent_profiles import GOVERNOR_PROFILE
+from app.runtime.feedback_schemas import (
+    AttributionFormatterOutput,
+    ExecutionPlanFormatterOutput,
+    FeedbackEvalCaseGenerationFormatterOutput,
+)
+from app.services.agent_job_worker import AgentJobWorker
 from fastapi.testclient import TestClient
 
 from feedback_store_test_utils import _create_batch_with_completed_attribution
@@ -81,6 +89,52 @@ def test_batch_plan_task_execute_endpoint_is_consumed_by_worker(monkeypatch, tmp
     assert updated_batch["status"] == "execution_ready"
     assert updated_plan_task["status"] == "execution_ready"
     assert updated_plan_task["latest_execution_job"]["execution_job_id"] == execution_job_id
+
+
+def test_worker_resolves_profile_from_job_type_not_persisted_stale_name(monkeypatch, tmp_path):
+    # 防回归（Issue #3 第3点）：Governor 合并前持久化、仍处于 queued 的 agent_job，其
+    # profile_name 是历史名（attribution-analyzer 等）。合并后 profiles 字典只剩
+    # main-agent/governor，执行期若用持久化旧名查字典会 KeyError。worker 必须按
+    # job_type→spec 解析为 governor，把持久化 profile_name 当作纯历史元数据。
+    module = _load_app(monkeypatch, tmp_path)
+
+    captured: dict[str, str] = {}
+
+    async def fake_run_profile_json(**kwargs):
+        captured["profile_name"] = kwargs["profile_name"]
+        return AttributionFormatterOutput.model_validate(
+            {
+                "problem_type": "tool_usage_gap",
+                "optimization_object_type": "agent",
+                "actionability": "manual_review",
+                "confidence": "high",
+                "human_review_required": True,
+                "responsibility_boundary": "sec-ops-data",
+                "rationale": "防回归测试只验证执行期 profile 解析。",
+                "recommended_next_step": "review",
+            }
+        )
+
+    monkeypatch.setattr(module.runtime, "_run_profile_json", fake_run_profile_json)
+
+    module.feedback_store.create_agent_job(
+        job_id="legacy-attribution-agent-job",
+        job_type="attribution",
+        scope_kind="feedback_case",
+        scope_id="legacy-case",
+        profile_name="attribution-analyzer",  # 合并前已删除的历史 profile 名
+        input_payload={},
+    )
+
+    worker = AgentJobWorker(
+        feedback_store=module.feedback_store,
+        run_profile_json=module.runtime._run_profile_json,
+    )
+    asyncio.run(worker.run_once())
+
+    # 解析结果必须是 governor，而不是持久化的旧名 attribution-analyzer。
+    assert captured["profile_name"] == GOVERNOR_PROFILE
+    assert captured["profile_name"] != "attribution-analyzer"
 
 
 def test_batch_plan_task_execute_endpoint_reports_unqueueable_existing_task(monkeypatch, tmp_path):

@@ -191,6 +191,11 @@ def test_feedback_panorama_matches_current_profiles_assets_and_version_ui():
 
     outdated_phrases = [
         "当前运行时已经实现 4 个固定 profile",
+        # Governor 合并（Issue #3）后，五治理 profile 收敛为单一 governor，
+        # 旧的 6-profile 口径与按职责分列的 *-workspace 表格行不再是当前契约。
+        "当前运行时已经实现 6 个固定 profile",
+        "| 用例治理智能体 | `eval-case-governor` | `/eval-case-governor-workspace`",
+        "| 回归影响分析智能体 | `regression-impact-analyzer` | `/regression-impact-analyzer-workspace`",
         "长期回归资产升级方案中还规划了 2 个新增 profile",
         "Feedback 工作台当前提供三个主菜单",
         "长期回归资产页尚属于升级目标",
@@ -204,11 +209,12 @@ def test_feedback_panorama_matches_current_profiles_assets_and_version_ui():
         assert phrase not in doc
 
     current_phrases = [
-        "当前运行时已经实现 6 个固定 profile",
+        "当前运行时实现 2 个固定 profile",
+        "单一治理 Agent `governor`",
+        "| 归因分析（job_type=attribution） | `governor` | `/governor-workspace` |",
+        "| 回归影响分析（job_type=regression_impact_analysis） | `governor` | `/governor-workspace` |",
         "Feedback 工作台当前提供四个主菜单",
         "提供反馈信息、优化批次、回归资产、版本管理的统一操作面",
-        "| 用例治理智能体 | `eval-case-governor` | `/eval-case-governor-workspace`",
-        "| 回归影响分析智能体 | `regression-impact-analyzer` | `/regression-impact-analyzer-workspace`",
         "回归资产页已作为 `反馈信息 / 优化批次 / 回归资产 / 版本管理` 中的独立侧边菜单页落地",
         "regression plan、gate result、gate override 和回归影响分析 job",
         "查看当前 main Agent Git ref 和 release",

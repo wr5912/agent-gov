@@ -94,7 +94,11 @@ class AgentJobWorker:
                 return deterministic
         job_input = cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
         return await self.run_profile_json(
-            profile_name=str(job["profile_name"]),
+            # 执行期 profile 由 job_type→spec 解析（合并后恒为 governor）；持久化的
+            # job["profile_name"] 仅为历史元数据/展示，不参与执行。合并前 queued 的旧 job
+            # 其 profile_name 可能是 attribution-analyzer 等已删除的名字，按持久化值查
+            # profiles 字典会 KeyError，故这里以 spec.profile_name 为唯一权威来源。
+            profile_name=agent_job_spec(job_type).profile_name,
             prompt=self._prompt(job_type, job, job_input),
             job_type=job_type,
             job_input=job_input,

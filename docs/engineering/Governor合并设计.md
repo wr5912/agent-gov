@@ -21,7 +21,7 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 
 ## 关键去风险结论（无需 DB 迁移）
 
-执行期 profile 由 **job_type → `spec.profile_name`** 解析（`feedback_job_orchestrator.py:54/90/122` 用 `self.profiles[spec.profile_name]` 与 `PROFILE_VERSION_IDS[spec.profile_name]`），**不读持久化 job 的 `profile_name`**（`agent_job_worker.py:97` 传入的 `job["profile_name"]` 仅为透传/展示）。因此：
+执行期 profile 由 **job_type → `spec.profile_name`** 解析：inline 编排路径（`feedback_job_orchestrator.py`）用 `self.profiles[spec.profile_name]` 与 `PROFILE_VERSION_IDS[spec.profile_name]`；后台 worker 路径（`agent_job_worker.py`）同样以 `agent_job_spec(job_type).profile_name` 解析（不读持久化 `job["profile_name"]`，否则合并前 queued 的旧 job 会拿已删除的旧名查 profiles 字典而 `KeyError`）。两条路径**都不依赖持久化 job 的 `profile_name`**，该字段仅为历史元数据/展示。因此：
 
 - 历史 job 记录里的 `profile_name`（"attribution-analyzer" 等）与 `profile_version` 是历史元数据，合并后仍是合法字符串，可正常读取/展示，**不需要数据迁移**。
 - 合并后新 job 一律 `profile_name=governor`；未执行的旧 pending job 也按其 job_type 走新 governor spec，不依赖存储的旧名。
@@ -67,3 +67,5 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 ## 落地状态
 
 已落地。五个治理 profile 合并为单一 `governor`（profile 名、`AgentRole`、`GOVERNANCE_AGENT_ROLES`、`PROFILE_VERSION_IDS`、`build_profiles` 均收敛为 main + governor）；workspace 合并为 `governor-workspace`，claude_root 合并为 `claude-roots/governor`。`AGENT_JOB_SPECS` 五个 job_type 统一指向 `GOVERNOR_PROFILE`，prompt/output_model/formatter 仍按 job_type 选择，闭环链路与输出契约不变。settings、docker-compose、Dockerfile、entrypoint、runtime-template、bootstrap/export/renderer 脚本、env 示例与 README 同步收敛为两套 profile，历史 job 记录的旧 `profile_name` 作为历史元数据保留、无需 DB 迁移。
+
+#3 复查跟进：后台 worker 执行期改为按 `agent_job_spec(job_type).profile_name` 解析 profile，不再透传持久化 `job["profile_name"]`，使合并前 queued 的旧 job（旧名如 `attribution-analyzer`）也走 governor 而非在 profiles 字典 `KeyError`；回归用例 `tests/test_batch_plan_task_execution_queue.py::test_worker_resolves_profile_from_job_type_not_persisted_stale_name`（已纳入 coverage policy 主流程清单）。

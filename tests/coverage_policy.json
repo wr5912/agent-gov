@@ -81,6 +81,13 @@
           ]
         },
         {
+          "id": "worker_executes_legacy_profile_name_job_via_governor",
+          "description": "Pre-merge queued agent jobs persisted with a removed profile_name (e.g. attribution-analyzer) execute via the job_type to spec governor profile, not the stale persisted name (no DB migration after Governor merge).",
+          "pytest": [
+            "tests/test_batch_plan_task_execution_queue.py::test_worker_resolves_profile_from_job_type_not_persisted_stale_name"
+          ]
+        },
+        {
           "id": "plan_tab_empty_success_failure_states",
           "description": "Optimization plan tab renders empty state, generated plan, generation failure and timeout details including background job refresh, editable plan task states, dirty workspace preflight, one-click execution controls, and execution record details.",
           "ui_scripts": [

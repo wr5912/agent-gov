@@ -1,0 +1,97 @@
+---
+name: "business-agent-workspace-optimizer"
+description: "开发、配置和优化 AgentGov 业务 Agent 自身 workspace 配置资产。用户要求提升某个业务 Agent 能力、修改该 Agent 的 CLAUDE.md、.mcp.json、.claude/settings.json、skills、agents、rules、hooks、commands、evals、templates，或要求离线修改 ${HOST_RUNTIME_VOLUME_ROOT} / docker/runtime-template 中业务 Agent workspace 配置时使用。"
+---
+
+# 业务 Agent Workspace 优化
+
+本技能给工程师、Codex、Claude 在本仓库离线开发时使用：按用户需求直接开发/优化某个业务 Agent 的 workspace 配置资产（prompt、skill、agent、rule、hook、command、MCP、eval、template）。它不是产品内置的业务 Agent 自优化能力，不是新的治理 Agent，也不是业务 Agent 运行时可调用的工具。
+
+## 适用与不适用
+
+- 适用：离线修改业务 Agent 的 workspace 配置资产；以业务 Agent 为主目标，`main-agent` 仅作样板（不是长期唯一边界）。
+- 不适用：新增产品 API、新增注册/生命周期/版本/反馈归属数据模型、让业务 Agent 运行时自改、修改治理 Agent（governor）合并方案、绕过 runtime-template 脱敏边界、自动发生产。
+- 治理 Agent（`governor`，见 `GOVERNANCE_AGENT_ROLES`）默认不作为目标；仅当用户明确要求改 governor 配置时纳入，并说明这是治理 Agent 而非业务 Agent。
+
+## 治理对象预检（先做再改）
+
+| 维度 | 结论 |
+| --- | --- |
+| 被治理对象 | 某业务 Agent 的 workspace 配置资产（执行资产为主） |
+| 治理执行者 | 开发者 / Codex / Claude 离线执行，非运行时自改 |
+| 资产类型 | prompt、skill、agent、rule、hook、command、MCP、eval、template |
+| 反馈归属 | 若改动来自反馈，实施记录标明目标 agent_id、反馈来源、影响文件、验收方式；不改数据库归属模型 |
+| 当前边界 | `/api/chat?agent_id=` 跑注册业务 Agent；业务 profile 从其 workspace 加载 `.mcp.json` / `.claude/settings.json`（`build_business_agent_profile`） |
+
+闭环：业务 Agent → workspace 配置资产 → 离线修改 → 格式/安全验证 → 本地运行或模板渲染验证 → 后续版本治理/发布。
+
+## 工作流（强制顺序）
+
+### 1. 目标确认
+
+- 明确目标是「运行态 workspace」还是「模板 workspace」。
+- 明确目标 agent_id、workspace 路径、业务用途。
+- 离线解析 agent_id → workspace（不要直接读 `runtime.sqlite3`）：
+  - 运行态业务 Agent：约定路径 `${RUNTIME_ROOT}/data/business-agents/<agent_id>`（容器 `/data/business-agents/<agent_id>`，本机调试 `/tmp/local-debug-volume-agent-gov/data/business-agents/<agent_id>`）；或经运行中的 `GET /api/agent-registry` 查 `workspace_dir`。
+  - 模板：仓库内 `docker/runtime-template/<workspace>`，当前为 `main-workspace`、`governor-workspace`（五个治理 workspace 已合并为单一 governor）；业务 Agent 暂无模板目录，新增模板按同一规则。
+- 只说「业务 Agent」而无法唯一定位时先提问，不得默认改 `main-workspace`。
+
+### 2. 路径边界检查
+
+允许目标解析到以下其一：
+
+- `${RUNTIME_ROOT}/data/business-agents/<agent_id>/`（业务 Agent 可编辑配置：`CLAUDE.md`、`.claude/`、`.mcp.json` 等）
+- `${RUNTIME_ROOT}/main-workspace/`（样板，谨慎）
+- 仓库 `docker/runtime-template/<workspace>/`
+- 用户明确给出的业务 Agent workspace 绝对路径
+
+默认拒绝（即使在允许根之下也不得改）：
+
+- 任意 `.../version/`（业务 Agent 的 per-agent git 版本库，B3；直接改会破坏版本治理）
+- 任意 `.../claude-root/`、`claude-roots/`（运行态 Claude 状态）
+- `data/runtime.sqlite3`、`data/agent-governance/`（worktrees/releases）、`data/outputs/`、`data/transcripts/`、`data/uploads/`、`langfuse/`、`.git/`
+- `.env*`、`.mcp.local.json`、`settings.local.json`、`CLAUDE.local.md`、`secrets/`
+
+注：业务 Agent workspace 在 `data/` 下，故不能整目录拒绝 `data/`；只拒绝上面列出的子路径。
+
+### 3. 现状读取
+
+- 读 `CLAUDE.md`、`.mcp.json`、`.claude/settings.json`。
+- 查 `.claude/skills/`、`.claude/agents/`、`.claude/rules/`、hooks、commands、evals、templates。
+- 产出简短资产清单：已有能力 / 工具 / 权限边界 / 缺口。
+
+### 4. 需求拆解（按资产类别）
+
+- prompt / 角色边界 → `CLAUDE.md`
+- 能力流程 → `.claude/skills/<skill>/SKILL.md`
+- 子角色 → `.claude/agents/*.md`
+- 工具接入 → `.mcp.json`（同步 `.claude/settings.json` 权限）
+- 强约束 → `.claude/rules/*` 或 hooks
+- 验收 → evals / 示例输入 / 验证命令
+
+### 5. 直接修改
+
+- 只改目标 workspace 内资产，不跨 Agent。
+- 不把业务 Agent 私有配置写入 `docker/runtime-template`。
+- 改前输出：目标路径 + 预计修改文件清单。
+- 回滚依据：repo-tracked（模板）用 `git diff`；运行态用文件清单 + 变更摘要，高风险修改先备份到 `/tmp/agentgov-workspace-optimizer-backups/<timestamp>/`。
+- 运行态业务 Agent workspace 同时是其 git 版本源（B3 `GitAgentVersionStore`）：直接改会在该仓库工作树留未提交改动；不要碰 `version/`；如需固化为版本，提示用户走现有 change set / release 流程。
+
+### 6. 修改后验证
+
+- JSON：`.mcp.json`、`.claude/settings.json` 可解析。
+- Markdown：`SKILL.md` 有合法 frontmatter（`name` / `description`）。
+- 权限模型：本运行时为非交互后端，`ask` 层无法呈现确认会被无声阻断——不要新增 `ask` 条目；用 allow/deny，人审在 `CLAUDE.md` 对话级确认；保持最小权限，不把 allow 放大到全盘读写或危险 Bash 通配；安全基线对齐 `initialize_business_agent_workspace` 起始容器（保守权限、空 MCP、无密钥）。
+- 安全：无 api_key / token / Authorization / header / 数据库凭据 / 本机绝对私有路径。
+- 模板改动：复用 `make runtime-template-scan`（`scripts/runtime_template_safety.py` 的 `scan_path` / `sanitize_path`）做脱敏扫描，不要另写一套扫描。
+- 运行态生效：必要时提示重启 Claude Code 或重新 bootstrap runtime volume；既有部署用 `make runtime-repair-managed-config` / `make local-debug-repair-managed-config` 重渲染受管配置。
+- 报告：输出「已改文件 / 未改文件 / 需人工配置项 / 验证结果 / 后续启动或渲染步骤」。
+
+## 为什么不走产品 change set
+
+本任务是开发者离线工作流，优化的是 workspace 配置资产本身；先用 skill 收敛流程比先改产品 API 成本低。若该流程稳定，再升级为产品内「业务 Agent 配置变更集」能力。
+
+## 与其他治理 skill 的关系
+
+- 涉及 MCP / env / volume / 本机 vs 容器边界时，按 `runtime-env-governance` 的 Consumer × Mode × Boundary 口径。
+- 本技能为 `.codex` / `.claude` 镜像同源，改动两侧同步（见 `check_docs_governance` 的 `MIRRORED_SKILLS`）。

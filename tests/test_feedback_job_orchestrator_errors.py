@@ -41,7 +41,7 @@ async def _raise(exc: Exception, **_: Any) -> JsonObject:
 
 def _auth_required() -> AgentAuthenticationRequiredError:
     return AgentAuthenticationRequiredError(
-        profile_name="attribution-analyzer",
+        profile_name="governor",
         runtime_volume_mode="local-debug",
         settings_env_file="docker/.env.local-debug",
         missing=["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"],

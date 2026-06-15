@@ -183,7 +183,7 @@ def test_feedback_attribution_job_options_use_profile_minimum_max_turns(tmp_path
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert options.max_turns == 16
 
@@ -193,15 +193,15 @@ def test_feedback_attribution_job_options_allow_global_max_turn_override(tmp_pat
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert options.max_turns == 20
 
 
 def test_feedback_job_profile_does_not_inject_mcp_servers(tmp_path):
     settings = _settings(tmp_path)
-    settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
-    (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
+    settings.governor_workspace_dir.mkdir(parents=True, exist_ok=True)
+    (settings.governor_workspace_dir / ".mcp.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -215,7 +215,7 @@ def test_feedback_job_profile_does_not_inject_mcp_servers(tmp_path):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert getattr(options, "mcp_servers", None) in (None, {})
 
@@ -233,7 +233,7 @@ def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["eval-case-governor"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert options.env["ANTHROPIC_API_KEY"] == "sk-test-provider"
     assert options.env["ANTHROPIC_BASE_URL"] == "https://model-gateway.example.test/anthropic"
@@ -259,7 +259,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
     with pytest.raises(AgentAuthenticationRequiredError) as exc_info:
         asyncio.run(
             runtime._run_profile_json(
-                profile_name="eval-case-governor",
+                profile_name="governor",
                 prompt="generate eval cases",
                 job_type="eval_case_generation",
                 job_input={},
@@ -269,14 +269,14 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
     assert called is False
     assert exc_info.value.error_code == AGENT_AUTH_REQUIRED
     assert exc_info.value.raw_output_json is not None
-    assert exc_info.value.raw_output_json["profile_name"] == "eval-case-governor"
+    assert exc_info.value.raw_output_json["profile_name"] == "governor"
     assert exc_info.value.raw_output_json["missing"] == ["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"]
 
 
 def test_profile_path_hook_blocks_denied_read_path(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["attribution-analyzer"]
+    profile = runtime.profiles["governor"]
     hook = build_profile_pre_tool_use_hook(profile)
 
     result = asyncio.run(
@@ -292,13 +292,13 @@ def test_profile_path_hook_blocks_denied_read_path(tmp_path):
 
     output = result["hookSpecificOutput"]
     assert output["permissionDecision"] == "deny"
-    assert "denied for profile attribution-analyzer" in output["permissionDecisionReason"]
+    assert "denied for profile governor" in output["permissionDecisionReason"]
 
 
 def test_profile_path_hook_blocks_internal_agent_data_read_path(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["attribution-analyzer"]
+    profile = runtime.profiles["governor"]
     hook = build_profile_pre_tool_use_hook(profile)
 
     result = asyncio.run(
@@ -314,13 +314,13 @@ def test_profile_path_hook_blocks_internal_agent_data_read_path(tmp_path):
 
     output = result["hookSpecificOutput"]
     assert output["permissionDecision"] == "deny"
-    assert "outside allowed paths for profile attribution-analyzer" in output["permissionDecisionReason"]
+    assert "outside allowed paths for profile governor" in output["permissionDecisionReason"]
 
 
 def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["execution-optimizer"]
+    profile = runtime.profiles["governor"]
     hook = build_profile_pre_tool_use_hook(profile)
 
     result = asyncio.run(
@@ -336,14 +336,14 @@ def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
 
     output = result["hookSpecificOutput"]
     assert output["permissionDecision"] == "deny"
-    assert "outside allowed paths for profile execution-optimizer" in output["permissionDecisionReason"]
+    assert "Write target is denied for profile governor" in output["permissionDecisionReason"]
 
 
 def test_feedback_batch_plan_job_options_use_proposal_generator_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["proposal-generator"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert options.max_turns == 16
     assert getattr(options, "allowed_tools", None) in (None, [])
@@ -355,7 +355,7 @@ def test_feedback_batch_plan_job_options_allow_global_max_turn_override(tmp_path
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["proposal-generator"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert options.max_turns == 20
 
@@ -434,8 +434,8 @@ def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
         CLAUDE_HOME=base.claude_home,
         CLAUDE_MCP_CONFIG_PATH=main_mcp_path,
     )
-    settings.attribution_analyzer_workspace_dir.mkdir(parents=True, exist_ok=True)
-    (settings.attribution_analyzer_workspace_dir / ".mcp.json").write_text(
+    settings.governor_workspace_dir.mkdir(parents=True, exist_ok=True)
+    (settings.governor_workspace_dir / ".mcp.json").write_text(
         json.dumps(
             {
                 "mcpServers": {
@@ -448,7 +448,7 @@ def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
-    options = runtime.job_runner.build_options(runtime.profiles["attribution-analyzer"])
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
 
     assert getattr(options, "mcp_servers", None) in (None, {})
 
@@ -643,23 +643,32 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
 def test_settings_derives_profile_dirs_from_custom_main_paths(tmp_path):
     main_workspace = tmp_path / "runtime" / "main-workspace"
     main_root = tmp_path / "runtime" / "claude-roots" / "main"
-    explicit_proposal_workspace = tmp_path / "custom-proposal-workspace"
     settings = AppSettings(
         _env_file=None,
         WORKSPACE_DIR=main_workspace,
         CLAUDE_ROOT=main_root,
-        PROPOSAL_GENERATOR_WORKSPACE_DIR=explicit_proposal_workspace,
     )
 
     assert settings.main_workspace_dir == main_workspace
-    assert settings.attribution_analyzer_workspace_dir == main_workspace.parent / "attribution-analyzer-workspace"
-    assert settings.proposal_generator_workspace_dir == explicit_proposal_workspace
-    assert settings.execution_optimizer_workspace_dir == main_workspace.parent / "execution-optimizer-workspace"
+    assert settings.governor_workspace_dir == main_workspace.parent / "governor-workspace"
     assert settings.main_claude_root == main_root
-    assert settings.attribution_analyzer_claude_root == main_root.parent / "attribution-analyzer"
-    assert settings.proposal_generator_claude_root == main_root.parent / "proposal-generator"
-    assert settings.execution_optimizer_claude_root == main_root.parent / "execution-optimizer"
+    assert settings.governor_claude_root == main_root.parent / "governor"
     assert settings.claude_home == main_root / ".claude"
+
+
+def test_settings_honors_explicit_governor_workspace_override(tmp_path):
+    main_workspace = tmp_path / "runtime" / "main-workspace"
+    main_root = tmp_path / "runtime" / "claude-roots" / "main"
+    explicit_governor_workspace = tmp_path / "custom-governor-workspace"
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=main_workspace,
+        CLAUDE_ROOT=main_root,
+        GOVERNOR_WORKSPACE_DIR=explicit_governor_workspace,
+    )
+
+    assert settings.governor_workspace_dir == explicit_governor_workspace
+    assert settings.governor_claude_root == main_root.parent / "governor"
 
 
 def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):

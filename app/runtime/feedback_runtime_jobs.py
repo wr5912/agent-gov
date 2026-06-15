@@ -2,13 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .agent_profiles import (
-    ATTRIBUTION_ANALYZER_PROFILE,
-    EVAL_CASE_GOVERNOR_PROFILE,
-    EXECUTION_OPTIMIZER_PROFILE,
-    PROPOSAL_GENERATOR_PROFILE,
-    REGRESSION_IMPACT_ANALYZER_PROFILE,
-)
+from .agent_profiles import GOVERNOR_PROFILE
 from .json_types import JsonObject
 from .response_schemas.agent_job_response_schemas import AgentJobResponse
 from .response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationBatchResponse
@@ -27,7 +21,7 @@ class FeedbackRuntimeJobsMixin:
         return self._agent_job_response(
             self.feedback_store.queue_attribution_agent_job(
                 feedback_case_id,
-                profile_version=self.profile_version_snapshot(ATTRIBUTION_ANALYZER_PROFILE),
+                profile_version=self.profile_version_snapshot(GOVERNOR_PROFILE),
                 force=force,
             )
         )
@@ -59,7 +53,7 @@ class FeedbackRuntimeJobsMixin:
         return self._agent_job_response(
             self.feedback_store.queue_batch_plan_agent_job(
                 batch_id,
-                profile_version=self.profile_version_snapshot(PROPOSAL_GENERATOR_PROFILE),
+                profile_version=self.profile_version_snapshot(GOVERNOR_PROFILE),
                 force=force,
                 regeneration_instruction=regeneration_instruction,
             )
@@ -76,7 +70,7 @@ class FeedbackRuntimeJobsMixin:
         return self._agent_job_response(
             self.feedback_store.queue_execution_agent_job(
                 optimization_task_id,
-                profile_version=self.profile_version_snapshot(EXECUTION_OPTIMIZER_PROFILE),
+                profile_version=self.profile_version_snapshot(GOVERNOR_PROFILE),
                 force=force,
             )
         )
@@ -104,7 +98,7 @@ class FeedbackRuntimeJobsMixin:
                 batch_id=batch_id,
                 limit=limit,
                 force=force,
-                profile_version=self.profile_version_snapshot(EVAL_CASE_GOVERNOR_PROFILE),
+                profile_version=self.profile_version_snapshot(GOVERNOR_PROFILE),
             )
         )
 
@@ -114,7 +108,7 @@ class FeedbackRuntimeJobsMixin:
         return self._agent_job_response(
             self.feedback_store.queue_regression_impact_agent_job(
                 eval_run_id,
-                profile_version=self.profile_version_snapshot(REGRESSION_IMPACT_ANALYZER_PROFILE),
+                profile_version=self.profile_version_snapshot(GOVERNOR_PROFILE),
                 force=force,
             )
         )

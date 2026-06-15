@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from app.runtime.agent_profiles import MAIN_AGENT_PROFILE, build_profiles
+from app.runtime.agent_profiles import GOVERNOR_PROFILE, MAIN_AGENT_PROFILE, build_profiles
 from app.runtime.mcp_config import McpConfigError, filtered_mcp_servers, resolve_main_mcp_config_path
 from app.runtime.settings import AppSettings
 
@@ -100,7 +100,7 @@ def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_p
     profiles = build_profiles(settings)
 
     assert profiles[MAIN_AGENT_PROFILE].mcp_config_path == workspace / ".mcp.json"
-    assert profiles["attribution-analyzer"].mcp_config_path.name == ".mcp.json"
+    assert profiles[GOVERNOR_PROFILE].mcp_config_path.name == ".mcp.json"
 
 
 def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:

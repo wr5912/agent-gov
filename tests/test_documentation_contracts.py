@@ -38,17 +38,13 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     readme = _read_repo_text("README.md")
     structure = readme.split("## 目录结构", 1)[1].split("## 快速启动", 1)[0]
 
-    # 实际模板根是 docker/runtime-template/，且其下六个 workspace 真实存在。
+    # 实际模板根是 docker/runtime-template/，五个治理 workspace 已合并为单一 governor（Issue #3）。
     assert "runtime-template/" in structure
     template_root = REPO_ROOT / "docker" / "runtime-template"
     assert template_root.is_dir()
     for workspace in (
         "main-workspace",
-        "attribution-analyzer-workspace",
-        "proposal-generator-workspace",
-        "execution-optimizer-workspace",
-        "eval-case-governor-workspace",
-        "regression-impact-analyzer-workspace",
+        "governor-workspace",
     ):
         assert f"{workspace}/" in structure, f"README 结构缺少 {workspace}"
         assert (template_root / workspace).is_dir(), f"模板缺少 {workspace}"

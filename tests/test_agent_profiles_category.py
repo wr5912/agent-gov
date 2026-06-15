@@ -47,13 +47,7 @@ def test_build_business_agent_profile_is_governed_business_object() -> None:
     assert profile.category == "business"
     assert profile.name == "soc-ops"
     assert profile.workspace_dir == workspace
-    governance_roots = {
-        settings.attribution_analyzer_claude_root,
-        settings.proposal_generator_claude_root,
-        settings.execution_optimizer_claude_root,
-        settings.eval_case_governor_claude_root,
-        settings.regression_impact_analyzer_claude_root,
-    }
+    governance_roots = {settings.governor_claude_root}
     assert governance_roots <= set(profile.denied_paths)
     assert isinstance(profile.workspace_dir, Path)
 
@@ -71,13 +65,7 @@ def test_business_agent_is_governed_object_governance_agents_are_executors() -> 
     main = profiles["main-agent"]
 
     # 业务 Agent（被治理对象）不得写入治理 Agent 的根目录。
-    governance_roots = {
-        settings.attribution_analyzer_claude_root,
-        settings.proposal_generator_claude_root,
-        settings.execution_optimizer_claude_root,
-        settings.eval_case_governor_claude_root,
-        settings.regression_impact_analyzer_claude_root,
-    }
+    governance_roots = {settings.governor_claude_root}
     assert governance_roots <= set(main.denied_paths)
 
     # 治理 Agent（执行者）不持有可写工作区，输出经后端投影而非直接落地。

@@ -16,37 +16,25 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     workspace = root / "main-workspace"
     data = root / "data"
     claude_root = root / "claude-roots" / "main"
-    attribution_workspace = root / "attribution-analyzer-workspace"
-    proposal_workspace = root / "proposal-generator-workspace"
-    optimizer_workspace = root / "execution-optimizer-workspace"
-    attribution_root = root / "claude-roots" / "attribution-analyzer"
-    proposal_root = root / "claude-roots" / "proposal-generator"
-    optimizer_root = root / "claude-roots" / "execution-optimizer"
+    governor_workspace = root / "governor-workspace"
+    governor_root = root / "claude-roots" / "governor"
     for path in (
         workspace,
         data,
         claude_root / ".claude",
-        attribution_workspace,
-        proposal_workspace,
-        optimizer_workspace,
-        attribution_root / ".claude",
-        proposal_root / ".claude",
-        optimizer_root / ".claude",
+        governor_workspace,
+        governor_root / ".claude",
     ):
         path.mkdir(parents=True, exist_ok=True)
     workspace.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
 
     monkeypatch.setenv("WORKSPACE_DIR", str(workspace))
     monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(workspace))
-    monkeypatch.setenv("ATTRIBUTION_ANALYZER_WORKSPACE_DIR", str(attribution_workspace))
-    monkeypatch.setenv("PROPOSAL_GENERATOR_WORKSPACE_DIR", str(proposal_workspace))
-    monkeypatch.setenv("EXECUTION_OPTIMIZER_WORKSPACE_DIR", str(optimizer_workspace))
+    monkeypatch.setenv("GOVERNOR_WORKSPACE_DIR", str(governor_workspace))
     monkeypatch.setenv("DATA_DIR", str(data))
     monkeypatch.setenv("CLAUDE_ROOT", str(claude_root))
     monkeypatch.setenv("MAIN_CLAUDE_ROOT", str(claude_root))
-    monkeypatch.setenv("ATTRIBUTION_ANALYZER_CLAUDE_ROOT", str(attribution_root))
-    monkeypatch.setenv("PROPOSAL_GENERATOR_CLAUDE_ROOT", str(proposal_root))
-    monkeypatch.setenv("EXECUTION_OPTIMIZER_CLAUDE_ROOT", str(optimizer_root))
+    monkeypatch.setenv("GOVERNOR_CLAUDE_ROOT", str(governor_root))
     monkeypatch.setenv("CLAUDE_HOME", str(claude_root / ".claude"))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
@@ -902,7 +890,7 @@ def test_feedback_optimization_batch_full_api_e2e(monkeypatch, tmp_path):
     assert plan_job.status == "completed"
     assert execution_job.status == "completed"
     assert impact_job.status == "completed"
-    assert plan["generated_by"] == "proposal-generator"
+    assert plan["generated_by"] == "governor"
     assert plan["optimization_plan_job_id"]
     assert plan_task["schema_version"] == "feedback-optimization-plan-task/v3"
     assert plan_task["task_context"]["target_file"] == "CLAUDE.md"

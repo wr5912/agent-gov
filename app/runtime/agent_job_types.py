@@ -11,13 +11,7 @@ configure_litellm_import_defaults()
 
 import dspy
 
-from .agent_profiles import (
-    ATTRIBUTION_ANALYZER_PROFILE,
-    EVAL_CASE_GOVERNOR_PROFILE,
-    EXECUTION_OPTIMIZER_PROFILE,
-    PROPOSAL_GENERATOR_PROFILE,
-    REGRESSION_IMPACT_ANALYZER_PROFILE,
-)
+from .agent_profiles import GOVERNOR_PROFILE
 from .feedback_schemas import (
     AttributionFormatterOutput,
     AttributionOutput,
@@ -175,7 +169,7 @@ def _regression_impact_prompt_builder(job_input: JsonObject) -> str:
 AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
     AgentJobType.ATTRIBUTION: AgentJobSpec(
         job_type=AgentJobType.ATTRIBUTION,
-        profile_name=ATTRIBUTION_ANALYZER_PROFILE,
+        profile_name=GOVERNOR_PROFILE,
         prompt_builder=_attribution_prompt_builder,
         output_model=AttributionOutput,
         formatter_output_model=AttributionFormatterOutput,
@@ -183,7 +177,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
     ),
     AgentJobType.BATCH_PLAN: AgentJobSpec(
         job_type=AgentJobType.BATCH_PLAN,
-        profile_name=PROPOSAL_GENERATOR_PROFILE,
+        profile_name=GOVERNOR_PROFILE,
         prompt_builder=_proposal_prompt_builder,
         output_model=FeedbackOptimizationPlanOutput,
         formatter_output_model=FeedbackOptimizationPlanFormatterOutput,
@@ -191,7 +185,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
     ),
     AgentJobType.EXECUTION: AgentJobSpec(
         job_type=AgentJobType.EXECUTION,
-        profile_name=EXECUTION_OPTIMIZER_PROFILE,
+        profile_name=GOVERNOR_PROFILE,
         prompt_builder=_execution_prompt_builder,
         output_model=ExecutionPlanOutput,
         formatter_output_model=ExecutionPlanFormatterOutput,
@@ -199,7 +193,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
     ),
     AgentJobType.EVAL_CASE_GENERATION: AgentJobSpec(
         job_type=AgentJobType.EVAL_CASE_GENERATION,
-        profile_name=EVAL_CASE_GOVERNOR_PROFILE,
+        profile_name=GOVERNOR_PROFILE,
         prompt_builder=_eval_case_prompt_builder,
         output_model=FeedbackEvalCaseGenerationOutput,
         formatter_output_model=FeedbackEvalCaseGenerationFormatterOutput,
@@ -207,7 +201,7 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
     ),
     AgentJobType.REGRESSION_IMPACT_ANALYSIS: AgentJobSpec(
         job_type=AgentJobType.REGRESSION_IMPACT_ANALYSIS,
-        profile_name=REGRESSION_IMPACT_ANALYZER_PROFILE,
+        profile_name=GOVERNOR_PROFILE,
         prompt_builder=_regression_impact_prompt_builder,
         output_model=RegressionImpactAnalysisOutput,
         formatter_output_model=RegressionImpactAnalysisFormatterOutput,

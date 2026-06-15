@@ -63,3 +63,7 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 ## 落地方式
 
 本合并为原子重构（半合并的 profile 系统会破坏闭环），须一次性改完上述清单再过 `make test`，不推半成品。建议作为独立专注提交执行（不与其他 issue 混提）。
+
+## 落地状态
+
+已落地。五个治理 profile 合并为单一 `governor`（profile 名、`AgentRole`、`GOVERNANCE_AGENT_ROLES`、`PROFILE_VERSION_IDS`、`build_profiles` 均收敛为 main + governor）；workspace 合并为 `governor-workspace`，claude_root 合并为 `claude-roots/governor`。`AGENT_JOB_SPECS` 五个 job_type 统一指向 `GOVERNOR_PROFILE`，prompt/output_model/formatter 仍按 job_type 选择，闭环链路与输出契约不变。settings、docker-compose、Dockerfile、entrypoint、runtime-template、bootstrap/export/renderer 脚本、env 示例与 README 同步收敛为两套 profile，历史 job 记录的旧 `profile_name` 作为历史元数据保留、无需 DB 迁移。

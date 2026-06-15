@@ -140,7 +140,7 @@ def test_agent_job_worker_maps_auth_required_failure(tmp_path, caplog):
 
     async def fail_auth(**_kwargs):
         raise AgentAuthenticationRequiredError(
-            profile_name="eval-case-governor",
+            profile_name="governor",
             runtime_volume_mode="local-debug",
             settings_env_file="docker/.env.local-debug",
             missing=["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"],

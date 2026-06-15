@@ -21,11 +21,9 @@ docker run --rm --user 0:0 \
   -v "$TARGET_ROOT:/target" \
   "$IMAGE" sh -eu -c '
     for path in \
-      main-workspace attribution-analyzer-workspace proposal-generator-workspace \
-      execution-optimizer-workspace eval-case-governor-workspace regression-impact-analyzer-workspace \
+      main-workspace governor-workspace \
       data \
-      claude-roots/main claude-roots/attribution-analyzer claude-roots/proposal-generator \
-      claude-roots/execution-optimizer claude-roots/eval-case-governor claude-roots/regression-impact-analyzer
+      claude-roots/main claude-roots/governor
     do
       [ -e "/target/$path" ] || continue
       chown -R "$HOST_UID:$HOST_GID" "/target/$path"

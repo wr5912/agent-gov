@@ -43,11 +43,7 @@ _RUNTIME_ENV_FILE_MODES = {
 }
 PROFILE_NAMES = (
     "main",
-    "attribution-analyzer",
-    "proposal-generator",
-    "execution-optimizer",
-    "eval-case-governor",
-    "regression-impact-analyzer",
+    "governor",
 )
 RUNTIME_DATA_DIRS = (
     "data/sessions",
@@ -262,11 +258,7 @@ def _is_stale_template_doc_candidate(rel_path: Path, template_files: set[Path]) 
 def _workspace_dir_names() -> set[str]:
     return {
         "main-workspace",
-        "attribution-analyzer-workspace",
-        "proposal-generator-workspace",
-        "execution-optimizer-workspace",
-        "eval-case-governor-workspace",
-        "regression-impact-analyzer-workspace",
+        "governor-workspace",
     }
 
 

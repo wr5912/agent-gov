@@ -582,13 +582,13 @@ def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(t
 
     attribution_job = asyncio.run(runtime.run_attribution_job(feedback_case["feedback_case_id"]))
 
-    assert attribution_job.profile_name == "attribution-analyzer"
+    assert attribution_job.profile_name == "governor"
     assert attribution_job.status == "failed"
     assert attribution_job.error_json is not None
     assert attribution_job.error_json.error_code == "AGENT_RUNTIME_ERROR"
     assert attribution_job.error_json.message is not None
     assert "formatter unavailable" in attribution_job.error_json.message
-    assert attribution_job.profile_name == "attribution-analyzer"
+    assert attribution_job.profile_name == "governor"
 
 
 def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(tmp_path, monkeypatch):
@@ -692,7 +692,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     assert "attribution_prompt_context" in str(seen["prompt_text"])
     assert "输入文件：" not in str(seen["prompt_text"])
     assert "tool_calls.json" in str(seen["prompt_text"])
-    assert seen["cwd"] == settings.attribution_analyzer_workspace_dir
+    assert seen["cwd"] == settings.governor_workspace_dir
     assert seen["max_turns"] == 16
     assert seen["formatter_job_type"] == "attribution"
     assert "tool_data_quality" in str(seen["formatter_raw_text"])

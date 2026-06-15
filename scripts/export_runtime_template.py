@@ -19,27 +19,15 @@ DEFAULT_STAGING_DIR = Path("docker/.runtime-template-staging")
 DEFAULT_ENV_FILE = Path("docker/.env")
 WORKSPACE_DIR_NAMES = {
     "main-workspace",
-    "attribution-analyzer-workspace",
-    "proposal-generator-workspace",
-    "execution-optimizer-workspace",
-    "eval-case-governor-workspace",
-    "regression-impact-analyzer-workspace",
+    "governor-workspace",
 }
 WORKSPACE_CONTAINER_PATHS = {
     "main-workspace": "/main-workspace",
-    "attribution-analyzer-workspace": "/attribution-analyzer-workspace",
-    "proposal-generator-workspace": "/proposal-generator-workspace",
-    "execution-optimizer-workspace": "/execution-optimizer-workspace",
-    "eval-case-governor-workspace": "/eval-case-governor-workspace",
-    "regression-impact-analyzer-workspace": "/regression-impact-analyzer-workspace",
+    "governor-workspace": "/governor-workspace",
 }
 CLAUDE_ROOT_CONTAINER_PATHS = {
     "main": "/claude-roots/main",
-    "attribution-analyzer": "/claude-roots/attribution-analyzer",
-    "proposal-generator": "/claude-roots/proposal-generator",
-    "execution-optimizer": "/claude-roots/execution-optimizer",
-    "eval-case-governor": "/claude-roots/eval-case-governor",
-    "regression-impact-analyzer": "/claude-roots/regression-impact-analyzer",
+    "governor": "/claude-roots/governor",
 }
 EXCLUDED_DIR_NAMES = {
     ".git",

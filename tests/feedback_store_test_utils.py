@@ -22,31 +22,15 @@ from pydantic import ValidationError
 
 def _settings(tmp_path):
     workspace = tmp_path / "docker" / "volume" / "main-workspace"
-    attribution_workspace = tmp_path / "docker" / "volume" / "attribution-analyzer-workspace"
-    proposal_workspace = tmp_path / "docker" / "volume" / "proposal-generator-workspace"
-    execution_workspace = tmp_path / "docker" / "volume" / "execution-optimizer-workspace"
-    eval_case_governor_workspace = tmp_path / "docker" / "volume" / "eval-case-governor-workspace"
-    regression_impact_workspace = tmp_path / "docker" / "volume" / "regression-impact-analyzer-workspace"
+    governor_workspace = tmp_path / "docker" / "volume" / "governor-workspace"
     data = tmp_path / "docker" / "volume" / "data"
     claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
-    attribution_root = tmp_path / "docker" / "volume" / "claude-roots" / "attribution-analyzer"
-    proposal_root = tmp_path / "docker" / "volume" / "claude-roots" / "proposal-generator"
-    execution_root = tmp_path / "docker" / "volume" / "claude-roots" / "execution-optimizer"
-    eval_case_governor_root = tmp_path / "docker" / "volume" / "claude-roots" / "eval-case-governor"
-    regression_impact_root = tmp_path / "docker" / "volume" / "claude-roots" / "regression-impact-analyzer"
+    governor_root = tmp_path / "docker" / "volume" / "claude-roots" / "governor"
     for path in (
         workspace,
-        attribution_workspace,
-        proposal_workspace,
-        execution_workspace,
-        eval_case_governor_workspace,
-        regression_impact_workspace,
+        governor_workspace,
         claude_root / ".claude",
-        attribution_root / ".claude",
-        proposal_root / ".claude",
-        execution_root / ".claude",
-        eval_case_governor_root / ".claude",
-        regression_impact_root / ".claude",
+        governor_root / ".claude",
     ):
         path.mkdir(parents=True, exist_ok=True)
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
@@ -55,19 +39,11 @@ def _settings(tmp_path):
         _env_file=None,
         WORKSPACE_DIR=workspace,
         MAIN_WORKSPACE_DIR=workspace,
-        ATTRIBUTION_ANALYZER_WORKSPACE_DIR=attribution_workspace,
-        PROPOSAL_GENERATOR_WORKSPACE_DIR=proposal_workspace,
-        EXECUTION_OPTIMIZER_WORKSPACE_DIR=execution_workspace,
-        EVAL_CASE_GOVERNOR_WORKSPACE_DIR=eval_case_governor_workspace,
-        REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR=regression_impact_workspace,
+        GOVERNOR_WORKSPACE_DIR=governor_workspace,
         DATA_DIR=data,
         CLAUDE_ROOT=claude_root,
         MAIN_CLAUDE_ROOT=claude_root,
-        ATTRIBUTION_ANALYZER_CLAUDE_ROOT=attribution_root,
-        PROPOSAL_GENERATOR_CLAUDE_ROOT=proposal_root,
-        EXECUTION_OPTIMIZER_CLAUDE_ROOT=execution_root,
-        EVAL_CASE_GOVERNOR_CLAUDE_ROOT=eval_case_governor_root,
-        REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT=regression_impact_root,
+        GOVERNOR_CLAUDE_ROOT=governor_root,
         CLAUDE_HOME=claude_root / ".claude",
         MODEL_PROVIDER_API_KEY="sk-test-provider",
     )

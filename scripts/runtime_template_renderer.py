@@ -13,19 +13,11 @@ UNRESOLVED_TEMPLATE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}")
 
 _PROFILE_WORKSPACE_DEFAULTS = {
     "main-workspace": ("MAIN_WORKSPACE_DIR", "/main-workspace"),
-    "attribution-analyzer-workspace": ("ATTRIBUTION_ANALYZER_WORKSPACE_DIR", "/attribution-analyzer-workspace"),
-    "proposal-generator-workspace": ("PROPOSAL_GENERATOR_WORKSPACE_DIR", "/proposal-generator-workspace"),
-    "execution-optimizer-workspace": ("EXECUTION_OPTIMIZER_WORKSPACE_DIR", "/execution-optimizer-workspace"),
-    "eval-case-governor-workspace": ("EVAL_CASE_GOVERNOR_WORKSPACE_DIR", "/eval-case-governor-workspace"),
-    "regression-impact-analyzer-workspace": ("REGRESSION_IMPACT_ANALYZER_WORKSPACE_DIR", "/regression-impact-analyzer-workspace"),
+    "governor-workspace": ("GOVERNOR_WORKSPACE_DIR", "/governor-workspace"),
 }
 _PROFILE_CLAUDE_ROOT_DEFAULTS = {
     "main": ("MAIN_CLAUDE_ROOT", "/claude-roots/main"),
-    "attribution-analyzer": ("ATTRIBUTION_ANALYZER_CLAUDE_ROOT", "/claude-roots/attribution-analyzer"),
-    "proposal-generator": ("PROPOSAL_GENERATOR_CLAUDE_ROOT", "/claude-roots/proposal-generator"),
-    "execution-optimizer": ("EXECUTION_OPTIMIZER_CLAUDE_ROOT", "/claude-roots/execution-optimizer"),
-    "eval-case-governor": ("EVAL_CASE_GOVERNOR_CLAUDE_ROOT", "/claude-roots/eval-case-governor"),
-    "regression-impact-analyzer": ("REGRESSION_IMPACT_ANALYZER_CLAUDE_ROOT", "/claude-roots/regression-impact-analyzer"),
+    "governor": ("GOVERNOR_CLAUDE_ROOT", "/claude-roots/governor"),
 }
 _MANAGED_ACTIVE_FILENAMES = {".mcp.json", "agent.yaml"}
 _MANAGED_JSON_FILENAMES = {".mcp.json", "settings.json"}
@@ -166,11 +158,7 @@ def _container_path_markers() -> tuple[str, ...]:
             sorted(
                 [
                     "/main-workspace",
-                    "/attribution-analyzer-workspace",
-                    "/proposal-generator-workspace",
-                    "/execution-optimizer-workspace",
-                    "/eval-case-governor-workspace",
-                    "/regression-impact-analyzer-workspace",
+                    "/governor-workspace",
                     "/claude-roots",
                     "/data",
                 ],

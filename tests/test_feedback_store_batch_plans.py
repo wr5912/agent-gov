@@ -763,7 +763,7 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     plan_task = plan.tasks[0]
     job = store.get_job(updated.optimization_plan_job_id)
 
-    assert seen["profile_name"] == "proposal-generator"
+    assert seen["profile_name"] == "governor"
     assert seen["job_type"] == "batch_plan"
     assert "optimization_plan_prompt_context" in seen["prompt"]
     assert "optimization_plan_input_json" not in seen["prompt"]
@@ -771,9 +771,9 @@ def test_batch_plan_generation_uses_proposal_generator_agent_output(tmp_path, mo
     assert "job_id" not in seen["prompt"]
     assert seen["job_input"]["regeneration_instruction"] == "优先保持指令简洁"
     assert job["job_type"] == "batch_plan"
-    assert job["profile_name"] == "proposal-generator"
+    assert job["profile_name"] == "governor"
     assert job["status"] == "completed"
-    assert plan.generated_by == "proposal-generator"
+    assert plan.generated_by == "governor"
     assert plan.status == "pending_execution"
     assert plan_task.title == "补充工作区配置核查指令"
     assert plan_task.target_path == "CLAUDE.md"

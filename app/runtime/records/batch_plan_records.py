@@ -24,34 +24,12 @@ class ExtensiblePlanRecord(StrictRuntimeRecord):
     model_config = ConfigDict(extra="ignore")
 
 
-class FeedbackOptimizationInternalActionResultRecord(StrictRuntimeRecord):
-    action: Literal["promote_eval_cases"]
-    status: Literal["completed"] = "completed"
-    eval_case_ids: list[str] = Field(default_factory=list)
-    updated_eval_case_ids: list[str] = Field(default_factory=list)
-    operator: Literal["feedback_optimizer"] = "feedback_optimizer"
-    role: Literal["system"] = "system"
-    completed_at: str
-
-    @model_validator(mode="after")
-    def validate_result_shape(self) -> FeedbackOptimizationInternalActionResultRecord:
-        if not self.completed_at.strip():
-            raise ValueError("internal action result completed_at cannot be empty")
-        if not self.eval_case_ids:
-            raise ValueError("internal action result requires eval_case_ids")
-        return self
-
-    def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json")
-
-
 class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     schema_version: str = "feedback-optimization-plan-task/v3"
     plan_task_id: str
     source_index: int = 0
-    execution_kind: Literal["workspace_execution", "external_webhook", "internal_action"]
+    execution_kind: Literal["workspace_execution", "external_webhook"]
     status: str
-    internal_action: Optional[Literal["promote_eval_cases"]] = None
     title: str
     description: str = ""
     objective: str = ""
@@ -85,7 +63,6 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
     external_item_id: Optional[str] = None
     latest_webhook_alias: Optional[str] = None
     latest_notification: Optional[ExternalGovernanceNotificationRecord] = None
-    internal_action_result: Optional[FeedbackOptimizationInternalActionResultRecord] = None
     applied_agent_version_id: Optional[str] = None
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
@@ -102,11 +79,6 @@ class FeedbackOptimizationPlanTaskRecord(ExtensiblePlanRecord):
             raise ValueError("plan task target_type cannot be empty")
         if self.execution_kind == "workspace_execution" and not self.target_path:
             raise ValueError("workspace_execution plan task must include target_path")
-        if self.execution_kind == "internal_action":
-            if self.internal_action != "promote_eval_cases":
-                raise ValueError("internal_action plan task must include supported internal_action")
-            if not self.eval_case_ids:
-                raise ValueError("promote_eval_cases plan task must include eval_case_ids")
         return self
 
     def to_payload(self) -> JsonObject:

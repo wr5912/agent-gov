@@ -136,7 +136,6 @@ class FeedbackOptimizationPlanTaskSummaryRecord(StrictRuntimeRecord):
     total: int = Field(default=0, ge=0)
     workspace_execution: int = Field(default=0, ge=0)
     external_webhook: int = Field(default=0, ge=0)
-    internal_action: int = Field(default=0, ge=0)
 
 
 class FeedbackOptimizationBlockedSummaryRecord(StrictRuntimeRecord):

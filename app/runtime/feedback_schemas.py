@@ -72,11 +72,6 @@ def _annotate_incomplete_formatter_tasks(agent_output: JsonObject) -> JsonObject
         if not isinstance(task, dict):
             annotated_tasks.append(task)
             continue
-        task_payload = cast(JsonObject, task)
-        annotated_task = _annotate_eval_case_promotion_formatter_task(task_payload)
-        if annotated_task is not task_payload:
-            changed = True
-        task = annotated_task
         missing_fields = _missing_formatter_task_fields(task)
         if not missing_fields:
             annotated_tasks.append(task)
@@ -101,33 +96,6 @@ def _annotate_incomplete_formatter_tasks(agent_output: JsonObject) -> JsonObject
     annotated_output = dict(agent_output)
     annotated_output["tasks"] = annotated_tasks
     return cast(JsonObject, annotated_output)
-
-
-def _annotate_eval_case_promotion_formatter_task(task: JsonObject) -> JsonObject:
-    if not _looks_like_eval_case_promotion_formatter_task(task):
-        return task
-    annotated = dict(task)
-    annotated.setdefault("execution_kind", "internal_action")
-    annotated.setdefault("internal_action", "promote_eval_cases")
-    annotated.setdefault("target_type", "eval_case")
-    annotated.setdefault("actionability", "regression_asset_governance")
-    return annotated
-
-
-def _looks_like_eval_case_promotion_formatter_task(task: JsonObject) -> bool:
-    if _has_formatter_value(task.get("target_path")):
-        return False
-    internal_action = str(task.get("internal_action") or "").strip()
-    if internal_action in {"promote_eval_cases", "promote_eval_case", "eval_case_promotion"}:
-        return True
-    target_type = str(task.get("target_type") or task.get("optimization_object_type") or "").strip()
-    actionability = str(task.get("actionability") or "").strip()
-    if target_type == "eval_case" and actionability in {"regression_asset_governance", "eval_case_promotion"}:
-        return True
-    text = " ".join(str(task.get(key) or "") for key in ("title", "description", "objective", "recommendation", "expected_effect"))
-    return bool(_has_formatter_value(task.get("eval_case_ids"))) and any(
-        keyword in text for keyword in ("晋级", "提升为活跃", "提升为 active", "promotion_status", "回归资产")
-    )
 
 
 def _missing_formatter_task_fields(task: JsonObject) -> list[str]:
@@ -199,7 +167,6 @@ Actionability = Literal[
     "eval_only",
     "external_guidance",
     "runtime_fix",
-    "regression_asset_governance",
     "needs_human_analysis",
     "not_actionable",
 ]
@@ -258,9 +225,8 @@ class TaskContext(NormalizedTaskContext):
 class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
     plan_task_id: Optional[str] = None
     source_index: int = 0
-    execution_kind: Literal["workspace_execution", "external_webhook", "internal_action"]
+    execution_kind: Literal["workspace_execution", "external_webhook"]
     status: Literal["pending_execution", "pending_notification", "needs_human_review"] | str = ""
-    internal_action: Optional[Literal["promote_eval_cases"]] = None
     title: str
     description: str
     objective: str
@@ -299,13 +265,6 @@ class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
                 raise ValueError("external_webhook task must include actionable task_context")
             if not self.status:
                 self.status = "pending_notification"
-        if self.execution_kind == "internal_action":
-            if self.internal_action != "promote_eval_cases":
-                raise ValueError("internal_action task must include supported internal_action")
-            if not self.eval_case_ids:
-                raise ValueError("promote_eval_cases task must include eval_case_ids")
-            if not self.status:
-                self.status = "pending_execution"
         return self
 
 

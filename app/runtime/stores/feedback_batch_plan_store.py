@@ -19,7 +19,6 @@ from ..records.batch_plan_records import (
     FeedbackOptimizationPlanRecord,
     FeedbackOptimizationPlanTaskRecord,
 )
-from ..response_schemas.feedback_workflow_response_schemas import FeedbackOptimizationPlanTaskExecuteResponse
 from ..runtime_db import utc_now
 
 BATCH_PLAN_ACTIVE_JOB_STATUSES = {"created", "queued", "running", "schema_validating", "evidence_packaging"}
@@ -353,57 +352,6 @@ class FeedbackBatchPlanStoreMixin:
             batch_status=str(batch.get("status") or "pending_execution"),
         )
         return {"batch": updated, "external_item": notified, "plan_task": self._plan_task_from_batch(updated, plan_task_id)}
-
-    def execute_batch_plan_task_internal_action(
-        self,
-        batch_id: str,
-        plan_task_id: str,
-        *,
-        reason: Optional[str] = None,
-    ) -> Optional[FeedbackOptimizationPlanTaskExecuteResponse]:
-        result = self._execute_batch_plan_task_internal_action(batch_id, plan_task_id, reason=reason)
-        return FeedbackOptimizationPlanTaskExecuteResponse.model_validate(result) if result else None
-
-    def _execute_batch_plan_task_internal_action(
-        self,
-        batch_id: str,
-        plan_task_id: str,
-        *,
-        reason: Optional[str] = None,
-    ) -> Optional[JsonObject]:
-        batch, plan, plan_task = self._batch_plan_task(batch_id, plan_task_id)
-        if not batch or not plan or not plan_task:
-            return None
-        if plan_task.get("execution_kind") != "internal_action":
-            raise BusinessRuleViolation("Optimization plan task is not an internal action task")
-        if plan_task.get("internal_action") != "promote_eval_cases":
-            raise BusinessRuleViolation("Unsupported internal action")
-
-        eval_case_ids = self._internal_action_eval_case_ids(batch, plan_task)
-        now = utc_now()
-        action_reason = self._string(reason) or self._string(plan_task.get("recommendation")) or "反馈优化批次内部动作晋级回归资产"
-        with self.Session.begin() as db:
-            updated_cases = self._promote_eval_cases_for_internal_action(db, eval_case_ids, now, action_reason)
-            result = self._internal_action_result_payload(eval_case_ids, updated_cases, now)
-            if not self._update_batch_plan_task_row(
-                db,
-                batch_id,
-                plan_task_id,
-                {
-                    "status": "completed",
-                    "internal_action_result": result,
-                },
-                batch_status=str(batch.get("status") or "pending_execution"),
-            ):
-                raise BusinessRuleViolation("Optimization plan task not found")
-
-        updated = self.find_optimization_batch(batch_id)
-        return {
-            "batch": updated,
-            "plan_task": self._plan_task_from_batch(updated, plan_task_id),
-            "eval_cases": updated_cases,
-            "internal_action_result": result,
-        }
 
     def _non_actionable_plan(self, batch: JsonObject, reason: str, regeneration_instruction: Optional[str] = None) -> JsonObject:
         blocked_items = [

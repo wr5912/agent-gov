@@ -69,7 +69,6 @@ PLAN_TASK_PROPOSAL_FIELDS = {
 
 WORKSPACE_EDITABLE_STATUSES = {"pending_execution", "execution_planning", "execution_ready", "execution_failed", "needs_human_review", "failed"}
 EXTERNAL_EDITABLE_STATUSES = {"pending_notification", "notification_failed"}
-INTERNAL_EDITABLE_STATUSES = {"pending_execution", "needs_human_review", "failed"}
 
 
 class FeedbackPlanTaskEditResultRecord(StrictRuntimeRecord):
@@ -194,7 +193,7 @@ class FeedbackPlanTaskEditStoreMixin:
     def _assert_plan_task_editable(self, plan_task: JsonObject) -> None:
         execution_kind = self._string(plan_task.get("execution_kind"))
         status = self._string(plan_task.get("status"))
-        if plan_task.get("applied_agent_version_id") or plan_task.get("internal_action_result"):
+        if plan_task.get("applied_agent_version_id"):
             raise ConflictError("Optimization plan task has already been applied")
         if execution_kind == "workspace_execution" and status not in WORKSPACE_EDITABLE_STATUSES:
             raise ConflictError("Workspace optimization task is not editable from current status")
@@ -203,8 +202,6 @@ class FeedbackPlanTaskEditStoreMixin:
                 raise ConflictError("External optimization task has already been notified")
             if status not in EXTERNAL_EDITABLE_STATUSES:
                 raise ConflictError("External optimization task is not editable from current status")
-        if execution_kind == "internal_action" and status not in INTERNAL_EDITABLE_STATUSES:
-            raise ConflictError("Internal optimization task is not editable from current status")
 
     def _edited_plan_task_payload(
         self,
@@ -236,9 +233,6 @@ class FeedbackPlanTaskEditStoreMixin:
                     "latest_notification": None,
                 }
             )
-        elif execution_kind == "internal_action":
-            self._internal_action_eval_case_ids(batch, merged)
-            merged["status"] = "pending_execution"
         else:
             raise ConflictError("Optimization plan task is not editable")
         plan_task = FeedbackOptimizationPlanTaskRecord.model_validate(merged).to_payload()

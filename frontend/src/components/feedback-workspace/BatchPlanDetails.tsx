@@ -92,7 +92,7 @@ export function BatchPlanDetails({
       />
     );
   }
-  const tasks = (plan.tasks || []).filter((task) => task.execution_kind === "workspace_execution" || task.execution_kind === "external_webhook" || task.execution_kind === "internal_action");
+  const tasks = (plan.tasks || []).filter((task) => task.execution_kind === "workspace_execution" || task.execution_kind === "external_webhook");
   const blockedItems = plan.blocked_items || [];
   const displayTitle = batchPlanDisplayTitle(batch);
   const latestRun = batch.latest_execution_run || null;

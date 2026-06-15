@@ -131,7 +131,7 @@ class BatchOptimizationExecutionService:
             results.append(self._workspace_task_result(task, context))
         apply_result = self._apply_workspace_contexts(run.batch_id, workspace_contexts, request.note)
         results = self._attach_applied_version(results, apply_result)
-        results.extend(self._execute_internal_and_external_tasks(run.batch_id, tasks, request))
+        results.extend(self._execute_external_tasks(run.batch_id, tasks, request))
         status = self._run_status_from_results(results)
         warnings = self._run_warnings(results)
         return self._completed_run(run, results, apply_result, status=status, warnings=warnings)
@@ -189,7 +189,7 @@ class BatchOptimizationExecutionService:
             note=note or f"一键执行优化批次 {batch_id}。",
         )
 
-    def _execute_internal_and_external_tasks(
+    def _execute_external_tasks(
         self,
         batch_id: str,
         tasks: list[JsonObject],
@@ -197,28 +197,10 @@ class BatchOptimizationExecutionService:
     ) -> list[FeedbackBatchExecutionTaskResultRecord]:
         results: list[FeedbackBatchExecutionTaskResultRecord] = []
         for task in tasks:
-            kind = str(task.get("execution_kind") or "")
-            if kind == "internal_action":
-                results.append(self._execute_internal_task(batch_id, task))
-            elif kind == "external_webhook":
+            if str(task.get("execution_kind") or "") == "external_webhook":
                 alias = request.webhook_alias_by_task_id[str(task["plan_task_id"])]
                 results.append(self._execute_external_task(batch_id, task, alias))
         return results
-
-    def _execute_internal_task(self, batch_id: str, plan_task: JsonObject) -> FeedbackBatchExecutionTaskResultRecord:
-        started_at = utc_now()
-        result = self.feedback_store.execute_batch_plan_task_internal_action(batch_id, str(plan_task["plan_task_id"]))
-        if not result:
-            raise NotFoundError("Optimization plan task not found")
-        return FeedbackBatchExecutionTaskResultRecord(
-            plan_task_id=str(plan_task["plan_task_id"]),
-            execution_kind="internal_action",
-            status="completed",
-            started_at=started_at,
-            completed_at=utc_now(),
-            internal_action=str(plan_task.get("internal_action") or ""),
-            summary="内部治理动作已完成。",
-        )
 
     def _execute_external_task(self, batch_id: str, plan_task: JsonObject, alias: str) -> FeedbackBatchExecutionTaskResultRecord:
         started_at = utc_now()
@@ -253,7 +235,7 @@ class BatchOptimizationExecutionService:
         if not plan:
             raise BusinessRuleViolation("Optimization plan has not been generated")
         tasks = [dict(item) for item in plan.get("tasks") or [] if isinstance(item, dict)]
-        executable = [item for item in tasks if item.get("execution_kind") in {"workspace_execution", "external_webhook", "internal_action"}]
+        executable = [item for item in tasks if item.get("execution_kind") in {"workspace_execution", "external_webhook"}]
         if not executable:
             raise ConflictError("Optimization plan has no executable tasks")
         return batch, executable
@@ -265,8 +247,6 @@ class BatchOptimizationExecutionService:
                 self._prevalidate_workspace_task(task)
             elif kind == "external_webhook" and not request.webhook_alias_by_task_id.get(str(task.get("plan_task_id"))):
                 raise BusinessRuleViolation(f"Webhook alias is required for external task {task.get('plan_task_id')}")
-            elif kind == "internal_action" and task.get("internal_action") != "promote_eval_cases":
-                raise BusinessRuleViolation(f"Unsupported internal action for task {task.get('plan_task_id')}")
 
     def _prevalidate_workspace_task(self, task: JsonObject) -> None:
         target_path = str(task.get("target_path") or "").strip()

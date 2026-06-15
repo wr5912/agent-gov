@@ -145,8 +145,6 @@ class NormalizedActionabilityValue(StrictRuntimeRecord):
             "workspace_change": "direct_workspace_change",
             "external": "external_guidance",
             "external_task": "external_guidance",
-            "eval_case_promotion": "regression_asset_governance",
-            "regression_asset": "regression_asset_governance",
             "not_applicable": "not_actionable",
         }
         actionability = aliases.get(actionability, actionability)
@@ -156,7 +154,6 @@ class NormalizedActionabilityValue(StrictRuntimeRecord):
             "eval_only",
             "external_guidance",
             "runtime_fix",
-            "regression_asset_governance",
             "needs_human_analysis",
             "not_actionable",
         }
@@ -245,7 +242,6 @@ class NormalizedOptimizationPlanTask(NormalizedOutputRecord):
     source_index: int = 0
     execution_kind: str
     status: str
-    internal_action: JsonValue = None
     title: JsonValue = None
     description: JsonValue = None
     objective: JsonValue = None

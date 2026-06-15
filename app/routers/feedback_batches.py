@@ -299,9 +299,6 @@ def _register_batch_plan_task_routes(
         batch = ensure_found(batch, "Feedback optimization batch not found")
         plan_task = ensure_found(_batch_plan_task(batch, plan_task_id), "Optimization plan task not found")
         execution_kind = plan_task.execution_kind
-        if execution_kind == "internal_action":
-            result = feedback_store.execute_batch_plan_task_internal_action(batch_id, plan_task_id)
-            return ensure_found(result, "Optimization plan task not found")
         if execution_kind == "external_webhook":
             require_request(bool(req.webhook_alias), "webhook_alias is required for external tasks")
             result = feedback_store.notify_batch_plan_task_external(batch_id, plan_task_id, webhook_alias=req.webhook_alias)

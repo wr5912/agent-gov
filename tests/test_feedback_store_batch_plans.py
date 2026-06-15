@@ -1,4 +1,4 @@
-from app.runtime.errors import BusinessRuleViolation, ConflictError
+from app.runtime.errors import ConflictError
 from app.runtime.feedback_schemas import FeedbackOptimizationPlanFormatterOutput
 from app.runtime.records.batch_plan_records import FeedbackOptimizationPlanTaskRecord
 from app.runtime.runtime_db import AgentJobModel, FeedbackOptimizationBatchModel
@@ -971,7 +971,10 @@ def test_batch_plan_external_task_notifies_selected_webhook(tmp_path):
         store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新生成外部任务")
 
 
-def test_batch_plan_internal_action_promotes_batch_eval_cases(tmp_path):
+def test_batch_plan_rejects_eval_case_promotion_task_from_agent_output(tmp_path):
+    # 防复发硬保护：漂移或敌意的 agent 输出即便显式声明 execution_kind=internal_action /
+    # internal_action=promote_eval_cases，后端也不再承认它是可执行任务，更不会自动晋级评估用例。
+    # 评估用例纳入长期回归资产只能由用户在“回归测试用例”界面手动决定（Issue #3 第2点）。
     store, _ = _store(tmp_path)
     batch = _create_batch_with_completed_attribution(store)
     feedback_case = store.find_case(batch["feedback_case_ids"][0])
@@ -1007,107 +1010,28 @@ def test_batch_plan_internal_action_promotes_batch_eval_cases(tmp_path):
                     "expected_effect": "后续版本回归可覆盖该反馈场景。",
                     "validation": "检查用例状态和审计记录。",
                     "risk": "用例质量不足时可能降低回归信号。",
-                    "feedback_case_ids": ["fbc-agent-wrong"],
-                    "eval_case_ids": ["evc-agent-wrong", eval_case["eval_case_id"]],
-                    "attribution_job_ids": ["fba-agent-wrong"],
+                    "eval_case_ids": [eval_case["eval_case_id"]],
                 }
             ],
             blocked_items=[],
         ),
     )
     plan = completed["validated_output_json"]
-    plan_task = plan["tasks"][0]
 
-    assert eval_case["status"] == "draft"
-    assert eval_case["promotion_status"] == "candidate"
-    assert plan_task["plan_task_id"] != "fopt-agent-wrong"
-    assert plan_task["schema_version"] == "feedback-optimization-plan-task/v3"
-    assert plan_task["execution_kind"] == "internal_action"
-    assert plan_task["internal_action"] == "promote_eval_cases"
-    assert plan_task["status"] == "pending_execution"
-    assert plan_task["owner"] == "feedback_optimizer"
-    assert plan_task["target_summary"] == "internal:promote_eval_cases"
-    assert plan_task["eval_case_ids"] == batch["eval_case_ids"]
-    assert plan["task_summary"]["internal_action"] == 1
+    # 不再产生任何 internal_action 可执行任务；该项被降级为 blocked。
+    assert all(task["execution_kind"] != "internal_action" for task in plan["tasks"])
+    assert "internal_action" not in plan["task_summary"]
+    assert plan["blocked_items"], "评估用例晋级项应降级为 blocked"
+    assert all("internal_action" not in task for task in plan["tasks"])
 
-    result = store._execute_batch_plan_task_internal_action(  # noqa: SLF001
-        batch["batch_id"],
-        plan_task["plan_task_id"],
-        reason="批次内部动作测试",
-    )
-    promoted = store.find_eval_case(eval_case["eval_case_id"])
-    revisions = store.list_eval_case_revisions(eval_case["eval_case_id"])
-    events = store.list_eval_case_governance_events(eval_case["eval_case_id"])
-
-    assert result["plan_task"]["status"] == "completed"
-    assert result["plan_task"]["internal_action_result"]["operator"] == "feedback_optimizer"
-    assert result["plan_task"]["internal_action_result"]["role"] == "system"
-    assert result["plan_task"]["internal_action_result"]["updated_eval_case_ids"] == [eval_case["eval_case_id"]]
-    assert promoted["status"] == "active"
-    assert promoted["asset_layer"] == "core_regression"
-    assert promoted["promotion_status"] == "approved"
-    assert promoted["blocking_policy"] == "blocking_if_relevant"
-    assert revisions[0]["created_by"] == "feedback_optimizer"
-    assert revisions[0]["reason"] == "批次内部动作测试"
-    assert events[0]["action"] == "promote"
-    assert events[0]["operator"] == "feedback_optimizer"
-    assert events[0]["role"] == "system"
-    assert events[0]["before"]["status"] == "draft"
-    assert events[0]["after"]["status"] == "active"
-    with pytest.raises(ConflictError, match="已有内部执行结果"):
-        store.create_batch_plan_job(batch["batch_id"], force=True, regeneration_instruction="重新生成内部任务")
-
-
-def test_batch_plan_internal_action_rejects_eval_cases_outside_batch(tmp_path):
-    store, _ = _store(tmp_path)
-    batch = _create_batch_with_completed_attribution(store)
-    feedback_case = store.find_case(batch["feedback_case_ids"][0])
-    eval_job = store.queue_feedback_eval_case_generation_agent_job(batch_id=batch["batch_id"], force=True)
-    eval_result = store.complete_projected_agent_job(eval_job, _eval_case_generation_output(eval_job, feedback_case))
-    eval_case = eval_result["validated_output_json"]["eval_cases"][0]
-    batch = store.find_optimization_batch(batch["batch_id"])
-    plan = {
-        "schema_version": "feedback-optimization-plan/v1",
-        "optimization_plan_id": "fop-invalid-internal-action",
-        "batch_id": batch["batch_id"],
-        "created_at": batch["created_at"],
-        "status": "pending_execution",
-        "title": "非法内部动作方案",
-        "actionability": "regression_asset_governance",
-        "target_type": "eval_case",
-        "recommendation": "尝试晋级非本批次用例。",
-        "expected_effect": "不应执行。",
-        "validation": "必须整体拒绝。",
-        "risk": "跨批次污染回归资产。",
-        "tasks": [
-            {
-                "plan_task_id": "fopt-invalid-internal-action",
-                "execution_kind": "internal_action",
-                "internal_action": "promote_eval_cases",
-                "status": "pending_execution",
-                "title": "晋级非法用例",
-                "description": "混入非本批次 eval_case_id。",
-                "objective": "验证内部动作边界。",
-                "target_type": "eval_case",
-                "actionability": "regression_asset_governance",
-                "recommendation": "不应执行。",
-                "expected_effect": "不应变更任何用例。",
-                "validation": "检查用例仍为 draft/candidate。",
-                "risk": "跨批次污染。",
-                "eval_case_ids": [eval_case["eval_case_id"], "evc-outside-batch"],
-            }
-        ],
-        "blocked_items": [],
-    }
-    store._update_batch(batch["batch_id"], status="pending_execution", fields={"optimization_plan": plan})  # noqa: SLF001
-
-    with pytest.raises(BusinessRuleViolation, match="must belong"):
-        store._execute_batch_plan_task_internal_action(batch["batch_id"], "fopt-invalid-internal-action")  # noqa: SLF001
-
+    # 评估用例保持候选状态，没有被任何任务链路自动晋级。
     unchanged = store.find_eval_case(eval_case["eval_case_id"])
     assert unchanged["status"] == "draft"
     assert unchanged["promotion_status"] == "candidate"
     assert store.list_eval_case_governance_events(eval_case["eval_case_id"]) == []
+
+    # 后端不再暴露内部动作执行入口。
+    assert not hasattr(store, "execute_batch_plan_task_internal_action")
 
 
 def test_batch_plan_blocks_external_task_without_specific_object_context(tmp_path):

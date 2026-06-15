@@ -19,14 +19,12 @@ import type {
 
 const WORKSPACE_TASK_EDITABLE_STATUSES = new Set(["pending_execution", "execution_ready", "execution_failed", "needs_human_review", "failed"]);
 const EXTERNAL_TASK_EDITABLE_STATUSES = new Set(["pending_notification", "notification_failed"]);
-const INTERNAL_TASK_EDITABLE_STATUSES = new Set(["pending_execution", "needs_human_review", "failed"]);
 const ACTIONABILITY_OPTIONS = [
   "direct_workspace_change",
   "workspace_config_change",
   "eval_only",
   "external_guidance",
   "runtime_fix",
-  "regression_asset_governance",
   "needs_human_analysis",
   "not_actionable",
 ] as const;
@@ -49,7 +47,6 @@ interface PlanTaskEditDraft {
   taskContextText: string;
   evidenceSummary: string;
   evidenceRefsText: string;
-  evalCaseIdsText: string;
   editNote: string;
   error: string | null;
 }
@@ -93,23 +90,18 @@ export function BatchPlanTaskCard({
   const workspaceDone = Boolean(planTask.applied_agent_version_id);
   const external = executionKind === "external_webhook";
   const workspace = executionKind === "workspace_execution";
-  const internal = executionKind === "internal_action";
   const canExecute = workspace
     ? !workspaceDone && !running
     : external
       ? Boolean(currentAlias && externalWebhooks.length && !running)
-      : internal
-        ? !planTask.internal_action_result && !running
-        : false;
+      : false;
   const buttonLabel = workspace
     ? planTask.execution_job_id && !workspaceDone ? "重试执行" : "执行"
-    : external
-      ? planTask.status === "notification_failed" ? "重试发送" : "发送任务"
-      : "执行内部动作";
-  const targetSummary = planTask.target_summary || (workspace ? `workspace:${planTask.target_path || "-"}` : external ? `external:${planTask.owner || planTask.target_type || "-"}` : `internal:${planTask.internal_action || "-"}`);
+    : planTask.status === "notification_failed" ? "重试发送" : "发送任务";
+  const targetSummary = planTask.target_summary || (workspace ? `workspace:${planTask.target_path || "-"}` : external ? `external:${planTask.owner || planTask.target_type || "-"}` : planTask.target_type || "-");
   const feedbackCount = planTask.feedback_case_ids?.length || 0;
   const evalCount = planTask.eval_case_ids?.length || 0;
-  const taskScopeLabel = workspace ? "受管 workspace 优化" : external ? "外部系统优化" : internal ? "内部治理动作" : "优化任务";
+  const taskScopeLabel = workspace ? "受管 workspace 优化" : external ? "外部系统优化" : "优化任务";
   const editable = canEditPlanTask(planTask);
 
   async function submitEdit(event: FormEvent) {
@@ -212,11 +204,6 @@ export function BatchPlanTaskCard({
                   {running ? <Loader2 size={16} className="fw-spin" /> : workspace ? <CheckCircle2 size={16} /> : <ChevronRight size={16} />}
                   {running ? "执行中" : buttonLabel}
                 </button>
-              ) : internal ? (
-                <button className="fw-small-secondary" type="button" disabled={!canExecute} onClick={() => onExecutePlanTask(batch, planTask)}>
-                  {running ? <Loader2 size={16} className="fw-spin" /> : <CheckCircle2 size={16} />}
-                  {running ? "执行中" : buttonLabel}
-                </button>
               ) : (
                 <Pill tone="orange">需人工复核</Pill>
               )}
@@ -313,12 +300,11 @@ function PlanTaskContextSummary({ context }: { context?: Record<string, unknown>
 }
 
 function canEditPlanTask(planTask: FeedbackOptimizationPlanTaskRecord): boolean {
-  if (planTask.applied_agent_version_id || planTask.internal_action_result) return false;
+  if (planTask.applied_agent_version_id) return false;
   if (planTask.execution_kind === "workspace_execution") return WORKSPACE_TASK_EDITABLE_STATUSES.has(String(planTask.status || ""));
   if (planTask.execution_kind === "external_webhook") {
     return EXTERNAL_TASK_EDITABLE_STATUSES.has(String(planTask.status || ""));
   }
-  if (planTask.execution_kind === "internal_action") return INTERNAL_TASK_EDITABLE_STATUSES.has(String(planTask.status || ""));
   return false;
 }
 
@@ -341,7 +327,6 @@ function planTaskEditDraft(planTask: FeedbackOptimizationPlanTaskRecord): PlanTa
     taskContextText: JSON.stringify(planTask.task_context || {}, null, 2),
     evidenceSummary: planTask.evidence_summary || "",
     evidenceRefsText: JSON.stringify(planTask.evidence_refs || [], null, 2),
-    evalCaseIdsText: listToText(planTask.eval_case_ids),
     editNote: planTask.edit_note || "",
     error: null,
   };
@@ -412,9 +397,6 @@ function planTaskUpdatePayload(planTask: FeedbackOptimizationPlanTaskRecord, dra
   if (planTask.execution_kind === "external_webhook") {
     payload.owner = draft.owner;
   }
-  if (planTask.execution_kind === "internal_action") {
-    payload.eval_case_ids = textToList(draft.evalCaseIdsText);
-  }
   return payload;
 }
 
@@ -435,7 +417,6 @@ function PlanTaskEditForm({
 }) {
   const workspace = planTask.execution_kind === "workspace_execution";
   const external = planTask.execution_kind === "external_webhook";
-  const internal = planTask.execution_kind === "internal_action";
   const updateField = (field: PlanTaskEditDraftField, value: string) => onChange({ ...draft, [field]: value, error: null });
   return (
     <form className="fw-eval-edit-form fw-plan-task-edit-form" onSubmit={onSubmit}>
@@ -473,12 +454,6 @@ function PlanTaskEditForm({
           <span>目标摘要</span>
           <input value={draft.targetSummary} onChange={(event) => updateField("targetSummary", event.target.value)} disabled={busy} />
         </label>
-        {internal ? (
-          <label className="fw-eval-edit-field">
-            <span>评估用例</span>
-            <textarea value={draft.evalCaseIdsText} onChange={(event) => updateField("evalCaseIdsText", event.target.value)} disabled={busy} rows={3} />
-          </label>
-        ) : null}
       </div>
       <label className="fw-eval-edit-field">
         <span>描述</span>

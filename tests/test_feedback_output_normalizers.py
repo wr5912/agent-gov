@@ -298,7 +298,9 @@ def test_batch_plan_formatter_infers_target_type_from_target_path():
     assert output.blocked_items == []
 
 
-def test_batch_plan_formatter_promotes_eval_case_task_to_internal_action():
+def test_batch_plan_formatter_does_not_generate_eval_case_promotion_task():
+    # 评估用例是否纳入长期回归资产由用户在“回归测试用例”界面手动决定，
+    # formatter 不再把它自动产出为可执行的 internal_action 任务（Issue #3 第2点）。
     output = FeedbackOptimizationPlanFormatterOutput.model_validate(
         {
             "status": "pending_execution",
@@ -318,13 +320,13 @@ def test_batch_plan_formatter_promotes_eval_case_task_to_internal_action():
         }
     )
 
-    assert output.blocked_items == []
-    task = output.tasks[0]
-    assert task.execution_kind == "internal_action"
-    assert task.internal_action == "promote_eval_cases"
-    assert task.target_type == "eval_case"
-    assert task.actionability == "regression_asset_governance"
-    assert task.eval_case_ids == ["evc-1"]
+    # 不产出任何可执行任务，整项降级为 blocked，等待用户手动晋级。
+    assert output.tasks == []
+    assert output.status == "needs_human_review"
+    assert len(output.blocked_items) == 1
+    blocked = output.blocked_items[0]
+    assert blocked.eval_case_ids == ["evc-1"]
+    assert not hasattr(blocked, "internal_action")
 
 
 def test_normalize_task_context_payload_coerces_lists_and_drops_empty_values():
@@ -486,7 +488,9 @@ def test_normalize_feedback_plan_output_records_blocked_workspace_task_reason():
     assert normalized["blocked_items"][0]["title"].startswith("{")
 
 
-def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
+def test_normalize_feedback_plan_output_downgrades_internal_action_task_to_blocked():
+    # 即使（漂移或敌意的）agent 输出显式声明 execution_kind=internal_action /
+    # internal_action=promote_eval_cases，归一化也不再承认它是可执行任务，一律降级为 blocked。
     normalized = normalize_feedback_optimization_plan_output(
         {
             "batch_id": "fob-test",
@@ -496,7 +500,6 @@ def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
                     "execution_kind": "internal_action",
                     "internal_action": "promote_eval_cases",
                     "title": "晋级回归资产",
-                    "description": "缺少明确 eval_case_ids。",
                     "objective": "纳入长期回归资产。",
                     "target_type": "eval_case",
                     "actionability": "regression_asset_governance",
@@ -504,14 +507,16 @@ def test_normalize_feedback_plan_output_blocks_invalid_internal_action_task():
                     "expected_effect": "回归计划可复用该资产。",
                     "validation": "检查评估用例状态。",
                     "risk": "误晋级会污染回归集。",
+                    "eval_case_ids": ["evc-1"],
                 }
             ],
         }
     )
 
     assert normalized["tasks"] == []
-    assert normalized["status"] == "pending_execution"
-    assert normalized["blocked_items"][0]["reason"] == "内部回归资产治理任务缺少 eval_case_ids 或受支持的 internal_action，不能自动执行。"
+    blocked = normalized["blocked_items"][0]
+    assert "internal_action" not in blocked
+    assert blocked["reason"] == "该项未形成可执行 workspace 任务或外部系统任务。"
 
 
 def test_normalize_feedback_plan_output_sanitizes_attribution_summary_extras():

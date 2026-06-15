@@ -95,8 +95,8 @@ class BatchPlanFormattingSignature(dspy.Signature):
     只能使用 raw_agent_output 中已有的优化方案业务要点。可执行任务必须放在
     tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；能定位到外部系统、
     工具/API 和具体问题描述的项必须生成 external_webhook 任务；不能定位到具体对象、
-    接口、工具或问题 ID 的项才放入 blocked_items。评估用例晋级任务必须生成
-    internal_action/promote_eval_cases，使用 approved 表示晋级后的 promotion_status。
+    接口、工具或问题 ID 的项才放入 blocked_items。评估用例是否纳入长期回归资产由用户
+    在“回归测试用例”界面手动决定，不生成为优化方案任务。
     """
 
     raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出。")

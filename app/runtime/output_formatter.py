@@ -222,7 +222,6 @@ def _formatter_success_observation_payload(output: BaseModel, raw_text: str) -> 
         "raw_text": _truncate(raw_text, 20000),
         "task_count": len(tasks),
         "blocked_count": len(blocked_items),
-        "internal_action_count": sum(1 for item in tasks if item.get("execution_kind") == "internal_action"),
     }
 
 

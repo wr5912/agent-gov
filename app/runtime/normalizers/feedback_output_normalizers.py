@@ -259,29 +259,20 @@ def _normalize_plan_task_output_item(item: JsonObject, index: int) -> JsonObject
     if not target_type and target_path:
         target_type = _optimization_plan_target_type_from_path(target_path)
     eval_case_ids = _string_list(task.get("eval_case_ids"))
-    internal_action = _normalize_internal_action(task.get("internal_action"), target_type, actionability, target_path, eval_case_ids)
-    if internal_action:
-        target_type = target_type or "eval_case"
-        actionability = "regression_asset_governance"
     execution_kind = str(task.get("execution_kind") or "").strip()
-    if not execution_kind:
-        if internal_action:
-            execution_kind = "internal_action"
-        elif target_path or actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"}:
+    # 评估用例晋级为长期回归资产由用户在“回归测试用例”界面手动决定，不再作为可执行优化任务。
+    # 旧契约的 internal_action 任务一律按普通规则重新归类（多数会落到 blocked）。
+    if not execution_kind or execution_kind == "internal_action":
+        if target_path or actionability in {"direct_workspace_change", "workspace_config_change", "eval_only"}:
             execution_kind = "workspace_execution"
         elif actionability == "external_guidance" or target_type in {"external_mcp_service", "soc_process", "mcp_description"}:
             execution_kind = "external_webhook"
         else:
             execution_kind = "blocked"
-    if execution_kind == "internal_action":
-        internal_action = internal_action or _normalize_internal_action("promote_eval_cases", target_type, actionability, target_path, eval_case_ids)
-        target_type = target_type or "eval_case"
-        actionability = "regression_asset_governance"
     task["source_index"] = int(task.get("source_index") or index)
     task["execution_kind"] = execution_kind
     task["status"] = task.get("status") or ("pending_notification" if execution_kind == "external_webhook" else "pending_execution")
-    if internal_action:
-        task["internal_action"] = internal_action
+    task.pop("internal_action", None)
     task["target_type"] = target_type or ("external_mcp_service" if execution_kind == "external_webhook" else "main_agent_claude_md")
     if target_path:
         task["target_path"] = target_path
@@ -322,37 +313,12 @@ def _normalize_plan_task_output_item(item: JsonObject, index: int) -> JsonObject
     return NormalizedOptimizationPlanTask.model_validate(task).to_payload()
 
 
-def _normalize_internal_action(
-    value: object,
-    target_type: str,
-    actionability: str,
-    target_path: str,
-    eval_case_ids: list[str],
-) -> str:
-    action = str(value or "").strip()
-    aliases = {
-        "promote_eval_case": "promote_eval_cases",
-        "promote_eval_cases": "promote_eval_cases",
-        "eval_case_promotion": "promote_eval_cases",
-        "regression_asset_governance": "promote_eval_cases",
-    }
-    if action in aliases:
-        return aliases[action]
-    if target_path:
-        return ""
-    if target_type == "eval_case" and actionability == "regression_asset_governance" and eval_case_ids:
-        return "promote_eval_cases"
-    return ""
-
-
 def _plan_task_output_is_executable(task: JsonObject) -> bool:
     execution_kind = str(task.get("execution_kind") or "")
     if execution_kind == "workspace_execution":
         return bool(task.get("target_path"))
     if execution_kind == "external_webhook":
         return task_context_has_external_specificity(_normalize_task_context_payload(task.get("task_context")))
-    if execution_kind == "internal_action":
-        return task.get("internal_action") == "promote_eval_cases" and bool(_string_list(task.get("eval_case_ids")))
     return False
 
 
@@ -363,8 +329,6 @@ def _blocked_item_from_plan_task(task: JsonObject, index: int) -> JsonObject:
             reason = "任务缺少 target_path，不能交给 execution-optimizer 执行。"
         elif task.get("execution_kind") == "external_webhook":
             reason = "任务缺少明确的外部对象、接口或问题 ID，不能派发到外部系统。"
-        elif task.get("execution_kind") == "internal_action":
-            reason = "内部回归资产治理任务缺少 eval_case_ids 或受支持的 internal_action，不能自动执行。"
         else:
             reason = "该项未形成可执行 workspace 任务或外部系统任务。"
     return _normalize_blocked_output_item(

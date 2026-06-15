@@ -122,7 +122,7 @@ export function BatchesPanel({
     () => buildBatchRegressionEligibility(selectedBatch, evalCases),
     [selectedBatch, evalCases],
   );
-  const hasAppliedPlanTask = planTasks.some((task) => Boolean(task.applied_agent_version_id || task.internal_action_result));
+  const hasAppliedPlanTask = planTasks.some((task) => Boolean(task.applied_agent_version_id));
   const hasActivePlanTaskExecution = planTasks.some((task) => {
     const latestExecutionJob = task.latest_execution_job as { status?: string | null } | null | undefined;
     return ["created", "queued", "running", "schema_validating", "evidence_packaging"].includes(latestExecutionJob?.status || "");

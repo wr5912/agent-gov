@@ -29,7 +29,7 @@ class FeedbackBatchExecutionErrorRecord(StrictRuntimeRecord):
 
 class FeedbackBatchExecutionTaskResultRecord(StrictRuntimeRecord):
     plan_task_id: str
-    execution_kind: Literal["workspace_execution", "external_webhook", "internal_action"]
+    execution_kind: Literal["workspace_execution", "external_webhook"]
     status: FeedbackBatchExecutionTaskStatus
     started_at: str
     completed_at: Optional[str] = None
@@ -38,7 +38,6 @@ class FeedbackBatchExecutionTaskResultRecord(StrictRuntimeRecord):
     execution_job: Optional[AgentJobProjectionRecord] = None
     external_item_id: Optional[str] = None
     webhook_alias: Optional[str] = None
-    internal_action: Optional[str] = None
     summary: Optional[str] = None
     planned_diff: Optional[JsonObject] = None
     applied_agent_version_id: Optional[str] = None

@@ -142,7 +142,6 @@ class FeedbackBatchExecutionTaskResultResponse(ExtensibleResponse):
     execution_job: Optional[AgentJobResponse] = None
     external_item_id: Optional[str] = None
     webhook_alias: Optional[str] = None
-    internal_action: Optional[str] = None
     summary: Optional[str] = None
     planned_diff: Optional[OptimizationExecutionPlannedDiffResponse] = None
     applied_agent_version_id: Optional[str] = None
@@ -381,7 +380,6 @@ class FeedbackOptimizationPlanTaskExecuteResponse(BaseModel):
     apply_result: Optional[OptimizationExecutionApplyResponse] = None
     external_item: Optional[ExternalGovernanceItemResponse] = None
     eval_cases: list[EvalCaseResponse] = Field(default_factory=list)
-    internal_action_result: Optional[JsonObject] = None
 
 
 class FeedbackOptimizationPlanTaskUpdateResponse(BaseModel):

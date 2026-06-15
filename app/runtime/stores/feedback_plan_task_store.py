@@ -23,13 +23,13 @@ class FeedbackPlanTaskStoreMixin:
         executable_tasks = [
             self._normalize_plan_task(batch, plan, item)
             for item in raw_tasks
-            if item.get("execution_kind") in {"workspace_execution", "external_webhook", "internal_action"}
+            if item.get("execution_kind") in {"workspace_execution", "external_webhook"}
         ]
         blocked_items = [self._normalize_blocked_item(batch, plan, dict(item)) for item in plan.get("blocked_items") or [] if isinstance(item, dict)]
         blocked_items.extend(self._blocked_items_from_tasks(batch, plan, raw_tasks))
         if not raw_tasks and not blocked_items:
             legacy_item = self._legacy_plan_task_or_blocked_item(batch, plan)
-            if legacy_item.get("execution_kind") in {"workspace_execution", "external_webhook", "internal_action"}:
+            if legacy_item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
                 executable_tasks.append(self._normalize_plan_task(batch, plan, legacy_item))
             else:
                 blocked_items.append(self._normalize_blocked_item(batch, plan, legacy_item))
@@ -52,15 +52,8 @@ class FeedbackPlanTaskStoreMixin:
         target_type = self._string(item.get("target_type")) or self._string(plan.get("target_type")) or "not_actionable"
         execution_kind = self._string(item.get("execution_kind")) or "workspace_execution"
         status = self._string(item.get("status")) or ("pending_notification" if execution_kind == "external_webhook" else "pending_execution")
-        internal_action = self._string(item.get("internal_action"))
-        if execution_kind == "internal_action" and target_type == "not_actionable":
-            target_type = "eval_case"
-        if execution_kind == "internal_action" and not internal_action and target_type == "eval_case":
-            internal_action = "promote_eval_cases"
         target_path = self._string(item.get("target_path")) or None
         owner = self._string(item.get("owner")) or self._external_owner_for_target(target_type) or target_type
-        if execution_kind == "internal_action":
-            owner = "feedback_optimizer"
         rationale = self._string(item.get("rationale")) or self._string(plan.get("rationale"))
         analysis_summary = self._string(item.get("analysis_summary")) or self._short_text(rationale, 420)
         evidence_refs = self._normalize_plan_evidence_refs(item.get("evidence_refs"))
@@ -73,18 +66,14 @@ class FeedbackPlanTaskStoreMixin:
             not target_summary or target_type in target_summary or "external-mcp-service" in target_summary or "对应外部系统" in target_summary
         ):
             target_summary = self._plan_task_target_summary(target_type, execution_kind, owner, target_path)
-        if execution_kind == "internal_action" and not target_summary:
-            target_summary = self._plan_task_target_summary(target_type, execution_kind, owner, target_path)
         normalized = {
             **item,
             "schema_version": "feedback-optimization-plan-task/v3",
             "plan_task_id": self._string(item.get("plan_task_id")) or f"fopt-{uuid.uuid4()}",
             "execution_kind": execution_kind,
             "status": status,
-            "internal_action": internal_action,
             "owner": owner,
-            "actionability": self._string(item.get("actionability"))
-            or ("regression_asset_governance" if execution_kind == "internal_action" else "needs_human_analysis"),
+            "actionability": self._string(item.get("actionability")) or "needs_human_analysis",
             "title": self._clean_plan_task_title(item.get("title"), target_type, execution_kind, int(item.get("source_index") or 0), task_context),
             "description": self._clean_plan_task_description(item.get("description"), target_type, execution_kind, owner, target_path, task_context),
             "objective": self._clean_plan_task_objective(item.get("objective"), target_type, execution_kind, task_context),
@@ -127,7 +116,7 @@ class FeedbackPlanTaskStoreMixin:
     def _blocked_items_from_tasks(self, batch: JsonObject, plan: JsonObject, tasks: list[JsonObject]) -> list[JsonObject]:
         blocked: list[JsonObject] = []
         for item in tasks:
-            if item.get("execution_kind") in {"workspace_execution", "external_webhook", "internal_action"}:
+            if item.get("execution_kind") in {"workspace_execution", "external_webhook"}:
                 continue
             blocked.append(self._normalize_blocked_item(batch, plan, item))
         return blocked
@@ -266,10 +255,10 @@ class FeedbackPlanTaskStoreMixin:
         return self._update_batch_row(db, batch_id, status=batch_status or str(batch.get("status") or "pending_execution"), fields=fields)
 
     def _plan_task_summary(self, tasks: list[JsonObject]) -> JsonObject:
-        summary: JsonObject = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0, "internal_action": 0}
+        summary: JsonObject = {"total": len(tasks), "workspace_execution": 0, "external_webhook": 0}
         for task in tasks:
             kind = self._string(task.get("execution_kind"))
-            if kind not in {"workspace_execution", "external_webhook", "internal_action"}:
+            if kind not in {"workspace_execution", "external_webhook"}:
                 continue
             summary[kind] = int(summary.get(kind) or 0) + 1
         return summary
@@ -294,11 +283,6 @@ class FeedbackPlanTaskStoreMixin:
                 "soc_process": "优化 SOC 处置流程",
             }.get(target_type, "处理外部系统优化事项")
             return f"任务 {index + 1}: {label}"
-        if execution_kind == "internal_action":
-            label = {
-                "eval_case": "晋级回归资产",
-            }.get(target_type, "执行内部治理动作")
-            return f"任务 {index + 1}: {label}"
         return f"阻塞项 {index + 1}: 未形成可执行优化任务"
 
     def _plan_task_description(
@@ -317,8 +301,6 @@ class FeedbackPlanTaskStoreMixin:
                 return context_description
             owner_label = owner if owner and owner != target_type else "对应外部系统"
             return f"将反馈暴露的问题整理为外部系统优化任务，派发给 {owner_label} 处理。"
-        if execution_kind == "internal_action":
-            return "将本批次候选评估用例晋级为已批准的回归资产，纳入后续版本回归验证。"
         return "该项没有形成可执行 workspace 任务或明确的外部系统派发目标。"
 
     def _plan_task_objective(self, target_type: str, execution_kind: str, task_context: Optional[JsonObject] = None) -> str:
@@ -329,8 +311,6 @@ class FeedbackPlanTaskStoreMixin:
             if context_objective:
                 return context_objective
             return "推动对应外部系统补齐能力、数据或流程，使 Agent 后续可获得可靠输入。"
-        if execution_kind == "internal_action":
-            return "把本批次验证同类问题所需的评估用例纳入长期回归资产，防止修复效果失守。"
         return "补充更多上下文后重新归因或重新生成优化方案。"
 
     def _plan_task_target_summary(self, target_type: str, execution_kind: str, owner: str, target_path: Optional[str]) -> str:
@@ -338,8 +318,6 @@ class FeedbackPlanTaskStoreMixin:
             return f"workspace:{target_path or target_type}"
         if execution_kind == "external_webhook":
             return f"external:{owner or target_type}"
-        if execution_kind == "internal_action":
-            return "internal:promote_eval_cases"
         return f"blocked:{target_type}"
 
     def _plan_task_actions(self, target_type: str, execution_kind: str, target_path: Optional[str], owner: str) -> list[str]:
@@ -354,12 +332,6 @@ class FeedbackPlanTaskStoreMixin:
                 f"通过已配置 Webhook 将任务派发给 {owner or target_type}。",
                 "Webhook payload 携带反馈、归因、测试用例、验收标准和证据摘要。",
                 "本阶段以通知成功作为派发完成状态，不等待外部系统回调完成。",
-            ]
-        if execution_kind == "internal_action":
-            return [
-                "后端校验任务列出的 eval_case_ids 全部属于当前优化批次。",
-                "将候选用例晋级为 active/approved 回归资产，并记录 revision 与 governance event。",
-                "刷新批次优化方案中的任务状态，后续回归计划可选择这些资产执行验证。",
             ]
         return ["重新补充反馈上下文后运行归因，或调整优化方案生成提示。"]
 
@@ -383,12 +355,6 @@ class FeedbackPlanTaskStoreMixin:
                 "外部系统在同类请求中提供 Agent 完成任务所需的完整、可靠输入。",
                 "Agent 使用外部系统返回结果后，能完整回答反馈指出的缺失或错误内容。",
                 "关联回归测试用例通过，反馈指出的问题不再复现。",
-            ]
-        if execution_kind == "internal_action":
-            return [
-                "任务列出的评估用例状态均为 active。",
-                "任务列出的评估用例 promotion_status 均为 approved。",
-                "每个被晋级用例都有 revision 和 governance event 审计记录。",
             ]
         return ["阻塞原因清晰可见，开发人员可据此重新归因或重新生成优化方案。"]
 
@@ -676,8 +642,6 @@ class FeedbackPlanTaskStoreMixin:
             base = "由 execution-optimizer 根据归因结果生成受控执行方案，并在安全校验通过后应用到 workspace。"
         elif execution_kind == "external_webhook":
             base = "将该优化任务发送给对应外部系统，由外部系统处理服务、知识库、MCP server 或流程侧变更。"
-        elif execution_kind == "internal_action":
-            base = "由后端执行内部回归资产治理动作，将当前批次候选评估用例晋级为 approved 回归资产。"
         else:
             base = "当前归因结果不能转为 workspace 执行任务，也没有明确的外部 webhook 执行目标。"
         return base

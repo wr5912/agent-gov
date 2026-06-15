@@ -41,7 +41,6 @@ from .feedback_eval_store import FeedbackEvalStoreMixin
 from .feedback_evidence_store import FeedbackEvidenceStoreMixin
 from .feedback_execution_store import FeedbackExecutionStoreMixin
 from .feedback_external_governance_store import FeedbackExternalGovernanceStoreMixin
-from .feedback_internal_action_store import FeedbackInternalActionStoreMixin
 from .feedback_job_store import FeedbackJobStoreMixin
 from .feedback_plan_task_edit_store import FeedbackPlanTaskEditStoreMixin
 from .feedback_plan_task_store import FeedbackPlanTaskStoreMixin
@@ -58,7 +57,6 @@ class FeedbackStore(
     FeedbackBatchExecutionStoreMixin,
     FeedbackBatchPlanStoreMixin,
     FeedbackBatchEvalCaseGovernanceStoreMixin,
-    FeedbackInternalActionStoreMixin,
     FeedbackPlanTaskEditStoreMixin,
     FeedbackPlanTaskStoreMixin,
     FeedbackExecutionStoreMixin,
@@ -236,8 +234,6 @@ class FeedbackStore(
         for item in (plan or {}).get("tasks") or []:
             if not isinstance(item, dict):
                 continue
-            if item.get("internal_action_result"):
-                return "已有内部执行结果"
             if item.get("applied_agent_version_id"):
                 return "已产生 Agent 版本"
             latest_notification = item.get("latest_notification") if isinstance(item.get("latest_notification"), dict) else None

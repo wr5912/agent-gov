@@ -33,6 +33,35 @@ def test_readme_api_index_uses_current_feedback_and_agent_routes():
         assert route in readme
 
 
+def test_readme_directory_structure_matches_actual_repo_layout():
+    """Issue #4：README「目录结构」必须与实际仓库布局一致，避免 docker/volume 这类漂移误导。"""
+    readme = _read_repo_text("README.md")
+    structure = readme.split("## 目录结构", 1)[1].split("## 快速启动", 1)[0]
+
+    # 实际模板根是 docker/runtime-template/，且其下六个 workspace 真实存在。
+    assert "runtime-template/" in structure
+    template_root = REPO_ROOT / "docker" / "runtime-template"
+    assert template_root.is_dir()
+    for workspace in (
+        "main-workspace",
+        "attribution-analyzer-workspace",
+        "proposal-generator-workspace",
+        "execution-optimizer-workspace",
+        "eval-case-governor-workspace",
+        "regression-impact-analyzer-workspace",
+    ):
+        assert f"{workspace}/" in structure, f"README 结构缺少 {workspace}"
+        assert (template_root / workspace).is_dir(), f"模板缺少 {workspace}"
+
+    # 目录树代码块不得把不存在的 docker/volume 子树当作当前布局展示。
+    tree_block = structure.split("```text", 1)[1].split("```", 1)[0]
+    assert "volume/" not in tree_block, "目录树不得把 docker/volume 当作当前布局"
+    assert not (REPO_ROOT / "docker" / "volume").exists()
+
+    # 运行态根目录说明保留（容器默认 ${HOME}/volume-agent-gov）。
+    assert "${HOME}/volume-agent-gov" in structure
+
+
 def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
     readme = _read_repo_text("README.md")
 

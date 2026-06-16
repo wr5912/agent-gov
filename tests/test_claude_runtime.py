@@ -4,7 +4,7 @@ import json
 import os
 import sys
 import types
-from contextlib import nullcontext
+from contextlib import contextmanager
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
@@ -16,12 +16,24 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 
 
+class FakeOtelSpan:
+    def __init__(self):
+        self.attributes = {}
+
+    def set_attributes(self, attributes):
+        self.attributes.update(attributes)
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+
 class FakeLangfuseObservation:
     def __init__(self, kwargs):
         self.kwargs = kwargs
         self.updates = []
         self.trace_io_updates = []
         self.exited = False
+        self._otel_span = FakeOtelSpan()
 
     def __enter__(self):
         return self
@@ -41,6 +53,12 @@ class FakeLangfuseClient:
     def __init__(self):
         self.observations = []
         self.flushed = False
+
+    def get_current_trace_id(self):
+        return "trace-test"
+
+    def get_trace_url(self, *, trace_id):
+        return f"http://langfuse.local/traces/{trace_id}"
 
     def start_as_current_observation(self, **kwargs):
         observation = FakeLangfuseObservation(kwargs)
@@ -833,13 +851,31 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
     propagations = []
+    trace_upserts = []
+    propagation_active = {"value": False}
+    observation_started_under_propagation: list[bool] = []
 
     def fake_propagate_attributes(**kwargs):
         propagations.append(kwargs)
-        return nullcontext()
+
+        @contextmanager
+        def active_context():
+            propagation_active["value"] = True
+            try:
+                yield
+            finally:
+                propagation_active["value"] = False
+
+        return active_context()
+
+    def tracked_start_as_current_observation(**kwargs):
+        observation_started_under_propagation.append(propagation_active["value"])
+        return FakeLangfuseClient.start_as_current_observation(fake_langfuse, **kwargs)
 
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
     monkeypatch.setattr(runtime.langfuse, "propagate_attributes", fake_propagate_attributes)
+    monkeypatch.setattr(runtime.langfuse, "upsert_trace", lambda trace_id, **kwargs: trace_upserts.append({"trace_id": trace_id, **kwargs}))
+    fake_langfuse.start_as_current_observation = tracked_start_as_current_observation
 
     result = asyncio.run(
         runtime.run(
@@ -867,7 +903,11 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
         "runtime.main_agent",
         "runtime.main_agent.claude_sdk_query",
     ]
+    assert observation_started_under_propagation == [True, True]
     root, generation = fake_langfuse.observations
+    assert root._otel_span.attributes["session.id"] == result.session_id
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.main_agent"
+    assert generation._otel_span.attributes["session.id"] == result.session_id
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
     assert root.kwargs["metadata"]["run_id"] == result.run_id
@@ -887,6 +927,17 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert root.trace_io_updates[-1]["output"]["agent_activity"]["skill_calls"][0]["name"] == "trace-debugger"
     assert generation.updates[-1]["usage_details"] == {"input_tokens": 3, "output_tokens": 5}
     assert generation.updates[-1]["cost_details"] == {"total_cost_usd": 0.01}
+    assert trace_upserts == [
+        {
+            "trace_id": "trace-test",
+            "name": "runtime.main_agent",
+            "session_id": result.session_id,
+            "user_id": "user-a",
+            "input": root.kwargs["input"],
+            "output": root.updates[-1]["output"],
+            "metadata": propagations[0]["metadata"],
+        }
+    ]
     assert propagations == [
         {
             "user_id": "user-a",
@@ -956,7 +1007,32 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     fake_langfuse = FakeLangfuseClient()
+    propagations = []
+    trace_upserts = []
+    propagation_active = {"value": False}
+    observation_started_under_propagation: list[bool] = []
+
+    def fake_propagate_attributes(**kwargs):
+        propagations.append(kwargs)
+
+        @contextmanager
+        def active_context():
+            propagation_active["value"] = True
+            try:
+                yield
+            finally:
+                propagation_active["value"] = False
+
+        return active_context()
+
+    def tracked_start_as_current_observation(**kwargs):
+        observation_started_under_propagation.append(propagation_active["value"])
+        return FakeLangfuseClient.start_as_current_observation(fake_langfuse, **kwargs)
+
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: fake_langfuse)
+    monkeypatch.setattr(runtime.langfuse, "propagate_attributes", fake_propagate_attributes)
+    monkeypatch.setattr(runtime.langfuse, "upsert_trace", lambda trace_id, **kwargs: trace_upserts.append({"trace_id": trace_id, **kwargs}))
+    fake_langfuse.start_as_current_observation = tracked_start_as_current_observation
 
     events = asyncio.run(collect(runtime))
 
@@ -969,8 +1045,25 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
         "runtime.main_agent",
         "runtime.main_agent.claude_sdk_query",
     ]
+    assert observation_started_under_propagation == [True, True]
+    assert propagations[0]["session_id"] == result_event["data"]["session_id"]
+    assert propagations[0]["metadata"]["api_session_id"] == result_event["data"]["session_id"]
+    assert root._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.main_agent"
+    assert generation._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
     assert root.updates[-1]["output"]["answer"] == "stream answer"
     assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
     assert root.trace_io_updates[-1]["input"]["message"] == "stream"
     assert root.trace_io_updates[-1]["output"]["answer"] == "stream answer"
     assert generation.updates[-1]["usage_details"] == {"input_tokens": 7, "output_tokens": 11}
+    assert trace_upserts == [
+        {
+            "trace_id": "trace-test",
+            "name": "runtime.main_agent",
+            "session_id": result_event["data"]["session_id"],
+            "user_id": None,
+            "input": root.kwargs["input"],
+            "output": root.updates[-1]["output"],
+            "metadata": propagations[0]["metadata"],
+        }
+    ]

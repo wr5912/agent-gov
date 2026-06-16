@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import os
+import uuid
 import warnings
 from collections.abc import Mapping
-from contextlib import nullcontext
+from contextlib import nullcontext, suppress
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from ..message_utils import to_plain
 from ..json_types import JsonObject
+from ..message_utils import to_plain
 from ..settings import AppSettings
 
 
@@ -59,11 +61,12 @@ class RuntimeLangfuseClient:
             return None
 
     def current_trace_ref(self) -> tuple[Optional[str], Optional[str]]:
-        if self.client is None:
+        client = self.client or self.get_client()
+        if client is None:
             return None, None
         try:
-            trace_id = self.client.get_current_trace_id()
-            trace_url = self.client.get_trace_url(trace_id=trace_id) if trace_id else None
+            trace_id = client.get_current_trace_id()
+            trace_url = client.get_trace_url(trace_id=trace_id) if trace_id else None
             return trace_id, trace_url
         except Exception as exc:
             print(f"[WARN] failed to read current Langfuse trace: {exc}", flush=True)
@@ -136,6 +139,43 @@ class RuntimeLangfuseClient:
             print(f"[WARN] failed to update Langfuse observation: {exc}", flush=True)
 
     @staticmethod
+    def set_trace_attributes(
+        observation: Any,
+        *,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        metadata: Optional[Mapping[str, str]] = None,
+        trace_name: Optional[str] = None,
+    ) -> None:
+        if observation is None:
+            return
+        otel_span = getattr(observation, "_otel_span", None)
+        if otel_span is None:
+            return
+
+        attributes: dict[str, str] = {}
+        if session_id:
+            attributes["session.id"] = session_id
+        if user_id:
+            attributes["user.id"] = user_id
+        if trace_name:
+            attributes["langfuse.trace.name"] = trace_name
+        for key, value in (metadata or {}).items():
+            if value:
+                attributes[f"langfuse.trace.metadata.{key}"] = value
+        if not attributes:
+            return
+
+        try:
+            otel_span.set_attributes(attributes)
+        except AttributeError:
+            for key, value in attributes.items():
+                with suppress(Exception):
+                    otel_span.set_attribute(key, value)
+        except Exception as exc:
+            print(f"[WARN] failed to set Langfuse trace attributes: {exc}", flush=True)
+
+    @staticmethod
     def set_trace_io(observation: Any, *, input: Any, output: Any) -> None:
         if observation is None:
             return
@@ -149,6 +189,46 @@ class RuntimeLangfuseClient:
                 observation.set_trace_io(input=input, output=output)
         except Exception as exc:
             print(f"[WARN] failed to set Langfuse trace input/output: {exc}", flush=True)
+
+    def upsert_trace(
+        self,
+        trace_id: Optional[str],
+        *,
+        name: Optional[str] = None,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        input: Any = None,
+        output: Any = None,
+        metadata: Optional[Mapping[str, str]] = None,
+    ) -> None:
+        if not trace_id or not self.settings.langfuse_enabled:
+            return
+        clean_metadata = {key: value for key, value in (metadata or {}).items() if value}
+        try:
+            ensure_langfuse_otel_compat()
+            from langfuse.api.ingestion.types.ingestion_event import IngestionEvent_TraceCreate
+            from langfuse.api.ingestion.types.trace_body import TraceBody
+
+            client = self.get_client()
+            api = getattr(client, "api", None) if client is not None else None
+            if api is None:
+                return
+            event = IngestionEvent_TraceCreate(
+                id=f"runtime-trace-upsert-{uuid.uuid4()}",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                body=TraceBody(
+                    id=trace_id,
+                    name=name,
+                    user_id=user_id,
+                    session_id=session_id,
+                    input=to_plain(input),
+                    output=to_plain(output),
+                    metadata=clean_metadata or None,
+                ),
+            )
+            api.ingestion.batch(batch=[event], metadata={"source": "agent-gov-runtime"})
+        except Exception as exc:
+            print(f"[WARN] failed to upsert Langfuse trace: {exc}", flush=True)
 
     def flush(self) -> None:
         client = self.client or self.get_client()

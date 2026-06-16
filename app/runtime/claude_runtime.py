@@ -553,7 +553,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         return answer, agent_activity, output
 
     def _update_runtime_observations(
-        self, root_span: Any, generation: Any, context: RuntimeRequestContext, state: RuntimeQueryState, output: JsonObject
+        self,
+        root_span: Any,
+        generation: Any,
+        context: RuntimeRequestContext,
+        state: RuntimeQueryState,
+        output: JsonObject,
+        trace_attributes: JsonObject,
     ) -> None:
         level = "ERROR" if state.errors else "DEFAULT"
         status_message = "\n".join(state.errors) if state.errors else None
@@ -572,7 +578,20 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             level=level,
             status_message=status_message,
         )
+        self.langfuse.set_trace_attributes(root_span, **trace_attributes)
+        self.langfuse.set_trace_attributes(generation, **trace_attributes)
         self.langfuse.set_trace_io(root_span, input=context.telemetry_input, output=output)
+
+    def _sync_langfuse_trace(self, context: RuntimeRequestContext, trace_attributes: JsonObject, output: JsonObject) -> None:
+        self.langfuse.upsert_trace(
+            context.langfuse_trace_id,
+            name=trace_attributes.get("trace_name"),
+            session_id=trace_attributes.get("session_id"),
+            user_id=trace_attributes.get("user_id"),
+            input=context.telemetry_input,
+            output=output,
+            metadata=trace_attributes.get("metadata") if isinstance(trace_attributes.get("metadata"), dict) else None,
+        )
 
     def _complete_runtime_request(
         self,
@@ -623,6 +642,20 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             errors=state.errors,
         )
 
+    @staticmethod
+    def _stream_session_event(req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
+        return {
+            "event": "session",
+            "data": {
+                "run_id": context.run_id,
+                "agent_version_id": context.agent_version_id,
+                "session_id": context.session.session_id,
+                "sdk_session_id": context.session.sdk_session_id,
+                "alert_id": req.alert_id,
+                "case_id": req.case_id,
+            },
+        }
+
     async def run(
         self,
         req: ChatRequest,
@@ -638,14 +671,15 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
         propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)
-        with self.langfuse.start_observation(
-            as_type="span",
-            name=profile.langfuse_observation_name,
-            input=context.telemetry_input,
-            metadata=root_metadata,
-        ) as root_span:
-            context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
-            with self.langfuse.propagate_attributes(**propagation):
+        with self.langfuse.propagate_attributes(**propagation):
+            with self.langfuse.start_observation(
+                as_type="span",
+                name=profile.langfuse_observation_name,
+                input=context.telemetry_input,
+                metadata=root_metadata,
+            ) as root_span:
+                context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
+                self.langfuse.set_trace_attributes(root_span, **propagation)
                 with self.langfuse.start_observation(
                     as_type="generation",
                     name=f"{profile.langfuse_observation_name}.claude_sdk_query",
@@ -653,6 +687,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     model=req.model or self.settings.agent_model,
                     metadata=root_metadata,
                 ) as generation:
+                    self.langfuse.set_trace_attributes(generation, **propagation)
                     try:
 
                         async def execute_query() -> None:
@@ -674,8 +709,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                             state.errors.append(f"{exc.__class__.__name__}: {exc}")
 
                     answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
-                    self._update_runtime_observations(root_span, generation, context, state, output)
+                    self._update_runtime_observations(root_span, generation, context, state, output, propagation)
         self._flush_langfuse()
+        self._sync_langfuse_trace(context, propagation, output)
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
 
@@ -690,25 +726,17 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "stream")
         propagation = self._langfuse_propagation_attributes(req, context, "stream")
-        with self.langfuse.start_observation(
-            as_type="span",
-            name=self._main_observation_name(),
-            input=context.telemetry_input,
-            metadata=root_metadata,
-        ) as root_span:
-            context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
-            yield {
-                "event": "session",
-                "data": {
-                    "run_id": context.run_id,
-                    "agent_version_id": context.agent_version_id,
-                    "session_id": context.session.session_id,
-                    "sdk_session_id": context.session.sdk_session_id,
-                    "alert_id": req.alert_id,
-                    "case_id": req.case_id,
-                },
-            }
-            with self.langfuse.propagate_attributes(**propagation):
+        final_output: JsonObject | None = None
+        with self.langfuse.propagate_attributes(**propagation):
+            with self.langfuse.start_observation(
+                as_type="span",
+                name=self._main_observation_name(),
+                input=context.telemetry_input,
+                metadata=root_metadata,
+            ) as root_span:
+                context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
+                self.langfuse.set_trace_attributes(root_span, **propagation)
+                yield self._stream_session_event(req, context)
                 with self.langfuse.start_observation(
                     as_type="generation",
                     name=f"{self._main_observation_name()}.claude_sdk_query",
@@ -716,6 +744,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     model=req.model or self.settings.agent_model,
                     metadata=root_metadata,
                 ) as generation:
+                    self.langfuse.set_trace_attributes(generation, **propagation)
                     try:
 
                         async def emit_query_events() -> AsyncIterator[JsonObject]:
@@ -759,7 +788,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                             yield {"event": "error", "data": {"errors": state.errors}}
                     finally:
                         answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
+                        final_output = output
                         self._complete_runtime_request(req, context, state, answer, agent_activity)
-                        self._update_runtime_observations(root_span, generation, context, state, output)
+                        self._update_runtime_observations(root_span, generation, context, state, output, propagation)
                         yield {"event": "done", "data": "[DONE]"}
         self._flush_langfuse()
+        if final_output is not None:
+            self._sync_langfuse_trace(context, propagation, final_output)

@@ -48,6 +48,14 @@ x-langfuse-env: &langfuse-env
   EMAIL_FROM_ADDRESS: ${LANGFUSE_EMAIL_FROM_ADDRESS:-}
   SMTP_CONNECTION_URL: ${LANGFUSE_SMTP_CONNECTION_URL:-}
 
+# 默认日志轮转：每容器日志上限 max-file × max-size，防止任一服务（尤其 Langfuse）日志撑满磁盘；
+# 显式写在 compose 内，不依赖宿主机 /etc/docker/daemon.json，保证 agent-gov 部署自洽可移植。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "50m"
+    max-file: "5"
+
 services:
   claude-agent-api:
     build:
@@ -103,6 +111,7 @@ services:
       - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     restart: unless-stopped
+    logging: *default-logging
 
   claude-agent-worker:
     build:
@@ -155,6 +164,7 @@ services:
     depends_on:
       - claude-agent-api
     restart: unless-stopped
+    logging: *default-logging
 
   claude-agent-ui:
     build:
@@ -177,12 +187,14 @@ services:
     depends_on:
       - claude-agent-api
     restart: unless-stopped
+    logging: *default-logging
 
   langfuse-worker:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}
     container_name: agent-gov-langfuse-worker
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -200,6 +212,7 @@ services:
     image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3}
     container_name: agent-gov-langfuse-web
     restart: unless-stopped
+    logging: *default-logging
     depends_on:
       langfuse-postgres:
         condition: service_healthy
@@ -231,6 +244,7 @@ services:
     image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3}
     container_name: agent-gov-langfuse-clickhouse
     restart: unless-stopped
+    logging: *default-logging
     user: "101:101"
     environment:
       CLICKHOUSE_DB: ${LANGFUSE_CLICKHOUSE_DB:-default}
@@ -251,6 +265,7 @@ services:
     image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio}
     container_name: agent-gov-langfuse-minio
     restart: unless-stopped
+    logging: *default-logging
     entrypoint: sh
     command: -c 'mkdir -p /data/langfuse && minio server --address ":9000" --console-address ":9001" /data'
     environment:
@@ -274,6 +289,7 @@ services:
     image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7}
     container_name: agent-gov-langfuse-redis
     restart: unless-stopped
+    logging: *default-logging
     command:
       - redis-server
       - --requirepass
@@ -295,6 +311,7 @@ services:
     image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
     container_name: agent-gov-langfuse-postgres
     restart: unless-stopped
+    logging: *default-logging
     environment:
       POSTGRES_USER: ${LANGFUSE_POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${LANGFUSE_POSTGRES_PASSWORD:-langfuse-postgres}

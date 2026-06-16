@@ -49,6 +49,48 @@ def test_codex_config_audit_reports_env_override_terminology_risks(tmp_path, cap
     assert "AGENTS.override.md:1" not in output
 
 
+def test_codex_config_audit_includes_claude_surfaces(tmp_path, capsys):
+    module = _load_audit_module()
+    _write(tmp_path / ".claude/README.md", "# Claude\n")
+    _write(tmp_path / ".claude/rules/project.md", "# Project\n")
+    _write(
+        tmp_path / ".claude/skills/project-skill/SKILL.md",
+        '---\nname: "project-skill"\ndescription: "使用 编写 调试 配置 skill"\n---\n\n# Project\n',
+    )
+
+    module._print_report(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "`.claude/README.md`" in output
+    assert "`.claude/rules/project.md`" in output
+    assert "`.claude/skills/project-skill/SKILL.md`" in output
+
+
+def test_codex_config_audit_reports_three_matrix_coverage(tmp_path, capsys):
+    module = _load_audit_module()
+    for rel_path, _label, markers, _action, _verification in module.MATRIX_EXPECTATIONS:
+        _write(tmp_path / rel_path, "\n".join(markers) + "\n")
+
+    module._print_report(tmp_path)
+
+    output = capsys.readouterr().out
+    assert "## 三矩阵覆盖" in output
+    assert "OK `.codex/skills/codex-config-optimizer/SKILL.md` 覆盖 配置治理三矩阵" in output
+    assert "MISSING" not in output
+
+
+def test_project_config_audit_matrix_coverage_is_complete():
+    module = _load_audit_module()
+
+    missing = [
+        (coverage.path, coverage.label, coverage.missing_markers)
+        for coverage in module._matrix_coverage(REPO_ROOT)
+        if coverage.missing_markers
+    ]
+
+    assert missing == []
+
+
 def test_feedback_runtime_preflight_reference_is_linked():
     skill = (REPO_ROOT / ".codex/skills/codex-config-optimizer/SKILL.md").read_text(encoding="utf-8")
     preflight = (REPO_ROOT / ".codex/skills/codex-config-optimizer/references/feedback-runtime-preflight.md").read_text(encoding="utf-8")

@@ -44,6 +44,16 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 - 影响 Agent job 时运行 `make main-flow-test`；提交、CI、发版或用户要求完整验证时运行 `make test`。
 - 提交前确认 `docker/.env`、`docker/.env.local-debug`、`frontend/.env.local`、runtime volume、SQLite、logs、dist 和 cache 都未进入 staged diff。
 
+## 测试模式选择矩阵
+
+| 改动类型 | 测试环境 | 推荐验证命令 | 不使用 |
+| --- | --- | --- | --- |
+| docs / skill / README 术语同步 | 宿主机仓库环境 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill 单测 | 不默认跑 `make test`，不使用 `local-debug` |
+| settings/env 选择代码 | 宿主机仓库环境 | `tests/test_settings.py`、`tests/test_repository_env_policy.py`、`tests/test_documentation_contracts.py` | 不用 `docker/.env.local-debug` 伪装容器 |
+| live 模型或真实运行态验收 | Docker Compose 容器 | `make container-live-test`，使用 Compose 注入的 `docker/.env` 和容器路径 | 不使用 `docker/.env.local-debug` |
+| local-debug 专项能力 | 宿主机 Python / PyCharm | 明确命名的 local-debug 专项测试和 bootstrap/repair 命令 | 不把结果声明为容器验收 |
+| 发版或用户要求完整验证 | 发布前工作区 | `make test`，必要时追加 `make container-live-test` | 不用单一 coverage 百分比替代主流程或 live 证据 |
+
 ## 配置面选择
 
 - 常驻入口只放在 `AGENTS.override.md` 和 `.codex/rules/*.rules`。

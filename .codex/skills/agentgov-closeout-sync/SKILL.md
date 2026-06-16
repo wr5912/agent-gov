@@ -32,6 +32,17 @@ git diff --check
 
 若同步触及代码、主流程、测试或前端可见页面，再按对应项目规则补目标测试、`make main-flow-test`、`make test`、前端构建或浏览器 smoke。
 
+## 发版收尾检查矩阵
+
+| 层面 | 检查项 | 验证 |
+| --- | --- | --- |
+| README / docs | 新能力、测试边界、环境边界和入口索引是否与当前实现一致 | `scripts/check_docs_governance.py` |
+| `.codex` / `.claude` | 项目专项 skill 是否两侧镜像，例外是否明确 | `scripts/check_docs_governance.py` 动态镜像发现 |
+| 版本面 | `app/version.py`、`frontend/package.json`、Compose image tag 是否同步 | 版本引用检索与 Compose config |
+| 测试面 | 是否按改动类型选择了定向测试、主流程、live 容器验收或全量 `make test` | 测试命令和结果写入最终报告 |
+| 远端校验 | commit、branch、annotated tag 是否真的到远端 | `git ls-remote --heads` / `git ls-remote --tags` |
+| 记忆边界 | 只有跨会话偏好或易忘边界进入 memory；稳定事实进 docs/skill | 用户明确要求时才更新 memory |
+
 ## 输出要求
 
 最终回复按项目事实给出：

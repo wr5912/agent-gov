@@ -17,6 +17,10 @@ SURFACE_PATTERNS = (
     ".codex/hooks.json",
     ".codex/rules/*.rules",
     ".codex/skills/*/SKILL.md",
+    ".claude/README.md",
+    ".claude/settings.json",
+    ".claude/rules/*.md",
+    ".claude/skills/*/SKILL.md",
 )
 
 HOT_TERMS = (
@@ -90,6 +94,44 @@ ENV_OVERRIDE_TERMS = (
 ENV_TERMINOLOGY_NEGATIONS = ("不要", "不得", "不是", "不应", "不能", "除非", "禁止")
 ENV_TERMINOLOGY_COVERAGE_CONTEXTS = ("测试覆盖", "覆盖 env 文件选择", "覆盖清单", "覆盖率", "覆盖策略", "coverage policy")
 
+MATRIX_EXPECTATIONS = (
+    (
+        ".codex/skills/codex-config-optimizer/SKILL.md",
+        "配置治理三矩阵",
+        ("治理对象矩阵", "配置面矩阵", "验收矩阵"),
+        "move-to-skill",
+        "配置优化请求先分类对象、配置面和验收方式，再决定是否改常驻规则。",
+    ),
+    (
+        ".codex/skills/business-agent-workspace-optimizer/SKILL.md",
+        "业务 Agent 目标解析矩阵",
+        ("目标解析矩阵", "不得把 `${RUNTIME_ROOT}/data`", "单个业务 Agent"),
+        "move-to-skill",
+        "业务 Agent workspace 修改前能证明目标精确到单个 workspace，父目录不是目标。",
+    ),
+    (
+        ".codex/skills/runtime-env-governance/SKILL.md",
+        "runtime/env 测试模式选择矩阵",
+        ("测试模式选择矩阵", "make container-live-test", "docker/.env.local-debug"),
+        "move-to-skill",
+        "live 验收必须走 Docker Compose 容器和 docker/.env；local-debug 仅服务专项调试测试。",
+    ),
+    (
+        ".codex/skills/test-sync-governance/SKILL.md",
+        "改动类型到验证命令矩阵",
+        ("改动类型", "推荐验证命令", "不默认跑全量"),
+        "move-to-skill",
+        "配置、文档、skill、主流程和发版场景能映射到不同测试深度。",
+    ),
+    (
+        ".codex/skills/agentgov-closeout-sync/SKILL.md",
+        "发版收尾检查矩阵",
+        ("发版收尾检查矩阵", "版本面", "远端校验"),
+        "move-to-skill",
+        "发版前后同步 README、docs、skill 镜像、版本面和远端状态。",
+    ),
+)
+
 
 @dataclass(frozen=True)
 class Issue:
@@ -107,6 +149,15 @@ class TerminologyRisk:
     term: str
     excerpt: str
     suggestion: str
+
+
+@dataclass(frozen=True)
+class MatrixCoverage:
+    path: str
+    label: str
+    missing_markers: tuple[str, ...]
+    action: str
+    verification: str
 
 
 def _iter_files(root: Path) -> list[Path]:
@@ -267,6 +318,16 @@ def _terminology_risks(root: Path, files: list[Path]) -> list[TerminologyRisk]:
     return risks
 
 
+def _matrix_coverage(root: Path) -> list[MatrixCoverage]:
+    coverage: list[MatrixCoverage] = []
+    for rel_path, label, markers, action, verification in MATRIX_EXPECTATIONS:
+        path = root / rel_path
+        text = _read(path) if path.is_file() else ""
+        missing = tuple(marker for marker in markers if marker not in text)
+        coverage.append(MatrixCoverage(rel_path, label, missing, action, verification))
+    return coverage
+
+
 def _collect_issues(root: Path, files: list[Path]) -> list[Issue]:
     issues: list[Issue] = []
     for path in files:
@@ -327,6 +388,20 @@ def _print_report(root: Path) -> None:
         print(
             f"- `{risk.path}:{risk.line}` 命中 `{risk.term}`：{risk.excerpt} "
             f"建议：{risk.suggestion}"
+        )
+
+    matrix_coverage = _matrix_coverage(root)
+    print()
+    print("## 三矩阵覆盖")
+    print()
+    for coverage in matrix_coverage:
+        if not coverage.missing_markers:
+            print(f"- OK `{coverage.path}` 覆盖 {coverage.label}。验证：{coverage.verification}")
+            continue
+        missing = "、".join(f"`{marker}`" for marker in coverage.missing_markers)
+        print(
+            f"- MISSING `{coverage.path}` 缺少 {coverage.label} 标记：{missing}。"
+            f"建议动作：`{coverage.action}`；验证：{coverage.verification}"
         )
 
 

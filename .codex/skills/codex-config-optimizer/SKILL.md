@@ -20,6 +20,16 @@ description: "治理和优化 Codex 配置、AGENTS.md、.codex/rules、hooks、
 4. 每条建议必须给出一个动作：`keep`、`delete`、`merge`、`move-to-skill`、`move-to-script`、`move-to-hook`、`no-op`。
 5. 优先选择最小有效配置面：能用一次性 prompt 解决的不进持久配置；能按需触发的进 skill；能静态判定的进脚本或 hook；项目私有内容不放进团队通用层。
 
+## 三矩阵预检
+
+遇到反复整改、配置越改越重、skill 触发不准、测试范围争议或 Codex/Claude 两侧不同步时，先写三张短矩阵，再决定是否修改配置：
+
+| 矩阵 | 必须区分 | 决策用途 |
+| --- | --- | --- |
+| 治理对象矩阵 | 业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、开发者离线工具 | 防止把产品对象、运行态数据和离线工具混成一个修改目标 |
+| 配置面矩阵 | 当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、rules、skill、script、hook、docs、memory | 防止把按需流程写进常驻规则，或把可机械检查的问题留成人工提醒 |
+| 验收矩阵 | docs/skill 治理、runtime/env、主流程、live 容器验收、发版远端校验 | 防止对小配置改动跑过重测试，或对 live 能力用 local-debug 伪验收 |
+
 ## 何时读取 References
 
 - 配置应放在哪个面：读 [surface-selection.md](references/surface-selection.md)。

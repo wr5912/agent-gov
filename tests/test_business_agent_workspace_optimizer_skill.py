@@ -65,6 +65,9 @@ def test_skill_encodes_review_corrected_boundaries():
     assert "version/" in text and "per-agent" in text
     # data/ 不可整目录拒绝（业务 Agent workspace 在其下）。
     assert "data/business-agents/<agent_id>" in text
+    assert "目标解析矩阵" in text
+    assert "runtime 父目录" in text
+    assert "no-op 并重新定位" in text
     assert "不能整目录拒绝 `data/`" in text
     assert "不得把 `${RUNTIME_ROOT}/data`" in text
     assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text

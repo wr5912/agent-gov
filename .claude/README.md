@@ -18,6 +18,8 @@
 - `skills/agentgov-governance-preflight/SKILL.md`: AgentGov 产品定位、目标愿景使命、反馈闭环治理、多业务 Agent 和 prompt/skill/SOP/eval 资产沉淀的治理对象预检。
 - `skills/runtime-env-governance/SKILL.md`: 治理本仓库 runtime/env、本机调试、容器部署、Langfuse 和后台 Agent job 模型凭据边界。
 - `skills/docs-governance/SKILL.md`: 治理本仓库 `docs/` 文档新增、迁移、归档、入口索引和 Codex/Claude skill 镜像同步；只处理文档容器治理，产品内容建模仍走 `agentgov-governance-preflight`。
+- `skills/agentgov-closeout-sync/SKILL.md`: 阶段收尾、里程碑交接或发版前后，同步 README、docs、项目规则、skill 镜像和记忆边界；触发范围窄于普通文档治理，不替代各专项 skill。
+- `skills/business-agent-workspace-optimizer/SKILL.md`: 离线开发、配置和优化单个业务 Agent workspace 配置资产；不代表产品内置自优化能力。
 - `skills/test-sync-governance/SKILL.md`: 迭代功能时治理测试的增删改，识别陈测与脆测；配合 `scripts/check_orphan_tests.py` 孤儿检测，覆盖率门只防欠测。
 
 ## 复用要求

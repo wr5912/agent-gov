@@ -35,7 +35,7 @@ git diff --check
 
 - 新增 `docs/*.md` 但未加入 `docs/README.md` 时，`check_docs_governance.py` 必须失败。
 - 新增 `docs/archive/**/*.md` 但未加入 `docs/archive/README.md` 时，`check_docs_governance.py` 必须失败。
-- 修改 `.codex/skills/docs-governance/SKILL.md` 或 `.claude/skills/docs-governance/SKILL.md` 任一侧后，两侧镜像漂移必须被硬门发现。
+- 修改自动发现范围内任一项目专项 skill 的 `.codex/skills/*/SKILL.md` 或 `.claude/skills/*/SKILL.md` 单侧文件后，两侧镜像漂移必须被硬门发现。
 - 新增或修改的 docs/skill 文件包含未完成标记时，`check_docs_governance.py` 必须失败。
 
 ## 注意事项

@@ -5,21 +5,22 @@
 真实模型输出能否被结构化契约消费、闭环归因那一步是否真的成立。
 
 离线产品不变量不受影响：缺少 `docker/.env` 或其中未配 `MODEL_PROVIDER_API_KEY` 时整文件 skip，
-因此 `make test` 在 CI/无凭据环境保持全绿；只有显式提供 live 凭据时才真打网络。
+因此 `make test` 在 CI/无凭据环境保持全绿；只有部署到真实容器环境并提供 live 凭据时才真打网络。
 
 凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），按白名单只取三项 provider 变量。
 关键约束：导入时**只读入一个本地 dict，绝不改写全局 `os.environ`**（否则 collection 阶段会污染
 同进程其他测试）；凭据仅在每个 live 用例内经 `monkeypatch` 临时注入、用完即还原。
 
-运行方式（凭据已在 `docker/.env` 中，命令行无需任何 secret）::
+运行方式：必须在 Docker Compose API/worker 容器等真实容器测试环境中执行，使用 `docker/.env`
+经 Compose 注入的运行时环境；`docker/.env.local-debug` 只用于本机调试专项测试，不用于本文件。
+宿主机直接执行会 skip，不伪装成 local-debug。
 
-    .venv/bin/python -m pytest -q tests/test_live_runtime_acceptance.py
-
-chat 用例额外要求已 bootstrap 的 local-debug 运行卷（`make local-debug-bootstrap`）。
+chat 用例额外要求已 bootstrap 的容器运行卷（`make runtime-bootstrap` 或容器 entrypoint）。
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -32,30 +33,55 @@ from app.runtime.settings import get_settings
 
 _LIVE_ENV_FILE = Path(__file__).resolve().parents[1] / "docker" / ".env"
 _LIVE_PROVIDER_KEYS = ("MODEL_PROVIDER_API_KEY", "MODEL_PROVIDER_API_URL", "AGENT_MODEL")
+_CONTAINER_REQUIRED_PATHS = (Path("/data"), Path("/main-workspace"), Path("/claude-roots/main"))
+_TRUTHY = {"1", "true", "yes", "on", "container"}
 
 
 def _read_live_creds() -> dict[str, str]:
-    """只从私有 env 文件读取白名单 provider 变量到本地 dict，不触碰全局环境。"""
+    """从容器部署 env 来源读取白名单 provider 变量到本地 dict，不触碰全局环境。"""
     creds: dict[str, str] = {}
-    if not _LIVE_ENV_FILE.exists():
-        return creds
-    for raw in _LIVE_ENV_FILE.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        key = key.strip()
-        if key in _LIVE_PROVIDER_KEYS:
-            creds[key] = value.strip().strip('"').strip("'")
+    if _LIVE_ENV_FILE.exists():
+        for raw in _LIVE_ENV_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            if key in _LIVE_PROVIDER_KEYS:
+                creds[key] = value.strip().strip('"').strip("'")
+    if os.environ.get("RUNTIME_CONTAINER", "").strip().lower() in _TRUTHY:
+        for key in _LIVE_PROVIDER_KEYS:
+            if os.environ.get(key):
+                creds[key] = os.environ[key]
     return creds
 
 
 _LIVE_CREDS = _read_live_creds()
 
-pytestmark = pytest.mark.skipif(
-    not _LIVE_CREDS.get("MODEL_PROVIDER_API_KEY"),
-    reason="live 验收需 docker/.env 配置 MODEL_PROVIDER_API_KEY；缺失默认 skip，不破坏 make test 产品不变量",
-)
+
+def _container_acceptance_skip_reason() -> str | None:
+    if os.environ.get("RUNTIME_CONTAINER", "").strip().lower() not in _TRUTHY:
+        return "live 验收必须在 Docker Compose API/worker 容器等真实容器环境中运行（RUNTIME_CONTAINER=1）"
+    missing = [path.as_posix() for path in _CONTAINER_REQUIRED_PATHS if not path.exists()]
+    if missing:
+        return f"live 验收缺少容器运行态挂载: {', '.join(missing)}"
+    if not os.access("/data", os.W_OK):
+        return "live 验收需要可写容器 DATA_DIR=/data"
+    return None
+
+
+_CONTAINER_ACCEPTANCE_SKIP_REASON = _container_acceptance_skip_reason()
+
+pytestmark = [
+    pytest.mark.skipif(
+        not _LIVE_CREDS.get("MODEL_PROVIDER_API_KEY"),
+        reason="live 验收需 docker/.env 配置 MODEL_PROVIDER_API_KEY；缺失默认 skip，不破坏 make test 产品不变量",
+    ),
+    pytest.mark.skipif(
+        _CONTAINER_ACCEPTANCE_SKIP_REASON is not None,
+        reason=_CONTAINER_ACCEPTANCE_SKIP_REASON or "",
+    ),
+]
 
 
 @pytest.fixture
@@ -67,7 +93,7 @@ def live_settings(monkeypatch):
     """
     for key, value in _LIVE_CREDS.items():
         monkeypatch.setenv(key, value)
-    monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    monkeypatch.setenv("RUNTIME_CONTAINER", "1")
     get_settings.cache_clear()
     try:
         yield get_settings()
@@ -82,6 +108,9 @@ def test_live_dspy_formatter_produces_typed_attribution_against_live_model(live_
     """
     settings = live_settings
     assert settings.provider_api_key, "live 验收要求 provider_api_key 已配置"
+    assert settings.runtime_volume_mode == "container"
+    assert settings.settings_env_file == Path("docker/.env")
+    assert settings.data_dir == Path("/data")
     assert settings.enable_dspy_output_formatter, "DSPy formatter 必须启用才能验证结构化契约"
 
     formatter = DSPyOutputFormatter(settings)
@@ -113,8 +142,8 @@ def test_live_runtime_chat_executes_against_live_model(live_settings):
     import anyio
 
     settings = live_settings
-    if not settings.main_workspace_dir.exists():
-        pytest.skip("chat live 验收需先 make local-debug-bootstrap 准备运行卷")
+    if not (settings.main_workspace_dir / "CLAUDE.md").exists():
+        pytest.skip("chat live 验收需先部署并 bootstrap 容器运行卷")
 
     runtime = __import__("app.runtime.claude_runtime", fromlist=["ClaudeRuntime"]).ClaudeRuntime(
         settings, LocalSessionStore(settings.session_dir)

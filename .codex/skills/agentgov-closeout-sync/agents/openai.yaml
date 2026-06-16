@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentGov Closeout Sync"
+  short_description: "阶段收尾时同步 AgentGov 文档、规则和记忆边界。"
+  default_prompt: "Use $agentgov-closeout-sync to reconcile this AgentGov milestone with README, docs, project rules, skill mirrors, and required governance checks."

@@ -734,6 +734,66 @@ def test_docs_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
     assert "mirrored skill differs from .claude/skills/docs-governance/SKILL.md" in result.stdout
 
 
+def test_new_project_skill_pair_is_discovered_for_mirror_drift(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    codex_skill = '---\nname: "new-project-governance"\ndescription: "docs"\n---\n\n# Skill\n\nKeep synced.\n'
+    claude_skill = (
+        '---\nname: "new-project-governance"\ndescription: "docs"\n---\n\n# Skill\n\n'
+        "> 本技能与 `.codex/skills/new-project-governance/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
+    )
+    _write_text(tmp_path / ".codex" / "skills" / "new-project-governance" / "SKILL.md", codex_skill)
+    _write_text(tmp_path / ".claude" / "skills" / "new-project-governance" / "SKILL.md", claude_skill)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / ".claude" / "skills" / "new-project-governance" / "SKILL.md", f"{claude_skill}\nDrift.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "mirrored skill differs from .claude/skills/new-project-governance/SKILL.md" in result.stdout
+
+
+def test_new_project_skill_missing_mirror_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _commit_all(tmp_path)
+    _write_text(
+        tmp_path / ".codex" / "skills" / "new-project-governance" / "SKILL.md",
+        '---\nname: "new-project-governance"\ndescription: "docs"\n---\n\n# Skill\n\nKeep synced.\n',
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "mirrored skill pair is incomplete: missing .claude/skills/new-project-governance/SKILL.md"
+        in result.stdout
+    )
+
+
+def test_skill_mirror_exclusions_are_not_forced_to_match(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(
+        tmp_path / ".codex" / "skills" / "codex-config-optimizer" / "SKILL.md",
+        '---\nname: "codex-config-optimizer"\ndescription: "codex"\n---\n\n# Codex Only\n\nCodex side only.\n',
+    )
+    _write_text(
+        tmp_path / ".codex" / "skills" / "project-skill" / "SKILL.md",
+        '---\nname: "project-skill"\ndescription: "project"\n---\n\n# Codex Project\n\nCodex shape.\n',
+    )
+    _write_text(
+        tmp_path / ".claude" / "skills" / "project-skill" / "SKILL.md",
+        '---\ndescription: "project"\n---\n\n# Claude Project\n\nClaude shape.\n',
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "mirrored skill" not in result.stdout
+
+
 def test_new_docs_file_with_unfinished_marker_fails(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)
@@ -848,3 +908,22 @@ def test_test_sync_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "mirrored skill differs from .claude/skills/test-sync-governance/SKILL.md" in result.stdout
+
+
+def test_agentgov_closeout_sync_skill_mirror_drift_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    codex_skill = '---\nname: "agentgov-closeout-sync"\ndescription: "closeout"\n---\n\n# Closeout\n\nKeep synced.\n'
+    claude_skill = (
+        '---\nname: "agentgov-closeout-sync"\ndescription: "closeout"\n---\n\n# Closeout\n\n'
+        "> 本技能与 `.codex/skills/agentgov-closeout-sync/SKILL.md` 同源镜像，修改需两侧同步。\n\nKeep synced.\n"
+    )
+    _write_text(tmp_path / ".codex" / "skills" / "agentgov-closeout-sync" / "SKILL.md", codex_skill)
+    _write_text(tmp_path / ".claude" / "skills" / "agentgov-closeout-sync" / "SKILL.md", claude_skill)
+    _commit_all(tmp_path)
+    _write_text(tmp_path / ".claude" / "skills" / "agentgov-closeout-sync" / "SKILL.md", f"{claude_skill}\nDrift.\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "mirrored skill differs from .claude/skills/agentgov-closeout-sync/SKILL.md" in result.stdout

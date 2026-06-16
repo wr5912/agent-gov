@@ -500,6 +500,8 @@ make local-debug-bootstrap
 
 `docker/.env.local-debug` 不是极简覆盖文件，它应与 `docker/.env` 保持 Runtime/API/worker 应用配置同构；主要差异只应是路径、端口和宿主机访问地址。模型提供商、Agent job、DSPy、Claude SDK、Runtime Langfuse tracing 等配置都应在两个文件中有同名 key。Compose、前端容器端口、Langfuse Postgres/ClickHouse/Redis/MinIO 镜像和初始化账号等部署编排项只放在 `docker/.env`。
 
+功能测试和验收测试不使用 `docker/.env.local-debug`，除非测试目标明确是本机调试 env 选择本身。`make test` 是离线功能硬门；需要真实模型和真实运行态的 live 验收必须先部署 Docker Compose 容器环境，并通过 `make container-live-test` 在容器内使用 `docker/.env` 和容器挂载路径执行。
+
 需要调整本机调试路径时编辑 `docker/.env.local-debug`；需要调整容器部署路径时编辑 `docker/.env` 或部署系统注入的 `HOST_RUNTIME_VOLUME_ROOT`。需要显式沿用旧目录时，可以在对应模式中把 `HOST_RUNTIME_VOLUME_ROOT` 设置为 `<repo root>/docker/volume`。
 
 本机后台 Agent job 不复用交互式 Claude `/login` 状态。运行“重新生成回归用例”等 worker 任务前，必须在私有 `docker/.env.local-debug` 配置 `MODEL_PROVIDER_API_KEY`；如使用 Anthropic 兼容网关，同时配置 `MODEL_PROVIDER_API_URL`。缺少模型凭据时，job 会以 `AGENT_AUTH_REQUIRED` 失败，并提示当前 profile 和 env 文件。

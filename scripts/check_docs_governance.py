@@ -2,7 +2,7 @@
 """docs/skill 容器治理硬门。
 
 除 `docs/` 文档入口索引与归档索引外，也治理 `.codex/skills/` 与 `.claude/skills/`
-下 Markdown 的未完成标记和镜像同步（见 TEXT_GOVERNANCE_ROOTS / MIRRORED_SKILLS）；
+下 Markdown 的未完成标记和镜像同步（见 TEXT_GOVERNANCE_ROOTS / collect_mirrored_skill_pairs）；
 产品内容是否正确仍由 agentgov-governance-preflight 负责，本脚本只做容器治理。
 """
 from __future__ import annotations
@@ -19,20 +19,18 @@ DOCS_INDEX = "docs/README.md"
 ARCHIVE_INDEX = "docs/archive/README.md"
 ARCHIVE_INDEX_HEADERS = ("原路径", "归档路径", "替代文档", "归档日期")
 TEXT_GOVERNANCE_ROOTS = ("docs/", ".codex/skills/", ".claude/skills/")
+CODEX_SKILLS_ROOT = ".codex/skills"
+CLAUDE_SKILLS_ROOT = ".claude/skills"
+MIRRORED_SKILL_EXCLUSIONS = frozenset(
+    {
+        "project-skill",  # 通用模板，两侧按各自工具形态维护。
+        "codex-config-optimizer",  # Codex-only 配置治理工具。
+    }
+)
 # CJK 标记按子串匹配；ASCII 标记按整词匹配，避免 `test_xxx.py`、掩码值等误报。
 _CJK_UNFINISHED_MARKERS = ("待" "补充", "占" "位")
 _WORD_UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "place" "holder", "x" "xx", "X" "XX")
 _WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
-MIRRORED_SKILLS = (
-    (".codex/skills/docs-governance/SKILL.md", ".claude/skills/docs-governance/SKILL.md"),
-    (".codex/skills/runtime-env-governance/SKILL.md", ".claude/skills/runtime-env-governance/SKILL.md"),
-    (".codex/skills/agentgov-governance-preflight/SKILL.md", ".claude/skills/agentgov-governance-preflight/SKILL.md"),
-    (".codex/skills/test-sync-governance/SKILL.md", ".claude/skills/test-sync-governance/SKILL.md"),
-    (
-        ".codex/skills/business-agent-workspace-optimizer/SKILL.md",
-        ".claude/skills/business-agent-workspace-optimizer/SKILL.md",
-    ),
-)
 
 
 @dataclass(frozen=True)
@@ -94,6 +92,20 @@ def _read_existing(root: Path, rel_path: str) -> str:
     return path.read_text(encoding="utf-8", errors="ignore")
 
 
+def _skill_names(root: Path, rel_root: str) -> set[str]:
+    base = root / rel_root
+    if not base.is_dir():
+        return set()
+    return {path.name for path in base.iterdir() if path.is_dir() and (path / "SKILL.md").is_file()}
+
+
+def collect_mirrored_skill_pairs(root: Path) -> tuple[tuple[str, str], ...]:
+    codex_names = _skill_names(root, CODEX_SKILLS_ROOT)
+    claude_names = _skill_names(root, CLAUDE_SKILLS_ROOT)
+    names = sorted((codex_names | claude_names) - MIRRORED_SKILL_EXCLUSIONS)
+    return tuple((f"{CODEX_SKILLS_ROOT}/{name}/SKILL.md", f"{CLAUDE_SKILLS_ROOT}/{name}/SKILL.md") for name in names)
+
+
 def _new_paths(root: Path, base_ref: str | None, paths: Iterable[str]) -> list[str]:
     return sorted(path for path in paths if _is_new_path(root, base_ref, path))
 
@@ -145,11 +157,13 @@ def _normalized_skill_text(text: str) -> str:
 
 def _skill_mirror_issues(root: Path) -> list[DocsGovernanceIssue]:
     issues: list[DocsGovernanceIssue] = []
-    for codex_path, claude_path in MIRRORED_SKILLS:
+    for codex_path, claude_path in collect_mirrored_skill_pairs(root):
         codex_text = _read_existing(root, codex_path)
         claude_text = _read_existing(root, claude_path)
         if bool(codex_text) != bool(claude_text):
-            issues.append(DocsGovernanceIssue(codex_path, f"mirrored skill pair is incomplete: {claude_path}"))
+            missing_path = codex_path if not codex_text else claude_path
+            anchor_path = claude_path if not codex_text else codex_path
+            issues.append(DocsGovernanceIssue(anchor_path, f"mirrored skill pair is incomplete: missing {missing_path}"))
             continue
         if codex_text and _normalized_skill_text(codex_text) != _normalized_skill_text(claude_text):
             issues.append(DocsGovernanceIssue(codex_path, f"mirrored skill differs from {claude_path}"))

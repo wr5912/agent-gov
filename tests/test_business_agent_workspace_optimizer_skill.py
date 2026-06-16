@@ -14,7 +14,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from check_docs_governance import MIRRORED_SKILLS, _normalized_skill_text  # noqa: E402
+from check_docs_governance import collect_mirrored_skill_pairs, _normalized_skill_text  # noqa: E402
 
 SKILL_NAME = "business-agent-workspace-optimizer"
 CODEX_PATH = ROOT / ".codex" / "skills" / SKILL_NAME / "SKILL.md"
@@ -40,12 +40,12 @@ def test_skill_pair_exists_with_valid_frontmatter():
         assert len(fm.get("description", "")) > 30
 
 
-def test_skill_pair_registered_in_mirrored_skills():
+def test_skill_pair_is_dynamically_discovered_as_mirrored():
     pair = (
         f".codex/skills/{SKILL_NAME}/SKILL.md",
         f".claude/skills/{SKILL_NAME}/SKILL.md",
     )
-    assert pair in MIRRORED_SKILLS
+    assert pair in collect_mirrored_skill_pairs(ROOT)
 
 
 def test_skill_pair_is_mirror_consistent():
@@ -66,6 +66,8 @@ def test_skill_encodes_review_corrected_boundaries():
     # data/ 不可整目录拒绝（业务 Agent workspace 在其下）。
     assert "data/business-agents/<agent_id>" in text
     assert "不能整目录拒绝 `data/`" in text
+    assert "不得把 `${RUNTIME_ROOT}/data`" in text
+    assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text
     # 权限模型对齐 #1 整改：不新增 ask、allow/deny + 对话级人审。
     assert "不要新增 `ask` 条目" in text
     # 复用现成模板脱敏扫描，不重复造轮子。

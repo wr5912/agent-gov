@@ -114,7 +114,7 @@
 
 - `make test`：含 `codex-guard`（`check_codex_governance --mode fail`）、全量 pytest、覆盖率门。
 - `check_orphan_tests.py`：删除旧能力时同步删测，无孤儿引用。
-- `check_docs_governance.py`：新增文档进 `docs/README.md`、四对 skill 镜像一致、无未完成标记。
+- `check_docs_governance.py`：新增文档进 `docs/README.md`、自动发现的项目专项 skill 镜像一致、无未完成标记。
 - 测试增删改按 `test-sync-governance`；runtime/env 改动按 `runtime-env-governance`；产品方案按 `agentgov-governance-preflight`。
 - 状态升级触及主流程时同步 `tests/coverage_policy.json` 的 nodeid 绑定。
 
@@ -128,18 +128,20 @@
 
 为补齐"模型那一环"的真实验证，新增 env-gated live 验收（`tests/test_live_runtime_acceptance.py`）：
 
-- 凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），测试在导入时按白名单
-  （`MODEL_PROVIDER_API_KEY`/`MODEL_PROVIDER_API_URL`/`AGENT_MODEL`）读入进程环境，
-  **绝不写入仓库、绝不出现在命令行**；真实 key 仅存在于本机 gitignored 文件，验收后应在模型厂商控制台 revoke。
-- 门控行为：`docker/.env` 缺失或未配 key（如 CI）时整文件 skip，不打网络；本机配置 `docker/.env` 后，
-  `make test` 会把这两条 live 用例纳入并真实打模型。即"离线 fake 守护编排正确性"与"本地 live 守护模型契约成立"
-  互补，CI 默认仍纯离线。
+- 凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件）。live 验收必须在已部署的
+  Docker Compose 容器环境中运行，使用 Compose 从 `docker/.env` 注入的
+  `MODEL_PROVIDER_API_KEY`/`MODEL_PROVIDER_API_URL`/`AGENT_MODEL`；真实 key 绝不写入仓库、绝不出现在命令行。
+- 门控行为：`docker/.env` 缺失、未配 key（如 CI），或当前 pytest 不在 `RUNTIME_CONTAINER=1` 且具备
+  `/data`、`/main-workspace`、`/claude-roots/main` 挂载的真实容器环境中运行时整文件 skip，不打网络。
+  `make test` 保持离线功能硬门；真实 live 验收使用 `make container-live-test`。
+- `docker/.env.local-debug` 只用于本机调试专项场景，不用于功能测试或 live 验收；除非测试目标就是
+  local-debug env 选择本身，否则测试不得切换到 local-debug 路径兜底。
 - 覆盖两条离线 fake 永远证明不了的路径：
   - 真实运行时 chat（`profile -> claude_agent_sdk -> live model -> ChatResponse`，`errors==[]`）。
   - 真实结构化输出（原始归因文本经 DSPy formatter 产出合法 `AttributionFormatterOutput`，
     且 backend-owned 字段不被模型回填）。
 
-已用 `deepseek-v4-flash`（Anthropic 兼容端点）实测通过：无凭据 2 skipped、配置 `docker/.env` 后 live 2 passed。
+已用 `deepseek-v4-flash`（Anthropic 兼容端点）实测通过：无凭据或非容器环境 skipped，容器环境 live 2 passed。
 此门验证"闭环对真实模型成立"，但因 CI 默认不带凭据、不进离线硬门覆盖率基线，故**不作为任何 AGV 用例的离线 `current` 依据**，
 只作为 live 环境下的端到端可用性证据。
 

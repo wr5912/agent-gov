@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -87,7 +88,7 @@ class AgentJobRunner:
         options = self.build_options(profile)
 
         async def collect() -> FormatterOutputModel:
-            async for msg in query(prompt=self.single_prompt_stream(prompt), options=options):
+            async for msg in query(prompt=self.single_prompt_stream(prompt, session_id=f"governor-job-{uuid.uuid4()}"), options=options):
                 text = extract_text(msg)
                 if text:
                     logger.debug(
@@ -146,12 +147,14 @@ class AgentJobRunner:
         return provider_api_key_configured(self.settings.provider_api_key)
 
     @staticmethod
-    async def single_prompt_stream(prompt: str) -> AsyncIterator[JsonObject]:
+    async def single_prompt_stream(prompt: str, *, session_id: str | None = None) -> AsyncIterator[JsonObject]:
+        # session_id 是喂给 SDK 的单条 user 消息 envelope id。主聊天沿用 "default"；
+        # 治理 job 由调用方传入独立 id，取代所有 job 共用 "default"（整改方案 §5.6 动作 1）。
         yield {
             "type": "user",
             "message": {"role": "user", "content": prompt},
             "parent_tool_use_id": None,
-            "session_id": "default",
+            "session_id": session_id or "default",
         }
 
     @staticmethod

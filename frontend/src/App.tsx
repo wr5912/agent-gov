@@ -18,6 +18,11 @@ function newId(prefix: string) {
   return `${prefix}_${random}`;
 }
 
+// 会话 ID 使用裸 UUID（不带 sess_ 前缀），便于后端首次 SDK 调用直接把 session_id 传给 Claude SDK 并对齐 sdk_session_id（整改方案 §4.3 / Phase 1）。消息等临时 UI ID 仍可带前缀。
+function newSessionId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+}
+
 function parseCsv(value: string): string[] {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
 }
@@ -240,7 +245,7 @@ export default function App() {
   }
 
   function createSession() {
-    const sessionId = newId("sess");
+    const sessionId = newSessionId();
     setActiveSessionId(sessionId);
     setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     setStreamEvents([]);
@@ -271,7 +276,7 @@ export default function App() {
     const message = input.trim();
     if (!message || streaming) return;
 
-    const sessionId = activeSessionId || newId("sess");
+    const sessionId = activeSessionId || newSessionId();
     setActiveSessionId(sessionId);
     setInput("");
     setStreaming(true);

@@ -110,10 +110,12 @@ class RuntimeLangfuseClient:
         session_id: Optional[str] = None,
         metadata: Optional[Mapping[str, str]] = None,
         trace_name: Optional[str] = None,
+        tags: Optional[list[str]] = None,
     ) -> Any:
         if not self.settings.langfuse_enabled:
             return nullcontext()
         clean_metadata = {key: value for key, value in (metadata or {}).items() if value}
+        clean_tags = [tag for tag in (tags or []) if tag]
         try:
             ensure_langfuse_otel_compat()
             from langfuse import propagate_attributes
@@ -123,6 +125,7 @@ class RuntimeLangfuseClient:
                 session_id=session_id,
                 metadata=clean_metadata or None,
                 trace_name=trace_name,
+                tags=clean_tags or None,
             )
         except Exception as exc:
             print(f"[WARN] failed to propagate Langfuse attributes: {exc}", flush=True)
@@ -146,6 +149,7 @@ class RuntimeLangfuseClient:
         user_id: Optional[str] = None,
         metadata: Optional[Mapping[str, str]] = None,
         trace_name: Optional[str] = None,
+        tags: Optional[list[str]] = None,
     ) -> None:
         if observation is None:
             return
@@ -153,13 +157,16 @@ class RuntimeLangfuseClient:
         if otel_span is None:
             return
 
-        attributes: dict[str, str] = {}
+        attributes: dict[str, str | list[str]] = {}
         if session_id:
             attributes["session.id"] = session_id
         if user_id:
             attributes["user.id"] = user_id
         if trace_name:
             attributes["langfuse.trace.name"] = trace_name
+        clean_tags = [tag for tag in (tags or []) if tag]
+        if clean_tags:
+            attributes["langfuse.trace.tags"] = clean_tags
         for key, value in (metadata or {}).items():
             if value:
                 attributes[f"langfuse.trace.metadata.{key}"] = value
@@ -200,10 +207,12 @@ class RuntimeLangfuseClient:
         input: Any = None,
         output: Any = None,
         metadata: Optional[Mapping[str, str]] = None,
+        tags: Optional[list[str]] = None,
     ) -> None:
         if not trace_id or not self.settings.langfuse_enabled:
             return
         clean_metadata = {key: value for key, value in (metadata or {}).items() if value}
+        clean_tags = [tag for tag in (tags or []) if tag]
         try:
             ensure_langfuse_otel_compat()
             from langfuse.api.ingestion.types.ingestion_event import IngestionEvent_TraceCreate
@@ -224,6 +233,7 @@ class RuntimeLangfuseClient:
                     input=to_plain(input),
                     output=to_plain(output),
                     metadata=clean_metadata or None,
+                    tags=clean_tags or None,
                 ),
             )
             api.ingestion.batch(batch=[event], metadata={"source": "agent-gov-runtime"})

@@ -23,6 +23,7 @@ from .agent_profiles import (
 )
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
+from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .message_utils import extract_text, message_event_name, to_plain
@@ -403,14 +404,14 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         prompt: str,
         job_type: str,
         job_input: JsonObject,
+        governor: Optional[JsonObject] = None,
     ) -> FormatterOutputModel:
         self.job_runner.output_formatter = self.output_formatter
-        return await self.job_runner.run_profile_json(
-            profile_name=profile_name,
-            prompt=prompt,
-            job_type=job_type,
-            job_input=job_input,
-        )
+
+        async def run() -> FormatterOutputModel:
+            return await self.job_runner.run_profile_json(profile_name=profile_name, prompt=prompt, job_type=job_type, job_input=job_input)
+
+        return await run_governor_profile_json(self.langfuse, run, governor)
 
     def _new_runtime_request_context(self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None) -> RuntimeRequestContext:
         self._raise_if_version_maintenance()
@@ -463,8 +464,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         return {
             "user_id": self._langfuse_user_id(req.metadata),
             "session_id": context.session.session_id,
-            "metadata": {key: value for key, value in metadata.items() if value},
             "trace_name": (profile or self.profiles[MAIN_AGENT_PROFILE]).langfuse_observation_name,
+            "tags": ["role:business", f"agent:{(profile or self.profiles[MAIN_AGENT_PROFILE]).name}"],  # §4.4 多主体
+            "metadata": {key: value for key, value in metadata.items() if value},
         }
 
     @staticmethod
@@ -591,6 +593,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             input=context.telemetry_input,
             output=output,
             metadata=trace_attributes.get("metadata") if isinstance(trace_attributes.get("metadata"), dict) else None,
+            tags=trace_attributes.get("tags") if isinstance(trace_attributes.get("tags"), list) else None,
         )
 
     def _complete_runtime_request(

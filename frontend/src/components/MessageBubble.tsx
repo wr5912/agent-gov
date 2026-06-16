@@ -652,14 +652,15 @@ function describeEvent(event: StreamLogEvent): string | undefined {
 
   const parts: string[] = [];
   const sessionId = stringValue(event.data.session_id);
-  const sdkSessionId = stringValue(event.data.sdk_session_id);
+  const runId = stringValue(event.data.run_id);
   const stopReason = stringValue(event.data.stop_reason);
   const totalCostUsd = numberValue(event.data.total_cost_usd);
   const errors = Array.isArray(event.data.errors) ? event.data.errors : undefined;
   const message = stringValue(event.data.message);
 
+  // sdk_session_id 是 Claude SDK 内部 resume id，已从气泡主信息降噪移出；仍可在详情/原始 SDK 事件 JSON 查看（整改方案 §5.2 / Phase 2）。
   if (sessionId) parts.push(`session_id: ${sessionId}`);
-  if (sdkSessionId) parts.push(`sdk_session_id: ${sdkSessionId}`);
+  if (runId) parts.push(`run_id: ${runId}`);
   if (stopReason) parts.push(`stop_reason: ${stopReason}`);
   if (typeof totalCostUsd === "number") parts.push(`total_cost_usd: ${totalCostUsd}`);
   if (errors?.length) parts.push(`errors: ${errors.map(String).join("; ")}`);

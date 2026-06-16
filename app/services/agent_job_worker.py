@@ -93,6 +93,14 @@ class AgentJobWorker:
             if deterministic:
                 return deterministic
         job_input = cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
+        # 治理 job 富化上下文：使其 Langfuse trace 走 runtime.governor.{job_type} + scope sessionId
+        # + role:governance tag，与业务 Agent 区分（整改方案 §4.4 / §5.6）。
+        governor = {
+            "job_type": str(job_type),
+            "scope_kind": str(job.get("scope_kind") or ""),
+            "scope_id": str(job.get("scope_id") or ""),
+            "job_id": str(job.get("job_id") or ""),
+        }
         return await self.run_profile_json(
             # 执行期 profile 由 job_type→spec 解析（合并后恒为 governor）；持久化的
             # job["profile_name"] 仅为历史元数据/展示，不参与执行。合并前 queued 的旧 job
@@ -102,6 +110,7 @@ class AgentJobWorker:
             prompt=self._prompt(job_type, job, job_input),
             job_type=job_type,
             job_input=job_input,
+            governor=governor,
         )
 
     def _prompt(self, job_type: AgentJobType, job: JsonObject, job_input: JsonObject) -> str:

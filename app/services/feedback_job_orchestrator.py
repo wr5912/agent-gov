@@ -68,6 +68,7 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(_job_input(job)),
                 job_type=spec.job_type,
                 job_input=_job_input(job),
+                governor={"job_type": str(spec.job_type), "scope_kind": "feedback_case", "scope_id": feedback_case_id, "job_id": str(job["job_id"])},
                 complete=lambda formatter_output: self.feedback_store.complete_attribution_job(
                     job["job_id"],
                     cast(AttributionFormatterOutput, formatter_output),
@@ -106,6 +107,7 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
+                governor={"job_type": str(spec.job_type), "scope_kind": "optimization_batch", "scope_id": batch_id, "job_id": str(job["job_id"])},
                 complete=lambda formatter_output: self.feedback_store.complete_batch_plan_job(
                     job["job_id"],
                     cast(FeedbackOptimizationPlanFormatterOutput, formatter_output),
@@ -141,6 +143,7 @@ class FeedbackJobOrchestrator:
                 prompt=spec.prompt_builder(input_payload),
                 job_type=spec.job_type,
                 job_input=input_payload,
+                governor={"job_type": str(spec.job_type), "scope_kind": "optimization_task", "scope_id": optimization_task_id, "job_id": str(job["execution_job_id"])},
                 complete=lambda formatter_output: self.feedback_store.complete_execution_job(
                     job["execution_job_id"],
                     cast(ExecutionPlanFormatterOutput, formatter_output),
@@ -162,6 +165,7 @@ class FeedbackJobOrchestrator:
         complete: Callable[[FormatterOutputModel], object],
         fail: Callable[[str, str, JsonObject | None], object],
         final_result: Callable[[], JobResult],
+        governor: Optional[JsonObject] = None,
     ) -> JobResult:
         try:
             formatter_output = await self.run_profile_json(
@@ -169,6 +173,7 @@ class FeedbackJobOrchestrator:
                 prompt=prompt,
                 job_type=job_type,
                 job_input=job_input,
+                governor=governor,
             )
             complete(formatter_output)
         except asyncio.TimeoutError as exc:

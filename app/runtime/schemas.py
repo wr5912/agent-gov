@@ -43,7 +43,10 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     run_id: str
     session_id: str
-    sdk_session_id: Optional[str] = None
+    sdk_session_id: Optional[str] = Field(
+        default=None,
+        description="Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.",
+    )
     agent_version_id: Optional[str] = None
     answer: str
     messages: list[JsonObject] = Field(default_factory=list)

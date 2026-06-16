@@ -124,7 +124,7 @@ def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
         data_dir=settings.data_dir,
         mcp_config_path=mcp_resolution.path,
         project_settings_path=settings.main_workspace_dir / ".claude" / "settings.json",
-        langfuse_observation_name="runtime.main_agent",
+        langfuse_observation_name="runtime.business_agent.main",
         readable_paths=(settings.main_workspace_dir, settings.data_dir),
         writable_paths=(settings.data_dir / "outputs",),
         denied_paths=(settings.governor_claude_root,),

@@ -900,13 +900,13 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert result.agent_activity["tool_results"][1]["name"] == ("mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get")
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.main_agent",
-        "runtime.main_agent.claude_sdk_query",
+        "runtime.business_agent.main",
+        "runtime.business_agent.main.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     root, generation = fake_langfuse.observations
     assert root._otel_span.attributes["session.id"] == result.session_id
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.main_agent"
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main"
     assert generation._otel_span.attributes["session.id"] == result.session_id
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
@@ -930,12 +930,13 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.main_agent",
+            "name": "runtime.business_agent.main",
             "session_id": result.session_id,
             "user_id": "user-a",
             "input": root.kwargs["input"],
             "output": root.updates[-1]["output"],
             "metadata": propagations[0]["metadata"],
+            "tags": ["role:business", "agent:main-agent"],
         }
     ]
     assert propagations == [
@@ -952,7 +953,8 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "skills_mode": "default",
                 "tenant_id": "tenant-a",
             },
-            "trace_name": "runtime.main_agent",
+            "trace_name": "runtime.business_agent.main",
+            "tags": ["role:business", "agent:main-agent"],
         }
     ]
     assert "api_key" not in propagations[0]["metadata"]
@@ -1042,14 +1044,14 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert fake_langfuse.flushed is True
     root, generation = fake_langfuse.observations
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.main_agent",
-        "runtime.main_agent.claude_sdk_query",
+        "runtime.business_agent.main",
+        "runtime.business_agent.main.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     assert propagations[0]["session_id"] == result_event["data"]["session_id"]
     assert propagations[0]["metadata"]["api_session_id"] == result_event["data"]["session_id"]
     assert root._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.main_agent"
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main"
     assert generation._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
     assert root.updates[-1]["output"]["answer"] == "stream answer"
     assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
@@ -1059,11 +1061,12 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.main_agent",
+            "name": "runtime.business_agent.main",
             "session_id": result_event["data"]["session_id"],
             "user_id": None,
             "input": root.kwargs["input"],
             "output": root.updates[-1]["output"],
             "metadata": propagations[0]["metadata"],
+            "tags": ["role:business", "agent:main-agent"],
         }
     ]

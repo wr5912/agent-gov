@@ -210,7 +210,9 @@ services:
       langfuse-clickhouse:
         condition: service_healthy
     ports:
-      - "${LANGFUSE_BIND_IP:-127.0.0.1}:${LANGFUSE_HOST_PORT:-53000}:3000"
+      # 默认绑定 0.0.0.0，使远端用户可访问 Langfuse 监测界面；仅限本机时设 LANGFUSE_BIND_IP=127.0.0.1。
+      # 暴露到网络时务必在私有 docker/.env 设置强 LANGFUSE_SALT/凭据，并把 LANGFUSE_NEXTAUTH_URL 指向宿主机外部地址。
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_HOST_PORT:-53000}:3000"
     environment:
       <<: *langfuse-env
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
@@ -256,8 +258,8 @@ services:
       MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
       HOME: ${LANGFUSE_MINIO_HOME:-/data}
     ports:
-      - "${LANGFUSE_BIND_IP:-127.0.0.1}:${LANGFUSE_MINIO_HOST_PORT:-59000}:9000"
-      - "${LANGFUSE_BIND_IP:-127.0.0.1}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_HOST_PORT:-59000}:9000"
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
     volumes:
       - ${LANGFUSE_MINIO_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/minio}:/data
     healthcheck:

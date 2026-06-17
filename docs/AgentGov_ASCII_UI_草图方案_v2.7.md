@@ -1188,6 +1188,33 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 后续加固：ContextPackage 脱敏（当前不做）。
 ```
 
+### 17.6 实现进度（截至当前）
+
+已落地并过硬门：
+
+```text
+[✓] ImprovementItem 事项级单一领域实体（持久化 + 7 段状态机 + archived 终态 + agent scoping + /api/improvements）
+[✓] 改进事项治理工作台（列表 / 详情 / stepper / 下一步 / 每态唯一主动作 / 归档 / 获取上下文）
+[✓] 治理工作台外壳：导航收敛 Playground / 改进 / 发布
+[✓] 顶栏全局「业务 Agent」切换器；改进按所选 Agent scoping；Playground 对话发 agent_id 归属该 Agent
+[✓] 发布页（§12 能不能发 / 为什么 / 包含什么），消费真实 /api/agent-change-sets + /api/agent-releases
+[✓] Governance Light 主题应用于顶栏导航与 改进 / 发布 surface
+[✓] 统一术语 improvement_* 贯穿 UI / API / DB / 状态机 / 上下文 / 测试；data-testid / data-state / data-action 齐备
+[✓] 验收：make test、make main-flow-test、tsc/build、Playwright（改进工作台 + 反馈回归）全绿；真实浏览器 + 真实 LLM(deepseek) E2E 通过
+```
+
+仍属后续 Wave（方案明确的未建成边界，非本轮可凭空实现）：
+
+```text
+[ ] W2 自动化策略编排引擎（自动推进，免点按钮）—— 当前为用户触发兜底
+[ ] W2 相似度自动归并 / 拆分 / 重归因 —— 当前手动关联
+[ ] W2 ImprovementItem ↔ 既有闭环引擎（attribution / optimization_plan / eval）深度对接
+[ ] W3 资产 Registry 复利中心（跨 Agent 方法论资产继承）
+[ ] 发布页 per-Agent scoping —— 需后端在 release / change-set 响应 DTO 暴露 agent_id
+[ ] 全站 Governance Light（Playground / 反馈优化工作台仍为既有暖色，待整页迁移）
+[ ] ContextPackage 脱敏 —— 裁决：面向开发优化人员，当前不做
+```
+
 ---
 
 ## 18. 一句话定稿

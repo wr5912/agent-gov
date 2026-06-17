@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import sessionmaker
 
-from ..errors import BusinessRuleViolation, NotFoundError
+from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
 from ..improvement_db import ImprovementItemModel
 from ..runtime_db import utc_now
 from ..state_machines import validate_transition
@@ -97,14 +97,29 @@ class ImprovementStore:
         )
 
     def transition_stage(self, improvement_id: str, *, stage: str) -> ImprovementItemRecord:
-        """改进事项阶段转移；非法转移由 state_machines 抛 StateTransitionError(409)。"""
+        """改进事项阶段转移；非法转移由 state_machines 抛 StateTransitionError(409)。
+
+        已归档（archived）为终态状态：不再接受阶段推进，转移请求被拒（409）。
+        """
         with self._session_factory.begin() as db:
             row = db.get(ImprovementItemModel, improvement_id)
             if row is None:
                 raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+            if row.improvement_status == "archived":
+                raise ConflictError(f"Archived improvement cannot transition: {improvement_id}")
             validate_transition("improvement_stage", row.improvement_stage or "feedback_intake", stage)
             row.improvement_stage = stage
             row.improvement_status = derive_improvement_status(stage)
+            row.updated_at = utc_now()
+            return _record(row)
+
+    def archive_improvement(self, improvement_id: str) -> ImprovementItemRecord:
+        """归档改进事项：improvement_status 置为终态 archived（不改 stage），归档后不再推进阶段。"""
+        with self._session_factory.begin() as db:
+            row = db.get(ImprovementItemModel, improvement_id)
+            if row is None:
+                raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+            row.improvement_status = "archived"
             row.updated_at = utc_now()
             return _record(row)
 

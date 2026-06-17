@@ -37,3 +37,11 @@ export function setImprovementStage(config: RuntimeClientConfig, improvementId: 
     },
   );
 }
+
+export function archiveImprovement(config: RuntimeClientConfig, improvementId: string) {
+  return requestJson<ImprovementItem>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}/archive`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+}

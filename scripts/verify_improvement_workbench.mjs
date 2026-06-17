@@ -161,6 +161,15 @@ async function main() {
         item.updated_at = ts;
         return json(route, item);
       }
+      const archive = path.match(/^\/api\/improvements\/([^/]+)\/archive$/);
+      if (archive && method === "POST") {
+        const id = decodeURIComponent(archive[1]);
+        const item = stateRef.improvements.find((i) => i.improvement_id === id);
+        if (!item) return json(route, { detail: "not found" }, 404);
+        item.improvement_status = "archived";
+        item.updated_at = ts;
+        return json(route, item);
+      }
       const detail = path.match(/^\/api\/improvements\/([^/]+)$/);
       if (detail && method === "GET") {
         const id = decodeURIComponent(detail[1]);
@@ -195,6 +204,13 @@ async function main() {
       const stagePill = page.getByTestId("current-stage");
       if ((await stagePill.getAttribute("data-state")) !== "attribution") {
         throw new Error("detail current-stage should be data-state=attribution");
+      }
+
+      // 详情展示「下一步」提示（非空）。
+      const nextStep = page.getByTestId("improvement-next-step");
+      await nextStep.waitFor({ timeout: 15_000 });
+      if (!(await nextStep.innerText()).trim()) {
+        throw new Error("detail should show a non-empty 下一步 hint");
       }
 
       // 每态唯一主动作：attribution -> optimization。
@@ -235,6 +251,14 @@ async function main() {
       if ((await page.getByTestId("primary-action").getAttribute("data-action")) !== "triage") {
         throw new Error("new improvement at feedback_intake should advance to triage");
       }
+
+      // 归档为终态状态：归档后状态 archived、主动作消失、显示已归档。
+      await page.getByTestId("archive-improvement").click();
+      await page.locator('[data-testid="improvement-status"][data-status="archived"]').waitFor({ timeout: 15_000 });
+      if ((await page.getByTestId("primary-action").count()) !== 0) {
+        throw new Error("archived improvement must expose no primary action");
+      }
+      await page.getByTestId("improvement-archived").waitFor({ timeout: 15_000 });
 
       // 业务 Agent scoping：按 soc-ops 过滤后仍可见其事项。
       await page.getByTestId("improvement-scope").selectOption("soc-ops");

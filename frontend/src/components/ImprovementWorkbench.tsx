@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  archiveImprovement,
   createImprovement,
   listImprovements,
   setImprovementStage,
@@ -89,6 +90,13 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
   const handleAdvance = (item: ImprovementItem, targetStage: string) => {
     void run(async () => {
       const updated = await setImprovementStage(clientConfig, item.improvement_id, targetStage);
+      setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+    });
+  };
+
+  const handleArchive = (item: ImprovementItem) => {
+    void run(async () => {
+      const updated = await archiveImprovement(clientConfig, item.improvement_id);
       setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
     });
   };
@@ -201,6 +209,20 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
               >
                 当前阶段：{stageView.label}
               </span>
+              {selected.improvement_status === "archived" ? (
+                <span className="iw-status-pill is-archived" data-testid="improvement-status" data-status="archived">已归档</span>
+              ) : null}
+            </div>
+
+            <div className="iw-detail-section">
+              <h4>下一步</h4>
+              <div className="iw-next-step" data-testid="improvement-next-step">
+                {selected.improvement_status === "archived"
+                  ? "已归档，不再推进。"
+                  : stageView.primaryAction
+                    ? stageView.primaryAction.label
+                    : "已进入发布阶段，治理闭环完成。"}
+              </div>
             </div>
 
             <div className="iw-detail-section">
@@ -237,7 +259,9 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
             ) : null}
 
             <div className="iw-action-row">
-              {stageView.primaryAction ? (
+              {selected.improvement_status === "archived" ? (
+                <span className="iw-done-note" data-testid="improvement-archived">本改进事项已归档。</span>
+              ) : stageView.primaryAction ? (
                 <button
                   className="iw-primary-button"
                   type="button"
@@ -259,6 +283,17 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
               >
                 获取上下文
               </button>
+              {selected.improvement_status !== "archived" ? (
+                <button
+                  className="iw-secondary-button"
+                  type="button"
+                  data-testid="archive-improvement"
+                  disabled={busy}
+                  onClick={() => handleArchive(selected)}
+                >
+                  归档
+                </button>
+              ) : null}
             </div>
 
             {contextOpen ? (

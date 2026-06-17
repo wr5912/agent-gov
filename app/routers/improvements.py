@@ -79,7 +79,16 @@ def create_improvements_router(
         summary="Transition an improvement item's stage (rejects illegal transitions with 409)",
     )
     async def transition_improvement(improvement_id: str, req: ImprovementStageTransitionRequest) -> ImprovementItemResponse:
-        # 合法阶段转移由集中状态机 improvement_stage 判定；非法转移返回 409。
+        # 合法阶段转移由集中状态机 improvement_stage 判定；非法转移 / 已归档返回 409。
         return _response(improvement_store.transition_stage(improvement_id, stage=req.stage))
+
+    @router.post(
+        "/improvements/{improvement_id}/archive",
+        response_model=ImprovementItemResponse,
+        summary="Archive an improvement item (terminal status archived; no further stage transitions)",
+    )
+    async def archive_improvement(improvement_id: str) -> ImprovementItemResponse:
+        # 归档为终态状态：improvement_status=archived，归档后阶段转移被拒（409）。
+        return _response(improvement_store.archive_improvement(improvement_id))
 
     return router

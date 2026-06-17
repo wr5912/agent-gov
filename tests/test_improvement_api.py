@@ -70,6 +70,22 @@ def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) ->
         assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "triage"}).status_code == 404
 
 
+def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: Path) -> None:
+    """归档为终态状态：improvement_status=archived；归档后阶段转移 409；未知 id 归档 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        created = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "待归档事项"})
+        improvement_id = created.json()["improvement_id"]
+        archived = client.post(f"/api/improvements/{improvement_id}/archive")
+        assert archived.status_code == 200 and archived.json()["improvement_status"] == "archived"
+        # 归档后阶段推进被拒。
+        assert client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"}).status_code == 409
+        # 归档项仍可列出（审计）。
+        assert improvement_id in {i["improvement_id"] for i in client.get("/api/improvements").json()}
+        # 未知 id 归档 404。
+        assert client.post("/api/improvements/imp-unknown/archive").status_code == 404
+
+
 def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path) -> None:
     """字段所有权：请求体里夹带 backend-owned 字段不得越权——后端权威生成 id/stage/status。"""
     module = _load_app(monkeypatch, tmp_path)

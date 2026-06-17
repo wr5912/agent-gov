@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.runtime.errors import BusinessRuleViolation, NotFoundError
+from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.state_machines import StateTransitionError
 from app.runtime.stores.improvement_store import ImprovementStore, derive_improvement_status
@@ -110,3 +110,23 @@ def test_transition_unknown_improvement_raises_not_found(tmp_path: Path) -> None
     store = _store(tmp_path)
     with pytest.raises(NotFoundError):
         store.transition_stage("imp-nope", stage="triage")
+
+
+def test_archive_sets_terminal_status_and_blocks_transition(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    record = store.create_improvement(agent_id="soc-ops", title="t")
+    store.transition_stage(record.improvement_id, stage="triage")
+    archived = store.archive_improvement(record.improvement_id)
+    assert archived.improvement_status == "archived"
+    # 归档后阶段转移被拒（终态状态）。
+    with pytest.raises(ConflictError):
+        store.transition_stage(record.improvement_id, stage="attribution")
+    # 归档项仍可查询（审计），仍出现在列表中。
+    assert store.get_improvement(record.improvement_id).improvement_status == "archived"
+    assert any(item.improvement_id == record.improvement_id for item in store.list_improvements(agent_id="soc-ops"))
+
+
+def test_archive_unknown_improvement_raises_not_found(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    with pytest.raises(NotFoundError):
+        store.archive_improvement("imp-nope")

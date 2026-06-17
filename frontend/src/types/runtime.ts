@@ -1,6 +1,7 @@
 import type { components } from "./api";
 
 type OpenApiAgentInfo = components["schemas"]["AgentInfo"];
+type OpenApiAgentSummary = components["schemas"]["AgentSummaryResponse"];
 type OpenApiAgentChangeSetActionRequest = components["schemas"]["AgentChangeSetActionRequest"];
 type OpenApiAgentChangeSetCreateRequest = components["schemas"]["AgentChangeSetCreateRequest"];
 type OpenApiAgentChangeSetEventResponse = components["schemas"]["AgentChangeSetEventResponse"];
@@ -33,6 +34,8 @@ type OpenApiSkillInfo = components["schemas"]["SkillInfo"];
 
 export type RuntimeHealth = OpenApiRuntimeHealth;
 export type AgentInfo = OpenApiAgentInfo;
+/** 业务 Agent（治理对象，/api/agent-registry），区别于运行内 Subagent（/api/agents）。 */
+export type AgentSummary = OpenApiAgentSummary;
 export type SkillInfo = OpenApiSkillInfo;
 export type SessionInfo = OpenApiSessionInfo;
 export type ConfigMappingItem = OpenApiConfigMappingItem;

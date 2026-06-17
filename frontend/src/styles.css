@@ -74,6 +74,40 @@ button:disabled {
   background: rgba(201, 100, 66, 0.12);
   color: var(--brand-2);
 }
+/* v2.7 治理工作台主导航 + 全局业务 Agent 切换器（Governance Light 蓝色主态） */
+.topbar-nav { display: flex; align-items: center; gap: 4px; }
+.topbar-nav-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.topbar-nav-button:hover { background: rgba(86, 63, 46, 0.06); }
+.topbar-nav-button.active {
+  background: #eff6ff;
+  color: #1d4ed8;
+  border-color: #bfdbfe;
+  font-weight: 600;
+}
+.topbar-agent { display: inline-flex; align-items: center; gap: 6px; }
+.topbar-agent > span { font-size: 12px; color: var(--muted); }
+.topbar-agent-select {
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid var(--line-strong);
+  background: #fffdf8;
+  color: var(--text);
+  padding: 0 8px;
+  font-size: 13px;
+  max-width: 200px;
+}
 .status-dot {
   width: 9px;
   height: 9px;

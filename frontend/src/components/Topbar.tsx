@@ -1,16 +1,22 @@
-import { Activity, BookOpen, ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
-import type { RuntimeHealth } from "../types/runtime";
+import { Activity, BookOpen, ListChecks, MessageSquare, Rocket, RefreshCw, Settings } from "lucide-react";
+import type { AgentSummary, RuntimeHealth } from "../types/runtime";
+
+type ActiveWindow = "chat" | "feedback" | "improvement" | "release";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
   apiDocsUrl: string;
   langfuseUrl: string;
-  activeWindow: "chat" | "feedback" | "improvement";
+  activeWindow: ActiveWindow;
   loading: boolean;
+  businessAgents: AgentSummary[];
+  selectedBusinessAgentId: string;
+  onSelectBusinessAgent: (agentId: string) => void;
   onRefresh: () => void;
   onOpenFeedback: () => void;
   onOpenPlayground: () => void;
   onOpenImprovement: () => void;
+  onOpenRelease: () => void;
   onOpenSettings: () => void;
 }
 
@@ -20,42 +26,83 @@ export function Topbar({
   langfuseUrl,
   activeWindow,
   loading,
+  businessAgents,
+  selectedBusinessAgentId,
+  onSelectBusinessAgent,
   onRefresh,
   onOpenFeedback,
   onOpenPlayground,
   onOpenImprovement,
+  onOpenRelease,
   onOpenSettings,
 }: TopbarProps) {
-  const isFeedbackWindow = activeWindow === "feedback";
-  const isImprovementWindow = activeWindow === "improvement";
   return (
     <header className="topbar">
       <div className="topbar-left">
         <span className={`status-dot ${health?.status === "ok" ? "ok" : "warn"}`} />
         <span>{health?.status === "ok" ? "Runtime online" : "Runtime unknown"}</span>
         <span className="topbar-sep" />
+        <label className="topbar-agent">
+          <span>业务 Agent</span>
+          <select
+            className="topbar-agent-select"
+            data-testid="topbar-agent-switcher"
+            value={selectedBusinessAgentId}
+            onChange={(e) => onSelectBusinessAgent(e.target.value)}
+            title="切换当前业务 Agent；改进 / 发布 / 对话按此 Agent 归属"
+          >
+            <option value="">全部业务 Agent</option>
+            {businessAgents.map((agent) => (
+              <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
+            ))}
+          </select>
+        </label>
+        <span className="topbar-sep" />
         <span className="muted">{health?.model || "model not loaded"}</span>
       </div>
-      <div className="topbar-actions">
+
+      <nav className="topbar-nav" aria-label="主导航">
         <button
-          className={`ghost-button topbar-view-button ${isFeedbackWindow ? "active" : ""}`}
+          className={`topbar-nav-button ${activeWindow === "chat" ? "active" : ""}`}
           type="button"
-          onClick={isFeedbackWindow ? onOpenPlayground : onOpenFeedback}
-          title={isFeedbackWindow ? "返回 Playground" : "打开反馈优化工作台"}
-          aria-label={isFeedbackWindow ? "返回 Playground" : "打开反馈优化工作台"}
-          aria-pressed={isFeedbackWindow}
+          data-testid="nav-playground"
+          aria-current={activeWindow === "chat"}
+          onClick={onOpenPlayground}
         >
-          <MessageSquare size={15} /> {isFeedbackWindow ? "Playground" : "反馈优化"}
+          <MessageSquare size={15} /> Playground
         </button>
         <button
-          className={`ghost-button topbar-view-button ${isImprovementWindow ? "active" : ""}`}
+          className={`topbar-nav-button ${activeWindow === "improvement" ? "active" : ""}`}
           type="button"
-          onClick={isImprovementWindow ? onOpenPlayground : onOpenImprovement}
-          title={isImprovementWindow ? "返回 Playground" : "打开改进工作台"}
-          aria-label={isImprovementWindow ? "返回 Playground" : "打开改进工作台"}
-          aria-pressed={isImprovementWindow}
+          data-testid="nav-improvement"
+          aria-label="打开改进工作台"
+          aria-current={activeWindow === "improvement"}
+          onClick={onOpenImprovement}
         >
-          <ListChecks size={15} /> {isImprovementWindow ? "Playground" : "改进"}
+          <ListChecks size={15} /> 改进
+        </button>
+        <button
+          className={`topbar-nav-button ${activeWindow === "release" ? "active" : ""}`}
+          type="button"
+          data-testid="nav-release"
+          aria-label="打开发布工作台"
+          aria-current={activeWindow === "release"}
+          onClick={onOpenRelease}
+        >
+          <Rocket size={15} /> 发布
+        </button>
+      </nav>
+
+      <div className="topbar-actions">
+        <button
+          className={`ghost-button topbar-view-button ${activeWindow === "feedback" ? "active" : ""}`}
+          type="button"
+          onClick={onOpenFeedback}
+          title="打开反馈优化工作台"
+          aria-label="打开反馈优化工作台"
+          aria-pressed={activeWindow === "feedback"}
+        >
+          反馈优化
         </button>
         <button className="ghost-button" onClick={onRefresh} disabled={loading}><RefreshCw size={15} className={loading ? "spin" : ""} /> 刷新</button>
         <a className="ghost-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><BookOpen size={15} /> API Docs</a>

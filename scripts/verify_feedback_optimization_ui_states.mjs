@@ -278,6 +278,7 @@ function apiPayload(path, stateRef) {
   if (path === "/health") return { status: "ok", model: "ui-state-mock" };
   if (path === "/api/sessions") return [];
   if (path === "/api/agents") return [];
+  if (path === "/api/agent-registry") return [];
   if (path === "/api/skills") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return repositoryStatus(Boolean(stateRef.repositoryDirty));
@@ -304,10 +305,24 @@ function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
+    // detached：子进程自成进程组，停止时整组回收（pnpm + vite + esbuild），避免残留占用端口。
+    detached: true,
   });
   child.stdout.on("data", (chunk) => process.stdout.write(chunk));
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   return child;
+}
+
+function killProcessTree(child, signal) {
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // already exited
+    }
+  }
 }
 
 async function waitForVite() {
@@ -325,9 +340,12 @@ async function waitForVite() {
 
 async function stopChild(child) {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  killProcessTree(child, "SIGTERM");
   await new Promise((resolve) => {
-    const timeout = setTimeout(resolve, 2000);
+    const timeout = setTimeout(() => {
+      killProcessTree(child, "SIGKILL");
+      resolve();
+    }, 2000);
     child.once("exit", () => {
       clearTimeout(timeout);
       resolve();
@@ -478,7 +496,7 @@ async function verifyOneClickExecutionAndRollback(page, stateRef) {
   await page.getByRole("button", { name: "一键执行" }).click();
   await page.getByText("Agent 优化结果").first().waitFor({ timeout: 15_000 });
   await page.getByText("completed").first().waitFor({ timeout: 15_000 });
-  const publishButton = page.getByRole("button", { name: "发布" });
+  const publishButton = page.getByRole("button", { name: "发布", exact: true });
   await publishButton.waitFor({ timeout: 15_000 });
   if (!(await publishButton.isDisabled())) {
     throw new Error("Batch publish should stay disabled before batch regression passes");
@@ -651,7 +669,9 @@ async function main() {
   console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["playground_spinner_only", "playground_empty_result", "empty", "success", "failed", "background_failed_refresh", "timeout_refresh", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "workspace_dirty_preflight", "execute_all", "rollback"] }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exit(1);
+  });

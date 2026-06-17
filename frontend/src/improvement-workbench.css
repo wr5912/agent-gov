@@ -52,7 +52,9 @@
 .iw-panel-body { overflow: auto; min-height: 0; padding: 12px 14px; }
 
 .iw-scope-row { display: flex; gap: 8px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--border-subtle); }
-.iw-scope-row label { font-size: 12px; color: var(--text-secondary); }
+.iw-scope-row label, .iw-scope-row > span:first-child { font-size: 12px; color: var(--text-secondary); }
+.iw-scope-row strong { font-size: 13px; color: var(--text-primary); }
+.iw-scope-hint { font-size: 11px; color: var(--text-muted); }
 .iw-select, .iw-input {
   height: 32px; border-radius: 6px; border: 1px solid #d1d5db; background: #fff;
   color: var(--text-primary); padding: 0 8px; font-size: 13px; min-width: 0;

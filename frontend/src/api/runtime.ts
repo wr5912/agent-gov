@@ -4,6 +4,7 @@ export * from "./feedback";
 export * from "./regressionAssets";
 import type {
   AgentInfo,
+  AgentSummary,
   AgentChangeSet,
   AgentChangeSetActionRequest,
   AgentChangeSetCreateRequest,
@@ -50,6 +51,11 @@ export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
 
 export function getAgents(config: RuntimeClientConfig) {
   return requestJson<AgentInfo[]>(config, "/api/agents");
+}
+
+// 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
+export function listBusinessAgents(config: RuntimeClientConfig) {
+  return requestJson<AgentSummary[]>(config, "/api/agent-registry");
 }
 
 export function getSkills(config: RuntimeClientConfig) {

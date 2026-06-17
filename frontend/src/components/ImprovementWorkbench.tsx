@@ -30,9 +30,8 @@ function buildContextPackage(item: ImprovementItem): string {
   return lines.join("\n");
 }
 
-export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeClientConfig }) {
+export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientConfig: RuntimeClientConfig; scopeAgentId: string }) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
-  const [scopeAgentId, setScopeAgentId] = useState("");
   const [items, setItems] = useState<ImprovementItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
@@ -58,6 +57,10 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    if (scopeAgentId) setNewAgentId(scopeAgentId);
+  }, [scopeAgentId]);
 
   const selected = useMemo(
     () => items.find((item) => item.improvement_id === selectedId) || null,
@@ -120,20 +123,10 @@ export function ImprovementWorkbench({ clientConfig }: { clientConfig: RuntimeCl
           <h3>改进事项</h3>
           <button className="iw-secondary-button" type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
         </div>
-        <div className="iw-scope-row">
-          <label htmlFor="iw-scope">范围</label>
-          <select
-            id="iw-scope"
-            className="iw-select"
-            data-testid="improvement-scope"
-            value={scopeAgentId}
-            onChange={(e) => setScopeAgentId(e.target.value)}
-          >
-            <option value="">全部业务 Agent</option>
-            {businessAgents.map((agent) => (
-              <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
-            ))}
-          </select>
+        <div className="iw-scope-row" data-testid="improvement-scope-label">
+          <span>范围</span>
+          <strong>{scopeAgentId ? agentName(scopeAgentId) : "全部业务 Agent"}</strong>
+          <span className="iw-scope-hint">（顶栏「业务 Agent」切换）</span>
         </div>
         <div className="iw-panel-body">
           {error ? <div className="iw-error">{error}</div> : null}

@@ -260,13 +260,18 @@ async function main() {
       }
       await page.getByTestId("improvement-archived").waitFor({ timeout: 15_000 });
 
-      // 业务 Agent scoping：按 soc-ops 过滤后仍可见其事项。
-      await page.getByTestId("improvement-scope").selectOption("soc-ops");
+      // 业务 Agent scoping：经顶栏全局切换器选 soc-ops，改进列表仍可见其事项。
+      await page.getByTestId("topbar-agent-switcher").selectOption("soc-ops");
       await page.locator('[data-testid="improvement-list-item"]').first().waitFor({ timeout: 15_000 });
       const scopedStages = await page.locator('[data-testid="improvement-list-item"]').count();
       if (scopedStages < 1) {
         throw new Error("scoping to soc-ops should still show its improvement items");
       }
+
+      // 发布页可达（消费真实 releases / change-sets；mock 下为空态，门禁为「无待发布变更」）。
+      await page.getByTestId("nav-release").click();
+      await page.getByTestId("release-workbench").waitFor({ timeout: 15_000 });
+      await page.getByTestId("release-gate").waitFor({ timeout: 15_000 });
     } finally {
       await browser.close();
     }

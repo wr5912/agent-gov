@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
+import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
+import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -10,7 +11,7 @@ import { Topbar } from "./components/Topbar";
 import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "./types/feedback";
-import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
 
@@ -90,6 +91,8 @@ export default function App() {
   const [currentAgentRef, setCurrentAgentRef] = useState<AgentGitRef | null>(null);
   const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
   const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
+  const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
+  const [selectedBusinessAgentId, setSelectedBusinessAgentId] = useState("");
   const [selectedAgent, setSelectedAgent] = useState("");
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [allowedTools, setAllowedTools] = useState("");
@@ -106,7 +109,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release">("chat");
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -179,18 +182,20 @@ export default function App() {
     setLoading(true);
     setLastError(undefined);
     try {
-      const [healthRes, sessionsRes, agentsRes, skillsRes, configRes] = await Promise.all([
+      const [healthRes, sessionsRes, agentsRes, skillsRes, configRes, businessAgentsRes] = await Promise.all([
         getHealth(effectiveClientConfig),
         getSessions(effectiveClientConfig),
         getAgents(effectiveClientConfig),
         getSkills(effectiveClientConfig),
         getConfigMapping(effectiveClientConfig),
+        listBusinessAgents(effectiveClientConfig),
       ]);
       setHealth(healthRes);
       setSessions(sessionsRes);
       setAgents(agentsRes);
       setSkills(skillsRes);
       setConfigMapping(configRes);
+      setBusinessAgents(businessAgentsRes);
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
@@ -332,6 +337,7 @@ export default function App() {
           case_id: caseId.trim() || undefined,
           message,
           agent: selectedAgent || undefined,
+          agent_id: selectedBusinessAgentId || undefined,
           skills: selectedSkills.length ? selectedSkills : undefined,
           skills_mode: skillsMode,
           allowed_tools: parseOptionalCsv(allowedTools),
@@ -467,6 +473,10 @@ export default function App() {
     setActiveWindow("improvement");
   }
 
+  function showReleaseWindow() {
+    setActiveWindow("release");
+  }
+
   return (
     <div className="app-shell">
       <Topbar
@@ -475,14 +485,25 @@ export default function App() {
         langfuseUrl={langfuseUrl}
         activeWindow={activeWindow}
         loading={loading}
+        businessAgents={businessAgents}
+        selectedBusinessAgentId={selectedBusinessAgentId}
+        onSelectBusinessAgent={setSelectedBusinessAgentId}
         onRefresh={refreshAll}
         onOpenFeedback={showFeedbackWindow}
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
+        onOpenRelease={showReleaseWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {activeWindow === "improvement" ? (
-        <ImprovementWorkbench clientConfig={effectiveClientConfig} />
+      {activeWindow === "release" ? (
+        <ReleaseWorkbench
+          scopeAgentId={selectedBusinessAgentId}
+          releases={agentReleases}
+          changeSets={agentChangeSets}
+          onRefresh={refreshAll}
+        />
+      ) : activeWindow === "improvement" ? (
+        <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} />
       ) : activeWindow === "feedback" ? (
         <ExternalFeedbackWorkspace
           clientConfig={effectiveClientConfig}

@@ -3834,8 +3834,74 @@ button:disabled {
   max-width: 320px;
 }
 
-.fw-plan-task-advanced-actions {
-  margin-top: -4px;
+.fw-task-stepper {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.fw-task-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px 4px 5px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--muted-2);
+  font-size: 12px;
+}
+.fw-task-step-dot {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  font-size: 11px;
+  line-height: 1;
+}
+.fw-task-step.is-done {
+  color: var(--good);
+  border-color: rgba(61, 123, 82, 0.4);
+}
+.fw-task-step.is-current {
+  color: var(--text);
+  border-color: var(--line-strong);
+  background: var(--panel-2);
+  font-weight: 600;
+}
+.fw-task-step.is-failed {
+  color: var(--danger);
+  border-color: rgba(181, 72, 72, 0.5);
+  background: rgba(181, 72, 72, 0.06);
+  font-weight: 600;
+}
+.fw-task-step.is-todo {
+  opacity: 0.65;
+}
+.fw-task-next-action {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  margin: 12px 0 4px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+.fw-task-next-action-label {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 
 .fw-plan-task-edit-form {

@@ -8,7 +8,8 @@ import {
   Pill,
   type PillTone,
 } from "./common";
-import { planTaskTone, shortId } from "./selectors";
+import { shortId } from "./selectors";
+import { describeTaskStage, type TaskStageView } from "./taskLifecycle";
 import type {
   ExternalGovernanceWebhookRecord,
   FeedbackBatchExecutionRunRecord,
@@ -103,6 +104,16 @@ export function BatchPlanTaskCard({
   const evalCount = planTask.eval_case_ids?.length || 0;
   const taskScopeLabel = workspace ? "受管 workspace 优化" : external ? "外部系统优化" : "优化任务";
   const editable = canEditPlanTask(planTask);
+  const stage = describeTaskStage(planTask);
+  const executeDisabledReason = running
+    ? "执行进行中，请等待完成。"
+    : workspace && workspaceDone
+      ? "已应用到 workspace，无需重复执行。"
+      : external && !externalWebhooks.length
+        ? "未配置 Webhook，请在 /data/external-governance-webhooks.yaml 增加后再发送。"
+        : external && !currentAlias
+          ? "请先选择 Webhook 再发送任务。"
+          : "";
 
   async function submitEdit(event: FormEvent) {
     event.preventDefault();
@@ -118,7 +129,7 @@ export function BatchPlanTaskCard({
   return (
     <article className="fw-plan-task-card">
       <div className="fw-proposal-detail-title">
-        <Pill tone={planTaskTone(planTask)}>{planTask.status || executionKind}</Pill>
+        <Pill tone={stage.statusTone}>{stage.statusLabel}</Pill>
         <h4>{planTask.title || shortId(planTask.plan_task_id)}</h4>
         <small>{taskScopeLabel}</small>
       </div>
@@ -133,6 +144,11 @@ export function BatchPlanTaskCard({
         />
       ) : (
         <>
+          {stage.stages.length ? <TaskStageStepper stage={stage} /> : null}
+          <p className="fw-task-next-action">
+            <span className="fw-task-next-action-label">下一步</span>
+            <span>{stage.nextActionHint}</span>
+          </p>
           <FormattedText className="fw-proposal-long-text fw-plan-task-description" value={planTask.description || planTask.recommendation || "-"} />
           <div className="fw-plan-task-text-grid">
             <FormattedTextSection title="任务目标" value={planTask.objective || "-"} compact />
@@ -178,8 +194,24 @@ export function BatchPlanTaskCard({
             </details>
           ) : null}
           <div className="fw-detail-action-row fw-plan-task-actions">
+            {workspace || external ? (
+              <button
+                className="fw-small-primary"
+                type="button"
+                disabled={!canExecute}
+                title={canExecute
+                  ? (workspace ? "把方案应用到受管 workspace（变更合并为一个 Agent 版本）" : "通知外部系统处理该任务")
+                  : executeDisabledReason || "当前状态不可执行。"}
+                onClick={() => onExecutePlanTask(batch, planTask, external ? currentAlias : undefined)}
+              >
+                {running ? <Loader2 size={16} className="fw-spin" /> : workspace ? <CheckCircle2 size={16} /> : <ChevronRight size={16} />}
+                {running ? "执行中" : buttonLabel}
+              </button>
+            ) : (
+              <Pill tone="orange">需人工复核</Pill>
+            )}
             {editable ? (
-              <button className="fw-small-secondary" type="button" disabled={Boolean(actionId)} onClick={() => setEditDraft(planTaskEditDraft(planTask))}>
+              <button className="fw-small-secondary" type="button" disabled={Boolean(actionId)} title="编辑任务内容（标题/目标/执行对象等）后再执行" onClick={() => setEditDraft(planTaskEditDraft(planTask))}>
                 <Pencil size={16} />
                 编辑
               </button>
@@ -196,22 +228,29 @@ export function BatchPlanTaskCard({
               </label>
             ) : null}
           </div>
-          <details className="fw-plan-task-disclosure fw-plan-task-advanced-actions">
-            <summary>高级操作</summary>
-            <div className="fw-detail-action-row fw-plan-task-actions">
-              {workspace || external ? (
-                <button className="fw-small-secondary" type="button" disabled={!canExecute} onClick={() => onExecutePlanTask(batch, planTask, external ? currentAlias : undefined)}>
-                  {running ? <Loader2 size={16} className="fw-spin" /> : workspace ? <CheckCircle2 size={16} /> : <ChevronRight size={16} />}
-                  {running ? "执行中" : buttonLabel}
-                </button>
-              ) : (
-                <Pill tone="orange">需人工复核</Pill>
-              )}
-            </div>
-          </details>
         </>
       )}
     </article>
+  );
+}
+
+function TaskStageStepper({ stage }: { stage: TaskStageView }) {
+  return (
+    <ol className="fw-task-stepper" aria-label="任务阶段">
+      {stage.stages.map((label, index) => {
+        const state = index < stage.stageIndex
+          ? "done"
+          : index === stage.stageIndex
+            ? (stage.failed ? "failed" : "current")
+            : "todo";
+        return (
+          <li className={`fw-task-step is-${state}`} key={label}>
+            <span className="fw-task-step-dot">{index + 1}</span>
+            <span className="fw-task-step-label">{label}</span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
@@ -224,7 +263,7 @@ function TaskExecutionResultSection({
   planTask: FeedbackOptimizationPlanTaskRecord;
   result?: BatchExecutionTaskResult;
 }) {
-  const status = result?.status || (latestRun ? "未包含本次执行" : "未执行");
+  const status = result?.status || (latestRun ? "本次批次执行未含此任务" : "尚未执行");
   const plannedFiles = Array.isArray(result?.planned_diff?.files) ? result.planned_diff.files.length : 0;
   return (
     <section className="fw-task-execution-result">

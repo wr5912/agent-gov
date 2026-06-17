@@ -16,6 +16,7 @@ import {
   planTaskTone,
   shortId,
 } from "./selectors";
+import { taskStatusLabel } from "./taskLifecycle";
 import { BatchExecutionRunPanel } from "./BatchExecutionRunPanel";
 import { BatchPlanTaskCard, type BatchExecutionTaskResult } from "./BatchPlanTaskCard";
 import { WorkspaceDirtyPreflightPanel } from "./WorkspaceDirtyPreflightPanel";
@@ -274,7 +275,7 @@ function PlanItemTabs({
           title={item.label}
           type="button"
         >
-          <Pill tone={item.tone}>{item.kind === "blocked" ? "未形成任务" : item.result?.status || item.task.status || "任务"}</Pill>
+          <Pill tone={item.tone}>{item.kind === "blocked" ? "未形成任务" : taskStatusLabel(item.task)}</Pill>
           <span>{item.label}</span>
         </button>
       ))}

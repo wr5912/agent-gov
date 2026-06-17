@@ -305,6 +305,9 @@ function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: repoRoot,
     stdio: ["ignore", "pipe", "pipe"],
+    // detached：让子进程自成进程组组长，停止时可一次性回收 pnpm + vite + esbuild 整个组，
+    // 避免 vite 孙进程残留占用端口、并使 node 事件循环挂住直到 timeout。
+    detached: true,
   });
   child.stdout.on("data", (chunk) => process.stdout.write(chunk));
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
@@ -324,11 +327,27 @@ async function waitForVite() {
   throw new Error(`Vite did not become ready at ${uiBase}`);
 }
 
+function killProcessTree(child, signal) {
+  try {
+    // 负号 PID：向整个进程组（detached 组长 pnpm + vite + esbuild）发信号。
+    process.kill(-child.pid, signal);
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {
+      // 进程已退出，忽略。
+    }
+  }
+}
+
 async function stopChild(child) {
   if (child.exitCode !== null) return;
-  child.kill("SIGTERM");
+  killProcessTree(child, "SIGTERM");
   await new Promise((resolve) => {
-    const timeout = setTimeout(resolve, 2000);
+    const timeout = setTimeout(() => {
+      killProcessTree(child, "SIGKILL");
+      resolve();
+    }, 2000);
     child.once("exit", () => {
       clearTimeout(timeout);
       resolve();
@@ -410,6 +429,15 @@ async function verifyGenerationTransition(page, stateRef, targetState) {
   if (targetState === "success") {
     await page.getByText("补充工作区配置核查指令").first().waitFor({ timeout: 15_000 });
     await page.getByText("运行批次回归测试验证回答包含当前配置事实").waitFor({ timeout: 15_000 });
+    // #6 掌控感：阶段 stepper、下一步提示、可见的主操作（不再埋在「高级操作」折叠里）。
+    await page.locator(".fw-task-stepper").first().waitFor({ timeout: 15_000 });
+    await page.getByText("待执行").first().waitFor({ timeout: 15_000 });
+    await page.getByText("下一步").first().waitFor({ timeout: 15_000 });
+    const executeButton = page.getByRole("button", { name: "执行", exact: true });
+    await executeButton.waitFor({ timeout: 15_000 });
+    if (await executeButton.isDisabled()) {
+      throw new Error("Pending-execution task should expose an enabled 执行 action directly (not behind a collapse)");
+    }
     return;
   }
   await page.getByText("生成失败").first().waitFor({ timeout: 15_000 });
@@ -487,7 +515,6 @@ async function verifyOneClickExecutionAndRollback(page, stateRef) {
   await page.getByText("查看快照和原始记录", { exact: true }).click();
   await page.getByText("agent-after-ui").first().waitFor({ timeout: 15_000 });
   await page.getByText("CLAUDE.md").first().waitFor({ timeout: 15_000 });
-  await page.getByText("高级操作", { exact: true }).first().waitFor({ timeout: 15_000 });
   await page.getByRole("button", { name: "回滚" }).click();
   await page.getByText("rolled_back").first().waitFor({ timeout: 15_000 });
   if (stateRef.executeAllCount !== 1) {
@@ -697,7 +724,9 @@ async function main() {
   console.log(JSON.stringify({ status: "passed", ui_base: uiBase, scenarios: ["playground_spinner_only", "playground_empty_result", "empty", "success", "failed", "background_failed_refresh", "timeout_refresh", "edit_success", "edit_invalid_json", "pending_execution_unapplied", "workspace_dirty_preflight", "execute_all", "rollback", "business_agent_selector_routes_chat"] }, null, 2));
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
-  process.exit(1);
-});
+main()
+  .then(() => process.exit(0))
+  .catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exit(1);
+  });

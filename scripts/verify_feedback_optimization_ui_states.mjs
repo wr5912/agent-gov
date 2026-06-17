@@ -445,6 +445,17 @@ async function verifyGenerationTransition(page, stateRef, targetState) {
   await page.getByText("DSPy output formatter failed for batch_plan").first().waitFor({ timeout: 15_000 });
   await page.getByText("查看错误详情", { exact: true }).click();
   await page.getByText("tasks.0.execution_kind").first().waitFor({ timeout: 15_000 });
+  // #7 框选复制友好：原始数据以「字段: 值」可读视图为主，原始 JSON 收进折叠。
+  const readableBody = page.locator(".fw-readable-body").first();
+  await readableBody.waitFor({ timeout: 15_000 });
+  const readableText = (await readableBody.innerText()).trim();
+  if (readableText.startsWith("{") || readableText.includes('": ')) {
+    throw new Error(`Readable preview should be plain 字段: 值 text, got JSON-like: ${readableText.slice(0, 80)}`);
+  }
+  if (!readableText.includes("error_code")) {
+    throw new Error("Readable preview should surface error_code as a 字段: 值 line");
+  }
+  await page.getByText("查看原始 JSON").first().waitFor({ timeout: 15_000 });
 }
 
 async function verifyOptimizationPlanJobBackgroundFailureRefresh(page, stateRef) {

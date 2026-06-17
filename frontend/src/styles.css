@@ -4648,6 +4648,44 @@ button:disabled {
   word-break: break-word;
 }
 
+/* #7 可读视图：「字段: 值」纯文本为主，原始 JSON 收进折叠 */
+.fw-readable-wrap {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+.fw-readable-raw {
+  border-top: 1px solid rgba(219, 234, 254, 0.16);
+}
+.fw-readable-raw > summary {
+  cursor: pointer;
+  padding: 8px 10px;
+  color: #93c5fd;
+  font-size: 12px;
+}
+.fw-readable-raw[open] > summary {
+  border-bottom: 1px solid rgba(219, 234, 254, 0.16);
+}
+
+/* #7 框选复制友好：交互 chrome 不可选中，正文可选中，使拖选只命中可粘贴文本 */
+.fw-pill,
+.fw-detail-tabs button,
+.fw-plan-item-tab,
+.fw-task-step,
+.fw-task-next-action-label,
+.fw-readable-raw > summary {
+  user-select: none;
+}
+.fw-readable-body,
+.fw-json-preview pre,
+.fw-formatted-text,
+.fw-text-section,
+.fw-task-next-action > span:last-child {
+  user-select: text;
+}
+
 .fw-case-next-action {
   min-width: 0;
   display: grid;

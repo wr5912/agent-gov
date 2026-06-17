@@ -1,5 +1,5 @@
 import { Database, FolderKanban, Loader2 } from "lucide-react";
-import { Metric, Pill, jsonPreview } from "./common";
+import { Metric, Pill, ReadableJsonBody } from "./common";
 import { formatDate, shortId, sourceKindText, sourceKindTone, sourceRowKey, summaryText, type SourceRow } from "./selectors";
 
 export function SignalsPanel({
@@ -138,7 +138,7 @@ function SignalDetailPanel({
           <strong>原始数据</strong>
           <span>{sourceKindText[row.kind]}</span>
         </div>
-        <pre>{jsonPreview(row.raw)}</pre>
+        <ReadableJsonBody value={row.raw} />
       </div>
     </aside>
   );

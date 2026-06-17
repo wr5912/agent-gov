@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Metric, Pill, jsonPreview } from "./common";
+import { Metric, Pill, ReadableJsonBody } from "./common";
 import { formatDate, shortId, sourceKindText, sourceKindTone, sourceRowKey, type SourceRow } from "./selectors";
 
 export function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
@@ -79,7 +79,7 @@ export function BatchFeedbackSourcesDetails({ rows }: { rows: SourceRow[] }) {
                   <strong>反馈原始数据</strong>
                   <span>{sourceKindText[selectedRow.kind]}</span>
                 </div>
-                <pre>{jsonPreview(selectedRow.raw)}</pre>
+                <ReadableJsonBody value={selectedRow.raw} />
               </div>
             </>
           ) : (

@@ -90,13 +90,32 @@ export function DetailRecordList({
   );
 }
 
+export function ReadableJsonBody({ value }: { value: unknown }) {
+  // #7 框选复制友好：以「字段: 值」纯文本为主视图，原始 JSON 收进折叠。
+  // 用户拖选粘贴得到的是可直接描述 issue 的线性文本，而非带括号/引号/逗号的 JSON。
+  const readable = readableKeyValue(value);
+  return (
+    <div className="fw-readable-wrap">
+      {readable ? (
+        <pre className="fw-readable-body">{readable}</pre>
+      ) : (
+        <div className="fw-json-empty-note">无可展示内容</div>
+      )}
+      <details className="fw-readable-raw">
+        <summary>查看原始 JSON</summary>
+        <pre>{jsonPreview(value)}</pre>
+      </details>
+    </div>
+  );
+}
+
 export function DetailJsonPreview({ title, value }: { title: string; value: unknown }) {
   return (
     <div className="fw-json-preview fw-json-preview-standalone fw-detail-json-output">
       <div className="fw-json-preview-header">
         <strong>{title}</strong>
       </div>
-      <pre>{jsonPreview(value)}</pre>
+      <ReadableJsonBody value={value} />
     </div>
   );
 }
@@ -342,6 +361,57 @@ function cleanFormattedText(text: string): string {
 
 export function jsonPreview(value: unknown): string {
   return JSON.stringify(value, null, 2);
+}
+
+// 把任意 JSON 值扁平为「字段: 值」纯文本行（标量数组顿号合并、嵌套缩进、跳过空字段），
+// 供 ReadableJsonBody 渲染人/AI 双友好的可框选文本。原始 JSON 仍由 jsonPreview 提供。
+export function readableKeyValue(value: unknown): string {
+  return renderReadableLines(value, 0).join("\n");
+}
+
+function isReadableEmpty(value: unknown): boolean {
+  if (value === null || value === undefined) return true;
+  if (typeof value === "string") return value.trim() === "";
+  if (Array.isArray(value)) return value.every(isReadableEmpty);
+  if (typeof value === "object") return Object.values(value as Record<string, unknown>).every(isReadableEmpty);
+  return false;
+}
+
+function renderReadableLines(value: unknown, depth: number): string[] {
+  const pad = "  ".repeat(depth);
+  if (isReadableEmpty(value)) return [];
+  if (value === null || value === undefined) return [];
+  if (typeof value !== "object") return [`${pad}${String(value)}`];
+  if (Array.isArray(value)) {
+    const lines: string[] = [];
+    for (const item of value) {
+      if (isReadableEmpty(item)) continue;
+      if (item !== null && typeof item === "object") {
+        lines.push(`${pad}-`);
+        lines.push(...renderReadableLines(item, depth + 1));
+      } else {
+        lines.push(`${pad}- ${String(item)}`);
+      }
+    }
+    return lines;
+  }
+  const lines: string[] = [];
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    if (isReadableEmpty(item)) continue;
+    if (item !== null && typeof item === "object") {
+      const scalarArray = Array.isArray(item) && item.every((entry) => entry === null || typeof entry !== "object");
+      if (scalarArray) {
+        const joined = (item as unknown[]).filter((entry) => !isReadableEmpty(entry)).map((entry) => String(entry)).join("、");
+        lines.push(`${pad}${key}: ${joined}`);
+      } else {
+        lines.push(`${pad}${key}:`);
+        lines.push(...renderReadableLines(item, depth + 1));
+      }
+    } else {
+      lines.push(`${pad}${key}: ${String(item)}`);
+    }
+  }
+  return lines;
 }
 
 export function isEmptyJsonValue(value: unknown): boolean {

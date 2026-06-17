@@ -1200,16 +1200,21 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 [✓] 发布页（§12 能不能发 / 为什么 / 包含什么），消费真实 /api/agent-change-sets + /api/agent-releases
 [✓] Governance Light 主题应用于顶栏导航与 改进 / 发布 surface
 [✓] 统一术语 improvement_* 贯穿 UI / API / DB / 状态机 / 上下文 / 测试；data-testid / data-state / data-action 齐备
-[✓] 验收：make test、make main-flow-test、tsc/build、Playwright（改进工作台 + 反馈回归）全绿；真实浏览器 + 真实 LLM(deepseek) E2E 通过
+[✓] W2-a 自动化策略编排引擎：AutomationPolicy(per-agent off/semi/full) + 确定性 auto_advance
+    （沿真实状态机；AUTO 段自动、GATE 段 semi 停/full 过、release 永远人工）+ /api/automation-policy + auto-advance
+[✓] W2-b 相似度归并/拆分：确定性相似度(token Jaccard + 共享反馈) + 同 Agent 相似建议 + 归并(对方归档)/拆分 + 创建时 auto_merge
+[✓] W2-c 闭环引用：ImprovementItem ↔ attribution/optimization_plan/eval_run/change_set/batch 轻引用(独立 links 表)
+[✓] W3 资产 Registry 复利中心：Asset 实体(方法论/回归/执行/审计) + /api/assets + 跨业务 Agent 继承复用(inherited_from)
+[✓] 治理工作台外壳新增 资产 主导航；改进详情新增 自动化策略 / 相似归并 / 关联闭环对象
+[✓] 验收：make test、make main-flow-test、tsc/build 全绿；Playwright（改进工作台含 W2-a/b/c + 反馈回归 + 资产 Registry）；
+    真实浏览器 + 真实后端截图验收（自动推进/相似归并/闭环引用/资产继承）通过
 ```
 
-仍属后续 Wave（方案明确的未建成边界，非本轮可凭空实现）：
+仍属后续 Wave / 明确边界：
 
 ```text
-[ ] W2 自动化策略编排引擎（自动推进，免点按钮）—— 当前为用户触发兜底
-[ ] W2 相似度自动归并 / 拆分 / 重归因 —— 当前手动关联
-[ ] W2 ImprovementItem ↔ 既有闭环引擎（attribution / optimization_plan / eval）深度对接
-[ ] W3 资产 Registry 复利中心（跨 Agent 方法论资产继承）
+[ ] W2 深度对接的「自动触发」：当前自动推进沿状态机做确定性推进 + 轻引用，归因/方案/评估的真实产物生成仍接既有闭环引擎（增量推进）
+[ ] W2 相似度「重归因」与基于语义向量的归并（当前为确定性 token 相似度，足够可解释，可后续增强）
 [ ] 发布页 per-Agent scoping —— 需后端在 release / change-set 响应 DTO 暴露 agent_id
 [ ] 全站 Governance Light（Playground / 反馈优化工作台仍为既有暖色，待整页迁移）
 [ ] ContextPackage 脱敏 —— 裁决：面向开发优化人员，当前不做

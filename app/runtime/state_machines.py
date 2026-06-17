@@ -190,6 +190,29 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
 
+# 改进事项阶段（v2.7 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
+# 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
+# 允许回退边（如 regression -> optimization）以支持返工，但不得跨段跳跃，由状态机统一判定。
+IMPROVEMENT_STAGES = {
+    "feedback_intake",
+    "triage",
+    "attribution",
+    "optimization",
+    "execution",
+    "regression",
+    "release",
+}
+
+IMPROVEMENT_STAGE_TRANSITIONS: Mapping[str, set[str]] = {
+    "feedback_intake": {"triage"},
+    "triage": {"feedback_intake", "attribution"},
+    "attribution": {"triage", "optimization"},
+    "optimization": {"attribution", "execution"},
+    "execution": {"optimization", "regression"},
+    "regression": {"optimization", "execution", "release"},
+    "release": set(),
+}
+
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     "job": {
         "created": {"queued", "running", "failed"},
@@ -383,6 +406,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rollback_failed": {"rolled_back"},
     },
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
+    "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
 }
 
 _KNOWN_STATES = {
@@ -403,6 +427,7 @@ _KNOWN_STATES = {
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
+    "improvement_stage": IMPROVEMENT_STAGES,
 }
 
 

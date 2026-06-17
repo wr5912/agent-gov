@@ -16,6 +16,7 @@
 - [反馈闭环长期回归资产升级方案](./反馈闭环长期回归资产升级方案.md)：`docs/反馈闭环长期回归资产升级方案.md`
 - [Agent版本治理与Diff对比重构方案](./Agent版本治理与Diff对比重构方案.md)：`docs/Agent版本治理与Diff对比重构方案.md`
 - [多业务Agent治理基座设计](./多业务Agent治理基座设计.md)：`docs/多业务Agent治理基座设计.md`
+- [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)：`docs/AgentGov_ASCII_UI_草图方案_v2.7.md`
 - [外部治理Webhook示例](./外部治理Webhook示例.yaml)：`docs/外部治理Webhook示例.yaml`
 
 ## 工程治理

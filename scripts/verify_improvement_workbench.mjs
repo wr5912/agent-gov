@@ -110,6 +110,7 @@ async function main() {
         },
       ],
       createCount: 0,
+      policyMode: "off",
     };
 
     await page.addInitScript(
@@ -160,6 +161,44 @@ async function main() {
         item.improvement_status = body.stage === "release" ? "done" : "active";
         item.updated_at = ts;
         return json(route, item);
+      }
+      if (path === "/api/automation-policy" && method === "GET") {
+        return json(route, { agent_id: url.searchParams.get("agent_id"), mode: stateRef.policyMode });
+      }
+      if (path === "/api/automation-policy" && method === "PUT") {
+        const body = req.postDataJSON();
+        stateRef.policyMode = body.mode;
+        return json(route, { agent_id: body.agent_id, mode: body.mode });
+      }
+      const autoAdv = path.match(/^\/api\/improvements\/([^/]+)\/auto-advance$/);
+      if (autoAdv && method === "POST") {
+        const id = decodeURIComponent(autoAdv[1]);
+        const item = stateRef.improvements.find((i) => i.improvement_id === id);
+        if (!item) return json(route, { detail: "not found" }, 404);
+        const ORDER = ["feedback_intake", "triage", "attribution", "optimization", "execution", "regression", "release"];
+        const AUTO = new Set(["feedback_intake>triage", "triage>attribution", "execution>regression"]);
+        const GATE = new Set(["attribution>optimization", "optimization>execution"]);
+        const applied = [];
+        let reason = "terminal";
+        if (stateRef.policyMode === "off") {
+          reason = "policy_off";
+        } else if (item.improvement_status === "archived") {
+          reason = "archived";
+        } else {
+          let stage = item.improvement_stage;
+          for (;;) {
+            const nxt = ORDER[ORDER.indexOf(stage) + 1];
+            if (!nxt) { reason = "terminal"; break; }
+            const edge = `${stage}>${nxt}`;
+            if (AUTO.has(edge) || (GATE.has(edge) && stateRef.policyMode === "full")) { stage = nxt; applied.push(nxt); continue; }
+            reason = GATE.has(edge) ? "gate_confirmation" : "release_gate";
+            break;
+          }
+          item.improvement_stage = stage;
+          item.improvement_status = stage === "release" ? "done" : "active";
+        }
+        item.updated_at = ts;
+        return json(route, { improvement: item, applied_stages: applied, stopped_reason: reason });
       }
       const archive = path.match(/^\/api\/improvements\/([^/]+)\/archive$/);
       if (archive && method === "POST") {
@@ -251,6 +290,12 @@ async function main() {
       if ((await page.getByTestId("primary-action").getAttribute("data-action")) !== "triage") {
         throw new Error("new improvement at feedback_intake should advance to triage");
       }
+
+      // W2-a 自动化策略：设 semi → 自动推进，feedback_intake 自动到 attribution（停在判断点）。
+      await page.getByTestId("automation-mode").selectOption("semi");
+      await page.getByTestId("auto-advance").click();
+      await page.locator('[data-testid="current-stage"][data-state="attribution"]').waitFor({ timeout: 15_000 });
+      await page.getByTestId("auto-advance-result").waitFor({ timeout: 15_000 });
 
       // 归档为终态状态：归档后状态 archived、主动作消失、显示已归档。
       await page.getByTestId("archive-improvement").click();

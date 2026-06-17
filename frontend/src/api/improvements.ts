@@ -7,6 +7,8 @@ import type { RuntimeClientConfig } from "../types/runtime";
 export type ImprovementItem = components["schemas"]["ImprovementItemResponse"];
 export type ImprovementCreateRequest = components["schemas"]["ImprovementCreateRequest"];
 export type ImprovementStageTransitionRequest = components["schemas"]["ImprovementStageTransitionRequest"];
+export type AutomationPolicy = components["schemas"]["AutomationPolicyResponse"];
+export type AutoAdvanceResult = components["schemas"]["AutoAdvanceResponse"];
 
 export function listImprovements(config: RuntimeClientConfig, agentId?: string) {
   const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";
@@ -42,6 +44,26 @@ export function archiveImprovement(config: RuntimeClientConfig, improvementId: s
   return requestJson<ImprovementItem>(
     config,
     `/api/improvements/${encodeURIComponent(improvementId)}/archive`,
+    { method: "POST", headers: { "Content-Type": "application/json" } },
+  );
+}
+
+export function getAutomationPolicy(config: RuntimeClientConfig, agentId: string) {
+  return requestJson<AutomationPolicy>(config, `/api/automation-policy?agent_id=${encodeURIComponent(agentId)}`);
+}
+
+export function setAutomationPolicy(config: RuntimeClientConfig, agentId: string, mode: string) {
+  return requestJson<AutomationPolicy>(config, "/api/automation-policy", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent_id: agentId, mode }),
+  });
+}
+
+export function autoAdvanceImprovement(config: RuntimeClientConfig, improvementId: string) {
+  return requestJson<AutoAdvanceResult>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}/auto-advance`,
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
 }

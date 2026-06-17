@@ -101,6 +101,8 @@
 .iw-step.is-current { color: var(--color-primary); border-color: var(--color-primary); background: var(--color-primary-soft); font-weight: 600; }
 
 .iw-action-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+.iw-automation-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.iw-automation-row .iw-select { width: auto; min-width: 220px; }
 .iw-primary-button {
   height: 36px; padding: 0 16px; border-radius: 8px; border: 1px solid var(--color-primary);
   background: var(--color-primary); color: #fff; font-weight: 600; cursor: pointer; font-size: 13px;

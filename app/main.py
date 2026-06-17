@@ -11,6 +11,7 @@ from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agents import create_agents_router
 from app.routers.improvements import create_improvements_router
+from app.routers.automation import create_automation_router
 from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
@@ -34,6 +35,7 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
@@ -71,6 +73,7 @@ agent_governance = AgentGovernanceService(
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+automation_policy_store = AutomationPolicyStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
@@ -102,6 +105,7 @@ app = FastAPI(
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "agents", "description": "List registered business agents (governance objects)."},
         {"name": "improvements", "description": "Improvement items: the event-level governance work unit (v2.7)."},
+        {"name": "automation", "description": "Automation policy and stage auto-advance orchestration (v2.7 W2)."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
@@ -162,6 +166,13 @@ app.include_router(
 app.include_router(
     create_improvements_router(
         improvement_store=improvement_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_automation_router(
+        improvement_store=improvement_store,
+        automation_policy_store=automation_policy_store,
         require_api_key=require_api_key,
     )
 )

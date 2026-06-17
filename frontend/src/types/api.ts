@@ -448,6 +448,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/automation-policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get automation policy for a business agent */
+        get: operations["get_policy_api_automation_policy_get"];
+        /** Set automation policy mode (off/semi/full) */
+        put: operations["put_policy_api_automation_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -1260,6 +1278,23 @@ export interface paths {
         put?: never;
         /** Archive an improvement item (terminal status archived; no further stage transitions) */
         post: operations["archive_improvement_api_improvements__improvement_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/auto-advance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Auto-advance an improvement under its agent's automation policy */
+        post: operations["auto_advance_improvement_api_improvements__improvement_id__auto_advance_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2461,6 +2496,40 @@ export interface components {
              * @description 本次优化改动的资产路径（改了哪些资产）。
              */
             target_paths?: string[];
+        };
+        /** AutoAdvanceResponse */
+        AutoAdvanceResponse: {
+            /**
+             * Applied Stages
+             * @description 本次自动推进经过的阶段序列。
+             */
+            applied_stages?: string[];
+            improvement: components["schemas"]["ImprovementItemResponse"];
+            /**
+             * Stopped Reason
+             * @description policy_off / archived / gate_confirmation / release_gate / terminal。
+             */
+            stopped_reason: string;
+        };
+        /** AutomationPolicyResponse */
+        AutomationPolicyResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Mode
+             * @description off / semi / full。
+             */
+            mode: string;
+        };
+        /** AutomationPolicyUpdateRequest */
+        AutomationPolicyUpdateRequest: {
+            /** Agent Id */
+            agent_id: string;
+            /**
+             * Mode
+             * @description off / semi / full；非法值 400。
+             */
+            mode: string;
         };
         /**
          * ChatRequest
@@ -6315,6 +6384,71 @@ export interface operations {
             };
         };
     };
+    get_policy_api_automation_policy_get: {
+        parameters: {
+            query: {
+                /** @description 业务 Agent ID */
+                agent_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationPolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_policy_api_automation_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AutomationPolicyUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutomationPolicyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     chat_api_chat_post: {
         parameters: {
             query?: never;
@@ -8172,6 +8306,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    auto_advance_improvement_api_improvements__improvement_id__auto_advance_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AutoAdvanceResponse"];
                 };
             };
             /** @description Validation Error */

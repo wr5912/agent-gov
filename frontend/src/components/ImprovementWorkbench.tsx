@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   archiveImprovement,
+  autoAdvanceImprovement,
   createImprovement,
+  getAutomationPolicy,
   listImprovements,
+  setAutomationPolicy,
   setImprovementStage,
+  type AutoAdvanceResult,
   type ImprovementItem,
 } from "../api/improvements";
 import { requestJson } from "../api/request";
@@ -30,6 +34,20 @@ function buildContextPackage(item: ImprovementItem): string {
   return lines.join("\n");
 }
 
+const STOP_REASON_LABEL: Record<string, string> = {
+  policy_off: "策略为关闭，未自动推进",
+  gate_confirmation: "已停在关键判断点，待人工确认",
+  release_gate: "已停在发布门禁，待人工发布",
+  archived: "已归档，未推进",
+  terminal: "已到终态",
+};
+
+function autoAdvanceNote(result: AutoAdvanceResult): string {
+  const applied = (result.applied_stages ?? []).map(stageLabel).join(" → ");
+  const reason = STOP_REASON_LABEL[result.stopped_reason] ?? result.stopped_reason;
+  return applied ? `自动推进：${applied} ｜ ${reason}` : `自动推进：${reason}`;
+}
+
 export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientConfig: RuntimeClientConfig; scopeAgentId: string }) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
   const [items, setItems] = useState<ImprovementItem[]>([]);
@@ -39,6 +57,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [newAgentId, setNewAgentId] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
+  const [automationMode, setAutomationMode] = useState("off");
+  const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
 
   const refresh = useCallback(async () => {
     setError(undefined);
@@ -66,6 +86,17 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     () => items.find((item) => item.improvement_id === selectedId) || null,
     [items, selectedId],
   );
+
+  useEffect(() => {
+    const agentId = selected?.agent_id;
+    if (!agentId) return;
+    let cancelled = false;
+    setLastAuto(undefined);
+    void getAutomationPolicy(clientConfig, agentId)
+      .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
+      .catch(() => { if (!cancelled) setAutomationMode("off"); });
+    return () => { cancelled = true; };
+  }, [clientConfig, selectedId, selected?.agent_id]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -101,6 +132,21 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     void run(async () => {
       const updated = await archiveImprovement(clientConfig, item.improvement_id);
       setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+    });
+  };
+
+  const handleSetMode = (item: ImprovementItem, mode: string) => {
+    void run(async () => {
+      const policy = await setAutomationPolicy(clientConfig, item.agent_id, mode);
+      setAutomationMode(policy.mode);
+    });
+  };
+
+  const handleAutoAdvance = (item: ImprovementItem) => {
+    void run(async () => {
+      const result = await autoAdvanceImprovement(clientConfig, item.improvement_id);
+      setItems((prev) => prev.map((entry) => (entry.improvement_id === result.improvement.improvement_id ? result.improvement : entry)));
+      setLastAuto(result);
     });
   };
 
@@ -288,6 +334,37 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
                 </button>
               ) : null}
             </div>
+
+            {selected.improvement_status !== "archived" ? (
+              <div className="iw-detail-section">
+                <h4>自动化策略</h4>
+                <div className="iw-automation-row">
+                  <select
+                    className="iw-select select-inline"
+                    data-testid="automation-mode"
+                    value={automationMode}
+                    disabled={busy}
+                    onChange={(e) => handleSetMode(selected, e.target.value)}
+                  >
+                    <option value="off">关闭（人工触发）</option>
+                    <option value="semi">半自动（推进至判断点）</option>
+                    <option value="full">全自动（推进至发布门禁前）</option>
+                  </select>
+                  <button
+                    className="iw-secondary-button"
+                    type="button"
+                    data-testid="auto-advance"
+                    disabled={busy}
+                    onClick={() => handleAutoAdvance(selected)}
+                  >
+                    自动推进
+                  </button>
+                </div>
+                {lastAuto ? (
+                  <div className="iw-next-step" data-testid="auto-advance-result">{autoAdvanceNote(lastAuto)}</div>
+                ) : null}
+              </div>
+            ) : null}
 
             {contextOpen ? (
               <div className="iw-context-drawer" data-testid="context-drawer" data-state="open">

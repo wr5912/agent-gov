@@ -203,6 +203,17 @@ IMPROVEMENT_STAGES = {
     "release",
 }
 
+# 改进事项阶段线性顺序（单一来源）：自动化编排与前端 stepper 的推进次序均以此为准。
+IMPROVEMENT_STAGE_ORDER: tuple[str, ...] = (
+    "feedback_intake",
+    "triage",
+    "attribution",
+    "optimization",
+    "execution",
+    "regression",
+    "release",
+)
+
 IMPROVEMENT_STAGE_TRANSITIONS: Mapping[str, set[str]] = {
     "feedback_intake": {"triage"},
     "triage": {"feedback_intake", "attribution"},

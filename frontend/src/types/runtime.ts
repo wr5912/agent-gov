@@ -23,6 +23,11 @@ type OpenApiAgentVersionDiffEntryResponse = components["schemas"]["AgentVersionD
 type OpenApiAgentVersionDiffResponse = components["schemas"]["AgentVersionDiffResponse"];
 type OpenApiAgentVersionFileEntryResponse = components["schemas"]["AgentVersionFileEntryResponse"];
 type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
+type OpenApiAgentSummaryResponse = components["schemas"]["AgentSummaryResponse"];
+type OpenApiAgentCreateRequest = components["schemas"]["AgentCreateRequest"];
+type OpenApiAgentLifecycleTransitionRequest = components["schemas"]["AgentLifecycleTransitionRequest"];
+type OpenApiAgentDeleteResponse = components["schemas"]["AgentDeleteResponse"];
+type OpenApiAgentDeletionImpact = components["schemas"]["AgentDeletionImpact"];
 type OpenApiChatRequest = components["schemas"]["ChatRequest"];
 type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
 type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
@@ -73,6 +78,13 @@ export type AgentChangeSetRegressionRunRequest = OpenApiAgentChangeSetRegression
 export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
+
+/** 业务 Agent（治理对象，对应 /api/agent-registry），区别于运行内 Subagent。 */
+export type AgentSummary = OpenApiAgentSummaryResponse;
+export type AgentCreateRequest = OpenApiAgentCreateRequest;
+export type AgentLifecycleTransitionRequest = OpenApiAgentLifecycleTransitionRequest;
+export type AgentDeleteResponse = OpenApiAgentDeleteResponse;
+export type AgentDeletionImpact = OpenApiAgentDeletionImpact;
 
 export type ChatRequest = OpenApiChatRequest;
 

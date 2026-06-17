@@ -1,6 +1,7 @@
-import { Bot, MessageSquarePlus, RefreshCw, Trash2 } from "lucide-react";
+import { Bot, MessageSquarePlus, RefreshCw, Settings2, Trash2 } from "lucide-react";
 import packageJson from "../../package.json";
-import type { AgentInfo, SessionInfo, SkillInfo } from "../types/runtime";
+import { MAIN_AGENT_ID } from "../api/runtime";
+import type { AgentInfo, AgentSummary, SessionInfo, SkillInfo } from "../types/runtime";
 
 const APP_VERSION = `v${packageJson.version}`;
 
@@ -9,12 +10,16 @@ interface SidebarProps {
   activeSessionId?: string;
   agents: AgentInfo[];
   skills: SkillInfo[];
+  businessAgents: AgentSummary[];
+  selectedBusinessAgentId: string;
   selectedAgent: string;
   selectedSkills: string[];
   onSelectSession: (sessionId: string) => void;
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onRefresh: () => void;
+  onSelectBusinessAgent: (agentId: string) => void;
+  onManageBusinessAgents: () => void;
   onSelectAgent: (agent: string) => void;
   onToggleSkill: (skill: string) => void;
 }
@@ -24,15 +29,21 @@ export function Sidebar({
   activeSessionId,
   agents,
   skills,
+  businessAgents,
+  selectedBusinessAgentId,
   selectedAgent,
   selectedSkills,
   onSelectSession,
   onNewSession,
   onDeleteSession,
   onRefresh,
+  onSelectBusinessAgent,
+  onManageBusinessAgents,
   onSelectAgent,
   onToggleSkill,
 }: SidebarProps) {
+  // 排除 main-agent：它由下方 value="" 的「默认 main-agent」选项代表，避免重复入口。
+  const activeBusinessAgents = businessAgents.filter((agent) => agent.status === "active" && agent.agent_id !== MAIN_AGENT_ID);
   return (
     <aside className="sidebar">
       <div className="brand">
@@ -53,6 +64,22 @@ export function Sidebar({
       </div>
 
       <section className="panel-section">
+        <div className="section-title-row">
+          <span className="section-title">业务 Agent</span>
+          <button className="icon-button" onClick={onManageBusinessAgents} title="管理业务 Agent（创建 / 生命周期 / 删除）">
+            <Settings2 size={14} />
+          </button>
+        </div>
+        <select className="select" value={selectedBusinessAgentId} onChange={(e) => onSelectBusinessAgent(e.target.value)}>
+          <option value="">默认 main-agent（主智能体）</option>
+          {activeBusinessAgents.map((agent) => (
+            <option value={agent.agent_id} key={agent.agent_id}>{agent.name}</option>
+          ))}
+        </select>
+        <p className="field-hint">对话 / 治理对象（agent_id）。选「默认」即主智能体；点右上「管理」可创建其他业务 Agent。</p>
+      </section>
+
+      <section className="panel-section">
         <label className="section-title">Subagent</label>
         <select className="select" value={selectedAgent} onChange={(e) => onSelectAgent(e.target.value)}>
           <option value="">默认 Agent</option>
@@ -60,6 +87,7 @@ export function Sidebar({
             <option value={agent.name} key={agent.name}>{agent.name}</option>
           ))}
         </select>
+        <p className="field-hint">运行内 SDK 子助手（agent），由当前业务 Agent 调度，非独立治理对象。</p>
       </section>
 
       <section className="panel-section grow">

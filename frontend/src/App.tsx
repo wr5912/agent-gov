@@ -1,15 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
+import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { Inspector } from "./components/Inspector";
+import { BusinessAgentModal } from "./components/BusinessAgentModal";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "./types/feedback";
-import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
 
@@ -90,6 +91,9 @@ export default function App() {
   const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
   const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
   const [selectedAgent, setSelectedAgent] = useState("");
+  const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
+  const [selectedBusinessAgentId, setSelectedBusinessAgentId] = useState("");
+  const [businessAgentModalOpen, setBusinessAgentModalOpen] = useState(false);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [allowedTools, setAllowedTools] = useState("");
   const [disallowedTools, setDisallowedTools] = useState("");
@@ -178,18 +182,20 @@ export default function App() {
     setLoading(true);
     setLastError(undefined);
     try {
-      const [healthRes, sessionsRes, agentsRes, skillsRes, configRes] = await Promise.all([
+      const [healthRes, sessionsRes, agentsRes, skillsRes, configRes, businessAgentsRes] = await Promise.all([
         getHealth(effectiveClientConfig),
         getSessions(effectiveClientConfig),
         getAgents(effectiveClientConfig),
         getSkills(effectiveClientConfig),
         getConfigMapping(effectiveClientConfig),
+        listBusinessAgents(effectiveClientConfig),
       ]);
       setHealth(healthRes);
       setSessions(sessionsRes);
       setAgents(agentsRes);
       setSkills(skillsRes);
       setConfigMapping(configRes);
+      setBusinessAgents(businessAgentsRes);
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
@@ -233,9 +239,22 @@ export default function App() {
     }
   }, [effectiveClientConfig]);
 
+  const reloadBusinessAgents = useCallback(async () => {
+    const list = await listBusinessAgents(effectiveClientConfig);
+    setBusinessAgents(list);
+  }, [effectiveClientConfig]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  // 选中的业务 Agent 若被删除或不再 active（弹窗管理或刷新后），回退到主智能体，避免把对话路由到失效对象。
+  useEffect(() => {
+    if (!selectedBusinessAgentId) return;
+    if (!businessAgents.some((agent) => agent.agent_id === selectedBusinessAgentId && agent.status === "active")) {
+      setSelectedBusinessAgentId("");
+    }
+  }, [businessAgents, selectedBusinessAgentId]);
 
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
@@ -331,6 +350,7 @@ export default function App() {
           case_id: caseId.trim() || undefined,
           message,
           agent: selectedAgent || undefined,
+          agent_id: selectedBusinessAgentId || undefined,
           skills: selectedSkills.length ? selectedSkills : undefined,
           skills_mode: skillsMode,
           allowed_tools: parseOptionalCsv(allowedTools),
@@ -497,12 +517,16 @@ export default function App() {
             activeSessionId={activeSessionId}
             agents={agents}
             skills={skills}
+            businessAgents={businessAgents}
+            selectedBusinessAgentId={selectedBusinessAgentId}
             selectedAgent={selectedAgent}
             selectedSkills={selectedSkills}
             onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
             onNewSession={createSession}
             onDeleteSession={removeSession}
             onRefresh={refresh}
+            onSelectBusinessAgent={setSelectedBusinessAgentId}
+            onManageBusinessAgents={() => setBusinessAgentModalOpen(true)}
             onSelectAgent={setSelectedAgent}
             onToggleSkill={toggleSkill}
           />
@@ -548,6 +572,15 @@ export default function App() {
           setSettingsOpen(false);
           setTimeout(refresh, 0);
         }}
+      />
+      <BusinessAgentModal
+        open={businessAgentModalOpen}
+        config={effectiveClientConfig}
+        agents={businessAgents}
+        selectedAgentId={selectedBusinessAgentId}
+        onClose={() => setBusinessAgentModalOpen(false)}
+        onSelect={setSelectedBusinessAgentId}
+        onChanged={() => reloadBusinessAgents().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
       />
     </div>
   );

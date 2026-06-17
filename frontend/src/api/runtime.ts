@@ -4,6 +4,10 @@ export * from "./feedback";
 export * from "./regressionAssets";
 import type {
   AgentInfo,
+  AgentSummary,
+  AgentCreateRequest,
+  AgentLifecycleTransitionRequest,
+  AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
   AgentChangeSetCreateRequest,
@@ -62,6 +66,47 @@ export const runtimeApi = {
   agents: getAgents,
   skills: getSkills,
 };
+
+// 业务 Agent（治理对象，/api/agent-registry）。区别于运行内 Subagent（/api/agents）。
+// main-agent 是样板基线（后端 MAIN_AGENT_PROFILE）：始终 active、不可删、生命周期固定，
+// 在 UI 中由「默认 main-agent」入口代表，不作为可新增/可删除的普通业务 Agent。
+export const MAIN_AGENT_ID = "main-agent";
+
+export function listBusinessAgents(config: RuntimeClientConfig) {
+  return requestJson<AgentSummary[]>(config, "/api/agent-registry");
+}
+
+export function createBusinessAgent(config: RuntimeClientConfig, payload: AgentCreateRequest) {
+  return requestJson<AgentSummary>(config, "/api/agent-registry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setBusinessAgentLifecycle(
+  config: RuntimeClientConfig,
+  agentId: string,
+  payload: AgentLifecycleTransitionRequest,
+) {
+  return requestJson<AgentSummary>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}/lifecycle`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string) {
+  return requestJson<AgentDeleteResponse>(
+    config,
+    `/api/agent-registry/${encodeURIComponent(agentId)}`,
+    { method: "DELETE" },
+  );
+}
 
 export function getConfigMapping(config: RuntimeClientConfig) {
   return requestJson<ConfigMappingResponse>(config, "/api/config");

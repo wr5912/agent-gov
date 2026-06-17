@@ -211,6 +211,12 @@ button:disabled {
   padding: 0 10px;
 }
 .select { margin-top: 8px; }
+.field-hint {
+  margin: 6px 0 0;
+  color: var(--muted-2);
+  font-size: 11px;
+  line-height: 1.5;
+}
 
 .session-list, .skill-list, .mapping-list, .compact-list, .event-list {
   display: flex;
@@ -575,6 +581,76 @@ button:disabled {
   padding: 10px;
 }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
+/* 业务 Agent 管理弹窗：可滚动长列表 + 内联确认删除 */
+.modal-card-wide {
+  width: min(720px, calc(100vw - 36px));
+  max-height: min(800px, calc(100vh - 36px));
+  display: flex;
+  flex-direction: column;
+}
+.modal-body {
+  overflow: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal-error {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--danger);
+  background: rgba(181, 72, 72, 0.08);
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.modal-notice {
+  margin-bottom: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line-strong);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.modal-section { margin-bottom: 18px; }
+.modal-section > .section-title { margin-bottom: 10px; }
+.danger-button {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--danger);
+  background: rgba(181, 72, 72, 0.1);
+  color: var(--danger);
+  font-weight: 600;
+  cursor: pointer;
+}
+.danger-button:hover { background: rgba(181, 72, 72, 0.18); }
+.danger-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.agent-admin-list { display: flex; flex-direction: column; gap: 8px; }
+.agent-admin-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+.agent-admin-row.active { border-color: var(--line-strong); background: var(--panel-2); }
+.agent-admin-main { min-width: 0; flex: 1 1 auto; }
+.agent-admin-name { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.agent-admin-name > span:first-child { font-weight: 600; color: var(--text); }
+.agent-admin-meta {
+  margin-top: 4px;
+  color: var(--muted-2);
+  font-size: 11px;
+  word-break: break-all;
+}
+.agent-admin-ops { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; }
+.select-inline { width: auto; min-width: 116px; margin-top: 0; }
 .fw-modal-inline-meta {
   display: flex;
   justify-content: flex-end;

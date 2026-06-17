@@ -2494,7 +2494,10 @@ export interface components {
             }[];
             /** Run Id */
             run_id: string;
-            /** Sdk Session Id */
+            /**
+             * Sdk Session Id
+             * @description Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.
+             */
             sdk_session_id?: string | null;
             /** Session Id */
             session_id: string;

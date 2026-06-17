@@ -1214,6 +1214,58 @@ export interface paths {
         patch: operations["update_feedback_source_api_feedback_sources__source_kind___source_id__patch"];
         trace?: never;
     };
+    "/api/improvements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List improvement items (governance work units), scoped by business agent */
+        get: operations["list_improvements_api_improvements_get"];
+        put?: never;
+        /** Create an improvement item under a business agent */
+        post: operations["create_improvement_api_improvements_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one improvement item (404 if unknown) */
+        get: operations["get_improvement_api_improvements__improvement_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transition an improvement item's stage (rejects illegal transitions with 409) */
+        post: operations["transition_improvement_api_improvements__improvement_id__lifecycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/optimization-tasks": {
         parameters: {
             query?: never;
@@ -2494,7 +2546,10 @@ export interface components {
             }[];
             /** Run Id */
             run_id: string;
-            /** Sdk Session Id */
+            /**
+             * Sdk Session Id
+             * @description Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.
+             */
             sdk_session_id?: string | null;
             /** Session Id */
             session_id: string;
@@ -4305,6 +4360,69 @@ export interface components {
         HTTPValidationError: {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
+        };
+        /** ImprovementCreateRequest */
+        ImprovementCreateRequest: {
+            /**
+             * Agent Id
+             * @description 归属业务 Agent 的稳定 ID（治理归属主键）。
+             */
+            agent_id: string;
+            /**
+             * Source Feedback Refs
+             * @description 来源反馈 ID 列表（轻引用）。
+             */
+            source_feedback_refs?: string[];
+            /**
+             * Summary
+             * @description 改进事项摘要/系统理解，可空。
+             * @default
+             */
+            summary: string;
+            /**
+             * Title
+             * @description 改进事项标题。
+             */
+            title: string;
+        };
+        /** ImprovementItemResponse */
+        ImprovementItemResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Created At */
+            created_at: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /**
+             * Improvement Stage
+             * @description 事项阶段（后端状态机管理）。
+             */
+            improvement_stage: string;
+            /**
+             * Improvement Status
+             * @description 派生状态：active/done/archived。
+             * @default active
+             */
+            improvement_status: string;
+            /** Source Feedback Refs */
+            source_feedback_refs?: string[];
+            /**
+             * Summary
+             * @default
+             */
+            summary: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ImprovementStageTransitionRequest */
+        ImprovementStageTransitionRequest: {
+            /**
+             * Stage
+             * @description 目标阶段：feedback_intake/triage/attribution/optimization/execution/regression/release；非法转移由后端状态机拒绝（409）。
+             */
+            stage: string;
         };
         JsonValue: unknown;
         /** OpenAIChatCompletionChoice */
@@ -7910,6 +8028,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FeedbackSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_improvements_api_improvements_get: {
+        parameters: {
+            query?: {
+                /** @description 按业务 Agent 归属过滤；省略则返回全部 Agent。 */
+                agent_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_improvement_api_improvements_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_improvement_api_improvements__improvement_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    transition_improvement_api_improvements__improvement_id__lifecycle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementStageTransitionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"];
                 };
             };
             /** @description Validation Error */

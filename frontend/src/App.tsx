@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
+import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -105,7 +106,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement">("chat");
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -462,6 +463,10 @@ export default function App() {
     setActiveWindow("chat");
   }
 
+  function showImprovementWindow() {
+    setActiveWindow("improvement");
+  }
+
   return (
     <div className="app-shell">
       <Topbar
@@ -473,9 +478,12 @@ export default function App() {
         onRefresh={refreshAll}
         onOpenFeedback={showFeedbackWindow}
         onOpenPlayground={showPlaygroundWindow}
+        onOpenImprovement={showImprovementWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {activeWindow === "feedback" ? (
+      {activeWindow === "improvement" ? (
+        <ImprovementWorkbench clientConfig={effectiveClientConfig} />
+      ) : activeWindow === "feedback" ? (
         <ExternalFeedbackWorkspace
           clientConfig={effectiveClientConfig}
           runtimeContext={feedbackRuntimeContext}

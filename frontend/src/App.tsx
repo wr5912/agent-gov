@@ -4,6 +4,7 @@ import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
+import { AssetRegistry } from "./components/AssetRegistry";
 import { Inspector } from "./components/Inspector";
 import { SettingsModal } from "./components/SettingsModal";
 import { Sidebar } from "./components/Sidebar";
@@ -109,7 +110,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release" | "asset">("chat");
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -477,6 +478,10 @@ export default function App() {
     setActiveWindow("release");
   }
 
+  function showAssetWindow() {
+    setActiveWindow("asset");
+  }
+
   return (
     <div className="app-shell">
       <Topbar
@@ -493,9 +498,16 @@ export default function App() {
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
         onOpenRelease={showReleaseWindow}
+        onOpenAsset={showAssetWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
-      {activeWindow === "release" ? (
+      {activeWindow === "asset" ? (
+        <AssetRegistry
+          clientConfig={effectiveClientConfig}
+          scopeAgentId={selectedBusinessAgentId}
+          businessAgents={businessAgents}
+        />
+      ) : activeWindow === "release" ? (
         <ReleaseWorkbench
           scopeAgentId={selectedBusinessAgentId}
           releases={agentReleases}

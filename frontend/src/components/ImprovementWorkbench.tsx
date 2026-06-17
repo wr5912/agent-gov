@@ -1,14 +1,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  addImprovementLink,
   archiveImprovement,
   autoAdvanceImprovement,
   createImprovement,
+  findSimilarImprovements,
   getAutomationPolicy,
+  listImprovementLinks,
   listImprovements,
+  mergeImprovement,
   setAutomationPolicy,
   setImprovementStage,
+  splitImprovement,
   type AutoAdvanceResult,
   type ImprovementItem,
+  type ImprovementLink,
+  type ImprovementSimilarItem,
 } from "../api/improvements";
 import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
@@ -33,6 +40,14 @@ function buildContextPackage(item: ImprovementItem): string {
   ];
   return lines.join("\n");
 }
+
+const LINK_KIND_LABEL: Record<string, string> = {
+  attribution: "归因",
+  optimization_plan: "优化方案",
+  eval_run: "评估",
+  change_set: "变更集",
+  batch: "批次",
+};
 
 const STOP_REASON_LABEL: Record<string, string> = {
   policy_off: "策略为关闭，未自动推进",
@@ -59,6 +74,10 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [contextOpen, setContextOpen] = useState(false);
   const [automationMode, setAutomationMode] = useState("off");
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
+  const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
+  const [links, setLinks] = useState<ImprovementLink[]>([]);
+  const [newLinkKind, setNewLinkKind] = useState("attribution");
+  const [newLinkRef, setNewLinkRef] = useState("");
 
   const refresh = useCallback(async () => {
     setError(undefined);
@@ -89,14 +108,25 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
 
   useEffect(() => {
     const agentId = selected?.agent_id;
-    if (!agentId) return;
+    const itemId = selected?.improvement_id;
+    if (!agentId || !itemId) {
+      setSimilar([]);
+      setLinks([]);
+      return;
+    }
     let cancelled = false;
     setLastAuto(undefined);
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
+    void findSimilarImprovements(clientConfig, itemId)
+      .then((s) => { if (!cancelled) setSimilar(s); })
+      .catch(() => { if (!cancelled) setSimilar([]); });
+    void listImprovementLinks(clientConfig, itemId)
+      .then((l) => { if (!cancelled) setLinks(l); })
+      .catch(() => { if (!cancelled) setLinks([]); });
     return () => { cancelled = true; };
-  }, [clientConfig, selectedId, selected?.agent_id]);
+  }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id]);
 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
@@ -114,7 +144,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     const title = newTitle.trim();
     if (!title || !newAgentId || busy) return;
     void run(async () => {
-      const created = await createImprovement(clientConfig, { agent_id: newAgentId, title, summary: "" });
+      const created = await createImprovement(clientConfig, { agent_id: newAgentId, title, summary: "", auto_merge: false });
       setNewTitle("");
       await refresh();
       setSelectedId(created.improvement_id);
@@ -147,6 +177,32 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
       const result = await autoAdvanceImprovement(clientConfig, item.improvement_id);
       setItems((prev) => prev.map((entry) => (entry.improvement_id === result.improvement.improvement_id ? result.improvement : entry)));
       setLastAuto(result);
+    });
+  };
+
+  const handleMerge = (target: ImprovementItem, sourceId: string) => {
+    void run(async () => {
+      await mergeImprovement(clientConfig, target.improvement_id, sourceId);
+      setSimilar([]);
+      await refresh();
+    });
+  };
+
+  const handleSplit = (item: ImprovementItem, feedbackRef: string) => {
+    void run(async () => {
+      const created = await splitImprovement(clientConfig, item.improvement_id, feedbackRef);
+      await refresh();
+      setSelectedId(created.improvement_id);
+    });
+  };
+
+  const handleAddLink = (item: ImprovementItem) => {
+    const ref = newLinkRef.trim();
+    if (!ref || busy) return;
+    void run(async () => {
+      const created = await addImprovementLink(clientConfig, item.improvement_id, newLinkKind, ref);
+      setLinks((prev) => [...prev, created]);
+      setNewLinkRef("");
     });
   };
 
@@ -289,9 +345,23 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
             {(selected.source_feedback_refs ?? []).length ? (
               <div className="iw-detail-section">
                 <h4>来源反馈</h4>
-                <div className="iw-source-refs">
+                <div className="iw-source-refs" data-testid="improvement-source-refs">
                   {(selected.source_feedback_refs ?? []).map((ref) => (
-                    <span className="iw-ref" key={ref}>{ref}</span>
+                    <span className="iw-ref" key={ref}>
+                      {ref}
+                      {selected.improvement_status !== "archived" && (selected.source_feedback_refs ?? []).length > 1 ? (
+                        <button
+                          className="iw-ref-split"
+                          type="button"
+                          data-testid="split-ref"
+                          title="把这条反馈拆分为独立改进事项"
+                          disabled={busy}
+                          onClick={() => handleSplit(selected, ref)}
+                        >
+                          拆分
+                        </button>
+                      ) : null}
+                    </span>
                   ))}
                 </div>
               </div>
@@ -363,6 +433,62 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
                 {lastAuto ? (
                   <div className="iw-next-step" data-testid="auto-advance-result">{autoAdvanceNote(lastAuto)}</div>
                 ) : null}
+              </div>
+            ) : null}
+
+            {selected.improvement_status !== "archived" && similar.length ? (
+              <div className="iw-detail-section" data-testid="similar-section">
+                <h4>相似改进事项（{similar.length}）</h4>
+                <div className="iw-next-step" style={{ marginBottom: 8 }}>同一业务 Agent 下疑似重复，可把它归并进当前事项（来源反馈合并、对方归档）。</div>
+                {similar.map((s) => (
+                  <div className="iw-list-item" data-testid="similar-item" key={s.improvement.improvement_id}>
+                    <span className="iw-list-item-title">{s.improvement.title}</span>
+                    <span className="iw-list-item-meta">相似度 {s.score} · {stageLabel(s.improvement.improvement_stage)}</span>
+                    <button
+                      className="iw-secondary-button"
+                      type="button"
+                      data-testid="merge-into-current"
+                      disabled={busy}
+                      onClick={() => handleMerge(selected, s.improvement.improvement_id)}
+                    >
+                      归并到当前
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+
+            {selected.improvement_status !== "archived" ? (
+              <div className="iw-detail-section" data-testid="links-section">
+                <h4>关联闭环对象</h4>
+                {links.length ? (
+                  <div className="iw-source-refs" data-testid="improvement-links">
+                    {links.map((l) => (
+                      <span className="iw-ref" key={l.link_id}>{LINK_KIND_LABEL[l.kind] ?? l.kind}: {l.ref_id}</span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="iw-next-step">尚未关联归因 / 方案 / 评估 / 变更集 / 批次。</div>
+                )}
+                <div className="iw-automation-row" style={{ marginTop: 8 }}>
+                  <select className="iw-select select-inline" data-testid="link-kind" value={newLinkKind} disabled={busy} onChange={(e) => setNewLinkKind(e.target.value)}>
+                    <option value="attribution">归因</option>
+                    <option value="optimization_plan">优化方案</option>
+                    <option value="eval_run">评估</option>
+                    <option value="change_set">变更集</option>
+                    <option value="batch">批次</option>
+                  </select>
+                  <input
+                    className="iw-input"
+                    data-testid="link-ref"
+                    style={{ width: "auto", flex: 1, minWidth: 140 }}
+                    placeholder="对象 ID"
+                    value={newLinkRef}
+                    disabled={busy}
+                    onChange={(e) => setNewLinkRef(e.target.value)}
+                  />
+                  <button className="iw-secondary-button" type="button" data-testid="add-link" disabled={busy || !newLinkRef.trim()} onClick={() => handleAddLink(selected)}>关联</button>
+                </div>
               </div>
             ) : null}
 

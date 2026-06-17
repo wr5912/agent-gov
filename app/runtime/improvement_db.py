@@ -26,3 +26,19 @@ class ImprovementItemModel(Base):
     source_feedback_refs_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+class ImprovementLinkModel(Base):
+    """改进事项 ↔ 既有闭环对象的轻引用（v2.7 W2-c）。
+
+    kind 标明被引对象类型（attribution / optimization_plan / eval_run / change_set / batch），
+    ref_id 为该对象 ID。独立新表，create_all 创建，无需改表迁移；不在 improvement_items 上加列。
+    """
+
+    __tablename__ = "improvement_links"
+
+    link_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(32))
+    ref_id: Mapped[str] = mapped_column(String(256))
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)

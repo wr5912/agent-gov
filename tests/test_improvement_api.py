@@ -86,6 +86,62 @@ def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: 
         assert client.post("/api/improvements/imp-unknown/archive").status_code == 404
 
 
+def test_merge_split_and_similar_api(monkeypatch, tmp_path: Path) -> None:
+    """W2-b：相似 → 归并(同 Agent)→ 拆分；跨 Agent 归并 400、未知 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        a = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警时间窗口不一致误报", "source_feedback_refs": ["f1"]}).json()
+        b = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警时间窗口不一致重复反馈", "source_feedback_refs": ["f2"]}).json()
+        # 相似列表（同 Agent，含 b）。
+        similar = client.get(f"/api/improvements/{a['improvement_id']}/similar").json()
+        assert any(s["improvement"]["improvement_id"] == b["improvement_id"] for s in similar)
+        # 归并 b 进 a：a 拿到 f1+f2，b 归档。
+        merged = client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": b["improvement_id"]})
+        assert merged.status_code == 200 and set(merged.json()["source_feedback_refs"]) == {"f1", "f2"}
+        assert client.get(f"/api/improvements/{b['improvement_id']}").json()["improvement_status"] == "archived"
+        # 拆分 f2 出来为新事项。
+        split = client.post(f"/api/improvements/{a['improvement_id']}/split", json={"feedback_ref": "f2"})
+        assert split.status_code == 201 and split.json()["source_feedback_refs"] == ["f2"]
+        # 跨 Agent 归并被拒（400）。
+        other = client.post("/api/improvements", json={"agent_id": "shop-bot", "title": "无关"}).json()
+        assert client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": other["improvement_id"]}).status_code == 400
+        # 未知 merge 源 404。
+        assert client.post(f"/api/improvements/{a['improvement_id']}/merge", json={"source_improvement_id": "imp-nope"}).status_code == 404
+
+
+def test_auto_merge_on_create(monkeypatch, tmp_path: Path) -> None:
+    """W2-b：auto_merge 创建时把来源反馈并入相似开放事项，而非新建。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        base = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "数据时间窗口不可靠导致误判", "source_feedback_refs": ["fa"]}).json()
+        merged = client.post(
+            "/api/improvements",
+            json={"agent_id": "soc-ops", "title": "数据时间窗口不可靠导致误判", "source_feedback_refs": ["fb"], "auto_merge": True},
+        ).json()
+        # 并入既有事项（同一 improvement_id），refs 合并，未新建。
+        assert merged["improvement_id"] == base["improvement_id"]
+        assert set(merged["source_feedback_refs"]) == {"fa", "fb"}
+        assert len(client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()) == 1
+
+
+def test_closed_loop_links_api(monkeypatch, tmp_path: Path) -> None:
+    """W2-c：改进事项关联既有闭环对象（attribution/plan/...）；未知 kind 400、未知事项 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "关联闭环"}).json()
+        iid = item["improvement_id"]
+        created = client.post(f"/api/improvements/{iid}/links", json={"kind": "attribution", "ref_id": "attr-1"})
+        assert created.status_code == 201 and created.json()["kind"] == "attribution"
+        client.post(f"/api/improvements/{iid}/links", json={"kind": "change_set", "ref_id": "cs-9"})
+        links = client.get(f"/api/improvements/{iid}/links").json()
+        assert {(l["kind"], l["ref_id"]) for l in links} == {("attribution", "attr-1"), ("change_set", "cs-9")}
+        # 未知 kind 400。
+        assert client.post(f"/api/improvements/{iid}/links", json={"kind": "bogus", "ref_id": "x"}).status_code == 400
+        # 未知改进事项 404。
+        assert client.post("/api/improvements/imp-nope/links", json={"kind": "attribution", "ref_id": "y"}).status_code == 404
+        assert client.get("/api/improvements/imp-nope/links").status_code == 404
+
+
 def test_create_ignores_hostile_backend_owned_fields(monkeypatch, tmp_path: Path) -> None:
     """字段所有权：请求体里夹带 backend-owned 字段不得越权——后端权威生成 id/stage/status。"""
     module = _load_app(monkeypatch, tmp_path)

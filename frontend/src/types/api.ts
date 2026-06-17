@@ -448,6 +448,58 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/assets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List governance assets, scoped by agent / type */
+        get: operations["list_assets_api_assets_get"];
+        put?: never;
+        /** Create a governance asset */
+        post: operations["create_asset_api_assets_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{asset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one asset (404 if unknown) */
+        get: operations["get_asset_api_assets__asset_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/assets/{asset_id}/inherit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Inherit (compound) an asset into another business agent */
+        post: operations["inherit_asset_api_assets__asset_id__inherit_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/automation-policy": {
         parameters: {
             query?: never;
@@ -1312,6 +1364,75 @@ export interface paths {
         put?: never;
         /** Transition an improvement item's stage (rejects illegal transitions with 409) */
         post: operations["transition_improvement_api_improvements__improvement_id__lifecycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/links": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List closed-loop object links of an improvement (404 if unknown) */
+        get: operations["list_links_api_improvements__improvement_id__links_get"];
+        put?: never;
+        /** Link an improvement to a closed-loop object (attribution/plan/eval/change_set/batch) */
+        post: operations["add_link_api_improvements__improvement_id__links_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge a source improvement into this one (same agent; source becomes archived) */
+        post: operations["merge_improvement_api_improvements__improvement_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/similar": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Find similar open improvements under the same business agent (deterministic similarity) */
+        get: operations["similar_improvements_api_improvements__improvement_id__similar_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/split": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Split a source feedback ref out of this improvement into a new one */
+        post: operations["split_improvement_api_improvements__improvement_id__split_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2461,6 +2582,44 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** AssetCreateRequest */
+        AssetCreateRequest: {
+            /**
+             * Agent Id
+             * @description 归属业务 Agent。
+             */
+            agent_id: string;
+            /**
+             * Asset Type
+             * @description regression / methodology / execution / audit。
+             */
+            asset_type: string;
+            /**
+             * Body
+             * @description 资产正文（方法论/回归用例/执行脚本/审计说明）。
+             * @default
+             */
+            body: string;
+            /**
+             * Source Improvement Id
+             * @description 沉淀来源改进事项 ID（可空）。
+             * @default
+             */
+            source_improvement_id: string;
+            /**
+             * Title
+             * @description 资产标题。
+             */
+            title: string;
+        };
+        /** AssetInheritRequest */
+        AssetInheritRequest: {
+            /**
+             * Target Agent Id
+             * @description 把资产继承复用到的目标业务 Agent。
+             */
+            target_agent_id: string;
+        };
         /**
          * AssetProvenanceResponse
          * @description 某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、改了哪些资产、进入哪个版本。
@@ -2496,6 +2655,37 @@ export interface components {
              * @description 本次优化改动的资产路径（改了哪些资产）。
              */
             target_paths?: string[];
+        };
+        /** AssetResponse */
+        AssetResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Asset Id */
+            asset_id: string;
+            /** Asset Type */
+            asset_type: string;
+            /**
+             * Body
+             * @default
+             */
+            body: string;
+            /** Created At */
+            created_at: string;
+            /**
+             * Inherited From
+             * @description 非空表示该资产由此源资产继承而来（复利来源）。
+             * @default
+             */
+            inherited_from: string;
+            /**
+             * Source Improvement Id
+             * @default
+             */
+            source_improvement_id: string;
+            /** Title */
+            title: string;
+            /** Updated At */
+            updated_at: string;
         };
         /** AutoAdvanceResponse */
         AutoAdvanceResponse: {
@@ -4455,6 +4645,12 @@ export interface components {
              */
             agent_id: string;
             /**
+             * Auto Merge
+             * @description 为真时：若同 Agent 存在相似开放改进事项，则把来源反馈并入该事项而非新建。
+             * @default false
+             */
+            auto_merge: boolean;
+            /**
              * Source Feedback Refs
              * @description 来源反馈 ID 列表（轻引用）。
              */
@@ -4501,6 +4697,57 @@ export interface components {
             title: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** ImprovementLinkRequest */
+        ImprovementLinkRequest: {
+            /**
+             * Kind
+             * @description 被引闭环对象类型：attribution/optimization_plan/eval_run/change_set/batch。
+             */
+            kind: string;
+            /**
+             * Ref Id
+             * @description 被引对象 ID。
+             */
+            ref_id: string;
+        };
+        /** ImprovementLinkResponse */
+        ImprovementLinkResponse: {
+            /** Created At */
+            created_at: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Kind */
+            kind: string;
+            /** Link Id */
+            link_id: string;
+            /** Ref Id */
+            ref_id: string;
+        };
+        /** ImprovementMergeRequest */
+        ImprovementMergeRequest: {
+            /**
+             * Source Improvement Id
+             * @description 被归并进当前事项的源改进事项 ID（同 Agent）。
+             */
+            source_improvement_id: string;
+        };
+        /** ImprovementSimilarItem */
+        ImprovementSimilarItem: {
+            improvement: components["schemas"]["ImprovementItemResponse"];
+            /**
+             * Score
+             * @description 相似度分数（确定性 token Jaccard + 共享反馈加权）。
+             */
+            score: number;
+        };
+        /** ImprovementSplitRequest */
+        ImprovementSplitRequest: {
+            /**
+             * Feedback Ref
+             * @description 要从当前事项拆出为新事项的来源反馈 ID。
+             */
+            feedback_ref: string;
         };
         /** ImprovementStageTransitionRequest */
         ImprovementStageTransitionRequest: {
@@ -6371,6 +6618,139 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AssetProvenanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_assets_api_assets_get: {
+        parameters: {
+            query?: {
+                /** @description 按业务 Agent 过滤。 */
+                agent_id?: string | null;
+                /** @description 按资产类型过滤。 */
+                asset_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_asset_api_assets_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_asset_api_assets__asset_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    inherit_asset_api_assets__asset_id__inherit_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                asset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssetInheritRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssetResponse"];
                 };
             };
             /** @description Validation Error */
@@ -8367,6 +8747,173 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_links_api_improvements__improvement_id__links_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementLinkResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_link_api_improvements__improvement_id__links_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementLinkResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_improvement_api_improvements__improvement_id__merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    similar_improvements_api_improvements__improvement_id__similar_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementSimilarItem"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    split_improvement_api_improvements__improvement_id__split_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementSplitRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };

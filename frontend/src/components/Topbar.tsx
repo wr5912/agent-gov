@@ -1,7 +1,7 @@
-import { Activity, BookOpen, ListChecks, MessageSquare, Rocket, RefreshCw, Settings } from "lucide-react";
+import { Activity, BookOpen, Boxes, ListChecks, MessageSquare, Rocket, RefreshCw, Settings } from "lucide-react";
 import type { AgentSummary, RuntimeHealth } from "../types/runtime";
 
-type ActiveWindow = "chat" | "feedback" | "improvement" | "release";
+type ActiveWindow = "chat" | "feedback" | "improvement" | "release" | "asset";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
@@ -17,6 +17,7 @@ interface TopbarProps {
   onOpenPlayground: () => void;
   onOpenImprovement: () => void;
   onOpenRelease: () => void;
+  onOpenAsset: () => void;
   onOpenSettings: () => void;
 }
 
@@ -34,6 +35,7 @@ export function Topbar({
   onOpenPlayground,
   onOpenImprovement,
   onOpenRelease,
+  onOpenAsset,
   onOpenSettings,
 }: TopbarProps) {
   return (
@@ -90,6 +92,16 @@ export function Topbar({
           onClick={onOpenRelease}
         >
           <Rocket size={15} /> 发布
+        </button>
+        <button
+          className={`topbar-nav-button ${activeWindow === "asset" ? "active" : ""}`}
+          type="button"
+          data-testid="nav-asset"
+          aria-label="打开资产复利中心"
+          aria-current={activeWindow === "asset"}
+          onClick={onOpenAsset}
+        >
+          <Boxes size={15} /> 资产
         </button>
       </nav>
 

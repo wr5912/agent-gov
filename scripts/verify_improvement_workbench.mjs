@@ -111,6 +111,8 @@ async function main() {
       ],
       createCount: 0,
       policyMode: "off",
+      links: {},
+      linkCount: 0,
     };
 
     await page.addInitScript(
@@ -161,6 +163,53 @@ async function main() {
         item.improvement_status = body.stage === "release" ? "done" : "active";
         item.updated_at = ts;
         return json(route, item);
+      }
+      const linksM = path.match(/^\/api\/improvements\/([^/]+)\/links$/);
+      if (linksM && method === "GET") {
+        return json(route, stateRef.links[decodeURIComponent(linksM[1])] || []);
+      }
+      if (linksM && method === "POST") {
+        const id = decodeURIComponent(linksM[1]);
+        const body = req.postDataJSON();
+        const link = { link_id: `lnk-${++stateRef.linkCount}`, improvement_id: id, kind: body.kind, ref_id: body.ref_id, created_at: ts };
+        (stateRef.links[id] = stateRef.links[id] || []).push(link);
+        return json(route, link, 201);
+      }
+      const similar = path.match(/^\/api\/improvements\/([^/]+)\/similar$/);
+      if (similar && method === "GET") {
+        const id = decodeURIComponent(similar[1]);
+        const self = stateRef.improvements.find((i) => i.improvement_id === id);
+        const out = stateRef.improvements
+          .filter((i) => i.improvement_id !== id && i.improvement_status !== "archived" && (!self || i.agent_id === self.agent_id))
+          .map((i) => ({ improvement: i, score: 0.8 }));
+        return json(route, out);
+      }
+      const mergeM = path.match(/^\/api\/improvements\/([^/]+)\/merge$/);
+      if (mergeM && method === "POST") {
+        const targetId = decodeURIComponent(mergeM[1]);
+        const sourceId = req.postDataJSON().source_improvement_id;
+        const target = stateRef.improvements.find((i) => i.improvement_id === targetId);
+        const source = stateRef.improvements.find((i) => i.improvement_id === sourceId);
+        if (!target || !source) return json(route, { detail: "not found" }, 404);
+        const refs = new Set([...(target.source_feedback_refs || []), ...(source.source_feedback_refs || [])]);
+        target.source_feedback_refs = [...refs];
+        target.updated_at = ts;
+        source.improvement_status = "archived";
+        source.updated_at = ts;
+        return json(route, target);
+      }
+      const splitM = path.match(/^\/api\/improvements\/([^/]+)\/split$/);
+      if (splitM && method === "POST") {
+        const id = decodeURIComponent(splitM[1]);
+        const ref = req.postDataJSON().feedback_ref;
+        const item = stateRef.improvements.find((i) => i.improvement_id === id);
+        if (!item) return json(route, { detail: "not found" }, 404);
+        item.source_feedback_refs = (item.source_feedback_refs || []).filter((r) => r !== ref);
+        item.updated_at = ts;
+        stateRef.createCount += 1;
+        const created = { improvement_id: `imp-split${stateRef.createCount}`, agent_id: item.agent_id, title: `${item.title}（拆分）`, summary: "", source_feedback_refs: [ref], improvement_stage: "feedback_intake", improvement_status: "active", created_at: ts, updated_at: ts };
+        stateRef.improvements.push(created);
+        return json(route, created, 201);
       }
       if (path === "/api/automation-policy" && method === "GET") {
         return json(route, { agent_id: url.searchParams.get("agent_id"), mode: stateRef.policyMode });
@@ -296,6 +345,18 @@ async function main() {
       await page.getByTestId("auto-advance").click();
       await page.locator('[data-testid="current-stage"][data-state="attribution"]').waitFor({ timeout: 15_000 });
       await page.getByTestId("auto-advance-result").waitFor({ timeout: 15_000 });
+
+      // W2-b 相似度归并：当前事项出现相似项区 → 归并 → 被归并方归档、相似项区清空。
+      await page.getByTestId("similar-section").waitFor({ timeout: 15_000 });
+      await page.getByTestId("similar-item").first().waitFor({ timeout: 15_000 });
+      await page.getByTestId("merge-into-current").first().click();
+      await page.getByTestId("similar-section").waitFor({ state: "detached", timeout: 15_000 });
+
+      // W2-c 闭环引用：给当前事项关联一个归因对象，关联后出现在「关联闭环对象」。
+      await page.getByTestId("link-kind").selectOption("attribution");
+      await page.getByTestId("link-ref").fill("attr-77");
+      await page.getByTestId("add-link").click();
+      await page.getByTestId("improvement-links").waitFor({ timeout: 15_000 });
 
       // 归档为终态状态：归档后状态 archived、主动作消失、显示已归档。
       await page.getByTestId("archive-improvement").click();

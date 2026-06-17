@@ -9,6 +9,40 @@ export type ImprovementCreateRequest = components["schemas"]["ImprovementCreateR
 export type ImprovementStageTransitionRequest = components["schemas"]["ImprovementStageTransitionRequest"];
 export type AutomationPolicy = components["schemas"]["AutomationPolicyResponse"];
 export type AutoAdvanceResult = components["schemas"]["AutoAdvanceResponse"];
+export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarItem"];
+export type ImprovementLink = components["schemas"]["ImprovementLinkResponse"];
+
+export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
+  return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);
+}
+
+export function addImprovementLink(config: RuntimeClientConfig, improvementId: string, kind: string, refId: string) {
+  return requestJson<ImprovementLink>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind, ref_id: refId }),
+  });
+}
+
+export function findSimilarImprovements(config: RuntimeClientConfig, improvementId: string) {
+  return requestJson<ImprovementSimilarItem[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/similar`);
+}
+
+export function mergeImprovement(config: RuntimeClientConfig, targetId: string, sourceImprovementId: string) {
+  return requestJson<ImprovementItem>(config, `/api/improvements/${encodeURIComponent(targetId)}/merge`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source_improvement_id: sourceImprovementId }),
+  });
+}
+
+export function splitImprovement(config: RuntimeClientConfig, improvementId: string, feedbackRef: string) {
+  return requestJson<ImprovementItem>(config, `/api/improvements/${encodeURIComponent(improvementId)}/split`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ feedback_ref: feedbackRef }),
+  });
+}
 
 export function listImprovements(config: RuntimeClientConfig, agentId?: string) {
   const query = agentId ? `?agent_id=${encodeURIComponent(agentId)}` : "";

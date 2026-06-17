@@ -15,6 +15,28 @@ class ImprovementCreateRequest(BaseModel):
     title: str = Field(description="改进事项标题。")
     summary: str = Field(default="", description="改进事项摘要/系统理解，可空。")
     source_feedback_refs: list[str] = Field(default_factory=list, description="来源反馈 ID 列表（轻引用）。")
+    auto_merge: bool = Field(default=False, description="为真时：若同 Agent 存在相似开放改进事项，则把来源反馈并入该事项而非新建。")
+
+
+class ImprovementMergeRequest(BaseModel):
+    source_improvement_id: str = Field(description="被归并进当前事项的源改进事项 ID（同 Agent）。")
+
+
+class ImprovementSplitRequest(BaseModel):
+    feedback_ref: str = Field(description="要从当前事项拆出为新事项的来源反馈 ID。")
+
+
+class ImprovementLinkRequest(BaseModel):
+    kind: str = Field(description="被引闭环对象类型：attribution/optimization_plan/eval_run/change_set/batch。")
+    ref_id: str = Field(description="被引对象 ID。")
+
+
+class ImprovementLinkResponse(BaseModel):
+    link_id: str
+    improvement_id: str
+    kind: str
+    ref_id: str
+    created_at: str
 
 
 class ImprovementStageTransitionRequest(BaseModel):
@@ -34,3 +56,8 @@ class ImprovementItemResponse(BaseModel):
     improvement_status: str = Field(default="active", description="派生状态：active/done/archived。")
     created_at: str
     updated_at: str
+
+
+class ImprovementSimilarItem(BaseModel):
+    improvement: ImprovementItemResponse
+    score: float = Field(description="相似度分数（确定性 token Jaccard + 共享反馈加权）。")

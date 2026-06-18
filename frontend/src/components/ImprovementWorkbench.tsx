@@ -3,6 +3,7 @@ import {
   addImprovementLink,
   getNormalizedFeedback,
   getAttribution,
+  upsertAttribution,
   confirmAttribution,
   type NormalizedFeedback,
   type Attribution,
@@ -74,6 +75,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [attribution, setAttribution] = useState<Attribution | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
   const [regressionDismissed, setRegressionDismissed] = useState(false);
+  const [editingAttribution, setEditingAttribution] = useState(false);
+  const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
   const [newLinkKind, setNewLinkKind] = useState("attribution");
   const [newLinkRef, setNewLinkRef] = useState("");
 
@@ -118,6 +121,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     let cancelled = false;
     setLastAuto(undefined);
     setRegressionDismissed(false);
+    setEditingAttribution(false);
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
       .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
@@ -211,6 +215,40 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     void run(async () => {
       const a = await confirmAttribution(clientConfig, item.improvement_id);
       setAttribution(a);
+    });
+  };
+
+  // 系统初步归因：从系统理解(NormalizedFeedback)确定性推导一版归因，供用户确认/修改（真正的智能归因为后续 Governor/LLM 引擎）。
+  const deriveAttribution = (nf: NormalizedFeedback | null, item: ImprovementItem) => ({
+    summary: nf
+      ? `可能与「${nf.possible_object || "外部数据/工具"}」相关：${nf.problem}${nf.possible_reason ? `（${nf.possible_reason}）` : ""}。`
+      : `针对「${item.title}」的初步归因，待补充证据。`,
+    responsibility_boundary: ["不是主 Agent 推理错误", `主要可能在：${nf?.possible_object || "外部数据源 / 工具质量"}`],
+    evidence: nf?.user_quote ? [`用户反馈：${nf.user_quote}`] : [],
+  });
+
+  const handleGenerateAttribution = (item: ImprovementItem) => {
+    void run(async () => {
+      const a = await upsertAttribution(clientConfig, item.improvement_id, deriveAttribution(normalizedFeedback, item));
+      setAttribution(a);
+      setEditingAttribution(false);
+    });
+  };
+
+  const handleEditAttribution = (a: Attribution) => {
+    setAttrDraft({ summary: a.summary, boundary: a.responsibility_boundary.join("\n"), evidence: a.evidence.join("\n") });
+    setEditingAttribution(true);
+  };
+
+  const handleSaveAttribution = (item: ImprovementItem) => {
+    void run(async () => {
+      const a = await upsertAttribution(clientConfig, item.improvement_id, {
+        summary: attrDraft.summary,
+        responsibility_boundary: attrDraft.boundary.split("\n").map((s) => s.trim()).filter(Boolean),
+        evidence: attrDraft.evidence.split("\n").map((s) => s.trim()).filter(Boolean),
+      });
+      setAttribution(a);
+      setEditingAttribution(false);
     });
   };
 
@@ -398,22 +436,48 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
             {attribution ? (
               <div className="iw-detail-section" data-testid="attribution">
                 <h4>系统归因{attribution.status === "confirmed" ? "（已确认）" : "（待确认）"}</h4>
-                <div className="iw-detail-summary">{attribution.summary}</div>
-                {attribution.responsibility_boundary.length ? (
+                {editingAttribution ? (
+                  <div>
+                    <textarea className="iw-input" data-testid="attr-edit-summary" value={attrDraft.summary} onChange={(e) => setAttrDraft({ ...attrDraft, summary: e.target.value })} placeholder="归因正文" style={{ minHeight: 60 }} />
+                    <textarea className="iw-input" data-testid="attr-edit-boundary" value={attrDraft.boundary} onChange={(e) => setAttrDraft({ ...attrDraft, boundary: e.target.value })} placeholder="责任边界（每行一条）" style={{ minHeight: 48, marginTop: 6 }} />
+                    <textarea className="iw-input" data-testid="attr-edit-evidence" value={attrDraft.evidence} onChange={(e) => setAttrDraft({ ...attrDraft, evidence: e.target.value })} placeholder="证据（每行一条）" style={{ minHeight: 48, marginTop: 6 }} />
+                    <div className="iw-action-row">
+                      <button className="iw-primary-button" type="button" data-testid="attr-save" disabled={busy} onClick={() => handleSaveAttribution(selected)}>保存</button>
+                      <button className="iw-secondary-button" type="button" data-testid="attr-cancel" onClick={() => setEditingAttribution(false)}>取消</button>
+                    </div>
+                  </div>
+                ) : (
                   <>
-                    <div className="iw-content-subhead">责任边界</div>
-                    <ul className="iw-content-list">{attribution.responsibility_boundary.map((b, i) => <li key={i}>{b}</li>)}</ul>
+                    <div className="iw-detail-summary">{attribution.summary}</div>
+                    {attribution.responsibility_boundary.length ? (
+                      <>
+                        <div className="iw-content-subhead">责任边界</div>
+                        <ul className="iw-content-list">{attribution.responsibility_boundary.map((b, i) => <li key={i}>{b}</li>)}</ul>
+                      </>
+                    ) : null}
+                    {attribution.evidence.length ? (
+                      <>
+                        <div className="iw-content-subhead">证据</div>
+                        <ul className="iw-content-list" data-testid="attribution-evidence">{attribution.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                      </>
+                    ) : null}
+                    {selected.improvement_status !== "archived" ? (
+                      <div className="iw-action-row">
+                        {attribution.status !== "confirmed" ? (
+                          <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={() => handleConfirmAttribution(selected)}>确认归因</button>
+                        ) : null}
+                        <button className="iw-secondary-button" type="button" data-testid="edit-attribution" disabled={busy} onClick={() => handleEditAttribution(attribution)}>修改</button>
+                        <button className="iw-secondary-button" type="button" data-testid="regenerate-attribution" disabled={busy} onClick={() => handleGenerateAttribution(selected)}>重新整理</button>
+                      </div>
+                    ) : null}
                   </>
-                ) : null}
-                {attribution.evidence.length ? (
-                  <>
-                    <div className="iw-content-subhead">证据</div>
-                    <ul className="iw-content-list" data-testid="attribution-evidence">{attribution.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-                  </>
-                ) : null}
-                {attribution.status !== "confirmed" && selected.improvement_status !== "archived" ? (
-                  <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={() => handleConfirmAttribution(selected)} style={{ marginTop: 8 }}>确认归因</button>
-                ) : null}
+                )}
+              </div>
+            ) : selected.improvement_status !== "archived" ? (
+              <div className="iw-detail-section" data-testid="attribution-empty">
+                <h4>系统归因</h4>
+                <div className="iw-next-step">尚未生成归因。可从系统理解生成初步归因，再确认或修改。</div>
+                <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={() => handleGenerateAttribution(selected)} style={{ marginTop: 8 }}>生成归因（初步）</button>
               </div>
             ) : null}
 

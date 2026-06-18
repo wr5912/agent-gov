@@ -72,7 +72,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -154,16 +154,29 @@ const RULES = [
     const ev = await has(page, "attribution-evidence");
     return { ok: nf && attr && ev, detail: `系统理解=${nf} 归因=${attr} 证据=${ev}` };
   } },
+  { id: "attribution-actions", phase: "P3", desc: "归因支持 修改/重新整理(§6 [确认][修改][重新整理])", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    const first = page.getByTestId("improvement-list-item").first();
+    await first.waitFor({ timeout: 8000 }).catch(() => {});
+    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
+    await first.click();
+    await page.getByTestId("attribution").waitFor({ timeout: 6000 }).catch(() => {});
+    const edit = await has(page, "edit-attribution");
+    const regen = await has(page, "regenerate-attribution");
+    return { ok: edit && regen, detail: `修改=${edit} 重新整理=${regen}` };
+  } },
   { id: "improvement-assets", phase: "P3", desc: "改进详情含回归保障候选(§11.1) + 本事项沉淀资产区(§11.2)", async fn(page) {
     await page.getByTestId("nav-improvement").click();
     const first = page.getByTestId("improvement-list-item").first();
     await first.waitFor({ timeout: 8000 }).catch(() => {});
     if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
     await first.click();
-    await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
+    await page.getByTestId("improvement-detail").waitFor({ timeout: 6000 }).catch(() => {});
+    // §11 能力存在的两种合法态：未采纳→候选卡(regression-guarantee+adopt)；已采纳→沉淀资产区(sediment-assets)。
     const rg = await has(page, "regression-guarantee");
     const adopt = await has(page, "adopt-regression");
-    return { ok: rg && adopt, detail: `回归保障候选=${rg} 采纳按钮=${adopt}` };
+    const sediment = await has(page, "sediment-assets");
+    return { ok: (rg && adopt) || sediment, detail: `回归保障候选=${rg} 采纳=${adopt} 沉淀资产=${sediment}` };
   } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();

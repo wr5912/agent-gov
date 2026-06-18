@@ -28,6 +28,9 @@ export function confirmNormalizedFeedback(config: RuntimeClientConfig, id: strin
 export function getAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`);
 }
+export function upsertAttribution(config: RuntimeClientConfig, id: string, body: components["schemas"]["AttributionUpsertRequest"]) {
+  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
+}
 export function confirmAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/confirm`, { method: "POST", headers: jsonHeaders });
 }

@@ -8,6 +8,11 @@ interface Props {
   message: ChatMessage;
   isActiveStreaming?: boolean;
   onCreateFeedback?: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
+  // v2.7 §3 助手回复动作：创建反馈(两阶段 Drawer)/查看 Trace/获取上下文/打开 Langfuse/重新运行。
+  onOpenFeedback?: (message: ChatMessage) => void;
+  onGetContext?: (message: ChatMessage) => void;
+  onRerun?: (message: ChatMessage) => void;
+  langfuseUrl?: string;
 }
 
 const feedbackLabelOptions = [
@@ -31,7 +36,7 @@ function feedbackLabelDisplay(value: string): string {
   return feedbackLabelOptions.find((option) => option.value === value)?.label || value;
 }
 
-export function MessageBubble({ message, isActiveStreaming = false, onCreateFeedback }: Props) {
+export function MessageBubble({ message, isActiveStreaming = false, onCreateFeedback, onOpenFeedback, onGetContext, onRerun, langfuseUrl }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackResult, setFeedbackResult] = useState<FeedbackSignalRecord | null>(null);
@@ -39,7 +44,6 @@ export function MessageBubble({ message, isActiveStreaming = false, onCreateFeed
   const isSystem = message.role === "system";
   const hasContent = message.content.length > 0;
   const detailEvents = message.role === "assistant" ? message.events || [] : [];
-  const canSubmitFeedback = Boolean(message.role === "assistant" && message.runId && message.sessionId && onCreateFeedback);
   const roleClass = isUser ? "message-user" : isSystem ? "message-system" : "message-assistant";
   const streamingClass = isActiveStreaming ? "message-assistant-streaming" : "";
   return (
@@ -55,22 +59,32 @@ export function MessageBubble({ message, isActiveStreaming = false, onCreateFeed
             <Loader2 size={16} className="spin" />
           </div>
         ) : null}
-        {detailEvents.length > 0 || canSubmitFeedback ? (
-          <div className="message-detail-actions">
-            {detailEvents.length > 0 ? (
-              <button className="message-detail-button" type="button" onClick={() => setDetailOpen(true)}>
-                <ListTree size={14} />
-                SDK 事件
-                <span>{detailEvents.length} 个</span>
-              </button>
+        {message.role === "assistant" && !isActiveStreaming && hasContent ? (
+          <div className="message-detail-actions" data-testid="message-actions">
+            <button
+              className="message-detail-button"
+              type="button"
+              data-testid="message-action-create-feedback"
+              onClick={() => (onOpenFeedback ? onOpenFeedback(message) : setFeedbackOpen(true))}
+            >
+              <MessageSquare size={14} /> 创建反馈
+            </button>
+            <button
+              className="message-detail-button"
+              type="button"
+              data-testid="message-action-view-trace"
+              disabled={detailEvents.length === 0}
+              onClick={() => setDetailOpen(true)}
+            >
+              <ListTree size={14} /> 查看 Trace{detailEvents.length > 0 ? <span>{detailEvents.length}</span> : null}
+            </button>
+            <button className="message-detail-button" type="button" data-testid="message-action-get-context" onClick={() => onGetContext?.(message)}>
+              <Search size={14} /> 获取上下文
+            </button>
+            {langfuseUrl ? (
+              <a className="message-detail-button" data-testid="message-action-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">打开 Langfuse</a>
             ) : null}
-            {canSubmitFeedback ? (
-              <button className="message-detail-button" type="button" onClick={() => setFeedbackOpen(true)}>
-                <MessageSquare size={14} />
-                提交反馈
-                {feedbackResult ? <span>已提交</span> : null}
-              </button>
-            ) : null}
+            <button className="message-detail-button" type="button" data-testid="message-action-rerun" onClick={() => onRerun?.(message)}>重新运行</button>
           </div>
         ) : null}
       </div>

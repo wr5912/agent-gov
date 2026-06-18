@@ -1,30 +1,23 @@
-import { Loader2, Send, Square } from "lucide-react";
-import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "../types/feedback";
+import { Loader2, MessageSquarePlus, Send, Settings2, Square } from "lucide-react";
 import type { ChatMessage } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
+// v2.7 §3 Playground：主区只留对话 + 回复动作 + 输入；运行配置进入「配置」抽屉（playground-config-trigger）。
 interface ChatPanelProps {
   messages: ChatMessage[];
   input: string;
   streaming: boolean;
   streamingAssistantMessageId?: string;
   activeSessionId?: string;
-  alertId: string;
-  caseId: string;
-  allowedTools: string;
-  disallowedTools: string;
-  maxTurns: number;
-  skillsMode: "all" | "default" | "none";
+  agentName: string;
+  langfuseUrl: string;
   onInputChange: (value: string) => void;
-  onAlertIdChange: (value: string) => void;
-  onCaseIdChange: (value: string) => void;
-  onAllowedToolsChange: (value: string) => void;
-  onDisallowedToolsChange: (value: string) => void;
-  onMaxTurnsChange: (value: number) => void;
-  onSkillsModeChange: (value: "all" | "default" | "none") => void;
   onSend: () => void;
   onStop: () => void;
-  onCreateFeedback?: (payload: FeedbackSignalCreateRequest) => Promise<FeedbackSignalRecord>;
+  onOpenConfig: () => void;
+  onOpenFeedback: (message?: ChatMessage) => void;
+  onGetContext: (message: ChatMessage) => void;
+  onRerun: (message: ChatMessage) => void;
 }
 
 export function ChatPanel({
@@ -33,70 +26,40 @@ export function ChatPanel({
   streaming,
   streamingAssistantMessageId,
   activeSessionId,
-  alertId,
-  caseId,
-  allowedTools,
-  disallowedTools,
-  maxTurns,
-  skillsMode,
+  agentName,
+  langfuseUrl,
   onInputChange,
-  onAlertIdChange,
-  onCaseIdChange,
-  onAllowedToolsChange,
-  onDisallowedToolsChange,
-  onMaxTurnsChange,
-  onSkillsModeChange,
   onSend,
   onStop,
-  onCreateFeedback,
+  onOpenConfig,
+  onOpenFeedback,
+  onGetContext,
+  onRerun,
 }: ChatPanelProps) {
   return (
-    <main className="chat-panel">
+    <main className="chat-panel chat-panel-v27" data-testid="playground">
       <header className="chat-header">
         <div>
-          <h2>Playground</h2>
-          <p>{activeSessionId ? `Session: ${activeSessionId}` : "创建新会话并发送第一条消息"}</p>
+          <h2>Playground · {agentName}</h2>
+          <p>{activeSessionId ? `会话进行中` : "输入任务，发送第一条消息"}</p>
         </div>
-        {streaming ? <span className="run-status"><Loader2 size={14} className="spin" /> 运行中</span> : <span className="idle-status">Ready</span>}
+        <div className="chat-header-actions">
+          {streaming ? <span className="run-status"><Loader2 size={14} className="spin" /> 运行中</span> : <span className="idle-status">Ready</span>}
+          <button className="ghost-button" type="button" data-testid="feedback-drawer-open" onClick={() => onOpenFeedback()}>
+            <MessageSquarePlus size={15} /> 创建反馈
+          </button>
+          <button className="ghost-button" type="button" data-testid="playground-config-trigger" onClick={onOpenConfig}>
+            <Settings2 size={15} /> 配置
+          </button>
+        </div>
       </header>
-
-      <div className="control-strip">
-        <label>
-          <span>Skills Mode</span>
-          <select value={skillsMode} onChange={(e) => onSkillsModeChange(e.target.value as "all" | "default" | "none")}>
-            <option value="default">default</option>
-            <option value="all">all</option>
-            <option value="none">none</option>
-          </select>
-        </label>
-        <label>
-          <span>Max Turns</span>
-          <input type="number" min={1} max={50} value={maxTurns} onChange={(e) => onMaxTurnsChange(Number(e.target.value || 1))} />
-        </label>
-        <label>
-          <span>Alert ID</span>
-          <input value={alertId} onChange={(e) => onAlertIdChange(e.target.value)} placeholder="alert-001" />
-        </label>
-        <label>
-          <span>Case ID</span>
-          <input value={caseId} onChange={(e) => onCaseIdChange(e.target.value)} placeholder="case-001" />
-        </label>
-        <label className="wide-control">
-          <span>Allowed Tools</span>
-          <input value={allowedTools} onChange={(e) => onAllowedToolsChange(e.target.value)} placeholder="留空使用后端默认：Read,Grep,Glob,Skill,mcp__sec-ops-data__*" />
-        </label>
-        <label className="wide-control">
-          <span>Disallowed Tools</span>
-          <input value={disallowedTools} onChange={(e) => onDisallowedToolsChange(e.target.value)} placeholder="留空使用后端默认：Bash,WebFetch,WebSearch" />
-        </label>
-      </div>
 
       <section className="messages">
         {messages.length === 0 ? (
           <div className="welcome-card">
             <div className="welcome-mark">⌘</div>
-            <h3>开始测试 AgentGov</h3>
-            <p>左侧选择 subagent / skills，中间输入任务。前端只调用你的 runtime API，不接管 Claude Code 进程。</p>
+            <h3>开始测试 {agentName}</h3>
+            <p>在下方输入任务即可对话；运行参数、subagent / skills 与会话在右上「配置」里。回复下可创建反馈、查看 Trace、获取上下文。</p>
             <div className="prompt-examples">
               <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
               <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>
@@ -109,7 +72,10 @@ export function ChatPanel({
               message={message}
               key={message.id}
               isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
-              onCreateFeedback={onCreateFeedback}
+              onOpenFeedback={onOpenFeedback}
+              onGetContext={onGetContext}
+              onRerun={onRerun}
+              langfuseUrl={langfuseUrl}
             />
           ))
         )}

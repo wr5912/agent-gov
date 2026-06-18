@@ -5632,3 +5632,33 @@ button:disabled {
 .fw-inline-actions .fw-primary-button {
   width: auto;
 }
+
+/* ===== v2.7 §3 Playground 重塑：主区只留对话；配置/反馈进抽屉 ===== */
+.playground-shell { flex: 1; min-height: 0; display: flex; }
+.chat-panel-v27 { width: 100%; }
+.chat-header-actions { display: flex; align-items: center; gap: 10px; }
+.playground-config-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 8, 0.32); z-index: 50; display: flex; justify-content: flex-end; }
+.playground-config-drawer { width: min(960px, 94vw); height: 100%; background: var(--panel); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow); overflow-y: auto; }
+.playground-config-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.playground-config-head h3 { margin: 0; }
+.playground-config-body { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 18px; align-items: flex-start; }
+.playground-config-body .sidebar, .playground-config-body .inspector { width: 300px; height: auto; border: 1px solid var(--line); border-radius: 14px; }
+.playground-config-fields { flex: 1; min-width: 260px; }
+.playground-config-fields h4 { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.control-strip-drawer { display: flex; flex-direction: column; gap: 10px; }
+
+/* 创建反馈 Drawer（两阶段） */
+.feedback-drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(480px, 96vw); background: var(--panel); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow); z-index: 60; overflow-y: auto; }
+.feedback-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+.feedback-drawer-head h3 { margin: 0; }
+.feedback-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+.feedback-field { display: flex; flex-direction: column; gap: 6px; }
+.feedback-field span { font-size: 13px; color: var(--text); }
+.feedback-field textarea { min-height: 84px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel); padding: 10px; color: var(--text); font: inherit; }
+.feedback-autoinclude { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.feedback-drawer-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 6px; }
+.feedback-understanding-card { border: 1px solid var(--line-strong); border-radius: 12px; padding: 12px 14px; background: var(--bg-surface-muted, rgba(0,0,0,0.02)); }
+.feedback-understanding-note { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.feedback-understanding-card ul { margin: 0 0 8px; padding-left: 18px; font-size: 13px; line-height: 1.7; }
+.feedback-understanding-quote { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
+.feedback-saved-item { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }

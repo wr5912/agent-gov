@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createFeedbackSignal, deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
-import { Inspector } from "./components/Inspector";
+import { PlaygroundConfigDrawer } from "./components/PlaygroundConfigDrawer";
+import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawer";
 import { SettingsModal } from "./components/SettingsModal";
-import { Sidebar } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import type { FeedbackSignalCreateRequest, FeedbackSignalRecord } from "./types/feedback";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
@@ -111,6 +110,9 @@ export default function App() {
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release" | "asset">("chat");
+  const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
+  const [feedbackDrawerOpen, setFeedbackDrawerOpen] = useState(false);
+  const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
@@ -456,12 +458,6 @@ export default function App() {
     setStreamingAssistantMessageId(undefined);
   }
 
-  async function submitFeedback(payload: FeedbackSignalCreateRequest): Promise<FeedbackSignalRecord> {
-    const result = await createFeedbackSignal(effectiveClientConfig, payload);
-    setFeedbackRefreshToken((prev) => prev + 1);
-    return result;
-  }
-
   function showFeedbackWindow() {
     setActiveWindow("feedback");
   }
@@ -480,6 +476,32 @@ export default function App() {
 
   function showAssetWindow() {
     setActiveWindow("asset");
+  }
+
+  const currentAgentName = businessAgents.find((a) => a.agent_id === selectedBusinessAgentId)?.name
+    || (selectedBusinessAgentId || "默认 Agent");
+
+  function openFeedbackDrawer(message?: ChatMessage) {
+    setFeedbackContext({
+      runId: message?.runId,
+      sessionId: message?.sessionId || activeSessionId,
+      agentId: selectedBusinessAgentId || "main-agent",
+      agentName: currentAgentName,
+    });
+    setFeedbackDrawerOpen(true);
+  }
+
+  function getContextForMessage(message: ChatMessage) {
+    // P1：简单拷贝消息上下文到剪贴板；ContextPackage 四类型在 P2。
+    const text = `# Playground 上下文\n\nAgent: ${currentAgentName}\nSession: ${message.sessionId || activeSessionId || "-"}\nRun: ${message.runId || "-"}\n\n${message.content}`;
+    void navigator.clipboard?.writeText(text).catch(() => {});
+  }
+
+  function rerunMessage(message: ChatMessage) {
+    const idx = activeMessages.findIndex((m) => m.id === message.id);
+    for (let i = idx - 1; i >= 0; i -= 1) {
+      if (activeMessages[i].role === "user") { setInput(activeMessages[i].content); break; }
+    }
   }
 
   return (
@@ -528,51 +550,62 @@ export default function App() {
           onFeedbackChanged={() => setFeedbackRefreshToken((prev) => prev + 1)}
         />
       ) : (
-        <div className="layout">
-          <Sidebar
-            sessions={mergedSessions}
-            activeSessionId={activeSessionId}
-            agents={agents}
-            skills={skills}
-            selectedAgent={selectedAgent}
-            selectedSkills={selectedSkills}
-            onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
-            onNewSession={createSession}
-            onDeleteSession={removeSession}
-            onRefresh={refresh}
-            onSelectAgent={setSelectedAgent}
-            onToggleSkill={toggleSkill}
-          />
+        <div className="playground-shell" data-testid="playground-shell">
           <ChatPanel
             messages={activeMessages}
             input={input}
             streaming={streaming}
             streamingAssistantMessageId={streamingAssistantMessageId}
             activeSessionId={activeSessionId}
-            alertId={alertId}
-            caseId={caseId}
-            allowedTools={allowedTools}
-            disallowedTools={disallowedTools}
-            maxTurns={maxTurns}
-            skillsMode={skillsMode}
+            agentName={currentAgentName}
+            langfuseUrl={langfuseUrl}
             onInputChange={setInput}
-            onAlertIdChange={setAlertId}
-            onCaseIdChange={setCaseId}
-            onAllowedToolsChange={setAllowedTools}
-            onDisallowedToolsChange={setDisallowedTools}
-            onMaxTurnsChange={setMaxTurns}
-            onSkillsModeChange={setSkillsMode}
             onSend={sendMessage}
             onStop={stopStream}
-            onCreateFeedback={submitFeedback}
+            onOpenConfig={() => setConfigDrawerOpen(true)}
+            onOpenFeedback={openFeedbackDrawer}
+            onGetContext={getContextForMessage}
+            onRerun={rerunMessage}
           />
-          <Inspector
-            health={health}
-            agents={agents}
-            skills={skills}
-            configMapping={configMapping}
-            streamEvents={streamEvents}
-            lastError={lastError}
+          {configDrawerOpen ? (
+            <PlaygroundConfigDrawer
+              sessions={mergedSessions}
+              activeSessionId={activeSessionId}
+              agents={agents}
+              skills={skills}
+              selectedAgent={selectedAgent}
+              selectedSkills={selectedSkills}
+              onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
+              onNewSession={createSession}
+              onDeleteSession={removeSession}
+              onRefresh={refresh}
+              onSelectAgent={setSelectedAgent}
+              onToggleSkill={toggleSkill}
+              alertId={alertId}
+              caseId={caseId}
+              allowedTools={allowedTools}
+              disallowedTools={disallowedTools}
+              maxTurns={maxTurns}
+              skillsMode={skillsMode}
+              onAlertIdChange={setAlertId}
+              onCaseIdChange={setCaseId}
+              onAllowedToolsChange={setAllowedTools}
+              onDisallowedToolsChange={setDisallowedTools}
+              onMaxTurnsChange={setMaxTurns}
+              onSkillsModeChange={setSkillsMode}
+              health={health}
+              configMapping={configMapping}
+              streamEvents={streamEvents}
+              lastError={lastError}
+              onClose={() => setConfigDrawerOpen(false)}
+            />
+          ) : null}
+          <FeedbackDrawer
+            open={feedbackDrawerOpen}
+            context={feedbackContext}
+            clientConfig={effectiveClientConfig}
+            onClose={() => setFeedbackDrawerOpen(false)}
+            onCreated={() => { setFeedbackDrawerOpen(false); setActiveWindow("improvement"); setTimeout(refresh, 0); }}
           />
         </div>
       )}

@@ -1211,13 +1211,13 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 **B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
-> parity 记分卡：mock 14/15，真实容器 14/15，baseline 14/14 held（截至 §7 完整链路）。仅 message-actions（需实时回复）未纳入确定性基线。
+> parity 记分卡：确定性基线 14/14 held(mock+真实容器)；第 15 条 message-actions 经真实 deepseek 对话验收(verify:message-actions-browser，截图 /tmp/agentgov-v27-ui-after-message-actions.png)。15/15 设计规则全部验证。
 
 ```text
 [P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
 [P0 已达标] Settings 升级为平台设置：业务 Agent 管理(CRUD) / 自动化策略 / 资产 / Developer·Debug
 [P1 已达标] Playground 主区只留对话；配置 / 会话 / 调试入「配置」抽屉
-[P1 已达标] 助手回复动作：创建反馈 / 查看Trace / 获取上下文 / 打开Langfuse / 重新运行（领域级 data-testid）
+[P1 已达标] 助手回复动作：创建反馈 / 查看Trace / 获取上下文 / 打开Langfuse / 重新运行(真实 deepseek 对话验收 ✅)
 [P1 已达标] 创建反馈两阶段 Drawer（输入→确认系统理解→保存生成改进事项；系统理解标注「初步」待 P3 实体）
 [P3 已达标] §7 查看完整链路：7 阶段时间线 + 状态(已完成/当前/待处理) + 自动化详情(parity full-chain ✅)
 [P2 已达标] ContextPackage 四类型(问题摘要/AI分析/Playwright/JSON) + 预览 + 复制 + 下载

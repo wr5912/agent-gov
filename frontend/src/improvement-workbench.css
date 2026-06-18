@@ -152,3 +152,7 @@
 .iw-advanced { margin-top: 12px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
 .iw-advanced > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); list-style: revert; padding: 4px 0; }
 .iw-advanced > summary:hover { color: var(--text-primary); }
+/* v2.7 §7 完整链路 */
+.iw-chain { margin: 6px 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
+.iw-chain li.is-done { color: var(--color-success); }
+.iw-chain li.is-current { color: var(--color-primary); font-weight: 600; }

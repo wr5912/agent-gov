@@ -427,6 +427,21 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               </ol>
             </div>
 
+            <details className="iw-advanced" data-testid="full-chain">
+              <summary>查看完整链路</summary>
+              <ol className="iw-chain">
+                {stageView.stages.map((stage, index) => {
+                  const word = index < stageView.stageIndex ? "已完成" : index === stageView.stageIndex ? "当前" : "待处理";
+                  return (
+                    <li key={stage.key} data-testid="full-chain-step" className={index === stageView.stageIndex ? "is-current" : index < stageView.stageIndex ? "is-done" : ""}>
+                      <strong>{stage.label}</strong> — {word}
+                    </li>
+                  );
+                })}
+              </ol>
+              {lastAuto ? <div className="iw-next-step" data-testid="full-chain-automation">自动化详情：{autoAdvanceNote(lastAuto)}</div> : null}
+            </details>
+
             {normalizedFeedback ? (
               <div className="iw-detail-section" data-testid="normalized-feedback">
                 <h4>系统理解{normalizedFeedback.status === "confirmed" ? "（已确认）" : "（初步）"}</h4>

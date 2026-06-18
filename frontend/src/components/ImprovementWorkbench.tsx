@@ -19,27 +19,14 @@ import {
 } from "../api/improvements";
 import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
+import { buildContext, CONTEXT_TYPE_LABEL, type ContextType } from "../contextPackage";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
 
 type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
 
-function buildContextPackage(item: ImprovementItem): string {
-  const refs = item.source_feedback_refs ?? [];
-  const lines = [
-    "## 改进事项上下文",
-    "",
-    `improvement_id: ${item.improvement_id}`,
-    `归属业务 Agent: ${item.agent_id}`,
-    `当前阶段: ${stageLabel(item.improvement_stage)} (${item.improvement_stage})`,
-    `状态: ${item.improvement_status}`,
-    `标题: ${item.title}`,
-    `摘要: ${item.summary || "-"}`,
-    `来源反馈: ${refs.length ? refs.join(", ") : "-"}`,
-  ];
-  return lines.join("\n");
-}
+const CONTEXT_TYPES: ContextType[] = ["problem", "ai", "playwright", "json"];
 
 const LINK_KIND_LABEL: Record<string, string> = {
   attribution: "归因",
@@ -72,6 +59,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [newAgentId, setNewAgentId] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
+  const [contextType, setContextType] = useState<ContextType>("problem");
   const [automationMode, setAutomationMode] = useState("off");
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
@@ -206,13 +194,20 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     });
   };
 
-  const handleCopyContext = (item: ImprovementItem) => {
-    const text = buildContextPackage(item);
+  const copyText = (text: string) => {
+    try { void navigator.clipboard?.writeText(text); } catch { /* 剪贴板不可用；正文可框选复制 */ }
+  };
+
+  const downloadText = (text: string, kind: ContextType) => {
     try {
-      void navigator.clipboard?.writeText(text);
-    } catch {
-      // 剪贴板不可用时忽略；正文已可框选复制。
-    }
+      const blob = new Blob([text], { type: kind === "json" ? "application/json" : "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `context-${selected?.improvement_id ?? "item"}-${kind}.${kind === "json" ? "json" : "md"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch { /* 下载不可用时忽略 */ }
   };
 
   const agentName = (agentId: string) => businessAgents.find((agent) => agent.agent_id === agentId)?.name || agentId;
@@ -492,15 +487,30 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               </div>
             ) : null}
 
-            {contextOpen ? (
-              <div className="iw-context-drawer" data-testid="context-drawer" data-state="open">
-                <div className="iw-context-head">
-                  <span>上下文包（可框选复制）</span>
-                  <button className="iw-secondary-button" type="button" data-testid="context-copy" onClick={() => handleCopyContext(selected)}>复制</button>
+            {contextOpen ? (() => {
+              const inputs = { item: selected, agentName: agentName(selected.agent_id), links, primaryActionLabel: stageView?.primaryAction?.label || "（已到终态）" };
+              const text = buildContext(contextType, inputs);
+              return (
+                <div className="iw-context-drawer" data-testid="context-drawer" data-state="open">
+                  <div className="iw-context-head">
+                    <span>上下文包</span>
+                    <div className="iw-context-head-actions">
+                      <button className="iw-secondary-button" type="button" data-testid="context-copy" onClick={() => copyText(text)}>复制</button>
+                      <button className="iw-secondary-button" type="button" data-testid="context-download" onClick={() => downloadText(text, contextType)}>下载</button>
+                    </div>
+                  </div>
+                  <div className="iw-context-types" role="radiogroup" aria-label="上下文类型">
+                    {CONTEXT_TYPES.map((t) => (
+                      <label key={t} className={`iw-context-type ${contextType === t ? "active" : ""}`} data-testid={`context-type-${t}`}>
+                        <input type="radio" name="iw-context-type" checked={contextType === t} onChange={() => setContextType(t)} />
+                        {CONTEXT_TYPE_LABEL[t]}
+                      </label>
+                    ))}
+                  </div>
+                  <pre className="iw-context-body" data-testid="context-preview">{text}</pre>
                 </div>
-                <pre className="iw-context-body">{buildContextPackage(selected)}</pre>
-              </div>
-            ) : null}
+              );
+            })() : null}
           </div>
         ) : (
           <div className="iw-panel-body">

@@ -2040,6 +2040,11 @@ export interface components {
         };
         /** AgentChangeSetResponse */
         AgentChangeSetResponse: {
+            /**
+             * Agent Id
+             * @default main-agent
+             */
+            agent_id: string;
             /** Base Commit Sha */
             base_commit_sha: string;
             /** Branch Name */
@@ -2318,6 +2323,11 @@ export interface components {
         };
         /** AgentReleaseResponse */
         AgentReleaseResponse: {
+            /**
+             * Agent Id
+             * @default main-agent
+             */
+            agent_id: string;
             /** Archive Path */
             archive_path?: string | null;
             /** Archive Sha256 */

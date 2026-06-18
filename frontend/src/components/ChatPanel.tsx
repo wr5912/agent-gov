@@ -59,7 +59,7 @@ export function ChatPanel({
           <div className="welcome-card">
             <div className="welcome-mark">⌘</div>
             <h3>开始测试 {agentName}</h3>
-            <p>在下方输入任务即可对话；运行参数、subagent / skills 与会话在右上「配置」里。回复下可创建反馈、查看 Trace、获取上下文。</p>
+            <p>在下方输入任务即可对话；前端只调用后端 Runtime API、不接管 Claude Code 进程。运行参数、subagent / skills 与会话在右上「配置」里，回复下可创建反馈、查看 Trace、获取上下文。</p>
             <div className="prompt-examples">
               <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
               <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>

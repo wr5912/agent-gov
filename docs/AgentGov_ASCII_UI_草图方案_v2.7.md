@@ -1211,14 +1211,17 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 **B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
+> parity 记分卡：mock 7/9，真实容器 7/9，baseline 7/7 held（截至 P2）。
+
 ```text
-[P0 达标中] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
-[P0 达标中] Settings 升级为平台设置：业务 Agent 管理(CRUD) / 自动化策略 / 资产 / Developer·Debug
-[P1 未达标] Playground 仍是旧三栏（Sidebar/Inspector/control-strip 常驻）；配置未进抽屉
-[P1 未达标] 助手回复动作未达草图（缺 创建反馈/查看Trace/获取上下文/打开Langfuse/重新运行）
-[P1 未达标] 创建反馈仍是旧结构化表单；缺「整理反馈→确认系统理解」两阶段
-[P2 未达标] ContextPackage 仅单类型文本；缺四类型 / 预览 / 下载 / 多入口
-[P2 未达标] 发布页单门派生；缺三门门禁明细与 去运行回归/查看变更/强制发布 动作
+[P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
+[P0 已达标] Settings 升级为平台设置：业务 Agent 管理(CRUD) / 自动化策略 / 资产 / Developer·Debug
+[P1 已达标] Playground 主区只留对话；配置 / 会话 / 调试入「配置」抽屉
+[P1 已达标] 助手回复动作：创建反馈 / 查看Trace / 获取上下文 / 打开Langfuse / 重新运行（领域级 data-testid）
+[P1 已达标] 创建反馈两阶段 Drawer（输入→确认系统理解→保存生成改进事项；系统理解标注「初步」待 P3 实体）
+[P2 已达标] ContextPackage 四类型(问题摘要/AI分析/Playwright/JSON) + 预览 + 复制 + 下载
+[P2 已达标] 发布页三门门禁(归因/优化/回归) + 去运行回归/查看变更/强制发布 动作；release/change-set 响应暴露 agent_id
+[P2 余项] 改进详情「收纳」(自动化/相似/链接进折叠/更多) 待办；message-actions 需实时回复，结构经 parity 校验
 [P3 未达标] 缺内容实体：NormalizedFeedback / 一等 Feedback / 带正文 Attribution / TraceSummary；归因正文、来源反馈表、回归保障候选、本事项沉淀资产 未呈现
 [P4 未达标] 全站 Governance Light 未统一（Playground / 反馈优化仍暖色）
 [边界] 旧反馈优化 workspace 先迁能力再下线；ContextPackage 脱敏不做

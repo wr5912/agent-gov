@@ -87,6 +87,7 @@ class AgentChangeSetEventResponse(ExtensibleResponse):
 class AgentChangeSetResponse(ExtensibleResponse):
     schema_version: str = "agent-change-set/v1"
     change_set_id: str
+    agent_id: str = "main-agent"
     created_at: str
     updated_at: str
     status: str
@@ -108,6 +109,7 @@ class AgentChangeSetResponse(ExtensibleResponse):
 class AgentReleaseResponse(ExtensibleResponse):
     schema_version: str = "agent-release/v1"
     release_id: str
+    agent_id: str = "main-agent"
     created_at: str
     updated_at: str
     status: str

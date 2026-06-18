@@ -1211,7 +1211,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 **B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
-> parity 记分卡：确定性基线 15/15 held(mock+真实容器)；message-actions 经真实 deepseek 对话验收(verify:message-actions-browser，截图 /tmp/agentgov-v27-ui-after-message-actions.png)。16/16 设计规则全部验证。
+> parity 记分卡：确定性基线 16/16 held(mock+真实容器)；message-actions 经真实 deepseek 对话验收(verify:message-actions-browser，截图 /tmp/agentgov-v27-ui-after-message-actions.png)。17/17 设计规则全部验证。
 
 ```text
 [P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings

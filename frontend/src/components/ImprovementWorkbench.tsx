@@ -94,6 +94,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [automationMode, setAutomationMode] = useState("off");
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
+  const [dismissedSimilar, setDismissedSimilar] = useState<Set<string>>(new Set());
   const [links, setLinks] = useState<ImprovementLink[]>([]);
   const [normalizedFeedback, setNormalizedFeedback] = useState<NormalizedFeedback | null>(null);
   const [attribution, setAttribution] = useState<Attribution | null>(null);
@@ -148,6 +149,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     setLastAuto(undefined);
     setRegressionDismissed(false);
     setEditingAttribution(false);
+    setDismissedSimilar(new Set());
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
       .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
@@ -675,27 +677,30 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               </div>
             ) : null}
 
-            {selected.improvement_status !== "archived" && similar.length ? (
-              <div className="iw-detail-section" data-testid="similar-section">
-                <h4>相似改进事项（{similar.length}）</h4>
-                <div className="iw-next-step" style={{ marginBottom: 8 }}>同一业务 Agent 下疑似重复，可把它归并进当前事项（来源反馈合并、对方归档）。</div>
-                {similar.map((s) => (
-                  <div className="iw-list-item" data-testid="similar-item" key={s.improvement.improvement_id}>
-                    <span className="iw-list-item-title">{s.improvement.title}</span>
-                    <span className="iw-list-item-meta">相似度 {s.score} · {stageLabel(s.improvement.improvement_stage)}</span>
-                    <button
-                      className="iw-secondary-button"
-                      type="button"
-                      data-testid="merge-into-current"
-                      disabled={busy}
-                      onClick={() => handleMerge(selected, s.improvement.improvement_id)}
-                    >
-                      归并到当前
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
+            {(() => {
+              const visibleSimilar = similar.filter((s) => !dismissedSimilar.has(s.improvement.improvement_id));
+              if (selected.improvement_status === "archived" || !visibleSimilar.length) return null;
+              return (
+                <div className="iw-detail-section" data-testid="similar-section">
+                  <h4>相似改进事项（{visibleSimilar.length}）</h4>
+                  <div className="iw-next-step" style={{ marginBottom: 8 }}>同一业务 Agent 下疑似重复，可归并进当前事项（来源反馈合并、对方归档）。</div>
+                  {visibleSimilar.map((s) => {
+                    const confidence = s.score >= 0.6 ? "高" : s.score >= 0.4 ? "中" : "低";
+                    return (
+                      <div className="iw-list-item" data-testid="similar-item" key={s.improvement.improvement_id}>
+                        <span className="iw-list-item-title">{s.improvement.title}</span>
+                        <span className="iw-list-item-meta">相似度 {s.score} · 置信度 {confidence} · {stageLabel(s.improvement.improvement_stage)}</span>
+                        <span className="iw-list-item-meta" data-testid="merge-basis">合并依据：标题/摘要 token 重叠（+共享来源反馈加权）</span>
+                        <div className="iw-automation-row" style={{ marginTop: 4 }}>
+                          <button className="iw-secondary-button" type="button" data-testid="merge-into-current" disabled={busy} onClick={() => handleMerge(selected, s.improvement.improvement_id)}>归并到当前</button>
+                          <button className="iw-secondary-button" type="button" data-testid="mark-merge-inaccurate" onClick={() => setDismissedSimilar((prev) => new Set(prev).add(s.improvement.improvement_id))}>标记合并不准</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
 
             {selected.improvement_status !== "archived" ? (
               <div className="iw-detail-section" data-testid="links-section">

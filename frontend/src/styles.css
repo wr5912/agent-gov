@@ -1,20 +1,21 @@
 :root {
   color-scheme: light;
-  --bg: #f4eee5;
-  --panel: #fffaf3;
-  --panel-2: #f7efe5;
-  --panel-3: #ecdcc9;
-  --line: rgba(86, 63, 46, 0.15);
-  --line-strong: rgba(86, 63, 46, 0.28);
-  --text: #2f261f;
-  --muted: #7b6c5f;
-  --muted-2: #9a897b;
-  --brand: #c96442;
-  --brand-2: #8f4b32;
-  --good: #3d7b52;
-  --warn: #b56b21;
-  --danger: #b54848;
-  --shadow: 0 20px 70px rgba(86, 63, 46, 0.18);
+  /* v2.7 §0.8 全站 Governance Light（深色仅用于 Trace/Raw/Diff/Debug 区） */
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --panel-2: #f3f5f7;
+  --panel-3: #eef0f3;
+  --line: #e5e7eb;
+  --line-strong: #d1d5db;
+  --text: #111827;
+  --muted: #4b5563;
+  --muted-2: #9ca3af;
+  --brand: #2563eb;
+  --brand-2: #1d4ed8;
+  --good: #16a34a;
+  --warn: #d97706;
+  --danger: #dc2626;
+  --shadow: 0 16px 48px rgba(15, 23, 42, 0.12);
 }
 
 * { box-sizing: border-box; }
@@ -24,7 +25,7 @@ body {
   min-width: 1180px;
   min-height: 100vh;
   color: var(--text);
-  background: linear-gradient(180deg, #fbf7f0 0%, var(--bg) 100%);
+  background: var(--bg);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -56,7 +57,7 @@ button:disabled {
   justify-content: space-between;
   padding: 0 18px;
   border-bottom: 1px solid var(--line);
-  background: rgba(255, 250, 243, 0.84);
+  background: rgba(255, 255, 255, 0.84);
   backdrop-filter: blur(16px);
 }
 
@@ -70,8 +71,8 @@ button:disabled {
 .topbar-sep { width: 1px; height: 18px; background: var(--line); }
 .muted { color: var(--muted); }
 .topbar-view-button.active {
-  border-color: rgba(201, 100, 66, 0.42);
-  background: rgba(201, 100, 66, 0.12);
+  border-color: rgba(37, 99, 235, 0.42);
+  background: rgba(37, 99, 235, 0.12);
   color: var(--brand-2);
 }
 /* v2.7 治理工作台主导航 + 全局业务 Agent 切换器（Governance Light 蓝色主态） */
@@ -89,7 +90,7 @@ button:disabled {
   font-size: 13px;
   cursor: pointer;
 }
-.topbar-nav-button:hover { background: rgba(86, 63, 46, 0.06); }
+.topbar-nav-button:hover { background: rgba(71, 85, 105, 0.06); }
 .topbar-nav-button.active {
   background: #eff6ff;
   color: #1d4ed8;
@@ -129,7 +130,7 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 250, 243, 0.88);
+  background: rgba(255, 255, 255, 0.88);
   border-right: 1px solid var(--line);
 }
 .sidebar { overflow: hidden; }
@@ -185,7 +186,7 @@ button:disabled {
   color: var(--text);
 }
 .ghost-button {
-  background: rgba(255, 250, 243, 0.8);
+  background: rgba(255, 255, 255, 0.8);
   border: 1px solid var(--line);
   padding: 0 11px;
   color: var(--text);
@@ -227,7 +228,7 @@ button:disabled {
 }
 .badge {
   color: var(--muted);
-  background: rgba(86, 63, 46, 0.07);
+  background: rgba(71, 85, 105, 0.07);
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 2px 8px;
@@ -269,8 +270,8 @@ button:disabled {
   padding: 10px;
 }
 .session-item.active > button:first-child {
-  border-color: rgba(201, 100, 66, 0.55);
-  background: rgba(201, 100, 66, 0.12);
+  border-color: rgba(37, 99, 235, 0.55);
+  background: rgba(37, 99, 235, 0.12);
 }
 .session-title, .session-meta {
   display: block;
@@ -316,8 +317,8 @@ button:disabled {
 }
 .skill-chip.checked {
   color: var(--text);
-  border-color: rgba(201, 100, 66, 0.62);
-  background: rgba(201, 100, 66, 0.14);
+  border-color: rgba(37, 99, 235, 0.62);
+  background: rgba(37, 99, 235, 0.14);
 }
 .skill-chip input { accent-color: var(--brand); }
 
@@ -325,7 +326,7 @@ button:disabled {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(255, 250, 243, 0.42);
+  background: rgba(255, 255, 255, 0.42);
 }
 .chat-header {
   height: 72px;
@@ -355,7 +356,7 @@ button:disabled {
   gap: 10px;
   padding: 14px 24px;
   border-bottom: 1px solid var(--line);
-  background: rgba(247, 239, 229, 0.68);
+  background: rgba(243, 245, 247, 0.68);
 }
 .control-strip label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 
@@ -370,7 +371,7 @@ button:disabled {
   max-width: 680px;
   border: 1px solid var(--line);
   border-radius: 28px;
-  background: linear-gradient(180deg, rgba(255, 250, 243, 0.98), rgba(247, 239, 229, 0.94));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(243, 245, 247, 0.94));
   box-shadow: var(--shadow);
   padding: 34px;
   text-align: center;
@@ -412,9 +413,9 @@ button:disabled {
 }
 .message-user {
   color: #fffaf3;
-  background: linear-gradient(135deg, rgba(201, 100, 66, 0.96), rgba(143, 75, 50, 0.94));
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.96), rgba(143, 75, 50, 0.94));
 }
-.message-assistant { background: rgba(255, 250, 243, 0.96); }
+.message-assistant { background: rgba(255, 255, 255, 0.96); }
 .message-system { background: rgba(181, 107, 33, 0.1); }
 .message-meta {
   display: flex;
@@ -424,7 +425,7 @@ button:disabled {
   font-size: 12px;
   color: rgba(92, 70, 56, 0.72);
 }
-.message-user .message-meta { color: rgba(255, 250, 243, 0.78); }
+.message-user .message-meta { color: rgba(255, 255, 255, 0.78); }
 .message-content { line-height: 1.65; }
 .message-stream-indicator {
   display: flex;
@@ -478,7 +479,7 @@ button:disabled {
   padding: 1px 6px;
   border-radius: 999px;
   color: var(--brand-2);
-  background: rgba(201, 100, 66, 0.12);
+  background: rgba(37, 99, 235, 0.12);
   font-size: 11px;
   font-weight: 700;
 }
@@ -489,7 +490,7 @@ button:disabled {
   gap: 12px;
   border-top: 1px solid var(--line);
   padding: 16px 24px;
-  background: rgba(255, 250, 243, 0.82);
+  background: rgba(255, 255, 255, 0.82);
 }
 .composer textarea {
   flex: 1;
@@ -732,7 +733,7 @@ button:disabled {
   min-height: 0;
   overflow: auto;
   padding: 20px;
-  background: linear-gradient(180deg, rgba(255, 250, 243, 0.58), rgba(255, 255, 255, 0.82));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.58), rgba(255, 255, 255, 0.82));
 }
 .version-window.embedded {
   flex: 1 1 auto;
@@ -970,9 +971,9 @@ button:disabled {
   font-weight: 700;
 }
 .version-toggle.active {
-  border-color: rgba(201, 100, 66, 0.42);
+  border-color: rgba(37, 99, 235, 0.42);
   color: var(--brand-2);
-  background: rgba(201, 100, 66, 0.08);
+  background: rgba(37, 99, 235, 0.08);
 }
 .version-unified-list {
   display: grid;
@@ -1015,7 +1016,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 4px 8px;
-  background: rgba(255, 250, 243, 0.84);
+  background: rgba(255, 255, 255, 0.84);
   color: var(--muted);
   font-size: 11px;
   font-weight: 700;
@@ -1045,8 +1046,8 @@ button:disabled {
   padding: 8px 10px;
 }
 .version-list-row.active {
-  border-color: rgba(201, 100, 66, 0.52);
-  background: rgba(201, 100, 66, 0.08);
+  border-color: rgba(37, 99, 235, 0.52);
+  background: rgba(37, 99, 235, 0.08);
 }
 .version-row-select {
   min-width: 0;
@@ -1135,7 +1136,7 @@ button:disabled {
   padding: 4px 8px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(255, 250, 243, 0.84);
+  background: rgba(255, 255, 255, 0.84);
   color: var(--muted);
   font-size: 11px;
   line-height: 1.3;
@@ -1197,7 +1198,7 @@ button:disabled {
   font-weight: 700;
   border: 1px solid var(--line);
   color: var(--muted);
-  background: rgba(86, 63, 46, 0.05);
+  background: rgba(71, 85, 105, 0.05);
 }
 .version-status.good {
   border-color: rgba(61, 123, 82, 0.32);
@@ -1360,7 +1361,7 @@ button:disabled {
   margin-top: 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 250, 243, 0.68);
+  background: rgba(255, 255, 255, 0.68);
   padding: 12px;
 }
 .detail-section-head {
@@ -1429,8 +1430,8 @@ button:disabled {
 }
 .detail-event {
   --event-color: var(--brand);
-  --event-bg: rgba(201, 100, 66, 0.12);
-  --event-border: rgba(201, 100, 66, 0.3);
+  --event-bg: rgba(37, 99, 235, 0.12);
+  --event-border: rgba(37, 99, 235, 0.3);
   position: relative;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr);
@@ -1542,7 +1543,7 @@ button:disabled {
 }
 .detail-json mark, .detail-event-summary mark, .detail-event-name mark {
   border-radius: 4px;
-  background: rgba(201, 100, 66, 0.24);
+  background: rgba(37, 99, 235, 0.24);
   color: inherit;
   padding: 0 2px;
 }
@@ -1649,7 +1650,7 @@ button:disabled {
   place-items: center;
   padding: 0 5px;
   border-radius: 999px;
-  background: rgba(201, 100, 66, 0.14);
+  background: rgba(37, 99, 235, 0.14);
   color: var(--brand-2);
   font-size: 11px;
   line-height: 1;
@@ -2348,7 +2349,7 @@ button:disabled {
 
 .fw-batch-result-tab:hover,
 .fw-batch-result-tab.is-active {
-  border-color: rgba(201, 100, 66, 0.42);
+  border-color: rgba(37, 99, 235, 0.42);
   background: rgba(255, 247, 237, 0.92);
 }
 
@@ -2718,7 +2719,7 @@ button:disabled {
   gap: 12px;
   align-items: center;
   margin-top: 8px;
-  border: 1px solid rgba(201, 100, 66, 0.28);
+  border: 1px solid rgba(37, 99, 235, 0.28);
   border-radius: 12px;
   padding: 10px 12px;
   background: rgba(255, 247, 237, 0.82);
@@ -2958,7 +2959,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-proposal-detail-meta-main,
@@ -3025,14 +3026,14 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 999px;
   padding: 7px 10px;
-  background: rgba(255, 250, 243, 0.74);
+  background: rgba(255, 255, 255, 0.74);
   color: var(--muted);
   font-size: 12px;
   font-weight: 800;
 }
 
 .fw-detail-tabs button.is-active {
-  border-color: rgba(201, 100, 66, 0.42);
+  border-color: rgba(37, 99, 235, 0.42);
   background: var(--brand);
   color: #fff;
 }
@@ -3055,7 +3056,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.58);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .fw-detail-result-summary .fw-detail-metric-grid {
@@ -3146,7 +3147,7 @@ button:disabled {
 
 .fw-formatted-table-wrap th {
   color: var(--text);
-  background: rgba(255, 250, 243, 0.95);
+  background: rgba(255, 255, 255, 0.95);
   font-weight: 800;
 }
 
@@ -3167,7 +3168,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.62);
+  background: rgba(255, 255, 255, 0.62);
 }
 
 .fw-text-section h4 {
@@ -3254,10 +3255,10 @@ button:disabled {
   display: grid;
   align-content: start;
   gap: 12px;
-  border: 1px solid rgba(201, 100, 66, 0.28);
+  border: 1px solid rgba(37, 99, 235, 0.28);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.72);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .fw-review-card-head {
@@ -3310,7 +3311,7 @@ button:disabled {
 
 .fw-detail-rationale {
   margin: 0;
-  border-color: rgba(201, 100, 66, 0.18);
+  border-color: rgba(37, 99, 235, 0.18);
   background: rgba(255, 253, 248, 0.9);
 }
 
@@ -3355,7 +3356,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-detail-info-grid h4 {
@@ -3403,7 +3404,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 8px 10px;
-  background: rgba(255, 250, 243, 0.54);
+  background: rgba(255, 255, 255, 0.54);
   color: var(--muted);
   font-size: 12px;
   line-height: 1.5;
@@ -3427,7 +3428,7 @@ button:disabled {
 
 .fw-external-guidance-card {
   border-color: rgba(181, 107, 33, 0.32);
-  background: rgba(255, 250, 243, 0.92);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 .fw-unvalidated-proposal-card {
@@ -3472,7 +3473,7 @@ button:disabled {
 .fw-external-notify-meta span {
   border: 1px solid var(--line);
   border-radius: 999px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
   color: var(--muted);
   padding: 4px 8px;
   font-size: 11px;
@@ -3485,7 +3486,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-detail-record-list p,
@@ -3501,7 +3502,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 9px 10px;
-  background: rgba(255, 250, 243, 0.58);
+  background: rgba(255, 255, 255, 0.58);
   color: var(--text);
 }
 
@@ -3586,7 +3587,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-task-detail-card .fw-detail-metric-grid {
@@ -3715,7 +3716,7 @@ button:disabled {
 
 .fw-plan-blocked-card {
   border-color: rgba(181, 107, 33, 0.28);
-  background: rgba(255, 250, 243, 0.84);
+  background: rgba(255, 255, 255, 0.84);
 }
 
 .fw-plan-task-description {
@@ -3830,7 +3831,7 @@ button:disabled {
 }
 
 .fw-execution-pending-note {
-  border-color: rgba(201, 100, 66, 0.28);
+  border-color: rgba(37, 99, 235, 0.28);
   background: rgba(255, 247, 237, 0.9);
   color: #9a3412;
 }
@@ -4112,7 +4113,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-batch-eval-case-list {
@@ -4141,7 +4142,7 @@ button:disabled {
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
-  background: rgba(255, 250, 243, 0.66);
+  background: rgba(255, 255, 255, 0.66);
 }
 
 .fw-eval-edit-wide {
@@ -5152,7 +5153,7 @@ button:disabled {
 
 /* Feedback workbench theme integration */
 .fw-shell {
-  background: linear-gradient(180deg, #fbf7f0 0%, var(--bg) 100%);
+  background: linear-gradient(180deg, #ffffff 0%, var(--bg) 100%);
   color: var(--text);
 }
 
@@ -5161,7 +5162,7 @@ button:disabled {
   flex-basis: 132px;
   border-right: 1px solid var(--line);
   color: var(--muted);
-  background: rgba(255, 250, 243, 0.88);
+  background: rgba(255, 255, 255, 0.88);
 }
 
 .fw-sidebar button {
@@ -5173,8 +5174,8 @@ button:disabled {
 
 .fw-sidebar button:hover,
 .fw-sidebar button.active {
-  border-color: rgba(201, 100, 66, 0.22);
-  background: rgba(201, 100, 66, 0.12);
+  border-color: rgba(37, 99, 235, 0.22);
+  background: rgba(37, 99, 235, 0.12);
   color: var(--brand-2);
   box-shadow: none;
 }
@@ -5215,7 +5216,7 @@ button:disabled {
 .fw-case-status-item,
 .fw-drawer-header {
   border-color: var(--line);
-  background: rgba(255, 250, 243, 0.74);
+  background: rgba(255, 255, 255, 0.74);
   color: var(--muted);
 }
 
@@ -5228,14 +5229,14 @@ button:disabled {
 .fw-case-filter-grid select,
 .fw-case-stats span {
   border-color: var(--line);
-  background: rgba(255, 250, 243, 0.74);
+  background: rgba(255, 255, 255, 0.74);
   color: var(--text);
 }
 
 .fw-case-card:hover,
 .fw-case-card.is-active {
-  border-color: rgba(201, 100, 66, 0.5);
-  box-shadow: 0 10px 26px rgba(86, 63, 46, 0.12);
+  border-color: rgba(37, 99, 235, 0.5);
+  box-shadow: 0 10px 26px rgba(71, 85, 105, 0.12);
 }
 
 .fw-checkbox.is-checked,
@@ -5332,7 +5333,7 @@ button:disabled {
   border: 1px dashed var(--line-strong);
   border-radius: 12px;
   color: var(--muted);
-  background: rgba(255, 250, 243, 0.5);
+  background: rgba(255, 255, 255, 0.5);
 }
 
 .fw-side-note-panel {
@@ -5399,7 +5400,7 @@ button:disabled {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 250, 243, 0.62);
+  background: rgba(255, 255, 255, 0.62);
   color: var(--text);
   line-height: 1.65;
   white-space: pre-wrap;
@@ -5410,7 +5411,7 @@ button:disabled {
   padding: 10px 12px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 250, 243, 0.62);
+  background: rgba(255, 255, 255, 0.62);
   color: var(--text);
   font-size: 14px;
   line-height: 1.65;
@@ -5620,7 +5621,7 @@ button:disabled {
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: rgba(255, 250, 243, 0.58);
+  background: rgba(255, 255, 255, 0.58);
 }
 
 .fw-inline-actions {

@@ -70,7 +70,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;

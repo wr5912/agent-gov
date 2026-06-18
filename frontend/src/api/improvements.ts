@@ -13,6 +13,14 @@ export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarIt
 export type ImprovementLink = components["schemas"]["ImprovementLinkResponse"];
 export type NormalizedFeedback = components["schemas"]["NormalizedFeedbackResponse"];
 export type Attribution = components["schemas"]["AttributionResponse"];
+export type ImprovementFeedback = components["schemas"]["ImprovementFeedbackResponse"];
+
+export function listImprovementFeedbacks(config: RuntimeClientConfig, id: string) {
+  return requestJson<ImprovementFeedback[]>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`);
+}
+export function addImprovementFeedback(config: RuntimeClientConfig, id: string, body: components["schemas"]["ImprovementFeedbackCreateRequest"]) {
+  return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
 
 const jsonHeaders = { "Content-Type": "application/json" };
 

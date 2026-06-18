@@ -66,6 +66,27 @@ class NormalizedFeedbackModel(Base):
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
 
+class ImprovementFeedbackModel(Base):
+    """改进事项来源反馈 Feedback（v2.7 §8.4 P3）：一等反馈内容（摘要/来源/状态/原文/Run-Trace）。
+
+    与改进事项 1:多（improvement_id index）。source：playground_run/feedback_inbox/trace 等；
+    status：merged/standalone 等。区别于 pre-v2.7 的 feedback_signals(旧反馈优化 workspace)。独立新表。
+    """
+
+    __tablename__ = "improvement_feedbacks"
+
+    feedback_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent")
+    summary: Mapped[str] = mapped_column(String(1024), default="")
+    source: Mapped[str] = mapped_column(String(64), default="playground_run")
+    status: Mapped[str] = mapped_column(String(32), default="merged")
+    raw_text: Mapped[str] = mapped_column(Text, default="")
+    run_id: Mapped[str] = mapped_column(String(128), default="")
+    session_id: Mapped[str] = mapped_column(String(128), default="")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
 class AttributionModel(Base):
     """归因结果 Attribution（v2.7 §6 P3）：归因正文 + 责任边界 + 证据 + 确认状态。
 

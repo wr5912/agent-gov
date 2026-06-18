@@ -8,12 +8,15 @@ from app.runtime.errors import NotFoundError
 from app.runtime.improvement_content_schemas import (
     AttributionResponse,
     AttributionUpsertRequest,
+    ImprovementFeedbackCreateRequest,
+    ImprovementFeedbackResponse,
     NormalizedFeedbackResponse,
     NormalizedFeedbackUpsertRequest,
 )
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
     ImprovementContentStore,
+    ImprovementFeedbackRecord,
     NormalizedFeedbackRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
@@ -24,6 +27,13 @@ def _nf_response(r: NormalizedFeedbackRecord) -> NormalizedFeedbackResponse:
         normalized_feedback_id=r.normalized_feedback_id, improvement_id=r.improvement_id, problem=r.problem,
         possible_reason=r.possible_reason, possible_object=r.possible_object, impact=r.impact,
         suggestion=r.suggestion, user_quote=r.user_quote, status=r.status, created_at=r.created_at, updated_at=r.updated_at,
+    )
+
+
+def _fb_response(r: ImprovementFeedbackRecord) -> ImprovementFeedbackResponse:
+    return ImprovementFeedbackResponse(
+        feedback_id=r.feedback_id, improvement_id=r.improvement_id, agent_id=r.agent_id, summary=r.summary,
+        source=r.source, status=r.status, raw_text=r.raw_text, run_id=r.run_id, session_id=r.session_id, created_at=r.created_at,
     )
 
 
@@ -47,6 +57,21 @@ def create_improvement_content_router(
     def _require(improvement_id: str) -> None:
         if improvement_store.get_improvement(improvement_id) is None:
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+
+    @router.get("/improvements/{improvement_id}/feedbacks", response_model=list[ImprovementFeedbackResponse], summary="List source feedbacks of an improvement (404 if unknown)")
+    async def list_feedbacks(improvement_id: str) -> list[ImprovementFeedbackResponse]:
+        _require(improvement_id)
+        return [_fb_response(r) for r in content_store.list_feedbacks(improvement_id)]
+
+    @router.post("/improvements/{improvement_id}/feedbacks", response_model=ImprovementFeedbackResponse, status_code=201, summary="Add a source feedback to an improvement (§8.4)")
+    async def add_feedback(improvement_id: str, req: ImprovementFeedbackCreateRequest) -> ImprovementFeedbackResponse:
+        item = improvement_store.get_improvement(improvement_id)
+        if item is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        return _fb_response(content_store.create_feedback(
+            improvement_id, agent_id=item.agent_id, summary=req.summary, source=req.source,
+            raw_text=req.raw_text, run_id=req.run_id, session_id=req.session_id,
+        ))
 
     @router.put("/improvements/{improvement_id}/normalized-feedback", response_model=NormalizedFeedbackResponse, summary="Upsert system understanding (NormalizedFeedback)")
     async def upsert_nf(improvement_id: str, req: NormalizedFeedbackUpsertRequest) -> NormalizedFeedbackResponse:

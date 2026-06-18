@@ -1388,6 +1388,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/feedbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List source feedbacks of an improvement (404 if unknown) */
+        get: operations["list_feedbacks_api_improvements__improvement_id__feedbacks_get"];
+        put?: never;
+        /** Add a source feedback to an improvement (§8.4) */
+        post: operations["add_feedback_api_improvements__improvement_id__feedbacks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/lifecycle": {
         parameters: {
             query?: never;
@@ -4784,6 +4802,61 @@ export interface components {
              */
             title: string;
         };
+        /** ImprovementFeedbackCreateRequest */
+        ImprovementFeedbackCreateRequest: {
+            /**
+             * Raw Text
+             * @description 反馈原文。
+             * @default
+             */
+            raw_text: string;
+            /**
+             * Run Id
+             * @description 关联 Run。
+             * @default
+             */
+            run_id: string;
+            /**
+             * Session Id
+             * @description 关联 Session。
+             * @default
+             */
+            session_id: string;
+            /**
+             * Source
+             * @description 来源：playground_run/feedback_inbox/trace 等。
+             * @default playground_run
+             */
+            source: string;
+            /**
+             * Summary
+             * @description 反馈摘要。
+             */
+            summary: string;
+        };
+        /** ImprovementFeedbackResponse */
+        ImprovementFeedbackResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Created At */
+            created_at: string;
+            /** Feedback Id */
+            feedback_id: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Raw Text */
+            raw_text: string;
+            /** Run Id */
+            run_id: string;
+            /** Session Id */
+            session_id: string;
+            /** Source */
+            source: string;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+        };
         /** ImprovementItemResponse */
         ImprovementItemResponse: {
             /** Agent Id */
@@ -6818,6 +6891,8 @@ export interface operations {
                 agent_id?: string | null;
                 /** @description 按资产类型过滤。 */
                 asset_type?: string | null;
+                /** @description 按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。 */
+                source_improvement_id?: string | null;
             };
             header?: never;
             path?: never;
@@ -8994,6 +9069,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutoAdvanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_feedbacks_api_improvements__improvement_id__feedbacks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementFeedbackResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    add_feedback_api_improvements__improvement_id__feedbacks_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementFeedbackCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementFeedbackResponse"];
                 };
             };
             /** @description Validation Error */

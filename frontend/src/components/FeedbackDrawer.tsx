@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { createImprovement, upsertNormalizedFeedback, type ImprovementItem } from "../api/improvements";
+import { createImprovement, upsertNormalizedFeedback, addImprovementFeedback, type ImprovementItem } from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
 
 // v2.7 §4 创建反馈 Drawer（两阶段）：自然语言反馈 → 整理为系统理解 → 确认保存 → 生成改进事项。
@@ -79,6 +79,13 @@ export function FeedbackDrawer({
           impact: "待评估",
           suggestion: "进入改进处理",
           user_quote: wrong.trim(),
+        });
+        await addImprovementFeedback(clientConfig, item.improvement_id, {
+          summary: problem,
+          source: "playground_run",
+          raw_text: wrong.trim(),
+          run_id: context.runId || "",
+          session_id: context.sessionId || "",
         });
       } catch { /* 非致命：改进事项已创建 */ }
     }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));

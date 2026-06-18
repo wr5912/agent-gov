@@ -143,3 +143,8 @@
 .iw-content-list { margin: 4px 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
 .iw-content-quote { font-size: 12px; color: var(--text-secondary); border-left: 2px solid var(--border-subtle); padding-left: 8px; }
 .iw-content-subhead { font-size: 12px; color: var(--text-secondary); margin-top: 6px; font-weight: 600; }
+/* v2.7 §8.4 来源反馈表 */
+.iw-feedback-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.iw-feedback-table th, .iw-feedback-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
+.iw-feedback-table th { color: var(--text-secondary); font-weight: 600; }
+.iw-feedback-table td:first-child, .iw-feedback-table th:first-child { width: 28px; color: var(--text-muted); }

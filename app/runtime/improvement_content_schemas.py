@@ -37,6 +37,27 @@ class AttributionUpsertRequest(BaseModel):
     evidence: list[str] = Field(default_factory=list, description="证据要点。")
 
 
+class ImprovementFeedbackCreateRequest(BaseModel):
+    summary: str = Field(description="反馈摘要。")
+    source: str = Field(default="playground_run", description="来源：playground_run/feedback_inbox/trace 等。")
+    raw_text: str = Field(default="", description="反馈原文。")
+    run_id: str = Field(default="", description="关联 Run。")
+    session_id: str = Field(default="", description="关联 Session。")
+
+
+class ImprovementFeedbackResponse(BaseModel):
+    feedback_id: str
+    improvement_id: str
+    agent_id: str
+    summary: str
+    source: str
+    status: str
+    raw_text: str
+    run_id: str
+    session_id: str
+    created_at: str
+
+
 class AttributionResponse(BaseModel):
     attribution_id: str
     improvement_id: str

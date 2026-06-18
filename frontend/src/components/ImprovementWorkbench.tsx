@@ -5,8 +5,10 @@ import {
   getAttribution,
   upsertAttribution,
   confirmAttribution,
+  listImprovementFeedbacks,
   type NormalizedFeedback,
   type Attribution,
+  type ImprovementFeedback,
   archiveImprovement,
   autoAdvanceImprovement,
   createImprovement,
@@ -34,6 +36,12 @@ import "../improvement-workbench.css";
 type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
 
 const CONTEXT_TYPES: ContextType[] = ["problem", "ai", "playwright", "json"];
+
+const SOURCE_LABEL: Record<string, string> = {
+  playground_run: "Playground Run",
+  feedback_inbox: "Feedback Inbox",
+  trace: "Trace 反馈",
+};
 
 const LINK_KIND_LABEL: Record<string, string> = {
   attribution: "归因",
@@ -73,6 +81,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [links, setLinks] = useState<ImprovementLink[]>([]);
   const [normalizedFeedback, setNormalizedFeedback] = useState<NormalizedFeedback | null>(null);
   const [attribution, setAttribution] = useState<Attribution | null>(null);
+  const [feedbacks, setFeedbacks] = useState<ImprovementFeedback[]>([]);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
   const [regressionDismissed, setRegressionDismissed] = useState(false);
   const [editingAttribution, setEditingAttribution] = useState(false);
@@ -116,6 +125,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
       setNormalizedFeedback(null);
       setAttribution(null);
       setSedimentAssets([]);
+      setFeedbacks([]);
       return;
     }
     let cancelled = false;
@@ -131,6 +141,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     void listAssets(clientConfig, { sourceImprovementId: itemId })
       .then((a) => { if (!cancelled) setSedimentAssets(a); })
       .catch(() => { if (!cancelled) setSedimentAssets([]); });
+    void listImprovementFeedbacks(clientConfig, itemId)
+      .then((f) => { if (!cancelled) setFeedbacks(f); })
+      .catch(() => { if (!cancelled) setFeedbacks([]); });
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
@@ -508,9 +521,28 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               </div>
             ) : null}
 
+            {feedbacks.length ? (
+              <div className="iw-detail-section" data-testid="source-feedback-table">
+                <h4>来源反馈（{feedbacks.length}）</h4>
+                <table className="iw-feedback-table">
+                  <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>状态</th></tr></thead>
+                  <tbody>
+                    {feedbacks.map((f, i) => (
+                      <tr key={f.feedback_id} data-testid="source-feedback-row">
+                        <td>{i + 1}</td>
+                        <td>{f.summary}</td>
+                        <td>{SOURCE_LABEL[f.source] ?? f.source}</td>
+                        <td>{f.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+
             {(selected.source_feedback_refs ?? []).length ? (
               <div className="iw-detail-section">
-                <h4>来源反馈</h4>
+                <h4>来源引用（可拆分）</h4>
                 <div className="iw-source-refs" data-testid="improvement-source-refs">
                   {(selected.source_feedback_refs ?? []).map((ref) => (
                     <span className="iw-ref" key={ref}>

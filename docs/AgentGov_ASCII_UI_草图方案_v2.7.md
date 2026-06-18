@@ -1211,7 +1211,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 **B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
-> parity 记分卡：mock 11/12，真实容器 11/12，baseline 11/11 held（截至 P3 §6 归因动作）。仅 message-actions（需实时回复）未纳入确定性基线。
+> parity 记分卡：mock 12/13，真实容器 12/13，baseline 12/12 held（截至 P3 §8.4 来源反馈表）。仅 message-actions（需实时回复）未纳入确定性基线。
 
 ```text
 [P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
@@ -1224,7 +1224,8 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 [P2 余项] 改进详情「收纳」(自动化/相似/链接进折叠/更多) 待办；message-actions 需实时回复，结构经 parity 校验
 [P3 部分达标] 内容实体首切：NormalizedFeedback(系统理解) + 带正文 Attribution(归因正文/责任边界/证据/确认) 真实后端实体并入改进详情(parity improvement-content ✅)
 [P3 部分达标] §11 回归保障候选(采纳为回归资产) + 本事项沉淀资产(按 source_improvement_id 关联) 并入改进详情(parity improvement-assets ✅)
-[P3 未达标] 一等 Feedback(来源反馈表 摘要/来源/状态 §8.4) / TraceSummary(§9) / 系统生成归因+修改/重新整理(§6) 未建；旧 workspace 归因/方案/执行/回归/版本能力未迁入
+[P3 部分达标] §6 归因 生成/修改/重新整理(确定性首切，parity attribution-actions ✅) + §8.4 一等 Feedback 来源反馈表(摘要/来源/状态，FeedbackDrawer 保存即建，parity source-feedback-table ✅) 并入改进详情
+[P3 未达标] TraceSummary(§9 关键观察/工具调用/关联运行) 未建；旧 workspace 归因/方案/执行/回归/版本能力未迁入改进闭环
 [P4 已达标] 全站 Governance Light：:root token + body + 顶栏/Playground/反馈页统一为浅色蓝调；深色仅保留 Trace/Raw/Diff/Debug 区
 [边界] 旧反馈优化 workspace 先迁能力再下线；ContextPackage 脱敏不做
 ```

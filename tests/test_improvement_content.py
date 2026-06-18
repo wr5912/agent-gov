@@ -56,3 +56,17 @@ def test_content_api_lifecycle(monkeypatch, tmp_path: Path) -> None:
         assert client.put("/api/improvements/imp-none/normalized-feedback", json={"problem": "x"}).status_code == 404
         other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "无内容"}).json()["improvement_id"]
         assert client.get(f"/api/improvements/{other}/attribution").status_code == 404
+
+
+def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
+    """v2.7 §8.4：来源反馈一等内容（摘要/来源/状态），1:多，未知事项 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
+        a = client.post(f"/api/improvements/{iid}/feedbacks", json={"summary": "这是误报", "source": "playground_run", "raw_text": "原文", "run_id": "run-1"})
+        assert a.status_code == 201 and a.json()["status"] == "merged" and a.json()["run_id"] == "run-1"
+        client.post(f"/api/improvements/{iid}/feedbacks", json={"summary": "MCP 数据像模拟", "source": "trace"})
+        rows = client.get(f"/api/improvements/{iid}/feedbacks").json()
+        assert {r["summary"] for r in rows} == {"这是误报", "MCP 数据像模拟"}
+        assert {r["source"] for r in rows} == {"playground_run", "trace"}
+        assert client.post("/api/improvements/imp-none/feedbacks", json={"summary": "x"}).status_code == 404

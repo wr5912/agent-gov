@@ -101,6 +101,9 @@ export function ExternalFeedbackWorkspace({
       </aside>
 
       <div className="fw-content">
+        <div className="fw-legacy-banner" data-testid="feedback-legacy-banner">
+          旧反馈优化工作台（诊断 / Legacy）。主治理闭环请用顶部「改进」；此视图保留旧批次引擎，能力迁移完成后退役。
+        </div>
         {activeMenu !== "versions" ? (
           <header className="fw-topbar fw-unified-topbar">
             <div className="fw-context-strip" aria-label="运行上下文">

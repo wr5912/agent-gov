@@ -5663,3 +5663,15 @@ button:disabled {
 .feedback-understanding-card ul { margin: 0 0 8px; padding-left: 18px; font-size: 13px; line-height: 1.7; }
 .feedback-understanding-quote { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
 .feedback-saved-item { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+
+/* v2.7 §0.5 旧反馈优化工作台 legacy 提示条（已降级为诊断视图，主闭环在「改进」） */
+.fw-legacy-banner {
+  margin: 10px 12px 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid #fcd34d;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.6;
+}

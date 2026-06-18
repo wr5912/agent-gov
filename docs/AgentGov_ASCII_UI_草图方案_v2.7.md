@@ -1231,7 +1231,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 [P3 已达标] §106 优化方案 OptimizationPlan(方案正文+变更项 生成/确认/重新整理) + §107 执行记录 ExecutionRecord(执行结果+已应用变更+Agent 版本+确认) 真实后端子资源并入改进详情(parity optimization-execution ✅)
 [P3 未达标] TraceSummary(§9 关键观察/工具调用/关联运行) 未建；旧 workspace 归因/方案/执行/回归/版本能力未迁入改进闭环
 [P4 已达标] 全站 Governance Light：:root token + body + 顶栏/Playground/反馈页统一为浅色蓝调；深色仅保留 Trace/Raw/Diff/Debug 区
-[边界] 旧反馈优化 workspace 先迁能力再下线；ContextPackage 脱敏不做
+[P5 进行中] 旧反馈优化 workspace 已降级至 Settings→Developer 且标「旧/诊断」，视图内加 legacy 提示条指向「改进」(feedback-legacy-banner)；裁决「先迁能力再下线」——其 LLM 批次引擎(真归因/方案/执行生成)未迁前保留不删，属 §17.5 future wave。ContextPackage 脱敏不做
 ```
 
 ---

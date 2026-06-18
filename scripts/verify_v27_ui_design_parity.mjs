@@ -54,6 +54,8 @@ function defaultPayload(path) {
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
   if (/^\/api\/improvements\/[^/]+\/similar$/.test(path)) return [];
   if (/^\/api\/improvements\/[^/]+\/links$/.test(path)) return [];
+  if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入改进处理", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", created_at: ts, updated_at: ts };
   if (/^\/api\/automation-policy/.test(path)) return { agent_id: "soc-ops", mode: "off" };
   if (/^\/api\/improvements\/[^/]+$/.test(path)) return IMPROVEMENTS[0];
   return {};
@@ -70,7 +72,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -139,6 +141,18 @@ const RULES = [
     const actions = ["release-action-run-regression", "release-action-view-changes", "release-action-force"];
     const afound = []; for (const a of actions) if (await has(page, a)) afound.push(a);
     return { ok: gfound.length === 3 && afound.length === 3, detail: `门禁 ${gfound.length}/3，动作 ${afound.length}/3` };
+  } },
+  { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解(NormalizedFeedback) + 归因(Attribution 正文/责任边界/证据)", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    const first = page.getByTestId("improvement-list-item").first();
+    await first.waitFor({ timeout: 8000 }).catch(() => {});
+    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
+    await first.click();
+    await page.getByTestId("normalized-feedback").waitFor({ timeout: 6000 }).catch(() => {});
+    const nf = await has(page, "normalized-feedback");
+    const attr = await has(page, "attribution");
+    const ev = await has(page, "attribution-evidence");
+    return { ok: nf && attr && ev, detail: `系统理解=${nf} 归因=${attr} 证据=${ev}` };
   } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();

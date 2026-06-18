@@ -1336,6 +1336,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/attribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get attribution (404 if none) */
+        get: operations["get_attr_api_improvements__improvement_id__attribution_get"];
+        /** Upsert attribution (text + responsibility boundary + evidence) */
+        put: operations["upsert_attr_api_improvements__improvement_id__attribution_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/attribution/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm attribution */
+        post: operations["confirm_attr_api_improvements__improvement_id__attribution_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/auto-advance": {
         parameters: {
             query?: never;
@@ -1399,6 +1434,41 @@ export interface paths {
         put?: never;
         /** Merge a source improvement into this one (same agent; source becomes archived) */
         post: operations["merge_improvement_api_improvements__improvement_id__merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/normalized-feedback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get system understanding (404 if none) */
+        get: operations["get_nf_api_improvements__improvement_id__normalized_feedback_get"];
+        /** Upsert system understanding (NormalizedFeedback) */
+        put: operations["upsert_nf_api_improvements__improvement_id__normalized_feedback_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/normalized-feedback/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm system understanding */
+        post: operations["confirm_nf_api_improvements__improvement_id__normalized_feedback_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2696,6 +2766,43 @@ export interface components {
             title: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** AttributionResponse */
+        AttributionResponse: {
+            /** Attribution Id */
+            attribution_id: string;
+            /** Created At */
+            created_at: string;
+            /** Evidence */
+            evidence: string[];
+            /** Improvement Id */
+            improvement_id: string;
+            /** Responsibility Boundary */
+            responsibility_boundary: string[];
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AttributionUpsertRequest */
+        AttributionUpsertRequest: {
+            /**
+             * Evidence
+             * @description 证据要点。
+             */
+            evidence?: string[];
+            /**
+             * Responsibility Boundary
+             * @description 责任边界 bullets。
+             */
+            responsibility_boundary?: string[];
+            /**
+             * Summary
+             * @description 归因正文。
+             */
+            summary: string;
         };
         /** AutoAdvanceResponse */
         AutoAdvanceResponse: {
@@ -4768,6 +4875,69 @@ export interface components {
             stage: string;
         };
         JsonValue: unknown;
+        /** NormalizedFeedbackResponse */
+        NormalizedFeedbackResponse: {
+            /** Created At */
+            created_at: string;
+            /** Impact */
+            impact: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Normalized Feedback Id */
+            normalized_feedback_id: string;
+            /** Possible Object */
+            possible_object: string;
+            /** Possible Reason */
+            possible_reason: string;
+            /** Problem */
+            problem: string;
+            /** Status */
+            status: string;
+            /** Suggestion */
+            suggestion: string;
+            /** Updated At */
+            updated_at: string;
+            /** User Quote */
+            user_quote: string;
+        };
+        /** NormalizedFeedbackUpsertRequest */
+        NormalizedFeedbackUpsertRequest: {
+            /**
+             * Impact
+             * @description 影响（高/中/低或描述）。
+             * @default
+             */
+            impact: string;
+            /**
+             * Possible Object
+             * @description 可能对象。
+             * @default
+             */
+            possible_object: string;
+            /**
+             * Possible Reason
+             * @description 可能原因。
+             * @default
+             */
+            possible_reason: string;
+            /**
+             * Problem
+             * @description 问题（一句话）。
+             */
+            problem: string;
+            /**
+             * Suggestion
+             * @description 建议方向。
+             * @default
+             */
+            suggestion: string;
+            /**
+             * User Quote
+             * @description 用户原话。
+             * @default
+             */
+            user_quote: string;
+        };
         /** OpenAIChatCompletionChoice */
         OpenAIChatCompletionChoice: {
             /**
@@ -8709,6 +8879,103 @@ export interface operations {
             };
         };
     };
+    get_attr_api_improvements__improvement_id__attribution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_attr_api_improvements__improvement_id__attribution_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttributionUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_attr_api_improvements__improvement_id__attribution_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     auto_advance_improvement_api_improvements__improvement_id__auto_advance_post: {
         parameters: {
             query?: never;
@@ -8863,6 +9130,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_nf_api_improvements__improvement_id__normalized_feedback_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_nf_api_improvements__improvement_id__normalized_feedback_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NormalizedFeedbackUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_nf_api_improvements__improvement_id__normalized_feedback_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedFeedbackResponse"];
                 };
             };
             /** @description Validation Error */

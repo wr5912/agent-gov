@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import JSON, String
+from sqlalchemy import JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .runtime_db import Base, utc_now
@@ -42,3 +42,43 @@ class ImprovementLinkModel(Base):
     kind: Mapped[str] = mapped_column(String(32))
     ref_id: Mapped[str] = mapped_column(String(256))
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+class NormalizedFeedbackModel(Base):
+    """系统理解 NormalizedFeedback（v2.7 §4/§6 P3）：把自然语言反馈整理成可确认的结构化理解。
+
+    与改进事项 1:1（improvement_id 唯一）。status：draft（系统初步整理）/ confirmed（用户已确认）。
+    独立新表，create_all 创建，无需改表迁移。
+    """
+
+    __tablename__ = "normalized_feedbacks"
+
+    normalized_feedback_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
+    problem: Mapped[str] = mapped_column(String(1024), default="")
+    possible_reason: Mapped[str] = mapped_column(String(1024), default="")
+    possible_object: Mapped[str] = mapped_column(String(512), default="")
+    impact: Mapped[str] = mapped_column(String(128), default="")
+    suggestion: Mapped[str] = mapped_column(String(1024), default="")
+    user_quote: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+
+
+class AttributionModel(Base):
+    """归因结果 Attribution（v2.7 §6 P3）：归因正文 + 责任边界 + 证据 + 确认状态。
+
+    与改进事项 1:1（improvement_id 唯一）。status：draft / confirmed。独立新表，create_all 创建。
+    """
+
+    __tablename__ = "attributions"
+
+    attribution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    responsibility_boundary_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    evidence_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)

@@ -1211,7 +1211,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 **B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
-> parity 记分卡：mock 8/9，真实容器 8/9，baseline 8/8 held（截至 P4）。仅 message-actions（需实时回复）未纳入确定性基线。
+> parity 记分卡：mock 9/10，真实容器 9/10，baseline 9/9 held（截至 P3 内容首切）。仅 message-actions（需实时回复）未纳入确定性基线。
 
 ```text
 [P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
@@ -1222,7 +1222,8 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 [P2 已达标] ContextPackage 四类型(问题摘要/AI分析/Playwright/JSON) + 预览 + 复制 + 下载
 [P2 已达标] 发布页三门门禁(归因/优化/回归) + 去运行回归/查看变更/强制发布 动作；release/change-set 响应暴露 agent_id
 [P2 余项] 改进详情「收纳」(自动化/相似/链接进折叠/更多) 待办；message-actions 需实时回复，结构经 parity 校验
-[P3 未达标] 缺内容实体：NormalizedFeedback / 一等 Feedback / 带正文 Attribution / TraceSummary；归因正文、来源反馈表、回归保障候选、本事项沉淀资产 未呈现
+[P3 部分达标] 内容实体首切：NormalizedFeedback(系统理解) + 带正文 Attribution(归因正文/责任边界/证据/确认) 已建为真实后端实体并入改进详情(parity improvement-content ✅)
+[P3 未达标] 一等 Feedback(来源反馈表 摘要/来源/状态) / TraceSummary(§9) / 回归保障候选(§11.1) / 本事项沉淀资产(§11.2) 未建；旧 workspace 归因/方案/执行/回归/版本能力未迁入
 [P4 已达标] 全站 Governance Light：:root token + body + 顶栏/Playground/反馈页统一为浅色蓝调；深色仅保留 Trace/Raw/Diff/Debug 区
 [边界] 旧反馈优化 workspace 先迁能力再下线；ContextPackage 脱敏不做
 ```

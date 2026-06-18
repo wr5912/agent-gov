@@ -11,6 +11,26 @@ export type AutomationPolicy = components["schemas"]["AutomationPolicyResponse"]
 export type AutoAdvanceResult = components["schemas"]["AutoAdvanceResponse"];
 export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarItem"];
 export type ImprovementLink = components["schemas"]["ImprovementLinkResponse"];
+export type NormalizedFeedback = components["schemas"]["NormalizedFeedbackResponse"];
+export type Attribution = components["schemas"]["AttributionResponse"];
+
+const jsonHeaders = { "Content-Type": "application/json" };
+
+export function getNormalizedFeedback(config: RuntimeClientConfig, id: string) {
+  return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback`);
+}
+export function upsertNormalizedFeedback(config: RuntimeClientConfig, id: string, body: components["schemas"]["NormalizedFeedbackUpsertRequest"]) {
+  return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
+}
+export function confirmNormalizedFeedback(config: RuntimeClientConfig, id: string) {
+  return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback/confirm`, { method: "POST", headers: jsonHeaders });
+}
+export function getAttribution(config: RuntimeClientConfig, id: string) {
+  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`);
+}
+export function confirmAttribution(config: RuntimeClientConfig, id: string) {
+  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/confirm`, { method: "POST", headers: jsonHeaders });
+}
 
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
   return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);

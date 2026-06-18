@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addImprovementLink,
+  getNormalizedFeedback,
+  getAttribution,
+  confirmAttribution,
+  type NormalizedFeedback,
+  type Attribution,
   archiveImprovement,
   autoAdvanceImprovement,
   createImprovement,
@@ -64,6 +69,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
   const [links, setLinks] = useState<ImprovementLink[]>([]);
+  const [normalizedFeedback, setNormalizedFeedback] = useState<NormalizedFeedback | null>(null);
+  const [attribution, setAttribution] = useState<Attribution | null>(null);
   const [newLinkKind, setNewLinkKind] = useState("attribution");
   const [newLinkRef, setNewLinkRef] = useState("");
 
@@ -100,10 +107,18 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     if (!agentId || !itemId) {
       setSimilar([]);
       setLinks([]);
+      setNormalizedFeedback(null);
+      setAttribution(null);
       return;
     }
     let cancelled = false;
     setLastAuto(undefined);
+    void getNormalizedFeedback(clientConfig, itemId)
+      .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
+      .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
+    void getAttribution(clientConfig, itemId)
+      .then((a) => { if (!cancelled) setAttribution(a); })
+      .catch(() => { if (!cancelled) setAttribution(null); });
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
@@ -181,6 +196,13 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
       const created = await splitImprovement(clientConfig, item.improvement_id, feedbackRef);
       await refresh();
       setSelectedId(created.improvement_id);
+    });
+  };
+
+  const handleConfirmAttribution = (item: ImprovementItem) => {
+    void run(async () => {
+      const a = await confirmAttribution(clientConfig, item.improvement_id);
+      setAttribution(a);
     });
   };
 
@@ -330,10 +352,44 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               </ol>
             </div>
 
-            {selected.summary ? (
+            {normalizedFeedback ? (
+              <div className="iw-detail-section" data-testid="normalized-feedback">
+                <h4>系统理解{normalizedFeedback.status === "confirmed" ? "（已确认）" : "（初步）"}</h4>
+                <ul className="iw-content-list">
+                  <li>问题：{normalizedFeedback.problem}</li>
+                  {normalizedFeedback.possible_reason ? <li>原因：{normalizedFeedback.possible_reason}</li> : null}
+                  {normalizedFeedback.possible_object ? <li>可能对象：{normalizedFeedback.possible_object}</li> : null}
+                  {normalizedFeedback.impact ? <li>影响：{normalizedFeedback.impact}</li> : null}
+                  {normalizedFeedback.suggestion ? <li>建议：{normalizedFeedback.suggestion}</li> : null}
+                </ul>
+                {normalizedFeedback.user_quote ? <div className="iw-content-quote">用户原话：“{normalizedFeedback.user_quote}”</div> : null}
+              </div>
+            ) : selected.summary ? (
               <div className="iw-detail-section">
                 <h4>系统理解</h4>
                 <div className="iw-detail-summary">{selected.summary}</div>
+              </div>
+            ) : null}
+
+            {attribution ? (
+              <div className="iw-detail-section" data-testid="attribution">
+                <h4>系统归因{attribution.status === "confirmed" ? "（已确认）" : "（待确认）"}</h4>
+                <div className="iw-detail-summary">{attribution.summary}</div>
+                {attribution.responsibility_boundary.length ? (
+                  <>
+                    <div className="iw-content-subhead">责任边界</div>
+                    <ul className="iw-content-list">{attribution.responsibility_boundary.map((b, i) => <li key={i}>{b}</li>)}</ul>
+                  </>
+                ) : null}
+                {attribution.evidence.length ? (
+                  <>
+                    <div className="iw-content-subhead">证据</div>
+                    <ul className="iw-content-list" data-testid="attribution-evidence">{attribution.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
+                  </>
+                ) : null}
+                {attribution.status !== "confirmed" && selected.improvement_status !== "archived" ? (
+                  <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={() => handleConfirmAttribution(selected)} style={{ marginTop: 8 }}>确认归因</button>
+                ) : null}
               </div>
             ) : null}
 

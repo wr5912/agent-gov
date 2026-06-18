@@ -1,0 +1,48 @@
+"""改进事项内容子资源 API 契约（v2.7 P3）：系统理解 + 归因。
+
+字段所有权：请求 DTO 只承载用户可编辑的内容字段；id / status / 时间戳为 backend-owned，不入请求体。
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field
+
+
+class NormalizedFeedbackUpsertRequest(BaseModel):
+    problem: str = Field(description="问题（一句话）。")
+    possible_reason: str = Field(default="", description="可能原因。")
+    possible_object: str = Field(default="", description="可能对象。")
+    impact: str = Field(default="", description="影响（高/中/低或描述）。")
+    suggestion: str = Field(default="", description="建议方向。")
+    user_quote: str = Field(default="", description="用户原话。")
+
+
+class NormalizedFeedbackResponse(BaseModel):
+    normalized_feedback_id: str
+    improvement_id: str
+    problem: str
+    possible_reason: str
+    possible_object: str
+    impact: str
+    suggestion: str
+    user_quote: str
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class AttributionUpsertRequest(BaseModel):
+    summary: str = Field(description="归因正文。")
+    responsibility_boundary: list[str] = Field(default_factory=list, description="责任边界 bullets。")
+    evidence: list[str] = Field(default_factory=list, description="证据要点。")
+
+
+class AttributionResponse(BaseModel):
+    attribution_id: str
+    improvement_id: str
+    summary: str
+    responsibility_boundary: list[str]
+    evidence: list[str]
+    status: str
+    created_at: str
+    updated_at: str

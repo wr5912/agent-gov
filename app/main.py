@@ -11,6 +11,7 @@ from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agents import create_agents_router
 from app.routers.improvements import create_improvements_router, create_improvement_relations_router
+from app.routers.improvement_content import create_improvement_content_router
 from app.routers.automation import create_automation_router
 from app.routers.assets import create_assets_router
 from app.routers.scenario_packs import create_scenario_packs_router
@@ -36,6 +37,7 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
@@ -75,6 +77,7 @@ agent_governance = AgentGovernanceService(
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 automation_policy_store = AutomationPolicyStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 asset_store = AssetStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
@@ -176,6 +179,13 @@ app.include_router(
 app.include_router(
     create_improvement_relations_router(
         improvement_store=improvement_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_improvement_content_router(
+        improvement_store=improvement_store,
+        content_store=improvement_content_store,
         require_api_key=require_api_key,
     )
 )

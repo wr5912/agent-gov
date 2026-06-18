@@ -73,7 +73,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions,source-feedback-table,detail-collapsed,full-chain").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -154,6 +154,14 @@ const RULES = [
     const attr = await has(page, "attribution");
     const ev = await has(page, "attribution-evidence");
     return { ok: nf && attr && ev, detail: `系统理解=${nf} 归因=${attr} 证据=${ev}` };
+  } },
+  { id: "status-filter", phase: "P3", desc: "改进列表状态过滤 pills(§5 待确认/处理中/待回归/已完成 + 全部)", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
+    const sf = await has(page, "status-filter");
+    let pills = 0;
+    for (const k of ["status-filter-all", "status-filter-pending-confirm", "status-filter-in-progress", "status-filter-pending-regression", "status-filter-done"]) if (await has(page, k)) pills += 1;
+    return { ok: sf && pills === 5, detail: `过滤区=${sf} pills=${pills}/5` };
   } },
   { id: "full-chain", phase: "P3", desc: "查看完整链路：7 阶段时间线 + 状态(§7)", async fn(page) {
     await page.getByTestId("nav-improvement").click();

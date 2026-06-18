@@ -156,3 +156,7 @@
 .iw-chain { margin: 6px 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
 .iw-chain li.is-done { color: var(--color-success); }
 .iw-chain li.is-current { color: var(--color-primary); font-weight: 600; }
+/* v2.7 §5 改进列表状态过滤 pills */
+.iw-status-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); }
+.iw-filter-pill { font-size: 11px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-subtle); background: #fff; color: var(--text-secondary); cursor: pointer; }
+.iw-filter-pill.active { background: var(--color-primary-soft); border-color: #bfdbfe; color: var(--color-primary); font-weight: 600; }

@@ -37,6 +37,21 @@ type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
 
 const CONTEXT_TYPES: ContextType[] = ["problem", "ai", "playwright", "json"];
 
+// §5 改进列表状态过滤分类（由 stage/status 派生）。
+const STATUS_CATEGORIES: { label: string; key: string }[] = [
+  { label: "待确认", key: "pending-confirm" },
+  { label: "处理中", key: "in-progress" },
+  { label: "待回归", key: "pending-regression" },
+  { label: "已完成", key: "done" },
+];
+function deriveCategory(item: ImprovementItem): string {
+  if (item.improvement_status === "archived") return "已归档";
+  if (item.improvement_status === "done" || item.improvement_stage === "release") return "已完成";
+  if (item.improvement_stage === "regression") return "待回归";
+  if (item.improvement_stage === "attribution" || item.improvement_stage === "optimization") return "待确认";
+  return "处理中";
+}
+
 const SOURCE_LABEL: Record<string, string> = {
   playground_run: "Playground Run",
   feedback_inbox: "Feedback Inbox",
@@ -75,6 +90,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [newTitle, setNewTitle] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
   const [contextType, setContextType] = useState<ContextType>("problem");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [automationMode, setAutomationMode] = useState("off");
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
@@ -322,12 +338,20 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
           <strong>{scopeAgentId ? agentName(scopeAgentId) : "全部业务 Agent"}</strong>
           <span className="iw-scope-hint">（顶栏「业务 Agent」切换）</span>
         </div>
+        <div className="iw-status-filter" data-testid="status-filter">
+          <button className={`iw-filter-pill ${statusFilter === "all" ? "active" : ""}`} type="button" data-testid="status-filter-all" onClick={() => setStatusFilter("all")}>全部 {items.length}</button>
+          {STATUS_CATEGORIES.map((c) => (
+            <button key={c.key} className={`iw-filter-pill ${statusFilter === c.label ? "active" : ""}`} type="button" data-testid={`status-filter-${c.key}`} onClick={() => setStatusFilter(c.label)}>
+              {c.label} {items.filter((i) => deriveCategory(i) === c.label).length}
+            </button>
+          ))}
+        </div>
         <div className="iw-panel-body">
           {error ? <div className="iw-error">{error}</div> : null}
-          {items.length === 0 ? (
-            <div className="iw-empty">当前范围暂无改进事项。新建后即可推进治理闭环。</div>
+          {items.filter((i) => statusFilter === "all" || deriveCategory(i) === statusFilter).length === 0 ? (
+            <div className="iw-empty">{items.length === 0 ? "当前范围暂无改进事项。新建后即可推进治理闭环。" : "该状态下暂无改进事项。"}</div>
           ) : (
-            items.map((item) => (
+            items.filter((i) => statusFilter === "all" || deriveCategory(i) === statusFilter).map((item) => (
               <button
                 key={item.improvement_id}
                 type="button"

@@ -3,7 +3,7 @@
 > 文档定位：设计评审报告。
 > 核查对象：当前 `feat/agentgov-cross-gen-v2.7` 分支前端实现、当前真实部署 UI、`docs/AgentGov_ASCII_UI_草图方案_v2.7.md`。
 > 权威关系：本报告不替代 `AgentGov_ASCII_UI_草图方案_v2.7.md`；草图方案仍是 v2.7 UI 的权威设计源。本报告记录当前实现与草图的差距、根因和整改验收口径。
-> 补充参考：已参考 `/home/admin/Downloads/AgentGov_UI_差距报告_v2.7.md`，吸收其中关于内容实体、设置结构、旧 workspace 迁移策略和逐节差距的补充判断。
+> 补充参考：已参考 `AgentGov_UI_差距报告_v2.7.md`，吸收其中关于内容实体、设置结构、旧 workspace 迁移策略和逐节差距的补充判断。
 > 术语口径：本报告按 v2.7 规划术语评审 UI 一致性；当前实现旧名与 v2.7 术语映射见 [AgentGov术语与版本边界](../AgentGov术语与版本边界.md)。
 > 本轮边界：只做核查报告输出，不改前端、后端、测试代码。
 

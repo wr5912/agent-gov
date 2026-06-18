@@ -533,7 +533,7 @@ export default function App() {
           onRefresh={refreshAll}
         />
       ) : activeWindow === "improvement" ? (
-        <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} />
+        <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} langfuseUrl={langfuseUrl} />
       ) : activeWindow === "feedback" ? (
         <ExternalFeedbackWorkspace
           clientConfig={effectiveClientConfig}

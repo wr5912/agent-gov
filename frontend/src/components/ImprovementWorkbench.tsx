@@ -80,7 +80,7 @@ function autoAdvanceNote(result: AutoAdvanceResult): string {
   return applied ? `自动推进：${applied} ｜ ${reason}` : `自动推进：${reason}`;
 }
 
-export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientConfig: RuntimeClientConfig; scopeAgentId: string }) {
+export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }: { clientConfig: RuntimeClientConfig; scopeAgentId: string; langfuseUrl: string }) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
   const [items, setItems] = useState<ImprovementItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -605,6 +605,23 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
                 </div>
               </div>
             ) : null}
+
+            {(() => {
+              const runIds = [...new Set(feedbacks.map((f) => f.run_id).filter(Boolean))];
+              if (!runIds.length) return null;
+              return (
+                <details className="iw-advanced" data-testid="trace-summary">
+                  <summary>Trace 摘要</summary>
+                  <div className="iw-trace-summary">
+                    <div className="iw-content-subhead" style={{ color: "var(--text-debug)" }}>关联运行</div>
+                    <ul className="iw-content-list" style={{ color: "var(--text-debug)" }}>{runIds.map((r) => <li key={r}>{r}</li>)}</ul>
+                    <div className="iw-content-subhead" style={{ color: "var(--text-debug)" }}>关键观察 / 相关工具调用</div>
+                    <div style={{ color: "var(--text-debug-muted, #9ca3af)", fontSize: 12 }}>运行证据摘要见 Langfuse trace（关键观察 / 工具调用由实时 trace 提供）。</div>
+                    {langfuseUrl ? <a className="iw-secondary-button" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer" style={{ marginTop: 8, display: "inline-block" }}>打开 Langfuse ↗</a> : null}
+                  </div>
+                </details>
+              );
+            })()}
 
             <div className="iw-action-row">
               {selected.improvement_status === "archived" ? (

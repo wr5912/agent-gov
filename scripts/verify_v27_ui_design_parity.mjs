@@ -73,7 +73,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -154,6 +154,17 @@ const RULES = [
     const attr = await has(page, "attribution");
     const ev = await has(page, "attribution-evidence");
     return { ok: nf && attr && ev, detail: `系统理解=${nf} 归因=${attr} 证据=${ev}` };
+  } },
+  { id: "trace-summary", phase: "P3", desc: "Trace 摘要(§9)：关联运行 + 打开 Langfuse（深色调试区）", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    const first = page.getByTestId("improvement-list-item").first();
+    await first.waitFor({ timeout: 8000 }).catch(() => {});
+    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
+    await first.click();
+    await page.getByTestId("trace-summary").waitFor({ state: "attached", timeout: 6000 }).catch(() => {});
+    const ts = await has(page, "trace-summary");
+    const lf = await has(page, "trace-open-langfuse");
+    return { ok: ts && lf, detail: `Trace摘要=${ts} 打开Langfuse=${lf}` };
   } },
   { id: "merge-basis", phase: "P3", desc: "相似归并 §8.5：置信度 + 合并依据 + 标记合并不准", async fn(page) {
     await page.getByTestId("nav-improvement").click();

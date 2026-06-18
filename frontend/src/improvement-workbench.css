@@ -160,3 +160,5 @@
 .iw-status-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); }
 .iw-filter-pill { font-size: 11px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-subtle); background: #fff; color: var(--text-secondary); cursor: pointer; }
 .iw-filter-pill.active { background: var(--color-primary-soft); border-color: #bfdbfe; color: var(--color-primary); font-weight: 600; }
+/* v2.7 §9 Trace 摘要（深色调试区） */
+.iw-trace-summary { background: var(--bg-debug); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }

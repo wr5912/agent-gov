@@ -596,6 +596,19 @@ button:disabled {
 .modal-head { display: flex; justify-content: space-between; gap: 18px; margin-bottom: 18px; }
 .modal-head h3 { margin: 0; }
 .modal-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
+/* v2.7 §2 平台设置面板 */
+.settings-panel { width: min(680px, calc(100vw - 36px)); max-height: calc(100vh - 60px); overflow-y: auto; }
+.settings-section { border-top: 1px solid var(--line); padding: 14px 0; }
+.settings-section:first-of-type { border-top: none; }
+.settings-section h4 { margin: 0 0 10px; font-size: 14px; }
+.settings-agent-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.settings-agent-row { display: flex; align-items: center; gap: 10px; }
+.settings-agent-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.settings-agent-main strong { font-size: 13px; }
+.settings-agent-main .muted { font-size: 11px; }
+.settings-agent-create, .settings-automation-row, .settings-developer-links { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.settings-input { height: 36px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--panel); color: var(--text); padding: 0 10px; font-size: 13px; flex: 1; min-width: 140px; }
+.settings-automation-row .select { min-width: 200px; }
 .form-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .form-field input { height: 42px; }
 .form-field textarea {

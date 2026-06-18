@@ -27,6 +27,7 @@ function defaultPayload(path) {
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
+  if (path.startsWith("/api/automation-policy")) return { agent_id: "soc-ops", mode: "off" };
   return {};
 }
 
@@ -72,7 +73,10 @@ async function main() {
     try {
       await page.goto(ui, { waitUntil: "domcontentloaded" });
       await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 20000 });
-      await page.getByTestId("nav-asset").click();
+      // 资产 Registry 现经 Settings 进入（v2.7 §2 导航收敛，资产不再是一级导航）。
+      await page.getByTestId("open-settings").click();
+      await page.getByTestId("settings-panel").waitFor({ timeout: 15000 });
+      await page.getByTestId("settings-open-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
 
       // 沉淀一个方法论资产。

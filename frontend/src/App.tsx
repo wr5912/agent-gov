@@ -486,19 +486,15 @@ export default function App() {
     <div className="app-shell">
       <Topbar
         health={health}
-        apiDocsUrl={apiDocsUrl}
-        langfuseUrl={langfuseUrl}
         activeWindow={activeWindow}
         loading={loading}
         businessAgents={businessAgents}
         selectedBusinessAgentId={selectedBusinessAgentId}
         onSelectBusinessAgent={setSelectedBusinessAgentId}
         onRefresh={refreshAll}
-        onOpenFeedback={showFeedbackWindow}
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
         onOpenRelease={showReleaseWindow}
-        onOpenAsset={showAssetWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       {activeWindow === "asset" ? (
@@ -583,12 +579,17 @@ export default function App() {
       <SettingsModal
         open={settingsOpen}
         config={effectiveClientConfig}
+        apiDocsUrl={apiDocsUrl}
+        langfuseUrl={langfuseUrl}
         onClose={() => setSettingsOpen(false)}
         onSave={(next) => {
           setClientConfig(next);
           setSettingsOpen(false);
           setTimeout(refresh, 0);
         }}
+        onAgentsChanged={() => setTimeout(refresh, 0)}
+        onOpenAsset={showAssetWindow}
+        onOpenFeedback={showFeedbackWindow}
       />
     </div>
   );

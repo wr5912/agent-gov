@@ -1192,34 +1192,36 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 ### 17.6 实现进度（截至当前）
 
-已落地并过硬门：
+> **验收口径更正（重要）**：此前本节把若干能力标为「✓ 落地并过硬门」，并以「真实浏览器 + 真实后端截图验收通过」作为整体 UI 一致性结论——这是**过度宣称**。`make test` / Playwright / 截图证明的是**功能可用**（后端实体、API、组件可点击、状态会变），**不等于对照本草图的 UI 设计一致**。真实部署 UI 仍与草图存在系统性偏差（Playground 旧三栏、创建反馈旧表单、ContextPackage 单类型、全站主题未统一等）。
+> **UI 设计一致性以两处为准**：`scripts/verify_v27_ui_design_parity.mjs` 的逐条记分卡（连真实容器 UI/API）+ `docs/design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md`。整改按该报告 P0→P5 推进。
+
+**A. 功能与实体层（已实现，过功能硬门 make test / make main-flow-test）：**
 
 ```text
 [✓] ImprovementItem 事项级单一领域实体（持久化 + 7 段状态机 + archived 终态 + agent scoping + /api/improvements）
-[✓] 改进事项治理工作台（列表 / 详情 / stepper / 下一步 / 每态唯一主动作 / 归档 / 获取上下文）
-[✓] 治理工作台外壳：导航收敛 Playground / 改进 / 发布
-[✓] 顶栏全局「业务 Agent」切换器；改进按所选 Agent scoping；Playground 对话发 agent_id 归属该 Agent
-[✓] 发布页（§12 能不能发 / 为什么 / 包含什么），消费真实 /api/agent-change-sets + /api/agent-releases
-[✓] Governance Light 主题应用于顶栏导航与 改进 / 发布 surface
-[✓] 统一术语 improvement_* 贯穿 UI / API / DB / 状态机 / 上下文 / 测试；data-testid / data-state / data-action 齐备
-[✓] W2-a 自动化策略编排引擎：AutomationPolicy(per-agent off/semi/full) + 确定性 auto_advance
-    （沿真实状态机；AUTO 段自动、GATE 段 semi 停/full 过、release 永远人工）+ /api/automation-policy + auto-advance
-[✓] W2-b 相似度归并/拆分：确定性相似度(token Jaccard + 共享反馈) + 同 Agent 相似建议 + 归并(对方归档)/拆分 + 创建时 auto_merge
-[✓] W2-c 闭环引用：ImprovementItem ↔ attribution/optimization_plan/eval_run/change_set/batch 轻引用(独立 links 表)
-[✓] W3 资产 Registry 复利中心：Asset 实体(方法论/回归/执行/审计) + /api/assets + 跨业务 Agent 继承复用(inherited_from)
-[✓] 治理工作台外壳新增 资产 主导航；改进详情新增 自动化策略 / 相似归并 / 关联闭环对象
-[✓] 验收：make test、make main-flow-test、tsc/build 全绿；Playwright（改进工作台含 W2-a/b/c + 反馈回归 + 资产 Registry）；
-    真实浏览器 + 真实后端截图验收（自动推进/相似归并/闭环引用/资产继承）通过
+[✓] 改进事项治理工作台组件（列表 / 详情 / stepper / 下一步 / 每态唯一主动作 / 归档 / 上下文）
+[✓] 顶栏全局「业务 Agent」切换器；改进按所选 Agent scoping；Playground 对话发 agent_id
+[✓] 发布页组件，消费真实 /api/agent-change-sets + /api/agent-releases
+[✓] W2-a 自动化策略编排：AutomationPolicy(per-agent off/semi/full) + 确定性 auto_advance + /api/automation-policy
+[✓] W2-b 相似度归并/拆分：确定性 token 相似度 + 同 Agent 相似建议 + 归并/拆分 + 创建时 auto_merge
+[✓] W2-c 闭环引用：ImprovementItem ↔ attribution/optimization_plan/eval_run/change_set/batch 轻引用（独立 links 表）
+[✓] W3 资产 Registry：Asset 实体 + /api/assets + 跨业务 Agent 继承复用
+[✓] 统一术语 improvement_* 贯穿 API / DB / 状态机 / 测试
 ```
 
-仍属后续 Wave / 明确边界：
+**B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
 
 ```text
-[ ] W2 深度对接的「自动触发」：当前自动推进沿状态机做确定性推进 + 轻引用，归因/方案/评估的真实产物生成仍接既有闭环引擎（增量推进）
-[ ] W2 相似度「重归因」与基于语义向量的归并（当前为确定性 token 相似度，足够可解释，可后续增强）
-[ ] 发布页 per-Agent scoping —— 需后端在 release / change-set 响应 DTO 暴露 agent_id
-[ ] 全站 Governance Light（Playground / 反馈优化工作台仍为既有暖色，待整页迁移）
-[ ] ContextPackage 脱敏 —— 裁决：面向开发优化人员，当前不做
+[P0 达标中] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
+[P0 达标中] Settings 升级为平台设置：业务 Agent 管理(CRUD) / 自动化策略 / 资产 / Developer·Debug
+[P1 未达标] Playground 仍是旧三栏（Sidebar/Inspector/control-strip 常驻）；配置未进抽屉
+[P1 未达标] 助手回复动作未达草图（缺 创建反馈/查看Trace/获取上下文/打开Langfuse/重新运行）
+[P1 未达标] 创建反馈仍是旧结构化表单；缺「整理反馈→确认系统理解」两阶段
+[P2 未达标] ContextPackage 仅单类型文本；缺四类型 / 预览 / 下载 / 多入口
+[P2 未达标] 发布页单门派生；缺三门门禁明细与 去运行回归/查看变更/强制发布 动作
+[P3 未达标] 缺内容实体：NormalizedFeedback / 一等 Feedback / 带正文 Attribution / TraceSummary；归因正文、来源反馈表、回归保障候选、本事项沉淀资产 未呈现
+[P4 未达标] 全站 Governance Light 未统一（Playground / 反馈优化仍暖色）
+[边界] 旧反馈优化 workspace 先迁能力再下线；ContextPackage 脱敏不做
 ```
 
 ---

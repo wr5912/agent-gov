@@ -10,7 +10,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "verify:feedback-browser": "cd .. && node scripts/verify_feedback_optimization_browser.mjs",
-    "verify:feedback-ui-states": "cd .. && node scripts/verify_feedback_optimization_ui_states.mjs"
+    "verify:feedback-ui-states": "cd .. && node scripts/verify_feedback_optimization_ui_states.mjs",
+    "verify:design-parity": "cd .. && node scripts/verify_v27_ui_design_parity.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

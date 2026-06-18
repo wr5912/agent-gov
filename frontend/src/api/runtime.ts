@@ -5,6 +5,8 @@ export * from "./regressionAssets";
 import type {
   AgentInfo,
   AgentSummary,
+  AgentCreateRequest,
+  AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
   AgentChangeSetCreateRequest,
@@ -56,6 +58,28 @@ export function getAgents(config: RuntimeClientConfig) {
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
 export function listBusinessAgents(config: RuntimeClientConfig) {
   return requestJson<AgentSummary[]>(config, "/api/agent-registry");
+}
+
+export function createBusinessAgent(config: RuntimeClientConfig, payload: AgentCreateRequest) {
+  return requestJson<AgentSummary>(config, "/api/agent-registry", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setBusinessAgentLifecycle(config: RuntimeClientConfig, agentId: string, status: string) {
+  return requestJson<AgentSummary>(config, `/api/agent-registry/${encodeURIComponent(agentId)}/lifecycle`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ status }),
+  });
+}
+
+export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string) {
+  return requestJson<AgentDeleteResponse>(config, `/api/agent-registry/${encodeURIComponent(agentId)}`, {
+    method: "DELETE",
+  });
 }
 
 export function getSkills(config: RuntimeClientConfig) {

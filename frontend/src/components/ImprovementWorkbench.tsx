@@ -603,6 +603,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
               ) : null}
             </div>
 
+            <details className="iw-advanced" data-testid="improvement-advanced">
+              <summary>高级（自动化策略 / 相似归并 / 关联闭环对象）</summary>
             {selected.improvement_status !== "archived" ? (
               <div className="iw-detail-section">
                 <h4>自动化策略</h4>
@@ -689,6 +691,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
                 </div>
               </div>
             ) : null}
+            </details>
 
             {contextOpen ? (() => {
               const inputs = { item: selected, agentName: agentName(selected.agent_id), links, primaryActionLabel: stageView?.primaryAction?.label || "（已到终态）" };

@@ -265,6 +265,12 @@ async function main() {
         return item ? json(route, item) : json(route, { detail: "not found" }, 404);
       }
 
+      // P3 内容子资源：无内容时 404（系统理解/归因），列表空（来源反馈/资产），与真实后端一致。
+      if (/^\/api\/improvements\/[^/]+\/(normalized-feedback|attribution)$/.test(path) && method === "GET") {
+        return json(route, { detail: "not found" }, 404);
+      }
+      if (/^\/api\/improvements\/[^/]+\/feedbacks$/.test(path) && method === "GET") return json(route, []);
+      if (path === "/api/assets" && method === "GET") return json(route, []);
       if (url.origin === apiBase || path.startsWith("/api/") || path === "/health") {
         return json(route, defaultPayload(path));
       }
@@ -315,19 +321,22 @@ async function main() {
         throw new Error("after advancing to optimization, next primary action should target execution");
       }
 
-      // 获取上下文：结构化 字段:值 文本（非原始 JSON），有复制入口。
+      // 获取上下文：ContextPackage 四类型 + 预览 + 复制 + 下载（v2.7 §10）。
       await page.getByTestId("open-context-drawer").click();
       const drawer = page.getByTestId("context-drawer");
       await drawer.waitFor({ timeout: 15_000 });
-      if ((await drawer.getAttribute("data-state")) !== "open") {
-        throw new Error("context drawer should be data-state=open after opening");
+      for (const t of ["context-type-problem", "context-type-ai", "context-type-playwright", "context-type-json"]) {
+        await page.getByTestId(t).waitFor({ timeout: 15_000 });
       }
-      const ctx = (await page.locator(".iw-context-body").innerText()).trim();
-      if (!ctx.includes("improvement_id: imp-seed01")) {
-        throw new Error("context package should surface improvement_id as 字段: 值 text");
+      await page.getByTestId("context-download").waitFor({ timeout: 15_000 });
+      const ctx = (await page.getByTestId("context-preview").innerText()).trim();
+      if (!ctx.includes("改进事项")) {
+        throw new Error("problem-summary context should mention 改进事项");
       }
-      if (ctx.startsWith("{") || ctx.includes('": ')) {
-        throw new Error("context package should be plain 字段: 值 text, not raw JSON");
+      await page.getByTestId("context-type-json").click();
+      const jsonCtx = (await page.getByTestId("context-preview").innerText()).trim();
+      if (!jsonCtx.startsWith("{")) {
+        throw new Error("json context type should render JSON");
       }
       await page.getByTestId("context-copy").waitFor({ timeout: 15_000 });
 
@@ -340,6 +349,8 @@ async function main() {
         throw new Error("new improvement at feedback_intake should advance to triage");
       }
 
+      // 改进详情收纳：自动化/相似/链接在「高级」折叠区，先展开再交互。
+      await page.getByTestId("improvement-advanced").locator("summary").click();
       // W2-a 自动化策略：设 semi → 自动推进，feedback_intake 自动到 attribution（停在判断点）。
       await page.getByTestId("automation-mode").selectOption("semi");
       await page.getByTestId("auto-advance").click();

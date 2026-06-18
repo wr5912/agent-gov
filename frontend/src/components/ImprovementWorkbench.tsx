@@ -25,6 +25,7 @@ import {
 import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
 import { buildContext, CONTEXT_TYPE_LABEL, type ContextType } from "../contextPackage";
+import { listAssets, createAsset, type Asset } from "../api/assets";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -71,6 +72,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
   const [links, setLinks] = useState<ImprovementLink[]>([]);
   const [normalizedFeedback, setNormalizedFeedback] = useState<NormalizedFeedback | null>(null);
   const [attribution, setAttribution] = useState<Attribution | null>(null);
+  const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
+  const [regressionDismissed, setRegressionDismissed] = useState(false);
   const [newLinkKind, setNewLinkKind] = useState("attribution");
   const [newLinkRef, setNewLinkRef] = useState("");
 
@@ -109,16 +112,21 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
       setLinks([]);
       setNormalizedFeedback(null);
       setAttribution(null);
+      setSedimentAssets([]);
       return;
     }
     let cancelled = false;
     setLastAuto(undefined);
+    setRegressionDismissed(false);
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
       .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
     void getAttribution(clientConfig, itemId)
       .then((a) => { if (!cancelled) setAttribution(a); })
       .catch(() => { if (!cancelled) setAttribution(null); });
+    void listAssets(clientConfig, { sourceImprovementId: itemId })
+      .then((a) => { if (!cancelled) setSedimentAssets(a); })
+      .catch(() => { if (!cancelled) setSedimentAssets([]); });
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
@@ -203,6 +211,22 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
     void run(async () => {
       const a = await confirmAttribution(clientConfig, item.improvement_id);
       setAttribution(a);
+    });
+  };
+
+  const handleAdoptRegression = (item: ImprovementItem) => {
+    void run(async () => {
+      const usecase = `当出现「${item.title}」类问题时，Agent 应正确处理，不得直接误判。`;
+      const checks = ["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"].map((c) => `- ${c}`).join("\n");
+      await createAsset(clientConfig, {
+        agent_id: item.agent_id,
+        asset_type: "regression",
+        title: `回归保障：${item.title}`,
+        body: `用例：${usecase}\n检查点：\n${checks}`,
+        source_improvement_id: item.improvement_id,
+      });
+      setSedimentAssets(await listAssets(clientConfig, { sourceImprovementId: item.improvement_id }));
+      setRegressionDismissed(true);
     });
   };
 
@@ -390,6 +414,33 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId }: { clientCon
                 {attribution.status !== "confirmed" && selected.improvement_status !== "archived" ? (
                   <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={() => handleConfirmAttribution(selected)} style={{ marginTop: 8 }}>确认归因</button>
                 ) : null}
+              </div>
+            ) : null}
+
+            {selected.improvement_status !== "archived" && !regressionDismissed && !sedimentAssets.some((a) => a.asset_type === "regression") ? (
+              <div className="iw-detail-section" data-testid="regression-guarantee">
+                <h4>回归保障</h4>
+                <div className="iw-next-step">系统建议沉淀 1 条候选回归资产：</div>
+                <ul className="iw-content-list">
+                  <li>用例：当出现「{selected.title}」类问题时，Agent 应正确处理、不得直接误判。</li>
+                  <li>检查点：是否识别问题条件 / 是否提示需核验数据源 / 是否避免直接升级处置</li>
+                </ul>
+                <div className="iw-action-row">
+                  <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy} onClick={() => handleAdoptRegression(selected)}>采纳为回归资产</button>
+                  <button className="iw-secondary-button" type="button" data-testid="ignore-regression" disabled={busy} onClick={() => setRegressionDismissed(true)}>忽略</button>
+                </div>
+              </div>
+            ) : null}
+
+            {sedimentAssets.length ? (
+              <div className="iw-detail-section" data-testid="sediment-assets">
+                <h4>本事项沉淀的资产（{sedimentAssets.length}）</h4>
+                {sedimentAssets.map((a) => (
+                  <div className="iw-list-item" data-testid="sediment-asset-item" data-asset-type={a.asset_type} key={a.asset_id}>
+                    <span className="iw-list-item-title">{a.title}</span>
+                    <span className="iw-list-item-meta">{a.asset_type}{a.inherited_from ? " · 继承" : ""}</span>
+                  </div>
+                ))}
               </div>
             ) : null}
 

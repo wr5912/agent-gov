@@ -31,13 +31,21 @@ class AssetStore:
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
 
-    def list_assets(self, *, agent_id: str | None = None, asset_type: str | None = None) -> list[AssetRecord]:
+    def list_assets(
+        self,
+        *,
+        agent_id: str | None = None,
+        asset_type: str | None = None,
+        source_improvement_id: str | None = None,
+    ) -> list[AssetRecord]:
         with self._session_factory.begin() as db:
             query = db.query(AssetModel)
             if agent_id:
                 query = query.filter(AssetModel.agent_id == agent_id)
             if asset_type:
                 query = query.filter(AssetModel.asset_type == asset_type)
+            if source_improvement_id:
+                query = query.filter(AssetModel.source_improvement_id == source_improvement_id)
             rows = query.order_by(AssetModel.created_at.desc(), AssetModel.asset_id).all()
             return [_record(row) for row in rows]
 

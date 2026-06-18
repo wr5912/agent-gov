@@ -6,10 +6,11 @@ import type { RuntimeClientConfig } from "../types/runtime";
 export type Asset = components["schemas"]["AssetResponse"];
 export type AssetCreateRequest = components["schemas"]["AssetCreateRequest"];
 
-export function listAssets(config: RuntimeClientConfig, agentId?: string, assetType?: string) {
+export function listAssets(config: RuntimeClientConfig, opts: { agentId?: string; assetType?: string; sourceImprovementId?: string } = {}) {
   const params = new URLSearchParams();
-  if (agentId) params.set("agent_id", agentId);
-  if (assetType) params.set("asset_type", assetType);
+  if (opts.agentId) params.set("agent_id", opts.agentId);
+  if (opts.assetType) params.set("asset_type", opts.assetType);
+  if (opts.sourceImprovementId) params.set("source_improvement_id", opts.sourceImprovementId);
   const query = params.toString();
   return requestJson<Asset[]>(config, `/api/assets${query ? `?${query}` : ""}`);
 }

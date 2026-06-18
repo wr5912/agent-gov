@@ -31,8 +31,9 @@ def create_assets_router(*, asset_store: AssetStore, require_api_key: Callable) 
     async def list_assets(
         agent_id: str | None = Query(default=None, description="按业务 Agent 过滤。"),
         asset_type: str | None = Query(default=None, description="按资产类型过滤。"),
+        source_improvement_id: str | None = Query(default=None, description="按沉淀来源改进事项过滤（§11.2 本事项沉淀资产）。"),
     ) -> list[AssetResponse]:
-        return [_response(record) for record in asset_store.list_assets(agent_id=agent_id, asset_type=asset_type)]
+        return [_response(record) for record in asset_store.list_assets(agent_id=agent_id, asset_type=asset_type, source_improvement_id=source_improvement_id)]
 
     @router.post("/assets", response_model=AssetResponse, status_code=201, summary="Create a governance asset")
     async def create_asset(req: AssetCreateRequest) -> AssetResponse:

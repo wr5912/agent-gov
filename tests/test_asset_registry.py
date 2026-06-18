@@ -49,3 +49,14 @@ def test_inherit_compounds_to_target_agent(tmp_path: Path) -> None:
         store.inherit_asset(src.asset_id, target_agent_id="soc")
     with pytest.raises(NotFoundError):
         store.inherit_asset("ast-nope", target_agent_id="shop")
+
+
+def test_list_by_source_improvement_id(tmp_path: Path) -> None:
+    """v2.7 §11.2：按沉淀来源改进事项过滤资产。"""
+    store = _store(tmp_path)
+    store.create_asset(agent_id="soc", asset_type="regression", title="回归A", source_improvement_id="imp-1")
+    store.create_asset(agent_id="soc", asset_type="methodology", title="方法B", source_improvement_id="imp-1")
+    store.create_asset(agent_id="soc", asset_type="regression", title="回归C", source_improvement_id="imp-2")
+    only1 = store.list_assets(source_improvement_id="imp-1")
+    assert {a.title for a in only1} == {"回归A", "方法B"}
+    assert [a.title for a in store.list_assets(source_improvement_id="imp-2")] == ["回归C"]

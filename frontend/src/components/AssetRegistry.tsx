@@ -31,7 +31,7 @@ export function AssetRegistry({
   const refresh = useCallback(async () => {
     setError(undefined);
     try {
-      setAssets(await listAssets(clientConfig, scopeAgentId || undefined));
+      setAssets(await listAssets(clientConfig, { agentId: scopeAgentId || undefined }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }

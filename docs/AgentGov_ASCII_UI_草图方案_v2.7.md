@@ -4,6 +4,8 @@
 > 主题：跨代重建 —— 多业务 Agent 舰队治理 · 统一领域实体 ImprovementItem · 可信治理工作台主题 · AI / Playwright 友好
 > 核心原则：**把复杂留在系统内，把简单留给用户；治理对象、统一术语、能力边界先建模，再写界面与代码。**
 > 交付前提：**基于 master 最新代码、在独立新分支上做跨代重建**——新分支不背负对外兼容义务，事项层直接建为统一领域实体，不保留旧名 / 兼容层 / 双写双读。
+> 文档层级：下一大版本 v2.7 规划设计。
+> 术语口径：本文 §0.6 是 v2.7 UI、API、DTO、ContextPackage 和 Playwright 选择器的权威术语来源；当前实现基线旧名与 v2.7 术语的映射见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
 
 ---
 
@@ -52,7 +54,7 @@
 | 统一术语表 + 主题 token 落地 | ✅ W1 | — | 前后端同名同义、状态色单一来源 |
 | `ImprovementItem` 事项级领域实体（持久化 + 状态机 + Agent scoping + `/api/improvements`） | ✅ W1 | — | 真实新实体，非投影 |
 | 治理工作台前端外壳（导航 / 改进 surface / 每态一主动作 / data-testid / 获取上下文） | ✅ W1 | — | 消费 `/api/improvements` |
-| ImprovementItem ↔ 闭环引擎深度对接 | — | W2 | 本期以 source_feedback_refs 轻引用占位 |
+| ImprovementItem ↔ 闭环引擎深度对接 | — | W2 | 本期以 source_feedback_refs 轻引用入口承接 |
 | 自动化策略编排（免点按钮自动推进） | — | W2 | 本期默认用户触发；UI 不画成全自动 |
 | 相似度自动归并 / 拆分 / 重归因 | — | W2 | 本期手动关联；纠错按钮禁用并提示 |
 | 资产 Registry 复利中心 | — | W3 预留 | 本期仅只读出口位 |

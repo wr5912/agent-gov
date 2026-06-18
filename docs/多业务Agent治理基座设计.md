@@ -2,6 +2,10 @@
 
 本文档为 AgentGov 从「单一 main agent + 5 个固定治理 Agent」演进到「多业务 Agent 治理」给出最小可落地基座设计，作为 AGV-004、AGV-024、AGV-028 等 `gap` 与 Phase 2 `future` 用例的共同前置。它是架构方案，不是完成承诺；落地按目标达成分阶段执行计划的迭代闭环逐步推进。
 
+> 文档层级：当前实现基线（pre-v2.7）到多业务 Agent 能力的过渡架构方案。
+> 术语口径：本文中的 `main-agent` 表示当前内置业务 Agent 样板，业务 Agent、治理 Agent、agent_id、资产 Registry 等长期术语与 v2.7 术语边界见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
+> 归档边界：本文仍解释多业务 Agent 基座的已落地与未落地边界，暂不移动。
+
 ## 治理对象预检
 
 | 维度 | 结论 |

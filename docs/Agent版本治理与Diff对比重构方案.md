@@ -1,5 +1,9 @@
 # Agent 版本治理与 Diff 对比重构方案
 
+> 文档层级：当前实现基线（pre-v2.7）上的版本治理重构方案。
+> 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；v2.7 面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
+> 归档边界：本文仍解释当前版本治理迁移和落地状态，暂不移动。
+
 ## 0. 评审采纳状态
 
 本文为 2026-06-03 两份评审报告后的修订版，评审对象包括：

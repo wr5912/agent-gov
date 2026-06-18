@@ -103,3 +103,38 @@ class AttributionModel(Base):
     status: Mapped[str] = mapped_column(String(32), default="draft")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+
+
+class OptimizationPlanModel(Base):
+    """优化方案 OptimizationPlan（v2.7 §6→optimization P3，草图 §106）：方案正文 + 变更项 + 确认状态。
+
+    与改进事项 1:1。变更项 changes_json：[{target, change}]。status：draft / confirmed。独立新表。
+    """
+
+    __tablename__ = "optimization_plans"
+
+    optimization_plan_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    changes_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+
+
+class ExecutionRecordModel(Base):
+    """执行记录 ExecutionRecord（v2.7 execution P3，草图 §107）：执行结果 + 已应用变更 + Agent 版本 + 状态。
+
+    与改进事项 1:1。status：draft / confirmed（确认=已应用/已生成版本）。独立新表。
+    """
+
+    __tablename__ = "execution_records"
+
+    execution_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    changes_applied_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+    agent_version: Mapped[str] = mapped_column(String(128), default="")
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)

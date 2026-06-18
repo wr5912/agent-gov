@@ -43,6 +43,27 @@ export function confirmAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/confirm`, { method: "POST", headers: jsonHeaders });
 }
 
+export type OptimizationPlan = components["schemas"]["OptimizationPlanResponse"];
+export type ExecutionRecord = components["schemas"]["ExecutionResponse"];
+export function getOptimizationPlan(config: RuntimeClientConfig, id: string) {
+  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan`);
+}
+export function upsertOptimizationPlan(config: RuntimeClientConfig, id: string, body: components["schemas"]["OptimizationPlanUpsertRequest"]) {
+  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
+}
+export function confirmOptimizationPlan(config: RuntimeClientConfig, id: string) {
+  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/confirm`, { method: "POST", headers: jsonHeaders });
+}
+export function getExecution(config: RuntimeClientConfig, id: string) {
+  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`);
+}
+export function upsertExecution(config: RuntimeClientConfig, id: string, body: components["schemas"]["ExecutionUpsertRequest"]) {
+  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
+}
+export function confirmExecution(config: RuntimeClientConfig, id: string) {
+  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/confirm`, { method: "POST", headers: jsonHeaders });
+}
+
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
   return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);
 }

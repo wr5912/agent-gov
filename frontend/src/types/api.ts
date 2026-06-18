@@ -1388,6 +1388,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/execution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get execution record (404 if none) */
+        get: operations["get_exec_api_improvements__improvement_id__execution_get"];
+        /** Upsert execution record (result + applied changes + version, §107) */
+        put: operations["upsert_exec_api_improvements__improvement_id__execution_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/execution/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm execution record */
+        post: operations["confirm_exec_api_improvements__improvement_id__execution_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/feedbacks": {
         parameters: {
             query?: never;
@@ -1487,6 +1522,41 @@ export interface paths {
         put?: never;
         /** Confirm system understanding */
         post: operations["confirm_nf_api_improvements__improvement_id__normalized_feedback_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/optimization-plan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get optimization plan (404 if none) */
+        get: operations["get_opt_api_improvements__improvement_id__optimization_plan_get"];
+        /** Upsert optimization plan (text + changes, §106) */
+        put: operations["upsert_opt_api_improvements__improvement_id__optimization_plan_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/optimization-plan/confirm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Confirm optimization plan */
+        post: operations["confirm_opt_api_improvements__improvement_id__optimization_plan_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3520,6 +3590,44 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** ExecutionResponse */
+        ExecutionResponse: {
+            /** Agent Version */
+            agent_version: string;
+            /** Changes Applied */
+            changes_applied: string[];
+            /** Created At */
+            created_at: string;
+            /** Execution Id */
+            execution_id: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** ExecutionUpsertRequest */
+        ExecutionUpsertRequest: {
+            /**
+             * Agent Version
+             * @description 生成的 Agent 版本标识。
+             * @default
+             */
+            agent_version: string;
+            /**
+             * Changes Applied
+             * @description 已应用变更要点。
+             */
+            changes_applied?: string[];
+            /**
+             * Summary
+             * @description 执行结果说明。
+             */
+            summary: string;
+        };
         /** ExternalGovernanceItemResponse */
         ExternalGovernanceItemResponse: {
             /** Acceptance Criteria */
@@ -5078,6 +5186,19 @@ export interface components {
             /** Role */
             role: string;
         };
+        /** OptimizationChange */
+        OptimizationChange: {
+            /**
+             * Change
+             * @description 变更描述。
+             */
+            change: string;
+            /**
+             * Target
+             * @description 变更对象（prompt/skill/profile/config 等）。
+             */
+            target: string;
+        };
         /** OptimizationExecutionApplyRequest */
         OptimizationExecutionApplyRequest: {
             /**
@@ -5263,6 +5384,36 @@ export interface components {
             unchanged: number;
         } & {
             [key: string]: unknown;
+        };
+        /** OptimizationPlanResponse */
+        OptimizationPlanResponse: {
+            /** Changes */
+            changes: components["schemas"]["OptimizationChange"][];
+            /** Created At */
+            created_at: string;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Optimization Plan Id */
+            optimization_plan_id: string;
+            /** Status */
+            status: string;
+            /** Summary */
+            summary: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** OptimizationPlanUpsertRequest */
+        OptimizationPlanUpsertRequest: {
+            /**
+             * Changes
+             * @description 变更项列表。
+             */
+            changes?: components["schemas"]["OptimizationChange"][];
+            /**
+             * Summary
+             * @description 方案正文。
+             */
+            summary: string;
         };
         /** OptimizationTaskMarkAppliedRequest */
         OptimizationTaskMarkAppliedRequest: {
@@ -9082,6 +9233,103 @@ export interface operations {
             };
         };
     };
+    get_exec_api_improvements__improvement_id__execution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_exec_api_improvements__improvement_id__execution_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExecutionUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_exec_api_improvements__improvement_id__execution_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExecutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_feedbacks_api_improvements__improvement_id__feedbacks_get: {
         parameters: {
             query?: never;
@@ -9368,6 +9616,103 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["NormalizedFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_opt_api_improvements__improvement_id__optimization_plan_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizationPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_opt_api_improvements__improvement_id__optimization_plan_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OptimizationPlanUpsertRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizationPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    confirm_opt_api_improvements__improvement_id__optimization_plan_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizationPlanResponse"];
                 };
             };
             /** @description Validation Error */

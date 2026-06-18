@@ -6,7 +6,13 @@ from uuid import uuid4
 from sqlalchemy.orm import sessionmaker
 
 from ..errors import BusinessRuleViolation
-from ..improvement_db import AttributionModel, ImprovementFeedbackModel, NormalizedFeedbackModel
+from ..improvement_db import (
+    AttributionModel,
+    ExecutionRecordModel,
+    ImprovementFeedbackModel,
+    NormalizedFeedbackModel,
+    OptimizationPlanModel,
+)
 from ..runtime_db import utc_now
 
 CONTENT_STATUS = {"draft", "confirmed"}
@@ -54,8 +60,31 @@ class ImprovementFeedbackRecord:
     created_at: str
 
 
+@dataclass(frozen=True)
+class OptimizationPlanRecord:
+    optimization_plan_id: str
+    improvement_id: str
+    summary: str
+    changes: list[dict]
+    status: str
+    created_at: str
+    updated_at: str = ""
+
+
+@dataclass(frozen=True)
+class ExecutionRecord:
+    execution_id: str
+    improvement_id: str
+    summary: str
+    changes_applied: list[str]
+    agent_version: str
+    status: str
+    created_at: str
+    updated_at: str = ""
+
+
 class ImprovementContentStore:
-    """改进事项内容子资源（v2.7 P3）：系统理解 NormalizedFeedback + 归因 Attribution（1:1）+ 来源反馈 Feedback（1:多）。"""
+    """改进事项内容子资源（v2.7 P3）：系统理解 NormalizedFeedback + 归因 Attribution + 优化方案 OptimizationPlan + 执行记录 ExecutionRecord（均与事项 1:1）+ 来源反馈 Feedback（1:多）。"""
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
@@ -180,6 +209,94 @@ class ImprovementContentStore:
             row.status = status
             row.updated_at = utc_now()
             return _attr_record(row)
+
+    # ---- OptimizationPlan（优化方案，§106）----
+    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None) -> OptimizationPlanRecord:
+        now = utc_now()
+        with self._session_factory.begin() as db:
+            row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                row = OptimizationPlanModel(optimization_plan_id=f"opt-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
+                db.add(row)
+            row.summary = summary
+            row.changes_json = list(changes or [])
+            row.status = "draft"
+            row.updated_at = now
+            db.flush()
+            return _opt_record(row)
+
+    def get_optimization_plan(self, improvement_id: str) -> OptimizationPlanRecord | None:
+        with self._session_factory.begin() as db:
+            row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
+            return _opt_record(row) if row is not None else None
+
+    def set_optimization_plan_status(self, improvement_id: str, *, status: str) -> OptimizationPlanRecord:
+        if status not in CONTENT_STATUS:
+            raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
+        with self._session_factory.begin() as db:
+            row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                raise BusinessRuleViolation(f"No optimization plan for improvement: {improvement_id}")
+            row.status = status
+            row.updated_at = utc_now()
+            return _opt_record(row)
+
+    # ---- ExecutionRecord（执行记录，§107）----
+    def upsert_execution(self, improvement_id: str, *, summary: str, changes_applied: list[str] | None = None, agent_version: str = "") -> ExecutionRecord:
+        now = utc_now()
+        with self._session_factory.begin() as db:
+            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                row = ExecutionRecordModel(execution_id=f"exec-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
+                db.add(row)
+            row.summary = summary
+            row.changes_applied_json = list(changes_applied or [])
+            row.agent_version = agent_version
+            row.status = "draft"
+            row.updated_at = now
+            db.flush()
+            return _exec_record(row)
+
+    def get_execution(self, improvement_id: str) -> ExecutionRecord | None:
+        with self._session_factory.begin() as db:
+            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
+            return _exec_record(row) if row is not None else None
+
+    def set_execution_status(self, improvement_id: str, *, status: str) -> ExecutionRecord:
+        if status not in CONTENT_STATUS:
+            raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
+        with self._session_factory.begin() as db:
+            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                raise BusinessRuleViolation(f"No execution record for improvement: {improvement_id}")
+            row.status = status
+            row.updated_at = utc_now()
+            return _exec_record(row)
+
+
+def _opt_record(row: OptimizationPlanModel) -> OptimizationPlanRecord:
+    return OptimizationPlanRecord(
+        optimization_plan_id=row.optimization_plan_id,
+        improvement_id=row.improvement_id,
+        summary=row.summary or "",
+        changes=list(row.changes_json or []),
+        status=row.status or "draft",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _exec_record(row: ExecutionRecordModel) -> ExecutionRecord:
+    return ExecutionRecord(
+        execution_id=row.execution_id,
+        improvement_id=row.improvement_id,
+        summary=row.summary or "",
+        changes_applied=list(row.changes_applied_json or []),
+        agent_version=row.agent_version or "",
+        status=row.status or "draft",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def _nf_record(row: NormalizedFeedbackModel) -> NormalizedFeedbackRecord:

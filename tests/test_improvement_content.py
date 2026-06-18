@@ -70,3 +70,22 @@ def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
         assert {r["summary"] for r in rows} == {"这是误报", "MCP 数据像模拟"}
         assert {r["source"] for r in rows} == {"playground_run", "trace"}
         assert client.post("/api/improvements/imp-none/feedbacks", json={"summary": "x"}).status_code == 404
+
+
+def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
+    """v2.7 §106/§107：优化方案 + 执行记录 1:1 子资源，upsert→get→confirm，未知事项/无内容 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
+        # 优化方案
+        op = client.put(f"/api/improvements/{iid}/optimization-plan", json={"summary": "收紧时间一致性校验", "changes": [{"target": "prompt", "change": "新增时间校验指令"}]})
+        assert op.status_code == 200 and op.json()["changes"][0]["target"] == "prompt" and op.json()["status"] == "draft"
+        assert client.post(f"/api/improvements/{iid}/optimization-plan/confirm").json()["status"] == "confirmed"
+        # 执行记录
+        ex = client.put(f"/api/improvements/{iid}/execution", json={"summary": "已应用并生成版本", "changes_applied": ["prompt 更新"], "agent_version": "v1.2.0"})
+        assert ex.status_code == 200 and ex.json()["agent_version"] == "v1.2.0"
+        assert client.post(f"/api/improvements/{iid}/execution/confirm").json()["status"] == "confirmed"
+        # 未知事项 / 无内容 404
+        assert client.put("/api/improvements/imp-none/optimization-plan", json={"summary": "x"}).status_code == 404
+        other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空"}).json()["improvement_id"]
+        assert client.get(f"/api/improvements/{other}/execution").status_code == 404

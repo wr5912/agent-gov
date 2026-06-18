@@ -265,8 +265,8 @@ async function main() {
         return item ? json(route, item) : json(route, { detail: "not found" }, 404);
       }
 
-      // P3 内容子资源：无内容时 404（系统理解/归因），列表空（来源反馈/资产），与真实后端一致。
-      if (/^\/api\/improvements\/[^/]+\/(normalized-feedback|attribution)$/.test(path) && method === "GET") {
+      // P3 内容子资源：无内容时 404（系统理解/归因/优化方案/执行记录），列表空（来源反馈/资产），与真实后端一致。
+      if (/^\/api\/improvements\/[^/]+\/(normalized-feedback|attribution|optimization-plan|execution)$/.test(path) && method === "GET") {
         return json(route, { detail: "not found" }, 404);
       }
       if (/^\/api\/improvements\/[^/]+\/feedbacks$/.test(path) && method === "GET") return json(route, []);

@@ -6,9 +6,17 @@ import {
   upsertAttribution,
   confirmAttribution,
   listImprovementFeedbacks,
+  getOptimizationPlan,
+  upsertOptimizationPlan,
+  confirmOptimizationPlan,
+  getExecution,
+  upsertExecution,
+  confirmExecution,
   type NormalizedFeedback,
   type Attribution,
   type ImprovementFeedback,
+  type OptimizationPlan,
+  type ExecutionRecord,
   archiveImprovement,
   autoAdvanceImprovement,
   createImprovement,
@@ -29,6 +37,9 @@ import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
 import { buildContext, CONTEXT_TYPE_LABEL, type ContextType } from "../contextPackage";
 import { listAssets, createAsset, type Asset } from "../api/assets";
+import { STATUS_CATEGORIES, deriveCategory, SOURCE_LABEL, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
+import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
+import { ImprovementSystemUnderstanding } from "./ImprovementSystemUnderstanding";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -36,49 +47,6 @@ import "../improvement-workbench.css";
 type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
 
 const CONTEXT_TYPES: ContextType[] = ["problem", "ai", "playwright", "json"];
-
-// §5 改进列表状态过滤分类（由 stage/status 派生）。
-const STATUS_CATEGORIES: { label: string; key: string }[] = [
-  { label: "待确认", key: "pending-confirm" },
-  { label: "处理中", key: "in-progress" },
-  { label: "待回归", key: "pending-regression" },
-  { label: "已完成", key: "done" },
-];
-function deriveCategory(item: ImprovementItem): string {
-  if (item.improvement_status === "archived") return "已归档";
-  if (item.improvement_status === "done" || item.improvement_stage === "release") return "已完成";
-  if (item.improvement_stage === "regression") return "待回归";
-  if (item.improvement_stage === "attribution" || item.improvement_stage === "optimization") return "待确认";
-  return "处理中";
-}
-
-const SOURCE_LABEL: Record<string, string> = {
-  playground_run: "Playground Run",
-  feedback_inbox: "Feedback Inbox",
-  trace: "Trace 反馈",
-};
-
-const LINK_KIND_LABEL: Record<string, string> = {
-  attribution: "归因",
-  optimization_plan: "优化方案",
-  eval_run: "评估",
-  change_set: "变更集",
-  batch: "批次",
-};
-
-const STOP_REASON_LABEL: Record<string, string> = {
-  policy_off: "策略为关闭，未自动推进",
-  gate_confirmation: "已停在关键判断点，待人工确认",
-  release_gate: "已停在发布门禁，待人工发布",
-  archived: "已归档，未推进",
-  terminal: "已到终态",
-};
-
-function autoAdvanceNote(result: AutoAdvanceResult): string {
-  const applied = (result.applied_stages ?? []).map(stageLabel).join(" → ");
-  const reason = STOP_REASON_LABEL[result.stopped_reason] ?? result.stopped_reason;
-  return applied ? `自动推进：${applied} ｜ ${reason}` : `自动推进：${reason}`;
-}
 
 export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }: { clientConfig: RuntimeClientConfig; scopeAgentId: string; langfuseUrl: string }) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
@@ -99,6 +67,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [normalizedFeedback, setNormalizedFeedback] = useState<NormalizedFeedback | null>(null);
   const [attribution, setAttribution] = useState<Attribution | null>(null);
   const [feedbacks, setFeedbacks] = useState<ImprovementFeedback[]>([]);
+  const [optPlan, setOptPlan] = useState<OptimizationPlan | null>(null);
+  const [execution, setExecution] = useState<ExecutionRecord | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
   const [regressionDismissed, setRegressionDismissed] = useState(false);
   const [editingAttribution, setEditingAttribution] = useState(false);
@@ -143,6 +113,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setAttribution(null);
       setSedimentAssets([]);
       setFeedbacks([]);
+      setOptPlan(null);
+      setExecution(null);
       return;
     }
     let cancelled = false;
@@ -162,6 +134,12 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void listImprovementFeedbacks(clientConfig, itemId)
       .then((f) => { if (!cancelled) setFeedbacks(f); })
       .catch(() => { if (!cancelled) setFeedbacks([]); });
+    void getOptimizationPlan(clientConfig, itemId)
+      .then((p) => { if (!cancelled) setOptPlan(p); })
+      .catch(() => { if (!cancelled) setOptPlan(null); });
+    void getExecution(clientConfig, itemId)
+      .then((e) => { if (!cancelled) setExecution(e); })
+      .catch(() => { if (!cancelled) setExecution(null); });
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
@@ -281,6 +259,37 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setAttribution(a);
       setEditingAttribution(false);
     });
+  };
+
+  // §106 优化方案：从归因/系统理解确定性推导一版方案（真智能方案为后续 governor 引擎）。
+  const handleGenerateOptPlan = (item: ImprovementItem) => {
+    void run(async () => {
+      const summary = `针对「${item.title}」：${attribution?.summary || normalizedFeedback?.suggestion || "收紧 Agent 处理逻辑，补充校验/提示"}。`;
+      const p = await upsertOptimizationPlan(clientConfig, item.improvement_id, {
+        summary,
+        changes: [{ target: "prompt", change: "补充对应校验与提示指令，避免重演该问题" }],
+      });
+      setOptPlan(p);
+    });
+  };
+  const handleConfirmOptPlan = (item: ImprovementItem) => {
+    void run(async () => { setOptPlan(await confirmOptimizationPlan(clientConfig, item.improvement_id)); });
+  };
+
+  // §107 执行记录：从已确认方案确定性生成执行结果（应用变更 + 版本占位）。
+  const handleRecordExecution = (item: ImprovementItem) => {
+    void run(async () => {
+      const changes = (optPlan?.changes || []).map((c) => `${c.target}：${c.change}`);
+      const e = await upsertExecution(clientConfig, item.improvement_id, {
+        summary: "已按优化方案应用变更并生成新版本（初步记录，待执行引擎对接）。",
+        changes_applied: changes.length ? changes : ["按方案应用变更"],
+        agent_version: "",
+      });
+      setExecution(e);
+    });
+  };
+  const handleConfirmExecution = (item: ImprovementItem) => {
+    void run(async () => { setExecution(await confirmExecution(clientConfig, item.improvement_id)); });
   };
 
   const handleAdoptRegression = (item: ImprovementItem) => {
@@ -468,24 +477,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               {lastAuto ? <div className="iw-next-step" data-testid="full-chain-automation">自动化详情：{autoAdvanceNote(lastAuto)}</div> : null}
             </details>
 
-            {normalizedFeedback ? (
-              <div className="iw-detail-section" data-testid="normalized-feedback">
-                <h4>系统理解{normalizedFeedback.status === "confirmed" ? "（已确认）" : "（初步）"}</h4>
-                <ul className="iw-content-list">
-                  <li>问题：{normalizedFeedback.problem}</li>
-                  {normalizedFeedback.possible_reason ? <li>原因：{normalizedFeedback.possible_reason}</li> : null}
-                  {normalizedFeedback.possible_object ? <li>可能对象：{normalizedFeedback.possible_object}</li> : null}
-                  {normalizedFeedback.impact ? <li>影响：{normalizedFeedback.impact}</li> : null}
-                  {normalizedFeedback.suggestion ? <li>建议：{normalizedFeedback.suggestion}</li> : null}
-                </ul>
-                {normalizedFeedback.user_quote ? <div className="iw-content-quote">用户原话：“{normalizedFeedback.user_quote}”</div> : null}
-              </div>
-            ) : selected.summary ? (
-              <div className="iw-detail-section">
-                <h4>系统理解</h4>
-                <div className="iw-detail-summary">{selected.summary}</div>
-              </div>
-            ) : null}
+            <ImprovementSystemUnderstanding nf={normalizedFeedback} fallbackSummary={selected.summary} />
 
             {attribution ? (
               <div className="iw-detail-section" data-testid="attribution">
@@ -534,6 +526,18 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={() => handleGenerateAttribution(selected)} style={{ marginTop: 8 }}>生成归因（初步）</button>
               </div>
             ) : null}
+
+            <ImprovementPlanExecution
+              item={selected}
+              busy={busy}
+              optPlan={optPlan}
+              execution={execution}
+              attribution={attribution}
+              onGenerateOpt={() => handleGenerateOptPlan(selected)}
+              onConfirmOpt={() => handleConfirmOptPlan(selected)}
+              onRecordExec={() => handleRecordExecution(selected)}
+              onConfirmExec={() => handleConfirmExecution(selected)}
+            />
 
             {selected.improvement_status !== "archived" && !regressionDismissed && !sedimentAssets.some((a) => a.asset_type === "regression") ? (
               <div className="iw-detail-section" data-testid="regression-guarantee">

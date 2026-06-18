@@ -67,3 +67,40 @@ class AttributionResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+
+
+class OptimizationChange(BaseModel):
+    target: str = Field(description="变更对象（prompt/skill/profile/config 等）。")
+    change: str = Field(description="变更描述。")
+
+
+class OptimizationPlanUpsertRequest(BaseModel):
+    summary: str = Field(description="方案正文。")
+    changes: list[OptimizationChange] = Field(default_factory=list, description="变更项列表。")
+
+
+class OptimizationPlanResponse(BaseModel):
+    optimization_plan_id: str
+    improvement_id: str
+    summary: str
+    changes: list[OptimizationChange]
+    status: str
+    created_at: str
+    updated_at: str
+
+
+class ExecutionUpsertRequest(BaseModel):
+    summary: str = Field(description="执行结果说明。")
+    changes_applied: list[str] = Field(default_factory=list, description="已应用变更要点。")
+    agent_version: str = Field(default="", description="生成的 Agent 版本标识。")
+
+
+class ExecutionResponse(BaseModel):
+    execution_id: str
+    improvement_id: str
+    summary: str
+    changes_applied: list[str]
+    agent_version: str
+    status: str
+    created_at: str
+    updated_at: str

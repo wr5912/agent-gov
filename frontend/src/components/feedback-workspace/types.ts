@@ -30,4 +30,5 @@ export interface ExternalFeedbackWorkspaceProps {
   onRefreshVersions?: () => void | Promise<void>;
   refreshToken?: number;
   onFeedbackChanged?: () => void;
+  onOpenImprovement?: () => void;
 }

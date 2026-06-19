@@ -49,6 +49,20 @@ function defaultPayload(path) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/api/agent-registry") return AGENTS;
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];
+  if (
+    path === "/api/agent-runs"
+    || path === "/api/feedback-sources"
+    || path === "/api/feedback-signals"
+    || path === "/api/soc-events"
+    || path === "/api/pending-correlations"
+    || path === "/api/feedback-cases"
+    || path === "/api/optimization-tasks"
+    || path === "/api/external-governance-items"
+    || path === "/api/external-governance-webhooks"
+    || path === "/api/eval-cases"
+    || path === "/api/eval-runs"
+    || path === "/api/feedback-optimization-batches"
+  ) return [];
   if (path === "/api/agent-change-sets") return [{
     change_set_id: "agc-demo",
     agent_id: "soc-ops",
@@ -105,7 +119,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,feedback-drawer-2phase,context-4types,release-gates,theme-governance-light,improvement-content,improvement-assets,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,message-actions,trace-drawer,drawer-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -163,7 +177,7 @@ async function seedRealAuditData() {
     agent_id: agentId,
     title: `${stamp} sec-ops-data 时间窗口误判重复反馈`,
     summary: "sec-ops-data 返回事件时间窗口和告警时间不一致，需要归并到同一改进事项。",
-    source_feedback_refs: [`${stamp}-fb-3`],
+    source_feedback_refs: [`${stamp}-fb-2`, `${stamp}-fb-3`],
     auto_merge: false,
   });
   await postJson(`/api/improvements/${target.improvement_id}/feedbacks`, {
@@ -226,7 +240,11 @@ async function seedRealAuditData() {
     body: "先比对告警时间、事件时间、查询窗口和数据源时间戳，再下结论。",
     source_improvement_id: target.improvement_id,
   });
-  await postJson(`/api/improvements/${target.improvement_id}/links`, { kind: "change_set", ref_id: `${stamp}-change-set` }).catch(() => null);
+  const changeSet = await postJson("/api/agent-change-sets", {
+    title: `${stamp} 告警误报治理候选变更`,
+    note: "v2.7 真实容器 UI 设计一致性验收种子：仅用于发布门禁结构检查，不执行强制发布。",
+  }).catch(() => null);
+  await postJson(`/api/improvements/${target.improvement_id}/links`, { kind: "change_set", ref_id: changeSet?.change_set_id || `${stamp}-change-set` }).catch(() => null);
   return { improvement_id: target.improvement_id, agent_id: agentId, stamp };
 }
 
@@ -258,12 +276,18 @@ const RULES = [
   { id: "settings-ia", phase: "P0", desc: "Settings 含 业务Agent管理/自动化策略/资产Registry/Developer 区块", async fn(page) {
     await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
     await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
-    const secs = ["settings-section-agents", "settings-section-automation", "settings-section-assets", "settings-section-developer"];
-    const found = []; for (const s of secs) if (await has(page, s)) found.push(s);
+    const tabs = ["agents", "automation", "assets", "developer"];
+    const found = [];
+    for (const tab of tabs) {
+      await page.getByTestId(`settings-tab-${tab}`).click();
+      const section = tab === "agents" ? "settings-section-agents" : tab === "assets" ? "settings-section-assets" : `settings-section-${tab}`;
+      if (await has(page, section)) found.push(section);
+    }
+    const tabsVisible = await has(page, "settings-tabs");
     // 关闭设置弹窗，避免 modal-backdrop 拦截后续规则的点击。
     await page.getByTestId("settings-panel").getByRole("button", { name: "关闭" }).click().catch(() => {});
     await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    return { ok: found.length === secs.length, detail: `${found.length}/${secs.length}: ${found.join(",")}` };
+    return { ok: tabsVisible && found.length === tabs.length, detail: `${found.length}/${tabs.length}: ${found.join(",")} tabs=${tabsVisible}` };
   } },
   { id: "playground-clean", phase: "P1", desc: "Playground 主区无旧 Subagent/Sessions/Skills 侧栏、无 Inspector、无常显 control-strip", async fn(page) {
     await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);
@@ -283,12 +307,52 @@ const RULES = [
     const ctx = await has(page, "message-action-get-context");
     return { ok: create && trace && ctx, detail: `create=${create} trace=${trace} get-context=${ctx}` };
   } },
+  { id: "trace-drawer", phase: "P0", desc: "查看 Trace 打开右侧 Trace 抽屉，旧中心 detail modal 不再出现", async fn(page) {
+    await page.getByTestId("nav-playground").click();
+    if (!(await has(page, "message-action-view-trace"))) return { ok: false, detail: "无 Trace 入口" };
+    await page.getByTestId("message-action-view-trace").first().click();
+    await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
+    const drawer = await visible(page, "trace-drawer");
+    const legacy = await page.locator(".detail-modal-card").isVisible().catch(() => false);
+    const size = await page.getByTestId("trace-drawer").getAttribute("data-size");
+    const langfuse = await has(page, "trace-open-langfuse");
+    await page.getByTestId("trace-drawer").getByLabel("关闭").click();
+    await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    return { ok: drawer && !legacy && (size === "medium" || size === "wide") && langfuse, detail: `drawer=${drawer} legacyModal=${legacy} size=${size} langfuse=${langfuse}` };
+  } },
+  { id: "drawer-size-policy", phase: "P0", desc: "抽屉宽度按 narrow/medium/wide 分档且打开后稳定", async fn(page) {
+    await page.getByTestId("nav-playground").click();
+    await page.getByTestId("message-action-view-trace").first().click();
+    await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
+    const traceSize = await page.getByTestId("trace-drawer").getAttribute("data-size");
+    const traceWidth = (await page.getByTestId("trace-drawer").boundingBox())?.width || 0;
+    await page.getByTestId("trace-drawer").getByLabel("关闭").click();
+    await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("message-action-create-feedback").first().click();
+    await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
+    const feedbackSize = await page.getByTestId("feedback-drawer").getAttribute("data-size");
+    const feedbackWidth = (await page.getByTestId("feedback-drawer").boundingBox())?.width || 0;
+    await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
+    await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("playground-config-trigger").click();
+    await page.getByTestId("playground-config-drawer").waitFor({ timeout: 8000 });
+    const configSize = await page.getByTestId("playground-config-drawer").getAttribute("data-size");
+    const configWidth = (await page.getByTestId("playground-config-drawer").boundingBox())?.width || 0;
+    await page.getByTestId("playground-config-drawer").getByLabel("关闭").click();
+    await page.getByTestId("playground-config-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    const ok = (traceSize === "medium" || traceSize === "wide") && traceWidth >= 650 && feedbackSize === "narrow" && feedbackWidth >= 430 && configSize === "wide" && configWidth >= 860;
+    return { ok, detail: `trace=${traceSize}/${Math.round(traceWidth)} feedback=${feedbackSize}/${Math.round(feedbackWidth)} config=${configSize}/${Math.round(configWidth)}` };
+  } },
   { id: "feedback-drawer-2phase", phase: "P1", desc: "创建反馈 Drawer 两阶段：输入态 → 系统理解确认态", async fn(page) {
     await page.getByTestId("nav-playground").click();
     if (!(await has(page, "feedback-drawer-open"))) return { ok: false, detail: "无 feedback-drawer-open 入口" };
     await page.getByTestId("feedback-drawer-open").first().click();
     const open = await visible(page, "feedback-drawer");
     const state = open ? await page.getByTestId("feedback-drawer").getAttribute("data-state") : null;
+    if (open) {
+      await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
+      await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    }
     return { ok: open && state === "input", detail: `drawer 可见=${open} data-state=${state}` };
   } },
   { id: "context-4types", phase: "P2", desc: "获取上下文四类型 + 下载", async fn(page) {
@@ -315,15 +379,46 @@ const RULES = [
     const afound = []; for (const a of actions) if (await has(page, a)) afound.push(a);
     const runEnabled = await page.getByTestId("release-action-run-regression").isEnabled().catch(() => false);
     const forceEnabled = await page.getByTestId("release-action-force").isEnabled().catch(() => false);
-    if (runEnabled) await page.getByTestId("release-action-run-regression").click().catch(() => {});
-    await page.getByText("已运行回归").waitFor({ timeout: 5000 }).catch(() => {});
-    if (forceEnabled) {
+    if (!REAL && runEnabled) await page.getByTestId("release-action-run-regression").click().catch(() => {});
+    if (!REAL) await page.getByText("已运行回归").waitFor({ timeout: 5000 }).catch(() => {});
+    if (!REAL && forceEnabled) {
       await page.getByTestId("release-action-force").click().catch(() => {});
-      await page.getByTestId("release-action-force").click().catch(() => {});
+      await page.getByTestId("release-force-confirm").waitFor({ timeout: 5000 }).catch(() => {});
+      await page.getByTestId("release-force-confirm-submit").click().catch(() => {});
     }
-    await page.getByText("已强制发布").waitFor({ timeout: 5000 }).catch(() => {});
+    if (!REAL) await page.getByText("已强制发布").waitFor({ timeout: 5000 }).catch(() => {});
     const actionResult = await has(page, "release-action-message");
-    return { ok: gfound.length === 3 && afound.length === 3 && runEnabled && forceEnabled && actionResult, detail: `门禁 ${gfound.length}/3，动作 ${afound.length}/3，回归可执行=${runEnabled}，强制可执行=${forceEnabled}，结果=${actionResult}` };
+    const ok = gfound.length === 3 && afound.length === 3 && (REAL || (runEnabled && forceEnabled && actionResult));
+    return { ok, detail: `门禁 ${gfound.length}/3，动作 ${afound.length}/3，回归可执行=${runEnabled}，强制可执行=${forceEnabled}，结果=${actionResult}，执行动作=${!REAL}` };
+  } },
+  { id: "release-gate-workbench", phase: "P1", desc: "发布页是门禁台：候选列表 + 门禁详情 + 可展开 diff 摘要", async fn(page) {
+    await page.getByTestId("nav-release").click();
+    await page.getByTestId("release-workbench").waitFor({ timeout: 8000 });
+    const gateWorkbench = await has(page, "release-gate-workbench");
+    const details = await has(page, "release-changeset-details");
+    const candidates = await page.getByTestId("release-changeset-item").count();
+    await page.getByTestId("release-action-view-changes").click().catch(() => {});
+    let diff = await has(page, "release-diff-summary");
+    if (!diff) {
+      await page.getByTestId("release-action-view-changes").click().catch(() => {});
+      diff = await has(page, "release-diff-summary");
+    }
+    return { ok: gateWorkbench && details && candidates >= 1 && diff, detail: `门禁台=${gateWorkbench} 详情=${details} 候选=${candidates} diff=${diff}` };
+  } },
+  { id: "improvement-default-detail", phase: "P1", desc: "改进列表有数据时默认展示首个详情，不留空白首屏", async fn(page) {
+    await page.getByTestId("nav-improvement").click();
+    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 });
+    await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
+    const detail = await has(page, "improvement-detail");
+    const emptyVisible = await page.locator(".iw-detail-panel .iw-empty").isVisible().catch(() => false);
+    return { ok: detail && !emptyVisible, detail: `detail=${detail} emptyVisible=${emptyVisible}` };
+  } },
+  { id: "closed-loop-spine", phase: "P1", desc: "改进详情始终显示压缩闭环 spine：反馈到资产", async fn(page) {
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
+    await page.getByTestId("closed-loop-spine").waitFor({ timeout: 6000 }).catch(() => {});
+    const spine = await has(page, "closed-loop-spine");
+    const steps = await page.getByTestId("closed-loop-step").count();
+    return { ok: spine && steps === 8, detail: `spine=${spine} steps=${steps}` };
   } },
   { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解(NormalizedFeedback) + 归因(Attribution 正文/责任边界/证据)", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
@@ -400,6 +495,38 @@ const RULES = [
     const sediment = await has(page, "sediment-assets");
     return { ok: (rg && adopt) || sediment, detail: `回归保障候选=${rg} 采纳=${adopt} 沉淀资产=${sediment}` };
   } },
+  { id: "asset-browse-first", phase: "P1", desc: "资产 Registry 默认浏览/追溯优先，创建资产进入抽屉", async fn(page) {
+    await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
+    await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
+    await page.getByTestId("settings-tab-assets").click();
+    await page.getByTestId("settings-open-asset").click();
+    await page.getByTestId("asset-registry").waitFor({ timeout: 8000 });
+    const toolbar = await has(page, "asset-browser-toolbar");
+    const typeFilter = await has(page, "asset-type-filter");
+    const sourceFilter = await has(page, "asset-source-filter");
+    const createButton = await has(page, "asset-create-open");
+    const titleVisibleBefore = await visible(page, "asset-create-title");
+    await page.getByTestId("asset-create-open").click();
+    const drawer = await visible(page, "asset-create-drawer");
+    const drawerSize = await page.getByTestId("asset-create-drawer").getAttribute("data-size").catch(() => "");
+    await page.getByTestId("asset-create-drawer").getByLabel("关闭").click().catch(() => {});
+    return { ok: toolbar && typeFilter && sourceFilter && createButton && !titleVisibleBefore && drawer && drawerSize === "narrow", detail: `toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
+  } },
+  { id: "legacy-diagnostic-downgraded", phase: "P2", desc: "旧反馈优化工作台降级为开发者诊断，并提供返回改进主流程入口", async fn(page) {
+    await page.getByTestId("nav-playground").click().catch(() => {});
+    await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
+    await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
+    await page.getByTestId("settings-tab-developer").click();
+    await page.getByTestId("settings-open-feedback").click();
+    await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("feedback-legacy-banner").waitFor({ timeout: 8000 });
+    const bannerText = await page.getByTestId("feedback-legacy-banner").innerText().catch(() => "");
+    const ret = await has(page, "legacy-return-improvement");
+    if (ret) await page.getByTestId("legacy-return-improvement").click().catch(() => {});
+    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
+    const improvement = await visible(page, "improvement-workbench");
+    return { ok: bannerText.includes("开发者诊断视图") && ret && improvement, detail: `banner=${bannerText.slice(0, 30)} return=${ret} improvement=${improvement}` };
+  } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();
     // 旧暖色：body 用暖色渐变(#fbf7f0/#f4eee5)+ topbar 等用 rgb(255,250,243)；需检查 backgroundImage（渐变在 image 而非 color）。
@@ -422,9 +549,32 @@ async function main() {
     auditTargetId = seeded.improvement_id || auditTargetId;
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
-    await page.addInitScript(([base, key]) => {
+    await page.addInitScript(([base, key, real]) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
-    }, [apiBase, apiKey]);
+      const sessionId = real ? "real-container-parity-session" : "mock-session";
+      const runId = real ? "run-trace-real-container" : "run-trace-mock";
+      const agentVersionId = real ? "v-real-container-parity" : "v-mock";
+      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
+      window.localStorage.setItem("playground-session-messages", JSON.stringify({
+        [sessionId]: [
+          { id: "msg-user", role: "user", content: "请用一句话说明你的治理职责。", createdAt: "2026-06-18T00:00:00Z" },
+          {
+            id: "msg-assistant",
+            role: "assistant",
+            content: "我是 AgentGov 治理测试助手。",
+            createdAt: "2026-06-18T00:00:01Z",
+            runId,
+            sessionId,
+            agentVersionId,
+            events: [
+              { id: "evt-1", event: "message", text: "开始治理分析。", data: { text: "开始治理分析。" }, createdAt: "2026-06-18T00:00:01Z" },
+              { id: "evt-2", event: "tool", data: { type: "tool_use", name: "Read", id: "tool-1", input: { file_path: "CLAUDE.md" } }, createdAt: "2026-06-18T00:00:02Z" },
+              { id: "evt-3", event: "result", data: { run_id: runId, session_id: sessionId, agent_version_id: agentVersionId, agent_activity: { requested_skills: ["project-skill"], allowed_tools: ["Read"], disallowed_tools: [], tool_names: ["Read"], tool_calls: [{ name: "Read", tool_use_id: "tool-1" }], tool_results: [{ name: "Read", tool_use_id: "tool-1", content: "ok" }], skill_calls: [] } }, createdAt: "2026-06-18T00:00:03Z" },
+            ],
+          },
+        ],
+      }));
+    }, [apiBase, apiKey, REAL]);
     if (!REAL) {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
@@ -438,7 +588,9 @@ async function main() {
       await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 20000 });
       for (const rule of RULES) {
         let r;
+        console.error(`RULE_START ${rule.id}`);
         try { r = await rule.fn(page); } catch (e) { r = { ok: false, detail: `EXC: ${e instanceof Error ? e.message : e}` }; }
+        console.error(`RULE_DONE ${rule.id} ${r.ok ? "ok" : "fail"}`);
         results.push({ id: rule.id, phase: rule.phase, ok: !!r.ok, desc: rule.desc, detail: r.detail });
       }
     } finally {

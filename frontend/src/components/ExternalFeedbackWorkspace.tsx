@@ -29,6 +29,7 @@ export function ExternalFeedbackWorkspace({
   onRefreshVersions,
   refreshToken = 0,
   onFeedbackChanged,
+  onOpenImprovement,
 }: ExternalFeedbackWorkspaceProps) {
   const {
     activeMenu,
@@ -102,7 +103,15 @@ export function ExternalFeedbackWorkspace({
 
       <div className="fw-content">
         <div className="fw-legacy-banner" data-testid="feedback-legacy-banner">
-          旧反馈优化工作台（诊断 / Legacy）。主治理闭环请用顶部「改进」；此视图保留旧批次引擎，能力迁移完成后退役。
+          <div>
+            <strong>开发者诊断视图（Legacy）</strong>
+            <span>旧反馈优化批次引擎仅用于排障和迁移核对；主治理闭环请使用「改进」。</span>
+          </div>
+          {onOpenImprovement ? (
+            <button className="fw-small-secondary" type="button" data-testid="legacy-return-improvement" onClick={onOpenImprovement}>
+              返回改进事项主流程
+            </button>
+          ) : null}
         </div>
         {activeMenu !== "versions" ? (
           <header className="fw-topbar fw-unified-topbar">

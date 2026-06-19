@@ -148,8 +148,46 @@ async function main() {
         for (const t of ["message-action-create-feedback", "message-action-view-trace", "message-action-get-context", "message-action-rerun"]) {
           counts[t] = await page.getByTestId(t).count();
         }
-        ok = Object.values(counts).every((c) => c > 0);
-        detail = JSON.stringify(counts);
+        await page.getByTestId("message-action-view-trace").first().click();
+        await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
+        const traceSize = await page.getByTestId("trace-drawer").getAttribute("data-size");
+        const traceBox = await page.getByTestId("trace-drawer").boundingBox();
+        const legacyModalVisible = await page.locator(".detail-modal-card").isVisible().catch(() => false);
+        await page.getByTestId("trace-drawer").getByLabel("关闭").click();
+        await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        await page.getByTestId("message-action-create-feedback").first().click();
+        await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
+        const feedbackSize = await page.getByTestId("feedback-drawer").getAttribute("data-size");
+        const feedbackBox = await page.getByTestId("feedback-drawer").boundingBox();
+        await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
+        await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        await page.getByTestId("playground-config-trigger").click();
+        await page.getByTestId("playground-config-drawer").waitFor({ timeout: 8000 });
+        const configSize = await page.getByTestId("playground-config-drawer").getAttribute("data-size");
+        const configBox = await page.getByTestId("playground-config-drawer").boundingBox();
+        await page.getByTestId("playground-config-drawer").getByLabel("关闭").click();
+        await page.getByTestId("playground-config-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        const drawerChecks = {
+          traceSize,
+          traceWidth: Math.round(traceBox?.width || 0),
+          feedbackSize,
+          feedbackWidth: Math.round(feedbackBox?.width || 0),
+          configSize,
+          configWidth: Math.round(configBox?.width || 0),
+          legacyModalVisible,
+        };
+        ok = Object.values(counts).every((c) => c > 0)
+          && (traceSize === "medium" || traceSize === "wide")
+          && (traceBox?.width || 0) >= 650
+          && feedbackSize === "narrow"
+          && (feedbackBox?.width || 0) >= 430
+          && configSize === "wide"
+          && (configBox?.width || 0) >= 860
+          && !legacyModalVisible;
+        detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: "/tmp/agentgov-v27-ui-after-message-actions.png" });
       } catch (e) {
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;

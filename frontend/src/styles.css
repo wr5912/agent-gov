@@ -598,10 +598,38 @@ button:disabled {
 .modal-head h3 { margin: 0; }
 .modal-head p { margin: 5px 0 0; color: var(--muted); font-size: 13px; line-height: 1.5; }
 /* v2.7 §2 平台设置面板 */
-.settings-panel { width: min(680px, calc(100vw - 36px)); max-height: calc(100vh - 60px); overflow-y: auto; }
+.settings-panel { width: min(720px, calc(100vw - 36px)); max-height: calc(100vh - 60px); overflow-y: auto; }
+.settings-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 8px 0 12px;
+  border-bottom: 1px solid var(--line);
+}
+.settings-tabs button {
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+.settings-tabs button.active {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+  font-weight: 700;
+}
 .settings-section { border-top: 1px solid var(--line); padding: 14px 0; }
 .settings-section:first-of-type { border-top: none; }
 .settings-section h4 { margin: 0 0 10px; font-size: 14px; }
+.settings-section-advanced {
+  background: rgba(17, 24, 39, 0.03);
+  border-radius: 10px;
+  padding: 14px;
+  margin-top: 12px;
+}
 .settings-agent-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
 .settings-agent-row { display: flex; align-items: center; gap: 10px; }
 .settings-agent-main { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
@@ -5638,10 +5666,27 @@ button:disabled {
 .playground-shell { flex: 1; min-height: 0; display: flex; }
 .chat-panel-v27 { width: 100%; }
 .chat-header-actions { display: flex; align-items: center; gap: 10px; }
-.playground-config-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 8, 0.32); z-index: 50; display: flex; justify-content: flex-end; }
-.playground-config-drawer { width: min(960px, 94vw); height: 100%; background: var(--panel); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow); overflow-y: auto; }
-.playground-config-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
-.playground-config-head h3 { margin: 0; }
+.drawer-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 8, 0.32); z-index: 60; display: flex; justify-content: flex-end; }
+.drawer-shell {
+  height: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--line-strong);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.drawer-shell-narrow { width: min(480px, 96vw); }
+.drawer-shell-medium { width: min(720px, 96vw); }
+.drawer-shell-wide { width: min(960px, 94vw); }
+.drawer-shell-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 14px 18px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.drawer-shell-title { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.drawer-shell-title h3 { margin: 0; font-size: 16px; color: var(--text); }
+.drawer-shell-title p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.drawer-shell-meta { margin-top: 4px; }
+.drawer-shell-actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.drawer-shell-body { flex: 1; min-height: 0; overflow-y: auto; }
+.drawer-header-link { display: inline-flex; align-items: center; gap: 6px; height: 32px; }
 .playground-config-body { display: flex; flex-wrap: wrap; gap: 14px; padding: 14px 18px; align-items: flex-start; }
 .playground-config-body .sidebar, .playground-config-body .inspector { width: 300px; height: auto; border: 1px solid var(--line); border-radius: 14px; }
 .playground-config-fields { flex: 1; min-width: 260px; }
@@ -5649,9 +5694,6 @@ button:disabled {
 .control-strip-drawer { display: flex; flex-direction: column; gap: 10px; }
 
 /* 创建反馈 Drawer（两阶段） */
-.feedback-drawer { position: fixed; top: 0; right: 0; height: 100%; width: min(480px, 96vw); background: var(--panel); border-left: 1px solid var(--line-strong); box-shadow: var(--shadow); z-index: 60; overflow-y: auto; }
-.feedback-drawer-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
-.feedback-drawer-head h3 { margin: 0; }
 .feedback-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
 .feedback-field { display: flex; flex-direction: column; gap: 6px; }
 .feedback-field span { font-size: 13px; color: var(--text); }
@@ -5663,6 +5705,20 @@ button:disabled {
 .feedback-understanding-card ul { margin: 0 0 8px; padding-left: 18px; font-size: 13px; line-height: 1.7; }
 .feedback-understanding-quote { font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 8px; }
 .feedback-saved-item { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.trace-drawer-body { padding: 16px 18px; }
+.trace-context-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.trace-context-chips span {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
 
 /* v2.7 §0.5 旧反馈优化工作台 legacy 提示条（已降级为诊断视图，主闭环在「改进」） */
 .fw-legacy-banner {
@@ -5674,4 +5730,13 @@ button:disabled {
   color: #92400e;
   font-size: 12px;
   line-height: 1.6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fw-legacy-banner div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }

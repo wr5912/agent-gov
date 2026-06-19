@@ -1,7 +1,7 @@
-import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createImprovement, upsertNormalizedFeedback, addImprovementFeedback, type ImprovementItem } from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
+import { DrawerShell } from "./DrawerShell";
 
 // v2.7 §4 创建反馈 Drawer（两阶段）：自然语言反馈 → 整理为系统理解 → 确认保存 → 生成改进事项。
 // 注：P1 阶段「系统理解」为客户端初步整理（占位），真正的 NormalizedFeedback 后端实体在 P3 接入；
@@ -108,15 +108,19 @@ export function FeedbackDrawer({
   };
 
   return (
-    <aside className="feedback-drawer" data-testid="feedback-drawer" data-state={phase}>
-      <div className="feedback-drawer-head">
-        <h3>{phase === "saved" ? "反馈已保存" : phase === "understanding" ? "确认系统理解" : "创建反馈"}</h3>
-        <button className="icon-button" onClick={onClose}><X size={18} /></button>
-      </div>
+    <DrawerShell
+      title={phase === "saved" ? "反馈已保存" : phase === "understanding" ? "确认系统理解" : "创建反馈"}
+      description="保留当前对话上下文，把反馈整理为可推进的改进事项。"
+      size="narrow"
+      testId="feedback-drawer"
+      dataState={phase}
+      className="feedback-drawer"
+      bodyClassName="feedback-drawer-body"
+      onClose={onClose}
+    >
       {error ? <div className="error-box" data-testid="feedback-drawer-error">{error}</div> : null}
-
       {phase === "input" ? (
-        <div className="feedback-drawer-body">
+        <>
           <label className="feedback-field">
             <span>这个结果哪里不对？</span>
             <textarea data-testid="feedback-input-wrong" value={wrong} onChange={(e) => setWrong(e.target.value)} placeholder="例如：这个告警其实是误报，AI 没注意到事件时间和告警时间不一致。" />
@@ -136,9 +140,9 @@ export function FeedbackDrawer({
             <button className="secondary-button" onClick={onClose}>取消</button>
             <button className="primary-button" data-testid="feedback-organize" disabled={!wrong.trim()} onClick={organize}>整理反馈</button>
           </div>
-        </div>
+        </>
       ) : phase === "understanding" ? (
-        <div className="feedback-drawer-body">
+        <>
           <div className="feedback-understanding-card" data-testid="feedback-understanding-card">
             <div className="feedback-understanding-note">系统整理（初步）：</div>
             <ul>
@@ -156,9 +160,9 @@ export function FeedbackDrawer({
             <button className="secondary-button" data-testid="feedback-edit" onClick={() => setPhase("input")}>修改</button>
             <button className="primary-button" data-testid="feedback-confirm-save" disabled={busy} onClick={save}>确认保存</button>
           </div>
-        </div>
+        </>
       ) : (
-        <div className="feedback-drawer-body" data-testid="feedback-saved">
+        <div data-testid="feedback-saved">
           <p>已保存为一条反馈，并生成改进事项：</p>
           <div className="feedback-saved-item">
             <strong>{created?.title}</strong>
@@ -171,6 +175,6 @@ export function FeedbackDrawer({
           </div>
         </div>
       )}
-    </aside>
+    </DrawerShell>
   );
 }

@@ -37,9 +37,11 @@ import {
 } from "../api/improvements";
 import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
-import { buildContext, CONTEXT_TYPE_LABEL, type ContextType } from "../contextPackage";
+import { buildContext, type ContextType } from "../contextPackage";
 import { listAssets, createAsset, type Asset } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, SOURCE_LABEL, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
+import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
+import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementSystemUnderstanding } from "./ImprovementSystemUnderstanding";
 import type { components } from "../types/api";
@@ -47,9 +49,6 @@ import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
 
 type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
-
-const CONTEXT_TYPES: ContextType[] = ["problem", "ai", "playwright", "json"];
-
 export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }: { clientConfig: RuntimeClientConfig; scopeAgentId: string; langfuseUrl: string }) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
   const [items, setItems] = useState<ImprovementItem[]>([]);
@@ -100,10 +99,25 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     if (scopeAgentId) setNewAgentId(scopeAgentId);
   }, [scopeAgentId]);
 
+  const visibleItems = useMemo(
+    () => items.filter((item) => statusFilter === "all" || deriveCategory(item) === statusFilter),
+    [items, statusFilter],
+  );
+
   const selected = useMemo(
     () => items.find((item) => item.improvement_id === selectedId) || null,
     [items, selectedId],
   );
+
+  useEffect(() => {
+    if (!visibleItems.length) {
+      if (selectedId && !items.some((item) => item.improvement_id === selectedId)) setSelectedId(undefined);
+      return;
+    }
+    if (!selectedId || !visibleItems.some((item) => item.improvement_id === selectedId)) {
+      setSelectedId(visibleItems[0].improvement_id);
+    }
+  }, [items, selectedId, visibleItems]);
 
   useEffect(() => {
     const agentId = selected?.agent_id;
@@ -347,10 +361,10 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
         </div>
         <div className="iw-panel-body">
           {error ? <div className="iw-error">{error}</div> : null}
-          {items.filter((i) => statusFilter === "all" || deriveCategory(i) === statusFilter).length === 0 ? (
+          {visibleItems.length === 0 ? (
             <div className="iw-empty">{items.length === 0 ? "当前范围暂无改进事项。新建后即可推进治理闭环。" : "该状态下暂无改进事项。"}</div>
           ) : (
-            items.filter((i) => statusFilter === "all" || deriveCategory(i) === statusFilter).map((item) => (
+            visibleItems.map((item) => (
               <button
                 key={item.improvement_id}
                 type="button"
@@ -410,6 +424,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
           >
             <h2 className="iw-detail-title" data-testid="improvement-title">{selected.title}</h2>
             <div className="iw-detail-owner">归属：{agentName(selected.agent_id)}（{selected.agent_id}）</div>
+            <ImprovementClosedLoopSpine currentIndex={stageView.stageIndex} hasAssets={sedimentAssets.length > 0} />
 
             <div className="iw-detail-section">
               <span
@@ -763,24 +778,13 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               };
               const text = buildContext(contextType, inputs);
               return (
-                <div className="iw-context-drawer" data-testid="context-drawer" data-state="open">
-                  <div className="iw-context-head">
-                    <span>上下文包</span>
-                    <div className="iw-context-head-actions">
-                      <button className="iw-secondary-button" type="button" data-testid="context-copy" onClick={() => copyText(text)}>复制</button>
-                      <button className="iw-secondary-button" type="button" data-testid="context-download" onClick={() => downloadText(text, contextType)}>下载</button>
-                    </div>
-                  </div>
-                  <div className="iw-context-types" role="radiogroup" aria-label="上下文类型">
-                    {CONTEXT_TYPES.map((t) => (
-                      <label key={t} className={`iw-context-type ${contextType === t ? "active" : ""}`} data-testid={`context-type-${t}`}>
-                        <input type="radio" name="iw-context-type" checked={contextType === t} onChange={() => setContextType(t)} />
-                        {CONTEXT_TYPE_LABEL[t]}
-                      </label>
-                    ))}
-                  </div>
-                  <pre className="iw-context-body" data-testid="context-preview">{text}</pre>
-                </div>
+                <ImprovementContextDrawer
+                  text={text}
+                  contextType={contextType}
+                  onContextTypeChange={setContextType}
+                  onCopy={() => copyText(text)}
+                  onDownload={() => downloadText(text, contextType)}
+                />
               );
             })() : null}
           </div>

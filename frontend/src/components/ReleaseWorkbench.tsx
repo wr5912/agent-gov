@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { publishAgentChangeSet, runAgentChangeSetRegression } from "../api/runtime";
 import type { AgentChangeSet, AgentRelease } from "../types/runtime";
 import type { RuntimeClientConfig } from "../types/runtime";
@@ -58,6 +58,7 @@ export function ReleaseWorkbench({
   const [showChanges, setShowChanges] = useState(false);
   const [busyAction, setBusyAction] = useState<string | undefined>();
   const [confirmForceId, setConfirmForceId] = useState<string | undefined>();
+  const [selectedChangeSetId, setSelectedChangeSetId] = useState<string | undefined>();
   const [actionMessage, setActionMessage] = useState<string | undefined>();
   const [actionError, setActionError] = useState<string | undefined>();
   const scopedChangeSets = scopedBy(changeSets as (AgentChangeSet & WithAgent)[], scopeAgentId);
@@ -69,6 +70,20 @@ export function ReleaseWorkbench({
   const regressionTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && !REGRESSION_PASS.has(String(cs.status)));
   const forceTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && CHANGESET_BLOCKED.has(String(cs.status))) || pendingChangeSets.find((cs) => cs.candidate_commit_sha);
   const canForce = Boolean(forceTarget);
+  const selectedChangeSet = useMemo(
+    () => pendingChangeSets.find((cs) => cs.change_set_id === selectedChangeSetId) || pendingChangeSets[0] || null,
+    [pendingChangeSets, selectedChangeSetId],
+  );
+
+  useEffect(() => {
+    if (!pendingChangeSets.length) {
+      setSelectedChangeSetId(undefined);
+      return;
+    }
+    if (!selectedChangeSetId || !pendingChangeSets.some((cs) => cs.change_set_id === selectedChangeSetId)) {
+      setSelectedChangeSetId(pendingChangeSets[0].change_set_id);
+    }
+  }, [pendingChangeSets, selectedChangeSetId]);
 
   const runAction = async (name: string, action: () => Promise<void>) => {
     setBusyAction(name);
@@ -97,9 +112,13 @@ export function ReleaseWorkbench({
     if (confirmForceId !== forceTarget.change_set_id) {
       setConfirmForceId(forceTarget.change_set_id);
       setShowChanges(true);
-      setActionMessage(`再次点击「强制发布」确认发布 ${forceTarget.change_set_id}。`);
       return;
     }
+    void confirmForcePublish();
+  };
+
+  const confirmForcePublish = async () => {
+    if (!forceTarget) return;
     void runAction("force-publish", async () => {
       const release = await publishAgentChangeSet(clientConfig, forceTarget.change_set_id, {
         operator: "ui",
@@ -113,8 +132,8 @@ export function ReleaseWorkbench({
   };
 
   return (
-    <div className="improvement-workbench" data-testid="release-workbench" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
-      <section className="iw-detail-panel">
+    <div className="improvement-workbench release-workbench-grid" data-testid="release-workbench">
+      <section className="iw-list-panel release-candidate-panel">
         <div className="iw-panel-head">
           <h3>发布{scopeAgentId ? ` · ${scopeAgentId}` : "（全部业务 Agent）"}</h3>
           <button className="iw-secondary-button" type="button" onClick={() => void onRefresh()}>刷新</button>
@@ -122,13 +141,38 @@ export function ReleaseWorkbench({
         <div className="iw-panel-body">
           {actionError ? <div className="iw-error" data-testid="release-action-error">{actionError}</div> : null}
           {actionMessage ? <div className="iw-next-step" data-testid="release-action-message">{actionMessage}</div> : null}
-          <div className="iw-detail-section">
+          <div className="iw-detail-section release-gate-summary">
             <h4>能不能发</h4>
             <span className={`iw-stage-pill ${gate.tone === "success" ? "is-done" : ""}`} data-testid="release-gate" data-state={gate.tone}>{gate.label}</span>
             <div className="iw-next-step" style={{ marginTop: 8 }}>{gate.reason}</div>
           </div>
 
           <div className="iw-detail-section">
+            <h4>待发布变更（{pendingChangeSets.length}）</h4>
+            {pendingChangeSets.length === 0 ? (
+              <div className="iw-empty">当前范围没有待发布的候选变更。</div>
+            ) : (
+              pendingChangeSets.map((cs) => (
+                <button
+                  className={`iw-list-item release-changeset-button ${selectedChangeSet?.change_set_id === cs.change_set_id ? "is-active" : ""}`}
+                  data-testid="release-changeset-item"
+                  data-status={cs.status}
+                  key={cs.change_set_id}
+                  type="button"
+                  onClick={() => setSelectedChangeSetId(cs.change_set_id)}
+                >
+                  <span className="iw-list-item-title">{cs.title || cs.change_set_id}</span>
+                  <span className="iw-list-item-meta">{cs.status} · {cs.change_set_id}{cs.publication_blocker ? ` · 阻塞：${cs.publication_blocker}` : ""}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      <section className="iw-detail-panel">
+        <div className="iw-panel-body release-detail-stack">
+          <div className="iw-detail-section" data-testid="release-gate-workbench">
             <h4>发布门禁</h4>
             <div className="iw-source-refs">
               {gates.map((g) => (
@@ -164,34 +208,36 @@ export function ReleaseWorkbench({
                 data-testid="release-action-view-changes"
                 onClick={() => setShowChanges((v) => !v)}
               >
-                查看变更
+                {showChanges ? "收起变更" : "展开变更"}
               </button>
               <button
-                className="iw-secondary-button"
+                className="iw-secondary-button release-force-button"
                 type="button"
                 data-testid="release-action-force"
                 disabled={!canForce || Boolean(busyAction)}
                 title={forceTarget ? `强制发布 ${forceTarget.change_set_id}` : "无可发布变更"}
-                style={{ color: canForce ? "#dc2626" : undefined }}
                 onClick={handleForcePublish}
               >
-                {busyAction === "force-publish" ? "发布中..." : confirmForceId === forceTarget?.change_set_id ? "确认强制发布" : "强制发布..."}
+                {busyAction === "force-publish" ? "发布中..." : "强制发布..."}
               </button>
             </div>
           </div>
 
-          <div className="iw-detail-section">
-            <h4>待发布变更（{pendingChangeSets.length}）</h4>
-            {pendingChangeSets.length === 0 ? (
-              <div className="iw-empty">当前范围没有待发布的候选变更。</div>
+          <div className="iw-detail-section" data-testid="release-changeset-details">
+            <h4>候选详情</h4>
+            {selectedChangeSet ? (
+              <div className="release-candidate-detail">
+                <strong>{selectedChangeSet.title || selectedChangeSet.change_set_id}</strong>
+                <span>状态：{selectedChangeSet.status}</span>
+                <span>候选提交：{selectedChangeSet.candidate_commit_sha || "-"}</span>
+                <span>来源改进：{String(selectedChangeSet.source_improvement_id || "-")}</span>
+                <span>阻塞项：{String(selectedChangeSet.publication_blocker || "无")}</span>
+                {showChanges ? (
+                  <pre className="iw-context-body release-diff-summary" data-testid="release-diff-summary">{String(selectedChangeSet.diff_summary || "暂无 diff 摘要。")}</pre>
+                ) : null}
+              </div>
             ) : (
-              pendingChangeSets.map((cs) => (
-                <div className="iw-list-item" data-testid="release-changeset-item" data-status={cs.status} key={cs.change_set_id}>
-                  <span className="iw-list-item-title">{cs.title || cs.change_set_id}</span>
-                  <span className="iw-list-item-meta">{cs.status} · {cs.change_set_id}{cs.publication_blocker ? ` · 阻塞：${cs.publication_blocker}` : ""}</span>
-                  {showChanges && cs.diff_summary ? <span className="iw-list-item-meta">{String(cs.diff_summary)}</span> : null}
-                </div>
-              ))
+              <div className="iw-empty">选择一个待发布变更查看门禁、diff 和阻塞项。</div>
             )}
           </div>
 
@@ -210,6 +256,28 @@ export function ReleaseWorkbench({
           </div>
         </div>
       </section>
+      {confirmForceId ? (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-card version-confirm-modal" role="dialog" aria-modal="true" aria-label="确认强制发布" data-testid="release-force-confirm">
+            <header className="modal-head">
+              <div>
+                <h3>确认强制发布</h3>
+                <p>该动作会绕过未完成或失败的发布门禁，并写入审计记录。</p>
+              </div>
+            </header>
+            <div className="iw-detail-section">
+              <div className="iw-next-step">目标变更：{confirmForceId}</div>
+              <div className="iw-next-step">绕过原因：{forceTarget?.publication_blocker || "人工确认门禁风险可接受"}</div>
+            </div>
+            <div className="modal-actions">
+              <button className="secondary-button" type="button" onClick={() => setConfirmForceId(undefined)}>取消</button>
+              <button className="primary-button" type="button" data-testid="release-force-confirm-submit" disabled={Boolean(busyAction)} onClick={() => void confirmForcePublish()}>
+                {busyAction === "force-publish" ? "发布中..." : "确认强制发布"}
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

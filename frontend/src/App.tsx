@@ -462,6 +462,11 @@ export default function App() {
     setActiveWindow("feedback");
   }
 
+  function openFeedbackWindowFromSettings() {
+    setSettingsOpen(false);
+    setActiveWindow("feedback");
+  }
+
   function showPlaygroundWindow() {
     setActiveWindow("chat");
   }
@@ -567,6 +572,7 @@ export default function App() {
           onRefreshVersions={() => refreshVersions().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
           refreshToken={feedbackRefreshToken}
           onFeedbackChanged={() => setFeedbackRefreshToken((prev) => prev + 1)}
+          onOpenImprovement={showImprovementWindow}
         />
       ) : (
         <div className="playground-shell" data-testid="playground-shell">
@@ -641,7 +647,7 @@ export default function App() {
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
         onOpenAsset={showAssetWindow}
-        onOpenFeedback={showFeedbackWindow}
+        onOpenFeedback={openFeedbackWindowFromSettings}
       />
     </div>
   );

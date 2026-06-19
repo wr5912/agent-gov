@@ -82,6 +82,32 @@
 
 .iw-detail-title { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
 .iw-detail-owner { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+.iw-closed-loop-spine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 14px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-surface-muted);
+}
+.iw-loop-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.iw-loop-step.is-done { color: var(--color-success); border-color: #bbf7d0; background: var(--color-success-soft); }
+.iw-loop-step.is-current { color: var(--color-primary); border-color: #bfdbfe; background: var(--color-primary-soft); }
 .iw-detail-section { margin: 14px 0; }
 .iw-detail-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.03em; }
 .iw-detail-summary { color: var(--text-primary); line-height: 1.6; font-size: 14px; white-space: pre-wrap; }
@@ -162,3 +188,19 @@
 .iw-filter-pill.active { background: var(--color-primary-soft); border-color: #bfdbfe; color: var(--color-primary); font-weight: 600; }
 /* v2.7 §9 Trace 摘要（深色调试区） */
 .iw-trace-summary { background: var(--bg-debug); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
+
+/* v2.7 发布门禁台 */
+.release-workbench-grid { grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); }
+.release-candidate-panel .iw-panel-body { display: flex; flex-direction: column; gap: 12px; }
+.release-gate-summary { margin-top: 0; }
+.release-changeset-button { color: inherit; font: inherit; }
+.release-detail-stack { display: flex; flex-direction: column; gap: 12px; }
+.release-candidate-detail { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
+.release-candidate-detail strong { color: var(--text-primary); font-size: 15px; }
+.release-diff-summary { max-height: 260px; border-radius: 8px; margin-top: 6px; }
+.release-force-button { color: #dc2626; border-color: #fecaca; }
+.release-force-button:hover { border-color: #fca5a5; }
+
+/* v2.7 资产 Registry 浏览优先 */
+.asset-browser-toolbar { margin-top: 0; }
+.asset-browser-toolbar .iw-automation-row { align-items: stretch; }

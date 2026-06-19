@@ -129,6 +129,7 @@ async function main() {
     // 旧反馈优化工作台现经 Settings → Developer 进入（v2.7 §2 导航收敛，旧入口降级为诊断入口）。
     await page.getByTestId("open-settings").click();
     await page.getByTestId("settings-panel").waitFor({ timeout: 15000 });
+    await page.getByTestId("settings-tab-developer").click();
     await page.getByTestId("settings-open-feedback").click();
     await page.getByRole("button", { name: "优化批次", exact: true }).click();
     await page.getByPlaceholder("搜索 ID、标签、Case").fill(seeded.title);

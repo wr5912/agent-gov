@@ -186,7 +186,7 @@ export function runAgentChangeSetRegression(config: RuntimeClientConfig, changeS
   );
 }
 
-export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetPublishRequest = { operator: "ui" }) {
+export function publishAgentChangeSet(config: RuntimeClientConfig, changeSetId: string, payload: AgentChangeSetPublishRequest = { operator: "ui", force: false }) {
   return requestJson<AgentRelease>(
     config,
     `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/publish`,

@@ -99,13 +99,22 @@
     },
     {
       "id": "improvement_item_governance",
-      "description": "v2.7 cross-gen rebuild: ImprovementItem is the single event-level governance domain entity, created and advanced through its stage state machine, scoped by business agent.",
+      "description": "v2.7 cross-gen rebuild: ImprovementItem is the single event-level governance domain entity, created and advanced through its stage state machine, scoped by business agent, and exposed through the target governance UI path.",
       "scenarios": [
         {
           "id": "improvement_item_single_source_lifecycle",
           "description": "Create an improvement item under a business agent, list it scoped by agent, read detail, advance stages through the central state machine, and reject illegal stage transitions.",
           "pytest": [
             "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle"
+          ]
+        },
+        {
+          "id": "v27_design_parity_and_message_actions",
+          "description": "The v2.7 user-facing governance path exposes the simplified Playground, message actions, ImprovementItem workbench, evidence-rich ContextPackage, actionable release gates, and Asset Registry provenance using stable selectors.",
+          "ui_scripts": [
+            "verify:design-parity",
+            "verify:asset-registry",
+            "verify:message-actions-browser"
           ]
         }
       ]

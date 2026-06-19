@@ -206,7 +206,13 @@ def _register_change_set_action_routes(
         summary="Publish an approved Agent change set",
     )
     async def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
-        return agent_governance.publish_change_set(change_set_id, operator=req.operator, tag_name=req.tag_name, note=req.note)
+        return agent_governance.publish_change_set(
+            change_set_id,
+            operator=req.operator,
+            tag_name=req.tag_name,
+            note=req.note,
+            force=req.force,
+        )
 
 
 def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanceService) -> None:

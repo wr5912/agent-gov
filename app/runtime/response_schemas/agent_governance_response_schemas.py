@@ -142,6 +142,7 @@ class AgentChangeSetPublishRequest(BaseModel):
     operator: str = "runtime"
     tag_name: Optional[str] = None
     note: Optional[str] = None
+    force: bool = False
 
 
 class AgentReleaseRollbackRequest(BaseModel):

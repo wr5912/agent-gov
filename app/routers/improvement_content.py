@@ -40,7 +40,9 @@ def _nf_response(r: NormalizedFeedbackRecord) -> NormalizedFeedbackResponse:
 def _fb_response(r: ImprovementFeedbackRecord) -> ImprovementFeedbackResponse:
     return ImprovementFeedbackResponse(
         feedback_id=r.feedback_id, improvement_id=r.improvement_id, agent_id=r.agent_id, summary=r.summary,
-        source=r.source, status=r.status, raw_text=r.raw_text, run_id=r.run_id, session_id=r.session_id, created_at=r.created_at,
+        source=r.source, status=r.status, raw_text=r.raw_text, run_id=r.run_id, session_id=r.session_id,
+        agent_version_id=r.agent_version_id, scenario=r.scenario, task_id=r.task_id,
+        alert_id=r.alert_id, case_id=r.case_id, created_at=r.created_at,
     )
 
 
@@ -82,6 +84,8 @@ def _register_feedback_routes(router: APIRouter, *, improvement_store: Improveme
         return _fb_response(content_store.create_feedback(
             improvement_id, agent_id=item.agent_id, summary=req.summary, source=req.source,
             raw_text=req.raw_text, run_id=req.run_id, session_id=req.session_id,
+            agent_version_id=req.agent_version_id, scenario=req.scenario, task_id=req.task_id,
+            alert_id=req.alert_id, case_id=req.case_id,
         ))
 
 
@@ -124,6 +128,48 @@ def _register_attr_routes(router: APIRouter, *, content_store: ImprovementConten
     @router.post("/improvements/{improvement_id}/attribution/confirm", response_model=AttributionResponse, summary="Confirm attribution")
     async def confirm_attr(improvement_id: str) -> AttributionResponse:
         return _attr_response(content_store.set_attribution_status(improvement_id, status="confirmed"))
+
+
+def _register_governance_generation_routes(
+    router: APIRouter,
+    *,
+    improvement_store: ImprovementStore,
+    content_store: ImprovementContentStore,
+    require: Callable,
+) -> None:
+    @router.post("/improvements/{improvement_id}/attribution/generate", response_model=AttributionResponse, summary="Generate initial backend attribution")
+    async def generate_attr(improvement_id: str) -> AttributionResponse:
+        item = improvement_store.get_improvement(improvement_id)
+        if item is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        nf = content_store.get_normalized_feedback(improvement_id)
+        summary = (
+            f"可能与「{nf.possible_object or '外部数据/工具'}」相关：{nf.problem}"
+            f"{f'（{nf.possible_reason}）' if nf.possible_reason else ''}。"
+            if nf else f"针对「{item.title}」的初步归因，待补充系统理解和证据。"
+        )
+        boundary = ["不是主 Agent 推理错误", f"主要可能在：{nf.possible_object or '外部数据源 / 工具质量'}"] if nf else ["归因对象待确认"]
+        evidence = [f"用户反馈：{nf.user_quote}"] if nf and nf.user_quote else []
+        return _attr_response(content_store.upsert_attribution(
+            improvement_id,
+            summary=summary,
+            responsibility_boundary=boundary,
+            evidence=evidence,
+        ))
+
+    @router.post("/improvements/{improvement_id}/optimization-plan/generate", response_model=OptimizationPlanResponse, summary="Generate initial backend optimization plan")
+    async def generate_opt(improvement_id: str) -> OptimizationPlanResponse:
+        item = improvement_store.get_improvement(improvement_id)
+        if item is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        nf = content_store.get_normalized_feedback(improvement_id)
+        attr = content_store.get_attribution(improvement_id)
+        summary = f"针对「{item.title}」：{attr.summary if attr else nf.suggestion if nf else '补充校验/提示，避免重演该问题'}。"
+        return _opt_response(content_store.upsert_optimization_plan(
+            improvement_id,
+            summary=summary,
+            changes=[{"target": "prompt", "change": "补充对应校验与提示指令，避免重演该问题"}],
+        ))
 
 
 def _register_opt_routes(router: APIRouter, *, content_store: ImprovementContentStore, require: Callable) -> None:
@@ -182,6 +228,7 @@ def create_improvement_content_router(
     _register_feedback_routes(router, improvement_store=improvement_store, content_store=content_store, require=_require)
     _register_nf_routes(router, content_store=content_store, require=_require)
     _register_attr_routes(router, content_store=content_store, require=_require)
+    _register_governance_generation_routes(router, improvement_store=improvement_store, content_store=content_store, require=_require)
     _register_opt_routes(router, content_store=content_store, require=_require)
     _register_exec_routes(router, content_store=content_store, require=_require)
     return router

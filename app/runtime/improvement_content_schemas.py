@@ -43,6 +43,11 @@ class ImprovementFeedbackCreateRequest(BaseModel):
     raw_text: str = Field(default="", description="反馈原文。")
     run_id: str = Field(default="", description="关联 Run。")
     session_id: str = Field(default="", description="关联 Session。")
+    agent_version_id: str = Field(default="", description="反馈归属的 Agent 版本。")
+    scenario: str = Field(default="", description="反馈归属的业务场景。")
+    task_id: str = Field(default="", description="反馈归属的任务 ID。")
+    alert_id: str = Field(default="", description="反馈归属的告警 ID。")
+    case_id: str = Field(default="", description="反馈归属的 Case ID。")
 
 
 class ImprovementFeedbackResponse(BaseModel):
@@ -55,6 +60,11 @@ class ImprovementFeedbackResponse(BaseModel):
     raw_text: str
     run_id: str
     session_id: str
+    agent_version_id: str
+    scenario: str
+    task_id: str
+    alert_id: str
+    case_id: str
     created_at: str
 
 

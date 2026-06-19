@@ -68,3 +68,32 @@ def test_similarity_score_and_find(tmp_path: Path) -> None:
     # 自身排除：以 keep 自己为基准、排除自身，结果不含 keep。
     self_excluded = find_similar_improvements(store, agent_id="a", text=keep.title, refs=keep.source_feedback_refs, exclude_id=keep.improvement_id)
     assert all(rec.improvement_id != keep.improvement_id for rec, _ in self_excluded)
+
+
+def test_similarity_finds_chinese_semantic_case_without_shared_refs(tmp_path: Path) -> None:
+    """v2.7 W2：中文长标题/摘要即使没有共享 feedback ref，也应命中同 Agent 相似事项。"""
+    store = _store(tmp_path)
+    target = store.create_improvement(
+        agent_id="soc-ops",
+        title="sec-ops-data MCP 数据接口返回模拟数据导致安全研判结论错误",
+        summary="list_events 返回的安全事件时间窗口和当前告警时间不一致，Agent 误判为真实横向移动。",
+        source_feedback_refs=["fb-a"],
+    )
+    store.create_improvement(
+        agent_id="soc-ops",
+        title="告警卡片按钮样式错位",
+        summary="前端按钮布局问题，与安全事件数据质量无关。",
+        source_feedback_refs=["fb-b"],
+    )
+
+    results = find_similar_improvements(
+        store,
+        agent_id="soc-ops",
+        text="sec-ops-data 返回事件时间窗口不一致，导致横向移动告警被误判为真实攻击",
+        refs=[],
+        exclude_id="imp-none",
+    )
+
+    assert results
+    assert results[0][0].improvement_id == target.improvement_id
+    assert results[0][1] >= 0.4

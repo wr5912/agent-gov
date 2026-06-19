@@ -63,12 +63,29 @@ def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
-        a = client.post(f"/api/improvements/{iid}/feedbacks", json={"summary": "这是误报", "source": "playground_run", "raw_text": "原文", "run_id": "run-1"})
+        a = client.post(f"/api/improvements/{iid}/feedbacks", json={
+            "summary": "这是误报",
+            "source": "playground_run",
+            "raw_text": "原文",
+            "run_id": "run-1",
+            "session_id": "session-1",
+            "agent_version_id": "agent-v1",
+            "scenario": "alert-triage",
+            "task_id": "task-1",
+            "alert_id": "alert-1",
+            "case_id": "case-1",
+        })
         assert a.status_code == 201 and a.json()["status"] == "merged" and a.json()["run_id"] == "run-1"
+        assert a.json()["agent_version_id"] == "agent-v1"
+        assert a.json()["scenario"] == "alert-triage"
+        assert a.json()["task_id"] == "task-1"
+        assert a.json()["alert_id"] == "alert-1"
+        assert a.json()["case_id"] == "case-1"
         client.post(f"/api/improvements/{iid}/feedbacks", json={"summary": "MCP 数据像模拟", "source": "trace"})
         rows = client.get(f"/api/improvements/{iid}/feedbacks").json()
         assert {r["summary"] for r in rows} == {"这是误报", "MCP 数据像模拟"}
         assert {r["source"] for r in rows} == {"playground_run", "trace"}
+        assert {r["agent_version_id"] for r in rows} == {"agent-v1", ""}
         assert client.post("/api/improvements/imp-none/feedbacks", json={"summary": "x"}).status_code == 404
 
 
@@ -89,3 +106,27 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
         assert client.put("/api/improvements/imp-none/optimization-plan", json={"summary": "x"}).status_code == 404
         other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空"}).json()["improvement_id"]
         assert client.get(f"/api/improvements/{other}/execution").status_code == 404
+
+
+def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: Path) -> None:
+    """P2：归因/方案生成走后端治理端点，不由浏览器拼接后直接 upsert。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
+        client.put(f"/api/improvements/{iid}/normalized-feedback", json={
+            "problem": "告警误报",
+            "possible_reason": "事件时间与告警时间窗口不一致",
+            "possible_object": "sec-ops-data MCP 数据",
+            "suggestion": "进入归因和回归保障",
+            "user_quote": "这个横向移动告警其实是误报",
+        })
+
+        attr = client.post(f"/api/improvements/{iid}/attribution/generate")
+        assert attr.status_code == 200
+        assert "sec-ops-data MCP 数据" in attr.json()["summary"]
+        assert attr.json()["evidence"] == ["用户反馈：这个横向移动告警其实是误报"]
+
+        plan = client.post(f"/api/improvements/{iid}/optimization-plan/generate")
+        assert plan.status_code == 200
+        assert plan.json()["changes"][0]["target"] == "prompt"
+        assert "告警误报治理" in plan.json()["summary"]

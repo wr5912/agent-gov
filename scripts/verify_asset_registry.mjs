@@ -55,7 +55,7 @@ async function main() {
       }
       if (path === "/api/assets" && method === "POST") {
         const b = req.postDataJSON();
-        const asset = { asset_id: `ast-${++stateRef.count}`, agent_id: b.agent_id, asset_type: b.asset_type, title: b.title, body: b.body || "", source_improvement_id: "", inherited_from: "", created_at: ts, updated_at: ts };
+        const asset = { asset_id: `ast-${++stateRef.count}`, agent_id: b.agent_id, asset_type: b.asset_type, title: b.title, body: b.body || "", source_improvement_id: b.source_improvement_id || "", inherited_from: "", created_at: ts, updated_at: ts };
         stateRef.assets.push(asset);
         return json(route, asset, 201);
       }
@@ -84,6 +84,7 @@ async function main() {
       await page.getByTestId("asset-create-title").fill("误报归因法");
       await page.getByTestId("asset-create-submit").click();
       await page.getByTestId("asset-item").first().waitFor({ timeout: 15000 });
+      await page.getByTestId("asset-provenance").first().waitFor({ timeout: 15000 });
       if ((await page.getByTestId("asset-item").count()) !== 1) throw new Error("expected 1 asset after create");
 
       // 跨 Agent 继承复用 → 出现第 2 条（带「继承」标记）。
@@ -92,8 +93,9 @@ async function main() {
       await page.locator('[data-testid="asset-item"]').nth(1).waitFor({ timeout: 15000 });
       await page.getByTestId("asset-inherited").first().waitFor({ timeout: 15000 });
       if ((await page.getByTestId("asset-item").count()) !== 2) throw new Error("expected 2 assets after inherit");
+      if ((await page.getByTestId("asset-provenance").count()) !== 2) throw new Error("expected provenance for every asset");
 
-      console.log(JSON.stringify({ status: "passed", ui_base: ui, scenarios: ["asset_create", "asset_inherit"] }, null, 2));
+      console.log(JSON.stringify({ status: "passed", ui_base: ui, scenarios: ["asset_create", "asset_inherit", "asset_provenance"] }, null, 2));
     } finally {
       await browser.close();
     }

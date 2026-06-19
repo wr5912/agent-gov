@@ -35,6 +35,7 @@ const port = Number(process.env.PARITY_PORT || 55197);
 const uiBase = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
 const apiBase = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
 const apiKey = process.env.RUNTIME_API_KEY || dockerEnvValue("FRONTEND_RUNTIME_API_KEY") || dockerEnvValue("API_KEY") || "";
+let auditTargetId = "imp-demo01";
 
 // ---- mock 后端（仅默认模式）----
 const AGENTS = [
@@ -47,14 +48,43 @@ const IMPROVEMENTS = [
 function defaultPayload(path) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/api/agent-registry") return AGENTS;
-  if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/assets") return [];
+  if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];
+  if (path === "/api/agent-change-sets") return [{
+    change_set_id: "agc-demo",
+    agent_id: "soc-ops",
+    created_at: ts,
+    updated_at: ts,
+    status: "regression_failed",
+    optimization_task_id: "opt-task-demo",
+    execution_job_id: "job-demo",
+    base_commit_sha: "base-demo",
+    candidate_commit_sha: "candidate-demo",
+    branch_name: "agent-change/agc-demo",
+    worktree_path: "/tmp/agc-demo",
+    title: "告警误报治理候选变更",
+    diff_summary: { modified: 2 },
+    publication_blocker: "批次回归存在失败用例",
+  }];
+  if (/^\/api\/agent-change-sets\/[^/]+\/regression-runs$/.test(path)) return { eval_run_id: "evr-demo", result_status: "passed", items: [], summary: { total: 0, passed: 0, failed: 0 } };
+  if (/^\/api\/agent-change-sets\/[^/]+\/publish$/.test(path)) return { release_id: "agr-demo", agent_id: "soc-ops", status: "published", tag_name: "agent-release-demo", commit_sha: "candidate-demo", created_at: ts, updated_at: ts };
+  if (path === "/api/assets") return [{
+    asset_id: "ast-1",
+    agent_id: "soc-ops",
+    asset_type: "regression",
+    title: "回归保障：时间窗口不一致不得误判",
+    body: "当告警时间与事件时间窗口不一致时，Agent 应提示核验数据源。",
+    source_improvement_id: "imp-demo01",
+    inherited_from: "",
+    created_at: ts,
+    updated_at: ts,
+  }];
   if (path === "/api/improvements") return IMPROVEMENTS;
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
   if (/^\/api\/improvements\/[^/]+\/similar$/.test(path)) return [{ improvement: { ...IMPROVEMENTS[0], improvement_id: "imp-sim01", title: "告警误报治理(相似项)" }, score: 0.55 }];
   if (/^\/api\/improvements\/[^/]+\/links$/.test(path)) return [];
-  if (/^\/api\/improvements\/[^/]+\/feedbacks$/.test(path)) return [{ feedback_id: "fb-1", improvement_id: "imp-demo01", agent_id: "soc-ops", summary: "这个告警其实是误报", source: "playground_run", status: "merged", raw_text: "", run_id: "run-1", session_id: "s-1", created_at: ts }];
+  if (/^\/api\/improvements\/[^/]+\/feedbacks$/.test(path)) return [{ feedback_id: "fb-1", improvement_id: "imp-demo01", agent_id: "soc-ops", summary: "这个告警其实是误报", source: "playground_run", status: "merged", raw_text: "", run_id: "run-1", session_id: "s-1", agent_version_id: "v1.2.0", scenario: "alert-triage", task_id: "task-1", alert_id: "alert-001", case_id: "case-001", created_at: ts }];
   if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入改进处理", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", created_at: ts, updated_at: ts };
@@ -80,6 +110,143 @@ const BASELINE_RULES = new Set(
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
 const visible = async (page, testid) => (await page.getByTestId(testid).count()) > 0 && (await page.getByTestId(testid).first().isVisible());
+
+function authHeaders(extra = {}) {
+  return {
+    Accept: "application/json",
+    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+    ...extra,
+  };
+}
+
+async function apiJson(path, init = {}) {
+  const res = await fetch(`${apiBase}${path}`, {
+    ...init,
+    headers: authHeaders(init.headers || {}),
+  });
+  if (!res.ok) {
+    let detail = "";
+    try { detail = await res.text(); } catch { /* ignore */ }
+    throw new Error(`${init.method || "GET"} ${path} failed: ${res.status} ${detail}`);
+  }
+  return res.json();
+}
+
+async function postJson(path, body) {
+  return apiJson(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function putJson(path, body) {
+  return apiJson(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function seedRealAuditData() {
+  const agents = await apiJson("/api/agent-registry").catch(() => []);
+  const agentId = agents.find((a) => a.status === "active")?.agent_id || agents[0]?.agent_id || "main-agent";
+  const stamp = `audit-v27-${Date.now().toString(36)}`;
+  const target = await postJson("/api/improvements", {
+    agent_id: agentId,
+    title: `${stamp} sec-ops-data 时间窗口误判治理`,
+    summary: "sec-ops-data MCP 数据时间窗口与告警时间不一致，导致 Agent 将误报判断为真实横向移动。",
+    source_feedback_refs: [`${stamp}-fb-1`, `${stamp}-fb-2`],
+    auto_merge: false,
+  });
+  await postJson("/api/improvements", {
+    agent_id: agentId,
+    title: `${stamp} sec-ops-data 时间窗口误判重复反馈`,
+    summary: "sec-ops-data 返回事件时间窗口和告警时间不一致，需要归并到同一改进事项。",
+    source_feedback_refs: [`${stamp}-fb-3`],
+    auto_merge: false,
+  });
+  await postJson(`/api/improvements/${target.improvement_id}/feedbacks`, {
+    summary: "这个横向移动告警其实是误报",
+    source: "playground_run",
+    raw_text: "Agent 没注意到事件时间和告警时间不一致，导致误报升级。",
+    run_id: `${stamp}-run-1`,
+    session_id: `${stamp}-session-1`,
+    agent_version_id: `${stamp}-agent-version`,
+    scenario: "alert-triage",
+    task_id: `${stamp}-task-1`,
+    alert_id: `${stamp}-alert`,
+    case_id: `${stamp}-case`,
+  });
+  await postJson(`/api/improvements/${target.improvement_id}/feedbacks`, {
+    summary: "sec-ops-data 返回的数据像是模拟数据",
+    source: "trace",
+    raw_text: "list_events 返回的数据时间窗口无法支撑当前告警判断。",
+    run_id: `${stamp}-run-2`,
+    session_id: `${stamp}-session-2`,
+    agent_version_id: `${stamp}-agent-version`,
+    scenario: "alert-triage",
+    task_id: `${stamp}-task-2`,
+    alert_id: `${stamp}-alert`,
+    case_id: `${stamp}-case`,
+  });
+  await putJson(`/api/improvements/${target.improvement_id}/normalized-feedback`, {
+    problem: "告警误报治理",
+    possible_reason: "事件时间与告警时间窗口不一致",
+    possible_object: "sec-ops-data MCP 数据",
+    impact: "中",
+    suggestion: "进入归因和回归保障",
+    user_quote: "这个横向移动告警其实是误报。",
+  });
+  await putJson(`/api/improvements/${target.improvement_id}/attribution`, {
+    summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致，导致 Agent 误判。",
+    responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"],
+    evidence: ["list_events 返回的数据时间与告警时间窗口不一致", "来源反馈均指向时间窗口核验缺失"],
+  });
+  await putJson(`/api/improvements/${target.improvement_id}/optimization-plan`, {
+    summary: "补充 sec-ops-data 时间窗口核验 SOP，并在 prompt 中要求先核验事件时间。",
+    changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }],
+  });
+  await putJson(`/api/improvements/${target.improvement_id}/execution`, {
+    summary: "已按优化方案形成候选执行记录，关联审计版本。",
+    changes_applied: ["prompt：新增时间窗口一致性校验", "SOP：补充 MCP 数据时间核验步骤"],
+    agent_version: `${stamp}-agent-version`,
+  });
+  await postJson("/api/assets", {
+    agent_id: agentId,
+    asset_type: "regression",
+    title: `${stamp} 回归保障：时间窗口不一致不得误判`,
+    body: "当告警时间与事件时间窗口不一致时，Agent 应提示核验数据源，不得直接升级处置。",
+    source_improvement_id: target.improvement_id,
+  });
+  await postJson("/api/assets", {
+    agent_id: agentId,
+    asset_type: "methodology",
+    title: `${stamp} MCP 数据时间窗口核验 SOP`,
+    body: "先比对告警时间、事件时间、查询窗口和数据源时间戳，再下结论。",
+    source_improvement_id: target.improvement_id,
+  });
+  await postJson(`/api/improvements/${target.improvement_id}/links`, { kind: "change_set", ref_id: `${stamp}-change-set` }).catch(() => null);
+  return { improvement_id: target.improvement_id, agent_id: agentId, stamp };
+}
+
+async function openAuditImprovement(page) {
+  await page.getByTestId("nav-improvement").click();
+  await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
+  const target = page.locator(`[data-testid="improvement-list-item"][data-item-id="${auditTargetId}"]`).first();
+  await target.waitFor({ timeout: 8000 }).catch(() => {});
+  if ((await target.count()) > 0) {
+    await target.click();
+    await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
+    return true;
+  }
+  const first = page.getByTestId("improvement-list-item").first();
+  await first.waitFor({ timeout: 8000 }).catch(() => {});
+  if ((await first.count()) === 0) return false;
+  await first.click();
+  await page.getByTestId("improvement-detail").waitFor({ timeout: 8000 }).catch(() => {});
+  return true;
+}
 
 const RULES = [
   { id: "nav-converged", phase: "P0", desc: "一级导航只含 Playground/改进/发布；资产与反馈优化不作为顶级主导航", async fn(page) {
@@ -125,16 +292,19 @@ const RULES = [
     return { ok: open && state === "input", detail: `drawer 可见=${open} data-state=${state}` };
   } },
   { id: "context-4types", phase: "P2", desc: "获取上下文四类型 + 下载", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项可打开上下文（需种子数据）" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项可打开上下文（需种子数据）" };
     await page.getByTestId("open-context-drawer").click().catch(() => {});
     const types = ["context-type-problem", "context-type-ai", "context-type-playwright", "context-type-json"];
     const found = []; for (const t of types) if (await has(page, t)) found.push(t);
-    return { ok: found.length === 4 && (await has(page, "context-download")), detail: `类型 ${found.length}/4，下载=${await has(page, "context-download")}` };
+    await page.getByTestId("context-type-json").click().catch(() => {});
+    const preview = await page.getByTestId("context-preview").innerText().catch(() => "");
+    const rich = preview.includes('"attribution_id"')
+      && preview.includes('"agent_version_id"')
+      && preview.includes('"optimization_plan_id"')
+      && preview.includes('"asset_id"')
+      && !preview.includes('"attribution": null')
+      && !preview.includes('"evidence": []');
+    return { ok: found.length === 4 && (await has(page, "context-download")) && rich, detail: `类型 ${found.length}/4，下载=${await has(page, "context-download")}，证据链JSON=${rich}` };
   } },
   { id: "release-gates", phase: "P2", desc: "发布页三门门禁 + 去运行回归/查看变更/强制发布动作", async fn(page) {
     await page.getByTestId("nav-release").click();
@@ -143,14 +313,20 @@ const RULES = [
     const gfound = []; for (const g of gates) if (await has(page, g)) gfound.push(g);
     const actions = ["release-action-run-regression", "release-action-view-changes", "release-action-force"];
     const afound = []; for (const a of actions) if (await has(page, a)) afound.push(a);
-    return { ok: gfound.length === 3 && afound.length === 3, detail: `门禁 ${gfound.length}/3，动作 ${afound.length}/3` };
+    const runEnabled = await page.getByTestId("release-action-run-regression").isEnabled().catch(() => false);
+    const forceEnabled = await page.getByTestId("release-action-force").isEnabled().catch(() => false);
+    if (runEnabled) await page.getByTestId("release-action-run-regression").click().catch(() => {});
+    await page.getByText("已运行回归").waitFor({ timeout: 5000 }).catch(() => {});
+    if (forceEnabled) {
+      await page.getByTestId("release-action-force").click().catch(() => {});
+      await page.getByTestId("release-action-force").click().catch(() => {});
+    }
+    await page.getByText("已强制发布").waitFor({ timeout: 5000 }).catch(() => {});
+    const actionResult = await has(page, "release-action-message");
+    return { ok: gfound.length === 3 && afound.length === 3 && runEnabled && forceEnabled && actionResult, detail: `门禁 ${gfound.length}/3，动作 ${afound.length}/3，回归可执行=${runEnabled}，强制可执行=${forceEnabled}，结果=${actionResult}` };
   } },
   { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解(NormalizedFeedback) + 归因(Attribution 正文/责任边界/证据)", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("normalized-feedback").waitFor({ timeout: 6000 }).catch(() => {});
     const nf = await has(page, "normalized-feedback");
     const attr = await has(page, "attribution");
@@ -158,22 +334,14 @@ const RULES = [
     return { ok: nf && attr && ev, detail: `系统理解=${nf} 归因=${attr} 证据=${ev}` };
   } },
   { id: "trace-summary", phase: "P3", desc: "Trace 摘要(§9)：关联运行 + 打开 Langfuse（深色调试区）", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("trace-summary").waitFor({ state: "attached", timeout: 6000 }).catch(() => {});
     const ts = await has(page, "trace-summary");
     const lf = await has(page, "trace-open-langfuse");
     return { ok: ts && lf, detail: `Trace摘要=${ts} 打开Langfuse=${lf}` };
   } },
   { id: "merge-basis", phase: "P3", desc: "相似归并 §8.5：置信度 + 合并依据 + 标记合并不准", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("merge-basis").first().waitFor({ state: "attached", timeout: 6000 }).catch(() => {});
     const basis = await has(page, "merge-basis");
     const mark = await has(page, "mark-merge-inaccurate");
@@ -188,44 +356,28 @@ const RULES = [
     return { ok: sf && pills === 5, detail: `过滤区=${sf} pills=${pills}/5` };
   } },
   { id: "full-chain", phase: "P3", desc: "查看完整链路：7 阶段时间线 + 状态(§7)", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("full-chain").waitFor({ timeout: 6000 }).catch(() => {});
     const fc = await has(page, "full-chain");
     const steps = await page.getByTestId("full-chain-step").count();
     return { ok: fc && steps === 7, detail: `完整链路=${fc} 阶段数=${steps}` };
   } },
   { id: "detail-collapsed", phase: "P2", desc: "改进详情收纳：自动化/相似/链接进「高级」折叠，默认不在主区可见", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("improvement-advanced").waitFor({ timeout: 6000 }).catch(() => {});
     const advanced = await has(page, "improvement-advanced");
     const autoVisible = await visible(page, "automation-mode");
     return { ok: advanced && !autoVisible, detail: `高级折叠=${advanced} 自动化默认隐藏=${!autoVisible}` };
   } },
   { id: "source-feedback-table", phase: "P3", desc: "来源反馈表(§8.4 #/反馈摘要/来源/状态)", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("source-feedback-table").waitFor({ timeout: 6000 }).catch(() => {});
     const tbl = await has(page, "source-feedback-table");
     const rows = await page.getByTestId("source-feedback-row").count();
     return { ok: tbl && rows >= 1, detail: `表=${tbl} 行=${rows}` };
   } },
   { id: "optimization-execution", phase: "P3", desc: "优化方案(§106 方案正文+变更项) + 执行记录(§107) 内容子资源", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("optimization-plan").waitFor({ timeout: 6000 }).catch(() => {});
     const opt = await has(page, "optimization-plan");
     const optChanges = await has(page, "optimization-plan-changes");
@@ -233,22 +385,14 @@ const RULES = [
     return { ok: opt && optChanges && exec, detail: `方案=${opt} 变更项=${optChanges} 执行记录=${exec}` };
   } },
   { id: "attribution-actions", phase: "P3", desc: "归因支持 修改/重新整理(§6 [确认][修改][重新整理])", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("attribution").waitFor({ timeout: 6000 }).catch(() => {});
     const edit = await has(page, "edit-attribution");
     const regen = await has(page, "regenerate-attribution");
     return { ok: edit && regen, detail: `修改=${edit} 重新整理=${regen}` };
   } },
   { id: "improvement-assets", phase: "P3", desc: "改进详情含回归保障候选(§11.1) + 本事项沉淀资产区(§11.2)", async fn(page) {
-    await page.getByTestId("nav-improvement").click();
-    const first = page.getByTestId("improvement-list-item").first();
-    await first.waitFor({ timeout: 8000 }).catch(() => {});
-    if ((await first.count()) === 0) return { ok: false, detail: "无改进事项" };
-    await first.click();
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("improvement-detail").waitFor({ timeout: 6000 }).catch(() => {});
     // §11 能力存在的两种合法态：未采纳→候选卡(regression-guarantee+adopt)；已采纳→沉淀资产区(sediment-assets)。
     const rg = await has(page, "regression-guarantee");
@@ -274,6 +418,8 @@ async function main() {
   const server = REAL ? null : startVite();
   try {
     if (!REAL) await waitForVite();
+    const seeded = REAL ? await seedRealAuditData() : { improvement_id: auditTargetId };
+    auditTargetId = seeded.improvement_id || auditTargetId;
     const browser = await chromium.launch({ headless: true });
     const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
     await page.addInitScript(([base, key]) => {
@@ -300,7 +446,7 @@ async function main() {
     }
     const passed = results.filter((r) => r.ok).length;
     const baselineFail = results.filter((r) => BASELINE_RULES.has(r.id) && !r.ok);
-    console.log(JSON.stringify({ mode: REAL ? "real-container" : "mock", ui_base: uiBase, passed, total: results.length, baseline: [...BASELINE_RULES], baseline_fail: baselineFail.map((r) => r.id), rules: results }, null, 2));
+    console.log(JSON.stringify({ mode: REAL ? "real-container" : "mock", ui_base: uiBase, audit_target_id: auditTargetId, passed, total: results.length, baseline: [...BASELINE_RULES], baseline_fail: baselineFail.map((r) => r.id), rules: results }, null, 2));
     console.log(`\nDESIGN_PARITY ${passed}/${results.length} passed (${REAL ? "real-container" : "mock"}); baseline ${BASELINE_RULES.size - baselineFail.length}/${BASELINE_RULES.size} held`);
     // 门：基线规则必须全绿（防回归）；目标是把基线扩到 9/9。
     return baselineFail.length === 0 ? 0 : 1;

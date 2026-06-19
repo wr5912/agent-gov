@@ -42,6 +42,9 @@ export function upsertAttribution(config: RuntimeClientConfig, id: string, body:
 export function confirmAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/confirm`, { method: "POST", headers: jsonHeaders });
 }
+export function generateAttribution(config: RuntimeClientConfig, id: string) {
+  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/generate`, { method: "POST", headers: jsonHeaders });
+}
 
 export type OptimizationPlan = components["schemas"]["OptimizationPlanResponse"];
 export type ExecutionRecord = components["schemas"]["ExecutionResponse"];
@@ -53,6 +56,9 @@ export function upsertOptimizationPlan(config: RuntimeClientConfig, id: string, 
 }
 export function confirmOptimizationPlan(config: RuntimeClientConfig, id: string) {
   return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/confirm`, { method: "POST", headers: jsonHeaders });
+}
+export function generateOptimizationPlan(config: RuntimeClientConfig, id: string) {
+  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/generate`, { method: "POST", headers: jsonHeaders });
 }
 export function getExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`);

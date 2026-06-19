@@ -57,6 +57,11 @@ class ImprovementFeedbackRecord:
     raw_text: str
     run_id: str
     session_id: str
+    agent_version_id: str
+    scenario: str
+    task_id: str
+    alert_id: str
+    case_id: str
     created_at: str
 
 
@@ -101,6 +106,11 @@ class ImprovementContentStore:
         raw_text: str = "",
         run_id: str = "",
         session_id: str = "",
+        agent_version_id: str = "",
+        scenario: str = "",
+        task_id: str = "",
+        alert_id: str = "",
+        case_id: str = "",
     ) -> ImprovementFeedbackRecord:
         clean_summary = (summary or "").strip()
         if not clean_summary:
@@ -110,11 +120,15 @@ class ImprovementContentStore:
         with self._session_factory.begin() as db:
             db.add(ImprovementFeedbackModel(
                 feedback_id=fid, improvement_id=improvement_id, agent_id=agent_id, summary=clean_summary,
-                source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id, created_at=now,
+                source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id,
+                agent_version_id=agent_version_id, scenario=scenario, task_id=task_id, alert_id=alert_id, case_id=case_id,
+                created_at=now,
             ))
         return ImprovementFeedbackRecord(
             feedback_id=fid, improvement_id=improvement_id, agent_id=agent_id, summary=clean_summary,
-            source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id, created_at=now,
+            source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id,
+            agent_version_id=agent_version_id, scenario=scenario, task_id=task_id, alert_id=alert_id, case_id=case_id,
+            created_at=now,
         )
 
     def list_feedbacks(self, improvement_id: str) -> list[ImprovementFeedbackRecord]:
@@ -128,7 +142,9 @@ class ImprovementContentStore:
             return [
                 ImprovementFeedbackRecord(
                     feedback_id=r.feedback_id, improvement_id=r.improvement_id, agent_id=r.agent_id, summary=r.summary,
-                    source=r.source, status=r.status, raw_text=r.raw_text or "", run_id=r.run_id or "", session_id=r.session_id or "", created_at=r.created_at,
+                    source=r.source, status=r.status, raw_text=r.raw_text or "", run_id=r.run_id or "", session_id=r.session_id or "",
+                    agent_version_id=r.agent_version_id or "", scenario=r.scenario or "", task_id=r.task_id or "",
+                    alert_id=r.alert_id or "", case_id=r.case_id or "", created_at=r.created_at,
                 )
                 for r in rows
             ]

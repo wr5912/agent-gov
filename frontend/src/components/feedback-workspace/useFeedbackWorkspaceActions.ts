@@ -381,6 +381,7 @@ export function useFeedbackWorkspaceActions({
       const release = await publishAgentChangeSet(clientConfig, changeSetId, {
         operator: "ui",
         note: `发布优化批次 ${batch.batch_id} 的回归通过候选版本`,
+        force: false,
       });
       setToast(`已发布版本 ${release.tag_name || shortId(release.commit_sha)}`);
       setSelectedBatchId(batch.batch_id);

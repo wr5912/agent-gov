@@ -1192,46 +1192,37 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 ### 17.6 实现进度（截至当前）
 
-> **验收口径更正（重要）**：此前本节把若干能力标为「✓ 落地并过硬门」，并以「真实浏览器 + 真实后端截图验收通过」作为整体 UI 一致性结论——这是**过度宣称**。`make test` / Playwright / 截图证明的是**功能可用**（后端实体、API、组件可点击、状态会变），**不等于对照本草图的 UI 设计一致**。真实部署 UI 仍与草图存在系统性偏差（Playground 旧三栏、创建反馈旧表单、ContextPackage 单类型、全站主题未统一等）。
-> **UI 设计一致性以两处为准**：`scripts/verify_v27_ui_design_parity.mjs` 的逐条记分卡（连真实容器 UI/API）+ `docs/design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md`。整改按该报告 P0→P5 推进。
+> **验收口径更正（重要）**：本节只记录当前实现分层事实，不再把“页面可见 / API 可调用 / Playwright 可点击”直接等同为 v2.7 目标能力完成。设计一致性和目标愿景使命一致性以 `scripts/verify_v27_ui_design_parity.mjs` 的逐条记分卡、真实容器验收数据和 `docs/design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md` 为准。
 
-**A. 功能与实体层（已实现，过功能硬门 make test / make main-flow-test）：**
+**A. W1 实体与工作台外壳（基本达成，仍以主流程硬门防回归）：**
 
 ```text
-[✓] ImprovementItem 事项级单一领域实体（持久化 + 7 段状态机 + archived 终态 + agent scoping + /api/improvements）
-[✓] 改进事项治理工作台组件（列表 / 详情 / stepper / 下一步 / 每态唯一主动作 / 归档 / 上下文）
-[✓] 顶栏全局「业务 Agent」切换器；改进按所选 Agent scoping；Playground 对话发 agent_id
-[✓] 发布页组件，消费真实 /api/agent-change-sets + /api/agent-releases
-[✓] W2-a 自动化策略编排：AutomationPolicy(per-agent off/semi/full) + 确定性 auto_advance + /api/automation-policy
-[✓] W2-b 相似度归并/拆分：确定性 token 相似度 + 同 Agent 相似建议 + 归并/拆分 + 创建时 auto_merge
-[✓] W2-c 闭环引用：ImprovementItem ↔ attribution/optimization_plan/eval_run/change_set/batch 轻引用（独立 links 表）
-[✓] W3 资产 Registry：Asset 实体 + /api/assets + 跨业务 Agent 继承复用
-[✓] 统一术语 improvement_* 贯穿 API / DB / 状态机 / 测试
+[已达成] ImprovementItem 事项级领域实体：持久化、7 段状态机、archived 终态、agent scoping、/api/improvements。
+[已达成] 改进事项治理工作台：列表、详情、阶段、下一步、每态主动作、归档、上下文入口。
+[已达成] 顶栏业务 Agent 切换、Playground 简化、配置抽屉、反馈 Drawer、发布页和资产入口。
+[已达成] 统一术语 improvement_* 已进入 API / DB / 状态机 / 测试主路径。
 ```
 
-**B. UI 设计一致性（对照草图，以 parity 记分卡为准）：**
-
-> parity 记分卡：确定性基线 18/18 held(mock+真实容器)；message-actions 经真实 deepseek 对话验收(verify:message-actions-browser，截图 /tmp/agentgov-v27-ui-after-message-actions.png)。19/19 设计规则全部验证。
+**B. W2/W3 已加固的首切能力（仍不能宣称治理闭环完全达成）：**
 
 ```text
-[P0 已达标] 一级导航收敛为 Playground / 改进 / 发布；资产 / 旧反馈优化 / API Docs / Langfuse 降级进 Settings
-[P0 已达标] Settings 升级为平台设置：业务 Agent 管理(CRUD) / 自动化策略 / 资产 / Developer·Debug
-[P1 已达标] Playground 主区只留对话；配置 / 会话 / 调试入「配置」抽屉
-[P3 已达标] §5 改进列表状态过滤 pills(待确认/处理中/待回归/已完成 + 全部，按 stage/status 派生计数与筛选，parity status-filter ✅)
-[P1 已达标] 助手回复动作：创建反馈 / 查看Trace / 获取上下文 / 打开Langfuse / 重新运行(真实 deepseek 对话验收 ✅)
-[P1 已达标] 创建反馈两阶段 Drawer（输入→确认系统理解→保存生成改进事项；系统理解标注「初步」待 P3 实体）
-[P3 已达标] §7 查看完整链路：7 阶段时间线 + 状态(已完成/当前/待处理) + 自动化详情(parity full-chain ✅)
-[P2 已达标] ContextPackage 四类型(问题摘要/AI分析/Playwright/JSON) + 预览 + 复制 + 下载
-[P3 已达标] §9 Trace 摘要：关联运行(来源反馈 run_id) + 打开 Langfuse(深色调试区，关键观察/工具调用诚实标注由实时 trace 提供，parity trace-summary ✅)
-[P2 已达标] 发布页三门门禁(归因/优化/回归) + 去运行回归/查看变更/强制发布 动作；release/change-set 响应暴露 agent_id
-[P2 已达标] 改进详情收纳：自动化/相似/链接进「高级」折叠(parity detail-collapsed ✅)；message-actions 需实时回复未入确定性基线
-[P3 部分达标] 内容实体首切：NormalizedFeedback(系统理解) + 带正文 Attribution(归因正文/责任边界/证据/确认) 真实后端实体并入改进详情(parity improvement-content ✅)
-[P3 部分达标] §11 回归保障候选(采纳为回归资产) + 本事项沉淀资产(按 source_improvement_id 关联) 并入改进详情(parity improvement-assets ✅)
-[P3 部分达标] §6 归因 生成/修改/重新整理(确定性首切，parity attribution-actions ✅) + §8.4 一等 Feedback 来源反馈表(摘要/来源/状态，FeedbackDrawer 保存即建，parity source-feedback-table ✅) 并入改进详情
-[P3 已达标] §106 优化方案 OptimizationPlan(方案正文+变更项 生成/确认/重新整理) + §107 执行记录 ExecutionRecord(执行结果+已应用变更+Agent 版本+确认) 真实后端子资源并入改进详情(parity optimization-execution ✅)
-[P3 未达标] TraceSummary(§9 关键观察/工具调用/关联运行) 未建；旧 workspace 归因/方案/执行/回归/版本能力未迁入改进闭环
-[P4 已达标] 全站 Governance Light：:root token + body + 顶栏/Playground/反馈页统一为浅色蓝调；深色仅保留 Trace/Raw/Diff/Debug 区
-[P5 进行中] 旧反馈优化 workspace 已降级至 Settings→Developer 且标「旧/诊断」，视图内加 legacy 提示条指向「改进」(feedback-legacy-banner)；裁决「先迁能力再下线」——其 LLM 批次引擎(真归因/方案/执行生成)未迁前保留不删，属 §17.5 future wave。ContextPackage 脱敏不做
+[已加固] ContextPackage 已接入 NormalizedFeedback、Attribution、来源反馈、Trace run/session、Agent version、links、assets；缺失字段输出 missing reason，不用空结构冒充完整证据。
+[已加固] 反馈归属已扩展到 agent_version_id、scenario、task_id、alert_id、case_id，并在 Feedback Drawer、来源反馈表和 ContextPackage 可见。
+[已加固] 归因和优化方案生成已从前端确定性拼接迁到后端 generation endpoint；当前仍是后端首切生成，尚未等价接通 LLM/Governor 深度分析。
+[已加固] 相似归并算法已加入中文 uni/bi/tri-gram 与短查询覆盖率，补充无共享 feedback_ref 的中文长文本样本测试。
+[已加固] 发布页“去运行回归”接 change set regression API；“强制发布”接二次确认、后端 force publish 与审计事件。
+[已加固] Asset Registry 显示 provenance：归属 Agent、来源改进事项、继承来源，并进入 UI 验收脚本。
+[首切] NormalizedFeedback / Attribution / OptimizationPlan / ExecutionRecord 内容子资源已经存在，但执行记录仍需进一步关联真实 change set / release / agent version。
+[首切] AutomationPolicy 和 auto_advance API 已存在，但真实自动编排需专项验证：从反馈进入关键确认点、失败投影、人工兜底、审计记录。
+```
+
+**C. 明确未完成或需要继续整改：**
+
+```text
+[未完成] ImprovementItem 与既有闭环引擎 / Governor 的深度对接：后端首切生成已经接入，但旧 feedback batch 的归因、方案、执行、回归、版本能力尚未完全迁入 v2.7 主链路。
+[未完成] 执行记录到真实 change set / release / agent version 的权威绑定仍需继续增强，不能用占位版本冒充真实发布。
+[未完成] 自动化策略从反馈到关键确认点的真实编排仍需专项硬门。
+[不纳入本期核心偏差] 移动端响应式已被真实截图记录，但本轮目标偏差和整改优先级不以移动端为主。
 ```
 
 ---

@@ -482,9 +482,16 @@ export default function App() {
     || (selectedBusinessAgentId || "默认 Agent");
 
   function openFeedbackDrawer(message?: ChatMessage) {
+    const feedbackAlertId = message?.alertId || alertId.trim() || undefined;
+    const feedbackCaseId = message?.caseId || caseId.trim() || undefined;
     setFeedbackContext({
       runId: message?.runId,
       sessionId: message?.sessionId || activeSessionId,
+      agentVersionId: message?.agentVersionId || currentAgentRef?.agent_version_id,
+      scenario: feedbackCaseId ? `case:${feedbackCaseId}` : feedbackAlertId ? `alert:${feedbackAlertId}` : "playground",
+      taskId: message?.runId || activeSessionId || undefined,
+      alertId: feedbackAlertId,
+      caseId: feedbackCaseId,
       agentId: selectedBusinessAgentId || "main-agent",
       agentName: currentAgentName,
     });
@@ -493,7 +500,18 @@ export default function App() {
 
   function getContextForMessage(message: ChatMessage) {
     // P1：简单拷贝消息上下文到剪贴板；ContextPackage 四类型在 P2。
-    const text = `# Playground 上下文\n\nAgent: ${currentAgentName}\nSession: ${message.sessionId || activeSessionId || "-"}\nRun: ${message.runId || "-"}\n\n${message.content}`;
+    const text = [
+      "# Playground 上下文",
+      "",
+      `Agent: ${currentAgentName}`,
+      `Agent Version: ${message.agentVersionId || currentAgentRef?.agent_version_id || "-"}`,
+      `Session: ${message.sessionId || activeSessionId || "-"}`,
+      `Run: ${message.runId || "-"}`,
+      `Alert: ${message.alertId || alertId.trim() || "-"}`,
+      `Case: ${message.caseId || caseId.trim() || "-"}`,
+      "",
+      message.content,
+    ].join("\n");
     void navigator.clipboard?.writeText(text).catch(() => {});
   }
 
@@ -527,6 +545,7 @@ export default function App() {
         />
       ) : activeWindow === "release" ? (
         <ReleaseWorkbench
+          clientConfig={effectiveClientConfig}
           scopeAgentId={selectedBusinessAgentId}
           releases={agentReleases}
           changeSets={agentChangeSets}

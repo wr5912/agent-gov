@@ -405,7 +405,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rejected": {"abandoned"},
         "regression_running": {"regression_passed", "regression_failed", "failed"},
         "regression_passed": {"approved", "published", "regression_running", "abandoned"},
-        "regression_failed": {"regression_running", "rejected", "abandoned", "failed"},
+        "regression_failed": {"regression_running", "rejected", "abandoned", "failed", "published"},
         "published": set(),
         "abandoned": set(),
         "failed": {"draft", "abandoned"},

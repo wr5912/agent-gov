@@ -1371,6 +1371,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/attribution/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate initial backend attribution */
+        post: operations["generate_attr_api_improvements__improvement_id__attribution_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/auto-advance": {
         parameters: {
             query?: never;
@@ -1557,6 +1574,23 @@ export interface paths {
         put?: never;
         /** Confirm optimization plan */
         post: operations["confirm_opt_api_improvements__improvement_id__optimization_plan_confirm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/optimization-plan/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate initial backend optimization plan */
+        post: operations["generate_opt_api_improvements__improvement_id__optimization_plan_generate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2181,6 +2215,11 @@ export interface components {
         };
         /** AgentChangeSetPublishRequest */
         AgentChangeSetPublishRequest: {
+            /**
+             * Force
+             * @default false
+             */
+            force: boolean;
             /** Note */
             note?: string | null;
             /**
@@ -4913,6 +4952,24 @@ export interface components {
         /** ImprovementFeedbackCreateRequest */
         ImprovementFeedbackCreateRequest: {
             /**
+             * Agent Version Id
+             * @description 反馈归属的 Agent 版本。
+             * @default
+             */
+            agent_version_id: string;
+            /**
+             * Alert Id
+             * @description 反馈归属的告警 ID。
+             * @default
+             */
+            alert_id: string;
+            /**
+             * Case Id
+             * @description 反馈归属的 Case ID。
+             * @default
+             */
+            case_id: string;
+            /**
              * Raw Text
              * @description 反馈原文。
              * @default
@@ -4924,6 +4981,12 @@ export interface components {
              * @default
              */
             run_id: string;
+            /**
+             * Scenario
+             * @description 反馈归属的业务场景。
+             * @default
+             */
+            scenario: string;
             /**
              * Session Id
              * @description 关联 Session。
@@ -4941,11 +5004,23 @@ export interface components {
              * @description 反馈摘要。
              */
             summary: string;
+            /**
+             * Task Id
+             * @description 反馈归属的任务 ID。
+             * @default
+             */
+            task_id: string;
         };
         /** ImprovementFeedbackResponse */
         ImprovementFeedbackResponse: {
             /** Agent Id */
             agent_id: string;
+            /** Agent Version Id */
+            agent_version_id: string;
+            /** Alert Id */
+            alert_id: string;
+            /** Case Id */
+            case_id: string;
             /** Created At */
             created_at: string;
             /** Feedback Id */
@@ -4956,6 +5031,8 @@ export interface components {
             raw_text: string;
             /** Run Id */
             run_id: string;
+            /** Scenario */
+            scenario: string;
             /** Session Id */
             session_id: string;
             /** Source */
@@ -4964,6 +5041,8 @@ export interface components {
             status: string;
             /** Summary */
             summary: string;
+            /** Task Id */
+            task_id: string;
         };
         /** ImprovementItemResponse */
         ImprovementItemResponse: {
@@ -9202,6 +9281,37 @@ export interface operations {
             };
         };
     };
+    generate_attr_api_improvements__improvement_id__attribution_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttributionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     auto_advance_improvement_api_improvements__improvement_id__auto_advance_post: {
         parameters: {
             query?: never;
@@ -9696,6 +9806,37 @@ export interface operations {
         };
     };
     confirm_opt_api_improvements__improvement_id__optimization_plan_confirm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OptimizationPlanResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    generate_opt_api_improvements__improvement_id__optimization_plan_generate_post: {
         parameters: {
             query?: never;
             header?: never;

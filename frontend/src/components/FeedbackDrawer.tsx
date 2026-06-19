@@ -10,6 +10,11 @@ import type { RuntimeClientConfig } from "../types/runtime";
 export interface FeedbackContext {
   runId?: string;
   sessionId?: string;
+  agentVersionId?: string;
+  scenario?: string;
+  taskId?: string;
+  alertId?: string;
+  caseId?: string;
   agentId: string;
   agentName: string;
 }
@@ -54,7 +59,13 @@ export function FeedbackDrawer({
     `用户反馈：${wrong.trim()}`,
     expected.trim() ? `期望处理：${expected.trim()}` : "",
     `归属业务 Agent：${context.agentName}（${context.agentId}）`,
+    context.agentVersionId ? `Agent 版本：${context.agentVersionId}` : "",
+    context.scenario ? `业务场景：${context.scenario}` : "",
+    context.taskId ? `任务：${context.taskId}` : "",
     context.runId ? `来源 Run：${context.runId}` : "",
+    context.sessionId ? `来源 Session：${context.sessionId}` : "",
+    context.alertId ? `关联 Alert：${context.alertId}` : "",
+    context.caseId ? `关联 Case：${context.caseId}` : "",
   ].filter(Boolean).join("\n");
 
   const organize = () => { if (!wrong.trim()) return; setPhase("understanding"); };
@@ -86,6 +97,11 @@ export function FeedbackDrawer({
           raw_text: wrong.trim(),
           run_id: context.runId || "",
           session_id: context.sessionId || "",
+          agent_version_id: context.agentVersionId || "",
+          scenario: context.scenario || "",
+          task_id: context.taskId || "",
+          alert_id: context.alertId || "",
+          case_id: context.caseId || "",
         });
       } catch { /* 非致命：改进事项已创建 */ }
     }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
@@ -113,6 +129,8 @@ export function FeedbackDrawer({
             <span>系统会自动带入：</span>
             <span>✓ 当前 Run / Trace</span>
             <span>✓ 业务 Agent（{context.agentName}）</span>
+            {context.agentVersionId ? <span>✓ Agent 版本（{context.agentVersionId}）</span> : null}
+            {context.scenario || context.alertId || context.caseId ? <span>✓ 场景上下文</span> : null}
           </div>
           <div className="feedback-drawer-actions">
             <button className="secondary-button" onClick={onClose}>取消</button>
@@ -127,6 +145,8 @@ export function FeedbackDrawer({
               <li>问题：{problem}</li>
               <li>原因：待系统归因（确认保存后进入归因）</li>
               <li>可能对象：当前 Agent 运行 / MCP 数据</li>
+              <li>归属：{context.agentName}{context.agentVersionId ? ` / ${context.agentVersionId}` : ""}</li>
+              {context.scenario ? <li>场景：{context.scenario}</li> : null}
               <li>影响：待评估</li>
               <li>建议：进入改进处理</li>
             </ul>

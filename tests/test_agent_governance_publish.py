@@ -265,6 +265,39 @@ def test_batch_regression_failed_cases_block_publish(tmp_path):
     assert agent_store.current_commit_sha() != change_set["candidate_commit_sha"]
 
 
+def test_force_publish_failed_regression_records_audit_event(tmp_path):
+    """P4 发布门禁：普通发布被失败回归阻断；force=True 才能发布并留下强制审计。"""
+    governance, agent_store = _governance(tmp_path)
+    change_set = _candidate_change_set(governance, agent_store)
+    change_set_id = str(change_set["change_set_id"])
+    governance.mark_regression_running(change_set_id, eval_run_id="pending", operator="tester")
+    governance.complete_regression(
+        change_set_id,
+        eval_run={
+            "eval_run_id": "evr-force-failed",
+            "source": "optimization_batch_regression",
+            "change_set_id": change_set_id,
+            "result_status": "failed",
+            "summary": {"total": 1, "passed": 0, "failed": 1, "needs_human_review": 0},
+            "items": [{"eval_case_id": "evc-force-failed", "status": "failed"}],
+        },
+        operator="tester",
+    )
+
+    with pytest.raises(AgentGovernanceError):
+        governance.publish_change_set(change_set_id, operator="tester")
+
+    release = governance.publish_change_set(change_set_id, operator="lead", note="人工确认风险可接受", force=True)
+    persisted = governance.get_change_set(change_set_id)
+
+    assert release["status"] == "published"
+    assert persisted["status"] == "published"
+    assert persisted["force_published"] is True
+    assert "批次回归存在失败用例" in persisted["force_publication_blocker"]
+    assert agent_store.current_commit_sha() == change_set["candidate_commit_sha"]
+    assert "force_published" in {str(event["action"]) for event in governance.list_change_set_events(change_set_id)}
+
+
 def test_high_risk_change_set_requires_approval_before_publish(tmp_path):
     """AGV-041：标记为待审批的高风险变更不经审批不得发布；审批后可发布。"""
     governance, agent_store = _governance(tmp_path)

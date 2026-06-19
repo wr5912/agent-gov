@@ -143,6 +143,29 @@ def migrate_0013_optimization_task_agent_id(connection: Connection) -> None:
     )
 
 
+def migrate_0014_improvement_feedback_context(connection: Connection) -> None:
+    columns = _table_columns(connection, "improvement_feedbacks")
+    if not columns:
+        return
+    for column_name, ddl in {
+        "agent_version_id": "VARCHAR(256) DEFAULT ''",
+        "scenario": "VARCHAR(256) DEFAULT ''",
+        "task_id": "VARCHAR(256) DEFAULT ''",
+        "alert_id": "VARCHAR(256) DEFAULT ''",
+        "case_id": "VARCHAR(256) DEFAULT ''",
+    }.items():
+        if column_name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE improvement_feedbacks ADD COLUMN {column_name} {ddl}")
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_agent_version_id "
+        "ON improvement_feedbacks (agent_version_id)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_scenario ON improvement_feedbacks (scenario)"
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_task_id ON improvement_feedbacks (task_id)")
+
+
 def migrate_0010_scenario_packs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """
@@ -234,5 +257,3 @@ def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_change_set_id ON agent_releases (change_set_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_rollback_of_release_id ON agent_releases (rollback_of_release_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_status_created ON agent_releases (status, created_at)")
-
-

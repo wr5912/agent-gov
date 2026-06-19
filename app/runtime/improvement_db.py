@@ -84,6 +84,11 @@ class ImprovementFeedbackModel(Base):
     raw_text: Mapped[str] = mapped_column(Text, default="")
     run_id: Mapped[str] = mapped_column(String(128), default="")
     session_id: Mapped[str] = mapped_column(String(128), default="")
+    agent_version_id: Mapped[str] = mapped_column(String(256), default="")
+    scenario: Mapped[str] = mapped_column(String(256), default="")
+    task_id: Mapped[str] = mapped_column(String(256), default="")
+    alert_id: Mapped[str] = mapped_column(String(256), default="")
+    case_id: Mapped[str] = mapped_column(String(256), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 

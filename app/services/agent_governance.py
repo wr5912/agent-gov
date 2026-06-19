@@ -344,7 +344,15 @@ class AgentGovernanceService:
             operator=operator,
         )
 
-    def publish_change_set(self, change_set_id: str, *, operator: str = "runtime", tag_name: str | None = None, note: str | None = None) -> JsonObject:
+    def publish_change_set(
+        self,
+        change_set_id: str,
+        *,
+        operator: str = "runtime",
+        tag_name: str | None = None,
+        note: str | None = None,
+        force: bool = False,
+    ) -> JsonObject:
         change_set = self.get_change_set(change_set_id)
         if not change_set:
             raise AgentGovernanceError(404, "Agent change set not found")
@@ -352,9 +360,11 @@ class AgentGovernanceService:
             raise AgentGovernanceError(409, "Agent change set has no candidate commit")
         status = str(change_set["status"])
         publication_blocker = self._publication_blocker_for_change_set(change_set)
-        if publication_blocker:
+        if publication_blocker and not force:
             raise AgentGovernanceError(409, publication_blocker)
-        if status not in PUBLISHABLE_CHANGE_SET_STATES:
+        if force and status not in (PUBLISHABLE_CHANGE_SET_STATES | {"regression_failed"}):
+            raise AgentGovernanceError(409, f"Agent change set cannot be force-published from status {status}")
+        if not force and status not in PUBLISHABLE_CHANGE_SET_STATES:
             raise AgentGovernanceError(409, f"Agent change set cannot be published from status {status}")
         agent_id = self._normalize_agent_id(change_set.get("agent_id"))
         store = self._store_for(agent_id)
@@ -377,8 +387,14 @@ class AgentGovernanceService:
         updated = self._transition_change_set(
             change_set_id,
             "published",
-            fields={"latest_release_id": release["release_id"], "latest_release": release},
-            action="published",
+            fields={
+                "latest_release_id": release["release_id"],
+                "latest_release": release,
+                "force_published": force,
+                "force_publication_blocker": publication_blocker if force else None,
+                "force_publish_note": note if force else None,
+            },
+            action="force_published" if force else "published",
             operator=operator,
         )
         release["change_set"] = updated

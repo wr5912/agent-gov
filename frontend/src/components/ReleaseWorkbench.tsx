@@ -1,5 +1,7 @@
 import { useState } from "react";
+import { publishAgentChangeSet, runAgentChangeSetRegression } from "../api/runtime";
 import type { AgentChangeSet, AgentRelease } from "../types/runtime";
+import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
 
 // 发布工作台（v2.7 §12）：回答「能不能发 / 为什么 / 发了包含什么」，并呈现三门门禁与动作。
@@ -41,33 +43,85 @@ function overallGate(gates: { state: GateState }[], total: number): { label: str
 }
 
 export function ReleaseWorkbench({
+  clientConfig,
   scopeAgentId,
   releases,
   changeSets,
   onRefresh,
 }: {
+  clientConfig: RuntimeClientConfig;
   scopeAgentId: string;
   releases: AgentRelease[];
   changeSets: AgentChangeSet[];
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
 }) {
   const [showChanges, setShowChanges] = useState(false);
+  const [busyAction, setBusyAction] = useState<string | undefined>();
+  const [confirmForceId, setConfirmForceId] = useState<string | undefined>();
+  const [actionMessage, setActionMessage] = useState<string | undefined>();
+  const [actionError, setActionError] = useState<string | undefined>();
   const scopedChangeSets = scopedBy(changeSets as (AgentChangeSet & WithAgent)[], scopeAgentId);
   const scopedReleases = scopedBy(releases as (AgentRelease & WithAgent)[], scopeAgentId);
   const pendingChangeSets = scopedChangeSets.filter((cs) => !CHANGESET_TERMINAL.has(String(cs.status)));
   const gates = deriveGates(scopedChangeSets);
   const gate = overallGate(gates, scopedChangeSets.length);
   const regressionPending = gates.find((g) => g.id === "regression")?.state !== "pass" && pendingChangeSets.length > 0;
-  const canForce = pendingChangeSets.length > 0;
+  const regressionTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && !REGRESSION_PASS.has(String(cs.status)));
+  const forceTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && CHANGESET_BLOCKED.has(String(cs.status))) || pendingChangeSets.find((cs) => cs.candidate_commit_sha);
+  const canForce = Boolean(forceTarget);
+
+  const runAction = async (name: string, action: () => Promise<void>) => {
+    setBusyAction(name);
+    setActionError(undefined);
+    setActionMessage(undefined);
+    try {
+      await action();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusyAction(undefined);
+    }
+  };
+
+  const handleRunRegression = () => {
+    if (!regressionTarget) return;
+    void runAction("regression", async () => {
+      const result = await runAgentChangeSetRegression(clientConfig, regressionTarget.change_set_id);
+      setActionMessage(`已运行回归：${result.eval_run_id}（${result.result_status}）`);
+      await onRefresh();
+    });
+  };
+
+  const handleForcePublish = () => {
+    if (!forceTarget) return;
+    if (confirmForceId !== forceTarget.change_set_id) {
+      setConfirmForceId(forceTarget.change_set_id);
+      setShowChanges(true);
+      setActionMessage(`再次点击「强制发布」确认发布 ${forceTarget.change_set_id}。`);
+      return;
+    }
+    void runAction("force-publish", async () => {
+      const release = await publishAgentChangeSet(clientConfig, forceTarget.change_set_id, {
+        operator: "ui",
+        force: true,
+        note: "UI 强制发布：人工确认发布门禁风险可接受。",
+      });
+      setConfirmForceId(undefined);
+      setActionMessage(`已强制发布：${release.release_id}`);
+      await onRefresh();
+    });
+  };
 
   return (
     <div className="improvement-workbench" data-testid="release-workbench" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
       <section className="iw-detail-panel">
         <div className="iw-panel-head">
           <h3>发布{scopeAgentId ? ` · ${scopeAgentId}` : "（全部业务 Agent）"}</h3>
-          <button className="iw-secondary-button" type="button" onClick={onRefresh}>刷新</button>
+          <button className="iw-secondary-button" type="button" onClick={() => void onRefresh()}>刷新</button>
         </div>
         <div className="iw-panel-body">
+          {actionError ? <div className="iw-error" data-testid="release-action-error">{actionError}</div> : null}
+          {actionMessage ? <div className="iw-next-step" data-testid="release-action-message">{actionMessage}</div> : null}
           <div className="iw-detail-section">
             <h4>能不能发</h4>
             <span className={`iw-stage-pill ${gate.tone === "success" ? "is-done" : ""}`} data-testid="release-gate" data-state={gate.tone}>{gate.label}</span>
@@ -98,11 +152,11 @@ export function ReleaseWorkbench({
                 className="iw-secondary-button"
                 type="button"
                 data-testid="release-action-run-regression"
-                disabled={!regressionPending}
-                title={regressionPending ? "在变更详情运行回归（旧 workspace 能力 P3 迁移后直接接入）" : "无待回归变更"}
-                onClick={() => onRefresh()}
+                disabled={!regressionPending || !regressionTarget || Boolean(busyAction)}
+                title={regressionTarget ? `运行 ${regressionTarget.change_set_id} 的回归` : "无可运行回归的候选变更"}
+                onClick={handleRunRegression}
               >
-                去运行回归
+                {busyAction === "regression" ? "回归中..." : "去运行回归"}
               </button>
               <button
                 className="iw-secondary-button"
@@ -116,12 +170,12 @@ export function ReleaseWorkbench({
                 className="iw-secondary-button"
                 type="button"
                 data-testid="release-action-force"
-                disabled={!canForce}
-                title={canForce ? "强制发布需在变更详情二次确认（危险操作）" : "无可发布变更"}
+                disabled={!canForce || Boolean(busyAction)}
+                title={forceTarget ? `强制发布 ${forceTarget.change_set_id}` : "无可发布变更"}
                 style={{ color: canForce ? "#dc2626" : undefined }}
-                onClick={() => setShowChanges(true)}
+                onClick={handleForcePublish}
               >
-                强制发布…
+                {busyAction === "force-publish" ? "发布中..." : confirmForceId === forceTarget?.change_set_id ? "确认强制发布" : "强制发布..."}
               </button>
             </div>
           </div>

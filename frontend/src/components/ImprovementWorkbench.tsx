@@ -3,10 +3,12 @@ import {
   addImprovementLink,
   getNormalizedFeedback,
   getAttribution,
+  generateAttribution,
   upsertAttribution,
   confirmAttribution,
   listImprovementFeedbacks,
   getOptimizationPlan,
+  generateOptimizationPlan,
   upsertOptimizationPlan,
   confirmOptimizationPlan,
   getExecution,
@@ -227,18 +229,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     });
   };
 
-  // 系统初步归因：从系统理解(NormalizedFeedback)确定性推导一版归因，供用户确认/修改（真正的智能归因为后续 Governor/LLM 引擎）。
-  const deriveAttribution = (nf: NormalizedFeedback | null, item: ImprovementItem) => ({
-    summary: nf
-      ? `可能与「${nf.possible_object || "外部数据/工具"}」相关：${nf.problem}${nf.possible_reason ? `（${nf.possible_reason}）` : ""}。`
-      : `针对「${item.title}」的初步归因，待补充证据。`,
-    responsibility_boundary: ["不是主 Agent 推理错误", `主要可能在：${nf?.possible_object || "外部数据源 / 工具质量"}`],
-    evidence: nf?.user_quote ? [`用户反馈：${nf.user_quote}`] : [],
-  });
-
   const handleGenerateAttribution = (item: ImprovementItem) => {
     void run(async () => {
-      const a = await upsertAttribution(clientConfig, item.improvement_id, deriveAttribution(normalizedFeedback, item));
+      const a = await generateAttribution(clientConfig, item.improvement_id);
       setAttribution(a);
       setEditingAttribution(false);
     });
@@ -261,15 +254,10 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     });
   };
 
-  // §106 优化方案：从归因/系统理解确定性推导一版方案（真智能方案为后续 governor 引擎）。
+  // §106 优化方案：由后端治理端点生成初版方案，再由用户确认/修改。
   const handleGenerateOptPlan = (item: ImprovementItem) => {
     void run(async () => {
-      const summary = `针对「${item.title}」：${attribution?.summary || normalizedFeedback?.suggestion || "收紧 Agent 处理逻辑，补充校验/提示"}。`;
-      const p = await upsertOptimizationPlan(clientConfig, item.improvement_id, {
-        summary,
-        changes: [{ target: "prompt", change: "补充对应校验与提示指令，避免重演该问题" }],
-      });
-      setOptPlan(p);
+      setOptPlan(await generateOptimizationPlan(clientConfig, item.improvement_id));
     });
   };
   const handleConfirmOptPlan = (item: ImprovementItem) => {
@@ -570,13 +558,14 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               <div className="iw-detail-section" data-testid="source-feedback-table">
                 <h4>来源反馈（{feedbacks.length}）</h4>
                 <table className="iw-feedback-table">
-                  <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>状态</th></tr></thead>
+                  <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>版本 / 场景</th><th>状态</th></tr></thead>
                   <tbody>
                     {feedbacks.map((f, i) => (
                       <tr key={f.feedback_id} data-testid="source-feedback-row">
                         <td>{i + 1}</td>
                         <td>{f.summary}</td>
                         <td>{SOURCE_LABEL[f.source] ?? f.source}</td>
+                        <td>{[f.agent_version_id, f.scenario].filter(Boolean).join(" / ") || "-"}</td>
                         <td>{f.status}</td>
                       </tr>
                     ))}
@@ -711,7 +700,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                       <div className="iw-list-item" data-testid="similar-item" key={s.improvement.improvement_id}>
                         <span className="iw-list-item-title">{s.improvement.title}</span>
                         <span className="iw-list-item-meta">相似度 {s.score} · 置信度 {confidence} · {stageLabel(s.improvement.improvement_stage)}</span>
-                        <span className="iw-list-item-meta" data-testid="merge-basis">合并依据：标题/摘要 token 重叠（+共享来源反馈加权）</span>
+                        <span className="iw-list-item-meta" data-testid="merge-basis">合并依据：标题/摘要 token 与中文 n-gram 重叠（+共享来源反馈加权）</span>
                         <div className="iw-automation-row" style={{ marginTop: 4 }}>
                           <button className="iw-secondary-button" type="button" data-testid="merge-into-current" disabled={busy} onClick={() => handleMerge(selected, s.improvement.improvement_id)}>归并到当前</button>
                           <button className="iw-secondary-button" type="button" data-testid="mark-merge-inaccurate" onClick={() => setDismissedSimilar((prev) => new Set(prev).add(s.improvement.improvement_id))}>标记合并不准</button>
@@ -759,7 +748,19 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
             </details>
 
             {contextOpen ? (() => {
-              const inputs = { item: selected, agentName: agentName(selected.agent_id), links, primaryActionLabel: stageView?.primaryAction?.label || "（已到终态）" };
+              const inputs = {
+                item: selected,
+                agentName: agentName(selected.agent_id),
+                links,
+                primaryActionLabel: stageView?.primaryAction?.label || "（已到终态）",
+                normalizedFeedback,
+                attribution,
+                feedbacks,
+                optimizationPlan: optPlan,
+                execution,
+                assets: sedimentAssets,
+                langfuseUrl,
+              };
               const text = buildContext(contextType, inputs);
               return (
                 <div className="iw-context-drawer" data-testid="context-drawer" data-state="open">

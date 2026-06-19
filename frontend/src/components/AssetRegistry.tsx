@@ -115,6 +115,11 @@ export function AssetRegistry({
                       {asset.inherited_from ? <span className="iw-ref" data-testid="asset-inherited" style={{ marginLeft: 8 }}>继承</span> : null}
                     </span>
                     <span className="iw-list-item-meta">{ASSET_TYPE_LABEL[asset.asset_type] ?? asset.asset_type} · {agentName(asset.agent_id)}</span>
+                    <div className="iw-list-item-meta" data-testid="asset-provenance">
+                      <span data-testid="asset-provenance-agent">归属：{agentName(asset.agent_id)}</span>
+                      <span> · 来源改进：{asset.source_improvement_id || "手工沉淀"}</span>
+                      {asset.inherited_from ? <span> · 继承自：{asset.inherited_from}</span> : null}
+                    </div>
                     <div className="iw-automation-row" style={{ marginTop: 6 }}>
                       <select
                         className="iw-select select-inline"

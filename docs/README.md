@@ -33,6 +33,7 @@
 
 - [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)：`docs/AgentGov_ASCII_UI_草图方案_v2.7.md`
 - [AgentGov v2.7 UI 设计一致性核查与整改报告](./design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md)：`docs/design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md`
+- [AgentGov v2.7 全局界面系统性审视报告](./design_review_report/AgentGov_v2.7_全局界面系统性审视报告.md)：`docs/design_review_report/AgentGov_v2.7_全局界面系统性审视报告.md`
 
 ## 接口与示例
 

@@ -180,9 +180,9 @@ async function installMockRoutes(page, state) {
 }
 
 async function assertVisible(page, testId) {
-  const locator = page.getByTestId(testId);
+  const locator = page.getByTestId(testId).first();
   await locator.waitFor({ timeout: 8000 });
-  if (!(await locator.first().isVisible())) throw new Error(`${testId} is not visible`);
+  if (!(await locator.isVisible())) throw new Error(`${testId} is not visible`);
   return locator;
 }
 

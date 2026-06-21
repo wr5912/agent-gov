@@ -70,6 +70,7 @@
 .iw-list-item:hover { border-color: #cbd5e1; }
 .iw-list-item.is-active { border-color: var(--color-primary); background: var(--color-primary-soft); }
 .iw-list-item-title { font-weight: 600; color: var(--text-primary); font-size: 13px; }
+.iw-list-item-decision { font-size: 12px; color: var(--color-primary); font-weight: 600; line-height: 1.35; }
 .iw-list-item-meta { font-size: 11px; color: var(--text-muted); }
 
 .iw-stage-pill {
@@ -82,6 +83,58 @@
 
 .iw-detail-title { font-size: 18px; font-weight: 700; margin: 0 0 4px; }
 .iw-detail-owner { font-size: 12px; color: var(--text-secondary); margin-bottom: 12px; }
+.iw-decision-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 8px 0 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.iw-decision-meta span {
+  min-width: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-muted);
+}
+.iw-decision-card,
+.iw-provenance-card,
+.iw-add-feedback-flow {
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-surface);
+  padding: 12px;
+}
+.iw-decision-card {
+  background: linear-gradient(180deg, #fff, #f8fafc);
+  border-color: #bfdbfe;
+}
+.iw-section-kicker {
+  color: var(--color-primary);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+.iw-decision-card h3 {
+  margin: 0 0 10px;
+  font-size: 17px;
+  line-height: 1.4;
+}
+.iw-decision-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr);
+  gap: 12px;
+}
+.iw-decision-consequence {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--color-primary-soft);
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .iw-closed-loop-spine {
   display: flex;
   flex-wrap: wrap;
@@ -152,6 +205,44 @@
 .iw-create { border-top: 1px solid var(--border-subtle); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
 .iw-create h4 { margin: 0; font-size: 12px; color: var(--text-secondary); }
 .iw-create-row { display: flex; gap: 8px; }
+.iw-flow-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.iw-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 10px 0;
+}
+.iw-form-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.iw-form-span { grid-column: 1 / -1; }
+.iw-textarea {
+  min-height: 72px;
+  padding-top: 8px;
+  resize: vertical;
+}
+.iw-review-box {
+  display: grid;
+  gap: 5px;
+  margin: 8px 0 10px;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-muted);
+  font-size: 13px;
+}
+.iw-review-box p { margin: 0; color: var(--text-secondary); line-height: 1.5; }
+.iw-review-box span { color: var(--text-muted); font-size: 12px; }
 
 /* 获取上下文抽屉：结构化文本为正文（深色调试区仅用于此类可复制 raw 文本）。 */
 .iw-context-body { background: var(--bg-debug); color: var(--text-debug); margin: 0; padding: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; user-select: text; }

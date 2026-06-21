@@ -39,11 +39,13 @@ import { requestJson } from "../api/request";
 import { describeImprovementStage, stageLabel } from "../improvementStage";
 import { buildContext, type ContextType } from "../contextPackage";
 import { listAssets, createAsset, type Asset } from "../api/assets";
-import { STATUS_CATEGORIES, deriveCategory, SOURCE_LABEL, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
+import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementSystemUnderstanding } from "./ImprovementSystemUnderstanding";
+import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
+import { ImprovementAddFeedbackFlow } from "./ImprovementAddFeedbackFlow";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -76,6 +78,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
   const [newLinkKind, setNewLinkKind] = useState("attribution");
   const [newLinkRef, setNewLinkRef] = useState("");
+  const [showAllFeedbacks, setShowAllFeedbacks] = useState(false);
+  const [addFeedbackOpen, setAddFeedbackOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     setError(undefined);
@@ -137,6 +141,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     setLastAuto(undefined);
     setRegressionDismissed(false);
     setEditingAttribution(false);
+    setShowAllFeedbacks(false);
+    setAddFeedbackOpen(false);
     setDismissedSimilar(new Set());
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
@@ -320,6 +326,14 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     });
   };
 
+  const reloadSelectedFeedbacks = async () => {
+    if (!selected) return;
+    const rows = await listImprovementFeedbacks(clientConfig, selected.improvement_id);
+    setFeedbacks(rows);
+    setShowAllFeedbacks(true);
+    await refresh();
+  };
+
   const copyText = (text: string) => {
     try { void navigator.clipboard?.writeText(text); } catch { /* 剪贴板不可用；正文可框选复制 */ }
   };
@@ -364,20 +378,29 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
           {visibleItems.length === 0 ? (
             <div className="iw-empty">{items.length === 0 ? "当前范围暂无改进事项。新建后即可推进治理闭环。" : "该状态下暂无改进事项。"}</div>
           ) : (
-            visibleItems.map((item) => (
-              <button
-                key={item.improvement_id}
-                type="button"
-                className={`iw-list-item ${item.improvement_id === selectedId ? "is-active" : ""}`}
-                data-testid="improvement-list-item"
-                data-item-id={item.improvement_id}
-                data-stage={item.improvement_stage}
-                onClick={() => { setSelectedId(item.improvement_id); setContextOpen(false); }}
-              >
-                <span className="iw-list-item-title">{item.title}</span>
-                <span className="iw-list-item-meta">{agentName(item.agent_id)} · {stageLabel(item.improvement_stage)}</span>
-              </button>
-            ))
+            visibleItems.map((item) => {
+              const itemStage = describeImprovementStage(item.improvement_stage);
+              const sourceCount = item.source_feedback_refs?.length ?? 0;
+              return (
+                <button
+                  key={item.improvement_id}
+                  type="button"
+                  className={`iw-list-item ${item.improvement_id === selectedId ? "is-active" : ""}`}
+                  data-testid="improvement-list-item"
+                  data-item-id={item.improvement_id}
+                  data-stage={item.improvement_stage}
+                  onClick={() => { setSelectedId(item.improvement_id); setContextOpen(false); }}
+                >
+                  <span className="iw-list-item-title">{item.title}</span>
+                  <span className="iw-list-item-decision" data-testid="improvement-list-decision">
+                    待决策：{itemStage.primaryAction?.label ?? (itemStage.isTerminal ? "查看发布状态" : `确认${itemStage.label}`)}
+                  </span>
+                  <span className="iw-list-item-meta">
+                    {agentName(item.agent_id)} · {stageLabel(item.improvement_stage)} · 来源 {sourceCount || "未记录"} 条反馈
+                  </span>
+                </button>
+              );
+            })
           )}
         </div>
         <div className="iw-create">
@@ -422,63 +445,32 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
             data-item-id={selected.improvement_id}
             data-stage={selected.improvement_stage}
           >
-            <h2 className="iw-detail-title" data-testid="improvement-title">{selected.title}</h2>
-            <div className="iw-detail-owner">归属：{agentName(selected.agent_id)}（{selected.agent_id}）</div>
             <ImprovementClosedLoopSpine currentIndex={stageView.stageIndex} hasAssets={sedimentAssets.length > 0} />
-
-            <div className="iw-detail-section">
-              <span
-                className={`iw-stage-pill ${stageView.isTerminal ? "is-done" : ""}`}
-                data-testid="current-stage"
-                data-state={selected.improvement_stage}
-              >
-                当前阶段：{stageView.label}
-              </span>
-              {selected.improvement_status === "archived" ? (
-                <span className="iw-status-pill is-archived" data-testid="improvement-status" data-status="archived">已归档</span>
-              ) : null}
-            </div>
-
-            <div className="iw-detail-section">
-              <h4>下一步</h4>
-              <div className="iw-next-step" data-testid="improvement-next-step">
-                {selected.improvement_status === "archived"
-                  ? "已归档，不再推进。"
-                  : stageView.primaryAction
-                    ? stageView.primaryAction.label
-                    : "已进入发布阶段，治理闭环完成。"}
-              </div>
-            </div>
-
-            <div className="iw-detail-section">
-              <h4>阶段</h4>
-              <ol className="iw-stepper" aria-label="改进事项阶段">
-                {stageView.stages.map((stage, index) => {
-                  const state = index < stageView.stageIndex ? "done" : index === stageView.stageIndex ? "current" : "todo";
-                  return (
-                    <li className={`iw-step is-${state}`} key={stage.key}>
-                      <span className="iw-step-dot">{index + 1}</span>
-                      <span>{stage.label}</span>
-                    </li>
-                  );
-                })}
-              </ol>
-            </div>
-
-            <details className="iw-advanced" data-testid="full-chain">
-              <summary>查看完整链路</summary>
-              <ol className="iw-chain">
-                {stageView.stages.map((stage, index) => {
-                  const word = index < stageView.stageIndex ? "已完成" : index === stageView.stageIndex ? "当前" : "待处理";
-                  return (
-                    <li key={stage.key} data-testid="full-chain-step" className={index === stageView.stageIndex ? "is-current" : index < stageView.stageIndex ? "is-done" : ""}>
-                      <strong>{stage.label}</strong> — {word}
-                    </li>
-                  );
-                })}
-              </ol>
-              {lastAuto ? <div className="iw-next-step" data-testid="full-chain-automation">自动化详情：{autoAdvanceNote(lastAuto)}</div> : null}
-            </details>
+            <ImprovementDecisionPanel
+              item={selected}
+              agentName={agentName(selected.agent_id)}
+              stageView={stageView}
+              feedbacks={feedbacks}
+              showAllFeedbacks={showAllFeedbacks}
+              lastAuto={lastAuto}
+              busy={busy}
+              langfuseUrl={langfuseUrl}
+              onPrimaryAction={() => handleAdvance(selected, stageView.primaryAction!.stage)}
+              onOpenContext={() => setContextOpen(true)}
+              onArchive={() => handleArchive(selected)}
+              onAddFeedback={() => { setShowAllFeedbacks(false); setAddFeedbackOpen(true); }}
+              onToggleAllFeedbacks={() => setShowAllFeedbacks((prev) => !prev)}
+              onSplit={(ref) => handleSplit(selected, ref)}
+            />
+            {addFeedbackOpen ? (
+              <ImprovementAddFeedbackFlow
+                clientConfig={clientConfig}
+                item={selected}
+                busy={busy}
+                onAdded={reloadSelectedFeedbacks}
+                onCancel={() => setAddFeedbackOpen(false)}
+              />
+            ) : null}
 
             <ImprovementSystemUnderstanding nf={normalizedFeedback} fallbackSummary={selected.summary} />
 
@@ -568,106 +560,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 ))}
               </div>
             ) : null}
-
-            {feedbacks.length ? (
-              <div className="iw-detail-section" data-testid="source-feedback-table">
-                <h4>来源反馈（{feedbacks.length}）</h4>
-                <table className="iw-feedback-table">
-                  <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>版本 / 场景</th><th>状态</th></tr></thead>
-                  <tbody>
-                    {feedbacks.map((f, i) => (
-                      <tr key={f.feedback_id} data-testid="source-feedback-row">
-                        <td>{i + 1}</td>
-                        <td>{f.summary}</td>
-                        <td>{SOURCE_LABEL[f.source] ?? f.source}</td>
-                        <td>{[f.agent_version_id, f.scenario].filter(Boolean).join(" / ") || "-"}</td>
-                        <td>{f.status}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
-            {(selected.source_feedback_refs ?? []).length ? (
-              <div className="iw-detail-section">
-                <h4>来源引用（可拆分）</h4>
-                <div className="iw-source-refs" data-testid="improvement-source-refs">
-                  {(selected.source_feedback_refs ?? []).map((ref) => (
-                    <span className="iw-ref" key={ref}>
-                      {ref}
-                      {selected.improvement_status !== "archived" && (selected.source_feedback_refs ?? []).length > 1 ? (
-                        <button
-                          className="iw-ref-split"
-                          type="button"
-                          data-testid="split-ref"
-                          title="把这条反馈拆分为独立改进事项"
-                          disabled={busy}
-                          onClick={() => handleSplit(selected, ref)}
-                        >
-                          拆分
-                        </button>
-                      ) : null}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {(() => {
-              const runIds = [...new Set(feedbacks.map((f) => f.run_id).filter(Boolean))];
-              if (!runIds.length) return null;
-              return (
-                <details className="iw-advanced" data-testid="trace-summary">
-                  <summary>Trace 摘要</summary>
-                  <div className="iw-trace-summary">
-                    <div className="iw-content-subhead" style={{ color: "var(--text-debug)" }}>关联运行</div>
-                    <ul className="iw-content-list" style={{ color: "var(--text-debug)" }}>{runIds.map((r) => <li key={r}>{r}</li>)}</ul>
-                    <div className="iw-content-subhead" style={{ color: "var(--text-debug)" }}>关键观察 / 相关工具调用</div>
-                    <div style={{ color: "var(--text-debug-muted, #9ca3af)", fontSize: 12 }}>运行证据摘要见 Langfuse trace（关键观察 / 工具调用由实时 trace 提供）。</div>
-                    {langfuseUrl ? <a className="iw-secondary-button" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer" style={{ marginTop: 8, display: "inline-block" }}>打开 Langfuse ↗</a> : null}
-                  </div>
-                </details>
-              );
-            })()}
-
-            <div className="iw-action-row">
-              {selected.improvement_status === "archived" ? (
-                <span className="iw-done-note" data-testid="improvement-archived">本改进事项已归档。</span>
-              ) : stageView.primaryAction ? (
-                <button
-                  className="iw-primary-button"
-                  type="button"
-                  data-testid="primary-action"
-                  data-action={stageView.primaryAction.stage}
-                  disabled={busy}
-                  onClick={() => handleAdvance(selected, stageView.primaryAction!.stage)}
-                >
-                  {stageView.primaryAction.label}
-                </button>
-              ) : (
-                <span className="iw-done-note" data-testid="improvement-terminal">已进入发布阶段，治理闭环完成。</span>
-              )}
-                <button
-                  className="iw-secondary-button"
-                  type="button"
-                  data-testid="open-context-drawer"
-                  onClick={() => setContextOpen(true)}
-                >
-                获取上下文
-              </button>
-              {selected.improvement_status !== "archived" ? (
-                <button
-                  className="iw-secondary-button"
-                  type="button"
-                  data-testid="archive-improvement"
-                  disabled={busy}
-                  onClick={() => handleArchive(selected)}
-                >
-                  归档
-                </button>
-              ) : null}
-            </div>
 
             <details className="iw-advanced" data-testid="improvement-advanced">
               <summary>高级（自动化策略 / 相似归并 / 关联闭环对象）</summary>

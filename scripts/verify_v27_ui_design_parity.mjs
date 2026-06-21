@@ -636,6 +636,7 @@ const RULES = [
   } },
   { id: "source-feedback-table", phase: "P3", desc: "来源反馈表(§8.4 #/反馈摘要/来源/状态)", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
+    await page.getByTestId("view-all-feedbacks").click().catch(() => {});
     await page.getByTestId("source-feedback-table").waitFor({ timeout: 6000 }).catch(() => {});
     const tbl = await has(page, "source-feedback-table");
     const rows = await page.getByTestId("source-feedback-row").count();

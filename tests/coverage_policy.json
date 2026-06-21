@@ -116,6 +116,7 @@
           ],
           "ui_scripts": [
             "verify:design-parity",
+            "verify:improvement-decision",
             "verify:asset-registry",
             "verify:message-actions-browser"
           ]

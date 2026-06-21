@@ -12,6 +12,7 @@
     "verify:feedback-browser": "cd .. && node scripts/verify_feedback_optimization_browser.mjs",
     "verify:feedback-ui-states": "cd .. && node scripts/verify_feedback_optimization_ui_states.mjs",
     "verify:design-parity": "cd .. && node scripts/verify_v27_ui_design_parity.mjs",
+    "verify:improvement-decision": "cd .. && node scripts/verify_improvement_decision_ui.mjs",
     "verify:asset-registry": "cd .. && node scripts/verify_asset_registry.mjs",
     "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs"
   },

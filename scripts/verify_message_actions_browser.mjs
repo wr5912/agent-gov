@@ -7,6 +7,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { scrollNavigationMetrics } from "./playground_scroll_test_helpers.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -81,6 +82,32 @@ function sse(route, events) {
   });
 }
 
+function mockAgentRuns(includeMessages) {
+  return Array.from({ length: 14 }, (_, index) => {
+    const n = index + 1;
+    const createdAt = new Date(Date.parse(ts) + index * 2000).toISOString();
+    const completedAt = new Date(Date.parse(ts) + index * 2000 + 1000).toISOString();
+    const answer = `我是 AgentGov 测试助手。第 ${n} 段回复用于构造可滚动的 Playground 历史，验证自动置底、一键置底和消息滚动导航。`.repeat(2);
+    return {
+      run_id: `mock-run-${n}`,
+      session_id: "mock-session",
+      sdk_session_id: "mock-session",
+      agent_version_id: "v-mock",
+      message: `用一句话说明你的角色，序号 ${n}。`,
+      answer: includeMessages ? answer : undefined,
+      answer_summary: answer,
+      messages: includeMessages ? [
+        { event: "AssistantMessage", content: [{ text: answer }] },
+        { event: "ToolUse", name: "Read", input: { file_path: "CLAUDE.md" } },
+        { event: "ResultMessage", content: [{ text: `trace ${n}` }] },
+      ] : undefined,
+      agent_activity: { tool_calls: [], tool_results: [], tool_names: [] },
+      created_at: createdAt,
+      completed_at: completedAt,
+    };
+  });
+}
+
 function mockPayload(urlOrPath) {
   const url = typeof urlOrPath === "string" ? null : urlOrPath;
   const path = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
@@ -89,26 +116,14 @@ function mockPayload(urlOrPath) {
     session_id: "mock-session",
     sdk_session_id: "mock-session",
     created_at: ts,
-    updated_at: "2026-06-18T00:00:01Z",
+    updated_at: "2026-06-18T00:00:30Z",
     title: "用一句话说明你的角色。",
-    turns: 1,
+    turns: 14,
     metadata: { client: "agent-gov-ui" },
   }];
   if (path === "/api/agent-runs") {
     const includeMessages = url?.searchParams.get("include_messages") === "true";
-    return [{
-      run_id: "mock-run",
-      session_id: "mock-session",
-      sdk_session_id: "mock-session",
-      agent_version_id: "v-mock",
-      message: "用一句话说明你的角色。",
-      answer: includeMessages ? "我是 AgentGov 测试助手。" : undefined,
-      answer_summary: "我是 AgentGov 测试助手。",
-      messages: includeMessages ? [{ event: "AssistantMessage", content: [{ text: "我是 AgentGov 测试助手。" }] }] : undefined,
-      agent_activity: { tool_calls: [], tool_results: [], tool_names: [] },
-      created_at: ts,
-      completed_at: "2026-06-18T00:00:01Z",
-    }];
+    return mockAgentRuns(includeMessages);
   }
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
@@ -116,6 +131,24 @@ function mockPayload(urlOrPath) {
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v-mock", commit_sha: "mock", created_at: ts, reason: "current" };
   return {};
+}
+
+async function scrollDistance(page) {
+  return page.getByTestId("playground-messages").evaluate((el) => Math.round(el.scrollHeight - el.clientHeight - el.scrollTop));
+}
+
+async function waitNearBottom(page) {
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="playground-messages"]');
+    return !!el && el.scrollHeight > el.clientHeight && el.scrollHeight - el.clientHeight - el.scrollTop <= 24;
+  }, null, { timeout: 5000 });
+}
+
+async function waitPreviewOpen(page) {
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="playground-scroll-preview"]');
+    return !!el && Number(getComputedStyle(el).opacity) > 0.9;
+  }, null, { timeout: 5000 });
 }
 
 async function main() {
@@ -160,6 +193,45 @@ async function main() {
         const counts = {};
         for (const t of ["message-action-create-feedback", "message-action-view-trace", "message-action-get-context", "message-action-rerun"]) {
           counts[t] = await page.getByTestId(t).count();
+        }
+        let scrollChecks = { skipped: REAL };
+        if (!REAL) {
+          await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+          await waitNearBottom(page);
+          const initialDistance = await scrollDistance(page);
+          await page.getByTestId("playground-messages").evaluate((el) => {
+            el.scrollTop = 0;
+            el.dispatchEvent(new Event("scroll", { bubbles: true }));
+          });
+          await page.getByTestId("playground-jump-to-bottom").waitFor({ timeout: 5000 });
+          const jumpVisibleAfterUp = await page.getByTestId("playground-jump-to-bottom").isVisible().catch(() => false);
+          await page.getByTestId("playground-scroll-rail").hover();
+          await waitPreviewOpen(page);
+          const previewItemCount = await page.getByTestId("playground-scroll-preview-item").count();
+          const previewRoles = await page.getByTestId("playground-scroll-preview-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+          const markCount = await page.getByTestId("playground-scroll-mark").count();
+          const markRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+          const navigationMetrics = await scrollNavigationMetrics(page);
+          await page.getByTestId("playground-scroll-preview-item").first().click();
+          await page.waitForFunction(() => {
+            const el = document.querySelector('[data-testid="playground-messages"]');
+            return !!el && el.scrollTop <= 80;
+          }, null, { timeout: 5000 });
+          const nearTopAfterPreviewClick = await page.getByTestId("playground-messages").evaluate((el) => el.scrollTop <= 80);
+          await page.getByTestId("playground-jump-to-bottom").click();
+          await waitNearBottom(page);
+          scrollChecks = {
+            skipped: false,
+            initialDistance,
+            jumpVisibleAfterUp,
+            previewItemCount,
+            previewRoles,
+            markCount,
+            markRoles,
+            navigationMetrics,
+            nearTopAfterPreviewClick,
+            distanceAfterJump: await scrollDistance(page),
+          };
         }
         await page.getByTestId("message-action-view-trace").first().click();
         await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
@@ -208,15 +280,22 @@ async function main() {
         if (!REAL) {
           await page.getByTestId("playground-session-trigger").click();
           await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
+          await page.getByTestId("playground-messages").evaluate((el) => {
+            el.scrollTop = 0;
+            el.dispatchEvent(new Event("scroll", { bubbles: true }));
+          });
+          const rowsBeforeSend = await page.locator("[data-message-id]").count();
           await page.locator(".composer textarea").fill("请再用一句话说明你的角色。");
           await page.getByRole("button", { name: "发送" }).click();
           await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
-          await page.getByTestId("message-actions").first().waitFor({ timeout: 90000 });
+          await page.waitForFunction((count) => document.querySelectorAll("[data-message-id]").length > count, rowsBeforeSend, { timeout: 90000 });
+          await waitNearBottom(page);
           autoPanelChecks = {
             skipped: false,
             sessionCollapsedAfterSend: await page.getByTestId("playground-session-sidebar").count() === 0,
             evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
             traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
+            autoBottomAfterSend: await scrollDistance(page) <= 24,
           };
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
           await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
@@ -238,6 +317,7 @@ async function main() {
           sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
           settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
           debugClosed,
+          scrollChecks,
           autoPanelChecks,
         };
         ok = Object.values(counts).every((c) => c > 0)
@@ -260,10 +340,26 @@ async function main() {
           && debugClosed
           && !legacyModalVisible
           && (REAL || (
+            !scrollChecks.skipped
+            && scrollChecks.initialDistance <= 24
+            && scrollChecks.jumpVisibleAfterUp
+            && scrollChecks.previewItemCount === 14
+            && scrollChecks.previewRoles.every((role) => role === "user")
+            && scrollChecks.markCount === 14
+            && scrollChecks.markRoles.every((role) => role === "user")
+            && scrollChecks.navigationMetrics.railHeight >= 330
+            && scrollChecks.navigationMetrics.railHeight <= 360
+            && scrollChecks.navigationMetrics.avgGap >= 22
+            && scrollChecks.navigationMetrics.avgGap <= 30
+            && scrollChecks.nearTopAfterPreviewClick
+            && scrollChecks.distanceAfterJump <= 24
+          ))
+          && (REAL || (
             !autoPanelChecks.skipped
             && autoPanelChecks.sessionCollapsedAfterSend
             && autoPanelChecks.evidenceOpenAfterSend
             && autoPanelChecks.traceTabAfterSend
+            && autoPanelChecks.autoBottomAfterSend
           ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: "/tmp/agentgov-v27-ui-after-message-actions.png" });

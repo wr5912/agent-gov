@@ -4,6 +4,7 @@ import type { ChatMessage } from "../types/runtime";
 interface Props {
   message: ChatMessage;
   isActiveStreaming?: boolean;
+  onMessageElement?: (messageId: string, element: HTMLElement | null) => void;
   // v2.7 §3 助手回复动作：创建反馈(两阶段 Drawer)/查看 Trace/获取上下文/重新运行。
   onOpenFeedback?: (message: ChatMessage) => void;
   onOpenTrace?: (message: ChatMessage) => void;
@@ -11,7 +12,7 @@ interface Props {
   onRerun?: (message: ChatMessage) => void;
 }
 
-export function MessageBubble({ message, isActiveStreaming = false, onOpenFeedback, onOpenTrace, onGetContext, onRerun }: Props) {
+export function MessageBubble({ message, isActiveStreaming = false, onMessageElement, onOpenFeedback, onOpenTrace, onGetContext, onRerun }: Props) {
   const isUser = message.role === "user";
   const isSystem = message.role === "system";
   const hasContent = message.content.length > 0;
@@ -19,7 +20,12 @@ export function MessageBubble({ message, isActiveStreaming = false, onOpenFeedba
   const roleClass = isUser ? "message-user" : isSystem ? "message-system" : "message-assistant";
   const streamingClass = isActiveStreaming ? "message-assistant-streaming" : "";
   return (
-    <article className={`message-row ${isUser ? "message-row-user" : ""}`}>
+    <article
+      className={`message-row ${isUser ? "message-row-user" : ""}`}
+      data-message-id={message.id}
+      data-message-role={message.role}
+      ref={(element) => onMessageElement?.(message.id, element)}
+    >
       <div className={`message-bubble ${roleClass} ${streamingClass}`.trim()}>
         <div className="message-meta">
           <span>{isUser ? "You" : isSystem ? "System" : "Claude Agent"}</span>

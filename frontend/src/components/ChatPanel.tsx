@@ -1,4 +1,6 @@
 import { History, Loader2, MessageSquarePlus, Send, Settings2, Square } from "lucide-react";
+import { PlaygroundMessageScrollNavigator } from "./PlaygroundMessageScrollNavigator";
+import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation";
 import type { ChatMessage } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
@@ -38,6 +40,16 @@ export function ChatPanel({
   onGetContext,
   onRerun,
 }: ChatPanelProps) {
+  const {
+    containerRef,
+    handleScroll,
+    scrollSnapshot,
+    scrollToBottom,
+    scrollToMessage,
+    scrollToProgress,
+    setMessageElement,
+  } = useMessageScrollNavigation({ activeSessionId, messages, streamingAssistantMessageId });
+
   return (
     <main className="chat-panel chat-panel-v27" data-testid="playground">
       <header className="chat-header">
@@ -59,32 +71,42 @@ export function ChatPanel({
         </div>
       </header>
 
-      <section className="messages">
-        {messages.length === 0 ? (
-          <div className="welcome-card">
-            <div className="welcome-mark">⌘</div>
-            <h3>开始测试 {agentName}</h3>
-            <p>在下方输入任务即可对话；右上「会话」展开历史导航，「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
-            <div className="prompt-examples">
-              <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
-              <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>
-              <button onClick={() => onInputChange("请使用只读工具检查当前 workspace 的配置结构，并给出摘要。")}>检查配置结构</button>
+      <div className="message-scroll-region" data-testid="playground-message-scroll-region">
+        <section id="playground-messages" className="messages" data-testid="playground-messages" ref={containerRef} onScroll={handleScroll}>
+          {messages.length === 0 ? (
+            <div className="welcome-card">
+              <div className="welcome-mark">⌘</div>
+              <h3>开始测试 {agentName}</h3>
+              <p>在下方输入任务即可对话；右上「会话」展开历史导航，「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
+              <div className="prompt-examples">
+                <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
+                <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>
+                <button onClick={() => onInputChange("请使用只读工具检查当前 workspace 的配置结构，并给出摘要。")}>检查配置结构</button>
+              </div>
             </div>
-          </div>
-        ) : (
-          messages.map((message) => (
-            <MessageBubble
-              message={message}
-              key={message.id}
-              isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
-              onOpenFeedback={onOpenFeedback}
-              onOpenTrace={onOpenTrace}
-              onGetContext={onGetContext}
-              onRerun={onRerun}
-            />
-          ))
-        )}
-      </section>
+          ) : (
+            messages.map((message) => (
+              <MessageBubble
+                message={message}
+                key={message.id}
+                isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
+                onMessageElement={setMessageElement}
+                onOpenFeedback={onOpenFeedback}
+                onOpenTrace={onOpenTrace}
+                onGetContext={onGetContext}
+                onRerun={onRerun}
+              />
+            ))
+          )}
+        </section>
+        <PlaygroundMessageScrollNavigator
+          messages={messages}
+          scrollSnapshot={scrollSnapshot}
+          onJumpToBottom={() => scrollToBottom("smooth")}
+          onScrollToMessage={scrollToMessage}
+          onScrollToProgress={scrollToProgress}
+        />
+      </div>
 
       <footer className="composer">
         <textarea

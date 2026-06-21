@@ -10,6 +10,7 @@ import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 import process from "node:process";
+import { scrollNavigationMetrics, seedPlaygroundMessages } from "./playground_scroll_test_helpers.mjs";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
 const { chromium } = require("playwright");
@@ -119,12 +120,25 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
 const visible = async (page, testid) => (await page.getByTestId(testid).count()) > 0 && (await page.getByTestId(testid).first().isVisible());
 const textIncludes = async (locator, value) => (await locator.innerText().catch(() => "")).includes(value);
+const scrollDistance = async (page) => page.getByTestId("playground-messages").evaluate((el) => Math.round(el.scrollHeight - el.clientHeight - el.scrollTop));
+async function waitNearBottom(page) {
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="playground-messages"]');
+    return !!el && el.scrollHeight > el.clientHeight && el.scrollHeight - el.clientHeight - el.scrollTop <= 24;
+  }, null, { timeout: 5000 });
+}
+async function waitPreviewOpen(page) {
+  await page.waitForFunction(() => {
+    const el = document.querySelector('[data-testid="playground-scroll-preview"]');
+    return !!el && Number(getComputedStyle(el).opacity) > 0.9;
+  }, null, { timeout: 5000 });
+}
 
 function authHeaders(extra = {}) {
   return {
@@ -362,6 +376,75 @@ const RULES = [
     const trace = await has(page, "message-action-view-trace");
     const ctx = await has(page, "message-action-get-context");
     return { ok: create && trace && ctx, detail: `create=${create} trace=${trace} get-context=${ctx}` };
+  } },
+  { id: "playground-scroll-navigation", phase: "P1", desc: "Playground 长对话自动置底、上滚暂停、一键置底与滚动预览导航", async fn(page) {
+    await page.getByTestId("nav-playground").click();
+    await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });
+    await waitNearBottom(page);
+    const initialDistance = await scrollDistance(page);
+    await page.getByTestId("playground-messages").evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.getByTestId("playground-jump-to-bottom").waitFor({ timeout: 5000 });
+    const jump = await visible(page, "playground-jump-to-bottom");
+    await page.getByTestId("playground-scroll-rail").hover();
+    await waitPreviewOpen(page);
+    const previewItems = await page.getByTestId("playground-scroll-preview-item").count();
+    const previewRoles = await page.getByTestId("playground-scroll-preview-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const markCount = await page.getByTestId("playground-scroll-mark").count();
+    const markRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const largeMetrics = await scrollNavigationMetrics(page);
+    await page.getByTestId("playground-scroll-preview-item").first().click();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="playground-messages"]');
+      return !!el && el.scrollTop <= 80;
+    }, null, { timeout: 5000 });
+    const nearTop = await page.getByTestId("playground-messages").evaluate((el) => el.scrollTop <= 80);
+    await page.getByTestId("playground-jump-to-bottom").click();
+    await waitNearBottom(page);
+    const finalDistance = await scrollDistance(page);
+    const noPanelMix = await page.getByTestId("playground-evidence-panel").count() === 0
+      && await page.getByTestId("feedback-drawer").count() === 0
+      && await page.getByTestId("playground-runtime-settings-drawer").count() === 0;
+    const anchorRolesOk = previewRoles.every((role) => role === "user") && markRoles.every((role) => role === "user");
+    await seedPlaygroundMessages(page, 4);
+    await page.getByTestId("playground-messages").evaluate((el) => {
+      el.scrollTop = 0;
+      el.dispatchEvent(new Event("scroll", { bubbles: true }));
+    });
+    await page.getByTestId("playground-scroll-rail").hover();
+    await waitPreviewOpen(page);
+    const fewPreviewItems = await page.getByTestId("playground-scroll-preview-item").count();
+    const fewMarkCount = await page.getByTestId("playground-scroll-mark").count();
+    const fewPreviewRoles = await page.getByTestId("playground-scroll-preview-item").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const fewMarkRoles = await page.getByTestId("playground-scroll-mark").evaluateAll((items) => items.map((item) => item.getAttribute("data-message-role")));
+    const fewMetrics = await scrollNavigationMetrics(page);
+    const fewRolesOk = fewPreviewRoles.every((role) => role === "user") && fewMarkRoles.every((role) => role === "user");
+    await page.evaluate(() => window.sessionStorage.removeItem("parity-preserve-playground-session"));
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await page.getByTestId("playground").waitFor({ timeout: 8000 });
+
+    const ok = initialDistance <= 24
+      && jump
+      && previewItems === 36
+      && markCount === 24
+      && anchorRolesOk
+      && largeMetrics.railHeight >= 340
+      && largeMetrics.maxGap <= 24
+      && largeMetrics.centerDelta <= 24
+      && fewPreviewItems === 4
+      && fewMarkCount === 4
+      && fewRolesOk
+      && fewMetrics.railHeight >= 90
+      && fewMetrics.railHeight <= 130
+      && fewMetrics.avgGap >= 24
+      && fewMetrics.avgGap <= 40
+      && fewMetrics.centerDelta <= 24
+      && nearTop
+      && finalDistance <= 24
+      && noPanelMix;
+    return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
   } },
   { id: "trace-evidence-panel", phase: "P0", desc: "查看 Trace 打开右侧运行证据 tab 面板，旧中心 modal/Trace 抽屉不再出现", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -638,28 +721,37 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
     await page.addInitScript(([base, key, real]) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
+      if (window.sessionStorage.getItem("parity-preserve-playground-session") === "1") return;
+
       const sessionId = real ? "real-container-parity-session" : "mock-session";
       const runId = real ? "run-trace-real-container" : "run-trace-mock";
       const agentVersionId = real ? "v-real-container-parity" : "v-mock";
-      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
-      window.localStorage.setItem("playground-session-messages", JSON.stringify({
-        [sessionId]: [
-          { id: "msg-user", role: "user", content: "请用一句话说明你的治理职责。", createdAt: "2026-06-18T00:00:00Z" },
+      const playgroundMessages = Array.from({ length: 36 }, (_, index) => {
+        const n = index + 1;
+        const createdAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000).toISOString();
+        const completedAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000 + 1000).toISOString();
+        const answer = `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证自动置底、一键置底和消息预览导航。`.repeat(2);
+        return [
+          { id: `msg-user-${n}`, role: "user", content: `请用一句话说明你的治理职责，序号 ${n}。`, createdAt },
           {
-            id: "msg-assistant",
+            id: `msg-assistant-${n}`,
             role: "assistant",
-            content: "我是 AgentGov 治理测试助手。",
-            createdAt: "2026-06-18T00:00:01Z",
-            runId,
+            content: answer,
+            createdAt: completedAt,
+            runId: `${runId}-${n}`,
             sessionId,
             agentVersionId,
             events: [
-              { id: "evt-1", event: "message", text: "开始治理分析。", data: { text: "开始治理分析。" }, createdAt: "2026-06-18T00:00:01Z" },
-              { id: "evt-2", event: "tool", data: { type: "tool_use", name: "Read", id: "tool-1", input: { file_path: "CLAUDE.md" } }, createdAt: "2026-06-18T00:00:02Z" },
-              { id: "evt-3", event: "result", data: { run_id: runId, session_id: sessionId, agent_version_id: agentVersionId, agent_activity: { requested_skills: ["project-skill"], allowed_tools: ["Read"], disallowed_tools: [], tool_names: ["Read"], tool_calls: [{ name: "Read", tool_use_id: "tool-1" }], tool_results: [{ name: "Read", tool_use_id: "tool-1", content: "ok" }], skill_calls: [] } }, createdAt: "2026-06-18T00:00:03Z" },
+              { id: `evt-${n}-1`, event: "message", text: "开始治理分析。", data: { text: "开始治理分析。" }, createdAt },
+              { id: `evt-${n}-2`, event: "tool", data: { type: "tool_use", name: "Read", id: `tool-${n}`, input: { file_path: "CLAUDE.md" } }, createdAt: completedAt },
+              { id: `evt-${n}-3`, event: "result", data: { run_id: `${runId}-${n}`, session_id: sessionId, agent_version_id: agentVersionId, agent_activity: { requested_skills: ["project-skill"], allowed_tools: ["Read"], disallowed_tools: [], tool_names: ["Read"], tool_calls: [{ name: "Read", tool_use_id: `tool-${n}` }], tool_results: [{ name: "Read", tool_use_id: `tool-${n}`, content: "ok" }], skill_calls: [] } }, createdAt: completedAt },
             ],
           },
-        ],
+        ];
+      }).flat();
+      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
+      window.localStorage.setItem("playground-session-messages", JSON.stringify({
+        [sessionId]: playgroundMessages,
       }));
     }, [apiBase, apiKey, REAL]);
     if (!REAL) {

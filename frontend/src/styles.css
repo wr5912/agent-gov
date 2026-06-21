@@ -360,11 +360,17 @@ button:disabled {
 }
 .control-strip label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 
-.messages {
+.message-scroll-region {
   flex: 1;
   min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+.messages {
+  height: 100%;
   overflow: auto;
   padding: 24px;
+  scrollbar-gutter: stable;
 }
 .welcome-card {
   margin: 10vh auto 0;
@@ -482,6 +488,148 @@ button:disabled {
   background: rgba(37, 99, 235, 0.12);
   font-size: 11px;
   font-weight: 700;
+}
+
+.playground-scroll-navigator {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  z-index: 12;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.playground-scroll-rail {
+  position: relative;
+  width: 18px;
+  height: var(--playground-scroll-rail-height, 360px);
+  min-height: 96px;
+  border-radius: 999px;
+  outline: none;
+  cursor: ns-resize;
+  pointer-events: auto;
+}
+.playground-scroll-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 8px;
+  width: 2px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.42);
+}
+.playground-scroll-rail:hover::before,
+.playground-scroll-rail:focus-visible::before,
+.playground-scroll-navigator.open .playground-scroll-rail::before {
+  background: rgba(37, 99, 235, 0.54);
+}
+.playground-scroll-marks {
+  position: absolute;
+  inset: 0;
+}
+.playground-scroll-marks span {
+  position: absolute;
+  left: 3px;
+  width: 12px;
+  height: 2px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.72);
+  transform: translateY(-1px);
+}
+.playground-scroll-marks span.active {
+  left: 1px;
+  width: 16px;
+  background: #1d4ed8;
+}
+.playground-scroll-thumb {
+  position: absolute;
+  left: 6px;
+  width: 6px;
+  min-height: 20px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
+}
+.playground-scroll-preview {
+  width: 320px;
+  max-height: min(420px, calc(100vh - 220px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 18px 44px rgba(15, 23, 42, 0.18);
+  opacity: 0;
+  transform: translateX(8px);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  pointer-events: none;
+}
+.playground-scroll-navigator.open .playground-scroll-preview {
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: auto;
+}
+.playground-scroll-preview button {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: rgba(247, 248, 250, 0.72);
+  color: var(--text);
+  text-align: left;
+}
+.playground-scroll-preview button:hover,
+.playground-scroll-preview button:focus-visible,
+.playground-scroll-preview button.active {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+.playground-scroll-preview span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+.playground-scroll-preview strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.jump-to-bottom-button {
+  position: absolute;
+  right: 36px;
+  bottom: 18px;
+  z-index: 11;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  color: #1d4ed8;
+  background: rgba(239, 246, 255, 0.96);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.14);
+  font-size: 12px;
+  font-weight: 800;
+}
+.jump-to-bottom-button:hover { background: #dbeafe; }
+body.is-dragging-message-scroll {
+  cursor: ns-resize;
+  user-select: none;
 }
 
 .composer {

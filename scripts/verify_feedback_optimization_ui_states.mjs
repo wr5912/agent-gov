@@ -392,7 +392,7 @@ async function verifyPlaygroundAssistantStreamingBubble(page, stateRef) {
   if (await page.getByText("停止生成").count()) {
     throw new Error("Streaming bubble should not duplicate the stop action inside the message");
   }
-  await page.getByText("第一段回答").waitFor({ timeout: 15_000 });
+  await page.locator(".messages").getByText("第一段回答", { exact: true }).waitFor({ timeout: 15_000 });
   await page.locator(".message-assistant-streaming").waitFor({ state: "detached", timeout: 15_000 });
   if (stateRef.chatStreamCount !== 1) {
     throw new Error(`Expected one chat stream request, got ${stateRef.chatStreamCount}`);

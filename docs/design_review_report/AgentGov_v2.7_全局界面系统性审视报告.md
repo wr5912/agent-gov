@@ -27,7 +27,7 @@
 | 资产类型 | 数据资产：run、trace、feedback、evidence、eval result、release event；方法论资产：归因法、优化 SOP、发布策略；执行资产：prompt、skill、profile、playbook、eval case；审计资产：状态、diff、版本和发布记录。 |
 | 生命周期 | 业务 Agent 有 draft / active / evaluating / deprecated / archived；改进事项有反馈收集、系统整理、归因分析、优化方案、执行优化、回归测试、发布。 |
 | 反馈归属 | 反馈必须归属到业务 Agent、agent version、场景、run / session，并进入改进事项链路。 |
-| 当前实现边界 | v2.7 主导航、改进事项、创建反馈抽屉、配置抽屉、发布门禁、资产 Registry 已存在；Trace 详情仍是中心 modal；旧反馈优化工作台仍作为诊断入口保留。 |
+| 当前实现边界 | v2.7 主导航、改进事项、创建反馈抽屉、运行设置抽屉、发布门禁、资产 Registry 已存在；Trace 详情仍是中心 modal；旧反馈优化工作台仍作为诊断入口保留。 |
 | 目标能力边界 | UI 应帮助用户理解和推进闭环：运行 -> Trace -> 反馈 -> 改进 -> 归因 -> 优化 -> 执行 -> 回归 -> 发布 -> 资产，而不是把内部对象堆成多个孤立页面。 |
 
 闭环链路：
@@ -67,7 +67,7 @@
 | `01-playground.png` | Playground 主界面 | 主区已聚焦对话；动作区包含创建反馈、查看 Trace、获取上下文、打开 Langfuse、重新运行。 |
 | `02-trace-current-modal.png` | 当前 Trace 详情 | `查看 Trace` 打开中心 modal，宽约 920px，高约 760px，打断主工作区空间模型。 |
 | `03-feedback-drawer.png` | 创建反馈抽屉 | 右侧 480px 抽屉保留对话上下文可见，适合轻表单和两阶段确认。 |
-| `04-playground-config-drawer.png` | 运行配置抽屉 | 右侧 960px 抽屉承载三列配置，证明宽抽屉适合高密度内容。 |
+| `04-playground-runtime-settings-drawer.png` | 运行设置抽屉 | 右侧 960px 抽屉承载 Subagent、Skills、工具权限和运行参数；会话历史应独立为「会话」抽屉。 |
 | `05-improvement.png` | 改进页未选中态 | 列表已有事项但详情区为空白，默认态浪费首屏并降低推进感。 |
 | `09-improvement-detail-selected.png` | 改进详情选中态 | 七段链路和主动作存在，但完整链路折叠，反馈环的系统图不够显性。 |
 | `06-release.png` | 发布页 | 发布门禁结论明确，但候选变更详情薄，页面主体大面积空白。 |
@@ -81,7 +81,7 @@
 
 - 顶层导航已收敛为 Playground / 改进 / 发布，符合 v2.7 主线。
 - “创建反馈”抽屉证明了侧边任务面板适合不中断主上下文的补充动作。
-- “运行配置”抽屉证明复杂配置可放入宽抽屉，不必回到旧三栏常驻布局。
+- “运行设置”抽屉证明复杂配置可放入宽抽屉，不必回到旧三栏常驻布局；会话历史不属于配置。
 - 改进详情的七段阶段条已表达闭环主线。
 - 发布页已有“能不能发”的门禁判断，符合治理杠杆点。
 - 资产 Registry 已进入主流程高级入口，并显示来源改进和继承关系。
@@ -112,7 +112,7 @@
 
 - `查看 Trace` 和 `打开 Langfuse` 并列，但二者层级不同：前者是内部运行证据，后者是外部观测系统入口。
 - “获取上下文”当前是复制动作，缺少用户可见的成功反馈和上下文内容预览。
-- Playground 中的侧边动作没有统一 DrawerShell，创建反馈和配置抽屉各自实现。
+- Playground 中的侧边动作没有统一 DrawerShell，创建反馈和运行设置抽屉各自实现。
 
 建议：
 
@@ -161,23 +161,25 @@
 - 把自动带入项抽成标准 context chips，用于 Trace 和反馈一致展示。
 - 后续支持从 Trace 抽屉直接发起创建反馈，并携带当前选中事件作为证据。
 
-### 6.4 运行配置抽屉
+### 6.4 会话抽屉与运行设置抽屉
 
 当前事实：
 
-- 右侧 960px 抽屉，承载 Sessions、Subagent、Skills、运行参数、Runtime 状态。
+- 会话历史、Subagent、Skills、运行参数和 Runtime 状态一度被混放进同一个“运行配置”抽屉。
+- 这是本报告早期建议的边界错误：Sessions 是 Playground 运行对象管理，不是运行配置。
 
 问题：
 
-- 这是高密度配置面板，但与创建反馈抽屉不是同一套 shell。
-- 配置抽屉和 Trace 宽抽屉未来会争用空间模型，必须先统一宽度和头部规则。
-- 抽屉内部仍保留旧侧栏感，配置项之间的主次关系不够明确。
+- “配置”入口承载会话历史、运行设置和 Runtime 调试，会变成杂物抽屉。
+- 抽屉内部如果复用旧 `Sidebar` / `Inspector`，会把旧三栏布局伪装成新抽屉。
+- 测试如果只校验抽屉存在和宽度，无法发现对象边界错误。
 
 建议：
 
-- 迁移到 `DrawerShell size="wide"`。
-- 抽屉头部统一为：标题、说明、关键状态、关闭。
-- 运行参数、Sessions、Runtime 状态分别作为分区，而不是嵌套旧三栏 UI 的视觉残留。
+- 拆成 `DrawerShell size="medium"` 的「会话」抽屉和 `DrawerShell size="wide"` 的「运行设置」抽屉。
+- 「会话」只承载会话历史、新会话、刷新、删除和切换。
+- 「运行设置」只承载 Subagent、Skills、Skills Mode、Max Turns、Alert/Case、Allowed/Disallowed Tools。
+- Runtime / Config / Events 只能作为「高级调试信息」默认折叠，不作为运行设置主内容。
 
 ### 6.5 改进事项
 
@@ -282,7 +284,7 @@
 | --- | --- | --- | --- |
 | `DrawerShell size="narrow"` | 轻量输入、确认、创建动作 | `min(480px, 96vw)` | 创建反馈、轻量资产创建 |
 | `DrawerShell size="medium"` | 证据摘要、上下文包、Trace 摘要 | `min(720px, 96vw)` | Trace 摘要、ContextPackage 预览 |
-| `DrawerShell size="wide"` | 高密度配置、事件时间线、JSON / Diff | `min(960px, 96vw)` | 运行配置、Trace 明细、diff 预览 |
+| `DrawerShell size="wide"` | 高密度设置、事件时间线、JSON / Diff | `min(960px, 96vw)` | 运行设置、Trace 明细、diff 预览 |
 | Center modal | 全局设置、危险确认、阻断式决策 | 固定中宽或内容宽度 | 设置、强制发布确认、删除 Agent 确认 |
 | 主工作台详情面板 | 长时间停留、对象详情、主流程推进 | 页面布局决定 | 改进详情、发布门禁台、资产列表 |
 
@@ -297,7 +299,7 @@
 
 ### P0：统一证据侧边任务模型
 
-1. 新建通用 `DrawerShell`，迁移创建反馈和运行配置抽屉。
+1. 新建通用 `DrawerShell`，迁移创建反馈、会话和运行设置抽屉。
 2. 把 `ResponseDetailModal` 改为 `TraceDrawer`。
 3. Trace 抽屉内整合内部事件详情、run/session/agent version、Langfuse 外链。
 4. Playwright 验证 `查看 Trace` 打开右侧抽屉，而不是中心 modal。
@@ -322,6 +324,7 @@
 | --- | --- |
 | Trace 抽屉替代 modal | `verify_message_actions_browser.mjs` 断言 `message-action-view-trace` 打开 drawer，且不存在 `.detail-modal-card`。 |
 | 抽屉宽度分档 | 新增 Playwright 断言 narrow / medium / wide 的 DOM 宽度区间。 |
+| 会话 / 运行设置语义边界 | 断言「会话」抽屉不含 Subagent / Skills Mode / Allowed Tools；「运行设置」抽屉不含 Sessions / 新会话 / 删除会话。 |
 | 反馈抽屉不回归 | 继续断言 `feedback-drawer` 两阶段流程和自动带入 context chips。 |
 | 改进页默认态 | `verify_v27_ui_design_parity.mjs` 增加“列表有项时详情区不空白”规则。 |
 | 发布门禁台 | 断言候选变更、门禁、回归、diff 摘要和强制发布确认都可见。 |

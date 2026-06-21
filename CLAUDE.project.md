@@ -15,6 +15,15 @@
 - 兼容边界：公开 API / OpenAPI / 前端生成类型属契约边界；持久化数据默认宿主机根 `${HOME}/volume-agent-gov`，`docker/volume/` 仅作迁移来源或显式兼容路径。
 - 旧设计清理策略：执行“代码质量 > 新设计/框架/架构 > 旧模式兼容或保留”。命中旧 facade、兼容 shim、历史路径、重复实现、schema 双轨、状态分散、过期 API、不可达分支等信号时进入替换旧设计模式，先列删除/迁移/保留清单（按公开 API、配置/env、持久化数据、文档、测试、内部兼容层逐项说明）。
 
+## 反复整改前置矩阵
+
+用户指出“举一反三”“触类旁通”“还有许多问题”“最近反复整改”，或任务同时跨实现、docs、skill、runtime/env、测试、UI 设计一致性、部署生效中的两个及以上配置面时，Analyze 阶段先做短矩阵：
+
+- 治理对象矩阵：业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、开发者离线工具。
+- 配置面矩阵：当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、Codex/Claude rules、skill、script、hook、docs、memory。
+- 验收路径矩阵：docs/skill 治理、专项测试、主流程测试、真实容器验收、发版完整硬门；不得用 local-debug 结果声明容器验收通过。
+- UI 语义矩阵：涉及 v2.7 或用户可见交互时，确认按钮名称、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”。
+
 ## 项目验证入口
 
 - 局部开发验证：`.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。

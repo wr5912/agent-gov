@@ -101,6 +101,37 @@ def test_feedback_runtime_preflight_reference_is_linked():
     assert "tests/coverage_policy.json" in preflight
 
 
+def test_agentgov_boundary_first_entries_are_kept():
+    codex_project = (REPO_ROOT / "AGENTS.override.md").read_text(encoding="utf-8")
+    claude_project = (REPO_ROOT / "CLAUDE.project.md").read_text(encoding="utf-8")
+    required = (
+        "反复整改前置矩阵",
+        "治理对象矩阵",
+        "配置面矩阵",
+        "验收路径矩阵",
+        "UI 语义矩阵",
+        "不得用 local-debug 结果声明容器验收通过",
+    )
+
+    for text in (codex_project, claude_project):
+        for marker in required:
+            assert marker in text
+
+
+def test_test_sync_governance_keeps_targeted_ui_semantic_validation_terms():
+    skill = (REPO_ROOT / ".codex/skills/test-sync-governance/SKILL.md").read_text(encoding="utf-8")
+    required = (
+        "测试选择前置判断",
+        "不要在配置、README、docs 或 skill 镜像同步这类低运行时风险改动中默认跑全量",
+        "语义负向断言",
+        "旧配置入口不存在",
+        "pnpm --dir frontend run verify:design-parity",
+    )
+
+    for marker in required:
+        assert marker in skill
+
+
 def _write(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")

@@ -154,13 +154,10 @@
 .iw-create-row { display: flex; gap: 8px; }
 
 /* 获取上下文抽屉：结构化文本为正文（深色调试区仅用于此类可复制 raw 文本）。 */
-.iw-context-drawer { margin-top: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; overflow: hidden; }
-.iw-context-head { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; background: var(--bg-surface-muted); }
 .iw-context-body { background: var(--bg-debug); color: var(--text-debug); margin: 0; padding: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; user-select: text; }
 .iw-source-refs { display: flex; flex-wrap: wrap; gap: 6px; }
 .iw-ref { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--bg-surface-muted); color: var(--text-secondary); border: 1px solid var(--border-subtle); }
 /* v2.7 §10 ContextPackage 四类型 */
-.iw-context-head-actions { display: flex; gap: 8px; }
 .iw-context-types { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .iw-context-type { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 999px; cursor: pointer; color: var(--text-secondary); }
 .iw-context-type.active { background: var(--color-primary-soft, #eff6ff); border-color: var(--color-primary-border, #bfdbfe); color: var(--color-primary, #1d4ed8); }

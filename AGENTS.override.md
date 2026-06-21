@@ -21,6 +21,15 @@
 - README、docs、测试和治理硬门如何验证新契约。
 - 内部兼容 facade、shim、旧工作流分支、不可达 UI 和一次性调试脚本是否删除；如保留，必须写明明确期限或后续清理条件。
 
+## 反复整改前置矩阵
+
+当用户指出“举一反三”“触类旁通”“还有许多问题”“最近反复整改”，或任务同时涉及实现、docs、skill、runtime/env、测试、UI 设计一致性、部署生效中的两个及以上配置面时，Analyze 阶段必须先做短矩阵，再决定改哪层：
+
+- 治理对象矩阵：区分业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace 和开发者离线工具。
+- 配置面矩阵：区分当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、Codex/Claude rules、skill、script、hook、docs 和 memory；能按需触发的流程不写成长篇常驻规则。
+- 验收路径矩阵：区分 docs/skill 治理、专项测试、主流程测试、真实容器验收和发版完整硬门；不得用 local-debug 结果声明容器验收通过。
+- UI 语义矩阵：涉及 v2.7 或用户可见交互时，先确认按钮名称、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”。
+
 ## 反馈闭环 / Agent Job / DSPy 契约专项要求
 
 反馈优化、归因、批次优化方案、agent job、DSPy formatter、提示词、OpenAPI 和前端生成类型相关问题，默认按产品级契约问题处理，不得只按局部 bug 修补。

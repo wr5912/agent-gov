@@ -24,12 +24,12 @@ def extract_text(message: Any) -> str:
     pieces: list[str] = []
 
     # ResultMessage.result
-    result = getattr(message, "result", None)
+    result = message.get("result") if isinstance(message, dict) else getattr(message, "result", None)
     if isinstance(result, str) and result.strip():
         pieces.append(result)
 
     # AssistantMessage.content -> TextBlock.text
-    content = getattr(message, "content", None)
+    content = message.get("content") if isinstance(message, dict) else getattr(message, "content", None)
     if isinstance(content, list):
         for block in content:
             text = getattr(block, "text", None)

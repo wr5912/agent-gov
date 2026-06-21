@@ -91,6 +91,7 @@ export interface FeedbackFilters {
   source_type?: string;
   event_type?: string;
   feedback_case_id?: string;
+  include_messages?: boolean;
   limit?: number;
   q?: string;
 }

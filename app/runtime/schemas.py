@@ -384,7 +384,12 @@ class AgentRunResponse(BaseModel):
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
     message: Optional[str] = None
+    answer: Optional[str] = None
     answer_summary: Optional[str] = None
+    messages: list[JsonObject] = Field(
+        default_factory=list,
+        description="Full SDK message timeline, returned only when include_messages=true.",
+    )
     agent_activity: JsonObject = Field(default_factory=dict)
     created_at: Optional[str] = None
     completed_at: Optional[str] = None

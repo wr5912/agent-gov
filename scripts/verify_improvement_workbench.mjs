@@ -339,6 +339,11 @@ async function main() {
         throw new Error("json context type should render JSON");
       }
       await page.getByTestId("context-copy").waitFor({ timeout: 15_000 });
+      if ((await drawer.getAttribute("data-size")) !== "medium") {
+        throw new Error("context drawer should use medium DrawerShell");
+      }
+      await drawer.getByLabel("关闭").click();
+      await drawer.waitFor({ state: "detached", timeout: 5_000 }).catch(() => {});
 
       // 新建改进事项 → 选中、阶段为初始 feedback_intake、主动作指向 triage。
       await page.getByTestId("improvement-create-agent").selectOption("soc-ops");

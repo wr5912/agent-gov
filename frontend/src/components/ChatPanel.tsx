@@ -1,8 +1,8 @@
-import { Loader2, MessageSquarePlus, Send, Settings2, Square } from "lucide-react";
+import { History, Loader2, MessageSquarePlus, Send, Settings2, Square } from "lucide-react";
 import type { ChatMessage } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
-// v2.7 §3 Playground：主区只留对话 + 回复动作 + 输入；运行配置进入「配置」抽屉（playground-config-trigger）。
+// v2.7 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
 interface ChatPanelProps {
   messages: ChatMessage[];
   input: string;
@@ -10,12 +10,13 @@ interface ChatPanelProps {
   streamingAssistantMessageId?: string;
   activeSessionId?: string;
   agentName: string;
-  langfuseUrl: string;
   onInputChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
-  onOpenConfig: () => void;
+  onOpenSession: () => void;
+  onOpenRuntimeSettings: () => void;
   onOpenFeedback: (message?: ChatMessage) => void;
+  onOpenTrace: (message: ChatMessage) => void;
   onGetContext: (message: ChatMessage) => void;
   onRerun: (message: ChatMessage) => void;
 }
@@ -27,12 +28,13 @@ export function ChatPanel({
   streamingAssistantMessageId,
   activeSessionId,
   agentName,
-  langfuseUrl,
   onInputChange,
   onSend,
   onStop,
-  onOpenConfig,
+  onOpenSession,
+  onOpenRuntimeSettings,
   onOpenFeedback,
+  onOpenTrace,
   onGetContext,
   onRerun,
 }: ChatPanelProps) {
@@ -48,8 +50,11 @@ export function ChatPanel({
           <button className="ghost-button" type="button" data-testid="feedback-drawer-open" onClick={() => onOpenFeedback()}>
             <MessageSquarePlus size={15} /> 创建反馈
           </button>
-          <button className="ghost-button" type="button" data-testid="playground-config-trigger" onClick={onOpenConfig}>
-            <Settings2 size={15} /> 配置
+          <button className="ghost-button" type="button" data-testid="playground-session-trigger" onClick={onOpenSession}>
+            <History size={15} /> 会话
+          </button>
+          <button className="ghost-button" type="button" data-testid="playground-runtime-settings-trigger" onClick={onOpenRuntimeSettings}>
+            <Settings2 size={15} /> 运行设置
           </button>
         </div>
       </header>
@@ -59,7 +64,7 @@ export function ChatPanel({
           <div className="welcome-card">
             <div className="welcome-mark">⌘</div>
             <h3>开始测试 {agentName}</h3>
-            <p>在下方输入任务即可对话；前端只调用后端 Runtime API、不接管 Claude Code 进程。运行参数、subagent / skills 与会话在右上「配置」里，回复下可创建反馈、查看 Trace、获取上下文。</p>
+            <p>在下方输入任务即可对话；右上「会话」展开历史导航，「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
             <div className="prompt-examples">
               <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
               <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>
@@ -73,9 +78,9 @@ export function ChatPanel({
               key={message.id}
               isActiveStreaming={streaming && message.id === streamingAssistantMessageId}
               onOpenFeedback={onOpenFeedback}
+              onOpenTrace={onOpenTrace}
               onGetContext={onGetContext}
               onRerun={onRerun}
-              langfuseUrl={langfuseUrl}
             />
           ))
         )}

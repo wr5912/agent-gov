@@ -283,7 +283,7 @@ PR / 设计稿必须说明：涉及哪些统一术语、是否新增、是否有
 ```
 
 - 业务 Agent 选择器在顶栏全局位，全站（Playground / 改进 / 发布）按当前业务 Agent 取数（舰队 scoping）。
-- 业务 Agent（治理对象，`agent_id`）与 Subagent（运行内 SDK 助手，`agent`）明确区分；Subagent / Skills 收进 Playground 的「配置」抽屉，不占全局导航。
+- 业务 Agent（治理对象，`agent_id`）与 Subagent（运行内 SDK 助手，`agent`）明确区分；Subagent / Skills / 工具权限收进 Playground 的「运行设置」抽屉，不占全局导航。
 
 高级能力收进 Settings，不在顶部提供 Tools 菜单：
 
@@ -307,11 +307,11 @@ Settings
 
 ## 3. Playground 页面
 
-Playground 只负责：运行 Agent、查看 AI 回复、创建反馈、查看 Trace 摘要、获取上下文、打开 Langfuse、重新运行。运行配置（Subagent / Skills / 工具权限）收进右上「配置」抽屉，主区只留对话。
+Playground 只负责：运行 Agent、查看 AI 回复、创建反馈、查看 Trace 摘要、获取上下文、打开 Langfuse、重新运行。会话历史进入右上「会话」抽屉；运行配置（Subagent / Skills / 工具权限）进入右上「运行设置」抽屉。两者不得混放，主区只留对话。
 
 ```text
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│ Playground · 安全运营助手                                          [配置]      │
+│ Playground · 安全运营助手                              [创建反馈][会话][运行设置] │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ User      分析这个告警是否是真实横向移动。                                       │
 │                                                                              │
@@ -1199,7 +1199,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 ```text
 [已达成] ImprovementItem 事项级领域实体：持久化、7 段状态机、archived 终态、agent scoping、/api/improvements。
 [已达成] 改进事项治理工作台：列表、详情、阶段、下一步、每态主动作、归档、上下文入口。
-[已达成] 顶栏业务 Agent 切换、Playground 简化、配置抽屉、反馈 Drawer、发布页和资产入口。
+[已达成] 顶栏业务 Agent 切换、Playground 简化、会话抽屉、运行设置抽屉、反馈 Drawer、发布页和资产入口。
 [已达成] 统一术语 improvement_* 已进入 API / DB / 状态机 / 测试主路径。
 ```
 

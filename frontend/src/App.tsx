@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
-import { PlaygroundConfigDrawer } from "./components/PlaygroundConfigDrawer";
+import { EVIDENCE_PANEL_DEFAULT_WIDTH, PlaygroundEvidencePanel } from "./components/PlaygroundEvidencePanel";
+import { PlaygroundRuntimeSettingsDrawer } from "./components/PlaygroundRuntimeSettingsDrawer";
+import { PlaygroundSessionSidebar } from "./components/PlaygroundSessionSidebar";
 import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawer";
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
 import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import { messagesFromAgentRuns } from "./playgroundHistory";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
@@ -110,7 +113,11 @@ export default function App() {
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release" | "asset">("chat");
-  const [configDrawerOpen, setConfigDrawerOpen] = useState(false);
+  const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
+  const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
+  const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
+  const [evidencePanelWidth, setEvidencePanelWidth] = useState(EVIDENCE_PANEL_DEFAULT_WIDTH);
+  const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | undefined>();
   const [feedbackDrawerOpen, setFeedbackDrawerOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
   const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
@@ -141,6 +148,19 @@ export default function App() {
   const langfuseUrl = useMemo(() => defaultLangfuseUrl(), []);
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
+  const activeMessageCount = activeMessages.length;
+  const activeTraceMessage = useMemo(() => {
+    if (activeTraceMessageId) {
+      const selected = activeMessages.find((message) => message.id === activeTraceMessageId);
+      if (selected?.role === "assistant") return selected;
+    }
+    if (streamingAssistantMessageId) {
+      const streamingMessage = activeMessages.find((message) => message.id === streamingAssistantMessageId);
+      if (streamingMessage?.role === "assistant") return streamingMessage;
+    }
+    return undefined;
+  }, [activeMessages, activeTraceMessageId, streamingAssistantMessageId]);
+  const activeTraceEvents = activeTraceMessage?.events || [];
   const feedbackRuntimeContext = useMemo<RuntimeIntegrationContext | undefined>(() => {
     for (let index = activeMessages.length - 1; index >= 0; index -= 1) {
       const message = activeMessages[index];
@@ -246,6 +266,32 @@ export default function App() {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!activeSessionId || activeMessageCount > 0 || streaming) return;
+    const backendSession = sessions.find((session) => session.session_id === activeSessionId);
+    if (!backendSession || backendSession.turns <= 0) return;
+
+    let cancelled = false;
+    void getAgentRuns(effectiveClientConfig, { session_id: activeSessionId, limit: 100, include_messages: true })
+      .then((runs) => {
+        if (cancelled) return;
+        const restoredMessages = messagesFromAgentRuns(runs);
+        if (!restoredMessages.length) return;
+        setMessagesBySession((prev) => {
+          if ((prev[activeSessionId] || []).length > 0) return prev;
+          return { ...prev, [activeSessionId]: restoredMessages };
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setLastError(error instanceof Error ? `加载历史会话失败：${error.message}` : `加载历史会话失败：${String(error)}`);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeMessageCount, activeSessionId, effectiveClientConfig, sessions, setMessagesBySession, streaming]);
+
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
       ...prev,
@@ -258,6 +304,17 @@ export default function App() {
     setActiveSessionId(sessionId);
     setMessagesBySession((prev) => ({ ...prev, [sessionId]: [] }));
     setStreamEvents([]);
+    setActiveTraceMessageId(undefined);
+    setEvidencePanelOpen(false);
+    setSessionSidebarOpen(false);
+  }
+
+  function selectSession(sessionId: string) {
+    setActiveSessionId(sessionId);
+    setStreamEvents([]);
+    setActiveTraceMessageId(undefined);
+    setEvidencePanelOpen(false);
+    setSessionSidebarOpen(false);
   }
 
   async function removeSession(sessionId: string) {
@@ -271,6 +328,10 @@ export default function App() {
         return next;
       });
       if (activeSessionId === sessionId) setActiveSessionId(undefined);
+      if (activeSessionId === sessionId) {
+        setActiveTraceMessageId(undefined);
+        setEvidencePanelOpen(false);
+      }
       await refresh();
     } catch (error) {
       setLastError(error instanceof Error ? error.message : String(error));
@@ -292,6 +353,8 @@ export default function App() {
     setStreamingAssistantMessageId(undefined);
     setLastError(undefined);
     setStreamEvents([]);
+    setSessionSidebarOpen(false);
+    setEvidencePanelOpen(true);
 
     const userMessage: ChatMessage = {
       id: newId("msg"),
@@ -310,6 +373,7 @@ export default function App() {
       events: [],
     };
     setStreamingAssistantMessageId(assistantMessage.id);
+    setActiveTraceMessageId(assistantMessage.id);
 
     updateSessionMessages(sessionId, (prev) => [...prev, userMessage, assistantMessage]);
 
@@ -520,6 +584,11 @@ export default function App() {
     void navigator.clipboard?.writeText(text).catch(() => {});
   }
 
+  function openTracePanel(message: ChatMessage) {
+    setActiveTraceMessageId(message.id);
+    setEvidencePanelOpen(true);
+  }
+
   function rerunMessage(message: ChatMessage) {
     const idx = activeMessages.findIndex((m) => m.id === message.id);
     for (let i = idx - 1; i >= 0; i -= 1) {
@@ -576,6 +645,17 @@ export default function App() {
         />
       ) : (
         <div className="playground-shell" data-testid="playground-shell">
+          {sessionSidebarOpen ? (
+            <PlaygroundSessionSidebar
+              sessions={mergedSessions}
+              activeSessionId={activeSessionId}
+              onSelectSession={selectSession}
+              onNewSession={createSession}
+              onDeleteSession={removeSession}
+              onRefresh={refresh}
+              onClose={() => setSessionSidebarOpen(false)}
+            />
+          ) : null}
           <ChatPanel
             messages={activeMessages}
             input={input}
@@ -583,27 +663,33 @@ export default function App() {
             streamingAssistantMessageId={streamingAssistantMessageId}
             activeSessionId={activeSessionId}
             agentName={currentAgentName}
-            langfuseUrl={langfuseUrl}
             onInputChange={setInput}
             onSend={sendMessage}
             onStop={stopStream}
-            onOpenConfig={() => setConfigDrawerOpen(true)}
+            onOpenSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}
+            onOpenRuntimeSettings={() => { setSessionSidebarOpen(false); setPlaygroundDrawer("runtime-settings"); }}
             onOpenFeedback={openFeedbackDrawer}
+            onOpenTrace={openTracePanel}
             onGetContext={getContextForMessage}
             onRerun={rerunMessage}
           />
-          {configDrawerOpen ? (
-            <PlaygroundConfigDrawer
-              sessions={mergedSessions}
-              activeSessionId={activeSessionId}
+          {evidencePanelOpen ? (
+            <PlaygroundEvidencePanel
+              message={activeTraceMessage}
+              events={activeTraceEvents}
+              streaming={streaming}
+              langfuseUrl={langfuseUrl}
+              width={evidencePanelWidth}
+              onWidthChange={setEvidencePanelWidth}
+              onClose={() => setEvidencePanelOpen(false)}
+            />
+          ) : null}
+          {playgroundDrawer === "runtime-settings" ? (
+            <PlaygroundRuntimeSettingsDrawer
               agents={agents}
               skills={skills}
               selectedAgent={selectedAgent}
               selectedSkills={selectedSkills}
-              onSelectSession={(sessionId) => { setActiveSessionId(sessionId); setStreamEvents([]); }}
-              onNewSession={createSession}
-              onDeleteSession={removeSession}
-              onRefresh={refresh}
               onSelectAgent={setSelectedAgent}
               onToggleSkill={toggleSkill}
               alertId={alertId}
@@ -622,7 +708,7 @@ export default function App() {
               configMapping={configMapping}
               streamEvents={streamEvents}
               lastError={lastError}
-              onClose={() => setConfigDrawerOpen(false)}
+              onClose={() => setPlaygroundDrawer(null)}
             />
           ) : null}
           <FeedbackDrawer

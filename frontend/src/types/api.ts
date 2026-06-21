@@ -2670,6 +2670,8 @@ export interface components {
             agent_version_id?: string | null;
             /** Alert Id */
             alert_id?: string | null;
+            /** Answer */
+            answer?: string | null;
             /** Answer Summary */
             answer_summary?: string | null;
             /** Case Id */
@@ -2680,6 +2682,13 @@ export interface components {
             created_at?: string | null;
             /** Message */
             message?: string | null;
+            /**
+             * Messages
+             * @description Full SDK message timeline, returned only when include_messages=true.
+             */
+            messages?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
             /** Run Id */
             run_id: string;
             /** Sdk Session Id */
@@ -7036,6 +7045,8 @@ export interface operations {
                 case_id?: string | null;
                 agent_id?: string | null;
                 limit?: number;
+                /** @description Return full SDK messages and reconstructed assistant answer for Playground session restore. */
+                include_messages?: boolean;
             };
             header?: never;
             path?: never;

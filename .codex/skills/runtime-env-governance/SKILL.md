@@ -30,6 +30,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 - `.env.local-debug` 的内容不能承担“选择 local-debug”的职责；它只在已被选择后提供配置值。
 - 本机后台 Agent job 不复用交互式 Claude `/login`；没有 `MODEL_PROVIDER_API_KEY` 时应在启动 Agent 前失败，并投影稳定错误码。
 - local-debug 和 container env 示例应保持 Runtime/API/worker key 同构；Compose、前端容器端口、Langfuse infra 和初始化账号只属于 container env。
+- 用户要求“启动、重启、重建、部署、生效最新代码”时，默认在原 Docker Compose 容器服务中生效，优先重建/重启既有 `agent-gov-ui` / `agent-gov-api` / `agent-gov-worker` 服务并验证既有端口；除非用户明确要求本机调试，不另起临时 Vite 或旁路 API 服务。
 - API 与 worker 应统一使用 `LOG_LEVEL` 控制应用日志级别；container 默认 `info`，local-debug 默认 `debug`，不要新增 worker 专属日志级别变量。
 - 真实 API key、MCP header、数据库凭据、本机私有路径和运行态 SQLite 不得提交。
 - 数据库和 workspace 路径必须随 mode 分离：container 默认 `${HOME}/volume-agent-gov`，local-debug 默认 `/tmp/local-debug-volume-agent-gov`。
@@ -49,6 +50,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 | docs / skill / README 术语同步 | 宿主机仓库环境 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill 单测 | 不默认跑 `make test`，不使用 `local-debug` |
 | settings/env 选择代码 | 宿主机仓库环境 | `tests/test_settings.py`、`tests/test_repository_env_policy.py`、`tests/test_documentation_contracts.py` | 不用 `docker/.env.local-debug` 伪装容器 |
 | live 模型或真实运行态验收 | Docker Compose 容器 | `make container-live-test`，使用 Compose 注入的 `docker/.env` 和容器路径 | 不使用 `docker/.env.local-debug` |
+| 启动 / 重启 / 重建 / 部署生效 | Docker Compose 既有服务 | `make ui-build && make ui-up && make ui-smoke`，必要时追加 API `/health` 与 `docker ps` | 不另起临时 Vite 服务，不用 local-debug 代替容器 |
 | local-debug 专项能力 | 宿主机 Python / PyCharm | 明确命名的 local-debug 专项测试和 bootstrap/repair 命令 | 不把结果声明为容器验收 |
 | 发版或用户要求完整验证 | 发布前工作区 | `make test`，必要时追加 `make container-live-test` | 不用单一 coverage 百分比替代主流程或 live 证据 |
 

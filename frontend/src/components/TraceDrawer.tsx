@@ -15,6 +15,52 @@ export function TraceDrawer({
   langfuseUrl?: string;
   onClose: () => void;
 }) {
+  const activity = useMemo(() => extractAgentActivity(events), [events]);
+  const drawerSize = useMemo<DrawerSize>(() => {
+    const jsonSize = events.reduce((total, event) => total + safeJson(event.data).length, 0);
+    const toolCount = activity.tool_calls.length + activity.tool_results.length;
+    return events.length > 8 || toolCount > 0 || jsonSize > 10000 ? "wide" : "medium";
+  }, [activity.tool_calls.length, activity.tool_results.length, events]);
+
+  return (
+    <DrawerShell
+      title="Trace 细节"
+      description={`${events.length} 个 SDK/流式事件，创建于 ${formatFullTime(message.createdAt)}`}
+      size={drawerSize}
+      testId="trace-drawer"
+      className="trace-drawer"
+      bodyClassName="trace-drawer-body"
+      onClose={onClose}
+      headerMeta={<TraceContextChips message={message} activity={activity} />}
+      headerActions={langfuseUrl ? (
+        <a className="secondary-button drawer-header-link" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">
+          <ExternalLink size={14} /> Langfuse
+        </a>
+      ) : null}
+    >
+      <TraceTimelineView events={events} activity={activity} />
+    </DrawerShell>
+  );
+}
+
+export function TraceContextChips({ message, activity }: { message: ChatMessage; activity: AgentActivity }) {
+  return (
+    <div className="trace-context-chips" data-testid="trace-context-chips">
+      <span title={message.runId || "-"}>run：{message.runId || "-"}</span>
+      <span title={message.sessionId || "-"}>session：{message.sessionId || "-"}</span>
+      <span title={message.agentVersionId || "-"}>agent version：{message.agentVersionId || "-"}</span>
+      <span>{activity.tool_calls.length} calls · {activity.tool_results.length} results</span>
+    </div>
+  );
+}
+
+export function TraceTimelineView({
+  events,
+  activity: providedActivity,
+}: {
+  events: StreamLogEvent[];
+  activity?: AgentActivity;
+}) {
   const [query, setQuery] = useState("");
   const normalizedQuery = query.trim().toLowerCase();
   const eventCounts = useMemo(() => {
@@ -23,7 +69,8 @@ export function TraceDrawer({
       return acc;
     }, {});
   }, [events]);
-  const activity = useMemo(() => extractAgentActivity(events), [events]);
+  const extractedActivity = useMemo(() => extractAgentActivity(events), [events]);
+  const activity = providedActivity || extractedActivity;
   const eventRows = useMemo(() => events.map((event) => {
     const eventName = detailEventName(event);
     const summary = describeEvent(event);
@@ -40,35 +87,9 @@ export function TraceDrawer({
   const visibleRows = normalizedQuery
     ? eventRows.filter((row) => row.searchText.includes(normalizedQuery))
     : eventRows;
-  const drawerSize = useMemo<DrawerSize>(() => {
-    const jsonSize = eventRows.reduce((total, row) => total + row.json.length, 0);
-    const toolCount = activity.tool_calls.length + activity.tool_results.length;
-    return events.length > 8 || toolCount > 0 || jsonSize > 10000 ? "wide" : "medium";
-  }, [activity.tool_calls.length, activity.tool_results.length, eventRows, events.length]);
 
   return (
-    <DrawerShell
-      title="Trace 细节"
-      description={`${events.length} 个 SDK/流式事件，创建于 ${formatFullTime(message.createdAt)}`}
-      size={drawerSize}
-      testId="trace-drawer"
-      className="trace-drawer"
-      bodyClassName="trace-drawer-body"
-      onClose={onClose}
-      headerMeta={(
-        <div className="trace-context-chips" data-testid="trace-context-chips">
-          <span title={message.runId || "-"}>run：{message.runId || "-"}</span>
-          <span title={message.sessionId || "-"}>session：{message.sessionId || "-"}</span>
-          <span title={message.agentVersionId || "-"}>agent version：{message.agentVersionId || "-"}</span>
-          <span>{activity.tool_calls.length} calls · {activity.tool_results.length} results</span>
-        </div>
-      )}
-      headerActions={langfuseUrl ? (
-        <a className="secondary-button drawer-header-link" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">
-          <ExternalLink size={14} /> Langfuse
-        </a>
-      ) : null}
-    >
+    <>
       <AgentActivitySummary activity={activity} />
 
       <div className="detail-summary" aria-label="事件统计">
@@ -106,8 +127,12 @@ export function TraceDrawer({
           <div className="detail-empty">没有匹配的事件</div>
         )}
       </div>
-    </DrawerShell>
+    </>
   );
+}
+
+export function traceActivityFromEvents(events: StreamLogEvent[]): AgentActivity {
+  return extractAgentActivity(events);
 }
 
 function AgentActivitySummary({ activity }: { activity: AgentActivity }) {

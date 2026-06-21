@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.json_types import JsonObject
+from app.runtime.message_utils import extract_text
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
@@ -46,6 +48,8 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
     @router.get(
         "/agent-runs",
         response_model=list[AgentRunResponse],
+        response_model_exclude_none=True,
+        response_model_exclude_defaults=True,
         summary="List Agent run records used by feedback evidence packages",
     )
     async def list_agent_runs(
@@ -55,10 +59,49 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         case_id: str | None = None,
         agent_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
-    ) -> list[AgentRunResponse]:
-        return feedback_store.list_runs(
+        include_messages: bool = Query(
+            default=False,
+            description="Return full SDK messages and reconstructed assistant answer for Playground session restore.",
+        ),
+    ) -> list[JsonObject]:
+        runs = feedback_store.list_runs(
             run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit
         )
+        return [_agent_run_response_payload(run, include_messages=include_messages) for run in runs]
+
+
+def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> JsonObject:
+    payload = dict(run)
+    raw_messages = payload.get("messages")
+    messages = raw_messages if isinstance(raw_messages, list) else []
+    if not include_messages:
+        payload.pop("messages", None)
+        payload.pop("answer", None)
+        return payload
+    payload["messages"] = [message for message in messages if isinstance(message, dict)]
+    if not isinstance(payload.get("answer"), str) or not str(payload.get("answer")).strip():
+        answer = _extract_agent_run_answer(payload["messages"])
+        if answer:
+            payload["answer"] = answer
+    return payload
+
+
+def _extract_agent_run_answer(messages: list[JsonObject]) -> str | None:
+    assistant_parts: list[str] = []
+    fallback_parts: list[str] = []
+    for message in messages:
+        text = extract_text(message)
+        if not text:
+            continue
+        event = str(message.get("event") or message.get("type") or message.get("role") or "")
+        if event.startswith("AssistantMessage") or event == "assistant":
+            assistant_parts.append(text)
+        elif event.startswith("ResultMessage"):
+            fallback_parts.append(text)
+        else:
+            fallback_parts.append(text)
+    answer = "\n\n".join(assistant_parts or fallback_parts).strip()
+    return answer or None
 
 
 def _register_feedback_signal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

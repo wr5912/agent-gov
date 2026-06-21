@@ -648,12 +648,12 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               ) : (
                 <span className="iw-done-note" data-testid="improvement-terminal">已进入发布阶段，治理闭环完成。</span>
               )}
-              <button
-                className="iw-secondary-button"
-                type="button"
-                data-testid="open-context-drawer"
-                onClick={() => setContextOpen((open) => !open)}
-              >
+                <button
+                  className="iw-secondary-button"
+                  type="button"
+                  data-testid="open-context-drawer"
+                  onClick={() => setContextOpen(true)}
+                >
                 获取上下文
               </button>
               {selected.improvement_status !== "archived" ? (
@@ -777,15 +777,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 langfuseUrl,
               };
               const text = buildContext(contextType, inputs);
-              return (
-                <ImprovementContextDrawer
-                  text={text}
-                  contextType={contextType}
-                  onContextTypeChange={setContextType}
-                  onCopy={() => copyText(text)}
-                  onDownload={() => downloadText(text, contextType)}
-                />
-              );
+              return <ImprovementContextDrawer text={text} contextType={contextType} onContextTypeChange={setContextType} onCopy={() => copyText(text)} onDownload={() => downloadText(text, contextType)} onClose={() => setContextOpen(false)} />;
             })() : null}
           </div>
         ) : (

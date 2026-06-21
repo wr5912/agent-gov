@@ -81,9 +81,36 @@ function sse(route, events) {
   });
 }
 
-function mockPayload(path) {
+function mockPayload(urlOrPath) {
+  const url = typeof urlOrPath === "string" ? null : urlOrPath;
+  const path = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
   if (path === "/health") return { status: "ok", model: "parity-mock", provider_key_configured: true };
-  if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
+  if (path === "/api/sessions") return [{
+    session_id: "mock-session",
+    sdk_session_id: "mock-session",
+    created_at: ts,
+    updated_at: "2026-06-18T00:00:01Z",
+    title: "用一句话说明你的角色。",
+    turns: 1,
+    metadata: { client: "agent-gov-ui" },
+  }];
+  if (path === "/api/agent-runs") {
+    const includeMessages = url?.searchParams.get("include_messages") === "true";
+    return [{
+      run_id: "mock-run",
+      session_id: "mock-session",
+      sdk_session_id: "mock-session",
+      agent_version_id: "v-mock",
+      message: "用一句话说明你的角色。",
+      answer: includeMessages ? "我是 AgentGov 测试助手。" : undefined,
+      answer_summary: "我是 AgentGov 测试助手。",
+      messages: includeMessages ? [{ event: "AssistantMessage", content: [{ text: "我是 AgentGov 测试助手。" }] }] : undefined,
+      agent_activity: { tool_calls: [], tool_results: [], tool_names: [] },
+      created_at: ts,
+      completed_at: "2026-06-18T00:00:01Z",
+    }];
+  }
+  if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-registry") return [{ agent_id: "main-agent", name: "默认 Agent", category: "", workspace_dir: "/main-workspace", created_at: ts, status: "active" }];
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
@@ -100,21 +127,7 @@ async function main() {
     window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: a, apiKey: k }));
     if (!real) {
       window.localStorage.setItem("playground-active-session", JSON.stringify("mock-session"));
-      window.localStorage.setItem("playground-session-messages", JSON.stringify({
-        "mock-session": [
-          { id: "msg-user", role: "user", content: "用一句话说明你的角色。", createdAt: "2026-06-18T00:00:00Z" },
-          {
-            id: "msg-assistant",
-            role: "assistant",
-            content: "我是 AgentGov 测试助手。",
-            createdAt: "2026-06-18T00:00:01Z",
-            runId: "mock-run",
-            sessionId: "mock-session",
-            agentVersionId: "v-mock",
-            events: [{ id: "evt-1", event: "message", text: "我是 AgentGov 测试助手。", data: { text: "我是 AgentGov 测试助手。" }, createdAt: "2026-06-18T00:00:01Z" }],
-          },
-        ],
-      }));
+      window.localStorage.removeItem("playground-session-messages");
     }
   }, [api, key, REAL]);
   let ok = false, detail = "";
@@ -131,7 +144,7 @@ async function main() {
             { event: "done", data: { ok: true } },
           ]);
         }
-        return json(route, mockPayload(url.pathname));
+        return json(route, mockPayload(url));
       });
     }
     await page.goto(ui, { waitUntil: "domcontentloaded" });
@@ -149,12 +162,24 @@ async function main() {
           counts[t] = await page.getByTestId(t).count();
         }
         await page.getByTestId("message-action-view-trace").first().click();
-        await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
-        const traceSize = await page.getByTestId("trace-drawer").getAttribute("data-size");
-        const traceBox = await page.getByTestId("trace-drawer").boundingBox();
+        await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+        const traceBox = await page.getByTestId("playground-evidence-panel").boundingBox();
+        const resizeHandle = page.getByTestId("evidence-panel-resize-handle");
+        const resizeBox = await resizeHandle.boundingBox();
+        if (resizeBox) {
+          await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 36);
+          await page.mouse.down();
+          await page.mouse.move(resizeBox.x - 110, resizeBox.y + 36, { steps: 8 });
+          await page.mouse.up();
+        }
+        const resizedTraceBox = await page.getByTestId("playground-evidence-panel").boundingBox();
+        const resizeAria = await resizeHandle.getAttribute("aria-valuenow");
+        const traceTabCount = await page.locator(".evidence-tab").count();
+        const traceTabVisible = await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false);
+        const traceDrawerCount = await page.getByTestId("trace-drawer").count();
         const legacyModalVisible = await page.locator(".detail-modal-card").isVisible().catch(() => false);
-        await page.getByTestId("trace-drawer").getByLabel("关闭").click();
-        await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+        await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+        await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
         await page.getByTestId("message-action-create-feedback").first().click();
         await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
@@ -163,30 +188,83 @@ async function main() {
         await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
         await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
-        await page.getByTestId("playground-config-trigger").click();
-        await page.getByTestId("playground-config-drawer").waitFor({ timeout: 8000 });
-        const configSize = await page.getByTestId("playground-config-drawer").getAttribute("data-size");
-        const configBox = await page.getByTestId("playground-config-drawer").boundingBox();
-        await page.getByTestId("playground-config-drawer").getByLabel("关闭").click();
-        await page.getByTestId("playground-config-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+        await page.getByTestId("playground-session-trigger").click();
+        await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
+        const sessionBox = await page.getByTestId("playground-session-sidebar").boundingBox();
+        const sessionText = await page.getByTestId("playground-session-sidebar").innerText();
+        await page.getByTestId("playground-session-sidebar").getByLabel("折叠会话栏").click();
+        await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        await page.getByTestId("playground-runtime-settings-trigger").click();
+        await page.getByTestId("playground-runtime-settings-drawer").waitFor({ timeout: 8000 });
+        const settingsSize = await page.getByTestId("playground-runtime-settings-drawer").getAttribute("data-size");
+        const settingsBox = await page.getByTestId("playground-runtime-settings-drawer").boundingBox();
+        const settingsText = await page.getByTestId("playground-runtime-settings-drawer").innerText();
+        const debugClosed = await page.getByTestId("runtime-debug-section").evaluate((el) => !el.open).catch(() => false);
+        await page.getByTestId("playground-runtime-settings-drawer").getByLabel("关闭").click();
+        await page.getByTestId("playground-runtime-settings-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+
+        let autoPanelChecks = { skipped: true };
+        if (!REAL) {
+          await page.getByTestId("playground-session-trigger").click();
+          await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
+          await page.locator(".composer textarea").fill("请再用一句话说明你的角色。");
+          await page.getByRole("button", { name: "发送" }).click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+          await page.getByTestId("message-actions").first().waitFor({ timeout: 90000 });
+          autoPanelChecks = {
+            skipped: false,
+            sessionCollapsedAfterSend: await page.getByTestId("playground-session-sidebar").count() === 0,
+            evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
+            traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
+          };
+          await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+          await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+        }
 
         const drawerChecks = {
-          traceSize,
           traceWidth: Math.round(traceBox?.width || 0),
+          resizedTraceWidth: Math.round(resizedTraceBox?.width || 0),
+          resizeAria: Number(resizeAria || 0),
+          traceTabCount,
+          traceTabVisible,
+          traceDrawerCount,
           feedbackSize,
           feedbackWidth: Math.round(feedbackBox?.width || 0),
-          configSize,
-          configWidth: Math.round(configBox?.width || 0),
+          sessionWidth: Math.round(sessionBox?.width || 0),
+          settingsSize,
+          settingsWidth: Math.round(settingsBox?.width || 0),
           legacyModalVisible,
+          sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
+          settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
+          debugClosed,
+          autoPanelChecks,
         };
         ok = Object.values(counts).every((c) => c > 0)
-          && (traceSize === "medium" || traceSize === "wide")
-          && (traceBox?.width || 0) >= 650
+          && (traceBox?.width || 0) >= 520
+          && (traceBox?.width || 0) <= 590
+          && (resizedTraceBox?.width || 0) >= (traceBox?.width || 0) + 80
+          && (resizedTraceBox?.width || 0) <= 680
+          && Number(resizeAria || 0) === Math.round(resizedTraceBox?.width || 0)
+          && traceTabCount === 1
+          && traceTabVisible
+          && traceDrawerCount === 0
           && feedbackSize === "narrow"
           && (feedbackBox?.width || 0) >= 430
-          && configSize === "wide"
-          && (configBox?.width || 0) >= 860
-          && !legacyModalVisible;
+          && (sessionBox?.width || 0) >= 260
+          && (sessionBox?.width || 0) <= 340
+          && settingsSize === "wide"
+          && (settingsBox?.width || 0) >= 860
+          && drawerChecks.sessionNoRuntimeSettings
+          && drawerChecks.settingsNoSessionHistory
+          && debugClosed
+          && !legacyModalVisible
+          && (REAL || (
+            !autoPanelChecks.skipped
+            && autoPanelChecks.sessionCollapsedAfterSend
+            && autoPanelChecks.evidenceOpenAfterSend
+            && autoPanelChecks.traceTabAfterSend
+          ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: "/tmp/agentgov-v27-ui-after-message-actions.png" });
       } catch (e) {

@@ -119,11 +119,12 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-config-drawer,message-actions,trace-drawer,drawer-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
 const visible = async (page, testid) => (await page.getByTestId(testid).count()) > 0 && (await page.getByTestId(testid).first().isVisible());
+const textIncludes = async (locator, value) => (await locator.innerText().catch(() => "")).includes(value);
 
 function authHeaders(extra = {}) {
   return {
@@ -296,9 +297,64 @@ const RULES = [
     const controlStrip = await page.locator(".control-strip").count();
     return { ok: legacySidebar === 0 && inspector === 0 && controlStrip === 0, detail: `legacy-sidebar=${legacySidebar} inspector=${inspector} control-strip=${controlStrip}（期望全 0）` };
   } },
-  { id: "playground-config-drawer", phase: "P1", desc: "Playground 运行配置进入「配置」抽屉", async fn(page) {
+  { id: "playground-action-semantics", phase: "P1", desc: "Playground 动作语义分离：无旧配置入口，会话与运行设置分开", async fn(page) {
+    await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);
+    const oldConfig = await page.getByTestId("playground-config-trigger").count();
+    const sessionTrigger = page.getByTestId("playground-session-trigger");
+    const runtimeTrigger = page.getByTestId("playground-runtime-settings-trigger");
+    const sessionCount = await sessionTrigger.count();
+    const runtimeCount = await runtimeTrigger.count();
+    const sessionText = sessionCount ? await sessionTrigger.first().innerText().catch(() => "") : "";
+    const runtimeText = runtimeCount ? await runtimeTrigger.first().innerText().catch(() => "") : "";
+    const sessionOk = sessionCount === 1 && sessionText.includes("会话") && !sessionText.includes("配置");
+    const runtimeOk = runtimeCount === 1 && runtimeText.includes("运行设置") && !runtimeText.includes("会话");
+    return { ok: oldConfig === 0 && sessionOk && runtimeOk, detail: `oldConfig=${oldConfig} session=${sessionCount}/${sessionText} runtime=${runtimeCount}/${runtimeText}` };
+  } },
+  { id: "playground-session-sidebar", phase: "P1", desc: "Playground 会话管理进入左侧可折叠导航栏，且不混入运行设置", async fn(page) {
     await page.getByTestId("nav-playground").click();
-    return { ok: await has(page, "playground-config-trigger"), detail: `playground-config-trigger=${await has(page, "playground-config-trigger")}` };
+    const trigger = await has(page, "playground-session-trigger");
+    const closedBefore = await page.getByTestId("playground-session-sidebar").count() === 0;
+    if (trigger) await page.getByTestId("playground-session-trigger").click();
+    const sidebar = page.getByTestId("playground-session-sidebar");
+    await sidebar.waitFor({ timeout: 8000 }).catch(() => {});
+    const open = await visible(page, "playground-session-sidebar");
+    const width = open ? ((await sidebar.boundingBox())?.width || 0) : 0;
+    const text = open ? await sidebar.innerText().catch(() => "") : "";
+    const hasSessionControls = text.includes("新会话") && text.includes("会话");
+    const noRuntimeSettings = !text.includes("Subagent") && !text.includes("Skills Mode") && !text.includes("Allowed Tools");
+    if (open) {
+      await sidebar.getByLabel("折叠会话栏").click();
+      await sidebar.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    }
+    return { ok: trigger && closedBefore && open && width >= 260 && width <= 340 && hasSessionControls && noRuntimeSettings, detail: `trigger=${trigger} defaultCollapsed=${closedBefore} open=${open} width=${Math.round(width)} sessionControls=${hasSessionControls} noRuntimeSettings=${noRuntimeSettings}` };
+  } },
+  { id: "playground-runtime-settings-drawer", phase: "P1", desc: "Playground 运行设置进入独立抽屉，且不混入会话历史", async fn(page) {
+    await page.getByTestId("nav-playground").click();
+    const trigger = await has(page, "playground-runtime-settings-trigger");
+    if (trigger) await page.getByTestId("playground-runtime-settings-trigger").click();
+    const drawer = page.getByTestId("playground-runtime-settings-drawer");
+    await drawer.waitFor({ timeout: 8000 }).catch(() => {});
+    const open = await visible(page, "playground-runtime-settings-drawer");
+    const size = open ? await drawer.getAttribute("data-size") : null;
+    const hasRuntimeSettings = open
+      && await has(page, "runtime-agent-settings")
+      && await has(page, "runtime-parameter-settings")
+      && await drawer.locator('input[placeholder="留空使用后端默认"]').count() >= 2;
+    const noSessionHistory = open
+      && await drawer.getByText("新会话").count() === 0
+      && await drawer.getByText("删除会话映射").count() === 0
+      && await drawer.getByText("Sessions").count() === 0
+      && await drawer.getByTestId("playground-session-list").count() === 0
+      && await page.getByTestId("playground-session-sidebar").count() === 0;
+    const debug = open ? page.getByTestId("runtime-debug-section") : null;
+    const debugClosed = debug ? await debug.evaluate((el) => !el.open).catch(() => false) : false;
+    if (debug) await debug.locator("summary").click().catch(() => {});
+    const debugVisible = open ? await textIncludes(drawer, "Runtime") && await textIncludes(drawer, "Events") : false;
+    if (open) {
+      await drawer.getByLabel("关闭").click();
+      await drawer.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    }
+    return { ok: trigger && open && size === "wide" && hasRuntimeSettings && noSessionHistory && debugClosed && debugVisible, detail: `trigger=${trigger} open=${open} size=${size} runtimeSettings=${hasRuntimeSettings} noSessionHistory=${noSessionHistory} debugClosed=${debugClosed} debugVisible=${debugVisible}` };
   } },
   { id: "message-actions", phase: "P1", desc: "助手回复动作含 创建反馈/查看Trace/获取上下文（领域级 data-testid）", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -307,41 +363,67 @@ const RULES = [
     const ctx = await has(page, "message-action-get-context");
     return { ok: create && trace && ctx, detail: `create=${create} trace=${trace} get-context=${ctx}` };
   } },
-  { id: "trace-drawer", phase: "P0", desc: "查看 Trace 打开右侧 Trace 抽屉，旧中心 detail modal 不再出现", async fn(page) {
+  { id: "trace-evidence-panel", phase: "P0", desc: "查看 Trace 打开右侧运行证据 tab 面板，旧中心 modal/Trace 抽屉不再出现", async fn(page) {
     await page.getByTestId("nav-playground").click();
     if (!(await has(page, "message-action-view-trace"))) return { ok: false, detail: "无 Trace 入口" };
     await page.getByTestId("message-action-view-trace").first().click();
-    await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
-    const drawer = await visible(page, "trace-drawer");
+    await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+    const panel = await visible(page, "playground-evidence-panel");
+    const traceTab = await visible(page, "evidence-tab-trace");
+    const tabCount = await page.locator(".evidence-tab").count();
     const legacy = await page.locator(".detail-modal-card").isVisible().catch(() => false);
-    const size = await page.getByTestId("trace-drawer").getAttribute("data-size");
+    const traceDrawer = await page.getByTestId("trace-drawer").count();
     const langfuse = await has(page, "trace-open-langfuse");
-    await page.getByTestId("trace-drawer").getByLabel("关闭").click();
-    await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    return { ok: drawer && !legacy && (size === "medium" || size === "wide") && langfuse, detail: `drawer=${drawer} legacyModal=${legacy} size=${size} langfuse=${langfuse}` };
+    await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+    await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && langfuse, detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} langfuse=${langfuse}` };
   } },
-  { id: "drawer-size-policy", phase: "P0", desc: "抽屉宽度按 narrow/medium/wide 分档且打开后稳定", async fn(page) {
+  { id: "panel-size-policy", phase: "P0", desc: "侧栏、tab 面板与抽屉按职责分档且打开后稳定", async fn(page) {
     await page.getByTestId("nav-playground").click();
     await page.getByTestId("message-action-view-trace").first().click();
-    await page.getByTestId("trace-drawer").waitFor({ timeout: 8000 });
-    const traceSize = await page.getByTestId("trace-drawer").getAttribute("data-size");
-    const traceWidth = (await page.getByTestId("trace-drawer").boundingBox())?.width || 0;
-    await page.getByTestId("trace-drawer").getByLabel("关闭").click();
-    await page.getByTestId("trace-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
+    const traceWidth = (await page.getByTestId("playground-evidence-panel").boundingBox())?.width || 0;
+    const resizeHandle = page.getByTestId("evidence-panel-resize-handle");
+    const resizeBox = await resizeHandle.boundingBox();
+    if (resizeBox) {
+      await page.mouse.move(resizeBox.x + resizeBox.width / 2, resizeBox.y + 36);
+      await page.mouse.down();
+      await page.mouse.move(resizeBox.x - 110, resizeBox.y + 36, { steps: 8 });
+      await page.mouse.up();
+    }
+    const resizedTraceWidth = (await page.getByTestId("playground-evidence-panel").boundingBox())?.width || 0;
+    const resizeAria = Number(await resizeHandle.getAttribute("aria-valuenow") || 0);
+    await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
+    await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     await page.getByTestId("message-action-create-feedback").first().click();
     await page.getByTestId("feedback-drawer").waitFor({ timeout: 8000 });
     const feedbackSize = await page.getByTestId("feedback-drawer").getAttribute("data-size");
     const feedbackWidth = (await page.getByTestId("feedback-drawer").boundingBox())?.width || 0;
     await page.getByTestId("feedback-drawer").getByLabel("关闭").click();
     await page.getByTestId("feedback-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    await page.getByTestId("playground-config-trigger").click();
-    await page.getByTestId("playground-config-drawer").waitFor({ timeout: 8000 });
-    const configSize = await page.getByTestId("playground-config-drawer").getAttribute("data-size");
-    const configWidth = (await page.getByTestId("playground-config-drawer").boundingBox())?.width || 0;
-    await page.getByTestId("playground-config-drawer").getByLabel("关闭").click();
-    await page.getByTestId("playground-config-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    const ok = (traceSize === "medium" || traceSize === "wide") && traceWidth >= 650 && feedbackSize === "narrow" && feedbackWidth >= 430 && configSize === "wide" && configWidth >= 860;
-    return { ok, detail: `trace=${traceSize}/${Math.round(traceWidth)} feedback=${feedbackSize}/${Math.round(feedbackWidth)} config=${configSize}/${Math.round(configWidth)}` };
+    await page.getByTestId("playground-session-trigger").click();
+    await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
+    const sessionWidth = (await page.getByTestId("playground-session-sidebar").boundingBox())?.width || 0;
+    await page.getByTestId("playground-session-sidebar").getByLabel("折叠会话栏").click();
+    await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    await page.getByTestId("playground-runtime-settings-trigger").click();
+    await page.getByTestId("playground-runtime-settings-drawer").waitFor({ timeout: 8000 });
+    const settingsSize = await page.getByTestId("playground-runtime-settings-drawer").getAttribute("data-size");
+    const settingsWidth = (await page.getByTestId("playground-runtime-settings-drawer").boundingBox())?.width || 0;
+    await page.getByTestId("playground-runtime-settings-drawer").getByLabel("关闭").click();
+    await page.getByTestId("playground-runtime-settings-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    const ok = traceWidth >= 520
+      && traceWidth <= 590
+      && resizedTraceWidth >= traceWidth + 80
+      && resizedTraceWidth <= 680
+      && resizeAria === Math.round(resizedTraceWidth)
+      && feedbackSize === "narrow"
+      && feedbackWidth >= 430
+      && sessionWidth >= 260
+      && sessionWidth <= 340
+      && settingsSize === "wide"
+      && settingsWidth >= 860;
+    return { ok, detail: `trace-panel=${Math.round(traceWidth)} resized=${Math.round(resizedTraceWidth)} aria=${resizeAria} feedback=${feedbackSize}/${Math.round(feedbackWidth)} session-sidebar=${Math.round(sessionWidth)} settings=${settingsSize}/${Math.round(settingsWidth)}` };
   } },
   { id: "feedback-drawer-2phase", phase: "P1", desc: "创建反馈 Drawer 两阶段：输入态 → 系统理解确认态", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -358,6 +440,8 @@ const RULES = [
   { id: "context-4types", phase: "P2", desc: "获取上下文四类型 + 下载", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项可打开上下文（需种子数据）" };
     await page.getByTestId("open-context-drawer").click().catch(() => {});
+    await page.getByTestId("context-drawer").waitFor({ timeout: 8000 }).catch(() => {});
+    const drawerSize = await page.getByTestId("context-drawer").getAttribute("data-size").catch(() => null);
     const types = ["context-type-problem", "context-type-ai", "context-type-playwright", "context-type-json"];
     const found = []; for (const t of types) if (await has(page, t)) found.push(t);
     await page.getByTestId("context-type-json").click().catch(() => {});
@@ -368,7 +452,10 @@ const RULES = [
       && preview.includes('"asset_id"')
       && !preview.includes('"attribution": null')
       && !preview.includes('"evidence": []');
-    return { ok: found.length === 4 && (await has(page, "context-download")) && rich, detail: `类型 ${found.length}/4，下载=${await has(page, "context-download")}，证据链JSON=${rich}` };
+    const download = await has(page, "context-download");
+    await page.getByTestId("context-drawer").getByLabel("关闭").click().catch(() => {});
+    await page.getByTestId("context-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
   { id: "release-gates", phase: "P2", desc: "发布页三门门禁 + 去运行回归/查看变更/强制发布动作", async fn(page) {
     await page.getByTestId("nav-release").click();

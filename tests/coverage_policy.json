@@ -110,7 +110,10 @@
         },
         {
           "id": "v27_design_parity_and_message_actions",
-          "description": "The v2.7 user-facing governance path exposes the simplified Playground, message actions, ImprovementItem workbench, evidence-rich ContextPackage, actionable release gates, and Asset Registry provenance using stable selectors.",
+          "description": "The v2.7 user-facing governance path exposes the simplified Playground, restores historical Playground runs after refresh, separates session navigation into the left sidebar, runtime settings into a drawer, Trace into the right evidence tab panel, keeps feedback creation in a drawer, and preserves ImprovementItem workbench, ContextPackage drawer, release gates, and Asset Registry provenance using stable selectors.",
+          "pytest": [
+            "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore"
+          ],
           "ui_scripts": [
             "verify:design-parity",
             "verify:asset-registry",

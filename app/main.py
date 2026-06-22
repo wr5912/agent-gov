@@ -38,6 +38,7 @@ from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
+from app.services.improvement_governor_service import ImprovementGovernorService
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
@@ -78,6 +79,11 @@ agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_f
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+improvement_governor_service = ImprovementGovernorService(
+    improvement_store=improvement_store,
+    content_store=improvement_content_store,
+    run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
+)
 automation_policy_store = AutomationPolicyStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 asset_store = AssetStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
@@ -186,6 +192,7 @@ app.include_router(
     create_improvement_content_router(
         improvement_store=improvement_store,
         content_store=improvement_content_store,
+        governor_service=improvement_governor_service,
         require_api_key=require_api_key,
     )
 )

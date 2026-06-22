@@ -75,6 +75,7 @@ class AttributionResponse(BaseModel):
     responsibility_boundary: list[str]
     evidence: list[str]
     status: str
+    generated_by: str = "heuristic"
     created_at: str
     updated_at: str
 
@@ -95,6 +96,7 @@ class OptimizationPlanResponse(BaseModel):
     summary: str
     changes: list[OptimizationChange]
     status: str
+    generated_by: str = "heuristic"
     created_at: str
     updated_at: str
 

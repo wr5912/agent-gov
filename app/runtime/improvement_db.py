@@ -106,6 +106,7 @@ class AttributionModel(Base):
     responsibility_boundary_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     evidence_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="draft")
+    generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
@@ -123,6 +124,7 @@ class OptimizationPlanModel(Base):
     summary: Mapped[str] = mapped_column(Text, default="")
     changes_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="draft")
+    generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 

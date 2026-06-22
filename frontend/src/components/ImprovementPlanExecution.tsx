@@ -19,7 +19,9 @@ export function ImprovementPlanExecution({
     <>
       {optPlan ? (
         <div className="iw-detail-section" data-testid="optimization-plan">
-          <h4>优化方案{optPlan.status === "confirmed" ? "（已确认）" : "（待确认）"}</h4>
+          <h4>优化方案{optPlan.status === "confirmed" ? "（已确认）" : "（待确认）"}
+            <span className="iw-source-badge" data-testid="optimization-plan-source" data-source={optPlan.generated_by}>{optPlan.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
+          </h4>
           <div className="iw-detail-summary">{optPlan.summary}</div>
           {optPlan.changes.length ? (
             <>

@@ -292,3 +292,6 @@
 /* v2.7 资产 Registry 浏览优先 */
 .asset-browser-toolbar { margin-top: 0; }
 .asset-browser-toolbar .iw-automation-row { align-items: stretch; }
+/* v2.7 §17.5 归因/方案 来源标注（治理 Agent 生成 vs 启发式初步） */
+.iw-source-badge { margin-left: 8px; font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 999px; vertical-align: middle; border: 1px solid var(--border-subtle); color: var(--text-secondary); background: #fff; }
+.iw-source-badge[data-source="governor"] { color: var(--color-primary); border-color: #bfdbfe; background: var(--color-primary-soft); }

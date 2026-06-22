@@ -1208,7 +1208,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 ```text
 [已加固] ContextPackage 已接入 NormalizedFeedback、Attribution、来源反馈、Trace run/session、Agent version、links、assets；缺失字段输出 missing reason，不用空结构冒充完整证据。
 [已加固] 反馈归属已扩展到 agent_version_id、scenario、task_id、alert_id、case_id，并在 Feedback Drawer、来源反馈表和 ContextPackage 可见。
-[已加固] 归因和优化方案生成已从前端确定性拼接迁到后端 generation endpoint；当前仍是后端首切生成，尚未等价接通 LLM/Governor 深度分析。
+[已接通] 归因和优化方案生成已接通治理 Agent governor LLM（ImprovementGovernorService 复用 agent_job_spec prompt/formatter + run_profile_json，improvement-scoped）：formatter agent-owned 字段映射到内容子资源，标注 generated_by=governor；governor 不可用/失败回退确定性启发式（generated_by=heuristic），离线/测试不依赖远程；UI 显示来源徽标（parity governance-generation-source ✅）。
 [已加固] 相似归并算法已加入中文 uni/bi/tri-gram 与短查询覆盖率，补充无共享 feedback_ref 的中文长文本样本测试。
 [已加固] 发布页“去运行回归”接 change set regression API；“强制发布”接二次确认、后端 force publish 与审计事件。
 [已加固] Asset Registry 显示 provenance：归属 Agent、来源改进事项、继承来源，并进入 UI 验收脚本。
@@ -1219,7 +1219,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 **C. 明确未完成或需要继续整改：**
 
 ```text
-[未完成] ImprovementItem 与既有闭环引擎 / Governor 的深度对接：后端首切生成已经接入，但旧 feedback batch 的归因、方案、执行、回归、版本能力尚未完全迁入 v2.7 主链路。
+[进行中] ImprovementItem 与既有闭环引擎 / Governor 的深度对接（§17.5 引擎波次）：归因 / 优化方案 已接通真 governor LLM 生成（heuristic 兜底 + generated_by 标注）；执行 / 回归 / 版本 的真 governor 编排与到真实 change set / release / agent version 的权威绑定仍待迁入，旧 feedback batch 引擎待功能等价覆盖后退役。
 [未完成] 执行记录到真实 change set / release / agent version 的权威绑定仍需继续增强，不能用占位版本冒充真实发布。
 [未完成] 自动化策略从反馈到关键确认点的真实编排仍需专项硬门。
 [不纳入本期核心偏差] 移动端响应式已被真实截图记录，但本轮目标偏差和整改优先级不以移动端为主。

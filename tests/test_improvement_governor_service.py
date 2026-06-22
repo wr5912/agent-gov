@@ -1,0 +1,114 @@
+"""v2.7 §17.5：改进事项归因/方案 governor 生成服务（真 LLM 路径 + 确定性回退 + 字段所有权）。"""
+
+from __future__ import annotations
+
+import asyncio
+from pathlib import Path
+from types import SimpleNamespace
+
+from app.runtime.runtime_db import make_session_factory
+from app.runtime.stores.improvement_content_store import ImprovementContentStore
+from app.services.improvement_governor_service import ImprovementGovernorService
+
+
+def _content(tmp_path: Path) -> ImprovementContentStore:
+    return ImprovementContentStore(make_session_factory(tmp_path / "runtime.sqlite3"))
+
+
+class _FakeImprovements:
+    def __init__(self, item: object) -> None:
+        self._item = item
+
+    def get_improvement(self, improvement_id: str) -> object:
+        return self._item
+
+
+def _item() -> SimpleNamespace:
+    return SimpleNamespace(improvement_id="imp-1", title="告警误报治理", agent_id="soc-ops")
+
+
+def _service(tmp_path: Path, run_profile_json) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
+    content = _content(tmp_path)
+    content.upsert_normalized_feedback("imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报")
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=run_profile_json)
+    return svc, content
+
+
+def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> None:
+    """governor 成功：映射 rationale/responsibility_boundary/evidence_refs，标 generated_by=governor。"""
+    async def fake_run(**_kwargs):
+        return {
+            "rationale": "MCP 返回的事件时间与告警时间窗口不一致，导致误判",
+            "confidence": "high",
+            "responsibility_boundary": {"owner": "external_mcp_service", "reason": "sec-ops-data 数据质量"},
+            "evidence_refs": [{"type": "trace", "id": "run-1", "reason": "list_events 时间窗口不一致"}],
+            "status": "confirmed",  # hostile: LLM 不能设 backend-owned 状态
+        }
+    svc, content = _service(tmp_path, fake_run)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "governor"
+    assert "时间窗口不一致" in rec.summary and "置信度 high" in rec.summary
+    assert rec.responsibility_boundary == ["external_mcp_service：sec-ops-data 数据质量"]
+    assert rec.evidence and "list_events" in rec.evidence[0]
+    # 字段所有权：status 由后端定为 draft，LLM 的 "confirmed" 不得污染。
+    assert content.get_attribution("imp-1").status == "draft"
+
+
+def test_attribution_falls_back_to_heuristic_on_governor_failure(tmp_path: Path) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("missing model credentials")
+    svc, _ = _service(tmp_path, boom)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+    assert "MCP 数据" in rec.summary and rec.status == "draft"
+
+
+def test_attribution_none_runner_is_heuristic(tmp_path: Path) -> None:
+    svc, _ = _service(tmp_path, None)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+
+
+def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> None:
+    """恶意/畸形 agent-owned 输出：缺字段、错类型、注入 backend-owned 字段，服务防御性映射且不污染。"""
+    async def hostile(**_kwargs):
+        return {
+            "rationale": "",  # 空 → 退回启发式 summary
+            "responsibility_boundary": "not-a-dict",
+            "evidence_refs": "not-a-list",
+            "attribution_id": "attacker-controlled",  # 不得被采纳
+            "generated_by": "user-spoofed",  # 不得被采纳
+        }
+    svc, content = _service(tmp_path, hostile)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "governor"  # 来源由后端判定，非 LLM 字段
+    assert not rec.attribution_id.startswith("attacker")  # id 后端生成
+    assert rec.status == "draft"
+    assert rec.summary  # 防御性回退非空
+
+
+def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> None:
+    async def fake_run(**_kwargs):
+        return {
+            "summary": "收紧时间一致性校验",
+            "tasks": [
+                {"target_type": "prompt", "recommendation": "新增事件时间与告警时间一致性校验"},
+                {"target_path": "skills/triage.md", "title": "补充误报判定 SOP"},
+            ],
+        }
+    content = _content(tmp_path)
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run)
+    rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
+    assert rec.generated_by == "governor"
+    assert rec.summary == "收紧时间一致性校验"
+    assert {c["target"] for c in rec.changes} == {"prompt", "skills/triage.md"}
+    assert content.get_optimization_plan("imp-1").status == "draft"
+
+
+def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:
+    async def boom(**_kwargs):
+        raise TimeoutError("governor timeout")
+    content = _content(tmp_path)
+    svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=boom)
+    rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
+    assert rec.generated_by == "heuristic" and rec.changes and rec.status == "draft"

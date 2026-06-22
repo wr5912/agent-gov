@@ -166,6 +166,16 @@ def migrate_0014_improvement_feedback_context(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_task_id ON improvement_feedbacks (task_id)")
 
 
+def migrate_0015_improvement_content_generated_by(connection: Connection) -> None:
+    """§17.5：归因/优化方案补 generated_by（governor / heuristic 来源标注）。已存在的旧表 ALTER 补列。"""
+    for table in ("attributions", "optimization_plans"):
+        columns = _table_columns(connection, table)
+        if not columns:
+            continue
+        if "generated_by" not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN generated_by VARCHAR(32) DEFAULT 'heuristic'")
+
+
 def migrate_0010_scenario_packs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

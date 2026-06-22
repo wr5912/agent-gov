@@ -27,6 +27,7 @@ from app.runtime.stores.improvement_content_store import (
     OptimizationPlanRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
+from app.services.improvement_governor_service import ImprovementGovernorService
 
 
 def _nf_response(r: NormalizedFeedbackRecord) -> NormalizedFeedbackResponse:
@@ -50,7 +51,7 @@ def _attr_response(r: AttributionRecord) -> AttributionResponse:
     return AttributionResponse(
         attribution_id=r.attribution_id, improvement_id=r.improvement_id, summary=r.summary,
         responsibility_boundary=list(r.responsibility_boundary), evidence=list(r.evidence),
-        status=r.status, created_at=r.created_at, updated_at=r.updated_at,
+        status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
 
@@ -58,7 +59,7 @@ def _opt_response(r: OptimizationPlanRecord) -> OptimizationPlanResponse:
     return OptimizationPlanResponse(
         optimization_plan_id=r.optimization_plan_id, improvement_id=r.improvement_id, summary=r.summary,
         changes=[OptimizationChange(target=c.get("target", ""), change=c.get("change", "")) for c in r.changes],
-        status=r.status, created_at=r.created_at, updated_at=r.updated_at,
+        status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
 
@@ -134,42 +135,22 @@ def _register_governance_generation_routes(
     router: APIRouter,
     *,
     improvement_store: ImprovementStore,
-    content_store: ImprovementContentStore,
+    governor_service: ImprovementGovernorService,
     require: Callable,
 ) -> None:
-    @router.post("/improvements/{improvement_id}/attribution/generate", response_model=AttributionResponse, summary="Generate initial backend attribution")
-    async def generate_attr(improvement_id: str) -> AttributionResponse:
-        item = improvement_store.get_improvement(improvement_id)
-        if item is None:
-            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
-        nf = content_store.get_normalized_feedback(improvement_id)
-        summary = (
-            f"可能与「{nf.possible_object or '外部数据/工具'}」相关：{nf.problem}"
-            f"{f'（{nf.possible_reason}）' if nf.possible_reason else ''}。"
-            if nf else f"针对「{item.title}」的初步归因，待补充系统理解和证据。"
-        )
-        boundary = ["不是主 Agent 推理错误", f"主要可能在：{nf.possible_object or '外部数据源 / 工具质量'}"] if nf else ["归因对象待确认"]
-        evidence = [f"用户反馈：{nf.user_quote}"] if nf and nf.user_quote else []
-        return _attr_response(content_store.upsert_attribution(
-            improvement_id,
-            summary=summary,
-            responsibility_boundary=boundary,
-            evidence=evidence,
-        ))
+    """§17.5：归因/方案由治理 Agent governor LLM 生成，governor 不可用/失败时回退确定性启发式（见 service）。"""
 
-    @router.post("/improvements/{improvement_id}/optimization-plan/generate", response_model=OptimizationPlanResponse, summary="Generate initial backend optimization plan")
-    async def generate_opt(improvement_id: str) -> OptimizationPlanResponse:
-        item = improvement_store.get_improvement(improvement_id)
-        if item is None:
+    @router.post("/improvements/{improvement_id}/attribution/generate", response_model=AttributionResponse, summary="Generate attribution via governor LLM (heuristic fallback)")
+    async def generate_attr(improvement_id: str) -> AttributionResponse:
+        if improvement_store.get_improvement(improvement_id) is None:
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
-        nf = content_store.get_normalized_feedback(improvement_id)
-        attr = content_store.get_attribution(improvement_id)
-        summary = f"针对「{item.title}」：{attr.summary if attr else nf.suggestion if nf else '补充校验/提示，避免重演该问题'}。"
-        return _opt_response(content_store.upsert_optimization_plan(
-            improvement_id,
-            summary=summary,
-            changes=[{"target": "prompt", "change": "补充对应校验与提示指令，避免重演该问题"}],
-        ))
+        return _attr_response(await governor_service.generate_attribution(improvement_id))
+
+    @router.post("/improvements/{improvement_id}/optimization-plan/generate", response_model=OptimizationPlanResponse, summary="Generate optimization plan via governor LLM (heuristic fallback)")
+    async def generate_opt(improvement_id: str) -> OptimizationPlanResponse:
+        if improvement_store.get_improvement(improvement_id) is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        return _opt_response(await governor_service.generate_optimization_plan(improvement_id))
 
 
 def _register_opt_routes(router: APIRouter, *, content_store: ImprovementContentStore, require: Callable) -> None:
@@ -216,6 +197,7 @@ def create_improvement_content_router(
     *,
     improvement_store: ImprovementStore,
     content_store: ImprovementContentStore,
+    governor_service: ImprovementGovernorService,
     require_api_key: Callable,
 ) -> APIRouter:
     """改进事项内容子资源（v2.7 §4/§6/§8/§106/§107 P3）：系统理解 / 归因 / 优化方案 / 执行记录 / 来源反馈。"""
@@ -228,7 +210,7 @@ def create_improvement_content_router(
     _register_feedback_routes(router, improvement_store=improvement_store, content_store=content_store, require=_require)
     _register_nf_routes(router, content_store=content_store, require=_require)
     _register_attr_routes(router, content_store=content_store, require=_require)
-    _register_governance_generation_routes(router, improvement_store=improvement_store, content_store=content_store, require=_require)
+    _register_governance_generation_routes(router, improvement_store=improvement_store, governor_service=governor_service, require=_require)
     _register_opt_routes(router, content_store=content_store, require=_require)
     _register_exec_routes(router, content_store=content_store, require=_require)
     return router

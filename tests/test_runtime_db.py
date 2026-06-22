@@ -72,6 +72,33 @@ def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
     assert tuple(row) == ("job-old", "batch_plan")
 
 
+def test_runtime_db_migrates_generated_by_onto_existing_content_tables(tmp_path):
+    """§17.5 0015：旧 attributions / optimization_plans 表（无 generated_by）应被 ALTER 补列并回填 heuristic。"""
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE attributions (attribution_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, responsibility_boundary_json JSON, evidence_json JSON, status VARCHAR(32), "
+            "created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute("INSERT INTO attributions (attribution_id, improvement_id, status) VALUES ('a-old', 'imp-1', 'draft')")
+        connection.execute(
+            "CREATE TABLE optimization_plans (optimization_plan_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, changes_json JSON, status VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute("INSERT INTO optimization_plans (optimization_plan_id, improvement_id, status) VALUES ('o-old', 'imp-1', 'draft')")
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        attr_cols = {str(r[1]) for r in connection.exec_driver_sql("PRAGMA table_info(attributions)").fetchall()}
+        opt_cols = {str(r[1]) for r in connection.exec_driver_sql("PRAGMA table_info(optimization_plans)").fetchall()}
+        attr_val = connection.exec_driver_sql("SELECT generated_by FROM attributions WHERE attribution_id = 'a-old'").fetchone()[0]
+        opt_val = connection.exec_driver_sql("SELECT generated_by FROM optimization_plans WHERE optimization_plan_id = 'o-old'").fetchone()[0]
+
+    assert "generated_by" in attr_cols and "generated_by" in opt_cols
+    assert attr_val == "heuristic" and opt_val == "heuristic"
+
+
 def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):
     store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
 

@@ -24,6 +24,7 @@ from .runtime_db_migrations import (
     migrate_0012_eval_run_agent_id,
     migrate_0013_optimization_task_agent_id,
     migrate_0014_improvement_feedback_context,
+    migrate_0015_improvement_content_generated_by,
 )
 
 
@@ -570,6 +571,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0012_eval_run_agent_id", migrate_0012_eval_run_agent_id),
         ("0013_optimization_task_agent_id", migrate_0013_optimization_task_agent_id),
         ("0014_improvement_feedback_context", migrate_0014_improvement_feedback_context),
+        ("0015_improvement_content_generated_by", migrate_0015_improvement_content_generated_by),
     ):
         if version in applied:
             continue

@@ -43,6 +43,7 @@ class AttributionRecord:
     status: str
     created_at: str
     updated_at: str = ""
+    generated_by: str = "heuristic"
     extra: dict = field(default_factory=dict)
 
 
@@ -74,6 +75,7 @@ class OptimizationPlanRecord:
     status: str
     created_at: str
     updated_at: str = ""
+    generated_by: str = "heuristic"
 
 
 @dataclass(frozen=True)
@@ -195,7 +197,7 @@ class ImprovementContentStore:
             return _nf_record(row)
 
     # ---- Attribution（归因结果）----
-    def upsert_attribution(self, improvement_id: str, *, summary: str, responsibility_boundary: list[str] | None = None, evidence: list[str] | None = None) -> AttributionRecord:
+    def upsert_attribution(self, improvement_id: str, *, summary: str, responsibility_boundary: list[str] | None = None, evidence: list[str] | None = None, generated_by: str = "heuristic") -> AttributionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
@@ -206,6 +208,7 @@ class ImprovementContentStore:
             row.responsibility_boundary_json = list(responsibility_boundary or [])
             row.evidence_json = list(evidence or [])
             row.status = "draft"
+            row.generated_by = generated_by
             row.updated_at = now
             db.flush()
             return _attr_record(row)
@@ -227,7 +230,7 @@ class ImprovementContentStore:
             return _attr_record(row)
 
     # ---- OptimizationPlan（优化方案，§106）----
-    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None) -> OptimizationPlanRecord:
+    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None, generated_by: str = "heuristic") -> OptimizationPlanRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
@@ -237,6 +240,7 @@ class ImprovementContentStore:
             row.summary = summary
             row.changes_json = list(changes or [])
             row.status = "draft"
+            row.generated_by = generated_by
             row.updated_at = now
             db.flush()
             return _opt_record(row)
@@ -299,6 +303,7 @@ def _opt_record(row: OptimizationPlanModel) -> OptimizationPlanRecord:
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
+        generated_by=row.generated_by or "heuristic",
     )
 
 
@@ -341,4 +346,5 @@ def _attr_record(row: AttributionModel) -> AttributionRecord:
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
+        generated_by=row.generated_by or "heuristic",
     )

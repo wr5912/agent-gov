@@ -476,7 +476,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
 
             {attribution ? (
               <div className="iw-detail-section" data-testid="attribution">
-                <h4>系统归因{attribution.status === "confirmed" ? "（已确认）" : "（待确认）"}</h4>
+                <h4>系统归因{attribution.status === "confirmed" ? "（已确认）" : "（待确认）"}
+                  <span className="iw-source-badge" data-testid="attribution-source" data-source={attribution.generated_by}>{attribution.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
+                </h4>
                 {editingAttribution ? (
                   <div>
                     <textarea className="iw-input" data-testid="attr-edit-summary" value={attrDraft.summary} onChange={(e) => setAttrDraft({ ...attrDraft, summary: e.target.value })} placeholder="归因正文" style={{ minHeight: 60 }} />

@@ -35,10 +35,9 @@ interface SettingsModalProps {
   onSave: (config: RuntimeClientConfig) => void;
   onAgentsChanged: () => void;
   onOpenAsset: () => void;
-  onOpenFeedback: () => void;
 }
 
-export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAsset, onOpenFeedback }: SettingsModalProps) {
+export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAsset }: SettingsModalProps) {
   const [apiBase, setApiBase] = useState(config.apiBase);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -213,7 +212,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
           <div className="settings-developer-links">
             <a className="secondary-button" href={apiDocsUrl} target="_blank" rel="noreferrer">API Docs</a>
             <a className="secondary-button" href={langfuseUrl} target="_blank" rel="noreferrer">Langfuse</a>
-            <button className="secondary-button" data-testid="settings-open-feedback" onClick={onOpenFeedback}>反馈优化工作台（旧 / 诊断）</button>
           </div>
         </section> : null}
 

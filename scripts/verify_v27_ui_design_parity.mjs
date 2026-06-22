@@ -121,7 +121,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -714,21 +714,6 @@ const RULES = [
     const drawerSize = await page.getByTestId("asset-create-drawer").getAttribute("data-size").catch(() => "");
     await page.getByTestId("asset-create-drawer").getByLabel("关闭").click().catch(() => {});
     return { ok: toolbar && typeFilter && sourceFilter && createButton && !titleVisibleBefore && drawer && drawerSize === "narrow", detail: `toolbar=${toolbar} type=${typeFilter} source=${sourceFilter} createBtn=${createButton} titleBefore=${titleVisibleBefore} drawer=${drawer}/${drawerSize}` };
-  } },
-  { id: "legacy-diagnostic-downgraded", phase: "P2", desc: "旧反馈优化工作台降级为开发者诊断，并提供返回改进主流程入口", async fn(page) {
-    await page.getByTestId("nav-playground").click().catch(() => {});
-    await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
-    await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
-    await page.getByTestId("settings-tab-developer").click();
-    await page.getByTestId("settings-open-feedback").click();
-    await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    await page.getByTestId("feedback-legacy-banner").waitFor({ timeout: 8000 });
-    const bannerText = await page.getByTestId("feedback-legacy-banner").innerText().catch(() => "");
-    const ret = await has(page, "legacy-return-improvement");
-    if (ret) await page.getByTestId("legacy-return-improvement").click().catch(() => {});
-    await page.getByTestId("improvement-workbench").waitFor({ timeout: 8000 }).catch(() => {});
-    const improvement = await visible(page, "improvement-workbench");
-    return { ok: bannerText.includes("开发者诊断视图") && ret && improvement, detail: `banner=${bannerText.slice(0, 30)} return=${ret} improvement=${improvement}` };
   } },
   { id: "theme-governance-light", phase: "P4", desc: "主工作台统一 Governance Light（主区背景非旧暖色，含背景渐变）", async fn(page) {
     await page.getByTestId("nav-playground").click();

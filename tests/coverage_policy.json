@@ -91,7 +91,6 @@
           "id": "plan_tab_empty_success_failure_states",
           "description": "Optimization plan tab renders empty state, generated plan, generation failure and timeout details including background job refresh, editable plan task states, dirty workspace preflight, one-click execution controls, and execution record details.",
           "ui_scripts": [
-            "verify:feedback-ui-states",
             "verify:design-parity"
           ]
         }

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
-import { ExternalFeedbackWorkspace } from "./components/ExternalFeedbackWorkspace";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
@@ -11,7 +10,6 @@ import { PlaygroundSessionSidebar } from "./components/PlaygroundSessionSidebar"
 import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawer";
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
-import type { RuntimeIntegrationContext } from "./components/feedback-workspace/types";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { messagesFromAgentRuns } from "./playgroundHistory";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
@@ -112,7 +110,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "feedback" | "improvement" | "release" | "asset">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "release" | "asset">("chat");
   const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
@@ -120,7 +118,6 @@ export default function App() {
   const [activeTraceMessageId, setActiveTraceMessageId] = useState<string | undefined>();
   const [feedbackDrawerOpen, setFeedbackDrawerOpen] = useState(false);
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
-  const [feedbackRefreshToken, setFeedbackRefreshToken] = useState(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const shouldMigrateLegacyApiBase = isLegacyDockerApiBase(clientConfig.apiBase) && !isLegacyDockerApiBase(runtimeDefaults.apiBase);
@@ -161,31 +158,6 @@ export default function App() {
     return undefined;
   }, [activeMessages, activeTraceMessageId, streamingAssistantMessageId]);
   const activeTraceEvents = activeTraceMessage?.events || [];
-  const feedbackRuntimeContext = useMemo<RuntimeIntegrationContext | undefined>(() => {
-    for (let index = activeMessages.length - 1; index >= 0; index -= 1) {
-      const message = activeMessages[index];
-      if (message.role !== "assistant") continue;
-      if (message.runId || message.sessionId || message.sdkSessionId || message.agentVersionId || message.alertId || message.caseId) {
-        return {
-          runId: message.runId,
-          sessionId: message.sessionId || activeSessionId,
-          sdkSessionId: message.sdkSessionId,
-          agentVersionId: message.agentVersionId,
-          alertId: message.alertId,
-          caseId: message.caseId,
-          sourceSystem: "agent-playground",
-        };
-      }
-    }
-    if (!activeSessionId && !alertId.trim() && !caseId.trim() && !currentAgentRef?.agent_version_id) return undefined;
-    return {
-      sessionId: activeSessionId,
-      alertId: alertId.trim() || undefined,
-      caseId: caseId.trim() || undefined,
-      agentVersionId: currentAgentRef?.agent_version_id,
-      sourceSystem: "agent-playground",
-    };
-  }, [activeMessages, activeSessionId, alertId, caseId, currentAgentRef]);
 
   const mergedSessions = useMemo(() => {
     const localOnly = Object.keys(messagesBySession)
@@ -241,7 +213,6 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     await refresh();
-    setFeedbackRefreshToken((prev) => prev + 1);
   }, [refresh]);
 
   const refreshVersions = useCallback(async () => {
@@ -522,15 +493,6 @@ export default function App() {
     setStreamingAssistantMessageId(undefined);
   }
 
-  function showFeedbackWindow() {
-    setActiveWindow("feedback");
-  }
-
-  function openFeedbackWindowFromSettings() {
-    setSettingsOpen(false);
-    setActiveWindow("feedback");
-  }
-
   function showPlaygroundWindow() {
     setActiveWindow("chat");
   }
@@ -627,22 +589,6 @@ export default function App() {
         />
       ) : activeWindow === "improvement" ? (
         <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} langfuseUrl={langfuseUrl} />
-      ) : activeWindow === "feedback" ? (
-        <ExternalFeedbackWorkspace
-          clientConfig={effectiveClientConfig}
-          runtimeContext={feedbackRuntimeContext}
-          monitoringConfig={{ langfuseUrl }}
-          agentRepository={agentRepository}
-          currentAgentRef={currentAgentRef}
-          agentChangeSets={agentChangeSets}
-          agentReleases={agentReleases}
-          versionLoading={versionLoading}
-          versionError={lastError}
-          onRefreshVersions={() => refreshVersions().catch((error) => setLastError(error instanceof Error ? error.message : String(error)))}
-          refreshToken={feedbackRefreshToken}
-          onFeedbackChanged={() => setFeedbackRefreshToken((prev) => prev + 1)}
-          onOpenImprovement={showImprovementWindow}
-        />
       ) : (
         <div className="playground-shell" data-testid="playground-shell">
           {sessionSidebarOpen ? (
@@ -733,7 +679,6 @@ export default function App() {
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
         onOpenAsset={showAssetWindow}
-        onOpenFeedback={openFeedbackWindowFromSettings}
       />
     </div>
   );

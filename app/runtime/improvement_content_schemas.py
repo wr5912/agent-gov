@@ -114,5 +114,9 @@ class ExecutionResponse(BaseModel):
     changes_applied: list[str]
     agent_version: str
     status: str
+    generated_by: str = "heuristic"
+    change_set_id: str = ""
+    applied_agent_version_id: str = ""
+    applied_diff: dict = Field(default_factory=dict)
     created_at: str
     updated_at: str

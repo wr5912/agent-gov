@@ -69,6 +69,9 @@ export function upsertExecution(config: RuntimeClientConfig, id: string, body: c
 export function confirmExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/confirm`, { method: "POST", headers: jsonHeaders });
 }
+export function applyExecution(config: RuntimeClientConfig, id: string) {
+  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/apply`, { method: "POST", headers: jsonHeaders });
+}
 
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
   return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);

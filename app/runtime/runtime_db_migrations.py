@@ -176,6 +176,21 @@ def migrate_0015_improvement_content_generated_by(connection: Connection) -> Non
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN generated_by VARCHAR(32) DEFAULT 'heuristic'")
 
 
+def migrate_0016_execution_application_binding(connection: Connection) -> None:
+    """§17.5：执行记录补 generated_by + change_set_id + applied_agent_version_id + applied_diff_json（自动 apply 权威绑定）。"""
+    columns = _table_columns(connection, "execution_records")
+    if not columns:
+        return
+    for column_name, ddl in {
+        "generated_by": "VARCHAR(32) DEFAULT 'heuristic'",
+        "change_set_id": "VARCHAR(128) DEFAULT ''",
+        "applied_agent_version_id": "VARCHAR(128) DEFAULT ''",
+        "applied_diff_json": "JSON",
+    }.items():
+        if column_name not in columns:
+            connection.exec_driver_sql(f"ALTER TABLE execution_records ADD COLUMN {column_name} {ddl}")
+
+
 def migrate_0010_scenario_packs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

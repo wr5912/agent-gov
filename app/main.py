@@ -39,6 +39,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
+from app.services.improvement_execution_service import ImprovementExecutionService
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
@@ -91,6 +92,13 @@ execution_application = ExecutionApplicationService(
     feedback_store=feedback_store,
     agent_version_store=agent_version_store,
     agent_governance=agent_governance,
+)
+improvement_execution_service = ImprovementExecutionService(
+    improvement_store=improvement_store,
+    content_store=improvement_content_store,
+    agent_governance=agent_governance,
+    execution_app=execution_application,
+    run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
 )
 bearer_auth = HTTPBearer(auto_error=False)
 api_key_credentials = Security(bearer_auth)
@@ -193,6 +201,7 @@ app.include_router(
         improvement_store=improvement_store,
         content_store=improvement_content_store,
         governor_service=improvement_governor_service,
+        execution_service=improvement_execution_service,
         require_api_key=require_api_key,
     )
 )

@@ -14,6 +14,7 @@ import {
   getExecution,
   upsertExecution,
   confirmExecution,
+  applyExecution,
   type NormalizedFeedback,
   type Attribution,
   type ImprovementFeedback,
@@ -296,6 +297,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setExecution(e);
     });
   };
+  const handleApplyExecution = (item: ImprovementItem) => {
+    void run(async () => { setExecution(await applyExecution(clientConfig, item.improvement_id)); });
+  };
   const handleConfirmExecution = (item: ImprovementItem) => {
     void run(async () => { setExecution(await confirmExecution(clientConfig, item.improvement_id)); });
   };
@@ -533,6 +537,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
               onConfirmOpt={() => handleConfirmOptPlan(selected)}
               onRecordExec={() => handleRecordExecution(selected)}
+              onApplyExec={() => handleApplyExecution(selected)}
               onConfirmExec={() => handleConfirmExecution(selected)}
             />
 

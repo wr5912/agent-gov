@@ -103,7 +103,7 @@ function defaultPayload(path) {
   if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入改进处理", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已应用变更并生成版本", changes_applied: ["prompt：新增时间校验"], agent_version: "v1.2.0", status: "draft", created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   if (/^\/api\/automation-policy/.test(path)) return { agent_id: "soc-ops", mode: "off" };
   if (/^\/api\/improvements\/[^/]+$/.test(path)) return IMPROVEMENTS[0];
   return {};
@@ -120,7 +120,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是 9/9。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,governance-generation-source").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-gates,release-gate-workbench,theme-governance-light,improvement-default-detail,closed-loop-spine,improvement-content,improvement-assets,asset-browse-first,legacy-diagnostic-downgraded,attribution-actions,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,governance-generation-source,execution-version-binding").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -649,6 +649,17 @@ const RULES = [
     const optChanges = await has(page, "optimization-plan-changes");
     const exec = await has(page, "execution-record");
     return { ok: opt && optChanges && exec, detail: `方案=${opt} 变更项=${optChanges} 执行记录=${exec}` };
+  } },
+  { id: "execution-version-binding", phase: "P3", desc: "§17.5 执行记录标治理 Agent 应用来源；governor 成功时绑定候选 Agent 版本/变更集", async fn(page) {
+    // 执行来源徽标始终在；版本绑定仅在 governor 成功 apply 时出现（取决于 governor 判断/环境），不强制。
+    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
+    await page.getByTestId("execution-record").waitFor({ timeout: 6000 }).catch(() => {});
+    const src = await has(page, "execution-source");
+    const srcVal = await page.getByTestId("execution-source").first().getAttribute("data-source").catch(() => "");
+    const validSrc = srcVal === "governor" || srcVal === "heuristic";
+    const binding = await has(page, "execution-version-binding");
+    const bindingOk = srcVal === "governor" ? binding : true;
+    return { ok: src && validSrc && bindingOk, detail: `执行来源徽标=${src}(${srcVal}) 版本绑定=${binding}` };
   } },
   { id: "governance-generation-source", phase: "P3", desc: "§17.5 归因/方案标注来源（治理 Agent 生成 vs 启发式初步）", async fn(page) {
     // 断言来源徽标存在且取值合法；governor/heuristic 取决于环境 LLM 可用性（代码两态都正确），不强制 governor。

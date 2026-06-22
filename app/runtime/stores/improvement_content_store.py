@@ -88,6 +88,10 @@ class ExecutionRecord:
     status: str
     created_at: str
     updated_at: str = ""
+    generated_by: str = "heuristic"
+    change_set_id: str = ""
+    applied_agent_version_id: str = ""
+    applied_diff: dict = field(default_factory=dict)
 
 
 class ImprovementContentStore:
@@ -262,7 +266,18 @@ class ImprovementContentStore:
             return _opt_record(row)
 
     # ---- ExecutionRecord（执行记录，§107）----
-    def upsert_execution(self, improvement_id: str, *, summary: str, changes_applied: list[str] | None = None, agent_version: str = "") -> ExecutionRecord:
+    def upsert_execution(
+        self,
+        improvement_id: str,
+        *,
+        summary: str,
+        changes_applied: list[str] | None = None,
+        agent_version: str = "",
+        generated_by: str = "heuristic",
+        change_set_id: str = "",
+        applied_agent_version_id: str = "",
+        applied_diff: dict | None = None,
+    ) -> ExecutionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
@@ -273,6 +288,10 @@ class ImprovementContentStore:
             row.changes_applied_json = list(changes_applied or [])
             row.agent_version = agent_version
             row.status = "draft"
+            row.generated_by = generated_by
+            row.change_set_id = change_set_id
+            row.applied_agent_version_id = applied_agent_version_id
+            row.applied_diff_json = dict(applied_diff or {})
             row.updated_at = now
             db.flush()
             return _exec_record(row)
@@ -317,6 +336,10 @@ def _exec_record(row: ExecutionRecordModel) -> ExecutionRecord:
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
+        generated_by=row.generated_by or "heuristic",
+        change_set_id=row.change_set_id or "",
+        applied_agent_version_id=row.applied_agent_version_id or "",
+        applied_diff=dict(row.applied_diff_json or {}),
     )
 
 

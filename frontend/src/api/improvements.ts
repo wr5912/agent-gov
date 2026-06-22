@@ -73,6 +73,17 @@ export function applyExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/apply`, { method: "POST", headers: jsonHeaders });
 }
 
+export type RegressionAssessment = components["schemas"]["RegressionAssessmentResponse"];
+export function getRegressionAssessment(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment`);
+}
+export function generateRegressionAssessment(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/generate`, { method: "POST", headers: jsonHeaders });
+}
+export function confirmRegressionAssessment(config: RuntimeClientConfig, id: string) {
+  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/confirm`, { method: "POST", headers: jsonHeaders });
+}
+
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
   return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);
 }

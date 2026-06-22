@@ -20,6 +20,7 @@ from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
     ImprovementContentStore,
     OptimizationPlanRecord,
+    RegressionAssessmentRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
 
@@ -29,6 +30,12 @@ RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 class OptimizationChangeItem(TypedDict):
     target: str
     change: str
+
+
+class RegressionCaseItem(TypedDict):
+    prompt: str
+    expected_behavior: str
+    checkpoints: list[str]
 
 
 def _text(value: Any) -> str:
@@ -90,6 +97,74 @@ class ImprovementGovernorService:
         return self._content.upsert_optimization_plan(
             improvement_id, summary=summary, changes=changes, generated_by=generated_by,
         )
+
+    # ---- 回归保障评估（§11/§17.5）----
+    async def generate_regression_assessment(self, improvement_id: str) -> RegressionAssessmentRecord:
+        item = self._improvements.get_improvement(improvement_id)
+        nf = self._content.get_normalized_feedback(improvement_id)
+        feedbacks = self._content.list_feedbacks(improvement_id)
+        summary, cases, generated_by = self._heuristic_regression(item, nf)
+        if self._run_profile_json is not None:
+            try:
+                output = await self._run_governor(
+                    AgentJobType.EVAL_CASE_GENERATION,
+                    self._build_regression_input(item, nf, feedbacks),
+                    improvement_id,
+                )
+                summary, cases = self._map_regression(output, summary, cases)
+                generated_by = "governor"
+            except Exception:  # noqa: BLE001
+                pass
+        return self._content.upsert_regression_assessment(improvement_id, summary=summary, cases=cases, generated_by=generated_by)
+
+    @staticmethod
+    def _build_regression_input(item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
+        problem = getattr(nf, "problem", "") if nf else getattr(item, "title", "")
+        return {
+            "feedback_cases": [
+                {
+                    "title": getattr(item, "title", ""),
+                    "problem": problem,
+                    "possible_object": getattr(nf, "possible_object", "") if nf else "",
+                    "user_quote": getattr(nf, "user_quote", "") if nf else "",
+                    "feedbacks": [{"summary": getattr(f, "summary", ""), "raw_text": getattr(f, "raw_text", "")} for f in feedbacks],
+                }
+            ],
+            "source_refs": [{"kind": "improvement", "id": getattr(item, "improvement_id", "")}],
+            "existing_eval_cases": [],
+        }
+
+    @staticmethod
+    def _map_regression(output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem]) -> tuple[str, list[RegressionCaseItem]]:
+        d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
+        eval_cases = d.get("eval_cases") or []
+        mapped: list[RegressionCaseItem] = []
+        for c in eval_cases:
+            if not isinstance(c, dict):
+                continue
+            prompt = _text(c.get("prompt"))
+            if not prompt:
+                continue
+            checks = c.get("checks_json") or {}
+            checkpoints = list(checks.values()) if isinstance(checks, dict) else []
+            mapped.append(RegressionCaseItem(
+                prompt=prompt,
+                expected_behavior=_text(c.get("expected_behavior")),
+                checkpoints=[str(x) for x in checkpoints][:6],
+            ))
+        new_summary = (_text(d.get("no_action_reason")) or summary) if not mapped else f"治理 Agent 生成 {len(mapped)} 条回归用例候选。"
+        return new_summary, (mapped or cases)
+
+    @staticmethod
+    def _heuristic_regression(item: Any, nf: Any) -> tuple[str, list[RegressionCaseItem], str]:
+        title = getattr(item, "title", "") if item else ""
+        problem = getattr(nf, "problem", "") if nf else title
+        case = RegressionCaseItem(
+            prompt=f"复现场景：当出现「{title}」类情况时，请处理。",
+            expected_behavior=f"正确识别并避免重演：{problem}。",
+            checkpoints=["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"],
+        )
+        return "回归保障候选（启发式）：1 条复现用例。", [case], "heuristic"
 
     # ---- governor 调用 ----
     async def _run_governor(self, job_type: AgentJobType, job_input: JsonObject, improvement_id: str) -> FormatterOutputModel:

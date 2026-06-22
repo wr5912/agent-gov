@@ -12,6 +12,7 @@ from ..improvement_db import (
     ImprovementFeedbackModel,
     NormalizedFeedbackModel,
     OptimizationPlanModel,
+    RegressionAssessmentModel,
 )
 from ..runtime_db import utc_now
 
@@ -72,6 +73,18 @@ class OptimizationPlanRecord:
     improvement_id: str
     summary: str
     changes: list[dict]
+    status: str
+    created_at: str
+    updated_at: str = ""
+    generated_by: str = "heuristic"
+
+
+@dataclass(frozen=True)
+class RegressionAssessmentRecord:
+    regression_assessment_id: str
+    improvement_id: str
+    summary: str
+    cases: list[dict]
     status: str
     created_at: str
     updated_at: str = ""
@@ -311,6 +324,51 @@ class ImprovementContentStore:
             row.status = status
             row.updated_at = utc_now()
             return _exec_record(row)
+
+    # ---- RegressionAssessment（回归保障评估，§11/§17.5）----
+    def upsert_regression_assessment(self, improvement_id: str, *, summary: str, cases: list[dict] | None = None, generated_by: str = "heuristic") -> RegressionAssessmentRecord:
+        now = utc_now()
+        with self._session_factory.begin() as db:
+            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                row = RegressionAssessmentModel(regression_assessment_id=f"reg-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
+                db.add(row)
+            row.summary = summary
+            row.cases_json = list(cases or [])
+            row.status = "draft"
+            row.generated_by = generated_by
+            row.updated_at = now
+            db.flush()
+            return _reg_record(row)
+
+    def get_regression_assessment(self, improvement_id: str) -> RegressionAssessmentRecord | None:
+        with self._session_factory.begin() as db:
+            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            return _reg_record(row) if row is not None else None
+
+    def set_regression_assessment_status(self, improvement_id: str, *, status: str) -> RegressionAssessmentRecord:
+        if status not in CONTENT_STATUS:
+            raise BusinessRuleViolation(f"Unknown status: {status}; expected one of {sorted(CONTENT_STATUS)}")
+        with self._session_factory.begin() as db:
+            row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
+            if row is None:
+                raise BusinessRuleViolation(f"No regression assessment for improvement: {improvement_id}")
+            row.status = status
+            row.updated_at = utc_now()
+            return _reg_record(row)
+
+
+def _reg_record(row: RegressionAssessmentModel) -> RegressionAssessmentRecord:
+    return RegressionAssessmentRecord(
+        regression_assessment_id=row.regression_assessment_id,
+        improvement_id=row.improvement_id,
+        summary=row.summary or "",
+        cases=list(row.cases_json or []),
+        status=row.status or "draft",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        generated_by=row.generated_by or "heuristic",
+    )
 
 
 def _opt_record(row: OptimizationPlanModel) -> OptimizationPlanRecord:

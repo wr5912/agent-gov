@@ -130,3 +130,18 @@ def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: P
         assert plan.status_code == 200
         assert plan.json()["changes"][0]["target"] == "prompt"
         assert "告警误报治理" in plan.json()["summary"]
+
+
+def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path) -> None:
+    """v2.7 §11/§17.5：回归保障评估 generate(治理 Agent，测试环境 heuristic 兜底)→get→confirm，未知事项 404。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
+        client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "告警误报"})
+        gen = client.post(f"/api/improvements/{iid}/regression-assessment/generate")
+        assert gen.status_code == 200 and gen.json()["generated_by"] in {"governor", "heuristic"} and gen.json()["cases"]
+        assert client.get(f"/api/improvements/{iid}/regression-assessment").json()["status"] == "draft"
+        assert client.post(f"/api/improvements/{iid}/regression-assessment/confirm").json()["status"] == "confirmed"
+        assert client.post("/api/improvements/imp-none/regression-assessment/generate").status_code == 404
+        other = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "空"}).json()["improvement_id"]
+        assert client.get(f"/api/improvements/{other}/regression-assessment").status_code == 404

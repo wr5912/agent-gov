@@ -107,6 +107,23 @@ class ExecutionUpsertRequest(BaseModel):
     agent_version: str = Field(default="", description="生成的 Agent 版本标识。")
 
 
+class RegressionCase(BaseModel):
+    prompt: str = Field(description="回归用例输入（发给 Agent 的 prompt）。")
+    expected_behavior: str = Field(default="", description="期望行为。")
+    checkpoints: list[str] = Field(default_factory=list, description="检查点。")
+
+
+class RegressionAssessmentResponse(BaseModel):
+    regression_assessment_id: str
+    improvement_id: str
+    summary: str
+    cases: list[RegressionCase]
+    status: str
+    generated_by: str = "heuristic"
+    created_at: str
+    updated_at: str
+
+
 class ExecutionResponse(BaseModel):
     execution_id: str
     improvement_id: str

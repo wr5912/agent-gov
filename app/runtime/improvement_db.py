@@ -149,3 +149,22 @@ class ExecutionRecordModel(Base):
     applied_diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+
+
+class RegressionAssessmentModel(Base):
+    """回归保障评估 RegressionAssessment（v2.7 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
+
+    与改进事项 1:1。cases_json：[{prompt, expected_behavior, checkpoints[]}]。status：draft / confirmed
+    （确认=已采纳为回归资产）。generated_by：governor / heuristic。独立新表。
+    """
+
+    __tablename__ = "regression_assessments"
+
+    regression_assessment_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True, unique=True)
+    summary: Mapped[str] = mapped_column(Text, default="")
+    cases_json: Mapped[list[dict]] = mapped_column(JSON, default=list)
+    status: Mapped[str] = mapped_column(String(32), default="draft")
+    generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)

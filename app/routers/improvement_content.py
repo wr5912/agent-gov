@@ -17,6 +17,8 @@ from app.runtime.improvement_content_schemas import (
     OptimizationChange,
     OptimizationPlanResponse,
     OptimizationPlanUpsertRequest,
+    RegressionAssessmentResponse,
+    RegressionCase,
 )
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
@@ -25,6 +27,7 @@ from app.runtime.stores.improvement_content_store import (
     ImprovementFeedbackRecord,
     NormalizedFeedbackRecord,
     OptimizationPlanRecord,
+    RegressionAssessmentRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -60,6 +63,14 @@ def _opt_response(r: OptimizationPlanRecord) -> OptimizationPlanResponse:
     return OptimizationPlanResponse(
         optimization_plan_id=r.optimization_plan_id, improvement_id=r.improvement_id, summary=r.summary,
         changes=[OptimizationChange(target=c.get("target", ""), change=c.get("change", "")) for c in r.changes],
+        status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
+    )
+
+
+def _reg_response(r: RegressionAssessmentRecord) -> RegressionAssessmentResponse:
+    return RegressionAssessmentResponse(
+        regression_assessment_id=r.regression_assessment_id, improvement_id=r.improvement_id, summary=r.summary,
+        cases=[RegressionCase(prompt=str(c.get("prompt", "")), expected_behavior=str(c.get("expected_behavior", "")), checkpoints=[str(x) for x in (c.get("checkpoints") or [])]) for c in r.cases],
         status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
@@ -162,6 +173,12 @@ def _register_governance_generation_routes(
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
         return _exec_response(await execution_service.generate_and_apply_execution(improvement_id))
 
+    @router.post("/improvements/{improvement_id}/regression-assessment/generate", response_model=RegressionAssessmentResponse, summary="Generate regression test cases via governor (heuristic fallback)")
+    async def generate_reg(improvement_id: str) -> RegressionAssessmentResponse:
+        if improvement_store.get_improvement(improvement_id) is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        return _reg_response(await governor_service.generate_regression_assessment(improvement_id))
+
 
 def _register_opt_routes(router: APIRouter, *, content_store: ImprovementContentStore, require: Callable) -> None:
     @router.put("/improvements/{improvement_id}/optimization-plan", response_model=OptimizationPlanResponse, summary="Upsert optimization plan (text + changes, §106)")
@@ -203,6 +220,19 @@ def _register_exec_routes(router: APIRouter, *, content_store: ImprovementConten
         return _exec_response(content_store.set_execution_status(improvement_id, status="confirmed"))
 
 
+def _register_regression_routes(router: APIRouter, *, content_store: ImprovementContentStore, require: Callable) -> None:
+    @router.get("/improvements/{improvement_id}/regression-assessment", response_model=RegressionAssessmentResponse, summary="Get regression assessment (404 if none)")
+    async def get_reg(improvement_id: str) -> RegressionAssessmentResponse:
+        record = content_store.get_regression_assessment(improvement_id)
+        if record is None:
+            raise NotFoundError(f"No regression assessment for improvement: {improvement_id}")
+        return _reg_response(record)
+
+    @router.post("/improvements/{improvement_id}/regression-assessment/confirm", response_model=RegressionAssessmentResponse, summary="Confirm regression assessment (adopted as regression asset)")
+    async def confirm_reg(improvement_id: str) -> RegressionAssessmentResponse:
+        return _reg_response(content_store.set_regression_assessment_status(improvement_id, status="confirmed"))
+
+
 def create_improvement_content_router(
     *,
     improvement_store: ImprovementStore,
@@ -224,4 +254,5 @@ def create_improvement_content_router(
     _register_governance_generation_routes(router, improvement_store=improvement_store, governor_service=governor_service, execution_service=execution_service, require=_require)
     _register_opt_routes(router, content_store=content_store, require=_require)
     _register_exec_routes(router, content_store=content_store, require=_require)
+    _register_regression_routes(router, content_store=content_store, require=_require)
     return router

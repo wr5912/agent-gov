@@ -131,7 +131,9 @@
             "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
             "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
             "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied"
+            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
+            "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
+            "tests/test_improvement_content.py::test_regression_assessment_generate_get_confirm"
           ]
         }
       ]

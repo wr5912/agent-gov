@@ -105,6 +105,28 @@ def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> Non
     assert content.get_optimization_plan("imp-1").status == "draft"
 
 
+def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
+    """governor EVAL_CASE_GENERATION → 回归用例候选（prompt/期望/检查点），generated_by=governor。"""
+    async def fake_run(**_kwargs):
+        return {"eval_cases": [
+            {"prompt": "当事件时间与告警时间不一致时如何处置？", "expected_behavior": "先核验时间一致性，不直接升级", "checks_json": {"c1": "是否核验时间", "c2": "是否避免误升级"}},
+        ]}
+    svc, content = _service(tmp_path, fake_run)
+    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+    assert rec.generated_by == "governor"
+    assert rec.cases and rec.cases[0]["prompt"].startswith("当事件时间")
+    assert rec.cases[0]["checkpoints"] == ["是否核验时间", "是否避免误升级"]
+    assert content.get_regression_assessment("imp-1").status == "draft"
+
+
+def test_regression_heuristic_fallback(tmp_path: Path) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("no governor")
+    svc, _ = _service(tmp_path, boom)
+    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+    assert rec.generated_by == "heuristic" and rec.cases and rec.cases[0]["checkpoints"]
+
+
 def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise TimeoutError("governor timeout")

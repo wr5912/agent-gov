@@ -26,6 +26,7 @@ from .runtime_db_migrations import (
     migrate_0014_improvement_feedback_context,
     migrate_0015_improvement_content_generated_by,
     migrate_0016_execution_application_binding,
+    migrate_0017_regression_assessments,
 )
 
 
@@ -574,6 +575,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0014_improvement_feedback_context", migrate_0014_improvement_feedback_context),
         ("0015_improvement_content_generated_by", migrate_0015_improvement_content_generated_by),
         ("0016_execution_application_binding", migrate_0016_execution_application_binding),
+        ("0017_regression_assessments", migrate_0017_regression_assessments),
     ):
         if version in applied:
             continue

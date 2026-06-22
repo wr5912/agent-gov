@@ -191,6 +191,25 @@ def migrate_0016_execution_application_binding(connection: Connection) -> None:
             connection.exec_driver_sql(f"ALTER TABLE execution_records ADD COLUMN {column_name} {ddl}")
 
 
+def migrate_0017_regression_assessments(connection: Connection) -> None:
+    """§17.5：回归保障评估表 regression_assessments（治理 Agent 生成回归用例候选）。新表 create_all 已建，此处仅幂等保障。"""
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS regression_assessments (
+            regression_assessment_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            improvement_id VARCHAR(128),
+            summary TEXT,
+            cases_json JSON,
+            status VARCHAR(32) DEFAULT 'draft',
+            generated_by VARCHAR(32) DEFAULT 'heuristic',
+            created_at VARCHAR(64),
+            updated_at VARCHAR(64)
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ix_regression_assessments_improvement_id ON regression_assessments (improvement_id)")
+
+
 def migrate_0010_scenario_packs(connection: Connection) -> None:
     connection.exec_driver_sql(
         """

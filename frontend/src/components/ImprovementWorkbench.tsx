@@ -15,6 +15,10 @@ import {
   upsertExecution,
   confirmExecution,
   applyExecution,
+  getRegressionAssessment,
+  generateRegressionAssessment,
+  confirmRegressionAssessment,
+  type RegressionAssessment,
   type NormalizedFeedback,
   type Attribution,
   type ImprovementFeedback,
@@ -75,6 +79,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [execution, setExecution] = useState<ExecutionRecord | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
   const [regressionDismissed, setRegressionDismissed] = useState(false);
+  const [regressionAssessment, setRegressionAssessment] = useState<RegressionAssessment | null>(null);
   const [editingAttribution, setEditingAttribution] = useState(false);
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
   const [newLinkKind, setNewLinkKind] = useState("attribution");
@@ -136,6 +141,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setFeedbacks([]);
       setOptPlan(null);
       setExecution(null);
+      setRegressionAssessment(null);
       return;
     }
     let cancelled = false;
@@ -163,6 +169,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void getExecution(clientConfig, itemId)
       .then((e) => { if (!cancelled) setExecution(e); })
       .catch(() => { if (!cancelled) setExecution(null); });
+    void getRegressionAssessment(clientConfig, itemId)
+      .then((r) => { if (!cancelled) setRegressionAssessment(r); })
+      .catch(() => { if (!cancelled) setRegressionAssessment(null); });
     void getAutomationPolicy(clientConfig, agentId)
       .then((p) => { if (!cancelled) setAutomationMode(p.mode); })
       .catch(() => { if (!cancelled) setAutomationMode("off"); });
@@ -304,17 +313,24 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void run(async () => { setExecution(await confirmExecution(clientConfig, item.improvement_id)); });
   };
 
+  const handleGenerateRegression = (item: ImprovementItem) => {
+    void run(async () => { setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id)); });
+  };
+
   const handleAdoptRegression = (item: ImprovementItem) => {
     void run(async () => {
-      const usecase = `当出现「${item.title}」类问题时，Agent 应正确处理，不得直接误判。`;
-      const checks = ["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"].map((c) => `- ${c}`).join("\n");
+      const cases = regressionAssessment?.cases ?? [];
+      const body = cases.length
+        ? cases.map((c, i) => `用例${i + 1}：${c.prompt}\n期望：${c.expected_behavior}\n检查点：\n${(c.checkpoints || []).map((x) => `- ${x}`).join("\n")}`).join("\n\n")
+        : `用例：当出现「${item.title}」类问题时，Agent 应正确处理，不得直接误判。\n检查点：\n${["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"].map((c) => `- ${c}`).join("\n")}`;
       await createAsset(clientConfig, {
         agent_id: item.agent_id,
         asset_type: "regression",
         title: `回归保障：${item.title}`,
-        body: `用例：${usecase}\n检查点：\n${checks}`,
+        body,
         source_improvement_id: item.improvement_id,
       });
+      if (regressionAssessment) await confirmRegressionAssessment(clientConfig, item.improvement_id).catch(() => undefined);
       setSedimentAssets(await listAssets(clientConfig, { sourceImprovementId: item.improvement_id }));
       setRegressionDismissed(true);
     });
@@ -543,13 +559,27 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
 
             {selected.improvement_status !== "archived" && !regressionDismissed && !sedimentAssets.some((a) => a.asset_type === "regression") ? (
               <div className="iw-detail-section" data-testid="regression-guarantee">
-                <h4>回归保障</h4>
-                <div className="iw-next-step">系统建议沉淀 1 条候选回归资产：</div>
-                <ul className="iw-content-list">
-                  <li>用例：当出现「{selected.title}」类问题时，Agent 应正确处理、不得直接误判。</li>
-                  <li>检查点：是否识别问题条件 / 是否提示需核验数据源 / 是否避免直接升级处置</li>
-                </ul>
+                <h4>回归保障
+                  {regressionAssessment ? <span className="iw-source-badge" data-testid="regression-source" data-source={regressionAssessment.generated_by}>{regressionAssessment.generated_by === "governor" ? "治理 Agent 生成" : "启发式候选"}</span> : null}
+                </h4>
+                {regressionAssessment && regressionAssessment.cases.length ? (
+                  <div data-testid="regression-cases">
+                    {regressionAssessment.cases.map((c, i) => (
+                      <div className="iw-content-quote" key={i}>
+                        <div>用例{i + 1}：{c.prompt}</div>
+                        {c.expected_behavior ? <div>期望：{c.expected_behavior}</div> : null}
+                        {(c.checkpoints || []).length ? <div>检查点：{(c.checkpoints || []).join(" / ")}</div> : null}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <ul className="iw-content-list">
+                    <li>用例：当出现「{selected.title}」类问题时，Agent 应正确处理、不得直接误判。</li>
+                    <li>检查点：是否识别问题条件 / 是否提示需核验数据源 / 是否避免直接升级处置</li>
+                  </ul>
+                )}
                 <div className="iw-action-row">
+                  <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={() => handleGenerateRegression(selected)}>生成回归用例（治理 Agent）</button>
                   <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy} onClick={() => handleAdoptRegression(selected)}>采纳为回归资产</button>
                   <button className="iw-secondary-button" type="button" data-testid="ignore-regression" disabled={busy} onClick={() => setRegressionDismissed(true)}>忽略</button>
                 </div>

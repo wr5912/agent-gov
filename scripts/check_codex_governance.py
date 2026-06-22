@@ -98,9 +98,11 @@ class GovernanceIssue:
 
 def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["git", "-C", str(root), *args],
+        ["git", "-C", str(root), "-c", "core.quotePath=false", *args],
         check=False,
         capture_output=True,
+        encoding="utf-8",
+        errors="ignore",
         text=True,
     )
 

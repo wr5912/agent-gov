@@ -139,21 +139,29 @@ def _iter_doc_texts(root: Path, base_ref: str | None) -> list[tuple[str, str]]:
 
 def _git_list_docs(root: Path, base_ref: str) -> list[str]:
     result = subprocess.run(
-        ["git", "-C", str(root), "ls-tree", "-r", "--name-only", base_ref, "--", "README.md", "docs"],
+        ["git", "-C", str(root), "-c", "core.quotePath=false", "ls-tree", "-r", "--name-only", base_ref, "--", "README.md", "docs"],
         check=False,
         capture_output=True,
+        encoding="utf-8",
+        errors="ignore",
         text=True,
     )
     if result.returncode != 0:
         return []
-    return [line for line in result.stdout.splitlines() if line == "README.md" or line.startswith("docs/")]
+    return [
+        line
+        for line in result.stdout.splitlines()
+        if line == "README.md" or (line.startswith("docs/") and Path(line).suffix == ".md")
+    ]
 
 
 def _git_show(root: Path, base_ref: str, rel_path: str) -> str | None:
     result = subprocess.run(
-        ["git", "-C", str(root), "show", f"{base_ref}:{rel_path}"],
+        ["git", "-C", str(root), "-c", "core.quotePath=false", "show", f"{base_ref}:{rel_path}"],
         check=False,
         capture_output=True,
+        encoding="utf-8",
+        errors="ignore",
         text=True,
     )
     return result.stdout if result.returncode == 0 else None

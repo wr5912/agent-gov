@@ -670,6 +670,19 @@ def test_new_active_docs_file_must_be_linked_from_docs_index(tmp_path: Path) -> 
     assert "FAIL: docs/new-plan.md: new active docs file is not linked from docs/README.md" in result.stdout
 
 
+def test_new_active_docs_file_with_cjk_path_must_be_linked_from_docs_index(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "新增方案.md", "# 新增方案\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/新增方案.md: new active docs file is not linked from docs/README.md" in result.stdout
+
+
 def test_new_active_docs_file_linked_from_docs_index_passes(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)
@@ -713,6 +726,20 @@ def test_new_archive_docs_file_listed_in_archive_index_passes(tmp_path: Path) ->
 
     assert result.returncode == 0
     assert "docs/archive/old-plan.md" not in result.stdout
+
+
+def test_docs_governance_handles_tracked_binary_assets(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    image_path = tmp_path / "docs" / "imgs" / "screen.png"
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
 
 
 def test_docs_governance_skill_mirror_drift_fails(tmp_path: Path) -> None:
@@ -818,6 +845,36 @@ def test_new_docs_file_with_cjk_unfinished_marker_fails(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "FAIL: docs/new-plan.md: unfinished marker `待补充` at line 3" in result.stdout
+
+
+def test_new_docs_file_with_local_generated_asset_path_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _commit_all(tmp_path)
+    _write_text(
+        tmp_path / "docs" / "new-plan.md",
+        "# New Plan\n\n- /mnt/data/ghostwriter_images/generated/screen.png\n",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/new-plan.md: local artifact path `/mnt/data/` at line 3" in result.stdout
+
+
+def test_existing_docs_unfinished_marker_is_not_flagged_for_unrelated_edit(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/guide.md\n")
+    _write_text(tmp_path / "docs" / "guide.md", "# Guide\n\n历史记录：TODO kept for audit.\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "guide.md", "# Guide\n\n历史记录：TODO kept for audit.\n\n新增整理说明。\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "unfinished marker" not in result.stdout
 
 
 def test_docs_file_with_test_path_is_not_flagged_as_marker(tmp_path: Path) -> None:

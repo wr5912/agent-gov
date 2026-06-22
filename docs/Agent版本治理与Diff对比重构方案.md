@@ -3,12 +3,13 @@
 > 文档层级：当前实现基线（pre-v2.7）上的版本治理重构方案。
 > 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；v2.7 面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
 > 归档边界：本文仍解释当前版本治理迁移和落地状态，暂不移动。
+> v2.7 覆盖规则：本文描述版本治理和 Diff 能力的当前实现与迁移边界；改进治理工作台中的发布门禁、回归验证、Diff 查看入口和用户主动作，以 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md) 的“测试发布”阶段及四张效果图为准。
 
 ## 0. 评审采纳状态
 
 本文为 2026-06-03 两份评审报告后的修订版，评审对象包括：
 
-- `docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告.md`
+- `docs/archive/design/Agent版本治理与Diff对比重构方案评审报告.md`
 - `docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 
 整改前核查结论：

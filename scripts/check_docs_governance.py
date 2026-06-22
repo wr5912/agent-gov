@@ -19,6 +19,7 @@ DOCS_INDEX = "docs/README.md"
 ARCHIVE_INDEX = "docs/archive/README.md"
 ARCHIVE_INDEX_HEADERS = ("原路径", "归档路径", "替代文档", "归档日期")
 TEXT_GOVERNANCE_ROOTS = ("docs/", ".codex/skills/", ".claude/skills/")
+LOCAL_ARTIFACT_PATH_MARKERS = ("/mnt/data/", "ghostwriter_images")
 CODEX_SKILLS_ROOT = ".codex/skills"
 CLAUDE_SKILLS_ROOT = ".claude/skills"
 MIRRORED_SKILL_EXCLUSIONS = frozenset(
@@ -41,7 +42,14 @@ class DocsGovernanceIssue:
 
 
 def _git(root: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(["git", "-C", str(root), *args], check=False, capture_output=True, text=True)
+    return subprocess.run(
+        ["git", "-C", str(root), "-c", "core.quotePath=false", *args],
+        check=False,
+        capture_output=True,
+        encoding="utf-8",
+        errors="ignore",
+        text=True,
+    )
 
 
 def _git_show(root: Path, ref: str, rel_path: str) -> str | None:
@@ -182,14 +190,36 @@ def _find_unfinished_marker(line: str) -> str | None:
     return match.group(0) if match else None
 
 
+def _new_or_changed_lines(root: Path, base_ref: str | None, rel_path: str) -> list[tuple[int, str]]:
+    current_lines = _read_existing(root, rel_path).splitlines()
+    if base_ref is None:
+        return list(enumerate(current_lines, start=1))
+    base_text = _git_show(root, base_ref, rel_path)
+    if base_text is None:
+        return list(enumerate(current_lines, start=1))
+    unchanged_lines = set(base_text.splitlines())
+    return [(line_number, line) for line_number, line in enumerate(current_lines, start=1) if line not in unchanged_lines]
+
+
 def _unfinished_marker_issues(root: Path, base_ref: str | None, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
     issues: list[DocsGovernanceIssue] = []
     changed_paths = sorted(path for path in paths if _text_governed_path(path) and _is_changed_path(root, base_ref, path))
     for rel_path in changed_paths:
-        for line_number, line in enumerate(_read_existing(root, rel_path).splitlines(), start=1):
+        for line_number, line in _new_or_changed_lines(root, base_ref, rel_path):
             marker = _find_unfinished_marker(line)
             if marker is not None:
                 issues.append(DocsGovernanceIssue(rel_path, f"unfinished marker `{marker}` at line {line_number}"))
+    return issues
+
+
+def _local_artifact_path_issues(root: Path, base_ref: str | None, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
+    issues: list[DocsGovernanceIssue] = []
+    changed_paths = sorted(path for path in paths if _text_governed_path(path) and _is_changed_path(root, base_ref, path))
+    for rel_path in changed_paths:
+        for line_number, line in _new_or_changed_lines(root, base_ref, rel_path):
+            marker = next((item for item in LOCAL_ARTIFACT_PATH_MARKERS if item in line), None)
+            if marker is not None:
+                issues.append(DocsGovernanceIssue(rel_path, f"local artifact path `{marker}` at line {line_number}"))
     return issues
 
 
@@ -203,6 +233,7 @@ def collect_docs_governance_issues(root: Path, base_ref: str | None) -> list[Doc
     issues.extend(_archive_index_issues(root, new_archive_docs))
     issues.extend(_skill_mirror_issues(root))
     issues.extend(_unfinished_marker_issues(root, base_ref, paths))
+    issues.extend(_local_artifact_path_issues(root, base_ref, paths))
     return sorted(issues, key=lambda issue: (issue.path, issue.message))
 
 

@@ -6,16 +6,18 @@
 
 1. 先读“权威入口”，明确产品边界、术语和验收锚点。
 2. 需要理解当前代码和运行态时，读“当前实现基线（pre-v2.7）”。
-3. 需要评审下一大版本时，读“下一大版本 v2.7 规划与审查”。
+3. 需要评审下一大版本时，读“下一大版本 v2.7 规划与四阶段改进治理工作台权威方案”。
 4. 需要落地工程质量、GSD 或治理硬门时，读“工程治理”。
+5. 需要追溯旧评审、旧补充方案或治理反思时，读“归档入口”。
 
 文档状态说明：
 
 - **权威入口**：长期产品口径、术语和验收锚点，优先级最高。
 - **当前实现基线**：解释当前代码和运行态，允许保留 pre-v2.7 真实 API、数据库和 UI 名称。
-- **v2.7 规划**：面向下一大版本的目标方案，不自动说明当前代码已经实现。
+- **v2.7 规划**：面向下一大版本的目标方案，不自动说明当前代码已经实现；其中四阶段改进治理工作台方案是改进治理工作台 UI、流程和效果图验收的绝对依据。
 - **评审/复盘**：保留证据链和审查意见，不作为主实现方案；若与主方案冲突，以对应权威入口或主方案为准。
 - **工程治理**：约束协作、测试、发布和治理硬门，不承载产品愿景。
+- **归档**：已被替代但仍有审计价值的历史文档，从活跃阅读路径移入 `docs/archive/`。
 
 ## 权威入口
 
@@ -26,7 +28,7 @@
 
 ## 当前实现基线（pre-v2.7）
 
-这些文档解释当前代码、API、数据库、测试和用户可见运行态。文档中出现的 `main-agent`、`反馈信息`、`优化批次`、`proposal` 等名称属于当前实现事实；v2.7 用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准。
+这些文档解释当前代码、API、数据库、测试和用户可见运行态。文档中出现的 `main-agent`、`反馈信息`、`优化批次`、`proposal` 等名称属于当前实现事实；v2.7 用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准。它们不得作为 v2.7 改进治理工作台未来主流程依据；与四阶段方案冲突时，以 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md) 和四张效果图为准。
 
 - [反馈优化产品调整方案](./反馈优化产品调整方案.md)：`docs/反馈优化产品调整方案.md`
 - [反馈优化闭环多智能体架构](./反馈优化闭环多智能体架构.md)：`docs/反馈优化闭环多智能体架构.md`
@@ -35,18 +37,18 @@
 - [Agent版本治理与Diff对比重构方案](./Agent版本治理与Diff对比重构方案.md)：`docs/Agent版本治理与Diff对比重构方案.md`
 - [多业务Agent治理基座设计](./多业务Agent治理基座设计.md)：`docs/多业务Agent治理基座设计.md`
 
-## 下一大版本 v2.7 规划与审查
+## 下一大版本 v2.7 规划与四阶段改进治理工作台权威方案
 
-这些文档面向跨代重建和设计评审，不自动替代当前实现基线。实现整改的阅读路径是：
+这些文档面向跨代重建和设计评审，不自动替代当前实现基线。对于“改进治理工作台”的 UI、用户主链路、决策卡、面板入口、处理记录和效果图验收，四阶段整改方案是绝对依据；ASCII 草图保留更大范围领域模型、导航、术语和架构背景，冲突时让位。
 
-1. 先读 [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)，它定义 v2.7 的总体目标、领域对象、跨页面结构和主体验。
-2. 再读 [AgentGov v2.7 开发者决策型 UI 优化重构方案](./design_review_report/AgentGov_v2.7_开发者决策型UI优化重构方案.md)，它把“改进事项详情、反馈归并、证据、上下文、高级治理”细化成开发者决策型页面结构。
-3. 最后用设计一致性和全局审视报告核查实现差距；报告用于差距审查，不作为新的并列主方案。
+实现整改的阅读路径是：
 
+1. 先读 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md)，它定义改进治理工作台的四阶段主链路、四张效果图、决策卡、面板入口、处理记录和代码整改原则。
+2. 再读 [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)，它定义 v2.7 的总体目标、领域对象、跨页面结构和术语背景；涉及改进治理工作台时必须服从四阶段方案。
+3. 如需追溯旧 UI 补充方案或历史核查报告，读 [归档入口](./archive/README.md)。
+
+- [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md)：`docs/AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md`
 - [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)：`docs/AgentGov_ASCII_UI_草图方案_v2.7.md`
-- [AgentGov v2.7 开发者决策型 UI 优化重构方案](./design_review_report/AgentGov_v2.7_开发者决策型UI优化重构方案.md)：`docs/design_review_report/AgentGov_v2.7_开发者决策型UI优化重构方案.md`
-- [AgentGov v2.7 UI 设计一致性核查与整改报告](./design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md)：`docs/design_review_report/AgentGov_v2.7_UI_设计一致性核查与整改报告.md`
-- [AgentGov v2.7 全局界面系统性审视报告](./design_review_report/AgentGov_v2.7_全局界面系统性审视报告.md)：`docs/design_review_report/AgentGov_v2.7_全局界面系统性审视报告.md`
 
 ## 接口与示例
 
@@ -62,15 +64,16 @@
 ## 评审与复盘
 
 - 代码与文档评审报告：`docs/code_review_reports/`
-  - [代码与文档评审报告](./code_review_reports/代码与文档评审报告.md)：`docs/code_review_reports/代码与文档评审报告.md`
   - [代码与文档评审报告第二轮](./code_review_reports/代码与文档评审报告第二轮.md)：`docs/code_review_reports/代码与文档评审报告第二轮.md`
 - 设计评审报告：`docs/design_review_report/`
   - [反馈闭环长期回归资产升级方案评审报告](./design_review_report/反馈闭环长期回归资产升级方案评审报告.md)：`docs/design_review_report/反馈闭环长期回归资产升级方案评审报告.md`
-  - [Agent版本治理与Diff对比重构方案评审报告](./design_review_report/Agent版本治理与Diff对比重构方案评审报告.md)：`docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告.md`
   - [Agent版本治理与Diff对比重构方案评审报告v2](./design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md)：`docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 - Codex/Claude 配置治理复盘：`docs/codex_setting_review_reports/`
-  - [智能体治理反思与改进方案](./codex_setting_review_reports/智能体治理反思与改进方案.md)：`docs/codex_setting_review_reports/智能体治理反思与改进方案.md`
   - [智能体治理反思与改进方案第二轮](./codex_setting_review_reports/智能体治理反思与改进方案第二轮.md)：`docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`
+
+## 归档入口
+
+- [归档文档索引](./archive/README.md)：`docs/archive/README.md`
 
 ## 图片资产
 

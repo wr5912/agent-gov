@@ -24,7 +24,7 @@
 - `docs/engineering/长程重构质量闭环.md`
 - `docs/engineering/GSD长程重构阶段清单.md`
 - `docs/Agent版本治理与Diff对比重构方案.md`
-- `docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告.md`
+- `docs/archive/design/Agent版本治理与Diff对比重构方案评审报告.md`
 - `docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 
 ## 项目验证门槛

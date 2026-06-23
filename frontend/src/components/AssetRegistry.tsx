@@ -6,6 +6,7 @@ import "../improvement-workbench.css";
 
 // 治理资产 Registry 复利中心（v2.7 W3）：沉淀方法论/回归/执行/审计资产，并跨业务 Agent 继承复用。
 const ASSET_TYPE_LABEL: Record<string, string> = {
+  test_dataset: "测试数据集",
   methodology: "方法论",
   regression: "回归",
   execution: "执行",
@@ -105,6 +106,7 @@ export function AssetRegistry({
             <div className="iw-automation-row">
               <select className="iw-select select-inline" data-testid="asset-type-filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                 <option value="all">全部类型</option>
+                <option value="test_dataset">测试数据集</option>
                 <option value="methodology">方法论</option>
                 <option value="regression">回归</option>
                 <option value="execution">执行</option>
@@ -173,6 +175,7 @@ export function AssetRegistry({
           onClose={() => setCreateOpen(false)}
         >
           <select className="iw-select" data-testid="asset-create-type" value={newType} disabled={busy} onChange={(e) => setNewType(e.target.value)}>
+            <option value="test_dataset">测试数据集</option>
             <option value="methodology">方法论</option>
             <option value="regression">回归</option>
             <option value="execution">执行</option>

@@ -1,51 +1,100 @@
-// 改进事项阶段展示单一来源（v2.7）：前端只读后端 improvement_stage，派生中文标签、
-// 线性 stepper 与「每态唯一主动作」。阶段集与后端状态机一致，合法转移仍由后端判定。
+// v2.7 四阶段改进治理工作台：后端仍可保留更细 improvement_stage，
+// 但用户主链路只展示四个阶段，所有按钮和 ContextPackage 以这里为展示真相源。
 
 export interface StageDef {
   key: string;
   label: string;
+  description: string;
 }
 
+export type VisibleImprovementStageKey =
+  | "feedback_sorting"
+  | "attribution_analysis"
+  | "optimization_execution"
+  | "test_release";
+
 export const IMPROVEMENT_STAGE_ORDER: StageDef[] = [
-  { key: "feedback_intake", label: "反馈收集" },
-  { key: "triage", label: "系统整理" },
-  { key: "attribution", label: "归因分析" },
-  { key: "optimization", label: "优化方案" },
-  { key: "execution", label: "执行优化" },
-  { key: "regression", label: "回归测试" },
-  { key: "release", label: "发布" },
+  { key: "feedback_sorting", label: "反馈整理", description: "整理完成，等待确认" },
+  { key: "attribution_analysis", label: "归因分析", description: "归因完成，等待确认" },
+  { key: "optimization_execution", label: "优化执行", description: "方案生成完成，等待确认执行" },
+  { key: "test_release", label: "测试发布", description: "待执行回归测试" },
 ];
 
-// 每个阶段唯一主动作：推进到下一阶段（data-action 用目标阶段 key，稳定可断言）。release 为终态、无主动作。
+const INTERNAL_STAGE_LABEL: Record<string, string> = {
+  feedback_intake: "反馈收集",
+  triage: "系统整理",
+  attribution: "归因分析",
+  optimization: "优化方案",
+  execution: "执行优化",
+  regression: "回归测试",
+  release: "发布门禁",
+};
+
+const VISIBLE_STAGE_BY_INTERNAL: Record<string, VisibleImprovementStageKey> = {
+  feedback_intake: "feedback_sorting",
+  triage: "feedback_sorting",
+  attribution: "attribution_analysis",
+  optimization: "optimization_execution",
+  execution: "optimization_execution",
+  regression: "test_release",
+  release: "test_release",
+};
+
+// data-action 仍使用后端内部 stage key，合法转移由后端状态机校验。
 const PRIMARY_ACTION: Record<string, { stage: string; label: string }> = {
-  feedback_intake: { stage: "triage", label: "开始系统整理" },
-  triage: { stage: "attribution", label: "确认进入归因" },
-  attribution: { stage: "optimization", label: "确认归因 · 生成方案" },
-  optimization: { stage: "execution", label: "确认方案 · 执行优化" },
-  execution: { stage: "regression", label: "执行完成 · 运行回归" },
-  regression: { stage: "release", label: "回归通过 · 准备发布" },
+  feedback_intake: { stage: "triage", label: "整理反馈" },
+  triage: { stage: "attribution", label: "确认整理结果，进入归因分析" },
+  attribution: { stage: "optimization", label: "确认归因，生成优化方案" },
+  optimization: { stage: "execution", label: "确认并执行优化" },
+  execution: { stage: "regression", label: "确认执行结果，进入测试发布" },
+  regression: { stage: "release", label: "执行回归测试" },
+};
+
+const BACK_ACTION: Partial<Record<string, { stage: string; label: string }>> = {
+  attribution: { stage: "triage", label: "返回反馈整理" },
+  optimization: { stage: "attribution", label: "返回归因分析" },
+  execution: { stage: "attribution", label: "返回归因分析" },
+  regression: { stage: "execution", label: "返回优化执行" },
+  release: { stage: "execution", label: "返回优化执行" },
 };
 
 export interface ImprovementStageView {
   stages: StageDef[];
   stageIndex: number;
   label: string;
+  visibleKey: VisibleImprovementStageKey;
+  internalStage: string;
+  internalLabel: string;
+  description: string;
   isTerminal: boolean;
   primaryAction: { stage: string; label: string } | null;
+  backAction: { stage: string; label: string } | null;
 }
 
 export function stageLabel(stage: string): string {
-  return IMPROVEMENT_STAGE_ORDER.find((item) => item.key === stage)?.label ?? stage;
+  const visible = VISIBLE_STAGE_BY_INTERNAL[stage] ?? (stage as VisibleImprovementStageKey);
+  return IMPROVEMENT_STAGE_ORDER.find((item) => item.key === visible)?.label ?? INTERNAL_STAGE_LABEL[stage] ?? stage;
+}
+
+export function internalStageLabel(stage: string): string {
+  return INTERNAL_STAGE_LABEL[stage] ?? stage;
 }
 
 export function describeImprovementStage(stage: string): ImprovementStageView {
-  const index = IMPROVEMENT_STAGE_ORDER.findIndex((item) => item.key === stage);
+  const visibleKey = VISIBLE_STAGE_BY_INTERNAL[stage] ?? "feedback_sorting";
+  const index = IMPROVEMENT_STAGE_ORDER.findIndex((item) => item.key === visibleKey);
   const stageIndex = index < 0 ? 0 : index;
+  const def = IMPROVEMENT_STAGE_ORDER[stageIndex] ?? IMPROVEMENT_STAGE_ORDER[0];
   return {
     stages: IMPROVEMENT_STAGE_ORDER,
     stageIndex,
-    label: IMPROVEMENT_STAGE_ORDER[stageIndex]?.label ?? stage,
+    label: def.label,
+    visibleKey,
+    internalStage: stage,
+    internalLabel: internalStageLabel(stage),
+    description: def.description,
     isTerminal: stage === "release",
     primaryAction: PRIMARY_ACTION[stage] ?? null,
+    backAction: BACK_ACTION[stage] ?? null,
   };
 }

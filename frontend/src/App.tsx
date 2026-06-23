@@ -570,7 +570,6 @@ export default function App() {
         onRefresh={refreshAll}
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
-        onOpenRelease={showReleaseWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       {activeWindow === "asset" ? (

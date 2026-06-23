@@ -125,11 +125,12 @@ async function seedRealData() {
     responsibility_boundary: ["主要是外部数据时间窗口问题"],
     evidence: ["来源反馈指向同一时间窗口误判问题"],
   });
+  await postJson(`/api/improvements/${item.improvement_id}/lifecycle`, { stage: "triage" }).catch(() => null);
   return { id: item.improvement_id, title: item.title };
 }
 
 function mockState() {
-  const target = { improvement_id: "imp-decision01", agent_id: "soc-ops", title: "sec-ops-data 时间窗口误判治理", summary: "sec-ops-data 时间窗口不一致导致同类告警误判。", source_feedback_refs: ["fb-1"], improvement_stage: "attribution", improvement_status: "active", created_at: ts, updated_at: ts };
+  const target = { improvement_id: "imp-decision01", agent_id: "soc-ops", title: "sec-ops-data 时间窗口误判治理", summary: "sec-ops-data 时间窗口不一致导致同类告警误判。", source_feedback_refs: ["fb-1"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts };
   return {
     target,
     agents: [{ agent_id: "soc-ops", name: "安全运营助手", category: "business", workspace_dir: "/w/soc", created_at: ts, status: "active" }],
@@ -171,6 +172,7 @@ async function installMockRoutes(page, state) {
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
     if (/^\/api\/automation-policy/.test(path)) return json(route, { agent_id: "soc-ops", mode: "off" });
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
+    if (/^\/api\/improvements\/[^/]+\/lifecycle$/.test(path)) return json(route, state.target);
     if (["/api/agents", "/api/skills", "/api/sessions", "/api/agent-releases", "/api/agent-change-sets"].includes(path)) return json(route, []);
     if (path === "/api/config") return json(route, { mappings: [] });
     if (path === "/api/agent-repository") return json(route, { status: "active", dirty: false, changed_files: [], file_diffs: [] });
@@ -211,8 +213,8 @@ async function main() {
     await assertVisible(page, "current-decision-card");
     await assertVisible(page, "current-decision-question");
     await assertVisible(page, "decision-basis");
-    await assertVisible(page, "decision-consequence");
-    await assertVisible(page, "improvement-provenance");
+    await assertVisible(page, "decision-score");
+    await assertVisible(page, "stage-panel-source-feedback");
     const primaryCount = await page.getByTestId("current-decision-card").getByTestId("primary-action").count();
     if (primaryCount !== 1) throw new Error(`current-decision-card primary action count=${primaryCount}`);
 

@@ -9,7 +9,7 @@ from ..asset_db import AssetModel
 from ..errors import BusinessRuleViolation, NotFoundError
 from ..runtime_db import utc_now
 
-ASSET_TYPES = {"regression", "methodology", "execution", "audit"}
+ASSET_TYPES = {"regression", "test_dataset", "methodology", "execution", "audit"}
 
 
 @dataclass(frozen=True)

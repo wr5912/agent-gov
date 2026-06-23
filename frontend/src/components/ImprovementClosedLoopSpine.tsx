@@ -1,26 +1,26 @@
-const CLOSED_LOOP_STEPS = ["反馈", "理解", "归因", "方案", "执行", "回归", "发布", "资产"];
+import type { ImprovementStageView } from "../improvementStage";
 
 export function ImprovementClosedLoopSpine({
-  currentIndex,
-  hasAssets,
+  stageView,
 }: {
-  currentIndex: number;
-  hasAssets: boolean;
+  stageView: ImprovementStageView;
 }) {
   return (
-    <div className="iw-closed-loop-spine" data-testid="closed-loop-spine" aria-label="治理闭环">
-      {CLOSED_LOOP_STEPS.map((label, index) => {
-        const state = index === CLOSED_LOOP_STEPS.length - 1 && hasAssets
-          ? "done"
-          : index < currentIndex
+    <div className="iw-four-stage-spine" data-testid="closed-loop-spine" aria-label="四阶段改进治理主链路">
+      {stageView.stages.map((stage, index) => {
+        const state = index < stageView.stageIndex
             ? "done"
-            : index === currentIndex
+            : index === stageView.stageIndex
               ? "current"
               : "todo";
         return (
-          <span className={`iw-loop-step is-${state}`} data-testid="closed-loop-step" data-state={state} key={label}>
-            {label}
-          </span>
+          <div className={`iw-four-stage-step is-${state}`} data-testid="closed-loop-step" data-state={state} data-stage-key={stage.key} key={stage.key}>
+            <span className="iw-four-stage-index">{state === "done" ? "✓" : index + 1}</span>
+            <span>
+              <strong>{stage.label}</strong>
+              <small>{index === stageView.stageIndex ? stageView.description : index < stageView.stageIndex ? "完成" : "待开始"}</small>
+            </span>
+          </div>
         );
       })}
     </div>

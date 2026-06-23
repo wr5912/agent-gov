@@ -1,4 +1,4 @@
-import { ListChecks, MessageSquare, Rocket, RefreshCw, Settings } from "lucide-react";
+import { ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
 import type { AgentSummary, RuntimeHealth } from "../types/runtime";
 
 type ActiveWindow = "chat" | "feedback" | "improvement" | "release" | "asset";
@@ -13,11 +13,10 @@ interface TopbarProps {
   onRefresh: () => void;
   onOpenPlayground: () => void;
   onOpenImprovement: () => void;
-  onOpenRelease: () => void;
   onOpenSettings: () => void;
 }
 
-// v2.7 §2：一级导航收敛为 Playground / 改进 / 发布；资产、旧反馈优化、API Docs、Langfuse 进 Settings。
+// v2.7 四阶段权威方案：一级导航只保留工作台与改进治理；测试发布归入改进治理第四阶段。
 export function Topbar({
   health,
   activeWindow,
@@ -28,7 +27,6 @@ export function Topbar({
   onRefresh,
   onOpenPlayground,
   onOpenImprovement,
-  onOpenRelease,
   onOpenSettings,
 }: TopbarProps) {
   return (
@@ -44,7 +42,7 @@ export function Topbar({
             data-testid="topbar-agent-switcher"
             value={selectedBusinessAgentId}
             onChange={(e) => onSelectBusinessAgent(e.target.value)}
-            title="切换当前业务 Agent；改进 / 发布 / 对话按此 Agent 归属"
+            title="切换当前业务 Agent；改进治理与对话按此 Agent 归属"
           >
             <option value="">全部业务 Agent</option>
             {businessAgents.map((agent) => (
@@ -75,16 +73,6 @@ export function Topbar({
           onClick={onOpenImprovement}
         >
           <ListChecks size={15} /> 改进
-        </button>
-        <button
-          className={`topbar-nav-button ${activeWindow === "release" ? "active" : ""}`}
-          type="button"
-          data-testid="nav-release"
-          aria-label="打开发布工作台"
-          aria-current={activeWindow === "release"}
-          onClick={onOpenRelease}
-        >
-          <Rocket size={15} /> 发布
         </button>
       </nav>
 

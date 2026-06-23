@@ -47,10 +47,9 @@ import { listAssets, createAsset, type Asset } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
-import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
-import { ImprovementSystemUnderstanding } from "./ImprovementSystemUnderstanding";
 import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
 import { ImprovementAddFeedbackFlow } from "./ImprovementAddFeedbackFlow";
+import { ImprovementStagePanels } from "./ImprovementStagePanels";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -78,7 +77,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [optPlan, setOptPlan] = useState<OptimizationPlan | null>(null);
   const [execution, setExecution] = useState<ExecutionRecord | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
-  const [regressionDismissed, setRegressionDismissed] = useState(false);
   const [regressionAssessment, setRegressionAssessment] = useState<RegressionAssessment | null>(null);
   const [editingAttribution, setEditingAttribution] = useState(false);
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
@@ -146,7 +144,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     }
     let cancelled = false;
     setLastAuto(undefined);
-    setRegressionDismissed(false);
     setEditingAttribution(false);
     setShowAllFeedbacks(false);
     setAddFeedbackOpen(false);
@@ -320,6 +317,40 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const handleAdoptRegression = (item: ImprovementItem) => {
     void run(async () => {
       const cases = regressionAssessment?.cases ?? [];
+      const sourceFeedbackIds = feedbacks.map((f) => f.feedback_id || "").filter(Boolean);
+      const baselineVersion = feedbacks.find((f) => f.agent_version_id)?.agent_version_id || "";
+      const candidateVersion = execution?.applied_agent_version_id || execution?.agent_version || "";
+      const testDatasetId = `tds-${item.improvement_id}`;
+      const datasetBody = JSON.stringify({
+        test_dataset_id: testDatasetId,
+        agent_id: item.agent_id,
+        improvement_id: item.improvement_id,
+        lifecycle: "candidate",
+        source_feedback_refs: sourceFeedbackIds.length ? sourceFeedbackIds : item.source_feedback_refs ?? [],
+        test_cases: cases.map((c, i) => ({
+          case_id: `${testDatasetId}-case-${i + 1}`,
+          prompt: c.prompt,
+          expected_behavior: c.expected_behavior,
+          checkpoints: c.checkpoints,
+        })),
+        selection_strategy: "current-improvement-regression",
+        scope: "改进事项测试发布阶段",
+        baseline_version: baselineVersion || "missing",
+        candidate_version: candidateVersion || "missing",
+        provenance: {
+          normalized_feedback_id: normalizedFeedback?.normalized_feedback_id,
+          attribution_id: attribution?.attribution_id,
+          optimization_plan_id: optPlan?.optimization_plan_id,
+          execution_id: execution?.execution_id,
+        },
+      }, null, 2);
+      await createAsset(clientConfig, {
+        agent_id: item.agent_id,
+        asset_type: "test_dataset",
+        title: `测试数据集：${item.title}`,
+        body: datasetBody,
+        source_improvement_id: item.improvement_id,
+      });
       const body = cases.length
         ? cases.map((c, i) => `用例${i + 1}：${c.prompt}\n期望：${c.expected_behavior}\n检查点：\n${(c.checkpoints || []).map((x) => `- ${x}`).join("\n")}`).join("\n\n")
         : `用例：当出现「${item.title}」类问题时，Agent 应正确处理，不得直接误判。\n检查点：\n${["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"].map((c) => `- ${c}`).join("\n")}`;
@@ -332,7 +363,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       });
       if (regressionAssessment) await confirmRegressionAssessment(clientConfig, item.improvement_id).catch(() => undefined);
       setSedimentAssets(await listAssets(clientConfig, { sourceImprovementId: item.improvement_id }));
-      setRegressionDismissed(true);
     });
   };
 
@@ -465,22 +495,16 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
             data-item-id={selected.improvement_id}
             data-stage={selected.improvement_stage}
           >
-            <ImprovementClosedLoopSpine currentIndex={stageView.stageIndex} hasAssets={sedimentAssets.length > 0} />
+            <ImprovementClosedLoopSpine stageView={stageView} />
             <ImprovementDecisionPanel
               item={selected}
               agentName={agentName(selected.agent_id)}
               stageView={stageView}
               feedbacks={feedbacks}
-              showAllFeedbacks={showAllFeedbacks}
-              lastAuto={lastAuto}
               busy={busy}
-              langfuseUrl={langfuseUrl}
               onPrimaryAction={() => handleAdvance(selected, stageView.primaryAction!.stage)}
-              onOpenContext={() => setContextOpen(true)}
-              onArchive={() => handleArchive(selected)}
-              onAddFeedback={() => { setShowAllFeedbacks(false); setAddFeedbackOpen(true); }}
-              onToggleAllFeedbacks={() => setShowAllFeedbacks((prev) => !prev)}
-              onSplit={(ref) => handleSplit(selected, ref)}
+              onBackAction={(stage) => handleAdvance(selected, stage)}
+              onManageSources={() => setShowAllFeedbacks((prev) => !prev)}
             />
             {addFeedbackOpen ? (
               <ImprovementAddFeedbackFlow
@@ -492,111 +516,39 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               />
             ) : null}
 
-            <ImprovementSystemUnderstanding nf={normalizedFeedback} fallbackSummary={selected.summary} />
-
-            {attribution ? (
-              <div className="iw-detail-section" data-testid="attribution">
-                <h4>系统归因{attribution.status === "confirmed" ? "（已确认）" : "（待确认）"}
-                  <span className="iw-source-badge" data-testid="attribution-source" data-source={attribution.generated_by}>{attribution.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
-                </h4>
-                {editingAttribution ? (
-                  <div>
-                    <textarea className="iw-input" data-testid="attr-edit-summary" value={attrDraft.summary} onChange={(e) => setAttrDraft({ ...attrDraft, summary: e.target.value })} placeholder="归因正文" style={{ minHeight: 60 }} />
-                    <textarea className="iw-input" data-testid="attr-edit-boundary" value={attrDraft.boundary} onChange={(e) => setAttrDraft({ ...attrDraft, boundary: e.target.value })} placeholder="责任边界（每行一条）" style={{ minHeight: 48, marginTop: 6 }} />
-                    <textarea className="iw-input" data-testid="attr-edit-evidence" value={attrDraft.evidence} onChange={(e) => setAttrDraft({ ...attrDraft, evidence: e.target.value })} placeholder="证据（每行一条）" style={{ minHeight: 48, marginTop: 6 }} />
-                    <div className="iw-action-row">
-                      <button className="iw-primary-button" type="button" data-testid="attr-save" disabled={busy} onClick={() => handleSaveAttribution(selected)}>保存</button>
-                      <button className="iw-secondary-button" type="button" data-testid="attr-cancel" onClick={() => setEditingAttribution(false)}>取消</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div className="iw-detail-summary">{attribution.summary}</div>
-                    {attribution.responsibility_boundary.length ? (
-                      <>
-                        <div className="iw-content-subhead">责任边界</div>
-                        <ul className="iw-content-list">{attribution.responsibility_boundary.map((b, i) => <li key={i}>{b}</li>)}</ul>
-                      </>
-                    ) : null}
-                    {attribution.evidence.length ? (
-                      <>
-                        <div className="iw-content-subhead">证据</div>
-                        <ul className="iw-content-list" data-testid="attribution-evidence">{attribution.evidence.map((e, i) => <li key={i}>{e}</li>)}</ul>
-                      </>
-                    ) : null}
-                    {selected.improvement_status !== "archived" ? (
-                      <div className="iw-action-row">
-                        {attribution.status !== "confirmed" ? (
-                          <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={() => handleConfirmAttribution(selected)}>确认归因</button>
-                        ) : null}
-                        <button className="iw-secondary-button" type="button" data-testid="edit-attribution" disabled={busy} onClick={() => handleEditAttribution(attribution)}>修改</button>
-                        <button className="iw-secondary-button" type="button" data-testid="regenerate-attribution" disabled={busy} onClick={() => handleGenerateAttribution(selected)}>重新整理</button>
-                      </div>
-                    ) : null}
-                  </>
-                )}
-              </div>
-            ) : selected.improvement_status !== "archived" ? (
-              <div className="iw-detail-section" data-testid="attribution-empty">
-                <h4>系统归因</h4>
-                <div className="iw-next-step">尚未生成归因。可从系统理解生成初步归因，再确认或修改。</div>
-                <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={() => handleGenerateAttribution(selected)} style={{ marginTop: 8 }}>生成归因（初步）</button>
-              </div>
-            ) : null}
-
-            <ImprovementPlanExecution
+            <ImprovementStagePanels
               item={selected}
-              busy={busy}
-              optPlan={optPlan}
-              execution={execution}
+              stageView={stageView}
+              normalizedFeedback={normalizedFeedback}
               attribution={attribution}
+              feedbacks={feedbacks}
+              optimizationPlan={optPlan}
+              execution={execution}
+              regressionAssessment={regressionAssessment}
+              assets={sedimentAssets}
+              showAllFeedbacks={showAllFeedbacks}
+              editingAttribution={editingAttribution}
+              attrDraft={attrDraft}
+              busy={busy}
+              langfuseUrl={langfuseUrl}
+              onToggleAllFeedbacks={() => setShowAllFeedbacks((prev) => !prev)}
+              onAddFeedback={() => { setShowAllFeedbacks(false); setAddFeedbackOpen(true); }}
+              onSplit={(ref) => handleSplit(selected, ref)}
+              onGenerateAttribution={() => handleGenerateAttribution(selected)}
+              onConfirmAttribution={() => handleConfirmAttribution(selected)}
+              onEditAttribution={handleEditAttribution}
+              onSaveAttribution={() => handleSaveAttribution(selected)}
+              onCancelAttribution={() => setEditingAttribution(false)}
+              onAttrDraftChange={setAttrDraft}
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
               onConfirmOpt={() => handleConfirmOptPlan(selected)}
               onRecordExec={() => handleRecordExecution(selected)}
               onApplyExec={() => handleApplyExecution(selected)}
               onConfirmExec={() => handleConfirmExecution(selected)}
+              onGenerateRegression={() => handleGenerateRegression(selected)}
+              onAdoptTestDataset={() => handleAdoptRegression(selected)}
+              onOpenContext={() => setContextOpen(true)}
             />
-
-            {selected.improvement_status !== "archived" && !regressionDismissed && !sedimentAssets.some((a) => a.asset_type === "regression") ? (
-              <div className="iw-detail-section" data-testid="regression-guarantee">
-                <h4>回归保障
-                  {regressionAssessment ? <span className="iw-source-badge" data-testid="regression-source" data-source={regressionAssessment.generated_by}>{regressionAssessment.generated_by === "governor" ? "治理 Agent 生成" : "启发式候选"}</span> : null}
-                </h4>
-                {regressionAssessment && regressionAssessment.cases.length ? (
-                  <div data-testid="regression-cases">
-                    {regressionAssessment.cases.map((c, i) => (
-                      <div className="iw-content-quote" key={i}>
-                        <div>用例{i + 1}：{c.prompt}</div>
-                        {c.expected_behavior ? <div>期望：{c.expected_behavior}</div> : null}
-                        {(c.checkpoints || []).length ? <div>检查点：{(c.checkpoints || []).join(" / ")}</div> : null}
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <ul className="iw-content-list">
-                    <li>用例：当出现「{selected.title}」类问题时，Agent 应正确处理、不得直接误判。</li>
-                    <li>检查点：是否识别问题条件 / 是否提示需核验数据源 / 是否避免直接升级处置</li>
-                  </ul>
-                )}
-                <div className="iw-action-row">
-                  <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={() => handleGenerateRegression(selected)}>生成回归用例（治理 Agent）</button>
-                  <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy} onClick={() => handleAdoptRegression(selected)}>采纳为回归资产</button>
-                  <button className="iw-secondary-button" type="button" data-testid="ignore-regression" disabled={busy} onClick={() => setRegressionDismissed(true)}>忽略</button>
-                </div>
-              </div>
-            ) : null}
-
-            {sedimentAssets.length ? (
-              <div className="iw-detail-section" data-testid="sediment-assets">
-                <h4>本事项沉淀的资产（{sedimentAssets.length}）</h4>
-                {sedimentAssets.map((a) => (
-                  <div className="iw-list-item" data-testid="sediment-asset-item" data-asset-type={a.asset_type} key={a.asset_id}>
-                    <span className="iw-list-item-title">{a.title}</span>
-                    <span className="iw-list-item-meta">{a.asset_type}{a.inherited_from ? " · 继承" : ""}</span>
-                  </div>
-                ))}
-              </div>
-            ) : null}
 
             <details className="iw-advanced" data-testid="improvement-advanced">
               <summary>高级（自动化策略 / 相似归并 / 关联闭环对象）</summary>
@@ -623,6 +575,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                     onClick={() => handleAutoAdvance(selected)}
                   >
                     自动推进
+                  </button>
+                  <button className="iw-secondary-button" type="button" data-testid="archive-improvement" disabled={busy} onClick={() => handleArchive(selected)}>
+                    归档事项
                   </button>
                 </div>
                 {lastAuto ? (

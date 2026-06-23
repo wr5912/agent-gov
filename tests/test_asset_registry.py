@@ -18,11 +18,13 @@ def _store(tmp_path: Path) -> AssetStore:
 def test_create_list_get(tmp_path: Path) -> None:
     store = _store(tmp_path)
     a = store.create_asset(agent_id="soc", asset_type="methodology", title="误报归因法", body="步骤...", source_improvement_id="imp-1")
+    dataset = store.create_asset(agent_id="soc", asset_type="test_dataset", title="时间窗口测试数据集", body='{"test_dataset_id":"tds-1"}', source_improvement_id="imp-1")
     store.create_asset(agent_id="soc", asset_type="regression", title="时间窗口回归集")
     store.create_asset(agent_id="shop", asset_type="methodology", title="退款方法论")
-    assert {x.asset_id for x in store.list_assets(agent_id="soc")} == {a.asset_id, *[x.asset_id for x in store.list_assets(agent_id="soc", asset_type="regression")]}
+    assert {x.asset_id for x in store.list_assets(agent_id="soc")} == {a.asset_id, dataset.asset_id, *[x.asset_id for x in store.list_assets(agent_id="soc", asset_type="regression")]}
     methods = store.list_assets(agent_id="soc", asset_type="methodology")
     assert [x.asset_id for x in methods] == [a.asset_id]
+    assert [x.body for x in store.list_assets(agent_id="soc", asset_type="test_dataset")] == ['{"test_dataset_id":"tds-1"}']
     assert store.get_asset(a.asset_id).source_improvement_id == "imp-1"
 
 

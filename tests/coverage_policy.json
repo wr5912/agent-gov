@@ -109,7 +109,7 @@
         },
         {
           "id": "v27_design_parity_and_message_actions",
-          "description": "The v2.7 user-facing governance path exposes the simplified Playground, restores historical Playground runs after refresh, keeps long chat streaming pinned to the bottom unless the user scrolls up, exposes one-click bottom jump plus vertically centered user-question scroll anchors with capped/adaptive density marks and preview navigation across few/many-message cases, separates session navigation into the left sidebar, runtime settings into a drawer, Trace into the right evidence tab panel, keeps feedback creation in a drawer, and preserves ImprovementItem workbench, ContextPackage drawer, release gates, and Asset Registry provenance using stable selectors.",
+          "description": "The v2.7 user-facing governance path exposes the simplified Playground, restores historical Playground runs after refresh, keeps long chat streaming pinned to the bottom unless the user scrolls up, exposes one-click bottom jump plus vertically centered user-question scroll anchors with capped/adaptive density marks and preview navigation across few/many-message cases, separates session navigation into the left sidebar, runtime settings into a drawer, Trace into the right evidence tab panel, keeps feedback creation in a drawer, and verifies the four-stage ImprovementItem workbench, slim decision card, ContextPackage drawer, test-release panels with TestDataset assets, and Asset Registry provenance using stable selectors.",
           "pytest": [
             "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore"
           ],

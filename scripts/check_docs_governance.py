@@ -22,6 +22,19 @@ TEXT_GOVERNANCE_ROOTS = ("docs/", ".codex/skills/", ".claude/skills/")
 LOCAL_ARTIFACT_PATH_MARKERS = ("/mnt/data/", "ghostwriter_images")
 CODEX_SKILLS_ROOT = ".codex/skills"
 CLAUDE_SKILLS_ROOT = ".claude/skills"
+LONG_TERM_AUTHORITY_DOCS = frozenset(
+    {
+        "docs/项目目标愿景使命.md",
+        "docs/AgentGov核心功能测试用例.md",
+    }
+)
+LEGACY_GOVERNANCE_AGENT_TERMS = (
+    "attribution-analyzer",
+    "proposal-generator",
+    "execution-optimizer",
+    "eval-case-governor",
+    "regression-impact-analyzer",
+)
 MIRRORED_SKILL_EXCLUSIONS = frozenset(
     {
         "project-skill",  # 通用模板，两侧按各自工具形态维护。
@@ -33,6 +46,9 @@ _CJK_UNFINISHED_MARKERS = ("待" "补充", "占" "位")
 _WORD_UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "place" "holder", "x" "xx", "X" "XX")
 _WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
 _ARCHIVE_ORIGINAL_PATH_PATTERN = re.compile(r"`(docs/[^`]+\.md)`")
+_LEGACY_GOVERNANCE_AGENT_PATTERN = re.compile(
+    r"(?:attribution|proposal|execution|eval-case|regression-impact).{0,120}治理 Agent"
+)
 
 
 @dataclass(frozen=True)
@@ -205,6 +221,23 @@ def _archived_original_reference_issues(root: Path, paths: Iterable[str]) -> lis
     return issues
 
 
+def _long_term_authority_term_issues(root: Path, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
+    issues: list[DocsGovernanceIssue] = []
+    for rel_path in sorted(set(paths) & LONG_TERM_AUTHORITY_DOCS):
+        text = _read_existing(root, rel_path)
+        for line_number, line in enumerate(text.splitlines(), start=1):
+            legacy_term = next((term for term in LEGACY_GOVERNANCE_AGENT_TERMS if term in line), None)
+            if legacy_term or _LEGACY_GOVERNANCE_AGENT_PATTERN.search(line):
+                issues.append(
+                    DocsGovernanceIssue(
+                        rel_path,
+                        "long-term authority doc uses legacy governance-agent terminology "
+                        f"at line {line_number}; use `governor` plus job type",
+                    )
+                )
+    return issues
+
+
 def _normalized_skill_text(text: str) -> str:
     lines: list[str] = []
     skip_next_blank = False
@@ -289,6 +322,7 @@ def collect_docs_governance_issues(root: Path, base_ref: str | None) -> list[Doc
     issues.extend(_active_doc_index_issues(root, new_active_docs))
     issues.extend(_archive_index_issues(root, new_archive_docs))
     issues.extend(_archived_original_reference_issues(root, paths))
+    issues.extend(_long_term_authority_term_issues(root, paths))
     issues.extend(_skill_mirror_issues(root))
     issues.extend(_unfinished_marker_issues(root, base_ref, paths))
     issues.extend(_local_artifact_path_issues(root, base_ref, paths))

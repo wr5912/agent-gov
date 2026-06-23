@@ -817,6 +817,43 @@ def test_archive_index_old_complete_draft_row_does_not_block_active_doc(tmp_path
     assert "docs/active-plan.md" not in result.stdout
 
 
+def test_long_term_authority_legacy_governance_agent_terms_fail(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(
+        tmp_path / "docs" / "AgentGov核心功能测试用例.md",
+        "# Core Cases\n\n"
+        "前置条件：系统存在业务 Agent 与 attribution、proposal、execution、eval-case、regression-impact 等治理 Agent。\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: docs/AgentGov核心功能测试用例.md: "
+        "long-term authority doc uses legacy governance-agent terminology at line 3; "
+        "use `governor` plus job type"
+        in result.stdout
+    )
+
+
+def test_current_baseline_legacy_governance_agent_terms_pass(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(
+        tmp_path / "docs" / "反馈闭环当前实现基线.md",
+        "# Current Baseline\n\n"
+        "`attribution-analyzer` 是 pre-v2.7 历史 profile 名，当前已合并为 `governor`。\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "legacy governance-agent terminology" not in result.stdout
+
+
 def test_docs_governance_handles_tracked_binary_assets(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

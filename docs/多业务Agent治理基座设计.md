@@ -1,6 +1,6 @@
 # 多业务 Agent 治理基座设计
 
-本文档为 AgentGov 从「单一 main agent + 5 个固定治理 Agent」演进到「多业务 Agent 治理」给出最小可落地基座设计，作为 AGV-004、AGV-024、AGV-028 等 `gap` 与 Phase 2 `future` 用例的共同前置。它是架构方案，不是完成承诺；落地按目标达成分阶段执行计划的迭代闭环逐步推进。
+本文档为 AgentGov 从「单一 main agent + 单一 governor 治理执行者」演进到「多业务 Agent 治理」给出最小可落地基座设计，作为 AGV-004、AGV-024、AGV-028 等 `gap` 与 Phase 2 `future` 用例的共同前置。它是架构方案，不是完成承诺；落地按目标达成分阶段执行计划的迭代闭环逐步推进。
 
 > 文档层级：当前实现基线（pre-v2.7）到多业务 Agent 能力的过渡架构方案。
 > 术语口径：本文中的 `main-agent` 表示当前内置业务 Agent 样板，业务 Agent、治理 Agent、agent_id、资产 Registry 等长期术语与 v2.7 术语边界见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
@@ -15,7 +15,7 @@
 | 资产类型 | 新增执行资产（Agent 定义/身份）与数据资产（Agent 注册记录、归属关系） |
 | 生命周期 | 业务 Agent 引入 draft/active/evaluating/deprecated/archived（AGV-020/021） |
 | 反馈归属 | feedback、job、change set、release、eval 增加 `agent_id` 归属（AGV-024） |
-| 当前实现边界 | `agent_profiles.py` 硬编码 6 角色；change set/release 无 `agent_id`，隐含 main-agent；无创建入口、无注册表 |
+| 当前实现边界 | 运行态 profile 已收敛为 `main-agent` + `governor`；change set/release 无 `agent_id`，隐含 main-agent；无创建入口、无注册表 |
 | 目标能力边界 | 可注册/配置业务 Agent，闭环对象从单 main-agent 扩展到任意已注册业务 Agent |
 
 闭环链路（基座要打通的是「对象」与「归属」两环，其余沿用现有闭环）：
@@ -28,7 +28,7 @@
 
 ## 当前实现边界（代码事实）
 
-- `app/runtime/agent_profiles.py`：`AgentRole` 是 6 元 `Literal`，`build_profiles()` 硬编码返回 6 个 profile；无动态创建。AGV-005 已加 `category`（business/governance）显式区分。
+- `app/runtime/agent_profiles.py`：当前运行态 profile 已收敛为 `main-agent` + `governor`；无动态创建。AGV-005 已加 `category`（business/governance）显式区分。
 - 无创建/配置入口：`app/routers/`、`app/services/` 无 create-agent route/service/store。
 - 版本治理：`AgentChangeSetModel`、`AgentReleaseModel`（`app/runtime/runtime_db.py`）无 `agent_id`，`agent_governance.py` 多处硬指 main agent workspace。
 - 配置项：system prompt 为预设 `claude_code`；模型/max_turns 为 profile 常量或 main-agent 请求级覆盖；skills/tools/MCP 为 workspace 级文件。
@@ -69,7 +69,7 @@
 
 ## B3 详细架构（per-agent 版本治理，最终 keystone）
 
-只读架构核查结论：`GitAgentVersionStore` 当前是 **main-agent-rooted 单实例**（仓库根在 main workspace），`agent_governance` 流程隐式用它、未按 agent_id 参数化；执行优化（execution-optimizer）改的是 main workspace。因此业务 Agent 的反馈虽已 agent-scoped（误路由防护 + agent_id 归属），其优化产出的 change set/release 仍落在 main agent。B3 即把版本治理改为 **多租户 per-agent**。
+只读架构核查结论：`GitAgentVersionStore` 当前是 **main-agent-rooted 单实例**（仓库根在 main workspace），`agent_governance` 流程隐式用它、未按 agent_id 参数化；governor 的执行类 job 仍作用于 main workspace。因此业务 Agent 的反馈虽已 agent-scoped（误路由防护 + agent_id 归属），其优化产出的 change set/release 仍落在 main agent。B3 即把版本治理改为 **多租户 per-agent**。
 
 核心架构决策：
 

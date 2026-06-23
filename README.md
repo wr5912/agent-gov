@@ -171,7 +171,7 @@ pnpm --dir frontend generate:api-types
 - `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/外部治理Webhook示例.yaml`。
 - `/data/feedback-signals/`、`/data/soc-events/`、`/data/feedback-cases/` 等旧目录仅为兼容路径，不再是权威存储。
 
-正式设计文档见 [反馈优化闭环多智能体架构.md](docs/反馈优化闭环多智能体架构.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。
+当前实现基线见 [反馈闭环当前实现基线.md](docs/反馈闭环当前实现基线.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。
 
 ## Langfuse 监控
 

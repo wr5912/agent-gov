@@ -1216,7 +1216,7 @@ W3：资产 Registry 复利中心（跨 Agent 方法论资产继承）。
 
 ```text
 [进行中] ImprovementItem 与既有闭环引擎 / Governor 的深度对接（§17.5 引擎波次）：归因 / 优化方案 已接通真 governor LLM 生成；执行已接通治理 Agent 自动 apply（隔离 change set worktree 落盘→提交→候选 Agent 版本，绑定 change_set_id/applied_agent_version_id/applied_diff；失败/拒绝放弃变更集回滚 + heuristic 兜底；幂等）；回归保障已接通 governor 生成回归用例候选（EVAL_CASE_GENERATION → RegressionAssessment cases，采纳为回归资产；heuristic 兜底；parity regression-governor ✅）。旧 feedback batch 引擎待功能等价覆盖后退役（已降级 Settings→Developer + legacy banner）。
-[已接通] 执行记录到真实 change set / 候选 agent version 的权威绑定：自动 apply 在隔离 worktree 生成候选版本并绑定（parity execution-version-binding ✅）；发布到 Agent 当前版本仍走 §12 人工发布门禁，不自动发布、不用占位版本冒充已发布。
+[已接通] 执行记录到真实 change set / 候选 agent version 的权威绑定：自动 apply 在隔离 worktree 生成候选版本并绑定（parity execution-version-binding ✅）；发布到 Agent 当前版本仍走 §12 人工发布门禁，不自动发布、不用临时版本冒充已发布。
 [未完成] 自动化策略从反馈到关键确认点的真实编排仍需专项硬门。
 [不纳入本期核心偏差] 移动端响应式已被真实截图记录，但本轮目标偏差和整改优先级不以移动端为主。
 ```

@@ -94,24 +94,22 @@ SQLite 负责业务治理元数据
 
 本轮默认采用 `local` Git provider：主 Agent workspace 本身是 Git 仓库，候选变更通过本地 worktree 隔离。`AGENT_GIT_SERVICE_PROVIDER=gitea`、`AGENT_GIT_SERVICE_URL` 和 `AGENT_GIT_SERVICE_PUBLIC_URL` 仅作为后续外部 Git 服务展示/发现配置，不作为本轮阶段 1-5 的硬完成条件。发布、回滚、后台候选回归和治理状态变更仍必须通过产品 API。
 
-本轮只覆盖：
+本轮只覆盖业务 Agent 版本链：
 
 ```text
 main-agent
 /main-workspace
 ```
 
-暂不把以下 profile 纳入 Git 发布治理：
+治理执行者运行态已合并为单一 `governor`。本文不把 `governor` 自身的 workspace、claude root 和 profile 配置纳入业务 Agent Git 发布治理；`governor` 只按 job_type 承担归因、方案、执行、用例治理和回归影响分析职责。
 
 ```text
-attribution-analyzer
-proposal-generator
-execution-optimizer
-eval-case-governor
-regression-impact-analyzer
+governor
+/governor-workspace
+/claude-roots/governor
 ```
 
-这些 profile 继续使用 `profile_version_snapshot` 记录配置 hash 和 profile version。例外是候选执行和候选回归期间，`execution-optimizer` 与 main profile 必须临时读取 candidate worktree，不能读取线上 `/main-workspace`。
+历史 job 记录中的合并前旧 `profile_name` 只作为历史元数据保留，不再作为当前 profile/workspace 设计。候选执行和候选回归期间，`governor` 的执行类 job 与 main profile 必须临时读取 candidate worktree，不能读取线上 `/main-workspace`。
 
 ## 4. 评审意见采纳矩阵
 
@@ -132,7 +130,7 @@ regression-impact-analyzer
 | GV-13 缺 GSD artifacts | 采纳 | 新增 `.planning/PROJECT.md`、`ROADMAP.md` 和 phase `CONTEXT.md`/`PLAN.md`。 |
 | GV-14 `safe_workspace_target` 硬编码主 workspace | 采纳 | 引入 `ExecutionTargetContext` 或显式 `workspace_dir`，候选执行写 worktree。 |
 | GV-15 `AgentVersionStore` consumer 断裂面大 | 采纳 | 阶段 0 建 consumer 矩阵，定义 `AgentVersionProvider` 协议，过渡 facade 只作为迁移窗口。 |
-| GV-16 `execution-optimizer` 读写目标有歧义 | 采纳 | 候选执行期间动态构建 optimizer profile，读 candidate worktree、写 candidate worktree。 |
+| GV-16 合并前旧执行优化 profile 读写目标有歧义 | 采纳 | Governor 合并后，候选执行期间动态构建 governor 执行上下文，读 candidate worktree、写 candidate worktree。 |
 | GV-17 candidate `.mcp.json` 和 settings 路径派生缺失 | 采纳 | candidate profile 统一派生 workspace、mcp、settings、readable paths、claude root。 |
 | GV-18 provider 异常被 `FeedbackStore` 静默吞掉 | 采纳 | 版本治理写路径 provider 失败必须阻断；测试断言 eval run 记录合法 commit sha。 |
 | GV-19 Compose fallback 仍是 `./volume` | 采纳 | 所有挂载 fallback 改为由 `HOST_RUNTIME_VOLUME_ROOT` 单根派生。 |
@@ -151,11 +149,8 @@ ${HOME}/volume-agent-gov
 /main-workspace
 /data
 /claude-roots/main
-/attribution-analyzer-workspace
-/proposal-generator-workspace
-/execution-optimizer-workspace
-/eval-case-governor-workspace
-/regression-impact-analyzer-workspace
+/governor-workspace
+/claude-roots/governor
 ```
 
 Compose 变量必须由单根派生：
@@ -362,7 +357,7 @@ readable_paths = (change_set.worktree_path, data_dir)
 claude_root = isolated candidate claude root
 ```
 
-`execution-optimizer` 候选阶段必须读取 candidate worktree，不读取线上 `/main-workspace`。候选回归必须读取 candidate `.mcp.json` 和 candidate `.claude/settings.json`。
+`governor` 执行类 job 在候选阶段必须读取 candidate worktree，不读取线上 `/main-workspace`。候选回归必须读取 candidate `.mcp.json` 和 candidate `.claude/settings.json`。
 
 ## 8. Git 服务与命令安全
 

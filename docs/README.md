@@ -24,31 +24,27 @@
 - [项目目标愿景使命](./项目目标愿景使命.md)：`docs/项目目标愿景使命.md`
 - [AgentGov核心功能测试用例](./AgentGov核心功能测试用例.md)：`docs/AgentGov核心功能测试用例.md`
 - [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)：`docs/AgentGov术语与版本边界.md`
-- [文档治理与归档策略](./文档治理与归档策略.md)：`docs/文档治理与归档策略.md`
+- [文档治理与归档策略](./文档治理与归档策略.md)：`docs/文档治理与归档策略.md`，文档治理入口和权威地图
 
 ## 当前实现基线（pre-v2.7）
 
 这些文档解释当前代码、API、数据库、测试和用户可见运行态。文档中出现的 `main-agent`、`反馈信息`、`优化批次`、`proposal` 等名称属于当前实现事实；v2.7 用户主流程术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准。它们不得作为 v2.7 改进治理工作台未来主流程依据；与四阶段方案冲突时，以 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md) 和四张效果图为准。
 
-- [反馈优化产品调整方案](./反馈优化产品调整方案.md)：`docs/反馈优化产品调整方案.md`
-- [反馈优化闭环多智能体架构](./反馈优化闭环多智能体架构.md)：`docs/反馈优化闭环多智能体架构.md`
-- [反馈闭环机制全景画像](./反馈闭环机制全景画像.md)：`docs/反馈闭环机制全景画像.md`
+- [反馈闭环当前实现基线](./反馈闭环当前实现基线.md)：`docs/反馈闭环当前实现基线.md`
 - [反馈闭环长期回归资产升级方案](./反馈闭环长期回归资产升级方案.md)：`docs/反馈闭环长期回归资产升级方案.md`
 - [Agent版本治理与Diff对比重构方案](./Agent版本治理与Diff对比重构方案.md)：`docs/Agent版本治理与Diff对比重构方案.md`
 - [多业务Agent治理基座设计](./多业务Agent治理基座设计.md)：`docs/多业务Agent治理基座设计.md`
 
 ## 下一大版本 v2.7 规划与四阶段改进治理工作台权威方案
 
-这些文档面向跨代重建和设计评审，不自动替代当前实现基线。对于“改进治理工作台”的 UI、用户主链路、决策卡、面板入口、处理记录和效果图验收，四阶段整改方案是绝对依据；ASCII 草图保留更大范围领域模型、导航、术语和架构背景，冲突时让位。
+这些文档面向跨代重建和设计评审，不自动替代当前实现基线。对于“改进治理工作台”的 UI、用户主链路、决策卡、面板入口、处理记录和效果图验收，四阶段整改方案是绝对依据；旧 ASCII 草图已归档，只能作为历史设计证据追溯。
 
 实现整改的阅读路径是：
 
 1. 先读 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md)，它定义改进治理工作台的四阶段主链路、四张效果图、决策卡、面板入口、处理记录和代码整改原则。
-2. 再读 [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)，它定义 v2.7 的总体目标、领域对象、跨页面结构和术语背景；涉及改进治理工作台时必须服从四阶段方案。
-3. 如需追溯旧 UI 补充方案或历史核查报告，读 [归档入口](./archive/README.md)。
+2. 如需追溯旧 UI 草图、旧 UI 补充方案或历史核查报告，读 [归档入口](./archive/README.md)。
 
 - [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md)：`docs/AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md`
-- [AgentGov ASCII UI 草图方案 v2.7（跨代重建）](./AgentGov_ASCII_UI_草图方案_v2.7.md)：`docs/AgentGov_ASCII_UI_草图方案_v2.7.md`
 
 ## 接口与示例
 
@@ -66,7 +62,6 @@
 - 代码与文档评审报告：`docs/code_review_reports/`
   - [代码与文档评审报告第二轮](./code_review_reports/代码与文档评审报告第二轮.md)：`docs/code_review_reports/代码与文档评审报告第二轮.md`
 - 设计评审报告：`docs/design_review_report/`
-  - [反馈闭环长期回归资产升级方案评审报告](./design_review_report/反馈闭环长期回归资产升级方案评审报告.md)：`docs/design_review_report/反馈闭环长期回归资产升级方案评审报告.md`
   - [Agent版本治理与Diff对比重构方案评审报告v2](./design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md)：`docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 - Codex/Claude 配置治理复盘：`docs/codex_setting_review_reports/`
   - [智能体治理反思与改进方案第二轮](./codex_setting_review_reports/智能体治理反思与改进方案第二轮.md)：`docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`

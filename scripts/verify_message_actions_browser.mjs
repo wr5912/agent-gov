@@ -87,13 +87,40 @@ function mockAgentRuns(includeMessages) {
     const n = index + 1;
     const createdAt = new Date(Date.parse(ts) + index * 2000).toISOString();
     const completedAt = new Date(Date.parse(ts) + index * 2000 + 1000).toISOString();
-    const answer = `我是 AgentGov 测试助手。第 ${n} 段回复用于构造可滚动的 Playground 历史，验证自动置底、一键置底和消息滚动导航。`.repeat(2);
+    const userPrompt = n === 1
+      ? [
+        "**测试数据集** 是否应该以资产形式管理？",
+        "",
+        "- 资产口径: `TestDataset`",
+        "- 链接依据: [OKF](https://example.com/okf)",
+      ].join("\n")
+      : `用一句话说明你的角色，序号 ${n}。`;
+    const answer = n === 1
+      ? [
+        "### 结论",
+        "测试数据集应沉淀为 **治理资产**，并进入发布前审计。",
+        "",
+        "| 字段 | 作用 |",
+        "| --- | --- |",
+        "| `dataset_id` | 稳定标识 |",
+        "| `owner` | 责任人 |",
+        "",
+        "```json",
+        "{\"dataset_id\":\"eval-smoke\"}",
+        "```",
+        "",
+        "- 支持回归复用",
+        "- 支持发布前审计",
+        "",
+        "[查看治理入口](https://example.com/governance)",
+      ].join("\n")
+      : `我是 AgentGov 测试助手。第 ${n} 段回复用于构造可滚动的 Playground 历史，验证自动置底、一键置底和消息滚动导航。`.repeat(2);
     return {
       run_id: `mock-run-${n}`,
       session_id: "mock-session",
       sdk_session_id: "mock-session",
       agent_version_id: "v-mock",
-      message: `用一句话说明你的角色，序号 ${n}。`,
+      message: userPrompt,
       answer: includeMessages ? answer : undefined,
       answer_summary: answer,
       messages: includeMessages ? [
@@ -151,6 +178,30 @@ async function waitPreviewOpen(page) {
   }, null, { timeout: 5000 });
 }
 
+async function mockMarkdownChecks(page) {
+  const userMarkdown = page.locator('[data-message-id="history_mock-run-1_user"]').getByTestId("message-markdown");
+  const assistantMarkdown = page.locator('[data-message-id="history_mock-run-1_assistant"]').getByTestId("message-markdown");
+  const userLink = userMarkdown.locator("a").filter({ hasText: "OKF" });
+  const assistantLink = assistantMarkdown.locator("a").filter({ hasText: "查看治理入口" });
+  const userText = await userMarkdown.innerText();
+  const assistantText = await assistantMarkdown.innerText();
+  return {
+    markdownContainerCount: await page.getByTestId("message-markdown").count(),
+    userStrong: await userMarkdown.locator("strong").filter({ hasText: "测试数据集" }).count(),
+    userListItems: await userMarkdown.locator("li").count(),
+    userInlineCode: await userMarkdown.locator("code").filter({ hasText: "TestDataset" }).count(),
+    userLinkTarget: await userLink.first().getAttribute("target").catch(() => ""),
+    userRawMarkersHidden: !userText.includes("**") && !userText.includes("[OKF]"),
+    assistantHeading: await assistantMarkdown.locator("h3").filter({ hasText: "结论" }).count(),
+    assistantStrong: await assistantMarkdown.locator("strong").filter({ hasText: "治理资产" }).count(),
+    assistantTableRows: await assistantMarkdown.locator("table tr").count(),
+    assistantCodeBlock: await assistantMarkdown.locator("pre code").filter({ hasText: "dataset_id" }).count(),
+    assistantListItems: await assistantMarkdown.locator("li").count(),
+    assistantLinkTarget: await assistantLink.first().getAttribute("target").catch(() => ""),
+    assistantRawMarkersHidden: !assistantText.includes("###") && !assistantText.includes("| --- |") && !assistantText.includes("```"),
+  };
+}
+
 async function main() {
   const server = REAL ? null : startVite();
   if (!REAL) await waitForVite();
@@ -193,6 +244,10 @@ async function main() {
         const counts = {};
         for (const t of ["message-action-create-feedback", "message-action-view-trace", "message-action-get-context", "message-action-rerun"]) {
           counts[t] = await page.getByTestId(t).count();
+        }
+        let markdownChecks = { skipped: REAL };
+        if (!REAL) {
+          markdownChecks = { skipped: false, ...await mockMarkdownChecks(page) };
         }
         let scrollChecks = { skipped: REAL };
         if (!REAL) {
@@ -317,6 +372,7 @@ async function main() {
           sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
           settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
           debugClosed,
+          markdownChecks,
           scrollChecks,
           autoPanelChecks,
         };
@@ -339,6 +395,22 @@ async function main() {
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible
+          && (REAL || (
+            !markdownChecks.skipped
+            && markdownChecks.markdownContainerCount >= 28
+            && markdownChecks.userStrong > 0
+            && markdownChecks.userListItems >= 2
+            && markdownChecks.userInlineCode > 0
+            && markdownChecks.userLinkTarget === "_blank"
+            && markdownChecks.userRawMarkersHidden
+            && markdownChecks.assistantHeading > 0
+            && markdownChecks.assistantStrong > 0
+            && markdownChecks.assistantTableRows >= 3
+            && markdownChecks.assistantCodeBlock > 0
+            && markdownChecks.assistantListItems >= 2
+            && markdownChecks.assistantLinkTarget === "_blank"
+            && markdownChecks.assistantRawMarkersHidden
+          ))
           && (REAL || (
             !scrollChecks.skipped
             && scrollChecks.initialDistance <= 24

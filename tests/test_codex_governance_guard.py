@@ -728,6 +728,95 @@ def test_new_archive_docs_file_listed_in_archive_index_passes(tmp_path: Path) ->
     assert "docs/archive/old-plan.md" not in result.stdout
 
 
+def test_archived_original_path_in_active_docs_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/old-plan.md\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `docs/old-plan.md` | `docs/archive/old-plan.md` | `docs/new-plan.md` | `2026-06-23` |\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: docs/README.md: archived original path is still referenced from active docs: docs/old-plan.md"
+        in result.stdout
+    )
+
+
+def test_documentation_contract_reading_archived_original_path_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `docs/old-plan.md` | `docs/archive/old-plan.md` | `docs/new-plan.md` | `2026-06-23` |\n",
+    )
+    _write_text(
+        tmp_path / "tests" / "test_documentation_contracts.py",
+        'def _read_repo_text(path: str) -> str:\n    return ""\n\n'
+        'def test_old_doc():\n    _read_repo_text("docs/old-plan.md")\n',
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: tests/test_documentation_contracts.py: "
+        "documentation contract test still reads archived original path: docs/old-plan.md"
+        in result.stdout
+    )
+
+
+def test_documentation_contract_literal_archived_path_check_passes(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/new-plan.md\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `docs/old-plan.md` | `docs/archive/old-plan.md` | `docs/new-plan.md` | `2026-06-23` |\n",
+    )
+    _write_text(
+        tmp_path / "tests" / "test_documentation_contracts.py",
+        'def test_old_doc_archived():\n    archived_roots = ["docs/old-plan.md"]\n    assert archived_roots\n',
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "archived original path" not in result.stdout
+
+
+def test_archive_index_old_complete_draft_row_does_not_block_active_doc(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/active-plan.md\n")
+    _write_text(tmp_path / "docs" / "active-plan.md", "# Active Plan\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| `docs/active-plan.md` 旧完整稿 | `docs/archive/active-plan-old.md` | `docs/active-plan.md` | `2026-06-23` |\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "docs/active-plan.md" not in result.stdout
+
+
 def test_docs_governance_handles_tracked_binary_assets(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)

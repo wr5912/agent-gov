@@ -40,6 +40,7 @@ git diff --check
 | --- | --- | --- |
 | README / docs | 新能力、测试边界、环境边界和入口索引是否与当前实现一致 | `scripts/check_docs_governance.py` |
 | `.codex` / `.claude` | 项目专项 skill 是否两侧镜像，例外是否明确 | `scripts/check_docs_governance.py` 动态镜像发现 |
+| docs 归档/合并 | 归档原路径是否已移出活跃入口，文档契约测试是否不再读取旧路径 | `tests/test_documentation_contracts.py`、`scripts/check_orphan_tests.py` |
 | 版本面 | `app/version.py`、`frontend/package.json`、Compose image tag 是否同步 | 版本引用检索与 Compose config |
 | 测试面 | 是否按改动类型选择了定向测试、主流程、live 容器验收或全量 `make test` | 测试命令和结果写入最终报告 |
 | 远端校验 | commit、branch、annotated tag 是否真的到远端 | `git ls-remote --heads` / `git ls-remote --tags` |

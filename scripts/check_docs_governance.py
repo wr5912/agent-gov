@@ -32,6 +32,7 @@ MIRRORED_SKILL_EXCLUSIONS = frozenset(
 _CJK_UNFINISHED_MARKERS = ("待" "补充", "占" "位")
 _WORD_UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "place" "holder", "x" "xx", "X" "XX")
 _WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
+_ARCHIVE_ORIGINAL_PATH_PATTERN = re.compile(r"`(docs/[^`]+\.md)`")
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,62 @@ def _archive_index_issues(root: Path, new_archive_docs: list[str]) -> list[DocsG
     return issues
 
 
+def _archived_original_paths(root: Path) -> tuple[str, ...]:
+    """Return archive-index original paths only when the whole cell is the path.
+
+    Rows such as `` `docs/active.md` 旧完整稿 `` describe an archived draft of an
+    active document; they must not make the active document path invalid.
+    """
+    index = _read_existing(root, ARCHIVE_INDEX)
+    archived_paths: set[str] = set()
+    for line in index.splitlines():
+        if not line.startswith("|") or "docs/" not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if len(cells) < len(ARCHIVE_INDEX_HEADERS):
+            continue
+        match = _ARCHIVE_ORIGINAL_PATH_PATTERN.fullmatch(cells[0])
+        if match:
+            archived_paths.add(match.group(1))
+    return tuple(sorted(archived_paths))
+
+
+def _documentation_contract_reads_path(text: str, archived_path: str) -> bool:
+    escaped = re.escape(archived_path)
+    return re.search(r"_read_repo_text\(\s*['\"]" + escaped + r"['\"]\s*\)", text) is not None
+
+
+def _archived_original_reference_issues(root: Path, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
+    archived_paths = _archived_original_paths(root)
+    if not archived_paths:
+        return []
+    issues: list[DocsGovernanceIssue] = []
+    active_doc_paths = sorted(path for path in paths if path == DOCS_INDEX or _is_active_doc(path))
+    for rel_path in active_doc_paths:
+        text = _read_existing(root, rel_path)
+        for archived_path in archived_paths:
+            if archived_path in text:
+                issues.append(
+                    DocsGovernanceIssue(
+                        rel_path,
+                        f"archived original path is still referenced from active docs: {archived_path}",
+                    )
+                )
+
+    contract_path = "tests/test_documentation_contracts.py"
+    if contract_path in set(paths):
+        contract_text = _read_existing(root, contract_path)
+        for archived_path in archived_paths:
+            if _documentation_contract_reads_path(contract_text, archived_path):
+                issues.append(
+                    DocsGovernanceIssue(
+                        contract_path,
+                        f"documentation contract test still reads archived original path: {archived_path}",
+                    )
+                )
+    return issues
+
+
 def _normalized_skill_text(text: str) -> str:
     lines: list[str] = []
     skip_next_blank = False
@@ -231,6 +288,7 @@ def collect_docs_governance_issues(root: Path, base_ref: str | None) -> list[Doc
     issues: list[DocsGovernanceIssue] = []
     issues.extend(_active_doc_index_issues(root, new_active_docs))
     issues.extend(_archive_index_issues(root, new_archive_docs))
+    issues.extend(_archived_original_reference_issues(root, paths))
     issues.extend(_skill_mirror_issues(root))
     issues.extend(_unfinished_marker_issues(root, base_ref, paths))
     issues.extend(_local_artifact_path_issues(root, base_ref, paths))

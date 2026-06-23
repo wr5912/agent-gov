@@ -315,7 +315,15 @@
   gap: 10px;
   min-width: 0;
   color: var(--text-muted);
+  border: 0;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
 }
+.iw-four-stage-step:disabled { cursor: default; opacity: 0.74; }
+.iw-four-stage-step:not(:disabled):hover strong { text-decoration: underline; text-underline-offset: 3px; }
 .iw-four-stage-step:not(:last-child)::after {
   content: "";
   position: absolute;
@@ -342,6 +350,8 @@
 .iw-four-stage-step.is-done .iw-four-stage-index { color: #fff; background: var(--color-success); border-color: var(--color-success); }
 .iw-four-stage-step.is-current { color: var(--color-primary); }
 .iw-four-stage-step.is-current .iw-four-stage-index { color: #fff; background: var(--color-primary); border-color: var(--color-primary); box-shadow: 0 0 0 4px var(--color-primary-soft); }
+.iw-four-stage-step.is-reviewing .iw-four-stage-index { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.14); }
+.iw-four-stage-step.is-reviewing strong { text-decoration: underline; text-underline-offset: 3px; }
 
 .iw-decision-card {
   display: grid;
@@ -388,6 +398,18 @@
 }
 
 .iw-stage-work-area { display: flex; flex-direction: column; gap: 12px; }
+.iw-stage-review-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+}
 .iw-stage-toolbar {
   display: flex;
   justify-content: space-between;
@@ -431,6 +453,7 @@
   letter-spacing: 0;
 }
 .iw-stage-card-head h4 span { color: var(--color-primary); font-weight: 800; }
+.source-management-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 .iw-link-button {
   border: 0;
   background: transparent;

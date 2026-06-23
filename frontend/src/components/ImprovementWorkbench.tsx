@@ -41,15 +41,15 @@ import {
   type ImprovementSimilarItem,
 } from "../api/improvements";
 import { requestJson } from "../api/request";
-import { describeImprovementStage, stageLabel } from "../improvementStage";
+import { IMPROVEMENT_STAGE_ORDER, describeImprovementStage, stageLabel, type VisibleImprovementStageKey } from "../improvementStage";
 import { buildContext, type ContextType } from "../contextPackage";
 import { listAssets, createAsset, type Asset } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
 import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
-import { ImprovementAddFeedbackFlow } from "./ImprovementAddFeedbackFlow";
 import { ImprovementStagePanels } from "./ImprovementStagePanels";
+import { ImprovementSourceManagementDrawer } from "./ImprovementSourceManagementDrawer";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
@@ -82,8 +82,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
   const [newLinkKind, setNewLinkKind] = useState("attribution");
   const [newLinkRef, setNewLinkRef] = useState("");
-  const [showAllFeedbacks, setShowAllFeedbacks] = useState(false);
   const [addFeedbackOpen, setAddFeedbackOpen] = useState(false);
+  const [sourceDrawerOpen, setSourceDrawerOpen] = useState(false);
+  const [reviewStageKey, setReviewStageKey] = useState<VisibleImprovementStageKey | null>(null);
 
   const refresh = useCallback(async () => {
     setError(undefined);
@@ -140,13 +141,16 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setOptPlan(null);
       setExecution(null);
       setRegressionAssessment(null);
+      setSourceDrawerOpen(false);
+      setReviewStageKey(null);
       return;
     }
     let cancelled = false;
     setLastAuto(undefined);
     setEditingAttribution(false);
-    setShowAllFeedbacks(false);
     setAddFeedbackOpen(false);
+    setSourceDrawerOpen(false);
+    setReviewStageKey(null);
     setDismissedSimilar(new Set());
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
@@ -208,6 +212,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void run(async () => {
       const updated = await setImprovementStage(clientConfig, item.improvement_id, targetStage);
       setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+      setReviewStageKey(null);
     });
   };
 
@@ -380,7 +385,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     if (!selected) return;
     const rows = await listImprovementFeedbacks(clientConfig, selected.improvement_id);
     setFeedbacks(rows);
-    setShowAllFeedbacks(true);
+    setSourceDrawerOpen(true);
+    setAddFeedbackOpen(false);
     await refresh();
   };
 
@@ -402,6 +408,19 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
 
   const agentName = (agentId: string) => businessAgents.find((agent) => agent.agent_id === agentId)?.name || agentId;
   const stageView = selected ? describeImprovementStage(selected.improvement_stage) : null;
+  const reviewStageDef = reviewStageKey ? IMPROVEMENT_STAGE_ORDER.find((stage) => stage.key === reviewStageKey) : undefined;
+  const reviewStageIndex = reviewStageDef ? IMPROVEMENT_STAGE_ORDER.findIndex((stage) => stage.key === reviewStageDef.key) : -1;
+  const canReviewStage = !!stageView && !!reviewStageDef && reviewStageIndex >= 0 && reviewStageIndex <= stageView.stageIndex;
+  const panelStageView = stageView && canReviewStage && reviewStageKey
+    ? {
+        ...stageView,
+        stageIndex: reviewStageIndex,
+        label: reviewStageDef.label,
+        visibleKey: reviewStageKey,
+        description: reviewStageDef.description,
+      }
+    : stageView;
+  const reviewingPastStage = !!stageView && !!panelStageView && panelStageView.visibleKey !== stageView.visibleKey;
 
   return (
     <div className="improvement-workbench" data-testid="improvement-workbench">
@@ -488,14 +507,18 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       </section>
 
       <section className="iw-detail-panel">
-        {selected && stageView ? (
+        {selected && stageView && panelStageView ? (
           <div
             className="iw-panel-body"
             data-testid="improvement-detail"
             data-item-id={selected.improvement_id}
             data-stage={selected.improvement_stage}
           >
-            <ImprovementClosedLoopSpine stageView={stageView} />
+            <ImprovementClosedLoopSpine
+              stageView={stageView}
+              reviewStageKey={reviewingPastStage ? panelStageView.visibleKey : null}
+              onReviewStage={(stageKey) => setReviewStageKey(stageKey === stageView.visibleKey ? null : stageKey)}
+            />
             <ImprovementDecisionPanel
               item={selected}
               agentName={agentName(selected.agent_id)}
@@ -504,21 +527,12 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               busy={busy}
               onPrimaryAction={() => handleAdvance(selected, stageView.primaryAction!.stage)}
               onBackAction={(stage) => handleAdvance(selected, stage)}
-              onManageSources={() => setShowAllFeedbacks((prev) => !prev)}
+              onManageSources={() => setSourceDrawerOpen(true)}
             />
-            {addFeedbackOpen ? (
-              <ImprovementAddFeedbackFlow
-                clientConfig={clientConfig}
-                item={selected}
-                busy={busy}
-                onAdded={reloadSelectedFeedbacks}
-                onCancel={() => setAddFeedbackOpen(false)}
-              />
-            ) : null}
 
             <ImprovementStagePanels
               item={selected}
-              stageView={stageView}
+              stageView={panelStageView}
               normalizedFeedback={normalizedFeedback}
               attribution={attribution}
               feedbacks={feedbacks}
@@ -526,14 +540,14 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               execution={execution}
               regressionAssessment={regressionAssessment}
               assets={sedimentAssets}
-              showAllFeedbacks={showAllFeedbacks}
               editingAttribution={editingAttribution}
               attrDraft={attrDraft}
               busy={busy}
               langfuseUrl={langfuseUrl}
-              onToggleAllFeedbacks={() => setShowAllFeedbacks((prev) => !prev)}
-              onAddFeedback={() => { setShowAllFeedbacks(false); setAddFeedbackOpen(true); }}
-              onSplit={(ref) => handleSplit(selected, ref)}
+              readOnly={reviewingPastStage}
+              reviewingLabel={reviewingPastStage ? panelStageView.label : undefined}
+              onOpenSources={() => setSourceDrawerOpen(true)}
+              onReturnCurrentStage={() => setReviewStageKey(null)}
               onGenerateAttribution={() => handleGenerateAttribution(selected)}
               onConfirmAttribution={() => handleConfirmAttribution(selected)}
               onEditAttribution={handleEditAttribution}
@@ -549,6 +563,22 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onAdoptTestDataset={() => handleAdoptRegression(selected)}
               onOpenContext={() => setContextOpen(true)}
             />
+
+            {sourceDrawerOpen ? (
+              <ImprovementSourceManagementDrawer
+                clientConfig={clientConfig}
+                item={selected}
+                feedbacks={feedbacks}
+                busy={busy}
+                readOnly={reviewingPastStage}
+                addingFeedback={addFeedbackOpen}
+                onStartAddFeedback={() => setAddFeedbackOpen(true)}
+                onCancelAddFeedback={() => setAddFeedbackOpen(false)}
+                onAddedFeedback={reloadSelectedFeedbacks}
+                onSplit={(ref) => handleSplit(selected, ref)}
+                onClose={() => { setSourceDrawerOpen(false); setAddFeedbackOpen(false); }}
+              />
+            ) : null}
 
             <details className="iw-advanced" data-testid="improvement-advanced">
               <summary>高级（自动化策略 / 相似归并 / 关联闭环对象）</summary>

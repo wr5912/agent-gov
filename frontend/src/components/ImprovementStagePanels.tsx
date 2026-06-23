@@ -10,7 +10,6 @@ import type {
   RegressionAssessment,
 } from "../api/improvements";
 import type { ImprovementStageView } from "../improvementStage";
-import { SOURCE_LABEL } from "./improvementWorkbench.helpers";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 
 interface AttrDraft {
@@ -29,14 +28,14 @@ export function ImprovementStagePanels({
   execution,
   regressionAssessment,
   assets,
-  showAllFeedbacks,
   editingAttribution,
   attrDraft,
   busy,
   langfuseUrl,
-  onToggleAllFeedbacks,
-  onAddFeedback,
-  onSplit,
+  readOnly = false,
+  reviewingLabel,
+  onOpenSources,
+  onReturnCurrentStage,
   onGenerateAttribution,
   onConfirmAttribution,
   onEditAttribution,
@@ -61,14 +60,14 @@ export function ImprovementStagePanels({
   execution: ExecutionRecord | null;
   regressionAssessment: RegressionAssessment | null;
   assets: Asset[];
-  showAllFeedbacks: boolean;
   editingAttribution: boolean;
   attrDraft: AttrDraft;
   busy: boolean;
   langfuseUrl: string;
-  onToggleAllFeedbacks: () => void;
-  onAddFeedback: () => void;
-  onSplit: (feedbackRef: string) => void;
+  readOnly?: boolean;
+  reviewingLabel?: string;
+  onOpenSources: () => void;
+  onReturnCurrentStage?: () => void;
   onGenerateAttribution: () => void;
   onConfirmAttribution: () => void;
   onEditAttribution: (value: Attribution) => void;
@@ -86,6 +85,12 @@ export function ImprovementStagePanels({
 }) {
   return (
     <div className="iw-stage-work-area" data-testid="stage-work-area" data-visible-stage={stageView.visibleKey}>
+      {readOnly && reviewingLabel ? (
+        <div className="iw-stage-review-banner" data-testid="stage-review-banner">
+          <span>正在回看：{reviewingLabel}。这里只展示历史阶段信息，不会改变当前事项阶段。</span>
+          {onReturnCurrentStage ? <button className="iw-secondary-button" type="button" data-testid="return-current-stage" onClick={onReturnCurrentStage}>返回当前阶段</button> : null}
+        </div>
+      ) : null}
       <div className="iw-stage-toolbar">
         <span>阶段工作面板 · {stageView.label}</span>
         <button className="iw-secondary-button" type="button" data-testid="open-context-drawer" onClick={onOpenContext}>获取上下文</button>
@@ -95,11 +100,9 @@ export function ImprovementStagePanels({
           item={item}
           normalizedFeedback={normalizedFeedback}
           feedbacks={feedbacks}
-          showAllFeedbacks={showAllFeedbacks}
           busy={busy}
-          onToggleAllFeedbacks={onToggleAllFeedbacks}
-          onAddFeedback={onAddFeedback}
-          onSplit={onSplit}
+          readOnly={readOnly}
+          onOpenSources={onOpenSources}
           onOpenContext={onOpenContext}
         />
       ) : null}
@@ -112,6 +115,7 @@ export function ImprovementStagePanels({
           attrDraft={attrDraft}
           busy={busy}
           langfuseUrl={langfuseUrl}
+          readOnly={readOnly}
           onGenerateAttribution={onGenerateAttribution}
           onConfirmAttribution={onConfirmAttribution}
           onEditAttribution={onEditAttribution}
@@ -127,6 +131,7 @@ export function ImprovementStagePanels({
           optimizationPlan={optimizationPlan}
           execution={execution}
           busy={busy}
+          readOnly={readOnly}
           onGenerateOpt={onGenerateOpt}
           onConfirmOpt={onConfirmOpt}
           onRecordExec={onRecordExec}
@@ -142,6 +147,7 @@ export function ImprovementStagePanels({
           regressionAssessment={regressionAssessment}
           assets={assets}
           busy={busy}
+          readOnly={readOnly}
           onGenerateRegression={onGenerateRegression}
           onAdoptTestDataset={onAdoptTestDataset}
         />
@@ -155,21 +161,17 @@ function FeedbackSortingPanels({
   item,
   normalizedFeedback,
   feedbacks,
-  showAllFeedbacks,
   busy,
-  onToggleAllFeedbacks,
-  onAddFeedback,
-  onSplit,
+  readOnly,
+  onOpenSources,
   onOpenContext,
 }: {
   item: ImprovementItem;
   normalizedFeedback: NormalizedFeedback | null;
   feedbacks: ImprovementFeedback[];
-  showAllFeedbacks: boolean;
   busy: boolean;
-  onToggleAllFeedbacks: () => void;
-  onAddFeedback: () => void;
-  onSplit: (feedbackRef: string) => void;
+  readOnly: boolean;
+  onOpenSources: () => void;
   onOpenContext: () => void;
 }) {
   const refs = item.source_feedback_refs ?? [];
@@ -193,37 +195,14 @@ function FeedbackSortingPanels({
           </ul>
           <div className="iw-evidence-state">证据状态：足够进入归因分析</div>
         </StageCard>
-        <StageCard letter="C" title="来源反馈" actionLabel="管理来源与归并" onAction={onToggleAllFeedbacks} testId="stage-panel-source-feedback">
+        <StageCard letter="C" title="来源反馈" actionLabel={readOnly ? "查看来源" : "管理来源与归并"} onAction={onOpenSources} testId="stage-panel-source-feedback">
           <SourceFeedbackList item={item} feedbacks={feedbacks} compact />
           <div className="iw-action-row">
-            <button className="iw-secondary-button" type="button" data-testid="add-feedback-to-improvement" disabled={busy || item.improvement_status === "archived"} onClick={onAddFeedback}>添加反馈</button>
-            <button className="iw-secondary-button" type="button" data-testid="view-all-feedbacks" onClick={onToggleAllFeedbacks}>{showAllFeedbacks ? "收起全部反馈" : "查看全部反馈"}</button>
+            {!readOnly ? <button className="iw-secondary-button" type="button" data-testid="view-all-feedbacks" disabled={busy} onClick={onOpenSources}>管理来源与归并</button> : null}
+            {readOnly ? <button className="iw-secondary-button" type="button" data-testid="view-all-feedbacks" onClick={onOpenSources}>查看全部反馈</button> : null}
           </div>
         </StageCard>
       </div>
-      {showAllFeedbacks ? (
-        <section className="iw-stage-card" data-testid="source-feedback-table">
-          <div className="iw-stage-card-head"><h4>来源反馈（{feedbacks.length || refs.length}）</h4></div>
-          {feedbacks.length ? (
-            <table className="iw-feedback-table">
-              <thead><tr><th>#</th><th>反馈摘要</th><th>来源</th><th>版本 / 场景</th><th>操作</th></tr></thead>
-              <tbody>
-                {feedbacks.map((f, i) => (
-                  <tr key={f.feedback_id} data-testid="source-feedback-row">
-                    <td>{i + 1}</td>
-                    <td>{f.summary}</td>
-                    <td>{SOURCE_LABEL[f.source] ?? f.source}</td>
-                    <td>{[f.agent_version_id, f.scenario].filter(Boolean).join(" / ") || "-"}</td>
-                    <td>{refs.length > 1 ? <button className="iw-link-button" type="button" data-testid="split-ref" onClick={() => onSplit(f.feedback_id)}>移出当前事项</button> : "保留"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="iw-source-refs" data-testid="improvement-source-refs">{refs.map((ref) => <span className="iw-ref" key={ref}>{ref}</span>)}</div>
-          )}
-        </section>
-      ) : null}
     </>
   );
 }
@@ -236,6 +215,7 @@ function AttributionPanels({
   attrDraft,
   busy,
   langfuseUrl,
+  readOnly,
   onGenerateAttribution,
   onConfirmAttribution,
   onEditAttribution,
@@ -250,6 +230,7 @@ function AttributionPanels({
   attrDraft: AttrDraft;
   busy: boolean;
   langfuseUrl: string;
+  readOnly: boolean;
   onGenerateAttribution: () => void;
   onConfirmAttribution: () => void;
   onEditAttribution: (value: Attribution) => void;
@@ -275,17 +256,17 @@ function AttributionPanels({
             <>
               <div className="iw-detail-summary">{attribution.summary}</div>
               <span className="iw-source-badge" data-testid="attribution-source" data-source={attribution.generated_by}>{attribution.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
-              <div className="iw-action-row">
+              {!readOnly ? <div className="iw-action-row">
                 {attribution.status !== "confirmed" ? <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={onConfirmAttribution}>确认归因</button> : null}
                 <button className="iw-secondary-button" type="button" data-testid="edit-attribution" disabled={busy} onClick={() => onEditAttribution(attribution)}>修改</button>
                 <button className="iw-secondary-button" type="button" data-testid="regenerate-attribution" disabled={busy} onClick={onGenerateAttribution}>重新归因</button>
-              </div>
+              </div> : null}
             </>
           )
         ) : (
           <>
             <div className="iw-next-step">尚未生成归因。可从系统理解生成初步归因，再确认或修改。</div>
-            <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={onGenerateAttribution}>生成归因（初步）</button>
+            {!readOnly ? <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={onGenerateAttribution}>生成归因（初步）</button> : null}
           </>
         )}
       </StageCard>
@@ -326,6 +307,7 @@ function OptimizationPanels({
   optimizationPlan,
   execution,
   busy,
+  readOnly,
   onGenerateOpt,
   onConfirmOpt,
   onRecordExec,
@@ -337,6 +319,7 @@ function OptimizationPanels({
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
   busy: boolean;
+  readOnly: boolean;
   onGenerateOpt: () => void;
   onConfirmOpt: () => void;
   onRecordExec: () => void;
@@ -352,6 +335,7 @@ function OptimizationPanels({
           optPlan={optimizationPlan}
           execution={null}
           attribution={attribution}
+          readOnly={readOnly}
           onGenerateOpt={onGenerateOpt}
           onConfirmOpt={onConfirmOpt}
           onRecordExec={onRecordExec}
@@ -388,6 +372,7 @@ function OptimizationPanels({
           optPlan={null}
           execution={execution}
           attribution={attribution}
+          readOnly={readOnly}
           onGenerateOpt={onGenerateOpt}
           onConfirmOpt={onConfirmOpt}
           onRecordExec={onRecordExec}
@@ -406,6 +391,7 @@ function TestReleasePanels({
   regressionAssessment,
   assets,
   busy,
+  readOnly,
   onGenerateRegression,
   onAdoptTestDataset,
 }: {
@@ -415,6 +401,7 @@ function TestReleasePanels({
   regressionAssessment: RegressionAssessment | null;
   assets: Asset[];
   busy: boolean;
+  readOnly: boolean;
   onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
 }) {
@@ -442,10 +429,10 @@ function TestReleasePanels({
             <span>覆盖场景数 <strong>{Math.max(1, sourceRefs.length)}</strong></span>
             <span>预计耗时 <strong>18m</strong></span>
           </div>
-          <div className="iw-action-row">
+          {!readOnly ? <div className="iw-action-row">
             <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
             <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!datasetAsset} onClick={onAdoptTestDataset}>{datasetAsset ? "已纳入测试集" : "纳入测试集"}</button>
-          </div>
+          </div> : null}
         </StageCard>
         <StageCard letter="B" title="回归执行状态" actionLabel="查看执行日志" testId="regression-guarantee">
           <div className="iw-regression-empty">

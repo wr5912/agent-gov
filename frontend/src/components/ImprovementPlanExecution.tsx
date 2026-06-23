@@ -2,13 +2,14 @@
 import type { ImprovementItem, OptimizationPlan, ExecutionRecord, Attribution } from "../api/improvements";
 
 export function ImprovementPlanExecution({
-  item, busy, optPlan, execution, attribution, onGenerateOpt, onConfirmOpt, onRecordExec, onApplyExec, onConfirmExec,
+  item, busy, optPlan, execution, attribution, readOnly = false, onGenerateOpt, onConfirmOpt, onRecordExec, onApplyExec, onConfirmExec,
 }: {
   item: ImprovementItem;
   busy: boolean;
   optPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
   attribution: Attribution | null;
+  readOnly?: boolean;
   onGenerateOpt: () => void;
   onConfirmOpt: () => void;
   onRecordExec: () => void;
@@ -30,14 +31,14 @@ export function ImprovementPlanExecution({
               <ul className="iw-content-list" data-testid="optimization-plan-changes">{optPlan.changes.map((c, i) => <li key={i}><strong>{c.target}</strong>：{c.change}</li>)}</ul>
             </>
           ) : null}
-          {!archived ? (
+          {!archived && !readOnly ? (
             <div className="iw-action-row">
               {optPlan.status !== "confirmed" ? <button className="iw-secondary-button" type="button" data-testid="confirm-optimization-plan" disabled={busy} onClick={onConfirmOpt}>确认方案</button> : null}
               <button className="iw-secondary-button" type="button" data-testid="regenerate-optimization-plan" disabled={busy} onClick={onGenerateOpt}>重新整理</button>
             </div>
           ) : null}
         </div>
-      ) : !archived && attribution?.status === "confirmed" ? (
+      ) : !archived && !readOnly && attribution?.status === "confirmed" ? (
         <div className="iw-detail-section" data-testid="optimization-plan-empty">
           <h4>优化方案</h4>
           <div className="iw-next-step">归因已确认。可生成初步优化方案，再确认。</div>
@@ -60,11 +61,11 @@ export function ImprovementPlanExecution({
           {execution.applied_agent_version_id ? (
             <div className="iw-list-item-meta" data-testid="execution-version-binding">候选 Agent 版本：{execution.applied_agent_version_id}{execution.change_set_id ? ` · 变更集 ${execution.change_set_id}` : ""}</div>
           ) : null}
-          {!archived && execution.status !== "confirmed" ? (
+          {!archived && !readOnly && execution.status !== "confirmed" ? (
             <button className="iw-secondary-button" type="button" data-testid="confirm-execution" disabled={busy} onClick={onConfirmExec} style={{ marginTop: 8 }}>确认执行</button>
           ) : null}
         </div>
-      ) : !archived && optPlan?.status === "confirmed" ? (
+      ) : !archived && !readOnly && optPlan?.status === "confirmed" ? (
         <div className="iw-detail-section" data-testid="execution-empty">
           <h4>执行记录</h4>
           <div className="iw-next-step">方案已确认。可让治理 Agent 在隔离变更集中自动应用并生成候选版本，或人工记录执行结果。</div>

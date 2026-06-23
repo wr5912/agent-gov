@@ -393,21 +393,36 @@ const RULES = [
     const feedbackTopNav = await page.getByRole("button", { name: "反馈优化", exact: true }).count();
     return { ok: nav === 2 && !asset && !release && feedbackTopNav === 0, detail: `topbar-nav=${nav} nav-asset=${asset} nav-release=${release} 反馈优化顶级=${feedbackTopNav}（期望 2/false/false/0）` };
   } },
-  { id: "settings-ia", phase: "P0", desc: "Settings 含 业务Agent管理/自动化策略/资产Registry/Developer 区块", async fn(page) {
+  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含侧栏导航、内容区和 业务Agent/自动化策略/资产Registry/Developer 分组", async fn(page) {
     await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
     await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
+    const box = await page.getByTestId("settings-panel").boundingBox();
+    const wide = (box?.width || 0) >= 1000;
+    const tall = (box?.height || 0) >= 760;
+    const navigation = await visible(page, "settings-navigation");
+    const content = await visible(page, "settings-content");
+    const oldHorizontalTabs = await page.locator(".settings-tabs").count();
     const tabs = ["agents", "automation", "assets", "developer"];
     const found = [];
     for (const tab of tabs) {
       await page.getByTestId(`settings-tab-${tab}`).click();
       const section = tab === "agents" ? "settings-section-agents" : tab === "assets" ? "settings-section-assets" : `settings-section-${tab}`;
-      if (await has(page, section)) found.push(section);
+      await page.getByTestId(section).waitFor({ timeout: 5000 }).catch(() => {});
+      if (await visible(page, section)) found.push(section);
     }
-    const tabsVisible = await has(page, "settings-tabs");
+    await page.getByTestId("settings-tab-agents").click();
+    const agentTable = await visible(page, "settings-agent-table");
+    await page.getByTestId("settings-tab-automation").click();
+    const modeGroup = await visible(page, "settings-automation-mode");
+    await page.getByTestId("settings-tab-assets").click();
+    const assetEntry = await visible(page, "settings-open-asset");
+    await page.getByTestId("settings-tab-developer").click();
+    const runtimeInput = await visible(page, "settings-api-base");
     // 关闭设置弹窗，避免 modal-backdrop 拦截后续规则的点击。
-    await page.getByTestId("settings-panel").getByRole("button", { name: "关闭" }).click().catch(() => {});
+    await page.locator(".settings-footer").getByRole("button", { name: "关闭" }).click().catch(() => {});
     await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    return { ok: tabsVisible && found.length === tabs.length, detail: `${found.length}/${tabs.length}: ${found.join(",")} tabs=${tabsVisible}` };
+    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && modeGroup && assetEntry && runtimeInput;
+    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} mode=${modeGroup} asset=${assetEntry} runtime=${runtimeInput}` };
   } },
   { id: "playground-clean", phase: "P1", desc: "Playground 主区无旧 Subagent/Sessions/Skills 侧栏、无 Inspector、无常显 control-strip", async fn(page) {
     await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);
@@ -700,14 +715,28 @@ const RULES = [
     }
     return { ok: true, detail: seen.join(" | ") };
   } },
-  { id: "closed-loop-spine", phase: "P1", desc: "改进详情始终显示四阶段 spine：反馈整理/归因分析/优化执行/测试发布", async fn(page) {
-    if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
+  { id: "closed-loop-spine", phase: "P1", desc: "改进详情始终显示四阶段 spine，并支持已完成阶段只读回看、未来阶段禁用", async fn(page) {
+    if (!(await openImprovementById(page, stageTarget("optimization", "imp-demo03")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("closed-loop-spine").waitFor({ timeout: 6000 }).catch(() => {});
     const spine = await has(page, "closed-loop-spine");
     const steps = await page.getByTestId("closed-loop-step").count();
     const labels = await page.getByTestId("closed-loop-step").evaluateAll((nodes) => nodes.map((node) => node.textContent || "").join("|")).catch(() => "");
     const okLabels = ["反馈整理", "归因分析", "优化执行", "测试发布"].every((label) => labels.includes(label));
-    return { ok: spine && steps === 4 && okLabels, detail: `spine=${spine} steps=${steps} labels=${labels}` };
+    const currentBefore = await page.getByTestId("current-decision-card").getAttribute("data-visible-stage").catch(() => "");
+    const feedbackStep = page.getByTestId("closed-loop-step").filter({ hasText: "反馈整理" }).first();
+    const futureStep = page.getByTestId("closed-loop-step").filter({ hasText: "测试发布" }).first();
+    const futureDisabled = await futureStep.isDisabled().catch(() => false);
+    await feedbackStep.click();
+    await page.getByTestId("stage-review-banner").waitFor({ timeout: 6000 }).catch(() => {});
+    const reviewedStage = await page.getByTestId("stage-work-area").getAttribute("data-visible-stage").catch(() => "");
+    const decisionAfterReview = await page.getByTestId("current-decision-card").getAttribute("data-visible-stage").catch(() => "");
+    const factActions = await page.locator('[data-testid="stage-work-area"] [data-testid="confirm-attribution"], [data-testid="stage-work-area"] [data-testid="generate-attribution"], [data-testid="stage-work-area"] [data-testid="confirm-optimization-plan"], [data-testid="stage-work-area"] [data-testid="adopt-regression"]').count();
+    await page.getByTestId("return-current-stage").click();
+    const returnedStage = await page.getByTestId("stage-work-area").getAttribute("data-visible-stage").catch(() => "");
+    return {
+      ok: spine && steps === 4 && okLabels && currentBefore === "optimization_execution" && futureDisabled && reviewedStage === "feedback_sorting" && decisionAfterReview === currentBefore && factActions === 0 && returnedStage === "optimization_execution",
+      detail: `spine=${spine} steps=${steps} futureDisabled=${futureDisabled} reviewed=${reviewedStage} decision=${currentBefore}->${decisionAfterReview} factActions=${factActions} returned=${returnedStage}`,
+    };
   } },
   { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解(NormalizedFeedback) + 归因(Attribution 正文/责任边界/证据)", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("attribution", "imp-demo02")))) return { ok: false, detail: "无改进事项" };
@@ -752,13 +781,18 @@ const RULES = [
     const autoVisible = await visible(page, "automation-mode");
     return { ok: advanced && !autoVisible, detail: `高级折叠=${advanced} 自动化默认隐藏=${!autoVisible}` };
   } },
-  { id: "source-feedback-table", phase: "P3", desc: "来源反馈表(§8.4 #/反馈摘要/来源/状态)", async fn(page) {
+  { id: "source-feedback-table", phase: "P3", desc: "来源反馈表(§8.4 #/反馈摘要/来源/状态) 进入来源管理抽屉", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
+    const hiddenInline = await page.getByTestId("source-feedback-table").isVisible().catch(() => false);
     await page.getByTestId("view-all-feedbacks").click().catch(() => {});
+    await page.getByTestId("source-management-drawer").waitFor({ timeout: 6000 }).catch(() => {});
     await page.getByTestId("source-feedback-table").waitFor({ timeout: 6000 }).catch(() => {});
+    const drawer = await has(page, "source-management-drawer");
+    const basis = await has(page, "source-merge-basis");
     const tbl = await has(page, "source-feedback-table");
     const rows = await page.getByTestId("source-feedback-row").count();
-    return { ok: tbl && rows >= 1, detail: `表=${tbl} 行=${rows}` };
+    await page.getByTestId("source-management-drawer").getByLabel("关闭").click().catch(() => {});
+    return { ok: !hiddenInline && drawer && basis && tbl && rows >= 1, detail: `inlineHidden=${!hiddenInline} drawer=${drawer} basis=${basis} 表=${tbl} 行=${rows}` };
   } },
   { id: "optimization-execution", phase: "P3", desc: "优化方案(§106 方案正文+变更项) + 执行记录(§107) 内容子资源", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("optimization", "imp-demo03")))) return { ok: false, detail: "无改进事项" };

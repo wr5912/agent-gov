@@ -1,9 +1,13 @@
-import type { ImprovementStageView } from "../improvementStage";
+import type { ImprovementStageView, VisibleImprovementStageKey } from "../improvementStage";
 
 export function ImprovementClosedLoopSpine({
   stageView,
+  reviewStageKey,
+  onReviewStage,
 }: {
   stageView: ImprovementStageView;
+  reviewStageKey: VisibleImprovementStageKey | null;
+  onReviewStage: (stageKey: VisibleImprovementStageKey) => void;
 }) {
   return (
     <div className="iw-four-stage-spine" data-testid="closed-loop-spine" aria-label="四阶段改进治理主链路">
@@ -13,14 +17,28 @@ export function ImprovementClosedLoopSpine({
             : index === stageView.stageIndex
               ? "current"
               : "todo";
+        const stageKey = stage.key as VisibleImprovementStageKey;
+        const isReviewing = reviewStageKey === stageKey;
+        const canReview = index <= stageView.stageIndex;
         return (
-          <div className={`iw-four-stage-step is-${state}`} data-testid="closed-loop-step" data-state={state} data-stage-key={stage.key} key={stage.key}>
+          <button
+            className={`iw-four-stage-step is-${state} ${isReviewing ? "is-reviewing" : ""}`}
+            type="button"
+            data-testid="closed-loop-step"
+            data-state={state}
+            data-reviewing={isReviewing ? "true" : "false"}
+            data-stage-key={stage.key}
+            disabled={!canReview}
+            aria-pressed={isReviewing}
+            onClick={() => onReviewStage(stageKey)}
+            key={stage.key}
+          >
             <span className="iw-four-stage-index">{state === "done" ? "✓" : index + 1}</span>
             <span>
               <strong>{stage.label}</strong>
-              <small>{index === stageView.stageIndex ? stageView.description : index < stageView.stageIndex ? "完成" : "待开始"}</small>
+              <small>{isReviewing ? "正在回看" : index === stageView.stageIndex ? stageView.description : index < stageView.stageIndex ? "完成" : "待开始"}</small>
             </span>
-          </div>
+          </button>
         );
       })}
     </div>

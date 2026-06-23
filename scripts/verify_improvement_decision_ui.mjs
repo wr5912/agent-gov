@@ -222,9 +222,12 @@ async function main() {
     await page.screenshot({ path: `${screenshotDir}/${REAL ? "real" : "mock"}-improvement-decision.png`, fullPage: true });
 
     const hiddenTable = await page.getByTestId("source-feedback-table").isVisible().catch(() => false);
-    if (hiddenTable) throw new Error("source feedback table should be hidden before 查看全部反馈");
+    if (hiddenTable) throw new Error("source feedback table should be hidden before opening source drawer");
     await page.getByTestId("view-all-feedbacks").click();
+    await assertVisible(page, "source-management-drawer");
+    await assertVisible(page, "source-merge-basis");
     await assertVisible(page, "source-feedback-table");
+    await page.getByTestId("source-feedback-row").first().waitFor({ timeout: 10_000 });
     const rowsBefore = await page.getByTestId("source-feedback-row").count();
     if (rowsBefore < 1) throw new Error(`source feedback rows before add=${rowsBefore}`);
 
@@ -240,6 +243,7 @@ async function main() {
     await page.screenshot({ path: `${screenshotDir}/${REAL ? "real" : "mock"}-add-feedback-confirm.png`, fullPage: true });
     await page.getByTestId("add-feedback-confirm-submit").click();
     await page.getByTestId("add-feedback-flow").waitFor({ state: "detached", timeout: 10_000 });
+    await assertVisible(page, "source-management-drawer");
     await assertVisible(page, "source-feedback-table");
     const rowsAfter = await page.getByTestId("source-feedback-row").count();
     if (rowsAfter <= rowsBefore) throw new Error(`source feedback rows did not increase: ${rowsBefore} -> ${rowsAfter}`);

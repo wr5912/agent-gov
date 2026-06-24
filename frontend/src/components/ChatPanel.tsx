@@ -1,4 +1,4 @@
-import { History, Loader2, MessageSquarePlus, Send, Settings2, Square } from "lucide-react";
+import { Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Send, Settings2, Square } from "lucide-react";
 import { PlaygroundMessageScrollNavigator } from "./PlaygroundMessageScrollNavigator";
 import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation";
 import type { ChatMessage } from "../types/runtime";
@@ -11,11 +11,12 @@ interface ChatPanelProps {
   streaming: boolean;
   streamingAssistantMessageId?: string;
   activeSessionId?: string;
+  sessionSidebarOpen: boolean;
   agentName: string;
   onInputChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
-  onOpenSession: () => void;
+  onToggleSession: () => void;
   onOpenRuntimeSettings: () => void;
   onOpenFeedback: (message?: ChatMessage) => void;
   onOpenTrace: (message: ChatMessage) => void;
@@ -29,11 +30,12 @@ export function ChatPanel({
   streaming,
   streamingAssistantMessageId,
   activeSessionId,
+  sessionSidebarOpen,
   agentName,
   onInputChange,
   onSend,
   onStop,
-  onOpenSession,
+  onToggleSession,
   onOpenRuntimeSettings,
   onOpenFeedback,
   onOpenTrace,
@@ -53,17 +55,27 @@ export function ChatPanel({
   return (
     <main className="chat-panel chat-panel-v27" data-testid="playground">
       <header className="chat-header">
-        <div>
-          <h2>Playground · {agentName}</h2>
-          <p>{activeSessionId ? `会话进行中` : "输入任务，发送第一条消息"}</p>
+        <div className="chat-header-left">
+          <button
+            className="icon-button playground-session-icon-trigger"
+            type="button"
+            data-testid="playground-session-trigger"
+            onClick={onToggleSession}
+            aria-label={sessionSidebarOpen ? "折叠会话栏" : "展开会话栏"}
+            aria-expanded={sessionSidebarOpen}
+            title={sessionSidebarOpen ? "折叠会话栏" : "展开会话栏"}
+          >
+            {sessionSidebarOpen ? <PanelLeftClose size={17} /> : <PanelLeftOpen size={17} />}
+          </button>
+          <div className="chat-title">
+            <h2>Playground · {agentName}</h2>
+            <p>{activeSessionId ? `会话进行中` : "输入任务，发送第一条消息"}</p>
+          </div>
         </div>
         <div className="chat-header-actions">
           {streaming ? <span className="run-status"><Loader2 size={14} className="spin" /> 运行中</span> : <span className="idle-status">Ready</span>}
           <button className="ghost-button" type="button" data-testid="feedback-drawer-open" onClick={() => onOpenFeedback()}>
             <MessageSquarePlus size={15} /> 创建反馈
-          </button>
-          <button className="ghost-button" type="button" data-testid="playground-session-trigger" onClick={onOpenSession}>
-            <History size={15} /> 会话
           </button>
           <button className="ghost-button" type="button" data-testid="playground-runtime-settings-trigger" onClick={onOpenRuntimeSettings}>
             <Settings2 size={15} /> 运行设置
@@ -77,7 +89,7 @@ export function ChatPanel({
             <div className="welcome-card">
               <div className="welcome-mark">⌘</div>
               <h3>开始测试 {agentName}</h3>
-              <p>在下方输入任务即可对话；右上「会话」展开历史导航，「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
+              <p>在下方输入任务即可对话；左上会话按钮展开或折叠历史导航，右上「运行设置」调整 subagent / skills / 工具权限。回复下可创建反馈、查看 Trace、获取上下文。</p>
               <div className="prompt-examples">
                 <button onClick={() => onInputChange("请说明当前 workspace 中有哪些 subagents 和 skills。")}>查看 agents / skills</button>
                 <button onClick={() => onInputChange("请基于 CLAUDE.md 简要介绍你的角色和能力边界。")}>介绍 Agent 能力</button>

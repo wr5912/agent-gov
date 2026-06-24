@@ -319,7 +319,7 @@ async function main() {
         await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
         const sessionBox = await page.getByTestId("playground-session-sidebar").boundingBox();
         const sessionText = await page.getByTestId("playground-session-sidebar").innerText();
-        await page.getByTestId("playground-session-sidebar").getByLabel("折叠会话栏").click();
+        await page.getByTestId("playground-session-trigger").click();
         await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
         await page.getByTestId("playground-runtime-settings-trigger").click();

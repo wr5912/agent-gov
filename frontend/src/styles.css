@@ -338,6 +338,31 @@ button:disabled {
 }
 .chat-header h2 { margin: 0; font-size: 18px; }
 .chat-header p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.chat-header-left {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 auto;
+}
+.chat-title {
+  min-width: 0;
+}
+.chat-title h2,
+.chat-title p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.playground-session-icon-trigger {
+  flex: 0 0 36px;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.86);
+}
+.playground-session-icon-trigger:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
+}
 .run-status, .idle-status {
   display: inline-flex;
   align-items: center;

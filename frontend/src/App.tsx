@@ -598,7 +598,6 @@ export default function App() {
               onNewSession={createSession}
               onDeleteSession={removeSession}
               onRefresh={refresh}
-              onClose={() => setSessionSidebarOpen(false)}
             />
           ) : null}
           <ChatPanel
@@ -607,11 +606,12 @@ export default function App() {
             streaming={streaming}
             streamingAssistantMessageId={streamingAssistantMessageId}
             activeSessionId={activeSessionId}
+            sessionSidebarOpen={sessionSidebarOpen}
             agentName={currentAgentName}
             onInputChange={setInput}
             onSend={sendMessage}
             onStop={stopStream}
-            onOpenSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}
+            onToggleSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}
             onOpenRuntimeSettings={() => { setSessionSidebarOpen(false); setPlaygroundDrawer("runtime-settings"); }}
             onOpenFeedback={openFeedbackDrawer}
             onOpenTrace={openTracePanel}

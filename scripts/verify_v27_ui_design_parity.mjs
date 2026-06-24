@@ -438,11 +438,24 @@ const RULES = [
     const runtimeTrigger = page.getByTestId("playground-runtime-settings-trigger");
     const sessionCount = await sessionTrigger.count();
     const runtimeCount = await runtimeTrigger.count();
-    const sessionText = sessionCount ? await sessionTrigger.first().innerText().catch(() => "") : "";
+    const sessionText = sessionCount ? (await sessionTrigger.first().innerText().catch(() => "")).trim() : "";
+    const sessionAria = sessionCount ? await sessionTrigger.first().getAttribute("aria-label").catch(() => "") : "";
+    const sessionTitle = sessionCount ? await sessionTrigger.first().getAttribute("title").catch(() => "") : "";
+    const sessionExpanded = sessionCount ? await sessionTrigger.first().getAttribute("aria-expanded").catch(() => "") : "";
+    const sessionBox = sessionCount ? await sessionTrigger.first().boundingBox().catch(() => null) : null;
+    const titleBox = await page.locator(".chat-header h2").first().boundingBox().catch(() => null);
+    const runtimeBox = runtimeCount ? await runtimeTrigger.first().boundingBox().catch(() => null) : null;
     const runtimeText = runtimeCount ? await runtimeTrigger.first().innerText().catch(() => "") : "";
-    const sessionOk = sessionCount === 1 && sessionText.includes("会话") && !sessionText.includes("配置");
+    const sessionIsIconOnly = sessionText === "";
+    const sessionIsLeft = !!sessionBox && !!titleBox && !!runtimeBox && sessionBox.x < titleBox.x && sessionBox.x < runtimeBox.x;
+    const sessionOk = sessionCount === 1
+      && sessionIsIconOnly
+      && sessionAria === "展开会话栏"
+      && sessionTitle === "展开会话栏"
+      && sessionExpanded === "false"
+      && sessionIsLeft;
     const runtimeOk = runtimeCount === 1 && runtimeText.includes("运行设置") && !runtimeText.includes("会话");
-    return { ok: oldConfig === 0 && sessionOk && runtimeOk, detail: `oldConfig=${oldConfig} session=${sessionCount}/${sessionText} runtime=${runtimeCount}/${runtimeText}` };
+    return { ok: oldConfig === 0 && sessionOk && runtimeOk, detail: `oldConfig=${oldConfig} session=${sessionCount}/iconOnly=${sessionIsIconOnly}/left=${sessionIsLeft}/aria=${sessionAria}/title=${sessionTitle}/expanded=${sessionExpanded} runtime=${runtimeCount}/${runtimeText}` };
   } },
   { id: "playground-session-sidebar", phase: "P1", desc: "Playground 会话管理进入左侧可折叠导航栏，且不混入运行设置", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -454,13 +467,18 @@ const RULES = [
     const open = await visible(page, "playground-session-sidebar");
     const width = open ? ((await sidebar.boundingBox())?.width || 0) : 0;
     const text = open ? await sidebar.innerText().catch(() => "") : "";
+    const expandedAria = await page.getByTestId("playground-session-trigger").getAttribute("aria-expanded").catch(() => "");
+    const expandedLabel = await page.getByTestId("playground-session-trigger").getAttribute("aria-label").catch(() => "");
+    const duplicatedCloseInSidebar = open ? await sidebar.getByLabel("折叠会话栏").count() : 0;
     const hasSessionControls = text.includes("新会话") && text.includes("会话");
     const noRuntimeSettings = !text.includes("Subagent") && !text.includes("Skills Mode") && !text.includes("Allowed Tools");
     if (open) {
-      await sidebar.getByLabel("折叠会话栏").click();
+      await page.getByTestId("playground-session-trigger").click();
       await sidebar.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     }
-    return { ok: trigger && closedBefore && open && width >= 260 && width <= 340 && hasSessionControls && noRuntimeSettings, detail: `trigger=${trigger} defaultCollapsed=${closedBefore} open=${open} width=${Math.round(width)} sessionControls=${hasSessionControls} noRuntimeSettings=${noRuntimeSettings}` };
+    const closedAfterToggle = await page.getByTestId("playground-session-sidebar").count() === 0;
+    const collapsedAria = await page.getByTestId("playground-session-trigger").getAttribute("aria-expanded").catch(() => "");
+    return { ok: trigger && closedBefore && open && width >= 260 && width <= 340 && expandedAria === "true" && expandedLabel === "折叠会话栏" && duplicatedCloseInSidebar === 0 && closedAfterToggle && collapsedAria === "false" && hasSessionControls && noRuntimeSettings, detail: `trigger=${trigger} defaultCollapsed=${closedBefore} open=${open} width=${Math.round(width)} expanded=${expandedAria}/${expandedLabel} sidebarCloseButtons=${duplicatedCloseInSidebar} closedAfterToggle=${closedAfterToggle}/${collapsedAria} sessionControls=${hasSessionControls} noRuntimeSettings=${noRuntimeSettings}` };
   } },
   { id: "playground-runtime-settings-drawer", phase: "P1", desc: "Playground 运行设置进入独立抽屉，且不混入会话历史", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -607,7 +625,7 @@ const RULES = [
     await page.getByTestId("playground-session-trigger").click();
     await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
     const sessionWidth = (await page.getByTestId("playground-session-sidebar").boundingBox())?.width || 0;
-    await page.getByTestId("playground-session-sidebar").getByLabel("折叠会话栏").click();
+    await page.getByTestId("playground-session-trigger").click();
     await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     await page.getByTestId("playground-runtime-settings-trigger").click();
     await page.getByTestId("playground-runtime-settings-drawer").waitFor({ timeout: 8000 });

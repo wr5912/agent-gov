@@ -1,4 +1,4 @@
-import { MessageSquarePlus, PanelLeftClose, RefreshCw, Trash2 } from "lucide-react";
+import { MessageSquarePlus, RefreshCw, Trash2 } from "lucide-react";
 import type { SessionInfo } from "../types/runtime";
 
 interface PlaygroundSessionSidebarProps {
@@ -8,7 +8,6 @@ interface PlaygroundSessionSidebarProps {
   onNewSession: () => void;
   onDeleteSession: (sessionId: string) => void;
   onRefresh: () => void;
-  onClose: () => void;
 }
 
 export function PlaygroundSessionSidebar({
@@ -18,7 +17,6 @@ export function PlaygroundSessionSidebar({
   onNewSession,
   onDeleteSession,
   onRefresh,
-  onClose,
 }: PlaygroundSessionSidebarProps) {
   return (
     <aside className="playground-session-sidebar" data-testid="playground-session-sidebar" aria-label="Playground 会话导航">
@@ -27,9 +25,6 @@ export function PlaygroundSessionSidebar({
           <h3>会话</h3>
           <p>{sessions.length} 条历史</p>
         </div>
-        <button className="icon-button" type="button" onClick={onClose} aria-label="折叠会话栏">
-          <PanelLeftClose size={16} />
-        </button>
       </header>
       <div className="playground-side-panel-actions">
         <button className="secondary-button" type="button" onClick={onRefresh}>

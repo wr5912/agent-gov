@@ -273,6 +273,19 @@ OTEL_LOG_RAW_API_BODIES=1
 
 `/health` 还会返回 `runtime_dependency_versions`，用于确认当前运行时实际解析到的 `claude-agent-sdk`、bundled Claude Code CLI、`langfuse` 和 OpenTelemetry 版本。`make langfuse-smoke` 会检查本地 Langfuse health、Runtime 版本、Redis/Bull ingestion 队列和最近一条 `runtime.*` trace 的基本结构；没有配置 Langfuse API key 或尚未产生 trace 时，会跳过对应深度检查。
 
+## 版本与发布
+
+版本唯一真相源是仓库根 `VERSION` 文件（semver，如 `2.7.15`）。其余全部派生、严格对齐，不允许第二个独立版本数字：
+
+- 后端 `app/version.py` 读取 `VERSION` → OpenAPI `info.version` 与 `/health` runtime_version。
+- 前端 `frontend/package.json` 的 `version` 同步自 `VERSION`（`make sync-version`）。
+- docker 镜像 tag 由 `make build` / `make up` 从 `VERSION` 注入 `${APP_VERSION}` 派生，不在 compose 硬编码。
+- git release tag 为 `v` + `VERSION`。
+
+发布流程：① 改 `VERSION` → ② `make sync-version` → ③ `make test`（含版本一致性硬门）→ ④ commit → ⑤ `git tag v$(cat VERSION) && git push --tags`。
+
+`scripts/check_version_consistency.py`（已并入 `make test` 的 `codex-guard`）断言上述各处与 `VERSION` 一致，并在 HEAD 带 `v*` tag 时要求其等于 `v`+`VERSION`，从根上堵住"打 tag 不 bump 版本号"的漂移。
+
 ## API 文档
 
 容器启动后，FastAPI 自动提供详细 OpenAPI 文档：

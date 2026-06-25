@@ -4,6 +4,8 @@ UV ?= uv
 LITELLM_LOCAL_MODEL_COST_MAP ?= True
 PYTHON_RUN ?= LITELLM_LOCAL_MODEL_COST_MAP=$(LITELLM_LOCAL_MODEL_COST_MAP) $(PYTHON)
 COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
+# 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
+export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/agent_job_types.py \
 	app/runtime/output_formatter.py \
@@ -29,7 +31,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list runtime-template-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list runtime-template-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -151,6 +153,10 @@ chat:
 
 codex-guard:
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
+	$(PYTHON_RUN) scripts/check_version_consistency.py
+
+sync-version:
+	@v=$$(cat VERSION); sed -i '0,/"version":/s/"version": *"[^"]*"/"version": "'$$v'"/' frontend/package.json; echo "synced frontend/package.json -> $$v"
 
 ruff-check:
 	$(PYTHON_RUN) -m ruff check $(PYTHON_TYPECHECK_TARGETS)

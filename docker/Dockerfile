@@ -72,6 +72,7 @@ RUN set -eux; \
 
 ENV LITELLM_LOCAL_MODEL_COST_MAP=True
 
+COPY VERSION /app/VERSION
 COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py

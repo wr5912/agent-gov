@@ -16,6 +16,7 @@ from .json_types import JsonObject
 class SessionInfo(BaseModel):
     session_id: str
     sdk_session_id: Optional[str] = None
+    agent_id: Optional[str] = None
     created_at: str
     updated_at: str
     title: Optional[str] = None

@@ -607,8 +607,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if state.sdk_session_id:
             context.session.sdk_session_id = state.sdk_session_id
         context.session.turns += 1
-        if not context.session.title:
-            context.session.title = req.message[:80]
+        context.session.title = context.session.title or req.message[:80]
+        context.session.agent_id = context.agent_id  # 归属 Agent 随完成态落库，端点据此强校验/定位 transcript
         self.session_store.save(context.session)
         self._record_feedback_run(
             run_id=context.run_id,

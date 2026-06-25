@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.runtime.errors import NotFoundError
@@ -11,25 +11,46 @@ from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, Sess
 from app.runtime.session_history import read_session_history
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
-_MAIN_AGENT_IDS = {"", "main-agent", "main"}
+# 主 Agent 的合法归属标识（main 样板）。业务 Agent 归属必须在注册表中存在。
+_MAIN_AGENT_IDS = {"main-agent", "main"}
 
 
-def _resolve_profile_paths(settings: AppSettings, session: LocalSession) -> tuple[Path, Path]:
-    """Return (workspace_dir, claude_config_dir) for the agent that owns the session.
+def _resolve_owning_profile(
+    settings: AppSettings, agent_registry_store: AgentRegistryStore, session: LocalSession
+) -> tuple[Path, Path]:
+    """Strongly resolve (workspace_dir, claude_config_dir) for the session's owning agent.
 
-    Defaults to the main profile. If the session metadata records a business ``agent_id``, use
-    that business agent's workspace + claude-root (mirrors build_business_agent_profile).
+    The owning agent is the backend-owned ``session.agent_id`` persisted by the runtime at chat
+    time (never client-supplied metadata). It is a hard invariant — there is no silent fallback:
+
+    - missing / empty while a transcript exists -> 500 (data integrity: a persisted transcript must
+      carry its owning agent);
+    - main agent -> main profile;
+    - business agent -> validated against the agent registry; an unknown / stale id -> 404.
     """
-    metadata = session.metadata if isinstance(session.metadata, dict) else {}
-    agent_id = metadata.get("agent_id")
-    if isinstance(agent_id, str) and agent_id.strip() and agent_id.strip() not in _MAIN_AGENT_IDS:
-        base = settings.data_dir / "business-agents" / agent_id.strip()
-        return base, base / "claude-root" / ".claude"
-    return settings.main_workspace_dir, settings.main_claude_root / ".claude"
+    agent_id = (session.agent_id or "").strip()
+    if not agent_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"session {session.session_id} has a transcript but no recorded owning agent",
+        )
+    if agent_id in _MAIN_AGENT_IDS:
+        return settings.main_workspace_dir, settings.main_claude_root / ".claude"
+    if agent_registry_store.get_agent(agent_id) is None:
+        raise NotFoundError(f"owning agent '{agent_id}' of session {session.session_id} not found")
+    base = settings.data_dir / "business-agents" / agent_id
+    return base, base / "claude-root" / ".claude"
 
 
-def create_sessions_router(*, session_store: LocalSessionStore, settings: AppSettings, require_api_key: Callable) -> APIRouter:
+def create_sessions_router(
+    *,
+    session_store: LocalSessionStore,
+    settings: AppSettings,
+    agent_registry_store: AgentRegistryStore,
+    require_api_key: Callable,
+) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["sessions"], dependencies=[Depends(require_api_key)])
 
     @router.get(
@@ -50,9 +71,9 @@ def create_sessions_router(*, session_store: LocalSessionStore, settings: AppSet
         if session is None:
             raise NotFoundError(f"session {session_id} not found")
         if not session.sdk_session_id:
-            # Session exists but never produced an SDK transcript yet -> empty history, not 404.
+            # No SDK transcript produced yet -> empty history (not an owning-agent error).
             return SessionMessagesResponse(session_id=session_id, sdk_session_id=None, title=session.title)
-        workspace_dir, claude_config_dir = _resolve_profile_paths(settings, session)
+        workspace_dir, claude_config_dir = _resolve_owning_profile(settings, agent_registry_store, session)
         history = await run_in_threadpool(
             read_session_history,
             sdk_session_id=session.sdk_session_id,

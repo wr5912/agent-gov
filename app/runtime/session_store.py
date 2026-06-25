@@ -15,6 +15,7 @@ from .runtime_db import SessionRecordModel, make_session_factory, runtime_db_pat
 class LocalSession:
     session_id: str
     sdk_session_id: Optional[str] = None
+    agent_id: Optional[str] = None
     created_at: str = field(default_factory=utc_now)
     updated_at: str = field(default_factory=utc_now)
     title: Optional[str] = None
@@ -59,6 +60,7 @@ class LocalSessionStore:
             existing = db.get(SessionRecordModel, session.session_id)
             if existing:
                 existing.sdk_session_id = session.sdk_session_id
+                existing.agent_id = session.agent_id
                 existing.updated_at = session.updated_at
                 existing.title = session.title
                 existing.turns = session.turns
@@ -68,6 +70,7 @@ class LocalSessionStore:
                     SessionRecordModel(
                         session_id=session.session_id,
                         sdk_session_id=session.sdk_session_id,
+                        agent_id=session.agent_id,
                         created_at=session.created_at,
                         updated_at=session.updated_at,
                         title=session.title,
@@ -93,6 +96,7 @@ class LocalSessionStore:
         return LocalSession(
             session_id=record.session_id,
             sdk_session_id=record.sdk_session_id,
+            agent_id=record.agent_id,
             created_at=record.created_at,
             updated_at=record.updated_at,
             title=record.title,

@@ -54,6 +54,9 @@ class SessionRecordModel(Base):
 
     session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     sdk_session_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    # Backend-owned owning agent (profile.name: "main-agent" or a business agent id), set by the
+    # runtime at chat time. Authoritative source for resolving a session's transcript directory.
+    agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)

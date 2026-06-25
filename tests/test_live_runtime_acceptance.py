@@ -165,6 +165,32 @@ def test_live_vllm_s2_litellm_accepts_anthropic_messages_and_streaming(live_sett
     base_url = route.claude_base_url.rstrip("/")
     model = settings.agent_model or "agent-gov-model"
 
+    tool_message = _post_json(
+        f"{base_url}/v1/messages",
+        {
+            "model": model,
+            "max_tokens": 128,
+            "messages": [{"role": "user", "content": [{"type": "text", "text": "Call the agent_gov_probe tool with value ok."}]}],
+            "tools": [
+                {
+                    "name": "agent_gov_probe",
+                    "description": "Return a probe value.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": "agent_gov_probe"},
+        },
+        api_key=api_key,
+    )
+    content_blocks = tool_message.get("content") or []
+    assert any(isinstance(block, dict) and block.get("type") == "tool_use" for block in content_blocks), (
+        "Anthropic Messages tool probe 未返回 tool_use，不能准入 Claude Code tool 循环"
+    )
+
     non_stream = _post_json(
         f"{base_url}/v1/messages",
         {
@@ -224,6 +250,26 @@ def test_live_vllm_c_model_tool_and_schema_preflight(live_settings):
     )
     message = (((tool_response.get("choices") or [{}])[0]).get("message") or {})
     assert message.get("tool_calls"), "模型未返回 tool_calls，不能准入 Claude Code 多工具循环"
+    first_tool_call = message["tool_calls"][0]
+    tool_call_id = first_tool_call.get("id") or "call_1"
+    function = first_tool_call.get("function") or {}
+    tool_name = function.get("name") or "agent_gov_probe"
+
+    loop_response = _post_json(
+        f"{base_url}/v1/chat/completions",
+        {
+            "model": model,
+            "messages": [
+                {"role": "user", "content": "Call the agent_gov_probe tool with value ok, then answer DONE after the tool result."},
+                {"role": "assistant", "content": None, "tool_calls": [first_tool_call]},
+                {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": '{"value":"ok"}'},
+            ],
+            "max_tokens": 64,
+        },
+        api_key=api_key,
+    )
+    loop_content = ((((loop_response.get("choices") or [{}])[0]).get("message") or {}).get("content") or "").strip()
+    assert loop_content, "模型拿到 tool_result 后未继续输出，不能准入 Claude Code 多工具循环"
 
     schema_response = _post_json(
         f"{base_url}/v1/chat/completions",

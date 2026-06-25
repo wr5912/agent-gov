@@ -11,8 +11,13 @@ from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from .agent_job_errors import (
+    LITELLM_CLAUDE_CODE_COMPAT_FAILED,
+    MODEL_AGENT_LOOP_CAPABILITY_FAILED,
     MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
+    MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
+    VLLM_CHAT_PROBE_FAILED,
     VLLM_MODELS_PROBE_FAILED,
+    VLLM_TOOL_CALLING_UNSUPPORTED,
     ModelProviderCapabilityError,
     provider_api_key_configured,
 )
@@ -198,6 +203,12 @@ class ModelProviderRouter:
             self._ensure_sidecar_ready(route)
         if route.backend == "vllm":
             self._ensure_vllm_models_ready(route)
+            self._ensure_vllm_chat_ready(route)
+            tool_call = self._ensure_vllm_tool_calling_ready(route)
+            self._ensure_model_agent_loop_ready(route, tool_call)
+            self._ensure_schema_exact_output_ready(route)
+        if route.requires_litellm_sidecar:
+            self._ensure_litellm_claude_code_compat_ready(route)
         self._agent_runtime_ready = True
 
     def _ensure_sidecar_ready(self, route: ModelProviderRoute) -> None:
@@ -244,7 +255,218 @@ class ModelProviderRouter:
             action="verify vLLM OpenAI-compatible server is running and MODEL_PROVIDER_API_URL has no /v1 suffix",
         )
 
-    def _http_json(self, method: str, endpoint: str, request_body: JsonObject | None = None) -> HttpProbeResult:
+    def _ensure_vllm_chat_ready(self, route: ModelProviderRoute) -> None:
+        result = self._post_vllm_chat(
+            route,
+            {
+                "model": self._agent_model(),
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+                "max_tokens": 32,
+                "temperature": 0,
+            },
+        )
+        message = first_choice_message(result.body_json)
+        if is_success(result) and message and message_content_text(message):
+            return
+        self._raise_capability_error(
+            error_code=VLLM_CHAT_PROBE_FAILED,
+            message="vLLM chat completion probe failed.",
+            route=route,
+            probe="chat",
+            result=result,
+            retryable=True,
+            action="verify the vLLM OpenAI-compatible chat/completions endpoint and selected AGENT_MODEL",
+        )
+
+    def _ensure_vllm_tool_calling_ready(self, route: ModelProviderRoute) -> JsonObject:
+        result = self._post_vllm_chat(
+            route,
+            {
+                "model": self._agent_model(),
+                "messages": [{"role": "user", "content": "Call the agent_gov_probe tool with value ok."}],
+                "tools": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "agent_gov_probe",
+                            "description": "Return a probe value.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"value": {"type": "string"}},
+                                "required": ["value"],
+                            },
+                        },
+                    }
+                ],
+                "tool_choice": {"type": "function", "function": {"name": "agent_gov_probe"}},
+                "max_tokens": 128,
+                "temperature": 0,
+            },
+        )
+        message = first_choice_message(result.body_json)
+        tool_call = first_tool_call(message)
+        if is_success(result) and tool_call:
+            return tool_call
+        self._raise_capability_error(
+            error_code=VLLM_TOOL_CALLING_UNSUPPORTED,
+            message="vLLM model service is reachable but tool calling probe failed.",
+            route=route,
+            probe="tool_calling",
+            result=result,
+            retryable=False,
+            action="check vLLM tool parser settings or choose a tool-calling capable model",
+        )
+
+    def _ensure_model_agent_loop_ready(self, route: ModelProviderRoute, tool_call: JsonObject) -> None:
+        tool_call_id = str(tool_call.get("id") or "call_1")
+        function = tool_call.get("function")
+        tool_name = function.get("name") if isinstance(function, dict) and isinstance(function.get("name"), str) else "agent_gov_probe"
+        result = self._post_vllm_chat(
+            route,
+            {
+                "model": self._agent_model(),
+                "messages": [
+                    {"role": "user", "content": "Call the agent_gov_probe tool with value ok, then answer DONE after the tool result."},
+                    {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+                    {"role": "tool", "tool_call_id": tool_call_id, "name": tool_name, "content": '{"value":"ok"}'},
+                ],
+                "max_tokens": 64,
+                "temperature": 0,
+            },
+        )
+        message = first_choice_message(result.body_json)
+        if is_success(result) and message_content_text(message):
+            return
+        self._raise_capability_error(
+            error_code=MODEL_AGENT_LOOP_CAPABILITY_FAILED,
+            message="Target model failed the two-step Claude Code-style tool loop probe.",
+            route=route,
+            probe="agent_tool_loop",
+            result=result,
+            retryable=False,
+            action="choose a model that can continue after tool_result messages without looping or stalling",
+        )
+
+    def _ensure_schema_exact_output_ready(self, route: ModelProviderRoute) -> None:
+        result = self._post_vllm_chat(
+            route,
+            {
+                "model": self._agent_model(),
+                "messages": [{"role": "user", "content": 'Return exactly this JSON object and nothing else: {"ok": true}'}],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 64,
+                "temperature": 0,
+            },
+        )
+        message = first_choice_message(result.body_json)
+        if is_success(result) and parse_json_object(message_content_text(message)) == {"ok": True}:
+            return
+        self._raise_capability_error(
+            error_code=MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
+            message="Target model failed schema-exact JSON output probe.",
+            route=route,
+            probe="schema_exact_json",
+            result=result,
+            retryable=False,
+            action="choose a model that can obey response_format=json_object and schema-exact governor outputs",
+        )
+
+    def _ensure_litellm_claude_code_compat_ready(self, route: ModelProviderRoute) -> None:
+        assert route.sidecar_base_url is not None
+        base_url = route.sidecar_base_url.rstrip("/")
+        tool_result = self._http_json(
+            "POST",
+            base_url + "/v1/messages",
+            request_body={
+                "model": self._agent_model(),
+                "max_tokens": 128,
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "Call the agent_gov_probe tool with value ok."}]}],
+                "tools": [
+                    {
+                        "name": "agent_gov_probe",
+                        "description": "Return a probe value.",
+                        "input_schema": {
+                            "type": "object",
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                        },
+                    }
+                ],
+                "tool_choice": {"type": "tool", "name": "agent_gov_probe"},
+            },
+        )
+        if not is_success(tool_result) or not anthropic_content_has_tool_use(tool_result.body_json):
+            self._raise_capability_error(
+                error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
+                message="LiteLLM sidecar failed Claude Code Anthropic Messages tool compatibility probe.",
+                route=route,
+                probe="claude_tool_compat",
+                result=tool_result,
+                endpoint=route.sidecar_base_url,
+                retryable=True,
+                action="verify LiteLLM Anthropic tool translation, tool_use response shape, and upstream vLLM tool calls",
+            )
+
+        stream_result = self._http_request(
+            "POST",
+            base_url + "/v1/messages",
+            request_body={
+                "model": self._agent_model(),
+                "max_tokens": 32,
+                "stream": True,
+                "messages": [{"role": "user", "content": "Reply with OK."}],
+            },
+            accept="text/event-stream",
+        )
+        stream_text = stream_result.raw_body.decode("utf-8", errors="replace")
+        if is_success(stream_result) and "event:" in stream_text and "event: error" not in stream_text:
+            return
+        self._raise_capability_error(
+            error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
+            message="LiteLLM sidecar failed Claude Code Anthropic Messages streaming compatibility probe.",
+            route=route,
+            probe="claude_streaming",
+            result=stream_result,
+            endpoint=route.sidecar_base_url,
+            retryable=True,
+            action="check LiteLLM sidecar version, Anthropic Messages streaming support, and upstream vLLM response shape",
+        )
+
+    def _post_vllm_chat(self, route: ModelProviderRoute, request_body: Mapping[str, object]) -> HttpProbeResult:
+        endpoint = provider_v1_api_base(route.provider_endpoint)
+        if endpoint is None:
+            return HttpProbeResult(status_code=None, duration_ms=0, reason="missing_provider_endpoint")
+        return self._http_json("POST", endpoint.rstrip("/") + "/chat/completions", request_body=request_body)
+
+    def _agent_model(self) -> str:
+        value = getattr(self.settings, "agent_model", None)
+        return value.strip() if isinstance(value, str) and value.strip() else "agent-gov-model"
+
+    def _raise_capability_error(
+        self,
+        *,
+        error_code: str,
+        message: str,
+        route: ModelProviderRoute,
+        probe: str,
+        result: HttpProbeResult,
+        retryable: bool,
+        action: str,
+        endpoint: str | None = None,
+    ) -> None:
+        raise ModelProviderCapabilityError(
+            error_code=error_code,
+            message=message,
+            route=route.route,
+            probe=probe,
+            endpoint=sanitize_endpoint(endpoint or route.provider_endpoint),
+            status_code=result.status_code,
+            duration_ms=result.duration_ms,
+            retryable=retryable,
+            action=action,
+        )
+
+    def _http_json(self, method: str, endpoint: str, request_body: Mapping[str, object] | None = None) -> HttpProbeResult:
         result = self._http_request(method, endpoint, request_body=request_body)
         parsed: JsonObject | None = None
         if result.raw_body:
@@ -256,10 +478,17 @@ class ModelProviderRouter:
                 parsed = None
         return HttpProbeResult(status_code=result.status_code, duration_ms=result.duration_ms, reason=result.reason, body_json=parsed, raw_body=result.raw_body)
 
-    def _http_request(self, method: str, endpoint: str, request_body: JsonObject | None = None) -> HttpProbeResult:
+    def _http_request(
+        self,
+        method: str,
+        endpoint: str,
+        request_body: Mapping[str, object] | None = None,
+        *,
+        accept: str = "application/json",
+    ) -> HttpProbeResult:
         start = time.monotonic()
         timeout = float(getattr(self.settings, "model_provider_probe_timeout_seconds", 3))
-        headers = {"Accept": "application/json"}
+        headers = {"Accept": accept}
         data = None
         if request_body is not None:
             data = json.dumps(request_body).encode("utf-8")
@@ -418,3 +647,58 @@ def parse_version(value: str) -> tuple[int, ...] | None:
             return None
         parts.append(int(item))
     return tuple(parts) if parts else None
+
+
+def is_success(result: HttpProbeResult) -> bool:
+    return result.status_code is not None and 200 <= result.status_code < 300
+
+
+def first_choice_message(body: JsonObject | None) -> JsonObject:
+    if not isinstance(body, dict):
+        return {}
+    choices = body.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return {}
+    first = choices[0]
+    if not isinstance(first, dict):
+        return {}
+    message = first.get("message")
+    return message if isinstance(message, dict) else {}
+
+
+def message_content_text(message: JsonObject) -> str:
+    content = message.get("content")
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                chunks.append(item["text"])
+        return "\n".join(chunks).strip()
+    return ""
+
+
+def first_tool_call(message: JsonObject) -> JsonObject:
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return {}
+    first = tool_calls[0]
+    return first if isinstance(first, dict) else {}
+
+
+def parse_json_object(value: str) -> JsonObject | None:
+    try:
+        loaded = json.loads(value)
+    except Exception:
+        return None
+    return loaded if isinstance(loaded, dict) else None
+
+
+def anthropic_content_has_tool_use(body: JsonObject | None) -> bool:
+    if not isinstance(body, dict):
+        return False
+    content = body.get("content")
+    if not isinstance(content, list):
+        return False
+    return any(isinstance(item, dict) and item.get("type") == "tool_use" for item in content)

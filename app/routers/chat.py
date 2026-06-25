@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Callable, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profiles import (
@@ -19,6 +19,15 @@ from app.runtime.schemas import ChatRequest, ChatResponse
 from app.runtime.settings import AppSettings
 from app.runtime.state_machines import AGENT_RUNNABLE_LIFECYCLE_STATES
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+
+
+def _require_agent_id(req: ChatRequest) -> None:
+    """两个原生 chat 入口（/api/chat、/api/chat/stream）都要求显式有效 agent_id；不静默跑 main。"""
+    if not (req.agent_id and req.agent_id.strip()):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="agent_id is required (main-agent or a registered business agent)",
+        )
 
 
 def create_chat_router(
@@ -55,20 +64,23 @@ def create_chat_router(
         "/chat",
         response_model=ChatResponse,
         summary="Run a Claude Agent task and return the full result",
-        description="Runs one Claude Agent SDK query. Set agent_id to run a registered business agent; omit it to run the main agent.",
+        description="Runs one Claude Agent SDK query. Requires a valid agent_id (main-agent or a registered business agent).",
     )
     async def chat(req: ChatRequest) -> ChatResponse:
+        _require_agent_id(req)
         profile = _resolve_business_profile(req)
         return await runtime.run(req, profile=profile)
 
     @router.post(
         "/chat/stream",
         summary="Run a Claude Agent task as server-sent events",
-        description="Streams session, message, result, error, and done events as text/event-stream. Runs the main agent; for business agents use POST /chat.",
+        description="Streams session, message, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).",
     )
     async def chat_stream(req: ChatRequest) -> StreamingResponse:
+        _require_agent_id(req)
+        profile = _resolve_business_profile(req)
         async def event_stream():
-            async for item in runtime.stream(req):
+            async for item in runtime.stream(req, profile=profile):
                 event = item.get("event", "message")
                 data = json.dumps(item.get("data"), ensure_ascii=False)
                 yield f"event: {event}\ndata: {data}\n\n"

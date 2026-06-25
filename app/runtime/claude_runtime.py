@@ -316,9 +316,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
     def fetch_langfuse_trace(self, trace_id: str) -> Optional[JsonObject]:
         return self.langfuse.fetch_trace(trace_id)
 
-    def _main_observation_name(self) -> str:
-        return self.profiles[MAIN_AGENT_PROFILE].langfuse_observation_name
-
     def _flush_langfuse(self) -> None:
         client = self.langfuse.get_client()
         if client is None:
@@ -413,7 +410,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         return await run_governor_profile_json(self.langfuse, run, governor)
 
-    def _new_runtime_request_context(self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None) -> RuntimeRequestContext:
+    def _new_runtime_request_context(self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE) -> RuntimeRequestContext:
         self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
@@ -425,6 +422,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             session=session,
             run_id=run_id,
             agent_version_id=agent_version_id,
+            agent_id=agent_id,
             created_at=created_at,
             prompt=prompt,
             telemetry_input=telemetry_input,
@@ -669,8 +667,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         from claude_agent_sdk import ResultMessage, query
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
-        context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override)
-        context.agent_id = profile.name  # 业务 Agent run 的反馈据此归属到该 Agent（profile.name=agent_id）
+        context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override, agent_id=profile.name)
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
         propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)
@@ -722,18 +719,19 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile = candidate_main_profile(self.settings, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
-    async def stream(self, req: ChatRequest) -> AsyncIterator[JsonObject]:
+    async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:
         from claude_agent_sdk import ResultMessage, query
 
-        context = self._new_runtime_request_context(req)
+        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
+        context = self._new_runtime_request_context(req, agent_id=profile.name)
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
-        root_metadata = self._runtime_observation_metadata(context, "stream")
-        propagation = self._langfuse_propagation_attributes(req, context, "stream")
+        root_metadata = self._runtime_observation_metadata(context, "stream", profile=profile)
+        propagation = self._langfuse_propagation_attributes(req, context, "stream", profile=profile)
         final_output: JsonObject | None = None
         with self.langfuse.propagate_attributes(**propagation):
             with self.langfuse.start_observation(
                 as_type="span",
-                name=self._main_observation_name(),
+                name=profile.langfuse_observation_name,
                 input=context.telemetry_input,
                 metadata=root_metadata,
             ) as root_span:
@@ -742,7 +740,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 yield self._stream_session_event(req, context)
                 with self.langfuse.start_observation(
                     as_type="generation",
-                    name=f"{self._main_observation_name()}.claude_sdk_query",
+                    name=f"{profile.langfuse_observation_name}.claude_sdk_query",
                     input=self._generation_input(req, context),
                     model=req.model or self.settings.agent_model,
                     metadata=root_metadata,
@@ -751,7 +749,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     try:
                         async def emit_query_events() -> AsyncIterator[JsonObject]:
                             self.model_provider_router.ensure_agent_runtime_ready()
-                            options = self._build_options(req, context.session)
+                            options = self._build_options(req, context.session, profile=profile)
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):
                                 event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)

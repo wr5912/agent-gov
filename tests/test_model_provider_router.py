@@ -412,3 +412,26 @@ def test_vllm_direct_capability_gate_fail_closed_when_native_messages_reject(mon
     assert exc_info.value.raw_output_json["probe"] == "vllm_direct_tool_compat"
     assert exc_info.value.raw_output_json["retryable"] is False
     assert exc_info.value.raw_output_json["route"] == "direct_anthropic"
+
+
+def test_route_summary_redacts_all_url_fields() -> None:
+    # #21：health 摘要不得泄露原始 URL（userinfo/path/query/内部网关路径）；
+    # provider_endpoint/claude_base_url/formatter_api_base/sidecar_base_url 都需脱敏。
+    secret = "https://user:pass@gw.internal:8000/v1/secret-path?token=abc"
+    route = model_provider.ModelProviderRoute(
+        backend="vllm",
+        route="litellm_sidecar",
+        provider_endpoint=secret,
+        claude_base_url=secret,
+        formatter_api_base=secret,
+        formatter_model_prefix="openai",
+        version_probe=model_provider.VersionProbeResult(status="skipped"),
+        sidecar_base_url=secret,
+        sidecar_required=True,
+        provider_api_key_required=False,
+    )
+    summary = route.to_summary()
+    for field in ("provider_endpoint", "claude_base_url", "formatter_api_base", "sidecar_base_url"):
+        value = summary[field]
+        assert value, f"{field} unexpectedly empty"
+        assert "user:pass@" not in value and "secret-path" not in value and "token=" not in value and "abc" not in value

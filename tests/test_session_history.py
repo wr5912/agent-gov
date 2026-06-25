@@ -198,31 +198,37 @@ class _StubSettings:
     main_claude_root = Path("/claude-roots/main")
 
 
+class _FakeRecord:
+    def __init__(self, workspace_dir: str) -> None:
+        self.workspace_dir = workspace_dir
+
+
 class _FakeRegistry:
-    def __init__(self, known: set[str]) -> None:
-        self._known = set(known)
+    def __init__(self, known: dict[str, str]) -> None:
+        self._known = dict(known)
 
     def get_agent(self, agent_id: str):
-        return object() if agent_id in self._known else None
+        ws = self._known.get(agent_id)
+        return _FakeRecord(ws) if ws is not None else None
 
 
 def test_resolve_owning_profile_main_and_registered_business() -> None:
-    settings, reg = _StubSettings(), _FakeRegistry({"biz-1"})
+    settings, reg = _StubSettings(), _FakeRegistry({"biz-1": "/custom/biz-1-ws"})
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="main-agent"))
     assert ws == Path("/main-workspace") and cfg == Path("/claude-roots/main/.claude")
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="biz-1"))
-    assert ws == Path("/data/business-agents/biz-1")
+    assert ws == Path("/custom/biz-1-ws")  # #22：cwd 来自注册表 workspace_dir，不硬推导
     assert cfg == Path("/data/business-agents/biz-1/claude-root/.claude")
 
 
 def test_resolve_owning_profile_unknown_business_agent_raises_404() -> None:
     with pytest.raises(NotFoundError):
-        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry(set()), LocalSession(session_id="x", agent_id="ghost"))
+        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({}), LocalSession(session_id="x", agent_id="ghost"))
 
 
 def test_resolve_owning_profile_missing_agent_id_is_integrity_500() -> None:
     with pytest.raises(HTTPException) as exc:
-        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry(set()), LocalSession(session_id="x", agent_id=None))
+        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({}), LocalSession(session_id="x", agent_id=None))
     assert exc.value.status_code == 500
 
 
@@ -230,7 +236,7 @@ def test_resolve_owning_profile_ignores_client_metadata_agent_id() -> None:
     # backend-owned：session.agent_id 缺失即整改性报错；客户端 metadata.agent_id 不被采信、不能改写归属
     session = LocalSession(session_id="x", agent_id=None, metadata={"agent_id": "attacker"})
     with pytest.raises(HTTPException) as exc:
-        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({"attacker"}), session)
+        sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({"attacker": "/x"}), session)
     assert exc.value.status_code == 500  # 不会路由到 metadata 里的 attacker
 
 
@@ -251,7 +257,7 @@ def test_endpoint_missing_owning_agent_is_integrity_500(monkeypatch, tmp_path: P
 
 def test_endpoint_routes_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    module.agent_registry_store.create_business_agent(name="Biz", agent_id="biz-9", workspace_dir="/x")
+    module.agent_registry_store.create_business_agent(name="Biz", agent_id="biz-9", workspace_dir="/custom/ws-biz-9")
     module.session_store.save(LocalSession(session_id="sb", sdk_session_id="sdk-b", agent_id="biz-9"))
     captured: dict[str, str] = {}
 
@@ -263,5 +269,15 @@ def test_endpoint_routes_registered_business_agent(monkeypatch, tmp_path: Path) 
     monkeypatch.setattr(sessions_mod, "read_session_history", fake_read)
     with TestClient(module.app) as client:
         assert client.get("/api/sessions/sb/messages").status_code == 200
-    assert captured["ws"].endswith("/business-agents/biz-9")
+    assert captured["ws"] == "/custom/ws-biz-9"  # #22：cwd = 注册表 workspace_dir，不硬推导
     assert captured["cfg"].endswith("/business-agents/biz-9/claude-root/.claude")
+
+
+def test_endpoint_rejects_invalid_limit_offset(monkeypatch, tmp_path: Path) -> None:
+    # #23：limit/offset 越界由 FastAPI Query 约束在进入 handler 前 422，不透传给 SDK
+    module = _load_app(monkeypatch, tmp_path)
+    module.session_store.save(LocalSession(session_id="s1", sdk_session_id="sdk-1", agent_id="main-agent"))
+    with TestClient(module.app) as client:
+        assert client.get("/api/sessions/s1/messages", params={"offset": -1}).status_code == 422
+        assert client.get("/api/sessions/s1/messages", params={"limit": 0}).status_code == 422
+        assert client.get("/api/sessions/s1/messages", params={"limit": 99999}).status_code == 422

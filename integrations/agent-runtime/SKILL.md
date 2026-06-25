@@ -17,7 +17,7 @@ AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集
 ## 集成旅程（按需取用）
 
 1. 选 / 建业务 Agent：`GET|POST /api/agent-registry`；只跑 main 时 `POST /api/chat` 省略 `agent_id`。
-2. 跑对话：`POST /api/chat`（非流，体含 `message`、可选 `session_id`/`agent_id`）或 `POST /api/chat/stream`（SSE）或 `POST /v1/chat/completions`（OpenAI 兼容）。续聊用同一 `session_id`。
+2. 跑对话：`POST /api/chat` 或 `POST /api/chat/stream`（SSE）——两个原生入口 **`agent_id` 必填有效**（main-agent 或已注册业务 Agent，缺失 422 / 未知 404）；或 `POST /v1/chat/completions`（OpenAI 兼容，无 agent_id，**固定跑 main agent、不能指定业务 Agent**）。续聊用同一 `session_id`。
 3. 回放历史：`GET /api/sessions`、`GET /api/sessions/{session_id}/messages`（`?limit=&offset=`）。
 4. 提交反馈：`POST /api/feedback-cases`（可挂 `run_id`/`session_id`），在确认门上决策；批次走 `/api/feedback-optimization-batches/...`。
 5. 评估 / 回归：`/api/eval-cases`、`/api/eval-runs`、`/api/regression-assets/...`。

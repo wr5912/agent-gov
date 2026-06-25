@@ -116,7 +116,7 @@ def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(t
 
 
 def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
-    """AGV-024 基座：/api/chat 带 agent_id 路由到业务 Agent profile；缺省走 main；未知 404。"""
+    """AGV-024 基座：/api/chat 带 agent_id 路由到业务 Agent profile；缺省 agent_id 422；未知 404。"""
     from app.runtime.schemas import ChatResponse
 
     module = _load_app(monkeypatch, tmp_path)
@@ -138,10 +138,8 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops")
         assert captured["profile"].category == "business"
 
-        # 缺省 agent_id -> 运行时默认 main agent（profile=None）。
-        captured.clear()
-        assert client.post("/api/chat", json={"message": "hi"}).status_code == 200
-        assert captured.get("profile") is None
+        # 缺省 agent_id -> 422（两个原生入口 agent_id 必填，不静默跑 main）。
+        assert client.post("/api/chat", json={"message": "hi"}).status_code == 422
 
         # 未知 agent_id -> 404，不静默回退到 main（避免错误归属）。
         assert client.post("/api/chat", json={"message": "hi", "agent_id": "biz-unknown"}).status_code == 404

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 
 from app.runtime.errors import NotFoundError
@@ -28,7 +28,8 @@ def _resolve_owning_profile(
     - missing / empty while a transcript exists -> 500 (data integrity: a persisted transcript must
       carry its owning agent);
     - main agent -> main profile;
-    - business agent -> validated against the agent registry; an unknown / stale id -> 404.
+    - business agent -> validated against the agent registry; cwd taken from its registered
+      ``workspace_dir`` (consistent with /api/chat); an unknown / stale id -> 404.
     """
     agent_id = (session.agent_id or "").strip()
     if not agent_id:
@@ -38,10 +39,13 @@ def _resolve_owning_profile(
         )
     if agent_id in _MAIN_AGENT_IDS:
         return settings.main_workspace_dir, settings.main_claude_root / ".claude"
-    if agent_registry_store.get_agent(agent_id) is None:
+    record = agent_registry_store.get_agent(agent_id)
+    if record is None:
         raise NotFoundError(f"owning agent '{agent_id}' of session {session.session_id} not found")
-    base = settings.data_dir / "business-agents" / agent_id
-    return base, base / "claude-root" / ".claude"
+    # cwd 用注册表登记的 workspace_dir（与 /api/chat 的 build_business_agent_profile 一致，支持自定义/同步 workspace）；
+    # claude-root 仍按 agent_id 推导（与 build_business_agent_profile 的 claude_root 一致）。
+    claude_config_dir = settings.data_dir / "business-agents" / agent_id / "claude-root" / ".claude"
+    return Path(record.workspace_dir), claude_config_dir
 
 
 def create_sessions_router(
@@ -66,7 +70,11 @@ def create_sessions_router(
         response_model=SessionMessagesResponse,
         summary="Read a session's conversation history (projected from the SDK session transcript)",
     )
-    async def get_session_messages(session_id: str, limit: int | None = None, offset: int = 0) -> SessionMessagesResponse:
+    async def get_session_messages(
+        session_id: str,
+        limit: int | None = Query(default=None, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+    ) -> SessionMessagesResponse:
         session = session_store.get(session_id)
         if session is None:
             raise NotFoundError(f"session {session_id} not found")

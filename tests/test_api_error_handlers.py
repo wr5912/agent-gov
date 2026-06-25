@@ -100,7 +100,8 @@ def test_chat_during_agent_version_maintenance_returns_structured_503(monkeypatc
     monkeypatch.setattr(module.agent_version_store, "is_maintenance_active", lambda: True)
 
     with TestClient(module.app) as client:
-        response = client.post("/api/chat", json={"message": "hello"})
+        # /api/chat 要求 agent_id 必填；用 main-agent 通过校验后才命中维护态 503。
+        response = client.post("/api/chat", json={"message": "hello", "agent_id": "main-agent"})
 
     assert response.status_code == 503
     assert response.json() == {

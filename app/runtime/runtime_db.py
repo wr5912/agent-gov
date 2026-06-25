@@ -508,6 +508,16 @@ class RegressionGateOverrideModel(Base):
     after_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
+class RuntimeSettingModel(Base):
+    """运营者级运行时设置 KV（如 /v1 出口 Agent）。backend-owned，经设置 API 读写。"""
+
+    __tablename__ = "runtime_settings"
+
+    key: Mapped[str] = mapped_column(String(256), primary_key=True)
+    value_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
 def runtime_db_path_from_data_dir(data_dir: Path) -> Path:
     return data_dir / "runtime.sqlite3"
 

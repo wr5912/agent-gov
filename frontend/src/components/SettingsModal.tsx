@@ -16,8 +16,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createBusinessAgent,
   deleteBusinessAgent,
+  getOpenAICompatAgent,
   listBusinessAgents,
+  resetOpenAICompatAgent,
   setBusinessAgentLifecycle,
+  setOpenAICompatAgent,
+  type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import { getAutomationPolicy, setAutomationPolicy } from "../api/improvements";
 import type { AgentDeleteResponse, AgentSummary, RuntimeClientConfig } from "../types/runtime";
@@ -68,10 +72,13 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [policyAgent, setPolicyAgent] = useState("");
   const [policyMode, setPolicyMode] = useState("off");
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
+  const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
+  const [openaiCompatSel, setOpenaiCompatSel] = useState("main-agent");
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
   const selectedAgent = useMemo(() => agents.find((agent) => agent.agent_id === policyAgent) ?? null, [agents, policyAgent]);
   const policyLabel = useMemo(() => AUTOMATION_OPTIONS.find((option) => option.value === policyMode)?.label ?? "人工", [policyMode]);
+  const openaiCompatOptions = useMemo(() => ["main-agent", ...agents.map((agent) => agent.agent_id)], [agents]);
 
   const reloadAgents = useCallback(async () => {
     setError(undefined);
@@ -94,6 +101,26 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   }, [open, reloadAgents]);
 
   useEffect(() => {
+    if (!open) return;
+    void getOpenAICompatAgent(config)
+      .then((cfg) => {
+        setOpenaiCompat(cfg);
+        setOpenaiCompatSel(cfg.effective_agent_id);
+      })
+      .catch(() => {
+        setOpenaiCompat(null);
+        setOpenaiCompatSel("main-agent");
+      });
+  }, [open, config]);
+
+  // 选中的出口 Agent 被删除（业务 Agent 列表刷新后不在选项里）时，回退到 main-agent，避免下拉悬空。
+  useEffect(() => {
+    if (openaiCompatSel !== "main-agent" && !openaiCompatOptions.includes(openaiCompatSel)) {
+      setOpenaiCompatSel("main-agent");
+    }
+  }, [openaiCompatOptions, openaiCompatSel]);
+
+  useEffect(() => {
     if (!open || !policyAgent) return;
     void getAutomationPolicy(config, policyAgent).then((p) => setPolicyMode(p.mode)).catch(() => setPolicyMode("off"));
   }, [open, policyAgent, config]);
@@ -111,6 +138,20 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       setBusy(false);
     }
   };
+
+  const handleSaveOpenaiCompat = () =>
+    void run(async () => {
+      const res = await setOpenAICompatAgent(config, openaiCompatSel);
+      setOpenaiCompat(res);
+      setOpenaiCompatSel(res.effective_agent_id);
+    });
+
+  const handleResetOpenaiCompat = () =>
+    void run(async () => {
+      const res = await resetOpenAICompatAgent(config);
+      setOpenaiCompat(res);
+      setOpenaiCompatSel(res.effective_agent_id);
+    });
 
   const handleCreate = () => {
     const name = newName.trim();
@@ -318,6 +359,25 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     <input data-testid="settings-api-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="默认读取 docker/.env 中的 API_KEY" />
                   </label>
                 </div>
+                <label className="form-field" data-testid="settings-openai-compat-agent">
+                  <span>OpenAI 兼容入口（/v1）出口 Agent</span>
+                  <select value={openaiCompatSel} onChange={(e) => setOpenaiCompatSel(e.target.value)} disabled={busy}>
+                    {openaiCompatOptions.map((id) => (
+                      <option key={id} value={id}>{id === "main-agent" ? "main-agent（默认）" : id}</option>
+                    ))}
+                  </select>
+                  <small data-testid="settings-openai-compat-state">
+                    {openaiCompat?.configured
+                      ? `已显式配置：/v1 跑 ${openaiCompat.effective_agent_id}`
+                      : "未配置：/v1 默认跑 main-agent"}
+                  </small>
+                  <div className="settings-developer-links">
+                    <button className="secondary-button" type="button" onClick={handleSaveOpenaiCompat} disabled={busy}>保存出口 Agent</button>
+                    {openaiCompat?.configured ? (
+                      <button className="secondary-button" type="button" onClick={handleResetOpenaiCompat} disabled={busy}>重置为默认</button>
+                    ) : null}
+                  </div>
+                </label>
                 <div className="settings-developer-links">
                   <a className="secondary-button" href={apiDocsUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />API Docs</a>
                   <a className="secondary-button" href={langfuseUrl} target="_blank" rel="noreferrer"><ExternalLink size={14} />Langfuse</a>

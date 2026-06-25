@@ -25,6 +25,7 @@ from app.routers.feedback_batches import create_feedback_batches_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.openai import create_openai_router
+from app.routers.settings import create_settings_router
 from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
 from app.routers.sessions import create_sessions_router
@@ -42,6 +43,7 @@ from app.services.improvement_governor_service import ImprovementGovernorService
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.asset_store import AssetStore
+from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
@@ -87,6 +89,7 @@ improvement_governor_service = ImprovementGovernorService(
 )
 automation_policy_store = AutomationPolicyStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 asset_store = AssetStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+runtime_settings_store = RuntimeSettingsStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
@@ -165,7 +168,8 @@ app.include_router(
 )
 app.include_router(create_config_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
-app.include_router(create_openai_router(settings=settings, runtime=runtime, require_api_key=require_api_key))
+app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
+app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(
     create_agent_governance_router(

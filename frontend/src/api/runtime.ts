@@ -86,6 +86,32 @@ export function getSkills(config: RuntimeClientConfig) {
   return requestJson<SkillInfo[]>(config, "/api/skills");
 }
 
+// /v1/chat/completions 出口 Agent 配置。configured=false 表示从未配置（默认走 main），
+// 与显式选 main-agent（configured=true）是不同状态；effective_agent_id 是 /v1 实际运行的 Agent。
+export interface OpenAICompatAgentConfig {
+  agent_id: string | null;
+  configured: boolean;
+  effective_agent_id: string;
+}
+
+export function getOpenAICompatAgent(config: RuntimeClientConfig) {
+  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent");
+}
+
+export function setOpenAICompatAgent(config: RuntimeClientConfig, agentId: string) {
+  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ agent_id: agentId }),
+  });
+}
+
+export function resetOpenAICompatAgent(config: RuntimeClientConfig) {
+  return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent", {
+    method: "DELETE",
+  });
+}
+
 export const runtimeApi = {
   health: getHealth,
   sessions: getSessions,

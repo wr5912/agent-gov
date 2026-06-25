@@ -166,7 +166,7 @@ app.include_router(
 app.include_router(create_config_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_openai_router(settings=settings, runtime=runtime, require_api_key=require_api_key))
-app.include_router(create_sessions_router(session_store=session_store, require_api_key=require_api_key))
+app.include_router(create_sessions_router(session_store=session_store, settings=settings, require_api_key=require_api_key))
 app.include_router(
     create_agent_governance_router(
         agent_governance=agent_governance,

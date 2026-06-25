@@ -206,6 +206,10 @@ class AppSettings(BaseSettings):
     model_provider_warning_ttl_seconds: int = Field(default=300, alias="MODEL_PROVIDER_WARNING_TTL_SECONDS")
     api_key: Optional[str] = Field(default=None, alias="API_KEY")
 
+    # 会话历史读取端点 GET /api/sessions/{id}/messages 默认返回完整对话正文（会话所有者回放自己的历史）；
+    # 仅当该开关打开时对返回的 text/thinking/tool 输入与结果做脱敏。
+    session_history_scrub: bool = Field(default=False, alias="SESSION_HISTORY_SCRUB")
+
     agent_model: Optional[str] = Field(default="claude-sonnet-4-5", alias="AGENT_MODEL")
     fallback_model: Optional[str] = Field(default=None, alias="FALLBACK_MODEL")
     default_agent: Optional[str] = Field(default=None, alias="DEFAULT_AGENT")

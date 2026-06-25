@@ -57,21 +57,6 @@ class ChatResponse(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
-class SessionInfo(BaseModel):
-    session_id: str
-    sdk_session_id: Optional[str] = None
-    created_at: str
-    updated_at: str
-    title: Optional[str] = None
-    turns: int = 0
-    metadata: JsonObject = Field(default_factory=dict)
-
-
-class SessionDeleteResponse(BaseModel):
-    deleted: bool
-    session_id: str
-
-
 class AgentInfo(BaseModel):
     name: str
     path: str

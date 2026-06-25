@@ -1,5 +1,5 @@
 ---
-name: agent-runtime
+name: agentgov-claude-skill
 description: Use when integrating AgentGov (the agent runtime governance backend) from an upper-layer business system — calling its HTTP API to run agents, replay session history, submit feedback, run evaluation/regression, or trigger version releases. Encodes the integration journeys, auth, and ownership boundaries.
 ---
 

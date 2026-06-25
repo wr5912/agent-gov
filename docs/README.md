@@ -48,6 +48,7 @@
 
 ## 接口与示例
 
+- [AgentGov集成指南](./AgentGov集成指南.md)：`docs/AgentGov集成指南.md`，上层业务系统集成 AgentGov 底座的权威集成参考（认证、概念模型、集成旅程、边界归属、反模式；契约真相源是 OpenAPI）
 - [外部治理Webhook示例](./外部治理Webhook示例.yaml)：`docs/外部治理Webhook示例.yaml`
 
 ## 工程治理

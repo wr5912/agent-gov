@@ -1,0 +1,107 @@
+# AgentGov 集成指南
+
+> 文档角色：面向**上层业务系统**集成 AgentGov 的权威集成参考（接口与集成层）。AgentGov 是 agent 运行治理底座，通常被上层业务系统（如 SOC 平台、客服平台、运维平台）集成，对外只暴露 HTTP API。
+>
+> 契约单一真相源：**OpenAPI**（运行容器的 `/openapi.json` 与 `/docs`）。本指南**不复制** request/response schema，只讲 OpenAPI 给不了的东西：集成旅程、认证、错误语义、边界归属、稳定性与反模式。涉及具体字段时请以 OpenAPI 为准。
+>
+> 术语以 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md) 为准；产品定位以 [项目目标愿景使命](./项目目标愿景使命.md) 为准。
+
+## 1. AgentGov 是什么 / 不是什么
+
+AgentGov 是**智能体治理平台**，对外作为 agent 运行治理底座，负责被治理 Agent 的运行（Runtime）、反馈闭环（Feedback Loop）和版本治理（Version Governance），并把运行、反馈、归因、优化、评估、发布沉淀为数据资产、方法论资产和执行资产。
+
+| 维度 | AgentGov 底座负责 | 上层业务系统负责 |
+| --- | --- | --- |
+| 运行 | 跑被治理的业务 Agent / main agent，产出 run、session、trace | 决定何时跑、传入业务上下文、承载业务工作流 |
+| 会话 | 持有会话事实（SDK session transcript 为权威源）、按 `session_id` 投影历史 | 展示对话、回放气泡、组织业务级会话 |
+| 反馈闭环 | 归因、优化、评估、回归（治理 Agent + DSPy，底座内部） | 采集用户反馈并提交、在确认门上做业务决策 |
+| 版本治理 | change set / release / 回滚 / 审计 | 触发发布、按业务规则决定是否发布 |
+| 审批 | 记录 operator/reason/审计事件 | **高风险动作的人审批**（划归外部业务系统，见 §6） |
+| 资产 | 沉淀与跨 Agent 复用 | 消费资产、按场景复用 |
+
+AgentGov **不**提供通用协作看板、不替代协作平台、不承载上层的领域 UI 与审批；治理 Agent 是底座内部工具，**不**对上层暴露为可编排对象。
+
+## 2. 集成前提与约定
+
+- **部署形态**：Docker 容器对外提供 HTTP API（默认端口 `8080`，宿主映射见部署）。供 Web UI、业务系统、Agent 平台控制面调用。
+- **认证**：所有 `/api/*` 与 `/v1/*` 走 `Authorization: Bearer <API_KEY>`。`API_KEY` 为空表示不鉴权（仅限可信内网）；配置后缺失/错误 token 返回 `401`。
+- **错误语义**：`400/422` 入参非法；`401` 未鉴权；`404` 资源不存在；`409` 状态冲突（如重复创建、并发发布）；`500` 服务端/数据完整性异常。失败即报错，不静默降级为 offline/raw 结果。
+- **离线不变量**：底座不依赖公网远程服务；模型经 `MODEL_PROVIDER_BACKEND` 显式选择的本地/内网网关接入。集成方不应假设任何公网回调。
+- **契约真相源**：以容器 `/openapi.json`、`/docs` 为准；前端/客户端类型应由 OpenAPI 生成，不要绕过 OpenAPI 自造 schema（见 §6）。
+
+## 3. 概念模型与所有权
+
+```
+业务Agent ──运行──▶ session / run ──反馈──▶ feedback-case ──归因/优化/评估──▶ change set / release ──沉淀──▶ asset registry
+```
+
+- **Agent**：`main-agent`（第一阶段样板）与**业务 Agent**（经 `/api/agent-registry` 注册、治理的长期对象）。集成方编排的是业务 Agent。
+- **session**：产品对话标识是 `session_id`（由 API 创建或客户端传入）。响应里的 `sdk_session_id` 是内部 SDK resume id，**不是**产品会话 id，集成方一律用 `session_id`。
+- **run**：一次运行，带 `run_id`，是反馈与归因的归属锚点。
+- **会话正文**：权威源是 agent 自己的 SDK session transcript；底座按需投影，**不另存副本**。集成方也不应缓存一份并行会话存储（会双轨漂移）。
+- **所有权（重要）**：
+  - `agent_id`（会话归属哪个 Agent）是 **backend-owned**：由底座在运行时落库。**集成方读历史时不传 `agent_id`**，只凭 `session_id`（见 §6）。
+  - 反馈/评估/版本按 `run_id` / `session_id` / `agent_id` 归属到对应 Agent 与 version。
+
+## 4. 集成旅程（任务式）
+
+> 每个旅程给“目标 + 最短路径（调用哪些 operation）+ 边界提示”。具体字段、状态码、schema 以 OpenAPI 对应 tag 为准。
+
+### 4.1 选择 / 创建业务 Agent — OpenAPI tag `agents`
+- 目标：拿到要运行的业务 Agent。
+- 最短路径：`GET /api/agent-registry` 列出；`POST /api/agent-registry` 创建；`POST /api/agent-registry/{agent_id}/lifecycle` 切换生命周期；`GET /api/agents`、`GET /api/skills` 查能力目录。
+- 边界：仅需运行 main agent 时可跳过——`POST /api/chat` 省略 `agent_id` 即跑 main。
+
+### 4.2 运行一次对话 — OpenAPI tag `chat` / `openai-compatible`
+- 目标：让 Agent 处理一条消息/任务。
+- 最短路径：
+  - 非流式：`POST /api/chat`，体含 `message`（必填）、可选 `session_id`（省略则 API 创建）、`agent_id`（省略跑 main）。响应含 `run_id`、`session_id`、`answer`、`messages`、`agent_activity`、`usage`。
+  - 流式：`POST /api/chat/stream`（Server-Sent Events）。
+  - OpenAI 兼容：`POST /v1/chat/completions`（便于复用现成 OpenAI 客户端）。
+- 边界：工具权限、MCP、skills、subagents 以 Claude Code 官方配置为准；`skills_mode`/`allowed_tools`/`disallowed_tools` 对 SDK 执行已废弃，不要依赖。续聊用同一 `session_id`。
+
+### 4.3 回放会话历史 — OpenAPI tag `sessions`
+- 目标：刷新/重开旧会话时重建对话气泡。
+- 最短路径：`GET /api/sessions` 列会话；`GET /api/sessions/{session_id}/messages` 取该会话全部消息（SDK transcript 投影）。返回 `messages[]`（每条含 `uuid`/`role`/`parent_tool_use_id`/`blocks`，块为 `thinking`/`text`/`tool_use`/`tool_result`，`tool_use.id` 与 `tool_result.tool_use_id` 可配对）与 `subagents[]`；支持 `?limit=&offset=` 分页。
+- 边界：**只传 `session_id`**，不传 `agent_id`（归属由底座解析）；会话尚无 transcript 返回空 `messages`，未知会话 `404`。
+
+### 4.4 提交反馈并驱动闭环 — OpenAPI tag `feedback`
+- 目标：把用户/系统反馈喂回闭环，产出归因、优化与回归。
+- 最短路径：`POST /api/feedback-cases` 提交反馈案例（可挂 `run_id`/`session_id`/`alert_id`/`case_id`）；`/feedback-cases/{id}/evidence-packages` 补证据；归因/优化由底座治理 Agent 生成（`attribution-jobs`、`optimization-plan`），集成方在**确认门**上决策；批次维度走 `/api/feedback-optimization-batches/...`（`optimization-plan/execute-all`、`regression-plan`、`regression-runs`、`gate-overrides`、`rollback`）。
+- 边界：归因/优化的内部机制（治理 Agent、DSPy formatter）是底座内部，集成方只**提交反馈 + 在确认/门禁上决策**，不直接编排治理 Agent。
+
+### 4.5 评估与回归 — OpenAPI tag `agents` / `automation`
+- 目标：用例化评估候选改动、固化回归资产。
+- 最短路径：`/api/eval-cases`、`/api/eval-runs`（含 `impact-analysis`）；`/api/regression-assets/...`（`promote`/`archive`/`mark-flaky`/`supersede`/`revisions`/`governance-events`）。
+- 边界：回归门禁结果由底座产出；集成方可读取并据业务规则决定是否放行。
+
+### 4.6 版本发布与回滚 — OpenAPI tag `agents`
+- 目标：把确认的改动发布为新版本，可回滚。
+- 最短路径：`/api/agent-change-sets/...`（`diff`/`file-diff`/`approve`/`reject`/`publish`）；`/api/agent-releases/...`（`restore`/`rollback`）；`/api/agent-repository/...`（`snapshot`/`current`）。
+- 边界：审批/发布的**业务决策**在上层；底座负责执行、记录、审计与原子性。
+
+### 4.7 资产沉淀与跨 Agent 复用 — OpenAPI tag `assets`
+- 目标：复用方法论/执行/数据资产。
+- 最短路径：`GET/POST /api/assets`（按 `agent_id`/`asset_type` 过滤）；`POST /api/assets/{asset_id}/inherit` 继承到另一个 Agent。
+
+### 观测
+- `GET /health` 健康检查与运行态字段；运行 trace 经 Langfuse（自托管，内网）观测，集成方可据 `run_id` 关联。
+
+## 5. 契约稳定性与版本
+
+- **稳定面**（可放心长期依赖）：`/v1` OpenAI 兼容、`/api/chat`、`/api/chat/stream`、`/api/sessions*`、`/api/feedback-cases`、`/api/agent-registry`、`/health`。
+- **演进中**（接入需关注变更）：业务 Agent 多租与隔离、审批外移细化、改进治理工作台的用户主流程术语。
+- OpenAPI 与生成类型是契约边界；底座变更公开 API 时会同步 OpenAPI 与迁移说明。集成方应以 OpenAPI 版本为对接基线，并对 `4xx/5xx` 做稳健处理。
+
+## 6. 集成反模式（请不要这么做）
+
+- **读会话历史时传 `agent_id`**：归属是 backend-owned，由底座按 `session_id` 解析；传入会与真实归属冲突。
+- **在 AgentGov 内做高风险动作的人审批**：审批划归外部业务系统（见愿景与生产化清单）；底座只记录 operator/reason/审计事件。
+- **绕过 OpenAPI 自造 schema**：客户端类型应由 OpenAPI 生成，避免 schema 双轨漂移。
+- **把 `main-agent` 当长期边界**：它是第一阶段样板，长期治理对象是业务 Agent。
+- **在上层另存一份会话/消息副本**：会话事实的单一真相源是 agent 的 SDK transcript，按 `session_id` 向底座取，不要并行存储。
+- **用 `sdk_session_id` 当会话 id**：它是内部 resume id，产品对话 id 一律用 `session_id`。
+
+## 7. AI 辅助集成（可选）
+
+若上层系统本身用 Claude Code / Codex 开发，可安装 AgentGov 提供的可分发集成 skill（见仓库 `integrations/`），让集成方的开发 Agent 直接掌握上面的旅程与边界。该 skill 派生自本指南，本指南为单一真相源。

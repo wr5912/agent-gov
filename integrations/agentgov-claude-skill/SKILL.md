@@ -9,7 +9,7 @@ AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集
 
 ## 接入前提
 
-- Base URL：AgentGov 容器地址（默认 `:8080`）。
+- Base URL：由 AgentGov 部署方提供。外部 / 同主机默认 `http://<host>:58080`（宿主暴露端口 `HOST_PORT`，约定 50000 + `API_PORT`，默认 58080）；同 Docker 网络内的服务用 `http://claude-agent-api:8080`。`8080` 是容器内端口、不是外部 Base URL，生产可能在反向代理 / TLS 之后。
 - 认证：所有 `/api/*`、`/v1/*` 带 `Authorization: Bearer <API_KEY>`。
 - 错误语义：`401` 未鉴权 / `404` 不存在 / `409` 状态冲突 / `400|422` 入参非法 / `500` 服务端或数据完整性异常。
 - 先 `GET /health` 探活，并拉一次 `/openapi.json` 作为对接基线。

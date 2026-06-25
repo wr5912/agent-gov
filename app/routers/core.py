@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, FastAPI
 
 from app.runtime.agent_git_store import AgentVersionProvider
+from app.runtime.model_provider import ModelProviderRouter
 from app.runtime.schemas import RuntimeDependencyVersions, RuntimeHealthResponse, RuntimeRootResponse
 from app.runtime.settings import AppSettings
 
@@ -75,6 +76,7 @@ def build_health_payload(
         default_skills_mode=settings.default_skills_mode,
         provider_api_url_configured=bool(settings.provider_api_url),
         provider_api_key_configured=bool(settings.provider_api_key),
+        model_provider_route=ModelProviderRouter(settings).health_summary(),
         programmatic_agents=False,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),
@@ -100,6 +102,9 @@ def runtime_dependency_versions() -> RuntimeDependencyVersions:
         bundled_claude_code_cli=bundled_claude_code_cli_version(),
         path_claude_code_cli=command_version(shutil.which("claude")),
         langfuse=package_version("langfuse"),
+        litellm=package_version("litellm"),
+        httpx=package_version("httpx"),
+        starlette=package_version("starlette"),
         opentelemetry_sdk=package_version("opentelemetry-sdk"),
         opentelemetry_exporter_otlp_proto_http=package_version("opentelemetry-exporter-otlp-proto-http"),
     )

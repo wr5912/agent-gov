@@ -127,6 +127,9 @@ class RuntimeDependencyVersions(BaseModel):
     bundled_claude_code_cli: Optional[str] = None
     path_claude_code_cli: Optional[str] = None
     langfuse: Optional[str] = None
+    litellm: Optional[str] = None
+    httpx: Optional[str] = None
+    starlette: Optional[str] = None
     opentelemetry_sdk: Optional[str] = None
     opentelemetry_exporter_otlp_proto_http: Optional[str] = None
 
@@ -152,6 +155,7 @@ class RuntimeHealthResponse(ExtensibleResponse):
     default_skills_mode: Optional[Literal["all", "default", "none"]] = None
     provider_api_url_configured: bool
     provider_api_key_configured: bool
+    model_provider_route: JsonObject = Field(default_factory=dict)
     programmatic_agents: bool
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None
@@ -182,7 +186,7 @@ class FeedbackSignalCreateRequest(BaseModel):
 
 
 # 多业务 Agent 治理 schema 拆至 agent_governance_schemas.py（控 schemas.py 行数），此处 re-export 保持导入路径稳定。
-from app.runtime.agent_governance_schemas import (  # noqa: E402
+from app.runtime.agent_governance_schemas import (  # noqa: E402,F401
     AgentCreateRequest,
     AgentDeleteResponse,
     AgentDeletionImpact,

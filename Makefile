@@ -176,4 +176,4 @@ main-flow-test:
 	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)
 
 container-live-test:
-	$(COMPOSE) run --rm --no-deps -v "$(CURDIR):/app" -w /app claude-agent-api sh -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+	$(COMPOSE) run --rm -v "$(CURDIR):/app" -w /app claude-agent-api sh -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

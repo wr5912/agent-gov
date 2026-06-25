@@ -13,6 +13,10 @@ RUNTIME_ENV_KEYS = (
     "LOG_LEVEL",
     "MODEL_PROVIDER_API_KEY",
     "MODEL_PROVIDER_API_URL",
+    "MODEL_PROVIDER_BACKEND",
+    "MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+    "MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD",
+    "MODEL_PROVIDER_WARNING_TTL_SECONDS",
 )
 CONTAINER_ONLY_ENV_KEYS = {
     "COMPOSE_PROJECT_NAME",
@@ -140,6 +144,18 @@ def test_official_env_examples_do_not_ship_configured_model_provider_key() -> No
         assert "ANTHROPIC_API_KEY=sk-" not in text
 
 
+def test_official_env_and_settings_do_not_allow_manual_vllm_version_or_second_upstream_url() -> None:
+    checked_paths = [
+        REPO_ROOT / "docker/.env.example",
+        REPO_ROOT / "docker/.env.local-debug.example",
+        REPO_ROOT / "app/runtime/settings.py",
+    ]
+    for path in checked_paths:
+        text = path.read_text(encoding="utf-8")
+        assert "MODEL_PROVIDER_VLLM_VERSION=" not in text
+        assert "MODEL_PROVIDER_UPSTREAM_URL=" not in text
+
+
 def test_runtime_env_governance_skill_keeps_required_boundary_terms() -> None:
     skill = (REPO_ROOT / ".codex/skills/runtime-env-governance/SKILL.md").read_text(encoding="utf-8")
 
@@ -223,3 +239,22 @@ def test_project_dspy_entrypoint_suppresses_known_litellm_import_warnings() -> N
     assert "Failed to fetch remote model cost map" not in output
     assert "could not pre-load bedrock-runtime response stream shape" not in output
     assert "could not pre-load sagemaker-runtime response stream shape" not in output
+
+
+def test_container_live_test_includes_litellm_sidecar_dependency() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    target = makefile.split("container-live-test:", 1)[1].split("\n\n", 1)[0]
+
+    assert "--no-deps" not in target
+    assert "tests/test_live_runtime_acceptance.py" in target
+
+
+def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
+    compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+    sidecar = compose.split("agent-gov-litellm-sidecar:", 1)[1].split("\n  claude-agent-api:", 1)[0]
+
+    assert "env_file:" not in sidecar
+    assert "MODEL_PROVIDER_API_URL" in sidecar
+    assert "MODEL_PROVIDER_API_KEY" in sidecar
+    assert "LANGFUSE_SECRET_KEY" not in sidecar
+    assert "\n      API_KEY:" not in sidecar

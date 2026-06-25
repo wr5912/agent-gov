@@ -4,10 +4,10 @@
 而是用真实模型凭据驱动真实运行时，验证「离线 fake 永远证明不了」的那一环——
 真实模型输出能否被结构化契约消费、闭环归因那一步是否真的成立。
 
-离线产品不变量不受影响：缺少 `docker/.env` 或其中未配 `MODEL_PROVIDER_API_KEY` 时整文件 skip，
-因此 `make test` 在 CI/无凭据环境保持全绿；只有部署到真实容器环境并提供 live 凭据时才真打网络。
+离线产品不变量不受影响：缺少 `docker/.env` 或其中未配可用模型后端时整文件 skip，
+因此 `make test` 在 CI/无模型环境保持全绿；只有部署到真实容器环境并提供 live 后端时才真打网络。
 
-凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），按白名单只取三项 provider 变量。
+凭据来源：私有、gitignored 的 `docker/.env`（容器部署 env 文件），按白名单只取 provider 变量。
 关键约束：导入时**只读入一个本地 dict，绝不改写全局 `os.environ`**（否则 collection 阶段会污染
 同进程其他测试）；凭据仅在每个 live 用例内经 `monkeypatch` 临时注入、用完即还原。
 
@@ -20,19 +20,29 @@ chat 用例额外要求已 bootstrap 的容器运行卷（`make runtime-bootstra
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 import pytest
-
 from app.runtime.feedback_schemas import AttributionFormatterOutput
+from app.runtime.model_provider import LOCAL_PROVIDER_DUMMY_API_KEY, ModelProviderRouter
 from app.runtime.output_formatter import DSPyOutputFormatter
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings
 
 _LIVE_ENV_FILE = Path(__file__).resolve().parents[1] / "docker" / ".env"
-_LIVE_PROVIDER_KEYS = ("MODEL_PROVIDER_API_KEY", "MODEL_PROVIDER_API_URL", "AGENT_MODEL")
+_LIVE_PROVIDER_KEYS = (
+    "MODEL_PROVIDER_API_KEY",
+    "MODEL_PROVIDER_API_URL",
+    "MODEL_PROVIDER_BACKEND",
+    "MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD",
+    "MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS",
+    "MODEL_PROVIDER_WARNING_TTL_SECONDS",
+    "AGENT_MODEL",
+)
 _CONTAINER_REQUIRED_PATHS = (Path("/data"), Path("/main-workspace"), Path("/claude-roots/main"))
 _TRUTHY = {"1", "true", "yes", "on", "container"}
 
@@ -72,10 +82,24 @@ def _container_acceptance_skip_reason() -> str | None:
 
 _CONTAINER_ACCEPTANCE_SKIP_REASON = _container_acceptance_skip_reason()
 
+
+def _live_provider_skip_reason() -> str | None:
+    backend = (_LIVE_CREDS.get("MODEL_PROVIDER_BACKEND") or "anthropic_compatible").strip()
+    if backend == "vllm" and not _LIVE_CREDS.get("MODEL_PROVIDER_API_URL"):
+        return "vLLM live 验收需 docker/.env 配置 MODEL_PROVIDER_API_URL"
+    if backend == "anthropic_compatible" and not _LIVE_CREDS.get("MODEL_PROVIDER_API_KEY"):
+        return "Anthropic-compatible live 验收需 docker/.env 配置 MODEL_PROVIDER_API_KEY"
+    if not _LIVE_CREDS.get("AGENT_MODEL"):
+        return "live 验收需 docker/.env 配置 AGENT_MODEL"
+    return None
+
+
+_LIVE_PROVIDER_SKIP_REASON = _live_provider_skip_reason()
+
 pytestmark = [
     pytest.mark.skipif(
-        not _LIVE_CREDS.get("MODEL_PROVIDER_API_KEY"),
-        reason="live 验收需 docker/.env 配置 MODEL_PROVIDER_API_KEY；缺失默认 skip，不破坏 make test 产品不变量",
+        _LIVE_PROVIDER_SKIP_REASON is not None,
+        reason=_LIVE_PROVIDER_SKIP_REASON or "",
     ),
     pytest.mark.skipif(
         _CONTAINER_ACCEPTANCE_SKIP_REASON is not None,
@@ -101,13 +125,130 @@ def live_settings(monkeypatch):
         get_settings.cache_clear()
 
 
+def _post_json(endpoint: str, payload: dict, *, api_key: str, timeout: float = 60):
+    request = Request(
+        endpoint,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        method="POST",
+    )
+    with urlopen(request, timeout=timeout) as response:
+        raw = response.read(1024 * 1024)
+        if "text/event-stream" in response.headers.get("content-type", ""):
+            return {"_sse": raw.decode("utf-8", errors="replace")}
+        return json.loads(raw.decode("utf-8")) if raw else {}
+
+
+def _live_vllm_router(settings):
+    if settings.model_provider_backend != "vllm":
+        pytest.skip("vLLM 专项 live probe 只在 MODEL_PROVIDER_BACKEND=vllm 时运行")
+    return ModelProviderRouter(settings)
+
+
+def test_live_vllm_s1_provider_route_ready(live_settings):
+    """S1：版本/sidecar/models 管道可达，失败时给出独立 probe 归因。"""
+    router = _live_vllm_router(live_settings)
+
+    router.ensure_agent_runtime_ready()
+
+
+def test_live_vllm_s2_litellm_accepts_anthropic_messages_and_streaming(live_settings):
+    """S2：LiteLLM sidecar 接受 Claude Code 所需 Anthropic Messages 形态和 streaming。"""
+    settings = live_settings
+    router = _live_vllm_router(settings)
+    route = router.route()
+    api_key = settings.provider_api_key or LOCAL_PROVIDER_DUMMY_API_KEY
+    base_url = route.claude_base_url.rstrip("/")
+    model = settings.agent_model or "agent-gov-model"
+
+    non_stream = _post_json(
+        f"{base_url}/v1/messages",
+        {
+            "model": model,
+            "max_tokens": 32,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+        },
+        api_key=api_key,
+    )
+    assert non_stream, "Anthropic Messages 非流式响应不能为空"
+
+    stream = _post_json(
+        f"{base_url}/v1/messages",
+        {
+            "model": model,
+            "max_tokens": 32,
+            "stream": True,
+            "messages": [{"role": "user", "content": "Reply with OK."}],
+        },
+        api_key=api_key,
+    )
+    assert "event:" in stream.get("_sse", ""), "Anthropic Messages streaming 应返回 SSE event"
+
+
+def test_live_vllm_c_model_tool_and_schema_preflight(live_settings):
+    """C：目标模型必须能完成强制 tool calling 与 schema-exact JSON，避免端到端阶段才混合暴露。"""
+    settings = live_settings
+    router = _live_vllm_router(settings)
+    route = router.route()
+    api_key = settings.provider_api_key or LOCAL_PROVIDER_DUMMY_API_KEY
+    base_url = route.formatter_api_base.rstrip("/")
+    model = settings.agent_model or "agent-gov-model"
+
+    tool_response = _post_json(
+        f"{base_url}/v1/chat/completions",
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": "Call the probe tool with value ok."}],
+            "tools": [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "agent_gov_probe",
+                        "description": "Return a probe value.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {"value": {"type": "string"}},
+                            "required": ["value"],
+                        },
+                    },
+                }
+            ],
+            "tool_choice": {"type": "function", "function": {"name": "agent_gov_probe"}},
+            "max_tokens": 128,
+        },
+        api_key=api_key,
+    )
+    message = (((tool_response.get("choices") or [{}])[0]).get("message") or {})
+    assert message.get("tool_calls"), "模型未返回 tool_calls，不能准入 Claude Code 多工具循环"
+
+    schema_response = _post_json(
+        f"{base_url}/v1/chat/completions",
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": 'Return exactly this JSON object and nothing else: {"ok": true}'}],
+            "response_format": {"type": "json_object"},
+            "max_tokens": 64,
+        },
+        api_key=api_key,
+    )
+    content = ((((schema_response.get("choices") or [{}])[0]).get("message") or {}).get("content") or "").strip()
+    assert json.loads(content) == {"ok": True}
+
+
 def test_live_dspy_formatter_produces_typed_attribution_against_live_model(live_settings):
     """闭环最关键一环：真实模型输出经 DSPy formatter 转为合法 typed 归因结果。
 
     这是离线闭环测试用 fake `_run_profile_json` 替换掉、从未真实验证的契约。
     """
     settings = live_settings
-    assert settings.provider_api_key, "live 验收要求 provider_api_key 已配置"
+    if settings.model_provider_backend == "anthropic_compatible":
+        assert settings.provider_api_key, "Anthropic-compatible live 验收要求 provider_api_key 已配置"
+    if settings.model_provider_backend == "vllm":
+        assert settings.provider_api_url, "vLLM live 验收要求 provider_api_url 已配置"
     assert settings.runtime_volume_mode == "container"
     assert settings.settings_env_file == Path("docker/.env")
     assert settings.data_dir == Path("/data")

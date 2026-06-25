@@ -4,6 +4,8 @@ from .json_types import JsonObject
 
 AGENT_AUTH_REQUIRED = "AGENT_AUTH_REQUIRED"
 AGENT_RUNTIME_ERROR = "AGENT_RUNTIME_ERROR"
+MODEL_PROVIDER_SIDECAR_UNAVAILABLE = "MODEL_PROVIDER_SIDECAR_UNAVAILABLE"
+VLLM_MODELS_PROBE_FAILED = "VLLM_MODELS_PROBE_FAILED"
 _PLACEHOLDER_PROVIDER_API_KEYS = {"", "sk-ant-xxxx", "change-me", "change-me-model-provider-key"}
 
 
@@ -43,6 +45,37 @@ class AgentAuthenticationRequiredError(AgentJobRuntimeError):
                 "missing": missing,
             },
         )
+
+
+class ModelProviderCapabilityError(AgentJobRuntimeError):
+    """Raised before launching an Agent when the selected model route is not usable."""
+
+    def __init__(
+        self,
+        *,
+        error_code: str,
+        message: str,
+        route: str,
+        probe: str,
+        endpoint: str | None,
+        status_code: int | None = None,
+        duration_ms: int | None = None,
+        retryable: bool,
+        action: str,
+    ) -> None:
+        raw_output_json: JsonObject = {
+            "error_type": "model_provider_capability",
+            "error_code": error_code,
+            "message": message,
+            "route": route,
+            "probe": probe,
+            "endpoint": endpoint,
+            "status_code": status_code,
+            "duration_ms": duration_ms,
+            "retryable": retryable,
+            "action": action,
+        }
+        super().__init__(error_code=error_code, message=message, raw_output_json={key: value for key, value in raw_output_json.items() if value is not None})
 
 
 def agent_error_code(exc: Exception) -> str:

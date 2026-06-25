@@ -10,6 +10,7 @@ import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
+from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
 from app.runtime.policy import build_profile_pre_tool_use_hook
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
@@ -255,6 +256,46 @@ def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
 
     assert options.env["ANTHROPIC_API_KEY"] == "sk-test-provider"
     assert options.env["ANTHROPIC_BASE_URL"] == "https://model-gateway.example.test/anthropic"
+
+
+def test_vllm_feedback_job_options_use_derived_litellm_sidecar(tmp_path, monkeypatch):
+    import app.runtime.model_provider as model_provider
+
+    class FakeResponse:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            return None
+
+        def getcode(self):
+            return 200
+
+        def read(self, _):
+            return b'{"version":"0.14.0"}'
+
+    def fake_urlopen(*_, **__):
+        return FakeResponse()
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    base = _settings(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        WORKSPACE_DIR=base.workspace_dir,
+        DATA_DIR=base.data_dir,
+        CLAUDE_ROOT=base.claude_root,
+        CLAUDE_HOME=base.claude_home,
+        MODEL_PROVIDER_BACKEND="vllm",
+        MODEL_PROVIDER_API_URL="http://vllm:8000",
+    )
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    options = runtime.job_runner.build_options(runtime.profiles["governor"])
+
+    assert options.env["ANTHROPIC_API_KEY"] == LOCAL_PROVIDER_DUMMY_API_KEY
+    assert options.env["ANTHROPIC_BASE_URL"] == LITELLM_SIDECAR_BASE_URL
 
 
 def test_background_agent_job_requires_model_credentials_before_query(tmp_path, monkeypatch):

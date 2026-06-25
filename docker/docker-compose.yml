@@ -57,6 +57,23 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
+  agent-gov-litellm-sidecar:
+    build:
+      context: ..
+      dockerfile: docker/litellm-sidecar.Dockerfile
+    image: agent-gov-litellm-sidecar:0.4.7
+    container_name: agent-gov-litellm-sidecar
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-vllm}
+      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
+      MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
+      AGENT_MODEL: ${AGENT_MODEL:-agent-gov-model}
+      LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
+    restart: unless-stopped
+    logging: *default-logging
+
   claude-agent-api:
     build:
       context: ..
@@ -94,6 +111,12 @@ services:
       MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
+      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
+      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
+      MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
+      MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD: ${MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD:-0.23.0}
+      MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS:-3}
+      MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
@@ -110,6 +133,8 @@ services:
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
+    depends_on:
+      - agent-gov-litellm-sidecar
     restart: unless-stopped
     logging: *default-logging
 
@@ -144,6 +169,12 @@ services:
       MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
       CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
+      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
+      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
+      MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
+      MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD: ${MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD:-0.23.0}
+      MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS:-3}
+      MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       MCP_SERVER_URL: ${MCP_SERVER_URL:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
@@ -162,6 +193,7 @@ services:
       - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     depends_on:
+      - agent-gov-litellm-sidecar
       - claude-agent-api
     restart: unless-stopped
     logging: *default-logging

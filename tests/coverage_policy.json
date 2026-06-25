@@ -88,6 +88,16 @@
           ]
         },
         {
+          "id": "model_provider_route_and_capability_gate",
+          "description": "Runtime, Agent job and formatter model access use explicit MODEL_PROVIDER_BACKEND routing; vLLM probes derive /version and /v1/models from MODEL_PROVIDER_API_URL, route through LiteLLM sidecar, and block when sidecar capability checks fail.",
+          "pytest": [
+            "tests/test_model_provider_router.py::test_vllm_route_probes_version_and_derives_litellm_sidecar",
+            "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
+            "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
+            "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
+          ]
+        },
+        {
           "id": "plan_tab_empty_success_failure_states",
           "description": "Optimization plan tab renders empty state, generated plan, generation failure and timeout details including background job refresh, editable plan task states, dirty workspace preflight, one-click execution controls, and execution record details.",
           "ui_scripts": [

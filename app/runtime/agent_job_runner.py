@@ -11,6 +11,7 @@ from .agent_job_types import AgentJobType, FormatterOutputModel
 from .agent_profiles import AgentRuntimeProfile
 from .json_types import JsonObject
 from .message_utils import extract_text
+from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .settings import AppSettings
 
@@ -31,20 +32,19 @@ class AgentJobRunner:
         profiles: dict[str, AgentRuntimeProfile],
         env_builder: Callable[[AgentRuntimeProfile], dict[str, str]],
         output_formatter: DSPyOutputFormatter,
+        provider_router: ModelProviderRouter | None = None,
     ) -> None:
         self.settings = settings
         self.profiles = profiles
         self.env_builder = env_builder
         self.output_formatter = output_formatter
+        self.provider_router = provider_router or ModelProviderRouter(settings)
 
     def build_options(self, profile: AgentRuntimeProfile) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
         env = self.env_builder(profile)
-        if self.settings.provider_api_key:
-            env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
-        if self.settings.provider_api_url:
-            env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
+        env.update(self.provider_router.claude_env())
 
         kwargs: dict[str, object] = {
             "cwd": profile.workspace_dir,
@@ -83,6 +83,7 @@ class AgentJobRunner:
 
         profile = self.profiles[profile_name]
         self.raise_if_missing_model_credentials(profile)
+        self.provider_router.ensure_agent_runtime_ready()
         answer_parts: list[str] = []
         errors: list[str] = []
         options = self.build_options(profile)
@@ -133,18 +134,22 @@ class AgentJobRunner:
         return result.output
 
     def raise_if_missing_model_credentials(self, profile: AgentRuntimeProfile) -> None:
-        if self.provider_api_key_configured():
+        if self.provider_credentials_configured():
             return
         env_file = self.settings.settings_env_file
+        missing = ["MODEL_PROVIDER_API_URL"] if not self.provider_router.route().provider_api_key_required else ["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"]
         raise AgentAuthenticationRequiredError(
             profile_name=profile.name,
             runtime_volume_mode=self.settings.runtime_volume_mode,
             settings_env_file=env_file.as_posix() if env_file else None,
-            missing=["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"],
+            missing=missing,
         )
 
     def provider_api_key_configured(self) -> bool:
         return provider_api_key_configured(self.settings.provider_api_key)
+
+    def provider_credentials_configured(self) -> bool:
+        return self.provider_router.provider_credentials_configured()
 
     @staticmethod
     async def single_prompt_stream(prompt: str, *, session_id: str | None = None) -> AsyncIterator[JsonObject]:

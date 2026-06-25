@@ -27,6 +27,7 @@ from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .message_utils import extract_text, message_event_name, to_plain
+from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .runtime_activity import RuntimeActivityExtractor
 from .runtime_db import utc_now
@@ -102,12 +103,14 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor(settings)
         self.langfuse = RuntimeLangfuseClient(settings)
-        self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse)
+        self.model_provider_router = ModelProviderRouter(settings)
+        self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse, provider_router=self.model_provider_router)
         self.job_runner = AgentJobRunner(
             settings=settings,
             profiles=self.profiles,
             env_builder=self._profile_env,
             output_formatter=self.output_formatter,
+            provider_router=self.model_provider_router,
         )
         self.job_orchestrator = (
             FeedbackJobOrchestrator(
@@ -346,10 +349,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         env = self._profile_env(profile)
-        if self.settings.provider_api_key:
-            env["ANTHROPIC_API_KEY"] = self.settings.provider_api_key
-        if self.settings.provider_api_url:
-            env["ANTHROPIC_BASE_URL"] = self.settings.provider_api_url
+        env.update(self.model_provider_router.claude_env())
 
         system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append] if part)
         system_prompt = {"type": "preset", "preset": "claude_code"}
@@ -692,8 +692,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 ) as generation:
                     self.langfuse.set_trace_attributes(generation, **propagation)
                     try:
-
                         async def execute_query() -> None:
+                            self.model_provider_router.ensure_agent_runtime_ready()
                             options = self._build_options(req, context.session, profile=profile)
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):
@@ -749,8 +749,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 ) as generation:
                     self.langfuse.set_trace_attributes(generation, **propagation)
                     try:
-
                         async def emit_query_events() -> AsyncIterator[JsonObject]:
+                            self.model_provider_router.ensure_agent_runtime_ready()
                             options = self._build_options(req, context.session)
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):

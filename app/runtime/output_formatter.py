@@ -14,6 +14,7 @@ from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait
 
 from .agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec, coerce_agent_job_type
 from .json_types import JsonObject
+from .model_provider import ModelProviderRouter
 from .settings import AppSettings
 
 
@@ -56,9 +57,10 @@ class DSPyOutputFormatter:
     of silently falling back to placeholder outputs.
     """
 
-    def __init__(self, settings: AppSettings, langfuse: Any | None = None) -> None:
+    def __init__(self, settings: AppSettings, langfuse: Any | None = None, provider_router: ModelProviderRouter | None = None) -> None:
         self.settings = settings
         self.langfuse = langfuse
+        self.provider_router = provider_router or ModelProviderRouter(settings)
         self._lm: Any | None = None
 
     def enabled(self) -> bool:
@@ -140,13 +142,8 @@ class DSPyOutputFormatter:
         model = self.settings.dspy_output_formatter_model or self.settings.agent_model
         if not model:
             raise RuntimeError("DSPy formatter model is not configured")
-        if "/" not in model and self.settings.provider_api_url and "anthropic" in self.settings.provider_api_url:
-            model = f"anthropic/{model}"
-        kwargs: dict[str, object] = {}
-        if self.settings.provider_api_key:
-            kwargs["api_key"] = self.settings.provider_api_key
-        if self.settings.provider_api_url:
-            kwargs["api_base"] = self.settings.provider_api_url
+        model = self.provider_router.formatter_model_name(model)
+        kwargs: dict[str, object] = dict(self.provider_router.formatter_kwargs())
         if self.settings.dspy_output_formatter_max_tokens > 0:
             kwargs["max_tokens"] = self.settings.dspy_output_formatter_max_tokens
         try:

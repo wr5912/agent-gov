@@ -9,6 +9,16 @@
 - `docs/engineering/GSD长程重构阶段清单.md`：GSD 阶段规划、执行、验证和发布前的质量清单。
 - `.planning/METHODOLOGY.md`：GSD discuss/plan 阶段应读取的项目级方法论 lenses。
 
+## 核心架构原则：以 claude-agent-sdk / Claude Code 为中心
+
+本仓库的根基是 claude-agent-sdk 及其捆绑的 Claude Code agent；后端只是在其外面包了一层交互接口与反馈优化闭环。一切都应围绕 Claude Code agent——它既是交互的中心，也是被治理 / 被优化的对象。开发时按此约束：
+
+- **单一真相源是 agent**：会话、消息、trace、session 元数据等的权威家是 SDK / agent（如 SDK session transcript、SDK session API），后端不另建并行存储或副本造成双轨 / 同步漂移。
+- **优先复用 SDK 原生能力**：需要读取或管理会话、消息、子 Agent、session 元数据时，先用 claude-agent-sdk 暴露的能力（如 `get_session_messages` / `get_session_info` / `list_sessions` / `get_subagent_messages` / `SessionStore`），不手解析 CLI 内部 transcript 格式、不在后端重新实现一份。
+- **后端是薄投影 / 编排层**：把 agent 的事实投影成 API 契约、反馈闭环证据与治理视图；交互与优化共享同一份「agent 行为事实」，不各存各的。
+- **不重写、不绕过 agent loop**：不重写 Claude Agent loop；工具权限、MCP、hooks、skills、subagents 以 Claude Code 官方配置与原生发现为准，后端不通过 Options 接管。
+- 设计任何「后端自建存储 / schema / 解析」前先自问：这是不是 SDK / agent 已持有或已暴露能力的东西？是则用 agent 的，不造副本。
+
 ## 本仓库代码质量优先策略
 
 本仓库执行“代码质量 > 新设计/框架/架构 > 旧模式兼容或保留”的优先级。凡用户提出重构、去除旧设计、优化架构、提高代码质量、引入更优秀设计方案/框架/架构，或 Analyze 阶段发现旧 facade、兼容 shim、历史路径、重复实现、schema 双轨、状态分散、过期 API、不可达分支等信号时，必须进入替换旧设计模式。

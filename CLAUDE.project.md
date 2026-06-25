@@ -9,6 +9,16 @@
 - 关键模块：`app/`（FastAPI Runtime 控制面）、`app/runtime/`（Claude SDK 适配、profile、版本、schema、stores）、`app/services/`（跨 store/runtime/profile 应用服务）、`frontend/`（React/Vite 调试与治理观察界面）、`docker/`、`docs/`、`tests/`。
 - 必读文档：`docs/项目目标愿景使命.md`、`docs/engineering/长程重构质量闭环.md`、`docs/engineering/GSD长程重构阶段清单.md`、`.planning/METHODOLOGY.md`。
 
+## 核心架构原则：以 claude-agent-sdk / Claude Code 为中心
+
+本项目的根基是 claude-agent-sdk 及其捆绑的 Claude Code agent；后端只是在其外面包了一层交互接口与反馈优化闭环。一切都应围绕 Claude Code agent——它既是交互的中心，也是被治理 / 被优化的对象。开发时按此约束：
+
+- **单一真相源是 agent**：会话、消息、trace、session 元数据等的权威家是 SDK / agent（如 SDK session transcript、SDK session API），后端不另建并行存储或副本造成双轨 / 同步漂移。
+- **优先复用 SDK 原生能力**：需要读取或管理会话、消息、子 Agent、session 元数据时，先用 claude-agent-sdk 暴露的能力（如 `get_session_messages` / `get_session_info` / `list_sessions` / `get_subagent_messages` / `SessionStore`），不手解析 CLI 内部 transcript 格式、不在后端重新实现一份。
+- **后端是薄投影 / 编排层**：把 agent 的事实投影成 API 契约、反馈闭环证据与治理视图；交互与优化共享同一份「agent 行为事实」，不各存各的。
+- **不重写、不绕过 agent loop**：不重写 Claude Agent loop；工具权限、MCP、hooks、skills、subagents 以 Claude Code 官方配置与原生发现为准，后端不通过 Options 接管。
+- 设计任何「后端自建存储 / schema / 解析」前先自问：这是不是 SDK / agent 已持有或已暴露能力的东西？是则用 agent 的，不造副本。
+
 ## 项目专属质量策略
 
 - 产品不变量：离线模式是产品不变量但始终提供本地化 LLM 模型；必需工作流不得依赖远程服务。真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。

@@ -328,3 +328,32 @@ DSPy formatter 不能继续依赖 URL 字符串包含 `anthropic` 来推断 prov
 | 能力不足是否可降级成 raw 成功 | 不允许；必须失败并给出稳定错误码 |
 | sidecar 是否完全借助 LiteLLM | 是；不保留自研 thin normalizer 兜底 |
 | LiteLLM 的 Claude Code tool/streaming 验收不通过怎么办 | 请求失败，返回 `LITELLM_CLAUDE_CODE_COMPAT_FAILED` 并投影到 `error_json` 和用户可见状态 |
+
+## 13. 评审整改：方案稳健性补强（severe / medium）
+
+> 来源：对本方案的一次独立再评审。只纳入与当前「LiteLLM sidecar + 能力门」架构相关的 severe / medium 项；与已废弃自研 thin normalizer 绑定的项不适用，见 §13.5。
+
+### 13.1【severe】先抓包定性真实 Claude Code 请求，再固化「LiteLLM only、无自研兜底」
+
+§7.2 与 §12 已决定 sidecar 完全借助 LiteLLM 且不保留自研兜底。该决策必须由对**真实 Claude Code 请求体的抓包与回放**前置验证，不能以「LiteLLM 必然兼容」为隐含假设：
+
+- P0 / P1 增加硬前置：临时把 Runtime 注入的 `ANTHROPIC_BASE_URL` 指向受控抓包端点，打一条真实 `/api/chat`（含工具 / skills），dump CLI 实际外发的 Anthropic 请求体——重点记录 system 块位置、是否出现 system-in-messages、`tool_use` / `tool_result`、streaming 形态、`anthropic-version` / `anthropic-beta` 头；脱敏后只落临时目录（§11）。
+- 用该真实请求体回放 LiteLLM sidecar，逐项核对 §10.2 的兼容项；只有回放通过，才把「LiteLLM only、无自研兜底」固化为决策。回放不通过则按 §5.3 / §10.2 返回 `LITELLM_CLAUDE_CODE_COMPAT_FAILED`，并据抓包事实评估补 LiteLLM 配置或调整协议层。
+- 理由：对 vLLM 的探测只验证了**孤立标准请求形态**；上游 schema 校验在第一个错误即返回，真实 CC 请求可能串联多处不兼容，必须以抓到的真实请求为唯一依据，而非逐项假设「只差一处」。
+
+### 13.2【severe】「协议连通」与「模型够用」拆成两道独立门，并前置最便宜的模型能力探测
+
+- 验收口径区分两类门：**S-协议**（连通 / chat / streaming / tool 协议可用）与 **S-模型**（模型在完整 agent 循环与 governor schema-exact 输出上的质量）。§10.3 的 live 验收必须能区分失败属于协议未通过还是模型质量不达标，probe / error 字段需带该判定维度，避免把两类失败混成一个红灯。
+- 在 P2 建 sidecar 之前先做**最便宜的模型能力探测**：用一条「类 Claude Code（claude_code 量级 system + 一组工具定义）」请求直打 vLLM OpenAI 端点，粗判模型的 `tool_use` 是否成形、是否乱循环。模型天花板先于工程投入暴露，避免在工具调用不达标的模型上投入完整 sidecar 与路由工程。这是 §5.3 能力门的「更早、更省」前移，不替代运行期能力门。
+
+### 13.3【medium】流式错误事件也要归一化与验收
+
+§10.2 已覆盖 streaming 成功事件。补充：Anthropic 流式以 SSE `event: error` 事件传递中途错误，而非 HTTP 状态码。LiteLLM sidecar 必须把上游中途错误规范成 Claude Code 可解析的 Anthropic `event: error`；验收项新增「流中途错误事件可被 CLI 正确识别并触发其重试 / 终止逻辑」，否则流式路径会静默挂起或误判。
+
+### 13.4【medium】system / 消息映射的语义保真
+
+LiteLLM 把 Claude Code 的 system（顶层块，及可能出现的 system-in-messages）映射到 vLLM OpenAI `messages` 时，可能因位置 / 合并而发生语义位移且**不报错**。补充验收：对同一请求，核对经 sidecar 转换前后模型实际看到的 system 语义是否一致（行为对比，而非仅「请求通过」），并在 §10.2 增加对应用例。
+
+### 13.5 不适用说明
+
+- **「自建代理依赖需显式固定（如 httpx）」不适用**：本方案已决定不保留自研 thin normalizer（§7.2 / §12），sidecar 唯一实现依赖为 LiteLLM，不引入自建反代的传递依赖固定问题。

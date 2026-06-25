@@ -105,7 +105,7 @@ def test_vllm_route_probes_version_and_derives_litellm_sidecar(monkeypatch) -> N
 
     def fake_urlopen(request, timeout: float):
         seen.append(request.full_url)
-        assert timeout == 3.0
+        assert timeout == settings.model_provider_probe_timeout_seconds
         return _FakeResponse(b'{"version":"0.14.0"}')
 
     monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)

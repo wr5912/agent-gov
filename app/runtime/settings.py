@@ -200,7 +200,7 @@ class AppSettings(BaseSettings):
     model_provider_api_url: Optional[str] = Field(default=None, alias="MODEL_PROVIDER_API_URL")
     model_provider_backend: ModelProviderBackend = Field(default="anthropic_compatible", alias="MODEL_PROVIDER_BACKEND")
     model_provider_vllm_sidecar_threshold: str = Field(default="0.23.0", alias="MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD")
-    model_provider_probe_timeout_seconds: float = Field(default=3.0, alias="MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS")
+    model_provider_probe_timeout_seconds: float = Field(default=30.0, alias="MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS")
     model_provider_warning_ttl_seconds: int = Field(default=300, alias="MODEL_PROVIDER_WARNING_TTL_SECONDS")
     api_key: Optional[str] = Field(default=None, alias="API_KEY")
 

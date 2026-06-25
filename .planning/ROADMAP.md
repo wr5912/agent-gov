@@ -2,9 +2,11 @@
 
 ## 当前里程碑：Agent 版本治理与 Diff 对比重构
 
+> 状态同步：本里程碑主链路已落地（Git-backed repository、change set、event、release/restore、candidate worktree、前端/OpenAPI/生成类型迁移、旧 `/api/agent-versions/main/*` 删除），落地清单、保留项与 provider 选择（当前为 local Git provider，未启用 Gitea）见 [Agent 版本治理与 Diff 对比重构方案](../docs/Agent版本治理与Diff对比重构方案.md) §0.1。以下各阶段状态据此同步为「已落地（主链路）」；逐阶段验收细节以该方案为准。
+
 ### 阶段 0：迁移契约与 GSD 对齐
 
-状态：planned
+状态：已落地（主链路）
 
 目标：完成评审意见整改，把 GV-1 到 GV-19 转成可执行契约、阶段计划和 GSD artifacts。
 
@@ -23,7 +25,7 @@
 
 ### 阶段 1：Git 服务、Provider 与 Legacy Bootstrap
 
-状态：planned
+状态：已落地（主链路）
 
 目标：引入离线 Gitea、Git CLI wrapper、`AgentVersionProvider` 和 legacy projection，为 Git-backed 主流程打基础，但不开放发布。
 
@@ -35,7 +37,7 @@
 
 ### 阶段 2：Change Set 与候选执行
 
-状态：planned
+状态：已落地（主链路）
 
 目标：把执行应用迁到 candidate worktree，建立 change set 状态机和候选 diff。
 
@@ -47,7 +49,7 @@
 
 ### 阶段 3：审批与候选回归
 
-状态：planned
+状态：已落地（主链路）
 
 目标：审批 candidate diff，并让回归真实运行在 candidate profile。
 
@@ -59,7 +61,7 @@
 
 ### 阶段 4：发布、归档、回滚和 Reconciliation
 
-状态：planned
+状态：已落地（主链路）
 
 目标：实现 Git main/tag push、release archive、rollback release 和启动 reconciliation。
 
@@ -71,7 +73,7 @@
 
 ### 阶段 5：前端治理工作台与旧契约删除
 
-状态：planned
+状态：已落地（主链路）
 
 目标：上线三栏治理工作台，迁移前端/OpenAPI/测试消费者，原子删除旧 snapshot API。
 

@@ -426,8 +426,7 @@ function TestReleasePanels({
           </dl>
           <div className="iw-test-plan-stats">
             <span>默认回归用例 <strong>{caseCount}</strong></span>
-            <span>覆盖场景数 <strong>{Math.max(1, sourceRefs.length)}</strong></span>
-            <span>预计耗时 <strong>18m</strong></span>
+            <span>反馈来源数 <strong>{sourceRefs.length}</strong></span>
           </div>
           {!readOnly ? <div className="iw-action-row">
             <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
@@ -437,39 +436,28 @@ function TestReleasePanels({
         <StageCard letter="B" title="回归执行状态" actionLabel="查看执行日志" testId="regression-guarantee">
           <div className="iw-regression-empty">
             <strong>{datasetAsset ? "等待执行回归测试" : "尚未固化测试数据集"}</strong>
-            <span>{datasetAsset ? `回归运行将引用 ${datasetAsset.asset_id}` : "请先将候选用例纳入测试数据集。"}</span>
+            <span>{datasetAsset ? `回归运行将引用 ${datasetAsset.asset_id}；执行后展示通过率/耗时/失败数` : "请先将候选用例纳入测试数据集。"}</span>
           </div>
-          <dl className="iw-compact-dl">
-            <div><dt>平均通过率</dt><dd>94.2%</dd></div>
-            <div><dt>平均耗时</dt><dd>17m 36s</dd></div>
-            <div><dt>失败次数</dt><dd>1</dd></div>
-          </dl>
         </StageCard>
         <StageCard letter="C" title="覆盖场景" actionLabel="查看全部" testId="stage-panel-coverage">
-          <ul className="iw-check-list">
-            <li className="ok">时间窗口边界</li>
-            <li className="ok">跨时区</li>
-            <li className="ok">DST 切换</li>
-            <li className="ok">窗口重叠</li>
-            <li className="warn">乱序事件</li>
-          </ul>
+          <div className="iw-regression-empty">
+            <span>覆盖场景由纳入回归集的 {caseCount} 条用例与 {sourceRefs.length} 个反馈来源派生，执行回归后展示实际命中。</span>
+          </div>
         </StageCard>
         <StageCard letter="D" title="执行环境 / 基线" actionLabel="查看详情" testId="stage-panel-execution-baseline">
           <dl className="iw-compact-dl">
-            <div><dt>执行环境</dt><dd>生产回归环境（RE-Prod）</dd></div>
-            <div><dt>数据版本</dt><dd>sec-ops-data v2025.05.20</dd></div>
-            <div><dt>代码版本</dt><dd>{candidateVersion}</dd></div>
+            <div><dt>基线 / 候选版本</dt><dd>{baselineVersion} → {candidateVersion}</dd></div>
             <div><dt>回归运行引用</dt><dd data-testid="regression-run-dataset-ref">{datasetId}</dd></div>
           </dl>
         </StageCard>
         <StageCard letter="E" title="发布门禁预览" actionLabel="查看门禁详情" testId="stage-panel-release-gate">
           <ul className="iw-check-list">
-            <li className="ok">关键指标不劣于基线</li>
-            <li className="ok">严重问题数不增加</li>
-            <li className="ok">新增严重问题 = 0</li>
-            <li className="ok">通过率 ≥ 95%</li>
+            <li>关键指标不劣于基线</li>
+            <li>严重问题数不增加</li>
+            <li>新增严重问题 = 0</li>
+            <li>通过率 ≥ 95%</li>
           </ul>
-          <div className="iw-gate-pass">预期门禁评估：通过</div>
+          <div className="iw-regression-empty"><span>门禁评估：待回归运行后产出</span></div>
         </StageCard>
       </div>
       {assets.length ? (

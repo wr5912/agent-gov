@@ -69,7 +69,7 @@ Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt
 
 镜像构建阶段会安装 `a2ui-adk` 相关 Python 依赖，并从 `docker/vendor/A2UI/agent_sdks/python` 安装已 vendor 的 Google A2UI v0.9 Python SDK。PyPI 依赖在 build 阶段完成下载，容器运行时不会再为 `a2ui-adk` 访问互联网。
 
-`LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。Compose 会启动独立 `agent-gov-litellm-sidecar` 服务；当 `MODEL_PROVIDER_BACKEND=vllm` 时，Runtime 会先通过 `{MODEL_PROVIDER_API_URL}/version` 探测运行中 vLLM 版本，低版本、未知版本或探测失败默认走 sidecar，并在 sidecar 或 `/v1/models` 不可达时阻断 Agent job，返回稳定模型接入错误。
+`LITELLM_LOCAL_MODEL_COST_MAP=True` 会强制 LiteLLM 使用包内置模型价格表，避免启动或 import 时访问 GitHub 获取远程 cost map。Compose 会启动独立 `agent-gov-litellm-sidecar` 服务；当 `MODEL_PROVIDER_BACKEND=vllm` 时，Runtime 会先通过 `{MODEL_PROVIDER_API_URL}/version` 探测运行中 vLLM 版本，低版本、未知版本或探测失败默认走 sidecar；仅当显式 `MODEL_PROVIDER_VLLM_ALLOW_DIRECT=true` 且探测版本 >= `MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD` 时才直连 vLLM 原生 Anthropic 端点（仍受能力门验收，不兼容即 fail-closed）。sidecar 或 `/v1/models` 不可达时阻断 Agent job，返回稳定模型接入错误。
 
 为减少 bind mount 权限问题，Compose 中的 API 容器默认以 root 运行，启动时会对 `${HOME}/volume-agent-gov/data/`、main 与 governor workspace 和 `${HOME}/volume-agent-gov/claude-roots/*` 对应的容器挂载目录执行 `chmod -R a+rwX`，方便直接写入。生产环境如果需要收紧权限，可以再切换到非 root 用户并配套处理宿主机目录 owner/ACL。
 
@@ -519,7 +519,7 @@ make local-debug-bootstrap
 
 本机后台 Agent job 不复用交互式 Claude `/login` 状态。运行“重新生成回归用例”等 worker 任务前，必须在私有 `docker/.env.local-debug` 配置模型后端：Anthropic-compatible 路径需要 `MODEL_PROVIDER_API_KEY`，本地/内网 vLLM 路径需要 `MODEL_PROVIDER_BACKEND=vllm` 和不带 `/v1` 的 `MODEL_PROVIDER_API_URL`。缺少模型凭据或模型 URL 时，job 会在启动 Claude Code 前失败；缺少 Anthropic-compatible key 时错误码为 `AGENT_AUTH_REQUIRED`，并提示当前 profile 和 env 文件。
 
-API 和 worker 统一使用 `LOG_LEVEL` 控制应用日志级别：容器部署的 `docker/.env` 默认 `LOG_LEVEL=info`，本机调试的 `docker/.env.local-debug` 默认 `LOG_LEVEL=debug`。API 和 worker 启动日志会打印 `log_level`、`runtime_volume_mode`、`settings_env_file`、`model_provider_backend`、`model_provider_vllm_sidecar_threshold`、`provider_api_key_configured`、`provider_api_url_configured`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
+API 和 worker 统一使用 `LOG_LEVEL` 控制应用日志级别：容器部署的 `docker/.env` 默认 `LOG_LEVEL=info`，本机调试的 `docker/.env.local-debug` 默认 `LOG_LEVEL=debug`。API 和 worker 启动日志会打印 `log_level`、`runtime_volume_mode`、`settings_env_file`、`model_provider_backend`、`model_provider_vllm_sidecar_threshold`、`model_provider_vllm_allow_direct`、`provider_api_key_configured`、`provider_api_url_configured`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
 
 本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，在 `docker/.env.local-debug` 中设置 `MCP_SERVER_URL=http://localhost:58001/mcp`，然后执行 `make local-debug-repair-managed-config` 修复 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.json`。main profile 和 feedback profiles 都只使用各自 workspace 的官方 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。
 

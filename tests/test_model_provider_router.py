@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 
 import pytest
 from app.runtime import model_provider
@@ -11,6 +11,7 @@ from app.runtime.agent_job_errors import (
     MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
     MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
     VLLM_CHAT_PROBE_FAILED,
+    VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
     VLLM_TOOL_CALLING_UNSUPPORTED,
     ModelProviderCapabilityError,
 )
@@ -257,3 +258,157 @@ def test_vllm_capability_gate_reports_specific_probe_failures(monkeypatch, broke
     assert exc_info.value.raw_output_json is not None
     assert exc_info.value.raw_output_json["error_code"] == expected_code
     assert exc_info.value.raw_output_json["probe"] == broken_probe
+
+
+def _fake_direct_capability_response(request) -> _FakeResponse:
+    # vLLM advertises a version >= threshold so direct routing is selected; native
+    # /v1/messages and OpenAI probes succeed (Claude Code direct compatible).
+    if request.full_url.endswith("/version"):
+        return _FakeResponse(b'{"version":"0.30.0"}')
+    return _fake_capability_response(request)
+
+
+def test_vllm_direct_route_when_version_meets_threshold_and_opt_in(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        assert request.full_url.endswith("/version")
+        return _FakeResponse(b'{"version":"0.30.0"}')
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    settings = _settings(
+        MODEL_PROVIDER_BACKEND="vllm",
+        MODEL_PROVIDER_API_URL="http://vllm:8000",
+        MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+        MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD="0.23.0",
+    )
+
+    route = ModelProviderRouter(settings).route()
+
+    assert route.route == "direct_anthropic"
+    assert route.claude_base_url == "http://vllm:8000"
+    assert route.formatter_api_base == "http://vllm:8000/v1"
+    assert route.formatter_model_prefix == "openai"
+    assert route.sidecar_required is False
+    assert route.provider_api_key_required is False
+    assert route.version_probe.status == "succeeded"
+    assert route.claude_env(settings.provider_api_key) == {
+        "ANTHROPIC_API_KEY": LOCAL_PROVIDER_DUMMY_API_KEY,
+        "ANTHROPIC_BASE_URL": "http://vllm:8000",
+    }
+
+
+def test_vllm_direct_route_boundary_version_equals_threshold(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        return _FakeResponse(b'{"version":"0.23.0"}')
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    settings = _settings(
+        MODEL_PROVIDER_BACKEND="vllm",
+        MODEL_PROVIDER_API_URL="http://vllm:8000",
+        MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+        MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD="0.23.0",
+    )
+
+    assert ModelProviderRouter(settings).route().route == "direct_anthropic"
+
+
+def test_vllm_stays_sidecar_below_threshold_even_with_opt_in(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        return _FakeResponse(b'{"version":"0.14.0"}')
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    settings = _settings(
+        MODEL_PROVIDER_BACKEND="vllm",
+        MODEL_PROVIDER_API_URL="http://vllm:8000",
+        MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+    )
+
+    route = ModelProviderRouter(settings).route()
+    assert route.route == "litellm_sidecar"
+    assert route.claude_base_url == LITELLM_SIDECAR_BASE_URL
+
+
+def test_vllm_stays_sidecar_when_opt_in_disabled_even_above_threshold(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        return _FakeResponse(b'{"version":"0.30.0"}')
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    settings = _settings(MODEL_PROVIDER_BACKEND="vllm", MODEL_PROVIDER_API_URL="http://vllm:8000")
+
+    assert ModelProviderRouter(settings).route().route == "litellm_sidecar"
+
+
+def test_vllm_stays_sidecar_when_version_unparseable_with_opt_in(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        return _FakeResponse(b'{"version":"weird-build"}')
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    settings = _settings(
+        MODEL_PROVIDER_BACKEND="vllm",
+        MODEL_PROVIDER_API_URL="http://vllm:8000",
+        MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+    )
+
+    route = ModelProviderRouter(settings).route()
+    assert route.route == "litellm_sidecar"
+    assert route.version_probe.status == "failed"
+    assert route.version_probe.reason == "invalid_version"
+
+
+def test_vllm_direct_capability_gate_probes_native_messages_and_passes(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def fake_urlopen(request, timeout: float):
+        seen.append(request.full_url)
+        return _fake_direct_capability_response(request)
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    router = ModelProviderRouter(
+        _settings(
+            MODEL_PROVIDER_BACKEND="vllm",
+            MODEL_PROVIDER_API_URL="http://vllm:8000",
+            MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+        )
+    )
+
+    router.ensure_agent_runtime_ready()
+    router.ensure_agent_runtime_ready()
+
+    assert router.route().route == "direct_anthropic"
+    # Direct path: no sidecar readiness; Claude Code compat probed against the
+    # native vLLM /v1/messages (not the LiteLLM sidecar).
+    assert seen == [
+        "http://vllm:8000/version",
+        "http://vllm:8000/v1/models",
+        "http://vllm:8000/v1/chat/completions",
+        "http://vllm:8000/v1/chat/completions",
+        "http://vllm:8000/v1/chat/completions",
+        "http://vllm:8000/v1/chat/completions",
+        "http://vllm:8000/v1/messages",
+        "http://vllm:8000/v1/messages",
+    ]
+
+
+def test_vllm_direct_capability_gate_fail_closed_when_native_messages_reject(monkeypatch) -> None:
+    def fake_urlopen(request, timeout: float):
+        if request.full_url.endswith("/v1/messages"):
+            raise HTTPError(request.full_url, 400, "messages: role 'system' not allowed", {}, None)
+        return _fake_direct_capability_response(request)
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    router = ModelProviderRouter(
+        _settings(
+            MODEL_PROVIDER_BACKEND="vllm",
+            MODEL_PROVIDER_API_URL="http://vllm:8000",
+            MODEL_PROVIDER_VLLM_ALLOW_DIRECT="true",
+        )
+    )
+
+    with pytest.raises(ModelProviderCapabilityError) as exc_info:
+        router.ensure_agent_runtime_ready()
+
+    assert router.route().route == "direct_anthropic"
+    assert exc_info.value.error_code == VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED
+    assert exc_info.value.raw_output_json is not None
+    assert exc_info.value.raw_output_json["probe"] == "vllm_direct_tool_compat"
+    assert exc_info.value.raw_output_json["retryable"] is False
+    assert exc_info.value.raw_output_json["route"] == "direct_anthropic"

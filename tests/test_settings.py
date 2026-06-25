@@ -173,6 +173,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "settings_env_file_exists": True,
         "model_provider_backend": "anthropic_compatible",
         "model_provider_vllm_sidecar_threshold": "0.23.0",
+        "model_provider_vllm_allow_direct": False,
         "provider_api_key_configured": False,
         "provider_api_url_configured": False,
         "api_host": "0.0.0.0",

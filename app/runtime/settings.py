@@ -68,6 +68,7 @@ class RuntimeSettingsLogFields(TypedDict):
     settings_env_file_exists: bool | None
     model_provider_backend: ModelProviderBackend
     model_provider_vllm_sidecar_threshold: str
+    model_provider_vllm_allow_direct: bool
     provider_api_key_configured: bool
     provider_api_url_configured: bool
     api_host: str
@@ -200,6 +201,7 @@ class AppSettings(BaseSettings):
     model_provider_api_url: Optional[str] = Field(default=None, alias="MODEL_PROVIDER_API_URL")
     model_provider_backend: ModelProviderBackend = Field(default="anthropic_compatible", alias="MODEL_PROVIDER_BACKEND")
     model_provider_vllm_sidecar_threshold: str = Field(default="0.23.0", alias="MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD")
+    model_provider_vllm_allow_direct: bool = Field(default=False, alias="MODEL_PROVIDER_VLLM_ALLOW_DIRECT")
     model_provider_probe_timeout_seconds: float = Field(default=30.0, alias="MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS")
     model_provider_warning_ttl_seconds: int = Field(default=300, alias="MODEL_PROVIDER_WARNING_TTL_SECONDS")
     api_key: Optional[str] = Field(default=None, alias="API_KEY")
@@ -403,6 +405,7 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "settings_env_file_exists": env_file.exists() if env_file else None,
         "model_provider_backend": settings.model_provider_backend,
         "model_provider_vllm_sidecar_threshold": settings.model_provider_vllm_sidecar_threshold,
+        "model_provider_vllm_allow_direct": settings.model_provider_vllm_allow_direct,
         "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
         "provider_api_url_configured": bool(settings.provider_api_url),
         "api_host": settings.api_host,

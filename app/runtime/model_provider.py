@@ -16,12 +16,21 @@ from .agent_job_errors import (
     MODEL_PROVIDER_SIDECAR_UNAVAILABLE,
     MODEL_SCHEMA_EXACT_OUTPUT_FAILED,
     VLLM_CHAT_PROBE_FAILED,
+    VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
     VLLM_MODELS_PROBE_FAILED,
     VLLM_TOOL_CALLING_UNSUPPORTED,
     ModelProviderCapabilityError,
     provider_api_key_configured,
 )
 from .json_types import JsonObject
+from .model_provider_responses import (
+    anthropic_content_has_tool_use,
+    anthropic_tool_probe_body,
+    first_choice_message,
+    first_tool_call,
+    message_content_text,
+    parse_json_object,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,8 +41,10 @@ ProbeStatus = Literal["skipped", "succeeded", "failed"]
 LITELLM_SIDECAR_BASE_URL = "http://agent-gov-litellm-sidecar:4000"
 LOCAL_PROVIDER_DUMMY_API_KEY = "agent-gov-local-provider"
 VLLM_VERSION_PROBE_FAILED = "VLLM_VERSION_PROBE_FAILED"
+VLLM_VERSION_ROUTE = "VLLM_VERSION_ROUTE"
 
 _WARNING_LAST_EMITTED_AT: dict[tuple[str, str], float] = {}
+_ROUTE_INFO_LAST_EMITTED_AT: dict[tuple[str, str], float] = {}
 
 
 @dataclass(frozen=True)
@@ -148,7 +159,37 @@ class ModelProviderRouter:
         if version_probe.status == "failed":
             self._warn_version_probe_failed(version_probe)
 
-        # vLLM / OpenAI-compatible / Ollama are exposed to Claude Code through
+        # vLLM direct routing is an explicit opt-in exception (MODEL_PROVIDER_VLLM_ALLOW_DIRECT):
+        # only when the probed version meets MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD do we point
+        # Claude Code at vLLM's native Anthropic endpoint and skip the LiteLLM sidecar. Direct is
+        # still gated by ensure_agent_runtime_ready() (it must pass a real Claude Code compat probe).
+        # Below threshold, version unknown/unparseable, probe failed, or opt-in off -> sidecar.
+        if backend == "vllm":
+            allow_direct = bool(getattr(self.settings, "model_provider_vllm_allow_direct", False))
+            meets_threshold = self._version_meets_threshold(version_probe)
+            use_direct = allow_direct and meets_threshold
+            if version_probe.status == "succeeded":
+                self._log_version_route_decision(
+                    version_probe,
+                    allow_direct=allow_direct,
+                    meets_threshold=meets_threshold,
+                    chosen_route="direct_anthropic" if use_direct else "litellm_sidecar",
+                )
+            if use_direct:
+                self._route = ModelProviderRoute(
+                    backend=backend,
+                    route="direct_anthropic",
+                    provider_endpoint=provider_endpoint,
+                    claude_base_url=provider_endpoint,
+                    formatter_api_base=provider_v1_api_base(provider_endpoint),
+                    formatter_model_prefix="openai",
+                    version_probe=version_probe,
+                    sidecar_required=False,
+                    provider_api_key_required=False,
+                )
+                return self._route
+
+        # Default: vLLM / OpenAI-compatible / Ollama are exposed to Claude Code through
         # the LiteLLM Anthropic-compatible sidecar. The upstream model service
         # URL remains MODEL_PROVIDER_API_URL; no second user URL is introduced.
         self._route = ModelProviderRoute(
@@ -164,6 +205,44 @@ class ModelProviderRouter:
             provider_api_key_required=False,
         )
         return self._route
+
+    def _version_meets_threshold(self, version_probe: VersionProbeResult) -> bool:
+        if version_probe.status != "succeeded" or not version_probe.version:
+            return False
+        detected = parse_version(version_probe.version)
+        threshold = parse_version(str(getattr(self.settings, "model_provider_vllm_sidecar_threshold", "0.23.0")))
+        if detected is None or threshold is None:
+            return False
+        return detected >= threshold
+
+    def _log_version_route_decision(
+        self,
+        version_probe: VersionProbeResult,
+        *,
+        allow_direct: bool,
+        meets_threshold: bool,
+        chosen_route: str,
+    ) -> None:
+        # §6.2: a successful version probe is an expected routing decision -> info, not warning.
+        # Throttled per (endpoint, route) so /health probing does not spam logs.
+        endpoint = version_probe.endpoint or "unconfigured"
+        key = (endpoint, chosen_route)
+        ttl_seconds = int(getattr(self.settings, "model_provider_warning_ttl_seconds", 300))
+        now = time.monotonic()
+        last = _ROUTE_INFO_LAST_EMITTED_AT.get(key)
+        if last is not None and now - last < ttl_seconds:
+            return
+        _ROUTE_INFO_LAST_EMITTED_AT[key] = now
+        logger.info(
+            "event=%s provider_endpoint=%s version=%s threshold=%s meets_threshold=%s allow_direct=%s route=%s",
+            VLLM_VERSION_ROUTE,
+            endpoint,
+            version_probe.version,
+            getattr(self.settings, "model_provider_vllm_sidecar_threshold", "0.23.0"),
+            meets_threshold,
+            allow_direct,
+            chosen_route,
+        )
 
     def claude_env(self) -> dict[str, str]:
         return self.route().claude_env(getattr(self.settings, "provider_api_key", None))
@@ -208,7 +287,25 @@ class ModelProviderRouter:
             self._ensure_model_agent_loop_ready(route, tool_call)
             self._ensure_schema_exact_output_ready(route)
         if route.requires_litellm_sidecar:
-            self._ensure_litellm_claude_code_compat_ready(route)
+            self._ensure_anthropic_messages_compat_ready(
+                route,
+                base_url=route.sidecar_base_url,
+                error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
+                probe_label="claude",
+                system_in_messages=False,
+                retryable=True,
+                action="verify LiteLLM Anthropic tool/streaming translation and upstream vLLM response shape",
+            )
+        elif route.backend == "vllm":
+            self._ensure_anthropic_messages_compat_ready(
+                route,
+                base_url=route.claude_base_url,
+                error_code=VLLM_DIRECT_CLAUDE_CODE_COMPAT_FAILED,
+                probe_label="vllm_direct",
+                system_in_messages=True,
+                retryable=False,
+                action="vLLM /v1/messages must accept Claude Code requests (system in messages, tool_use, streaming); upgrade vLLM or unset MODEL_PROVIDER_VLLM_ALLOW_DIRECT to route via the LiteLLM sidecar",
+            )
         self._agent_runtime_ready = True
 
     def _ensure_sidecar_ready(self, route: ModelProviderRoute) -> None:
@@ -371,45 +468,73 @@ class ModelProviderRouter:
             action="choose a model that can obey response_format=json_object and schema-exact governor outputs",
         )
 
-    def _ensure_litellm_claude_code_compat_ready(self, route: ModelProviderRoute) -> None:
-        assert route.sidecar_base_url is not None
-        base_url = route.sidecar_base_url.rstrip("/")
+    def _ensure_anthropic_messages_compat_ready(
+        self,
+        route: ModelProviderRoute,
+        *,
+        base_url: str | None,
+        error_code: str,
+        probe_label: str,
+        system_in_messages: bool,
+        retryable: bool,
+        action: str,
+    ) -> None:
+        # Shared Claude Code Anthropic Messages compatibility probe for the LiteLLM sidecar
+        # (sidecar_base_url) and vLLM direct (provider_endpoint). `system_in_messages` injects a
+        # `system`-role entry inside `messages` (the exact shape Claude Code emits) so strict vLLM
+        # Anthropic schemas that reject it fail-close instead of passing a false positive.
+        base = normalize_url(base_url)
+        if base is None:
+            raise ModelProviderCapabilityError(
+                error_code=error_code,
+                message="Anthropic Messages compatibility route has no endpoint configured.",
+                route=route.route,
+                probe=f"{probe_label}_compat",
+                endpoint=None,
+                retryable=True,
+                action=action,
+            )
+        messages_url = base + "/v1/messages"
         tool_result = self._http_json(
             "POST",
-            base_url + "/v1/messages",
-            request_body={
-                "model": self._agent_model(),
-                "max_tokens": 128,
-                "messages": [{"role": "user", "content": [{"type": "text", "text": "Call the agent_gov_probe tool with value ok."}]}],
-                "tools": [
-                    {
-                        "name": "agent_gov_probe",
-                        "description": "Return a probe value.",
-                        "input_schema": {
-                            "type": "object",
-                            "properties": {"value": {"type": "string"}},
-                            "required": ["value"],
-                        },
-                    }
-                ],
-                "tool_choice": {"type": "tool", "name": "agent_gov_probe"},
-            },
+            messages_url,
+            request_body=anthropic_tool_probe_body(self._agent_model(), system_in_messages=system_in_messages),
         )
         if not is_success(tool_result) or not anthropic_content_has_tool_use(tool_result.body_json):
             self._raise_capability_error(
-                error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
-                message="LiteLLM sidecar failed Claude Code Anthropic Messages tool compatibility probe.",
+                error_code=error_code,
+                message="Anthropic Messages endpoint failed the Claude Code tool compatibility probe.",
                 route=route,
-                probe="claude_tool_compat",
+                probe=f"{probe_label}_tool_compat",
                 result=tool_result,
-                endpoint=route.sidecar_base_url,
-                retryable=True,
-                action="verify LiteLLM Anthropic tool translation, tool_use response shape, and upstream vLLM tool calls",
+                endpoint=base_url,
+                retryable=retryable,
+                action=action,
             )
+        self._ensure_anthropic_streaming_compat(
+            route,
+            messages_url=messages_url,
+            endpoint=base_url,
+            error_code=error_code,
+            probe_label=probe_label,
+            retryable=retryable,
+            action=action,
+        )
 
+    def _ensure_anthropic_streaming_compat(
+        self,
+        route: ModelProviderRoute,
+        *,
+        messages_url: str,
+        endpoint: str | None,
+        error_code: str,
+        probe_label: str,
+        retryable: bool,
+        action: str,
+    ) -> None:
         stream_result = self._http_request(
             "POST",
-            base_url + "/v1/messages",
+            messages_url,
             request_body={
                 "model": self._agent_model(),
                 "max_tokens": 32,
@@ -422,14 +547,14 @@ class ModelProviderRouter:
         if is_success(stream_result) and "event:" in stream_text and "event: error" not in stream_text:
             return
         self._raise_capability_error(
-            error_code=LITELLM_CLAUDE_CODE_COMPAT_FAILED,
-            message="LiteLLM sidecar failed Claude Code Anthropic Messages streaming compatibility probe.",
+            error_code=error_code,
+            message="Anthropic Messages endpoint failed the Claude Code streaming compatibility probe.",
             route=route,
-            probe="claude_streaming",
+            probe=f"{probe_label}_streaming",
             result=stream_result,
-            endpoint=route.sidecar_base_url,
-            retryable=True,
-            action="check LiteLLM sidecar version, Anthropic Messages streaming support, and upstream vLLM response shape",
+            endpoint=endpoint,
+            retryable=retryable,
+            action=action,
         )
 
     def _post_vllm_chat(self, route: ModelProviderRoute, request_body: Mapping[str, object]) -> HttpProbeResult:
@@ -651,54 +776,3 @@ def parse_version(value: str) -> tuple[int, ...] | None:
 
 def is_success(result: HttpProbeResult) -> bool:
     return result.status_code is not None and 200 <= result.status_code < 300
-
-
-def first_choice_message(body: JsonObject | None) -> JsonObject:
-    if not isinstance(body, dict):
-        return {}
-    choices = body.get("choices")
-    if not isinstance(choices, list) or not choices:
-        return {}
-    first = choices[0]
-    if not isinstance(first, dict):
-        return {}
-    message = first.get("message")
-    return message if isinstance(message, dict) else {}
-
-
-def message_content_text(message: JsonObject) -> str:
-    content = message.get("content")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        chunks: list[str] = []
-        for item in content:
-            if isinstance(item, dict) and isinstance(item.get("text"), str):
-                chunks.append(item["text"])
-        return "\n".join(chunks).strip()
-    return ""
-
-
-def first_tool_call(message: JsonObject) -> JsonObject:
-    tool_calls = message.get("tool_calls")
-    if not isinstance(tool_calls, list) or not tool_calls:
-        return {}
-    first = tool_calls[0]
-    return first if isinstance(first, dict) else {}
-
-
-def parse_json_object(value: str) -> JsonObject | None:
-    try:
-        loaded = json.loads(value)
-    except Exception:
-        return None
-    return loaded if isinstance(loaded, dict) else None
-
-
-def anthropic_content_has_tool_use(body: JsonObject | None) -> bool:
-    if not isinstance(body, dict):
-        return False
-    content = body.get("content")
-    if not isinstance(content, list):
-        return False
-    return any(isinstance(item, dict) and item.get("type") == "tool_use" for item in content)

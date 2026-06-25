@@ -53,7 +53,10 @@ def main() -> None:
     # 仅在工作区干净时校验 tag：bump 提交前 HEAD 仍指向上一个 release（tag 与已 bump 的 VERSION 必然短暂不符），
     # 那是正常瞬态而非漂移；提交后 HEAD 是未打 tag 的新 commit，打 tag 时再校验即可。CI/干净态下此门生效。
     try:
-        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=str(ROOT), capture_output=True, text=True, timeout=10).stdout.strip()
+        # 只看已跟踪文件的未提交改动；未跟踪的私有文件（如 docker/.env.bak）不应使 tag 校验失效。
+        dirty = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=no"], cwd=str(ROOT), capture_output=True, text=True, timeout=10
+        ).stdout.strip()
     except Exception:
         dirty = ""
     release_tags: list[str] = []

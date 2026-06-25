@@ -51,3 +51,8 @@ docker/.runtime-template-staging/
 # Added by code-review-graph
 .code-review-graph/
 temp/
+# 编辑器临时/交换文件，不提交
+*.swp
+*.swo
+*~
+*.orig

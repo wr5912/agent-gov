@@ -386,14 +386,14 @@ function stageTarget(key, mockId) {
 }
 
 const RULES = [
-  { id: "nav-converged", phase: "P0", desc: "一级导航只含 Playground/改进；测试发布归入改进治理第四阶段，资产与旧发布不作为顶级主导航", async fn(page) {
+  { id: "nav-converged", phase: "P0", desc: "一级导航三支柱 Playground/改进事项/资产复利；测试发布归入改进治理第四阶段，旧发布不作为顶级主导航", async fn(page) {
     const nav = await page.locator(".topbar-nav .topbar-nav-button").count();
     const asset = await has(page, "nav-asset");
     const release = await has(page, "nav-release");
     const feedbackTopNav = await page.getByRole("button", { name: "反馈优化", exact: true }).count();
-    return { ok: nav === 2 && !asset && !release && feedbackTopNav === 0, detail: `topbar-nav=${nav} nav-asset=${asset} nav-release=${release} 反馈优化顶级=${feedbackTopNav}（期望 2/false/false/0）` };
+    return { ok: nav === 3 && asset && !release && feedbackTopNav === 0, detail: `topbar-nav=${nav} nav-asset=${asset} nav-release=${release} 反馈优化顶级=${feedbackTopNav}（期望 3/true/false/0）` };
   } },
-  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含侧栏导航、内容区和 业务Agent/自动化策略/资产Registry/Developer 分组", async fn(page) {
+  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含侧栏导航、内容区和 业务Agent/自动化策略/Developer 分组", async fn(page) {
     await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
     await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
     const box = await page.getByTestId("settings-panel").boundingBox();
@@ -402,11 +402,11 @@ const RULES = [
     const navigation = await visible(page, "settings-navigation");
     const content = await visible(page, "settings-content");
     const oldHorizontalTabs = await page.locator(".settings-tabs").count();
-    const tabs = ["agents", "automation", "assets", "developer"];
+    const tabs = ["agents", "automation", "developer"];
     const found = [];
     for (const tab of tabs) {
       await page.getByTestId(`settings-tab-${tab}`).click();
-      const section = tab === "agents" ? "settings-section-agents" : tab === "assets" ? "settings-section-assets" : `settings-section-${tab}`;
+      const section = `settings-section-${tab}`;
       await page.getByTestId(section).waitFor({ timeout: 5000 }).catch(() => {});
       if (await visible(page, section)) found.push(section);
     }
@@ -414,15 +414,13 @@ const RULES = [
     const agentTable = await visible(page, "settings-agent-table");
     await page.getByTestId("settings-tab-automation").click();
     const modeGroup = await visible(page, "settings-automation-mode");
-    await page.getByTestId("settings-tab-assets").click();
-    const assetEntry = await visible(page, "settings-open-asset");
     await page.getByTestId("settings-tab-developer").click();
     const runtimeInput = await visible(page, "settings-api-base");
     // 关闭设置弹窗，避免 modal-backdrop 拦截后续规则的点击。
     await page.locator(".settings-footer").getByRole("button", { name: "关闭" }).click().catch(() => {});
     await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && modeGroup && assetEntry && runtimeInput;
-    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} mode=${modeGroup} asset=${assetEntry} runtime=${runtimeInput}` };
+    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && modeGroup && runtimeInput;
+    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} mode=${modeGroup} runtime=${runtimeInput}` };
   } },
   { id: "playground-clean", phase: "P1", desc: "Playground 主区无旧 Subagent/Sessions/Skills 侧栏、无 Inspector、无常显 control-strip", async fn(page) {
     await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);
@@ -869,10 +867,7 @@ const RULES = [
     return { ok: (rg && adopt) || sediment, detail: `回归保障候选=${rg} 采纳=${adopt} 沉淀资产=${sediment}` };
   } },
   { id: "asset-browse-first", phase: "P1", desc: "资产 Registry 默认浏览/追溯优先，创建资产进入抽屉", async fn(page) {
-    await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
-    await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
-    await page.getByTestId("settings-tab-assets").click();
-    await page.getByTestId("settings-open-asset").click();
+    await page.getByTestId("nav-asset").click();
     await page.getByTestId("asset-registry").waitFor({ timeout: 8000 });
     const toolbar = await has(page, "asset-browser-toolbar");
     const typeFilter = await has(page, "asset-type-filter");

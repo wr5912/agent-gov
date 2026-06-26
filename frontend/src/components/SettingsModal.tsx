@@ -1,6 +1,5 @@
 import {
   Bot,
-  Database,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -29,8 +28,8 @@ import { getAutomationPolicy, setAutomationPolicy } from "../api/improvements";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import "./SettingsModal.css";
 
-// v2.7 §2 平台设置：业务 Agent 管理 / 自动化策略 / 资产 Registry / Developer·Debug。
-// 资产、旧反馈优化、API Docs、Langfuse 从一级导航降级到此处（导航收敛为 Playground/改进）。
+// v2.7 §2 平台设置：业务 Agent 管理 / 自动化策略 / Developer·Debug（纯配置）。
+// 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
 
 const LIFECYCLE_OPTIONS = [
   { value: "active", label: "启用" },
@@ -46,10 +45,9 @@ const AUTOMATION_OPTIONS: { value: string; label: string; detail: string }[] = [
 const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; description: string; Icon: LucideIcon }[] = [
   { key: "agents", label: "业务 Agent", eyebrow: "Agents", description: "创建、停用和维护业务 Agent。", Icon: Bot },
   { key: "automation", label: "自动化策略", eyebrow: "Policy", description: "设置每个业务 Agent 的自动推进边界。", Icon: Sparkles },
-  { key: "assets", label: "资产 Registry", eyebrow: "Assets", description: "进入治理资产、回归资产和执行资产目录。", Icon: Database },
   { key: "developer", label: "Developer", eyebrow: "Runtime", description: "配置本浏览器连接的 Runtime 与调试入口。", Icon: Wrench },
 ];
-type SettingsTab = "agents" | "automation" | "assets" | "developer";
+type SettingsTab = "agents" | "automation" | "developer";
 
 // F7：业务 Agent ID 客户端校验，与后端 agent_paths `^[A-Za-z0-9._-]+$` 一致；留空合法（自动生成）。
 const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
@@ -69,10 +67,9 @@ interface SettingsModalProps {
   onClose: () => void;
   onSave: (config: RuntimeClientConfig) => void;
   onAgentsChanged: () => void;
-  onOpenAsset: () => void;
 }
 
-export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged, onOpenAsset }: SettingsModalProps) {
+export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, onSave, onAgentsChanged }: SettingsModalProps) {
   const [apiBase, setApiBase] = useState(config.apiBase);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
@@ -244,7 +241,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
           <div className="settings-header-main">
             <span className="settings-kicker">平台配置</span>
             <h3 id="settings-panel-title">设置</h3>
-            <p>业务 Agent、自动化策略、资产入口和开发者连接配置。</p>
+            <p>业务 Agent、自动化策略和开发者连接配置。</p>
           </div>
           <div className="settings-header-status" aria-label="设置摘要">
             <span><Bot size={14} />{agents.length} Agent</span>
@@ -385,27 +382,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                       <span>{option.detail}</span>
                     </button>
                   ))}
-                </div>
-              </section>
-            ) : null}
-
-            {activeTab === "assets" ? (
-              <section className="settings-section settings-section-assets" data-testid="settings-section-assets" role="tabpanel">
-                <div className="settings-assets-hero">
-                  <Database size={24} />
-                  <div>
-                    <h5>资产 Registry</h5>
-                    <p>治理资产、回归资产、执行资产和审计资产统一进入资产目录。</p>
-                  </div>
-                  <button className="secondary-button" type="button" data-testid="settings-open-asset" onClick={() => { onOpenAsset(); onClose(); }}>
-                    打开资产 Registry<ExternalLink size={14} />
-                  </button>
-                </div>
-                <div className="settings-asset-types" aria-label="资产类型">
-                  <span>methodology</span>
-                  <span>regression</span>
-                  <span>execution</span>
-                  <span>audit</span>
                 </div>
               </section>
             ) : null}

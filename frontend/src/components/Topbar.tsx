@@ -1,7 +1,7 @@
-import { ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
+import { Database, ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
 import type { AgentSummary, RuntimeHealth } from "../types/runtime";
 
-type ActiveWindow = "chat" | "feedback" | "improvement" | "release" | "asset";
+type ActiveWindow = "chat" | "improvement" | "release" | "asset";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
@@ -13,10 +13,11 @@ interface TopbarProps {
   onRefresh: () => void;
   onOpenPlayground: () => void;
   onOpenImprovement: () => void;
+  onOpenAsset: () => void;
   onOpenSettings: () => void;
 }
 
-// v2.7 四阶段权威方案：一级导航只保留工作台与改进治理；测试发布归入改进治理第四阶段。
+// v2.7 四阶段权威方案 + W3 修订：一级导航 = 工作台/改进治理/资产复利；测试发布仍归改进治理第四阶段（不作一级导航）。
 export function Topbar({
   health,
   activeWindow,
@@ -27,6 +28,7 @@ export function Topbar({
   onRefresh,
   onOpenPlayground,
   onOpenImprovement,
+  onOpenAsset,
   onOpenSettings,
 }: TopbarProps) {
   return (
@@ -72,7 +74,17 @@ export function Topbar({
           aria-current={activeWindow === "improvement"}
           onClick={onOpenImprovement}
         >
-          <ListChecks size={15} /> 改进
+          <ListChecks size={15} /> 改进事项
+        </button>
+        <button
+          className={`topbar-nav-button ${activeWindow === "asset" ? "active" : ""}`}
+          type="button"
+          data-testid="nav-asset"
+          aria-label="打开资产复利中心"
+          aria-current={activeWindow === "asset"}
+          onClick={onOpenAsset}
+        >
+          <Database size={15} /> 资产复利
         </button>
       </nav>
 

@@ -576,6 +576,7 @@ export default function App() {
         onRefresh={refreshAll}
         onOpenPlayground={showPlaygroundWindow}
         onOpenImprovement={showImprovementWindow}
+        onOpenAsset={showAssetWindow}
         onOpenSettings={() => setSettingsOpen(true)}
       />
       {activeWindow === "asset" ? (
@@ -683,7 +684,6 @@ export default function App() {
           setTimeout(refresh, 0);
         }}
         onAgentsChanged={() => setTimeout(refresh, 0)}
-        onOpenAsset={showAssetWindow}
       />
     </div>
   );

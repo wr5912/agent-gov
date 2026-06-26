@@ -128,11 +128,8 @@ async function main() {
     try {
       await page.goto(ui, { waitUntil: "domcontentloaded" });
       await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 20000 });
-      // 资产 Registry 现经 Settings 进入（v2.7 §2 导航收敛，资产不再是一级导航）。
-      await page.getByTestId("open-settings").click();
-      await page.getByTestId("settings-panel").waitFor({ timeout: 15000 });
-      await page.getByTestId("settings-tab-assets").click();
-      await page.getByTestId("settings-open-asset").click();
+      // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（v2.7 W3 修订，资产复利为第三支柱）。
+      await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
       if (await page.getByTestId("asset-create-title").isVisible().catch(() => false)) throw new Error("asset create form should not be visible before opening drawer");

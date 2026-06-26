@@ -22,6 +22,7 @@ from app.routers.feedback_batches import create_feedback_batches_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.improvement_content import create_improvement_content_router
+from app.routers.improvement_feedback_ops import create_improvement_feedback_ops_router
 from app.routers.improvements import create_improvement_relations_router, create_improvements_router
 from app.routers.openai import create_openai_router
 from app.routers.optimization import create_optimization_router
@@ -208,6 +209,14 @@ app.include_router(
         content_store=improvement_content_store,
         governor_service=improvement_governor_service,
         execution_service=improvement_execution_service,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_improvement_feedback_ops_router(
+        improvement_store=improvement_store,
+        content_store=improvement_content_store,
+        feedback_store=feedback_store,
         require_api_key=require_api_key,
     )
 )

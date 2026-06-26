@@ -1330,7 +1330,8 @@ export interface paths {
         get: operations["get_improvement_api_improvements__improvement_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /** Delete an improvement (hard delete; cascades feedbacks/content; FeedbackCases survive → unassigned pool) */
+        delete: operations["delete_improvement_api_improvements__improvement_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1347,6 +1348,40 @@ export interface paths {
         put?: never;
         /** Archive an improvement item (terminal status archived; no further stage transitions) */
         post: operations["archive_improvement_api_improvements__improvement_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/attach-feedback-case": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Attach an existing FeedbackCase to this improvement (prefilled + ref registered) */
+        post: operations["attach_feedback_case_api_improvements__improvement_id__attach_feedback_case_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/attachable-feedbacks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List feedback selectable to add: unassigned FeedbackCases + other improvements' feedbacks */
+        get: operations["attachable_feedbacks_api_improvements__improvement_id__attachable_feedbacks_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1422,6 +1457,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/deletion-impact": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview impact of deleting an improvement (dry-run; FeedbackCases return to the unassigned pool) */
+        get: operations["deletion_impact_api_improvements__improvement_id__deletion_impact_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/execution": {
         parameters: {
             query?: never;
@@ -1486,6 +1538,23 @@ export interface paths {
         put?: never;
         /** Add a source feedback to an improvement (§8.4) */
         post: operations["add_feedback_api_improvements__improvement_id__feedbacks_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/feedbacks/{feedback_id}/reassign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Move a feedback to another improvement (cross-item adjust) */
+        post: operations["reassign_feedback_api_improvements__improvement_id__feedbacks__feedback_id__reassign_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3025,6 +3094,38 @@ export interface components {
             title: string;
             /** Updated At */
             updated_at: string;
+        };
+        /** AttachFeedbackCaseRequest */
+        AttachFeedbackCaseRequest: {
+            /**
+             * Feedback Case Id
+             * @description 要归入当前事项的已有反馈 Case（fbc-…）。
+             */
+            feedback_case_id: string;
+        };
+        /** AttachableFeedbackCase */
+        AttachableFeedbackCase: {
+            /** Feedback Case Id */
+            feedback_case_id: string;
+            /** Run Ids */
+            run_ids?: string[];
+            /** Status */
+            status: string;
+            /** Title */
+            title: string;
+        };
+        /** AttachableFeedbacksResponse */
+        AttachableFeedbacksResponse: {
+            /**
+             * Feedback Cases
+             * @description 未归属于任何改进事项的一等反馈 Case 池。
+             */
+            feedback_cases?: components["schemas"]["AttachableFeedbackCase"][];
+            /**
+             * Other Improvement Feedbacks
+             * @description 其他改进事项中、同一业务 Agent 的反馈，可调整过来。
+             */
+            other_improvement_feedbacks?: components["schemas"]["ImprovementFeedbackResponse"][];
         };
         /** AttributionResponse */
         AttributionResponse: {
@@ -5113,6 +5214,23 @@ export interface components {
              */
             title: string;
         };
+        /** ImprovementDeletionImpactResponse */
+        ImprovementDeletionImpactResponse: {
+            /** Feedbacks */
+            feedbacks: number;
+            /** Has Attribution */
+            has_attribution: boolean;
+            /** Has Optimization Plan */
+            has_optimization_plan: boolean;
+            /** Improvement Id */
+            improvement_id: string;
+            /** Links */
+            links: number;
+            /** Source Feedback Refs */
+            source_feedback_refs: number;
+            /** Title */
+            title: string;
+        };
         /** ImprovementFeedbackCreateRequest */
         ImprovementFeedbackCreateRequest: {
             /**
@@ -5174,6 +5292,14 @@ export interface components {
              * @default
              */
             task_id: string;
+        };
+        /** ImprovementFeedbackReassignRequest */
+        ImprovementFeedbackReassignRequest: {
+            /**
+             * Target Improvement Id
+             * @description 把该反馈移动到的目标改进事项 ID（跨事项调整）。
+             */
+            target_improvement_id: string;
         };
         /** ImprovementFeedbackResponse */
         ImprovementFeedbackResponse: {
@@ -9474,6 +9600,35 @@ export interface operations {
             };
         };
     };
+    delete_improvement_api_improvements__improvement_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     archive_improvement_api_improvements__improvement_id__archive_post: {
         parameters: {
             query?: never;
@@ -9492,6 +9647,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attach_feedback_case_api_improvements__improvement_id__attach_feedback_case_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AttachFeedbackCaseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    attachable_feedbacks_api_improvements__improvement_id__attachable_feedbacks_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachableFeedbacksResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9651,6 +9872,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AutoAdvanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deletion_impact_api_improvements__improvement_id__deletion_impact_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementDeletionImpactResponse"];
                 };
             };
             /** @description Validation Error */
@@ -9840,6 +10092,42 @@ export interface operations {
         responses: {
             /** @description Successful Response */
             201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImprovementFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reassign_feedback_api_improvements__improvement_id__feedbacks__feedback_id__reassign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+                feedback_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImprovementFeedbackReassignRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -68,6 +68,36 @@ class ImprovementFeedbackResponse(BaseModel):
     created_at: str
 
 
+class ImprovementFeedbackReassignRequest(BaseModel):
+    target_improvement_id: str = Field(description="把该反馈移动到的目标改进事项 ID（跨事项调整）。")
+
+
+class AttachFeedbackCaseRequest(BaseModel):
+    feedback_case_id: str = Field(description="要归入当前事项的已有反馈 Case（fbc-…）。")
+
+
+class AttachableFeedbackCase(BaseModel):
+    feedback_case_id: str
+    title: str
+    status: str
+    run_ids: list[str] = Field(default_factory=list)
+
+
+class AttachableFeedbacksResponse(BaseModel):
+    feedback_cases: list[AttachableFeedbackCase] = Field(default_factory=list, description="未归属于任何改进事项的一等反馈 Case 池。")
+    other_improvement_feedbacks: list[ImprovementFeedbackResponse] = Field(default_factory=list, description="其他改进事项中、同一业务 Agent 的反馈，可调整过来。")
+
+
+class ImprovementDeletionImpactResponse(BaseModel):
+    improvement_id: str
+    title: str
+    source_feedback_refs: int
+    feedbacks: int
+    links: int
+    has_attribution: bool
+    has_optimization_plan: bool
+
+
 class AttributionResponse(BaseModel):
     attribution_id: str
     improvement_id: str

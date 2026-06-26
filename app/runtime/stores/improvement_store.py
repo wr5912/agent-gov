@@ -87,6 +87,14 @@ class ImprovementStore:
             row = db.get(ImprovementItemModel, improvement_id)
             return _record(row) if row is not None else None
 
+    def all_source_feedback_refs(self) -> set[str]:
+        """所有改进事项已登记的来源反馈引用集合——用于判定一等反馈 Case 是否「未归属」可选。"""
+        with self._session_factory.begin() as db:
+            refs: set[str] = set()
+            for (json_refs,) in db.query(ImprovementItemModel.source_feedback_refs_json).all():
+                refs.update(str(r) for r in (json_refs or []))
+            return refs
+
     def create_improvement(
         self,
         *,

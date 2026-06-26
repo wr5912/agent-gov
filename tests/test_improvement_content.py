@@ -45,6 +45,32 @@ def test_reassign_feedback_and_delete_improvement_cascade(tmp_path: Path) -> Non
     assert items.get_improvement(a.improvement_id) is not None
 
 
+def test_part_b_reassign_attachable_delete_endpoints(monkeypatch, tmp_path: Path) -> None:
+    """Part B API：reassign / attachable / deletion-impact / DELETE 端到端。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        a = client.post("/api/improvements", json={"agent_id": "main-agent", "title": "事项A"}).json()
+        b = client.post("/api/improvements", json={"agent_id": "main-agent", "title": "事项B"}).json()
+        fb = client.post(f"/api/improvements/{a['improvement_id']}/feedbacks", json={"summary": "反馈一"}).json()
+
+        # 跨事项调整：A 的反馈 reassign 到 B。
+        moved = client.post(
+            f"/api/improvements/{a['improvement_id']}/feedbacks/{fb['feedback_id']}/reassign",
+            json={"target_improvement_id": b["improvement_id"]},
+        )
+        assert moved.status_code == 200 and moved.json()["improvement_id"] == b["improvement_id"]
+        # 从 A 视角 attachable 能看到 B 的反馈（其他事项源）。
+        attach = client.get(f"/api/improvements/{a['improvement_id']}/attachable-feedbacks").json()
+        assert any(f["feedback_id"] == fb["feedback_id"] for f in attach["other_improvement_feedbacks"])
+
+        # deletion-impact + 硬删除 B：反馈随删；A 仍在。
+        impact = client.get(f"/api/improvements/{b['improvement_id']}/deletion-impact").json()
+        assert impact["feedbacks"] == 1
+        assert client.delete(f"/api/improvements/{b['improvement_id']}").status_code == 204
+        assert client.get(f"/api/improvements/{b['improvement_id']}").status_code == 404
+        assert client.get(f"/api/improvements/{a['improvement_id']}").status_code == 200
+
+
 def test_normalized_feedback_upsert_is_1to1_and_confirmable(tmp_path: Path) -> None:
     store = _store(tmp_path)
     a = store.upsert_normalized_feedback("imp-1", problem="告警误报", user_quote="这是误报")

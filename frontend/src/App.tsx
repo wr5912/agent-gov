@@ -191,6 +191,12 @@ export default function App() {
       setSkills(skillsRes);
       setConfigMapping(configRes);
       setBusinessAgents(businessAgentsRes);
+      // ②修复：默认选中 main-agent（预制业务 Agent，始终注册），使 Playground 打开即可发消息、下拉与实际运行一致。
+      if (!selectedBusinessAgentId && businessAgentsRes.length) {
+        setSelectedBusinessAgentId(
+          businessAgentsRes.find((a) => a.agent_id === "main-agent")?.agent_id || businessAgentsRes[0].agent_id,
+        );
+      }
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }

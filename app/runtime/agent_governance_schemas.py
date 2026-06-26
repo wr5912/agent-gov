@@ -14,6 +14,14 @@ from pydantic import BaseModel, Field
 class AgentCreateRequest(BaseModel):
     name: str
     agent_id: Optional[str] = None
+    # 创建时基于的模板（catalog 子目录名）；缺省用 general。未知值 → 422。
+    template_id: Optional[str] = Field(default=None)
+
+
+class BusinessAgentTemplatesResponse(BaseModel):
+    """业务 Agent 创建模板 catalog（可选 template_id 列表）。"""
+
+    templates: list[str]
 
 
 class AgentSummaryResponse(BaseModel):

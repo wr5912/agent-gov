@@ -179,6 +179,7 @@ from app.runtime.agent_governance_schemas import (  # noqa: E402,F401
     AgentSummaryResponse,
     AssetProvenanceResponse,
     AssetProvenanceTask,
+    BusinessAgentTemplatesResponse,
     FeedbackSignalReassignRequest,
 )
 
@@ -188,6 +189,7 @@ __all_agent_governance__ = [
     "AgentDeletionImpact",
     "AgentLifecycleTransitionRequest",
     "AgentSummaryResponse",
+    "BusinessAgentTemplatesResponse",
     "AssetProvenanceResponse",
     "AssetProvenanceTask",
     "FeedbackSignalReassignRequest",

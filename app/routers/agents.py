@@ -4,16 +4,21 @@ from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.runtime.agent_paths import business_agent_layout
-from app.runtime.business_agent_workspace import initialize_business_agent_workspace
+from app.runtime.business_agent_workspace import (
+    DEFAULT_TEMPLATE_ID,
+    list_business_agent_templates,
+    seed_business_agent_workspace,
+)
 from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
     AgentDeletionImpact,
     AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
+    BusinessAgentTemplatesResponse,
 )
 from app.runtime.settings import AppSettings
 from app.runtime.errors import ConflictError
@@ -35,6 +40,28 @@ def _summary(record: AgentRegistryRecord) -> AgentSummaryResponse:
         created_at=record.created_at,
         status=record.status,
     )
+
+
+def _resolve_template_id(raw: str | None) -> str:
+    """校验创建用 template_id（外部输入）；未知值投影为 422。"""
+    template_id = (raw or DEFAULT_TEMPLATE_ID).strip() or DEFAULT_TEMPLATE_ID
+    if template_id not in list_business_agent_templates():
+        raise HTTPException(status_code=422, detail=f"Unknown template_id: {template_id!r}")
+    return template_id
+
+
+def _register_and_seed_agent(
+    req: AgentCreateRequest, settings: AppSettings, store: AgentRegistryStore
+) -> AgentSummaryResponse:
+    """注册业务 Agent 并从所选模板幂等播种其 workspace。"""
+    template_id = _resolve_template_id(req.template_id)
+    agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
+    workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
+    record = store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
+    seed_business_agent_workspace(
+        Path(record.workspace_dir), agent_id=record.agent_id, name=record.name, template_id=template_id
+    )
+    return _summary(record)
 
 
 def create_agents_router(
@@ -60,6 +87,14 @@ def create_agents_router(
     async def list_agents() -> list[AgentSummaryResponse]:
         return [_summary(record) for record in agent_registry_store.list_agents()]
 
+    @router.get(
+        "/agent-registry/templates",
+        response_model=BusinessAgentTemplatesResponse,
+        summary="List business agent creation templates (catalog)",
+    )
+    async def list_templates() -> BusinessAgentTemplatesResponse:
+        return BusinessAgentTemplatesResponse(templates=list_business_agent_templates())
+
     @router.post(
         "/agent-registry",
         response_model=AgentSummaryResponse,
@@ -67,11 +102,7 @@ def create_agents_router(
         summary="Register a business agent (governance object)",
     )
     async def create_agent(req: AgentCreateRequest) -> AgentSummaryResponse:
-        agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
-        workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
-        record = agent_registry_store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
-        initialize_business_agent_workspace(Path(record.workspace_dir), agent_id=record.agent_id, name=record.name)
-        return _summary(record)
+        return _register_and_seed_agent(req, settings, agent_registry_store)
 
     @router.post(
         "/agent-registry/{agent_id}/lifecycle",

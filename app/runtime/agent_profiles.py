@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .agent_paths import business_agent_layout, business_agents_root
+from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
 from .settings import AppSettings
 
 AgentRole = Literal[
@@ -69,6 +69,42 @@ def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
         ),
         GOVERNOR_PROFILE: _governor_profile(settings),
     }
+
+
+def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeProfile]:
+    """发现运行卷 ``data/business-agents/*`` 下已落盘（seed 预置或历史创建）的业务 Agent profile。
+
+    每个直接子目录名即 ``agent_id``（与 ``build_business_agent_profile`` 的路径约定同源）；
+    经 ``validate_agent_id`` 防目录穿越，非法名静默跳过，并要求其下存在 ``workspace/`` 才视为
+    有效业务 Agent（过滤备份/残留等非 Agent 目录）。每个 Agent 的 ``workspace_dir`` 仍由
+    ``business_agent_layout`` 这一单一真相派生，与运行时 profile 完全一致（返回的 ``profile.name``
+    即 ``agent_id``，调用方据此归并）。
+
+    用途：启动时把 seed 预置的多业务 Agent 幂等纳入注册表（main-agent 之外的 AAA/BBB…），
+    使其与 main-agent 走同一注册/路由/治理抽象。main-agent 也会被发现，但与 ``build_profiles``
+    的预制 main-agent 同 ``workspace_dir``，合并时幂等无冲突。
+
+    语义：以磁盘为发现源——经 API 删除某 Agent 只移除注册表行、不清磁盘，故重启会重新发现登记。
+    在“seed 声明基线业务 Agent”模型下这是预期行为；不在此引入 tombstone（超出本职责）。
+    """
+    root = business_agents_root(settings.data_dir)
+    discovered: list[AgentRuntimeProfile] = []
+    if not root.is_dir():
+        return discovered
+    for child in sorted(root.iterdir()):
+        if not child.is_dir():
+            continue
+        try:
+            agent_id = validate_agent_id(child.name)
+        except InvalidAgentId:
+            continue
+        layout = business_agent_layout(settings.data_dir, agent_id)
+        if not layout.workspace.is_dir():
+            continue
+        discovered.append(
+            build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=layout.workspace)
+        )
+    return discovered
 
 
 def candidate_profile(

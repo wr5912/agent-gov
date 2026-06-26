@@ -109,7 +109,9 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
         langfuse_observation_name=f"runtime.business_agent.{agent_id}",
         readable_paths=(workspace_dir, settings.data_dir),
         writable_paths=(settings.data_dir / "outputs",),
-        denied_paths=(settings.governor_claude_root,),
+        # 业务 Agent 不得自读自身 SDK 运行态家目录（claude-root 在 data_dir 下、且可能嵌于 cwd），
+        # 否则可经 Read(./claude-root/**) 读到 session/缓存/凭据态。denied 在 policy.py 优先于 readable。
+        denied_paths=(settings.governor_claude_root, claude_root),
     )
 
 

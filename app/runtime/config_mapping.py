@@ -8,9 +8,10 @@ from .settings import AppSettings
 
 def _host_path(path: Path, settings: AppSettings) -> str | None:
     pairs = [
-        (settings.workspace_dir, settings.host_workspace_mount),
+        # main 已并入 /data 下（workspace/claude-root 经 data 挂载映射）；governor 仍是顶层挂载。
         (settings.data_dir, settings.host_data_mount),
-        (settings.claude_root, settings.host_claude_root_mount),
+        (settings.governor_workspace_dir, settings.host_governor_workspace_mount),
+        (settings.governor_claude_root, settings.host_governor_claude_root_mount),
     ]
     for container_root, host_root in pairs:
         try:

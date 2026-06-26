@@ -6,6 +6,7 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import NotFoundError
 from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, SessionMessagesResponse
 from app.runtime.session_history import read_session_history
@@ -13,8 +14,8 @@ from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
-# 主 Agent 的合法归属标识（main 样板）。业务 Agent 归属必须在注册表中存在。
-_MAIN_AGENT_IDS = {"main-agent", "main"}
+# 预制 main-agent 的合法归属标识；其余业务 Agent 归属必须在注册表中存在。
+_MAIN_AGENT_IDS = {"main-agent"}
 
 
 def _resolve_owning_profile(
@@ -44,7 +45,7 @@ def _resolve_owning_profile(
         raise NotFoundError(f"owning agent '{agent_id}' of session {session.session_id} not found")
     # cwd 用注册表登记的 workspace_dir（与 /api/chat 的 build_business_agent_profile 一致，支持自定义/同步 workspace）；
     # claude-root 仍按 agent_id 推导（与 build_business_agent_profile 的 claude_root 一致）。
-    claude_config_dir = settings.data_dir / "business-agents" / agent_id / "claude-root" / ".claude"
+    claude_config_dir = business_agent_layout(settings.data_dir, agent_id).claude_root / ".claude"
     return Path(record.workspace_dir), claude_config_dir
 
 

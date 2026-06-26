@@ -75,11 +75,12 @@ def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_pa
     assert AppSettings.model_config["env_file"] is None
     assert settings.runtime_volume_mode == "container"
     assert settings.api_port == 58080
-    assert settings.workspace_dir == Path("/main-workspace")
+    # main 已并入业务模型：workspace/claude-root 由 data_dir 下的 main-agent layout 派生。
+    assert settings.workspace_dir == settings.data_dir / "business-agents" / "main-agent" / "workspace"
     assert settings.main_workspace_dir == settings.workspace_dir
     assert settings.governor_workspace_dir == Path("/governor-workspace")
     assert settings.data_dir == Path("/data")
-    assert settings.claude_root == Path("/claude-roots/main")
+    assert settings.claude_root == settings.data_dir / "business-agents" / "main-agent" / "claude-root"
     assert settings.main_claude_root == settings.claude_root
     assert settings.governor_claude_root == Path("/claude-roots/governor")
     assert settings.claude_home == settings.claude_root / ".claude"
@@ -128,9 +129,9 @@ def test_settings_selects_local_debug_env_file_for_host_runtime(tmp_path, monkey
     assert settings_env_file_for_mode() == Path("docker/.env.local-debug")
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_port == 8080
-    assert settings.workspace_dir == Path("/tmp/local-debug-volume-agent-gov/main-workspace")
+    assert settings.workspace_dir == settings.data_dir / "business-agents" / "main-agent" / "workspace"
     assert settings.data_dir == Path("/tmp/local-debug-volume-agent-gov/data")
-    assert settings.claude_root == Path("/tmp/local-debug-volume-agent-gov/claude-roots/main")
+    assert settings.claude_root == settings.data_dir / "business-agents" / "main-agent" / "claude-root"
     assert settings.langfuse_base_url == "http://localhost:53000"
 
 
@@ -146,13 +147,14 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
     assert settings.runtime_volume_mode == "local-debug"
     assert settings.api_host == "0.0.0.0"
     assert settings.host_runtime_volume_root == local_debug_root.as_posix()
-    assert settings.workspace_dir == local_debug_root / "main-workspace"
-    assert settings.main_workspace_dir == local_debug_root / "main-workspace"
+    main_layout_root = local_debug_root / "data" / "business-agents" / "main-agent"
+    assert settings.workspace_dir == main_layout_root / "workspace"
+    assert settings.main_workspace_dir == main_layout_root / "workspace"
     assert settings.governor_workspace_dir == local_debug_root / "governor-workspace"
     assert settings.data_dir == local_debug_root / "data"
-    assert settings.claude_root == local_debug_root / "claude-roots" / "main"
-    assert settings.main_claude_root == local_debug_root / "claude-roots" / "main"
-    assert settings.claude_home == local_debug_root / "claude-roots" / "main" / ".claude"
+    assert settings.claude_root == main_layout_root / "claude-root"
+    assert settings.main_claude_root == main_layout_root / "claude-root"
+    assert settings.claude_home == main_layout_root / "claude-root" / ".claude"
     assert settings.agent_git_worktrees_dir == local_debug_root / "data" / "agent-governance" / "worktrees"
     assert settings.agent_release_archives_dir == local_debug_root / "data" / "agent-governance" / "releases"
 
@@ -178,9 +180,9 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "provider_api_url_configured": False,
         "api_host": "0.0.0.0",
         "api_port": 8080,
-        "workspace_dir": "/tmp/local-debug-volume-agent-gov/main-workspace",
+        "workspace_dir": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/workspace",
         "data_dir": "/tmp/local-debug-volume-agent-gov/data",
-        "claude_root": "/tmp/local-debug-volume-agent-gov/claude-roots/main",
+        "claude_root": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/claude-root",
         "langfuse_base_url": "http://localhost:53000",
     }
     assert fields["provider_api_key_configured"] is False

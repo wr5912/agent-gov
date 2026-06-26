@@ -11,6 +11,7 @@ from pydantic import Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent_job_errors import provider_api_key_configured
+from .agent_paths import business_agent_layout
 from .json_types import JsonObject
 from .model_provider import ModelProviderBackend
 
@@ -40,11 +41,11 @@ def _optional_string_dict(value: JsonObject) -> dict[str, str | None]:
     return {str(key): None if val is None else str(val) for key, val in value.items()}
 
 
-_DEFAULT_MAIN_WORKSPACE_DIR = Path("/main-workspace")
-_DEFAULT_MAIN_CLAUDE_ROOT = Path("/claude-roots/main")
+# main 已并入业务模型：其 workspace/claude-root 由 business_agent_layout(data_dir, "main-agent")
+# 派生（在 /data 下），不再有专属顶层挂载与 env 字段。governor 仍是顶层挂载的特殊治理 Agent。
+MAIN_AGENT_ID = "main-agent"
 _DEFAULT_GOVERNOR_WORKSPACE_DIR = Path("/governor-workspace")
 _DEFAULT_GOVERNOR_CLAUDE_ROOT = Path("/claude-roots/governor")
-_DEFAULT_CLAUDE_HOME = Path("/claude-roots/main/.claude")
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
 _SETTINGS_ENV_FILES = {
@@ -79,33 +80,14 @@ class RuntimeSettingsLogFields(TypedDict):
     langfuse_base_url: str
 
 
-_WORKSPACE_PROFILE_DIR_DEFAULTS = (
-    ("GOVERNOR_WORKSPACE_DIR", "governor_workspace_dir", _DEFAULT_GOVERNOR_WORKSPACE_DIR, "governor-workspace"),
-)
-_CLAUDE_ROOT_PROFILE_DIR_DEFAULTS = (
-    ("GOVERNOR_CLAUDE_ROOT", "governor_claude_root", _DEFAULT_GOVERNOR_CLAUDE_ROOT, "governor"),
-)
-
-
 def _derive_profile_dirs(settings: Any, explicit_env: Mapping[str, str] = os.environ) -> None:
-    if (
-        "MAIN_WORKSPACE_DIR" not in explicit_env
-        and settings.main_workspace_dir == _DEFAULT_MAIN_WORKSPACE_DIR
-        and settings.workspace_dir != _DEFAULT_MAIN_WORKSPACE_DIR
-    ):
-        settings.main_workspace_dir = settings.workspace_dir
-    if "MAIN_CLAUDE_ROOT" not in explicit_env and settings.main_claude_root == _DEFAULT_MAIN_CLAUDE_ROOT and settings.claude_root != _DEFAULT_MAIN_CLAUDE_ROOT:
-        settings.main_claude_root = settings.claude_root
-    _derive_child_dirs(settings, explicit_env, settings.main_workspace_dir.parent, _WORKSPACE_PROFILE_DIR_DEFAULTS)
-    _derive_child_dirs(settings, explicit_env, settings.main_claude_root.parent, _CLAUDE_ROOT_PROFILE_DIR_DEFAULTS)
-    if "CLAUDE_HOME" not in explicit_env and settings.claude_home == _DEFAULT_CLAUDE_HOME:
-        settings.claude_home = settings.main_claude_root / ".claude"
-
-
-def _derive_child_dirs(settings: Any, explicit_env: Mapping[str, str], parent: Path, defaults: tuple[tuple[str, str, Path, str], ...]) -> None:
-    for env_name, attr_name, default_path, child_name in defaults:
-        if env_name not in explicit_env and getattr(settings, attr_name) == default_path:
-            setattr(settings, attr_name, parent / child_name)
+    """governor 顶层目录随运行卷根（data_dir 的父目录）派生，使本机调试/容器两模式一致；
+    main 的 workspace/claude-root 已由 business_agent_layout 在 /data 下派生，无需在此处理。"""
+    volume_root = settings.data_dir.parent
+    if "GOVERNOR_WORKSPACE_DIR" not in explicit_env and settings.governor_workspace_dir == _DEFAULT_GOVERNOR_WORKSPACE_DIR:
+        settings.governor_workspace_dir = volume_root / "governor-workspace"
+    if "GOVERNOR_CLAUDE_ROOT" not in explicit_env and settings.governor_claude_root == _DEFAULT_GOVERNOR_CLAUDE_ROOT:
+        settings.governor_claude_root = volume_root / "claude-roots" / "governor"
 
 
 def running_in_container(environ: Mapping[str, str] = os.environ, *, dockerenv_path: Path = Path("/.dockerenv")) -> bool:
@@ -175,9 +157,7 @@ class AppSettings(BaseSettings):
     log_level: str = Field(default="info", alias="LOG_LEVEL")
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
-    host_workspace_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "main-workspace"), alias="HOST_WORKSPACE_MOUNT")
     host_data_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "data"), alias="HOST_DATA_MOUNT")
-    host_claude_root_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "main"), alias="HOST_CLAUDE_ROOT_MOUNT")
     host_governor_workspace_mount: str = Field(
         default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "governor-workspace"), alias="HOST_GOVERNOR_WORKSPACE_MOUNT"
     )
@@ -185,14 +165,9 @@ class AppSettings(BaseSettings):
         default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "governor"), alias="HOST_GOVERNOR_CLAUDE_ROOT_MOUNT"
     )
 
-    workspace_dir: Path = Field(default=Path("/main-workspace"), alias="WORKSPACE_DIR")
-    main_workspace_dir: Path = Field(default=Path("/main-workspace"), alias="MAIN_WORKSPACE_DIR")
     governor_workspace_dir: Path = Field(default=Path("/governor-workspace"), alias="GOVERNOR_WORKSPACE_DIR")
     data_dir: Path = Field(default=Path("/data"), alias="DATA_DIR")
-    claude_root: Path = Field(default=Path("/claude-roots/main"), alias="CLAUDE_ROOT")
-    main_claude_root: Path = Field(default=Path("/claude-roots/main"), alias="MAIN_CLAUDE_ROOT")
     governor_claude_root: Path = Field(default=Path("/claude-roots/governor"), alias="GOVERNOR_CLAUDE_ROOT")
-    claude_home: Path = Field(default=Path("/claude-roots/main/.claude"), alias="CLAUDE_HOME")
     claude_config_dir: Optional[Path] = Field(default=None, alias="CLAUDE_CONFIG_DIR")
 
     anthropic_api_key: Optional[str] = Field(default=None, alias="ANTHROPIC_API_KEY")
@@ -286,6 +261,28 @@ class AppSettings(BaseSettings):
     @property
     def settings_env_file(self) -> Path | None:
         return self._settings_env_file
+
+    # main 已并入业务模型：其 workspace/claude-root 由 main-agent 的 layout 在 /data 下派生
+    # （随 data_dir 自动适配 container/local-debug），不再是独立可配置字段或顶层挂载。
+    @property
+    def main_workspace_dir(self) -> Path:
+        return business_agent_layout(self.data_dir, MAIN_AGENT_ID).workspace
+
+    @property
+    def main_claude_root(self) -> Path:
+        return business_agent_layout(self.data_dir, MAIN_AGENT_ID).claude_root
+
+    @property
+    def workspace_dir(self) -> Path:
+        return self.main_workspace_dir
+
+    @property
+    def claude_root(self) -> Path:
+        return self.main_claude_root
+
+    @property
+    def claude_home(self) -> Path:
+        return self.main_claude_root / ".claude"
 
     @property
     def provider_api_key(self) -> Optional[str]:

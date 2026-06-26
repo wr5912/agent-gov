@@ -38,11 +38,13 @@ class AgentRegistryStore:
             for profile in profiles.values():
                 if profile.category != "business":
                     continue
-                if db.get(AgentRegistryModel, profile.role) is not None:
+                # 业务 Agent（含预制 main-agent）以 profile.name 为身份；role 现统一为通用
+                # business-agent，不能再当 agent_id。
+                if db.get(AgentRegistryModel, profile.name) is not None:
                     continue
                 db.add(
                     AgentRegistryModel(
-                        agent_id=profile.role,
+                        agent_id=profile.name,
                         name=profile.name,
                         category=profile.category,
                         workspace_dir=str(profile.workspace_dir),

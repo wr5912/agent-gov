@@ -33,7 +33,9 @@ import type {
 } from "../types/runtime";
 import { isRecord } from "../utils/records";
 
-const STREAM_IDLE_TIMEOUT_MS = 60_000;
+// 流式空闲超时：60s 对大提示词 + 翻译代理整段缓冲的 Qwen 推理太紧（init 后常 >60s 才吐首个增量），
+// 调大到 180s 容纳慢响应；根治需后端 SSE 心跳或代理增量转发（见 v2.8.1 验收记录）。
+const STREAM_IDLE_TIMEOUT_MS = 180_000;
 
 export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");

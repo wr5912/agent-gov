@@ -12,14 +12,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     NPM_CONFIG_REGISTRY=https://registry.npmmirror.com \
     API_HOST=0.0.0.0 \
     API_PORT=8080 \
-    WORKSPACE_DIR=/main-workspace \
-    MAIN_WORKSPACE_DIR=/main-workspace \
     GOVERNOR_WORKSPACE_DIR=/governor-workspace \
     DATA_DIR=/data \
-    CLAUDE_ROOT=/claude-roots/main \
-    MAIN_CLAUDE_ROOT=/claude-roots/main \
-    GOVERNOR_CLAUDE_ROOT=/claude-roots/governor \
-    CLAUDE_HOME=/claude-roots/main/.claude
+    GOVERNOR_CLAUDE_ROOT=/claude-roots/governor
 
 WORKDIR /app
 
@@ -81,8 +76,7 @@ COPY docker/runtime-volume-seeds /app/docker/runtime-volume-seeds
 COPY docker/entrypoint.sh /usr/local/bin/agent-gov-entrypoint
 
 RUN chmod +x /usr/local/bin/agent-gov-entrypoint \
-    && mkdir -p /main-workspace /governor-workspace \
-        /claude-roots/main/.claude /claude-roots/governor/.claude /data
+    && mkdir -p /governor-workspace /claude-roots/governor/.claude /data
 
 ENTRYPOINT ["/usr/local/bin/agent-gov-entrypoint"]
 CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080} --log-level ${LOG_LEVEL:-info}"]

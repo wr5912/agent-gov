@@ -43,7 +43,13 @@ _LIVE_PROVIDER_KEYS = (
     "MODEL_PROVIDER_WARNING_TTL_SECONDS",
     "AGENT_MODEL",
 )
-_CONTAINER_REQUIRED_PATHS = (Path("/data"), Path("/main-workspace"), Path("/claude-roots/main"))
+# 业务 Agent（含预制 main-agent）统一住 /data 下；断言真实运行布局，不再用已删的 /main-workspace、
+# /claude-roots/main（B 整改后这两个目录已不创建，旧断言会因空死目录假通过）。
+_CONTAINER_REQUIRED_PATHS = (
+    Path("/data"),
+    Path("/data/business-agents/main-agent/workspace"),
+    Path("/data/business-agents/main-agent/claude-root"),
+)
 _TRUTHY = {"1", "true", "yes", "on", "container"}
 
 

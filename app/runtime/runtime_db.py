@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -553,9 +554,34 @@ def make_engine(db_path: Path) -> Engine:
         return engine
 
 
+@contextmanager
+def _schema_init_lock(db_path: Path):
+    """跨进程串行化 schema 初始化。
+
+    api 与 worker 冷启动会同时对同一 sqlite 跑 ``create_all``；``checkfirst`` 只是进程内
+    TOCTOU，挡不住跨进程并发 → ``sqlite3.OperationalError: table ... already exists``。
+    用与 db 同目录的锁文件 + ``flock`` 排他锁串行化（``:memory:`` 等无父目录路径跳过）。
+    """
+    try:
+        import fcntl
+    except ImportError:  # 非 Unix 平台无 fcntl：退化为不加锁（仍有 create_all checkfirst）
+        yield
+        return
+    lock_path = db_path.parent / f"{db_path.name}.schema.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
 def make_session_factory(db_path: Path) -> sessionmaker:
     engine = make_engine(db_path)
-    ensure_schema(engine)
+    # ①修复：api/worker 并发冷启动时串行化建表/迁移，避免 create_all 跨进程竞态。
+    with _schema_init_lock(db_path):
+        ensure_schema(engine)
     return sessionmaker(bind=engine, expire_on_commit=False, future=True)
 
 

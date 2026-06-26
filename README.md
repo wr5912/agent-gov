@@ -8,7 +8,7 @@ AgentGov 不提供通用协作看板，也不替代 Multica、Jira、GitHub Issu
 
 - 不重写 Claude Agent loop。
 - 通过 Docker 容器封装 Claude Agent SDK / Claude Code Runtime。
-- 通过两套 Runtime Profile 隔离主智能体和单一治理智能体（governor）：`/main-workspace` 与 `/governor-workspace`，以及独立 `claude-roots/main`、`claude-roots/governor`。治理智能体按 job_type 承担归因、优化方案、执行、用例治理和回归影响分析。
+- 通过 Runtime Profile 隔离业务 Agent 与单一治理智能体（governor）：业务 Agent（含预制 `main-agent`）住 `data/business-agents/<agent_id>/workspace`、各自独立并列的 `claude-root`；唯一特殊的是治理智能体 governor（`/governor-workspace` 与 `claude-roots/governor`），按 job_type 承担归因、优化方案、执行、用例治理和回归影响分析。
 - 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。上层业务系统集成 AgentGov 底座的权威参考见 [docs/AgentGov集成指南.md](docs/AgentGov集成指南.md)（契约真相源是容器 OpenAPI `/openapi.json`、`/docs`）。
 
 ## 目录结构

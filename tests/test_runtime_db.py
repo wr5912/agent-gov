@@ -15,6 +15,33 @@ def test_runtime_db_reuses_engine_for_same_path(tmp_path):
     assert first.kw["bind"] is second.kw["bind"]
 
 
+def test_concurrent_schema_init_no_table_exists_race(tmp_path):
+    """①回归：api/worker 冷启动各自 engine 并发对同一 db 建 schema，不得 'table ... already exists'。
+
+    用多个独立 engine（绕过进程内 engine 缓存）模拟跨进程并发；``_schema_init_lock`` 文件锁应串行化，
+    否则并发 ``create_all`` 会触发 sqlite TOCTOU 竞态。
+    """
+    from sqlalchemy import create_engine
+
+    from app.runtime.runtime_db import _schema_init_lock, ensure_schema
+
+    db_path = tmp_path / "runtime.sqlite3"
+    errors: list[Exception] = []
+
+    def init(_: int) -> None:
+        try:
+            engine = create_engine(f"sqlite:///{db_path}", future=True)
+            with _schema_init_lock(db_path):
+                ensure_schema(engine)
+        except Exception as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        list(executor.map(init, range(8)))
+
+    assert not errors, f"并发 schema 初始化报错（竞态未被串行化）: {errors}"
+
+
 def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
     db_path = tmp_path / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:

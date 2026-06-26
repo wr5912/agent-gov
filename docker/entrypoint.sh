@@ -20,13 +20,12 @@ if [ -d /app/docker/runtime-volume-seeds ] && [ -f /app/scripts/bootstrap_runtim
         --quiet
 fi
 
-ensure_claude_config_dir "${MAIN_CLAUDE_ROOT:-${CLAUDE_ROOT:-/claude-roots/main}}"
+# governor 是唯一顶层特殊 Agent；业务 Agent（含预制 main-agent）的 workspace/claude-root 落在
+# /data 下，由下方 DATA_DIR 一并放权——不再单独建 /main-workspace、/claude-roots/main（已随 B 整改去除）。
 ensure_claude_config_dir "${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}"
 
-relax_volume_permissions "${MAIN_WORKSPACE_DIR:-${WORKSPACE_DIR:-/main-workspace}}"
 relax_volume_permissions "${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}"
 relax_volume_permissions "${DATA_DIR:-/data}"
-relax_volume_permissions "${MAIN_CLAUDE_ROOT:-${CLAUDE_ROOT:-/claude-roots/main}}"
 relax_volume_permissions "${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}"
 
 exec "$@"

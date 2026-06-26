@@ -6,7 +6,16 @@ from uuid import uuid4
 from sqlalchemy.orm import sessionmaker
 
 from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
-from ..improvement_db import ImprovementItemModel, ImprovementLinkModel
+from ..improvement_db import (
+    AttributionModel,
+    ExecutionRecordModel,
+    ImprovementFeedbackModel,
+    ImprovementItemModel,
+    ImprovementLinkModel,
+    NormalizedFeedbackModel,
+    OptimizationPlanModel,
+    RegressionAssessmentModel,
+)
 from ..runtime_db import utc_now
 from ..state_machines import validate_transition
 
@@ -36,6 +45,19 @@ class ImprovementItemRecord:
     improvement_status: str
     created_at: str
     updated_at: str
+
+
+@dataclass(frozen=True)
+class ImprovementDeletionImpact:
+    """删除改进事项前的影响面（dry-run）：随删计数 + 退回未归属池的来源反馈引用数。"""
+
+    improvement_id: str
+    title: str
+    source_feedback_refs: int
+    feedbacks: int
+    links: int
+    has_attribution: bool
+    has_optimization_plan: bool
 
 
 def derive_improvement_status(stage: str) -> str:
@@ -248,6 +270,48 @@ class ImprovementStore:
             row.improvement_status = "archived"
             row.updated_at = utc_now()
             return _record(row)
+
+    def deletion_impact(self, improvement_id: str) -> ImprovementDeletionImpact:
+        """删除前影响面（dry-run，区别于归档）：将随删的反馈/链接/内容计数 + 退回未归属池的来源反馈引用数。"""
+        with self._session_factory.begin() as db:
+            row = db.get(ImprovementItemModel, improvement_id)
+            if row is None:
+                raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+
+            def _count(model) -> int:
+                return db.query(model).filter(model.improvement_id == improvement_id).count()
+
+            return ImprovementDeletionImpact(
+                improvement_id=improvement_id,
+                title=row.title,
+                source_feedback_refs=len(row.source_feedback_refs_json or []),
+                feedbacks=_count(ImprovementFeedbackModel),
+                links=_count(ImprovementLinkModel),
+                has_attribution=_count(AttributionModel) > 0,
+                has_optimization_plan=_count(OptimizationPlanModel) > 0,
+            )
+
+    def delete_improvement(self, improvement_id: str) -> None:
+        """硬删除改进事项及其 1:多 反馈、1:1 内容、轻引用（同一 improvement_db 内原子级联）。
+
+        一等反馈 FeedbackCase 存于独立 feedback 域、不在此删除：删后它们不再被任何事项引用，
+        退回未归属池可重新归入别处（区别于归档——归档保留事项与反馈）。
+        """
+        with self._session_factory.begin() as db:
+            row = db.get(ImprovementItemModel, improvement_id)
+            if row is None:
+                raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+            for model in (
+                ImprovementFeedbackModel,
+                ImprovementLinkModel,
+                NormalizedFeedbackModel,
+                AttributionModel,
+                OptimizationPlanModel,
+                ExecutionRecordModel,
+                RegressionAssessmentModel,
+            ):
+                db.query(model).filter(model.improvement_id == improvement_id).delete(synchronize_session=False)
+            db.delete(row)
 
 
 def _record(row: ImprovementItemModel) -> ImprovementItemRecord:

@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from sqlalchemy.orm import sessionmaker
 
-from ..errors import BusinessRuleViolation
+from ..errors import BusinessRuleViolation, NotFoundError
 from ..improvement_db import (
     AttributionModel,
     ExecutionRecordModel,
@@ -158,15 +158,39 @@ class ImprovementContentStore:
                 .order_by(ImprovementFeedbackModel.created_at, ImprovementFeedbackModel.feedback_id)
                 .all()
             )
-            return [
-                ImprovementFeedbackRecord(
-                    feedback_id=r.feedback_id, improvement_id=r.improvement_id, agent_id=r.agent_id, summary=r.summary,
-                    source=r.source, status=r.status, raw_text=r.raw_text or "", run_id=r.run_id or "", session_id=r.session_id or "",
-                    agent_version_id=r.agent_version_id or "", scenario=r.scenario or "", task_id=r.task_id or "",
-                    alert_id=r.alert_id or "", case_id=r.case_id or "", created_at=r.created_at,
+            return [_fb_record(r) for r in rows]
+
+    def reassign_feedback(self, feedback_id: str, *, target_improvement_id: str) -> ImprovementFeedbackRecord:
+        """把一条来源反馈从当前事项移动到另一个改进事项（跨事项调整）。目标存在性/同 agent 由调用方校验。"""
+        clean_target = (target_improvement_id or "").strip()
+        if not clean_target:
+            raise BusinessRuleViolation("target_improvement_id is required")
+        with self._session_factory.begin() as db:
+            row = db.get(ImprovementFeedbackModel, feedback_id)
+            if row is None:
+                raise NotFoundError(f"Feedback not found: {feedback_id}")
+            if row.improvement_id == clean_target:
+                raise BusinessRuleViolation("Feedback already belongs to the target improvement")
+            row.improvement_id = clean_target
+            return _fb_record(row)
+
+    def count_feedbacks(self, improvement_id: str) -> int:
+        with self._session_factory.begin() as db:
+            return db.query(ImprovementFeedbackModel).filter(ImprovementFeedbackModel.improvement_id == improvement_id).count()
+
+    def list_attachable_feedbacks(self, *, agent_id: str, exclude_improvement_id: str) -> list[ImprovementFeedbackRecord]:
+        """其他改进事项中、同一业务 Agent 的来源反馈——供「从其他事项调整过来」选择。"""
+        with self._session_factory.begin() as db:
+            rows = (
+                db.query(ImprovementFeedbackModel)
+                .filter(
+                    ImprovementFeedbackModel.agent_id == agent_id,
+                    ImprovementFeedbackModel.improvement_id != exclude_improvement_id,
                 )
-                for r in rows
-            ]
+                .order_by(ImprovementFeedbackModel.created_at.desc(), ImprovementFeedbackModel.feedback_id)
+                .all()
+            )
+            return [_fb_record(r) for r in rows]
 
     # ---- NormalizedFeedback（系统理解）----
     def upsert_normalized_feedback(
@@ -428,4 +452,13 @@ def _attr_record(row: AttributionModel) -> AttributionRecord:
         created_at=row.created_at,
         updated_at=row.updated_at,
         generated_by=row.generated_by or "heuristic",
+    )
+
+
+def _fb_record(row: ImprovementFeedbackModel) -> ImprovementFeedbackRecord:
+    return ImprovementFeedbackRecord(
+        feedback_id=row.feedback_id, improvement_id=row.improvement_id, agent_id=row.agent_id, summary=row.summary,
+        source=row.source, status=row.status, raw_text=row.raw_text or "", run_id=row.run_id or "",
+        session_id=row.session_id or "", agent_version_id=row.agent_version_id or "", scenario=row.scenario or "",
+        task_id=row.task_id or "", alert_id=row.alert_id or "", case_id=row.case_id or "", created_at=row.created_at,
     )

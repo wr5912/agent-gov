@@ -3,6 +3,7 @@
 docker/.env
 docker/.env.local
 docker/.env.local-debug
+docker/.env.bak*
 .venv/
 __pycache__/
 *.pyc

@@ -105,11 +105,26 @@ export async function readError(res: Response): Promise<string> {
     const json = await res.json();
     if (typeof json?.detail === "string") return json.detail;
     if (typeof json?.message === "string") return json.message;
+    if (Array.isArray(json?.detail)) {
+      // F11：FastAPI 校验错误 detail 是 [{loc, msg, type}, ...]，拼"字段名: msg"成可读句子而非吐原始 JSON。
+      const parts = (json.detail as unknown[])
+        .map((d) => {
+          if (d && typeof d === "object" && typeof (d as { msg?: unknown }).msg === "string") {
+            const loc = (d as { loc?: unknown }).loc;
+            const field = Array.isArray(loc) && loc.length ? String(loc[loc.length - 1]) : "";
+            const msg = (d as { msg: string }).msg;
+            return field ? `${field}: ${msg}` : msg;
+          }
+          return null;
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join("；");
+    }
     if (json?.detail && typeof json.detail === "object") {
       if (typeof json.detail.message === "string") return json.detail.message;
       if (typeof json.detail.error === "string") return json.detail.error;
     }
-    return JSON.stringify(json);
+    return `${res.status} ${res.statusText}`.trim() || JSON.stringify(json);
   } catch {
     try {
       return await res.text();

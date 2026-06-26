@@ -50,6 +50,16 @@ const SETTINGS_TABS: { key: SettingsTab; label: string; eyebrow: string; descrip
 ];
 type SettingsTab = "agents" | "automation" | "assets" | "developer";
 
+// F7：业务 Agent ID 客户端校验，与后端 agent_paths `^[A-Za-z0-9._-]+$` 一致；留空合法（自动生成）。
+const AGENT_ID_RE = /^[A-Za-z0-9._-]+$/;
+function validateAgentId(id: string): string | undefined {
+  if (!id) return undefined;
+  if (id === "." || id === ".." || !AGENT_ID_RE.test(id)) {
+    return "仅允许字母、数字、点、下划线、连字符（留空将自动生成）。";
+  }
+  return undefined;
+}
+
 interface SettingsModalProps {
   open: boolean;
   config: RuntimeClientConfig;
@@ -71,6 +81,9 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [newId, setNewId] = useState("");
   const [templates, setTemplates] = useState<string[]>([]);
   const [templateId, setTemplateId] = useState("");
+  const [agentsLoading, setAgentsLoading] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | undefined>();
+  const [idError, setIdError] = useState<string | undefined>();
   const [impact, setImpact] = useState<Record<string, AgentDeleteResponse["impact"] | undefined>>({});
   const [policyAgent, setPolicyAgent] = useState("");
   const [policyMode, setPolicyMode] = useState("off");
@@ -85,12 +98,15 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
   const reloadAgents = useCallback(async () => {
     setError(undefined);
+    setAgentsLoading(true);
     try {
       const list = await listBusinessAgents(config);
       setAgents(list);
       if (!policyAgent && list[0]) setPolicyAgent(list[0].agent_id);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setAgentsLoading(false);
     }
   }, [config, policyAgent]);
 
@@ -148,6 +164,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const run = async (action: () => Promise<void>) => {
     setBusy(true);
     setError(undefined);
+    setSuccessMsg(undefined);
     try {
       await action();
     } catch (e) {
@@ -173,11 +190,16 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
   const handleCreate = () => {
     const name = newName.trim();
-    if (!name || busy) return;
+    const id = newId.trim();
+    const idErr = validateAgentId(id);
+    setIdError(idErr);
+    if (!name || busy || idErr) return;
     void run(async () => {
-      await createBusinessAgent(config, { name, agent_id: newId.trim() || undefined, template_id: templateId || undefined });
+      const res = await createBusinessAgent(config, { name, agent_id: id || undefined, template_id: templateId || undefined });
       setNewName("");
       setNewId("");
+      setIdError(undefined);
+      setSuccessMsg(`已创建业务 Agent ${res.name}（ID ${res.agent_id}）`);
       await reloadAgents();
       onAgentsChanged();
     });
@@ -230,7 +252,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
           </button>
         </header>
 
-        {error ? <div className="error-box settings-error" data-testid="settings-error">{error}</div> : null}
+        {error ? <div className="error-box settings-error" data-testid="settings-error" role="alert" aria-live="assertive">{error}</div> : null}
+        {successMsg ? <div className="settings-success" data-testid="settings-success" role="status" aria-live="polite">{successMsg}</div> : null}
 
         <div className="settings-layout">
           <nav className="settings-navigation" data-testid="settings-navigation" role="tablist" aria-label="设置分组">
@@ -242,7 +265,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                 aria-selected={activeTab === key}
                 data-testid={`settings-tab-${key}`}
                 key={key}
-                onClick={() => setActiveTab(key)}
+                onClick={() => { setActiveTab(key); setError(undefined); setSuccessMsg(undefined); }}
               >
                 <span className="settings-nav-icon"><Icon size={17} /></span>
                 <span className="settings-nav-copy">
@@ -268,7 +291,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                 <div className="settings-agent-create" data-testid="settings-agent-create">
                   <label>
                     <span>名称</span>
-                    <input className="settings-input" data-testid="settings-agent-create-name" placeholder="新业务 Agent 名称" value={newName} disabled={busy} onChange={(e) => setNewName(e.target.value)} />
+                    <input className="settings-input" data-testid="settings-agent-create-name" placeholder="新业务 Agent 名称" value={newName} maxLength={120} disabled={busy} aria-required="true" onChange={(e) => setNewName(e.target.value)} />
                   </label>
                   {/* F14：仅当 catalog 多于一个模板时展示选择器；单模板（general）/拉取失败时隐藏并默认 general。 */}
                   {templates.length > 1 ? (
@@ -281,9 +304,10 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                   ) : null}
                   <label>
                     <span>Agent ID</span>
-                    <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选" value={newId} disabled={busy} onChange={(e) => setNewId(e.target.value)} />
+                    <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选，留空自动生成" value={newId} disabled={busy} aria-describedby="settings-agent-id-help" aria-invalid={!!idError} onChange={(e) => { setNewId(e.target.value); setIdError(validateAgentId(e.target.value.trim())); }} />
+                    <small id="settings-agent-id-help" className={idError ? "settings-field-error" : "settings-field-help"} data-testid="settings-agent-id-help">{idError || "仅字母、数字、点、下划线、连字符；留空将自动生成。"}</small>
                   </label>
-                  <button className="primary-button" type="button" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim()} onClick={handleCreate}>
+                  <button className="primary-button" type="button" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError} onClick={handleCreate}>
                     <Plus size={15} />创建
                   </button>
                 </div>
@@ -296,8 +320,10 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     <span>操作</span>
                   </div>
                   <div className="settings-agent-list">
-                    {agents.length === 0 ? (
-                      <div className="empty-state">暂无业务 Agent。</div>
+                    {agentsLoading ? (
+                      <div className="empty-state" data-testid="settings-agent-loading">加载中…</div>
+                    ) : !agents.length ? (
+                      error ? null : <div className="empty-state">暂无业务 Agent。</div>
                     ) : agents.map((agent) => (
                       <div className="settings-agent-row" data-testid="settings-agent-item" key={agent.agent_id}>
                         <div className="settings-agent-main">

@@ -87,7 +87,7 @@ def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_pat
     assert created.status_code == 201
     assert created.json()["agent_id"] == "soc-ops"
     assert created.json()["category"] == "business"
-    assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops")
+    assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops/workspace")
     assert {item["agent_id"] for item in listed.json()} == {"main-agent", "soc-ops"}
     assert duplicate.status_code == 409  # 重复身份被拒绝，不污染既有 Agent
     assert empty_name.status_code == 400  # 空名校验
@@ -135,7 +135,7 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         routed = client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"})
         assert routed.status_code == 200
         assert captured["profile"] is not None
-        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops")
+        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
         assert captured["profile"].category == "business"
 
         # 缺省 agent_id -> 422（两个原生入口 agent_id 必填，不静默跑 main）。

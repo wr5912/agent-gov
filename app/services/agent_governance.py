@@ -72,19 +72,20 @@ class AgentGovernanceService:
     def _store_for(self, agent_id: str | None) -> GitAgentVersionStore:
         """按 agent_id 选版本 store。
 
-        main-agent 复用主 store，保证既有 main 路径字节级不变；业务 Agent 在
-        ``data_dir/business-agents/{agent_id}/version`` 下各自独立 git 版本链，
-        懒初始化并缓存，实现 per-agent 版本治理隔离。
+        main-agent 暂复用主 store（B 阶段并入统一模型）；业务 Agent 的版本库 root 在其
+        **workspace**（与 main 同构：git 就地版本化配置），worktrees/releases 落
+        ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录，claude-root 因去嵌套
+        在 workspace 之外、天然不进版本源。懒初始化并缓存，实现 per-agent 版本治理隔离。
         """
         normalized = self._normalize_agent_id(agent_id)
         existing = self._agent_stores.get(normalized)
         if existing is not None:
             return existing
-        base = business_agent_layout(self.feedback_store.data_dir, normalized).version_base
+        layout = business_agent_layout(self.feedback_store.data_dir, normalized)
         store = GitAgentVersionStore(
-            repository_dir=base / "repo",
-            worktrees_dir=base / "worktrees",
-            releases_dir=base / "releases",
+            repository_dir=layout.workspace,
+            worktrees_dir=layout.version_base / "worktrees",
+            releases_dir=layout.version_base / "releases",
             repository_name=f"{normalized}-config",
         )
         store.ensure_bootstrap()

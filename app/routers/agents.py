@@ -6,12 +6,13 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.runtime.agent_paths import business_agent_layout
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     list_business_agent_templates,
     seed_business_agent_workspace,
 )
+from app.runtime.errors import ConflictError
 from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
@@ -21,7 +22,6 @@ from app.runtime.schemas import (
     BusinessAgentTemplatesResponse,
 )
 from app.runtime.settings import AppSettings
-from app.runtime.errors import ConflictError
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
@@ -56,7 +56,11 @@ def _register_and_seed_agent(
     """注册业务 Agent 并从所选模板幂等播种其 workspace。"""
     template_id = _resolve_template_id(req.template_id)
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
-    workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
+    try:
+        # 缺陷③：agent_id 直接作路径段，business_agent_layout 收敛了防穿越校验，非法 → 422。
+        workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
+    except InvalidAgentId as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     record = store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
     seed_business_agent_workspace(
         Path(record.workspace_dir), agent_id=record.agent_id, name=record.name, template_id=template_id

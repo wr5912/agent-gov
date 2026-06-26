@@ -13,10 +13,27 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
 BUSINESS_AGENTS_DIRNAME = "business-agents"
+
+# agent_id 直接作为 data_dir 下的路径段，必须防目录穿越/分隔符注入。单一真相：
+# 创建（agents.py）、版本治理（_store_for）、路径解析（business_agent_layout）全链路复用。
+_SAFE_AGENT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
+
+
+class InvalidAgentId(ValueError):
+    """agent_id 不安全（空、含路径分隔符/穿越、非法字符）。"""
+
+
+def validate_agent_id(agent_id: str | None) -> str:
+    """校验并返回安全 agent_id；非法抛 InvalidAgentId（路由层投影为 422/400）。"""
+    normalized = (agent_id or "").strip()
+    if not normalized or normalized in {".", ".."} or not _SAFE_AGENT_ID.match(normalized):
+        raise InvalidAgentId(f"Invalid agent_id: {agent_id!r}")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -35,8 +52,9 @@ def business_agents_root(data_dir: Path) -> Path:
 
 
 def business_agent_layout(data_dir: Path, agent_id: str) -> BusinessAgentLayout:
-    """解析单个业务 Agent 的运行卷目录布局。"""
-    root = business_agents_root(data_dir) / agent_id
+    """解析单个业务 Agent 的运行卷目录布局（先校验 agent_id 防目录穿越）。"""
+    safe_id = validate_agent_id(agent_id)
+    root = business_agents_root(data_dir) / safe_id
     return BusinessAgentLayout(
         root=root,
         workspace=root / "workspace",

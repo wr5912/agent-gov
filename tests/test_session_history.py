@@ -10,14 +10,14 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-from fastapi import HTTPException
-from fastapi.testclient import TestClient
-
 import app.routers.sessions as sessions_mod
+import pytest
 from app.runtime.errors import NotFoundError
 from app.runtime.session_history import _scrub_message, normalize_message, read_session_history
 from app.runtime.session_store import LocalSession
+from fastapi import HTTPException
+from fastapi.testclient import TestClient
+
 from test_api_execution_optimizer import _load_app
 
 

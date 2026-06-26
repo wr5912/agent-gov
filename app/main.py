@@ -10,11 +10,8 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agents import create_agents_router
-from app.routers.improvements import create_improvements_router, create_improvement_relations_router
-from app.routers.improvement_content import create_improvement_content_router
-from app.routers.automation import create_automation_router
 from app.routers.assets import create_assets_router
-from app.routers.scenario_packs import create_scenario_packs_router
+from app.routers.automation import create_automation_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.config import create_config_router
@@ -24,11 +21,14 @@ from app.routers.eval import create_eval_router
 from app.routers.feedback_batches import create_feedback_batches_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
+from app.routers.improvement_content import create_improvement_content_router
+from app.routers.improvements import create_improvement_relations_router, create_improvements_router
 from app.routers.openai import create_openai_router
-from app.routers.settings import create_settings_router
 from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
+from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
+from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_profiles import build_profiles
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -37,17 +37,17 @@ from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_da
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-from app.runtime.stores.improvement_store import ImprovementStore
-from app.runtime.stores.improvement_content_store import ImprovementContentStore
-from app.services.improvement_governor_service import ImprovementGovernorService
-from app.services.improvement_execution_service import ImprovementExecutionService
-from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.asset_store import AssetStore
+from app.runtime.stores.automation_policy_store import AutomationPolicyStore
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.stores.improvement_content_store import ImprovementContentStore
+from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
+from app.services.improvement_execution_service import ImprovementExecutionService
+from app.services.improvement_governor_service import ImprovementGovernorService
 from app.version import APP_VERSION
 
 settings = get_settings()
@@ -79,6 +79,8 @@ agent_governance = AgentGovernanceService(
     agent_version_store=agent_version_store,
 )
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+# 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
+agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))

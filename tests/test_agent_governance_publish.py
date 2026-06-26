@@ -356,3 +356,15 @@ def test_repository_ops_route_per_agent_not_always_main(tmp_path):
     main_status = governance.repository_status("main-agent")
     assert str(biz_store.repository_dir) == str(biz_status["repository_dir"])
     assert biz_status["repository_dir"] != main_status["repository_dir"]
+
+
+def test_version_governance_rejects_unregistered_ghost_agent(tmp_path):
+    """缺陷④：装配 agent_exists 后，未注册 agent_id 的版本治理操作被拒（404），不懒建幽灵版本库。"""
+    governance, _ = _governance(tmp_path)
+    governance.agent_exists = lambda aid: aid == "real-biz"
+    with pytest.raises(AgentGovernanceError) as exc:
+        governance.repository_status("ghost-agent")
+    assert exc.value.status_code == 404
+    # main-agent 恒有效；已注册的 real-biz 放行。
+    assert governance.repository_status("main-agent")
+    assert governance.repository_status("real-biz")

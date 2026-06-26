@@ -7,7 +7,6 @@ from typing import Literal
 from .agent_paths import business_agent_layout, business_agents_root
 from .settings import AppSettings
 
-
 AgentRole = Literal[
     "main-agent",
     "business-agent",

@@ -40,7 +40,12 @@ class AgentRegistryStore:
                     continue
                 # 业务 Agent（含预制 main-agent）以 profile.name 为身份；role 现统一为通用
                 # business-agent，不能再当 agent_id。
-                if db.get(AgentRegistryModel, profile.name) is not None:
+                existing = db.get(AgentRegistryModel, profile.name)
+                if existing is not None:
+                    # ⑤：已存在记录若 workspace_dir 漂移（升级后 main 从 /main-workspace 迁到
+                    # data/business-agents/main-agent/workspace），同步更新，避免会话历史等读旧路径。
+                    if existing.workspace_dir != str(profile.workspace_dir):
+                        existing.workspace_dir = str(profile.workspace_dir)
                     continue
                 db.add(
                     AgentRegistryModel(

@@ -12,7 +12,7 @@ mcp = FastMCP("report-template")
 
 
 def _template_dir() -> Path:
-    return Path(os.getenv("REPORT_TEMPLATE_DIR", "/main-workspace/templates/reports"))
+    return Path(os.getenv("REPORT_TEMPLATE_DIR", "/data/business-agents/main-agent/workspace/templates/reports"))
 
 
 def _output_dir() -> Path:

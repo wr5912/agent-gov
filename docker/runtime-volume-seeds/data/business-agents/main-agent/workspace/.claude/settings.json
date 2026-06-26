@@ -27,8 +27,8 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
-      "Read(/claude-roots/main/.claude.json)",
-      "Read(/claude-roots/main/.claude/projects/**)",
+      "Read(/data/business-agents/main-agent/claude-root/.claude.json)",
+      "Read(/data/business-agents/main-agent/claude-root/.claude/projects/**)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf /)",
       "Bash(:(){ :|:& };:*)",
@@ -91,7 +91,7 @@
       "denyRead": [
         "./.env",
         "./secrets",
-        "/claude-roots/main/.claude.json"
+        "/data/business-agents/main-agent/claude-root/.claude.json"
       ]
     },
     "network": {

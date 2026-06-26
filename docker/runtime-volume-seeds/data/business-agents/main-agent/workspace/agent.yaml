@@ -17,8 +17,8 @@ capabilities:
   - ocsf_stix_threat_modeling
 
 paths:
-  workspace: /main-workspace
-  claude_home: /claude-roots/main/.claude
+  workspace: /data/business-agents/main-agent/workspace
+  claude_home: /data/business-agents/main-agent/claude-root/.claude
   data_root: /data
   sessions: /data/sessions
   transcripts: /data/transcripts

@@ -86,6 +86,8 @@ class FeedbackStore(
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.main_workspace_dir = workspace_dir or business_agent_layout(data_dir, "main-agent").workspace
+        # main-agent workspace 在 /data 下，确保存在（与 get_settings 一致；执行/证据写入依赖它）。
+        self.main_workspace_dir.mkdir(parents=True, exist_ok=True)
         self.execution_targets = WorkspaceExecutionTargetPolicy(self.main_workspace_dir)
         self.db_path = runtime_db_path_from_data_dir(data_dir)
         self.Session = make_session_factory(self.db_path)

@@ -86,16 +86,12 @@ def test_explicit_mcp_config_path_is_ignored_by_project_resolution(tmp_path: Pat
 
 
 def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_path: Path) -> None:
-    workspace = tmp_path / "main-workspace"
-    workspace.mkdir()
+    # main 已并入业务模型：workspace 由 data_dir 下 main-agent layout 派生（不再有 MAIN_WORKSPACE_DIR）。
+    settings = AppSettings(_env_file=None, DATA_DIR=tmp_path / "data")
+    workspace = settings.main_workspace_dir
+    workspace.mkdir(parents=True, exist_ok=True)
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
-    settings = AppSettings(
-        _env_file=None,
-        DATA_DIR=tmp_path / "data",
-        MAIN_WORKSPACE_DIR=workspace,
-        MAIN_CLAUDE_ROOT=tmp_path / "claude-roots" / "main",
-    )
 
     profiles = build_profiles(settings)
 
@@ -104,17 +100,11 @@ def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_p
 
 
 def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:
-    workspace = tmp_path / "main-workspace"
-    workspace.mkdir()
+    settings = AppSettings(_env_file=None, DATA_DIR=tmp_path / "data", CLAUDE_MCP_CONFIG_PATH="")
+    workspace = settings.main_workspace_dir
+    workspace.mkdir(parents=True, exist_ok=True)
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
     _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
-    settings = AppSettings(
-        _env_file=None,
-        DATA_DIR=tmp_path / "data",
-        MAIN_WORKSPACE_DIR=workspace,
-        MAIN_CLAUDE_ROOT=tmp_path / "claude-roots" / "main",
-        CLAUDE_MCP_CONFIG_PATH="",
-    )
 
     profiles = build_profiles(settings)
 

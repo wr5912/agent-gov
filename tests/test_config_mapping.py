@@ -3,26 +3,20 @@ from app.runtime.settings import AppSettings
 
 
 def test_config_mapping_uses_native_claude_code_paths(tmp_path):
-    workspace = tmp_path / "volume-agent-gov" / "main-workspace"
-    claude_root = tmp_path / "volume-agent-gov" / "claude-roots" / "main"
-    claude_home = claude_root / ".claude"
+    # main 已并入 /data：workspace/claude-root 由 data_dir 派生，host 映射经 data 挂载（无独立 main 挂载）。
     data = tmp_path / "volume-agent-gov" / "data"
-    workspace.mkdir(parents=True)
-    claude_home.mkdir(parents=True)
-    (workspace / "CLAUDE.md").write_text("# Project", encoding="utf-8")
-    (claude_root / ".claude.json").write_text("{}", encoding="utf-8")
-
     settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=workspace,
-        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
-        CLAUDE_ROOT=claude_root,
-        MAIN_CLAUDE_ROOT=claude_root,
-        CLAUDE_HOME=claude_home,
-        HOST_WORKSPACE_MOUNT="./volume-agent-gov/main-workspace",
-        HOST_CLAUDE_ROOT_MOUNT="./volume-agent-gov/claude-roots/main",
+        HOST_DATA_MOUNT="./volume-agent-gov/data",
     )
+    workspace = settings.main_workspace_dir
+    claude_root = settings.main_claude_root
+    claude_home = settings.claude_home
+    workspace.mkdir(parents=True, exist_ok=True)
+    claude_home.mkdir(parents=True, exist_ok=True)
+    (workspace / "CLAUDE.md").write_text("# Project", encoding="utf-8")
+    (claude_root / ".claude.json").write_text("{}", encoding="utf-8")
 
     response = build_config_mapping(settings)
     by_kind = {(item.scope, item.kind): item for item in response.mappings}
@@ -32,6 +26,12 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     assert response.claude_config_dir is None
     assert response.claude_global_config_file == str(claude_root / ".claude.json")
     assert response.setting_sources_effective is None
-    assert by_kind[("global", "state")].host_mount == "volume-agent-gov/claude-roots/main/.claude.json"
-    assert by_kind[("project", "instructions")].host_mount == "volume-agent-gov/main-workspace/CLAUDE.md"
+    assert (
+        by_kind[("global", "state")].host_mount
+        == "volume-agent-gov/data/business-agents/main-agent/claude-root/.claude.json"
+    )
+    assert (
+        by_kind[("project", "instructions")].host_mount
+        == "volume-agent-gov/data/business-agents/main-agent/workspace/CLAUDE.md"
+    )
     assert by_kind[("global", "state")].exists is True

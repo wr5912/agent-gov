@@ -41,10 +41,9 @@ _RUNTIME_ENV_FILE_MODES = {
     ".env.local-debug": "local-debug",
     ".env.local-debug.example": "local-debug",
 }
-PROFILE_NAMES = (
-    "main",
-    "governor",
-)
+# 仅 governor 需要顶层 claude-roots/<name>；main 已并入业务模型，其 claude-root 在
+# data/business-agents/main-agent/claude-root（由 AppSettings 在 get_settings 时创建）。
+PROFILE_NAMES = ("governor",)
 RUNTIME_DATA_DIRS = (
     "data/sessions",
     "data/transcripts",
@@ -256,8 +255,9 @@ def _is_stale_template_doc_candidate(rel_path: Path, template_files: set[Path]) 
 
 
 def _workspace_dir_names() -> set[str]:
+    # 顶层挂载的 workspace 种子目录名；main 已迁入 data/business-agents/main-agent/workspace，
+    # 不再是顶层 workspace（其配置作为预制业务 Agent 种子随 data/ 子树拷入卷）。
     return {
-        "main-workspace",
         "governor-workspace",
     }
 

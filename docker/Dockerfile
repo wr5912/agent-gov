@@ -77,7 +77,7 @@ COPY app /app/app
 COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.py
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
 COPY scripts/runtime_template_renderer.py /app/scripts/runtime_template_renderer.py
-COPY docker/runtime-template /app/docker/runtime-template
+COPY docker/runtime-volume-seeds /app/docker/runtime-volume-seeds
 COPY docker/entrypoint.sh /usr/local/bin/agent-gov-entrypoint
 
 RUN chmod +x /usr/local/bin/agent-gov-entrypoint \

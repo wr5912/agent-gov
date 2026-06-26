@@ -33,8 +33,8 @@ FORBIDDEN_DIR_NAMES = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
-    ".runtime-template-backups",
-    ".runtime-template-staging",
+    ".runtime-volume-seeds-backups",
+    ".runtime-volume-seeds-staging",
     "agent-governance",
     "agent-releases",
     "agent-versions",
@@ -219,11 +219,17 @@ def _redact_snippet(line: str) -> str:
     return redacted.strip()[:180]
 
 
+def _is_prebuilt_agent_workspace_seed(parts: tuple[str, ...]) -> bool:
+    """预制业务 Agent 的配置种子 data/business-agents/<id>/workspace/ 是合法模板源；
+    其余 data/ 内容（runtime.sqlite3/sessions/claude-root/version 等）仍属运行态、禁止入模板。"""
+    return len(parts) >= 4 and parts[0] == "data" and parts[1] == "business-agents" and parts[3] == "workspace"
+
+
 def _forbidden_reason(rel: Path) -> str | None:
     parts = rel.parts
     if not parts:
         return None
-    if parts[0] in FORBIDDEN_TOP_LEVEL_DIRS:
+    if parts[0] in FORBIDDEN_TOP_LEVEL_DIRS and not _is_prebuilt_agent_workspace_seed(parts):
         return f"top-level runtime directory '{parts[0]}' is not a template source"
     if any(part in FORBIDDEN_DIR_NAMES for part in parts):
         return "runtime/cache/state directory is forbidden in templates"
@@ -275,7 +281,7 @@ def _scan_line(rel_path: str, line_number: int, line: str) -> list[Finding]:
                     line_number,
                     "unrenderable_placeholder",
                     "high",
-                    f"{placeholder} is a sanitization fallback, not a deployable runtime-template placeholder",
+                    f"{placeholder} is a sanitization fallback, not a deployable runtime-volume-seeds placeholder",
                     _redact_snippet(line),
                 )
             )

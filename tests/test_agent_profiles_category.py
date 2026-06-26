@@ -52,6 +52,29 @@ def test_build_business_agent_profile_is_governed_business_object() -> None:
     assert isinstance(profile.workspace_dir, Path)
 
 
+def test_business_agent_cannot_self_read_claude_root() -> None:
+    """越权读防护：业务 Agent 不得 Read 自身 SDK 运行态家目录（claude-root）。
+
+    claude-root 在 data_dir 下、且可能嵌于 cwd（workspace），Read(./**) / readable=data_dir
+    会让它落入可读面；denied_paths 必须显式拦截，policy.py 中 denied 优先于 readable。
+    """
+    from app.runtime.policy import _path_policy_denial
+
+    settings = _settings()
+    workspace = settings.data_dir / "business-agents" / "soc-ops"
+    profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
+
+    claude_root = settings.data_dir / "business-agents" / "soc-ops" / "claude-root"
+    assert claude_root in set(profile.denied_paths)
+
+    # 经 policy 实际拦截：读自身 claude-root 下任意文件（含凭据态 .claude.json）被拒。
+    denial = _path_policy_denial("Read", {"file_path": str(claude_root / ".claude" / ".claude.json")}, profile)
+    assert denial is not None and "denied" in denial
+
+    # 对照：读自身 workspace 配置文件不受影响，仍允许。
+    assert _path_policy_denial("Read", {"file_path": str(workspace / "CLAUDE.md")}, profile) is None
+
+
 def test_build_profiles_expose_category() -> None:
     profiles = build_profiles(_settings())
     assert profiles["main-agent"].category == "business"

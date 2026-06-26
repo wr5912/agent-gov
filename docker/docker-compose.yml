@@ -92,9 +92,7 @@ services:
       HOST_PORT: ${HOST_PORT:-58080}
       RUNTIME_CONTAINER: "1"
       HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}
-      HOST_WORKSPACE_MOUNT: ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/main-workspace}
       HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}
-      HOST_CLAUDE_ROOT_MOUNT: ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}
       HOST_GOVERNOR_WORKSPACE_MOUNT: ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}
       HOST_GOVERNOR_CLAUDE_ROOT_MOUNT: ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}
       AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
@@ -103,14 +101,9 @@ services:
       AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
       AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
       AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
-      WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
-      MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
-      CLAUDE_ROOT: ${CLAUDE_ROOT:-/claude-roots/main}
-      MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
-      CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
       MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
       MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
       MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
@@ -129,10 +122,8 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     depends_on:
       - agent-gov-litellm-sidecar
@@ -162,14 +153,9 @@ services:
       AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
       AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
       AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
-      WORKSPACE_DIR: ${WORKSPACE_DIR:-/main-workspace}
-      MAIN_WORKSPACE_DIR: ${MAIN_WORKSPACE_DIR:-/main-workspace}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
-      CLAUDE_ROOT: ${CLAUDE_ROOT:-/claude-roots/main}
-      MAIN_CLAUDE_ROOT: ${MAIN_CLAUDE_ROOT:-/claude-roots/main}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
-      CLAUDE_HOME: ${CLAUDE_HOME:-${CLAUDE_ROOT:-/claude-roots/main}/.claude}
       MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
       MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
       MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
@@ -189,10 +175,8 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
-      - ${HOST_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/main-workspace}:${WORKSPACE_DIR:-/main-workspace}
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
-      - ${HOST_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/main}:${CLAUDE_ROOT:-/claude-roots/main}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     depends_on:
       - agent-gov-litellm-sidecar

@@ -19,7 +19,7 @@ from .agent_profiles import (
     PROFILE_VERSION_IDS,
     AgentRuntimeProfile,
     build_profiles,
-    candidate_main_profile,
+    candidate_profile,
 )
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
@@ -716,7 +716,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         return self._run_response(context, state, answer, agent_activity)
 
     async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str) -> ChatResponse:
-        profile = candidate_main_profile(self.settings, workspace_dir=worktree_path, candidate_id=change_set_id)
+        profile = candidate_profile(
+            self.settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=worktree_path, candidate_id=change_set_id
+        )
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:

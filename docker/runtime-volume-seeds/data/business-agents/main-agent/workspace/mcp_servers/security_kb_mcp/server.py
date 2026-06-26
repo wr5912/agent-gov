@@ -12,7 +12,7 @@ mcp = FastMCP("security-kb")
 
 
 def _load_kb() -> list[dict[str, Any]]:
-    path = Path(os.getenv("SECURITY_KB_FILE", "/main-workspace/mcp_servers/security_kb_mcp/kb.yaml"))
+    path = Path(os.getenv("SECURITY_KB_FILE", "/data/business-agents/main-agent/workspace/mcp_servers/security_kb_mcp/kb.yaml"))
     data = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {"items": []}
     return data.get("items", [])
 

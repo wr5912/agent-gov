@@ -31,7 +31,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-template-scan runtime-template-export runtime-template-restore runtime-template-restore-list runtime-template-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -117,22 +117,22 @@ local-debug-repair-managed-config: local-debug-env
 local-debug-clean: local-debug-env
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --runtime-artifacts
 
-runtime-template-scan:
-	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-template
+runtime-volume-seeds-scan:
+	$(PYTHON_RUN) scripts/runtime_template_safety.py verify docker/runtime-volume-seeds
 
-runtime-template-export:
+runtime-volume-seeds-export:
 	$(PYTHON_RUN) scripts/export_runtime_template.py
 
-runtime-template-clean:
+runtime-volume-seeds-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --template-artifacts
 
-clean-runtime-artifacts: runtime-clean local-debug-clean runtime-template-clean
+clean-runtime-artifacts: runtime-clean local-debug-clean runtime-volume-seeds-clean
 
-runtime-template-restore:
+runtime-volume-seeds-restore:
 	@if [ -z "$(BACKUP)" ]; then echo "BACKUP=<backup-file> is required" >&2; exit 1; fi
 	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --backup "$(BACKUP)"
 
-runtime-template-restore-list:
+runtime-volume-seeds-restore-list:
 	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --list
 
 smoke:

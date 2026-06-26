@@ -38,16 +38,19 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     readme = _read_repo_text("README.md")
     structure = readme.split("## 目录结构", 1)[1].split("## 快速启动", 1)[0]
 
-    # 实际模板根是 docker/runtime-template/，五个治理 workspace 已合并为单一 governor（Issue #3）。
-    assert "runtime-template/" in structure
-    template_root = REPO_ROOT / "docker" / "runtime-template"
+    # 实际模板根是 docker/runtime-volume-seeds/，镜像运行卷初始态：governor 顶层种子 +
+    # 预制业务 Agent（main 落 data/business-agents/main-agent/workspace）+ 创建模板 catalog。
+    assert "runtime-volume-seeds/" in structure
+    template_root = REPO_ROOT / "docker" / "runtime-volume-seeds"
     assert template_root.is_dir()
-    for workspace in (
-        "main-workspace",
+    assert "governor-workspace/" in structure, "README 结构缺少 governor-workspace"
+    assert "business-agents/" in structure, "README 结构缺少预制业务 Agent（data/business-agents）"
+    for path in (
         "governor-workspace",
+        "data/business-agents/main-agent/workspace",
+        "templates/business-agent",
     ):
-        assert f"{workspace}/" in structure, f"README 结构缺少 {workspace}"
-        assert (template_root / workspace).is_dir(), f"模板缺少 {workspace}"
+        assert (template_root / path).is_dir(), f"模板缺少 {path}"
 
     # 目录树代码块不得把不存在的 docker/volume 子树当作当前布局展示。
     tree_block = structure.split("```text", 1)[1].split("```", 1)[0]

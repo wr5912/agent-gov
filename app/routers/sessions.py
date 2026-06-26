@@ -6,15 +6,13 @@ from typing import Callable
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.concurrency import run_in_threadpool
 
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import NotFoundError
 from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, SessionMessagesResponse
 from app.runtime.session_history import read_session_history
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
-
-# 主 Agent 的合法归属标识（main 样板）。业务 Agent 归属必须在注册表中存在。
-_MAIN_AGENT_IDS = {"main-agent", "main"}
 
 
 def _resolve_owning_profile(
@@ -27,9 +25,11 @@ def _resolve_owning_profile(
 
     - missing / empty while a transcript exists -> 500 (data integrity: a persisted transcript must
       carry its owning agent);
-    - main agent -> main profile;
-    - business agent -> validated against the agent registry; cwd taken from its registered
-      ``workspace_dir`` (consistent with /api/chat); an unknown / stale id -> 404.
+    - any agent (含预制 main-agent) -> validated against the agent registry; cwd taken from its
+      registered ``workspace_dir`` (consistent with /api/chat); an unknown / stale id -> 404.
+
+    main-agent 在 lifespan 经 sync_business_agents 登记，故与其它业务 Agent 走完全相同的解析路径
+    （不再有 main 特判）。
     """
     agent_id = (session.agent_id or "").strip()
     if not agent_id:
@@ -37,14 +37,12 @@ def _resolve_owning_profile(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"session {session.session_id} has a transcript but no recorded owning agent",
         )
-    if agent_id in _MAIN_AGENT_IDS:
-        return settings.main_workspace_dir, settings.main_claude_root / ".claude"
     record = agent_registry_store.get_agent(agent_id)
     if record is None:
         raise NotFoundError(f"owning agent '{agent_id}' of session {session.session_id} not found")
     # cwd 用注册表登记的 workspace_dir（与 /api/chat 的 build_business_agent_profile 一致，支持自定义/同步 workspace）；
     # claude-root 仍按 agent_id 推导（与 build_business_agent_profile 的 claude_root 一致）。
-    claude_config_dir = settings.data_dir / "business-agents" / agent_id / "claude-root" / ".claude"
+    claude_config_dir = business_agent_layout(settings.data_dir, agent_id).claude_root / ".claude"
     return Path(record.workspace_dir), claude_config_dir
 
 

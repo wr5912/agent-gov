@@ -5,10 +5,10 @@ import sys
 
 def test_post_tool_audit_uses_data_dir_fallback(tmp_path):
     data_dir = tmp_path / "data"
-    script = "docker/runtime-template/main-workspace/hooks/post_tool_audit.py"
+    script = "docker/runtime-volume-seeds/data/business-agents/main-agent/workspace/hooks/post_tool_audit.py"
     payload = {
         "session_id": "sess-test",
-        "cwd": "/main-workspace",
+        "cwd": "/data/business-agents/main-agent/workspace",
         "hook_event_name": "PostToolUse",
         "tool_name": "Read",
         "tool_input": {"file_path": "CLAUDE.md"},

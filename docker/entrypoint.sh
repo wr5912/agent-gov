@@ -13,10 +13,10 @@ ensure_claude_config_dir() {
     mkdir -p "$root/.claude"
 }
 
-if [ -d /app/docker/runtime-template ] && [ -f /app/scripts/bootstrap_runtime_volume.py ]; then
+if [ -d /app/docker/runtime-volume-seeds ] && [ -f /app/scripts/bootstrap_runtime_volume.py ]; then
     python /app/scripts/bootstrap_runtime_volume.py \
         --runtime-root / \
-        --template-dir /app/docker/runtime-template \
+        --template-dir /app/docker/runtime-volume-seeds \
         --quiet
 fi
 

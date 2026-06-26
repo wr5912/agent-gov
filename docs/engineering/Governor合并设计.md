@@ -38,7 +38,7 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 
 配置/部署：
 - `docker/docker-compose.yml`：6 workspace 卷 + 5 claude_root 卷 → main + governor 两套 workspace/claude_root；删除 5 组 `*_WORKSPACE_DIR/CLAUDE_ROOT` env 与 mount。
-- `docker/runtime-template/`：5 个 `*-workspace/` 合并为 `governor-workspace/`（agent.yaml + CLAUDE.md 通用治理执行者说明 + .claude/settings.json 只读边界 + .mcp.json）；删除 5 个旧目录。
+- `docker/runtime-volume-seeds/`：5 个 `*-workspace/` 合并为 `governor-workspace/`（agent.yaml + CLAUDE.md 通用治理执行者说明 + .claude/settings.json 只读边界 + .mcp.json）；删除 5 个旧目录。
 - `scripts/bootstrap_runtime_volume.py` / `runtime_template_safety.py` / entrypoint：workspace 列表 6→2。
 
 文档：
@@ -66,6 +66,6 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 
 ## 落地状态
 
-已落地。五个治理 profile 合并为单一 `governor`（profile 名、`AgentRole`、`GOVERNANCE_AGENT_ROLES`、`PROFILE_VERSION_IDS`、`build_profiles` 均收敛为 main + governor）；workspace 合并为 `governor-workspace`，claude_root 合并为 `claude-roots/governor`。`AGENT_JOB_SPECS` 五个 job_type 统一指向 `GOVERNOR_PROFILE`，prompt/output_model/formatter 仍按 job_type 选择，闭环链路与输出契约不变。settings、docker-compose、Dockerfile、entrypoint、runtime-template、bootstrap/export/renderer 脚本、env 示例与 README 同步收敛为两套 profile，历史 job 记录的旧 `profile_name` 作为历史元数据保留、无需 DB 迁移。
+已落地。五个治理 profile 合并为单一 `governor`（profile 名、`AgentRole`、`GOVERNANCE_AGENT_ROLES`、`PROFILE_VERSION_IDS`、`build_profiles` 均收敛为 main + governor）；workspace 合并为 `governor-workspace`，claude_root 合并为 `claude-roots/governor`。`AGENT_JOB_SPECS` 五个 job_type 统一指向 `GOVERNOR_PROFILE`，prompt/output_model/formatter 仍按 job_type 选择，闭环链路与输出契约不变。settings、docker-compose、Dockerfile、entrypoint、runtime-volume-seeds、bootstrap/export/renderer 脚本、env 示例与 README 同步收敛为两套 profile，历史 job 记录的旧 `profile_name` 作为历史元数据保留、无需 DB 迁移。
 
 #3 复查跟进：后台 worker 执行期改为按 `agent_job_spec(job_type).profile_name` 解析 profile，不再透传持久化 `job["profile_name"]`，使合并前 queued 的旧 job（旧名如 `attribution-analyzer`）也走 governor 而非在 profiles 字典 `KeyError`；回归用例 `tests/test_batch_plan_task_execution_queue.py::test_worker_resolves_profile_from_job_type_not_persisted_stale_name`（已纳入 coverage policy 主流程清单）。

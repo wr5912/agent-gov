@@ -21,32 +21,26 @@ from pydantic import ValidationError
 
 
 def _settings(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "main-workspace"
     governor_workspace = tmp_path / "docker" / "volume" / "governor-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
     governor_root = tmp_path / "docker" / "volume" / "claude-roots" / "governor"
-    for path in (
-        workspace,
-        governor_workspace,
-        claude_root / ".claude",
-        governor_root / ".claude",
-    ):
+    for path in (governor_workspace, governor_root / ".claude"):
         path.mkdir(parents=True, exist_ok=True)
-    (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
-    (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=workspace,
-        MAIN_WORKSPACE_DIR=workspace,
         GOVERNOR_WORKSPACE_DIR=governor_workspace,
         DATA_DIR=data,
-        CLAUDE_ROOT=claude_root,
-        MAIN_CLAUDE_ROOT=claude_root,
         GOVERNOR_CLAUDE_ROOT=governor_root,
-        CLAUDE_HOME=claude_root / ".claude",
         MODEL_PROVIDER_API_KEY="sk-test-provider",
     )
+    # main 已并入业务模型：在派生的 main-agent workspace（/data 下）写入起始受管文件，
+    # 执行/证据测试针对这些文件。
+    workspace = settings.main_workspace_dir
+    workspace.mkdir(parents=True, exist_ok=True)
+    (settings.main_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
+    (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
+    (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    return settings
 
 
 def _store(tmp_path):

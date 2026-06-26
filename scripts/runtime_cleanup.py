@@ -5,9 +5,9 @@ import shutil
 from pathlib import Path
 from typing import TypedDict
 
-RUNTIME_BACKUP_DIR_NAME = ".runtime-template-backups"
-TEMPLATE_BACKUP_DIR_NAME = ".runtime-template-backups"
-TEMPLATE_STAGING_DIR_NAME = ".runtime-template-staging"
+RUNTIME_BACKUP_DIR_NAME = ".runtime-volume-seeds-backups"
+TEMPLATE_BACKUP_DIR_NAME = ".runtime-volume-seeds-backups"
+TEMPLATE_STAGING_DIR_NAME = ".runtime-volume-seeds-staging"
 PROTECTED_RUNTIME_DIR_NAMES = {".git", "data", "langfuse"}
 
 

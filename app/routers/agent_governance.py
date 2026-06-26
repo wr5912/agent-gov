@@ -51,32 +51,36 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentRepositoryStatusResponse,
         summary="Get Git-backed Agent repository status",
     )
-    async def get_agent_repository_status() -> AgentRepositoryStatusResponse:
-        return agent_governance.repository_status()
+    async def get_agent_repository_status(agent_id: str | None = Query(default=None)) -> AgentRepositoryStatusResponse:
+        return agent_governance.repository_status(agent_id)
 
     @router.post(
         "/agent-repository/discard-changes",
         response_model=AgentRepositoryStatusResponse,
-        summary="Discard confirmed uncommitted changes from the main Agent workspace",
+        summary="Discard confirmed uncommitted changes from a business Agent workspace (default main-agent)",
     )
-    async def discard_agent_repository_changes(req: AgentRepositoryDiscardChangesRequest) -> AgentRepositoryStatusResponse:
-        return agent_governance.discard_repository_changes(req.paths)
+    async def discard_agent_repository_changes(
+        req: AgentRepositoryDiscardChangesRequest, agent_id: str | None = Query(default=None)
+    ) -> AgentRepositoryStatusResponse:
+        return agent_governance.discard_repository_changes(req.paths, agent_id)
 
     @router.post(
         "/agent-repository/snapshot",
         response_model=AgentGitRefResponse,
-        summary="Save current main Agent workspace as an Agent version",
+        summary="Save a business Agent workspace as an Agent version (default main-agent)",
     )
-    async def snapshot_agent_repository(req: AgentRepositorySnapshotRequest) -> AgentGitRefResponse:
-        return agent_governance.snapshot_repository(operator=req.operator, note=req.note)
+    async def snapshot_agent_repository(
+        req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)
+    ) -> AgentGitRefResponse:
+        return agent_governance.snapshot_repository(operator=req.operator, note=req.note, agent_id=agent_id)
 
     @router.get(
         "/agent-repository/current",
         response_model=AgentGitRefResponse,
-        summary="Get current published Agent Git ref",
+        summary="Get current published Agent Git ref (default main-agent)",
     )
-    async def get_current_agent_ref() -> AgentGitRefResponse:
-        return agent_governance.current_ref()
+    async def get_current_agent_ref(agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
+        return agent_governance.current_ref(agent_id)
 
 
 def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentGovernanceService) -> None:
@@ -130,7 +134,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     async def diff_agent_change_set(change_set_id: str) -> AgentGitDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
         candidate = _require_candidate_commit(change_set)
-        diff = agent_governance.agent_version_store.diff_versions(str(change_set["base_commit_sha"]), candidate)
+        diff = agent_governance.change_set_diff(change_set, candidate)
         return ensure_found(diff, "Agent change set diff not found")
 
     @router.get(
@@ -141,7 +145,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     async def diff_agent_change_set_file(change_set_id: str, path: str) -> AgentGitFileDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
         candidate = _require_candidate_commit(change_set)
-        diff = agent_governance.agent_version_store.diff_version_file(str(change_set["base_commit_sha"]), candidate, path)
+        diff = agent_governance.change_set_file_diff(change_set, candidate, path)
         return ensure_found(diff, "Agent change set file diff not found")
 
 

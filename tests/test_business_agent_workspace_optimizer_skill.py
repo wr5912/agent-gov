@@ -74,7 +74,7 @@ def test_skill_encodes_review_corrected_boundaries():
     # 权限模型对齐 #1 整改：不新增 ask、allow/deny + 对话级人审。
     assert "不要新增 `ask` 条目" in text
     # 复用现成模板脱敏扫描，不重复造轮子。
-    assert "runtime-template-scan" in text
+    assert "runtime-volume-seeds-scan" in text
     assert "scan_path" in text
     # governor 已是单一治理 workspace（合并后），且默认不作为目标。
     assert "governor-workspace" in text

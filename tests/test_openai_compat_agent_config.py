@@ -108,7 +108,7 @@ def test_v1_runs_configured_business_agent(monkeypatch, tmp_path: Path) -> None:
         resp = client.post("/v1/chat/completions", json={"model": "x", "messages": [{"role": "user", "content": "hi"}]})
         assert resp.status_code == 200
     assert captured["profile"] is not None
-    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops")
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
 
 
 def test_v1_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:

@@ -51,6 +51,18 @@ def test_get_agent_returns_stable_identity(tmp_path: Path) -> None:
     assert record.created_at
 
 
+def test_sync_updates_drifted_workspace_dir(tmp_path: Path) -> None:
+    """⑤：已存在记录若 workspace_dir 漂移（升级后 main 从 /main-workspace 迁到 data/ 下），sync 同步更新。"""
+    store, profiles = _store(tmp_path)
+    store.create_business_agent(name="main-agent", agent_id="main-agent", workspace_dir="/main-workspace")
+    assert store.get_agent("main-agent").workspace_dir == "/main-workspace"
+
+    store.sync_business_agents(profiles)
+    updated = store.get_agent("main-agent").workspace_dir
+    assert updated != "/main-workspace"
+    assert updated.endswith("/business-agents/main-agent/workspace")
+
+
 def test_lifespan_seeds_business_agent_registry(monkeypatch, tmp_path: Path) -> None:
     """应用启动（lifespan）幂等登记业务 Agent，使注册表在运行态被真实消费。"""
     module = _load_app(monkeypatch, tmp_path)
@@ -87,7 +99,7 @@ def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_pat
     assert created.status_code == 201
     assert created.json()["agent_id"] == "soc-ops"
     assert created.json()["category"] == "business"
-    assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops")
+    assert created.json()["workspace_dir"].endswith("/business-agents/soc-ops/workspace")
     assert {item["agent_id"] for item in listed.json()} == {"main-agent", "soc-ops"}
     assert duplicate.status_code == 409  # 重复身份被拒绝，不污染既有 Agent
     assert empty_name.status_code == 400  # 空名校验
@@ -95,6 +107,15 @@ def test_create_business_agent_endpoint_registers_and_lists(monkeypatch, tmp_pat
     claude_md = Path(created.json()["workspace_dir"]) / "CLAUDE.md"
     assert claude_md.is_file()
     assert "客服助手" in claude_md.read_text(encoding="utf-8")
+
+
+def test_create_business_agent_rejects_path_traversal_agent_id(monkeypatch, tmp_path: Path) -> None:
+    """③ 越权输入：含路径穿越/分隔符/非法字符的 agent_id 不得用于 workspace 落地路径，→ 422。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        for hostile in ["../escape", "a/b", "..", ".", "with space", "x/../../etc"]:
+            resp = client.post("/api/agent-registry", json={"name": "恶意归属", "agent_id": hostile})
+            assert resp.status_code == 422, f"{hostile!r} 应 422，实际 {resp.status_code}"
 
 
 def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(tmp_path: Path) -> None:
@@ -135,7 +156,7 @@ def test_chat_routes_to_registered_business_agent(monkeypatch, tmp_path: Path) -
         routed = client.post("/api/chat", json={"message": "hi", "agent_id": "soc-ops"})
         assert routed.status_code == 200
         assert captured["profile"] is not None
-        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops")
+        assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
         assert captured["profile"].category == "business"
 
         # 缺省 agent_id -> 422（两个原生入口 agent_id 必填，不静默跑 main）。

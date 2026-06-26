@@ -62,7 +62,7 @@ class BatchOptimizationExecutionService:
         if latest and self._latest_run_covers_current_tasks(latest, tasks):
             return FeedbackOptimizationBatchExecuteAllResponse(batch=batch, execution_run=latest.to_payload())
         self._prevalidate_tasks(tasks, request)
-        self._assert_main_workspace_clean()
+        self._assert_main_workspace_clean(batch_id)
         run = self._new_run(batch_id, request)
         self.feedback_store.record_batch_execution_run(run, batch_status="execution_planning")
         try:
@@ -95,7 +95,7 @@ class BatchOptimizationExecutionService:
         if not target_version_id:
             raise ConflictError("Batch execution run has no pre-execution Agent version")
         try:
-            restore_result = self.execution_application.agent_version_store.restore_version(
+            restore_result = self._batch_version_store(batch_id).restore_version(
                 target_version_id,
                 note=request.note or f"回滚批次执行 {execution_run_id} 到应用前版本。",
             )
@@ -265,8 +265,13 @@ class BatchOptimizationExecutionService:
         if latest and latest.status == "running":
             raise ConflictError(f"Batch execution is already running: {latest.execution_run_id}")
 
-    def _assert_main_workspace_clean(self) -> None:
-        repository_status = self.execution_application.agent_version_store.repository_status()
+    def _batch_version_store(self, batch_id: str):
+        """按 batch 归属的 agent_id 路由到对应版本库（缺陷②：批次执行不再恒走主库）。"""
+        batch = self.feedback_store.find_optimization_batch(batch_id) or {}
+        return self.execution_application._version_store(batch.get("agent_id"))
+
+    def _assert_main_workspace_clean(self, batch_id: str) -> None:
+        repository_status = self._batch_version_store(batch_id).repository_status()
         if repository_status.get("dirty"):
             raise MainWorkspaceDirtyError(repository_status)
 
@@ -279,8 +284,9 @@ class BatchOptimizationExecutionService:
 
     def _new_run(self, batch_id: str, request: FeedbackOptimizationBatchExecuteAllRequest) -> FeedbackBatchExecutionRunRecord:
         now = utc_now()
-        current_version_id = self.execution_application.agent_version_store.current_version_id() or ""
-        pre_version = self.execution_application.agent_version_store.version_summary(
+        store = self._batch_version_store(batch_id)
+        current_version_id = store.current_version_id() or ""
+        pre_version = store.version_summary(
             current_version_id,
             reason="batch_execution_base",
             note=f"批次 {batch_id} 一键执行前版本。",

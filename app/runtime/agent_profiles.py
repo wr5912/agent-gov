@@ -4,9 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from .mcp_config import resolve_main_mcp_config_path
+from .agent_paths import business_agent_layout, business_agents_root
 from .settings import AppSettings
-
 
 AgentRole = Literal[
     "main-agent",
@@ -63,30 +62,38 @@ class AgentRuntimeProfile:
 
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     return {
-        MAIN_AGENT_PROFILE: _main_profile(settings),
+        # main 是预制的业务 Agent：与动态业务 Agent 同走 build_business_agent_profile，
+        # workspace 落 data/business-agents/main-agent/workspace。governor 仍是特殊治理 Agent。
+        MAIN_AGENT_PROFILE: build_business_agent_profile(
+            settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=settings.main_workspace_dir
+        ),
         GOVERNOR_PROFILE: _governor_profile(settings),
     }
 
 
-def candidate_main_profile(settings: AppSettings, *, workspace_dir: Path, candidate_id: str) -> AgentRuntimeProfile:
-    profile = _main_profile(settings)
+def candidate_profile(
+    settings: AppSettings, *, agent_id: str, workspace_dir: Path, candidate_id: str
+) -> AgentRuntimeProfile:
+    """候选版本 profile：cwd=候选 worktree，claude-root 隔离到 candidate-claude-roots/<id>，
+    其余边界与该 Agent 的业务 profile 同构（不再 main 专属）。"""
+    base = build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=workspace_dir)
     claude_root = settings.data_dir / "agent-governance" / "candidate-claude-roots" / candidate_id
     return AgentRuntimeProfile(
-        name=f"{MAIN_AGENT_PROFILE}-candidate",
-        role=MAIN_AGENT_PROFILE,
+        name=f"{agent_id}-candidate",
+        role=BUSINESS_AGENT_ROLE,
         workspace_dir=workspace_dir,
         claude_root=claude_root,
         claude_config_dir=claude_root / ".claude",
         data_dir=settings.data_dir,
         mcp_config_path=workspace_dir / ".mcp.json",
         project_settings_path=workspace_dir / ".claude" / "settings.json",
-        langfuse_observation_name="runtime.main_agent_candidate",
+        langfuse_observation_name=f"runtime.candidate.{agent_id}",
         readable_paths=(workspace_dir, settings.data_dir),
-        writable_paths=profile.writable_paths,
-        denied_paths=profile.denied_paths,
-        max_turns=profile.max_turns,
-        max_runtime_seconds=profile.max_runtime_seconds,
-        max_output_bytes=profile.max_output_bytes,
+        writable_paths=base.writable_paths,
+        denied_paths=(settings.governor_claude_root, claude_root),
+        max_turns=base.max_turns,
+        max_runtime_seconds=base.max_runtime_seconds,
+        max_output_bytes=base.max_output_bytes,
     )
 
 
@@ -96,7 +103,7 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
     业务 Agent 是被治理对象：可读自身 workspace 与 data_dir、可写输出目录，
     但不得写入任何治理 Agent 根目录。role 统一为 business-agent，name 为 agent_id。
     """
-    claude_root = settings.data_dir / "business-agents" / agent_id / "claude-root"
+    claude_root = business_agent_layout(settings.data_dir, agent_id).claude_root
     return AgentRuntimeProfile(
         name=agent_id,
         role=BUSINESS_AGENT_ROLE,
@@ -109,25 +116,9 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
         langfuse_observation_name=f"runtime.business_agent.{agent_id}",
         readable_paths=(workspace_dir, settings.data_dir),
         writable_paths=(settings.data_dir / "outputs",),
-        denied_paths=(settings.governor_claude_root,),
-    )
-
-
-def _main_profile(settings: AppSettings) -> AgentRuntimeProfile:
-    mcp_resolution = resolve_main_mcp_config_path(settings.main_workspace_dir)
-    return AgentRuntimeProfile(
-        name=MAIN_AGENT_PROFILE,
-        role=MAIN_AGENT_PROFILE,
-        workspace_dir=settings.main_workspace_dir,
-        claude_root=settings.main_claude_root,
-        claude_config_dir=settings.main_claude_root / ".claude",
-        data_dir=settings.data_dir,
-        mcp_config_path=mcp_resolution.path,
-        project_settings_path=settings.main_workspace_dir / ".claude" / "settings.json",
-        langfuse_observation_name="runtime.business_agent.main",
-        readable_paths=(settings.main_workspace_dir, settings.data_dir),
-        writable_paths=(settings.data_dir / "outputs",),
-        denied_paths=(settings.governor_claude_root,),
+        # 业务 Agent 不得自读自身 SDK 运行态家目录（claude-root 在 data_dir 下、且可能嵌于 cwd），
+        # 否则可经 Read(./claude-root/**) 读到 session/缓存/凭据态。denied 在 policy.py 优先于 readable。
+        denied_paths=(settings.governor_claude_root, claude_root),
     )
 
 
@@ -172,6 +163,6 @@ def _readonly_feedback_kwargs(
         "langfuse_observation_name": observation,
         "readable_paths": readable_paths or (),
         "writable_paths": (),
-        "denied_paths": denied_paths or (settings.main_workspace_dir, settings.main_claude_root),
+        "denied_paths": denied_paths or (business_agents_root(settings.data_dir),),
         "max_turns": max_turns,
     }

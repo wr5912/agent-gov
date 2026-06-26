@@ -110,7 +110,7 @@ def test_cleanup_runtime_artifacts_removes_backups_without_runtime_data(tmp_path
     runtime_root = tmp_path / "runtime"
     workspace = runtime_root / "main-workspace"
     workspace.mkdir(parents=True)
-    backup_dir = runtime_root / ".runtime-template-backups" / "20260608T000000Z"
+    backup_dir = runtime_root / ".runtime-volume-seeds-backups" / "20260608T000000Z"
     backup_dir.mkdir(parents=True)
     (backup_dir / "agent.yaml").write_text("backup", encoding="utf-8")
     old_mcp_backup = workspace / ".mcp.json.bak-20260608T000000Z"
@@ -133,10 +133,10 @@ def test_cleanup_runtime_artifacts_removes_backups_without_runtime_data(tmp_path
 
     result = cleanup_runtime_artifacts(runtime_root=runtime_root)
 
-    assert str(runtime_root / ".runtime-template-backups") in result["removed"]
+    assert str(runtime_root / ".runtime-volume-seeds-backups") in result["removed"]
     assert old_mcp_backup.as_posix() in result["removed"]
     assert old_agent_backup.as_posix() in result["removed"]
-    assert not (runtime_root / ".runtime-template-backups").exists()
+    assert not (runtime_root / ".runtime-volume-seeds-backups").exists()
     assert not old_mcp_backup.exists()
     assert not old_agent_backup.exists()
     assert runtime_data.exists()
@@ -160,14 +160,14 @@ def test_runtime_template_safety_rejects_unrenderable_host_path_placeholder(tmp_
 def test_runtime_template_safety_rejects_backup_artifacts(tmp_path):
     template = tmp_path / "template"
     workspace = template / "main-workspace"
-    backup_dir = workspace / ".runtime-template-backups"
+    backup_dir = workspace / ".runtime-volume-seeds-backups"
     backup_dir.mkdir(parents=True)
     (backup_dir / ".mcp.json").write_text("{}\n", encoding="utf-8")
     (workspace / ".mcp.json.bak-20260608T000000Z").write_text("{}\n", encoding="utf-8")
 
     findings = scan_path(template)
 
-    assert any(finding.path == "main-workspace/.runtime-template-backups/.mcp.json" for finding in findings)
+    assert any(finding.path == "main-workspace/.runtime-volume-seeds-backups/.mcp.json" for finding in findings)
     assert any(finding.path == "main-workspace/.mcp.json.bak-20260608T000000Z" for finding in findings)
 
 
@@ -320,18 +320,19 @@ def test_bootstrap_runtime_volume_repairs_managed_config_and_cleans_backups(tmp_
     assert result["repaired"] == [(runtime_workspace / ".mcp.json").as_posix()]
     assert result["backups"]
     assert not Path(result["backups"][0]).exists()
-    assert ".runtime-template-backups" in result["backups"][0]
-    assert (runtime_root / ".runtime-template-backups").as_posix() in result["cleanup_removed"]
-    assert not (runtime_root / ".runtime-template-backups").exists()
+    assert ".runtime-volume-seeds-backups" in result["backups"][0]
+    assert (runtime_root / ".runtime-volume-seeds-backups").as_posix() in result["cleanup_removed"]
+    assert not (runtime_root / ".runtime-volume-seeds-backups").exists()
 
 
 def test_repair_managed_config_removes_stale_template_docs_without_runtime_data(tmp_path):
     template = tmp_path / "template"
-    workspace_template = template / "main-workspace"
+    # main 已迁出顶层；用 governor-workspace 作为受管顶层 workspace 验证 stale-doc 清理。
+    workspace_template = template / "governor-workspace"
     workspace_template.mkdir(parents=True)
     (workspace_template / "CLAUDE.md").write_text("当前模板\n", encoding="utf-8")
     runtime_root = tmp_path / "runtime"
-    runtime_workspace = runtime_root / "main-workspace"
+    runtime_workspace = runtime_root / "governor-workspace"
     runtime_workspace.mkdir(parents=True)
     stale_readme = runtime_workspace / "README.md"
     stale_doc = runtime_workspace / "docs" / "MCP_REPLACEMENT_GUIDE.md"
@@ -367,8 +368,8 @@ def test_repair_managed_config_removes_stale_template_docs_without_runtime_data(
     assert result["removed"] == [stale_readme.as_posix(), stale_doc.as_posix(), stale_hook_readme.as_posix()]
     assert len(result["backups"]) == 3
     assert all(not Path(path).exists() for path in result["backups"])
-    assert (runtime_root / ".runtime-template-backups").as_posix() in result["cleanup_removed"]
-    assert not (runtime_root / ".runtime-template-backups").exists()
+    assert (runtime_root / ".runtime-volume-seeds-backups").as_posix() in result["cleanup_removed"]
+    assert not (runtime_root / ".runtime-volume-seeds-backups").exists()
 
 
 def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):

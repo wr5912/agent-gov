@@ -7,7 +7,7 @@
 ## 使用方式
 
 - 初始化运行态目录：`make runtime-bootstrap`
-- 从当前运行态保存模板：`make runtime-template-export`
+- 从当前运行态保存模板：`make runtime-volume-seeds-export`
 - 清理运行态备份和模板临时产物：`make clean-runtime-artifacts`
 
 `runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。

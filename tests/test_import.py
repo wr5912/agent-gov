@@ -3,7 +3,7 @@ from pathlib import Path
 
 def test_import_app(tmp_path, monkeypatch):
     root = Path(__file__).resolve().parents[1]
-    workspace = root / "docker" / "runtime-template" / "main-workspace"
+    workspace = root / "docker" / "runtime-volume-seeds" / "main-workspace"
     runtime_root = tmp_path / "runtime"
     monkeypatch.setenv("WORKSPACE_DIR", str(workspace))
     monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(workspace))

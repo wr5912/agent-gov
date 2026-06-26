@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import re
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy import select
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import (
@@ -26,8 +27,6 @@ PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved", "regression_
 BATCH_REGRESSION_SOURCE = "optimization_batch_regression"
 BATCH_REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "passed_with_notes", "failed", "needs_human_review"}
 MAIN_AGENT_ID = "main-agent"
-# 业务 Agent 版本 store 在 data_dir 下落地，agent_id 直接作为路径段；限制为安全字符防目录穿越。
-_SAFE_AGENT_ID = re.compile(r"^[A-Za-z0-9._-]+$")
 
 
 class AgentGovernanceError(FeedbackStoreError):
@@ -59,60 +58,81 @@ class AgentGovernanceService:
         # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
         # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
         self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
+        # 缺陷④：非 main 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
+        # 由 app 装配后注入（None 则不校验，便于单测）。
+        self.agent_exists: Callable[[str], bool] | None = None
 
     def _normalize_agent_id(self, agent_id: str | None) -> str:
         normalized = (agent_id or MAIN_AGENT_ID).strip()
         if normalized == MAIN_AGENT_ID:
             return MAIN_AGENT_ID
-        if normalized in {".", ".."} or not _SAFE_AGENT_ID.match(normalized):
-            raise AgentGovernanceError(400, f"Invalid agent_id for version governance: {agent_id!r}")
-        return normalized
+        try:
+            return validate_agent_id(normalized)
+        except InvalidAgentId as exc:
+            raise AgentGovernanceError(400, f"Invalid agent_id for version governance: {agent_id!r}") from exc
 
     def _store_for(self, agent_id: str | None) -> GitAgentVersionStore:
         """按 agent_id 选版本 store。
 
-        main-agent 复用主 store，保证既有 main 路径字节级不变；业务 Agent 在
-        ``data_dir/business-agents/{agent_id}/version`` 下各自独立 git 版本链，
-        懒初始化并缓存，实现 per-agent 版本治理隔离。
+        main-agent 暂复用主 store（B 阶段并入统一模型）；业务 Agent 的版本库 root 在其
+        **workspace**（与 main 同构：git 就地版本化配置），worktrees/releases 落
+        ``data_dir/business-agents/{agent_id}/version/`` 兄弟目录，claude-root 因去嵌套
+        在 workspace 之外、天然不进版本源。懒初始化并缓存，实现 per-agent 版本治理隔离。
         """
         normalized = self._normalize_agent_id(agent_id)
         existing = self._agent_stores.get(normalized)
         if existing is not None:
             return existing
-        base = self.feedback_store.data_dir / "business-agents" / normalized / "version"
+        # 缺陷④：懒建版本库前校验该业务 Agent 在注册表中存在（main-agent 恒有效）。
+        if normalized != MAIN_AGENT_ID and self.agent_exists is not None and not self.agent_exists(normalized):
+            raise AgentGovernanceError(404, f"Agent not registered for version governance: {normalized}")
+        layout = business_agent_layout(self.feedback_store.data_dir, normalized)
         store = GitAgentVersionStore(
-            repository_dir=base / "repo",
-            worktrees_dir=base / "worktrees",
-            releases_dir=base / "releases",
+            repository_dir=layout.workspace,
+            worktrees_dir=layout.version_base / "worktrees",
+            releases_dir=layout.version_base / "releases",
             repository_name=f"{normalized}-config",
         )
         store.ensure_bootstrap()
         self._agent_stores[normalized] = store
         return store
 
-    def repository_status(self) -> JsonObject:
-        return self.agent_version_store.repository_status()
+    def repository_status(self, agent_id: str | None = None) -> JsonObject:
+        return self._store_for(agent_id).repository_status()
 
-    def discard_repository_changes(self, paths: list[str]) -> JsonObject:
+    def discard_repository_changes(self, paths: list[str], agent_id: str | None = None) -> JsonObject:
         try:
-            return self.agent_version_store.discard_workspace_changes(paths)
+            return self._store_for(agent_id).discard_workspace_changes(paths)
         except AgentGitError as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
 
-    def snapshot_repository(self, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
+    def snapshot_repository(
+        self, *, operator: str = "runtime", note: str | None = None, agent_id: str | None = None
+    ) -> JsonObject:
+        normalized = self._normalize_agent_id(agent_id)
         try:
-            return self.agent_version_store.create_snapshot(
+            return self._store_for(agent_id).create_snapshot(
                 reason="manual_workspace_snapshot",
-                note=note or f"{operator} 保存 Main Agent workspace 当前未提交改动。",
+                note=note or f"{operator} 保存 {normalized} workspace 当前未提交改动。",
             )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
 
-    def current_ref(self) -> JsonObject:
-        current = self.agent_version_store.current_commit_sha()
+    def current_ref(self, agent_id: str | None = None) -> JsonObject:
+        store = self._store_for(agent_id)
+        current = store.current_commit_sha()
         if not current:
             raise AgentGovernanceError(409, "Agent Git repository is not initialized")
-        return self.agent_version_store.version_summary(current, reason="current")
+        return store.version_summary(current, reason="current")
+
+    def change_set_diff(self, change_set: JsonObject, candidate: str) -> JsonObject | None:
+        # 按 change_set 归属的 agent_id 路由到对应版本库（缺陷②：不再恒走主库）。
+        return self._store_for(change_set.get("agent_id")).diff_versions(str(change_set["base_commit_sha"]), candidate)
+
+    def change_set_file_diff(self, change_set: JsonObject, candidate: str, path: str) -> JsonObject | None:
+        return self._store_for(change_set.get("agent_id")).diff_version_file(
+            str(change_set["base_commit_sha"]), candidate, path
+        )
 
     def list_change_sets(
         self,

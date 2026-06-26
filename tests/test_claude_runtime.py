@@ -178,6 +178,7 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
     settings = _settings(tmp_path)
+    settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
     (settings.main_workspace_dir / ".mcp.json").write_text(
         json.dumps(
             {
@@ -699,35 +700,31 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
     assert env["OTEL_LOG_RAW_API_BODIES"] == "1"
 
 
-def test_settings_derives_profile_dirs_from_custom_main_paths(tmp_path):
-    main_workspace = tmp_path / "runtime" / "main-workspace"
-    main_root = tmp_path / "runtime" / "claude-roots" / "main"
-    settings = AppSettings(
-        _env_file=None,
-        WORKSPACE_DIR=main_workspace,
-        CLAUDE_ROOT=main_root,
-    )
+def test_settings_derives_profile_dirs_from_data_dir(tmp_path):
+    # main 已并入业务模型：其 workspace/claude-root 由 data_dir 下的 main-agent layout 派生
+    # （不再有独立 WORKSPACE_DIR/CLAUDE_ROOT 字段）；governor 顶层目录随运行卷根派生。
+    data_dir = tmp_path / "runtime" / "data"
+    settings = AppSettings(_env_file=None, DATA_DIR=data_dir)
 
-    assert settings.main_workspace_dir == main_workspace
-    assert settings.governor_workspace_dir == main_workspace.parent / "governor-workspace"
-    assert settings.main_claude_root == main_root
-    assert settings.governor_claude_root == main_root.parent / "governor"
-    assert settings.claude_home == main_root / ".claude"
+    assert settings.main_workspace_dir == data_dir / "business-agents" / "main-agent" / "workspace"
+    assert settings.main_claude_root == data_dir / "business-agents" / "main-agent" / "claude-root"
+    assert settings.claude_home == settings.main_claude_root / ".claude"
+    assert settings.governor_workspace_dir == data_dir.parent / "governor-workspace"
+    assert settings.governor_claude_root == data_dir.parent / "claude-roots" / "governor"
 
 
 def test_settings_honors_explicit_governor_workspace_override(tmp_path):
-    main_workspace = tmp_path / "runtime" / "main-workspace"
-    main_root = tmp_path / "runtime" / "claude-roots" / "main"
+    data_dir = tmp_path / "runtime" / "data"
     explicit_governor_workspace = tmp_path / "custom-governor-workspace"
     settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=main_workspace,
-        CLAUDE_ROOT=main_root,
+        DATA_DIR=data_dir,
         GOVERNOR_WORKSPACE_DIR=explicit_governor_workspace,
     )
 
     assert settings.governor_workspace_dir == explicit_governor_workspace
-    assert settings.governor_claude_root == main_root.parent / "governor"
+    # governor_claude_root 未显式给则随运行卷根（data_dir.parent）派生。
+    assert settings.governor_claude_root == data_dir.parent / "claude-roots" / "governor"
 
 
 def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
@@ -941,13 +938,13 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert result.agent_activity["tool_results"][1]["name"] == ("mcp__sec-ops-data__local_api__list_assets_api_v1_assets_get")
     assert fake_langfuse.flushed is True
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.business_agent.main",
-        "runtime.business_agent.main.claude_sdk_query",
+        "runtime.business_agent.main-agent",
+        "runtime.business_agent.main-agent.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     root, generation = fake_langfuse.observations
     assert root._otel_span.attributes["session.id"] == result.session_id
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main"
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main-agent"
     assert generation._otel_span.attributes["session.id"] == result.session_id
     assert root.kwargs["input"]["message"] == "hello"
     assert root.kwargs["input"]["metadata"]["api_key"] == "secret"
@@ -971,7 +968,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.business_agent.main",
+            "name": "runtime.business_agent.main-agent",
             "session_id": result.session_id,
             "user_id": "user-a",
             "input": root.kwargs["input"],
@@ -994,7 +991,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "skills_mode": "default",
                 "tenant_id": "tenant-a",
             },
-            "trace_name": "runtime.business_agent.main",
+            "trace_name": "runtime.business_agent.main-agent",
             "tags": ["role:business", "agent:main-agent"],
         }
     ]
@@ -1085,14 +1082,14 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert fake_langfuse.flushed is True
     root, generation = fake_langfuse.observations
     assert [obs.kwargs["name"] for obs in fake_langfuse.observations] == [
-        "runtime.business_agent.main",
-        "runtime.business_agent.main.claude_sdk_query",
+        "runtime.business_agent.main-agent",
+        "runtime.business_agent.main-agent.claude_sdk_query",
     ]
     assert observation_started_under_propagation == [True, True]
     assert propagations[0]["session_id"] == result_event["data"]["session_id"]
     assert propagations[0]["metadata"]["api_session_id"] == result_event["data"]["session_id"]
     assert root._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
-    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main"
+    assert root._otel_span.attributes["langfuse.trace.name"] == "runtime.business_agent.main-agent"
     assert generation._otel_span.attributes["session.id"] == result_event["data"]["session_id"]
     assert root.updates[-1]["output"]["answer"] == "stream answer"
     assert root.updates[-1]["output"]["stop_reason"] == "end_turn"
@@ -1102,7 +1099,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     assert trace_upserts == [
         {
             "trace_id": "trace-test",
-            "name": "runtime.business_agent.main",
+            "name": "runtime.business_agent.main-agent",
             "session_id": result_event["data"]["session_id"],
             "user_id": None,
             "input": root.kwargs["input"],

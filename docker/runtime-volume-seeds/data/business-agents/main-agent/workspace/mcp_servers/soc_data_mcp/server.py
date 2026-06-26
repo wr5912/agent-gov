@@ -9,13 +9,13 @@ from typing import Any
 try:
     from mcp.server.fastmcp import FastMCP
 except Exception as exc:  # pragma: no cover
-    raise SystemExit("Missing dependency: pip install -r /main-workspace/mcp_servers/requirements.txt") from exc
+    raise SystemExit("Missing dependency: pip install -r /data/business-agents/main-agent/workspace/mcp_servers/requirements.txt") from exc
 
 mcp = FastMCP("soc-data")
 
 
 def _load_alerts() -> list[dict[str, Any]]:
-    sample = Path(os.getenv("SOC_SAMPLE_DATA", "/main-workspace/mcp_servers/soc_data_mcp/sample_alerts.json"))
+    sample = Path(os.getenv("SOC_SAMPLE_DATA", "/data/business-agents/main-agent/workspace/mcp_servers/soc_data_mcp/sample_alerts.json"))
     if sample.exists():
         return json.loads(sample.read_text(encoding="utf-8"))
     return []

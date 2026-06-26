@@ -30,7 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
         validate_rendered_config,
     )
 
-DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
+DEFAULT_TEMPLATE_DIR = Path("docker/runtime-volume-seeds")
 DEFAULT_ENV_FILE = Path("docker/.env")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
@@ -41,10 +41,9 @@ _RUNTIME_ENV_FILE_MODES = {
     ".env.local-debug": "local-debug",
     ".env.local-debug.example": "local-debug",
 }
-PROFILE_NAMES = (
-    "main",
-    "governor",
-)
+# 仅 governor 需要顶层 claude-roots/<name>；main 已并入业务模型，其 claude-root 在
+# data/business-agents/main-agent/claude-root（由 AppSettings 在 get_settings 时创建）。
+PROFILE_NAMES = ("governor",)
 RUNTIME_DATA_DIRS = (
     "data/sessions",
     "data/transcripts",
@@ -70,7 +69,7 @@ RUNTIME_DATA_DIRS = (
 )
 SKIP_TEMPLATE_ROOT_FILES = {"README.md", ".template-sanitization.json"}
 PRIVATE_RUNTIME_FILENAMES = {".env", ".mcp.local.json", "CLAUDE.local.md", "settings.local.json"}
-PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-template-backups", "data", "langfuse"}
+PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-volume-seeds-backups", "data", "langfuse"}
 
 
 class BootstrapResult(TypedDict):
@@ -225,7 +224,7 @@ def _backup_path(path: Path, *, runtime_root: Path) -> Path:
         rel_path = path.relative_to(runtime_root)
     except ValueError as exc:
         raise ValueError(f"Refusing to create runtime backup outside runtime root: {path}") from exc
-    return runtime_root / ".runtime-template-backups" / timestamp / rel_path
+    return runtime_root / ".runtime-volume-seeds-backups" / timestamp / rel_path
 
 
 def _template_file_set(template_dir: Path) -> set[Path]:
@@ -256,8 +255,9 @@ def _is_stale_template_doc_candidate(rel_path: Path, template_files: set[Path]) 
 
 
 def _workspace_dir_names() -> set[str]:
+    # 顶层挂载的 workspace 种子目录名；main 已迁入 data/business-agents/main-agent/workspace，
+    # 不再是顶层 workspace（其配置作为预制业务 Agent 种子随 data/ 子树拷入卷）。
     return {
-        "main-workspace",
         "governor-workspace",
     }
 
@@ -376,7 +376,7 @@ def bootstrap_runtime_volume(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Bootstrap runtime volume from docker/runtime-template.")
+    parser = argparse.ArgumentParser(description="Bootstrap runtime volume from docker/runtime-volume-seeds.")
     parser.add_argument("--runtime-root", help="Host runtime root. Defaults to HOST_RUNTIME_VOLUME_ROOT or the selected runtime volume mode.")
     parser.add_argument(
         "--runtime-volume-mode",
@@ -389,7 +389,7 @@ def main() -> int:
     parser.add_argument(
         "--repair-managed-config",
         action="store_true",
-        help="Re-render existing runtime-template managed text files; remove transient backups and stale template README/docs files after successful validation.",
+        help="Re-render existing runtime-volume-seeds managed text files; remove transient backups and stale template README/docs files after successful validation.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet", action="store_true")

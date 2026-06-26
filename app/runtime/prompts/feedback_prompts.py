@@ -54,7 +54,7 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "- mcp_servers/**/sample*.json 若作为 MCP 工具返回数据污染回答，通常归因到外部 MCP 服务数据质量。\n"
             "- README、docs、*.example 只作为说明或示例，通常归 not_actionable 或 insufficient_information，除非证据显示示例被当作运行配置使用。\n"
             "- *.sh 中的 ${VAR:-default} 通常是 shell 默认值语法，不应仅因出现占位符归因，必须结合执行失败证据判断。\n"
-            "如果有效 .mcp.json 或 .claude/settings.json 中仍存在模板占位符或错误运行环境路径，通常归因到 runtime-template 初始化或修复逻辑。\n"
+            "如果有效 .mcp.json 或 .claude/settings.json 中仍存在模板占位符或错误运行环境路径，通常归因到 runtime-volume-seeds 初始化或修复逻辑。\n"
             "只有在 MCP 配置已实例化且无占位符、MCP 仍连接失败或服务返回异常时，才优先判定 external_mcp_service。\n"
             "MAX_TURNS 达上限若伴随 MCP failed 或 MCP 配置未解析占位符，应视为放大器，不要把 turns 默认值当作唯一根因。",
         ),

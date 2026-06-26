@@ -3,6 +3,7 @@ import {
   Database,
   ExternalLink,
   KeyRound,
+  Loader2,
   Plus,
   Save,
   ShieldCheck,
@@ -75,7 +76,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [apiBase, setApiBase] = useState(config.apiBase);
   const [apiKey, setApiKey] = useState(config.apiKey);
   const [agents, setAgents] = useState<AgentSummary[]>([]);
-  const [busy, setBusy] = useState(false);
+  // F8：per-action pending key（如 "create"、`delete:${id}`、`lifecycle:${id}`），按钮就近显示 spinner/aria-busy。
+  const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | undefined>();
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
@@ -89,6 +91,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
   const [openaiCompat, setOpenaiCompat] = useState<OpenAICompatAgentConfig | null>(null);
   const [openaiCompatSel, setOpenaiCompatSel] = useState("main-agent");
+  const busy = pending !== null; // 全局禁用沿用（防并发），具体进行中的控件再叠加 spinner/aria-busy。
 
   const activeTabMeta = useMemo(() => SETTINGS_TABS.find((tab) => tab.key === activeTab) ?? SETTINGS_TABS[0], [activeTab]);
   const selectedAgent = useMemo(() => agents.find((agent) => agent.agent_id === policyAgent) ?? null, [agents, policyAgent]);
@@ -160,8 +163,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
   if (!open) return null;
 
-  const run = async (action: () => Promise<void>) => {
-    setBusy(true);
+  const run = async (action: () => Promise<void>, actionKey = "busy") => {
+    setPending(actionKey);
     setError(undefined);
     setSuccessMsg(undefined);
     try {
@@ -169,7 +172,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -201,7 +204,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       setSuccessMsg(`已创建业务 Agent ${res.name}（ID ${res.agent_id}）`);
       await reloadAgents();
       onAgentsChanged();
-    });
+    }, "create");
   };
 
   const handleLifecycle = (agentId: string, status: string) => {
@@ -209,7 +212,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       await setBusinessAgentLifecycle(config, agentId, status);
       await reloadAgents();
       onAgentsChanged();
-    });
+    }, `lifecycle:${agentId}`);
   };
 
   const handleDelete = (agentId: string) => {
@@ -223,7 +226,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       setSuccessMsg(`已删除业务 Agent ${label}（影响：runs ${i.runs} · feedback ${i.feedback_signals} · 优化 ${i.optimization_tasks} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}）`);
       await reloadAgents();
       onAgentsChanged();
-    });
+    }, `delete:${agentId}`);
   };
 
   const handleSetPolicy = (mode: string) => {
@@ -307,8 +310,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选，留空自动生成" value={newId} disabled={busy} aria-describedby="settings-agent-id-help" aria-invalid={!!idError} onChange={(e) => { setNewId(e.target.value); setIdError(validateAgentId(e.target.value.trim())); }} />
                     <small id="settings-agent-id-help" className={idError ? "settings-field-error" : "settings-field-help"} data-testid="settings-agent-id-help">{idError || "仅字母、数字、点、下划线、连字符；留空将自动生成。"}</small>
                   </label>
-                  <button className="primary-button" type="submit" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError}>
-                    <Plus size={15} />创建
+                  <button className="primary-button" type="submit" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError} aria-busy={pending === "create"}>
+                    {pending === "create" ? <><Loader2 size={15} className="settings-spin" />创建中…</> : <><Plus size={15} />创建</>}
                   </button>
                 </form>
 
@@ -334,11 +337,11 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                           <span>{agent.agent_id}</span>
                         </div>
                         <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
-                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
+                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
                           {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
-                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isMain} title={isMain ? "样板基线不可删除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
-                          <Trash2 size={14} />删除
+                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isMain} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
+                          {pending === `delete:${agent.agent_id}` ? <><Loader2 size={14} className="settings-spin" />删除中…</> : <><Trash2 size={14} />删除</>}
                         </button>
                       </div>
                       );

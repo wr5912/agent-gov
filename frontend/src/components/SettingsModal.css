@@ -582,3 +582,7 @@
     align-items: stretch;
   }
 }
+
+/* F8：进行中操作的就近 spinner（per-action busy）。 */
+.settings-spin { animation: settings-spin 0.8s linear infinite; }
+@keyframes settings-spin { to { transform: rotate(360deg); } }

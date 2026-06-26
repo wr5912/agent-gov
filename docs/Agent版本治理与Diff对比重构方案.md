@@ -1,5 +1,10 @@
 # Agent 版本治理与 Diff 对比重构方案
 
+> ⚠️ 部分实现细节已被「main 归一为预制业务 Agent」整改（v2.8.0，分支 `unify-business-agent-model`）取代，阅读下方旧描述时按此更正：
+> - main 配置已从 `/main-workspace` 迁到 `data/business-agents/main-agent/workspace`；`HOST_WORKSPACE_MOUNT`/`HOST_CLAUDE_ROOT_MOUNT` 主挂载已删（main 落 `/data` 下）。
+> - 版本治理改为**按 `agent_id` 的 per-agent 版本库**（repo 就地在各业务 Agent 的 `workspace/`，`claude-root/`、`version/` 去嵌套并列）；`repository_status`/`snapshot`/`current`/`diff` 及批次执行均按 agent_id 路由，不再恒走主库。
+> - 用户面契约以 [AgentGov集成指南](./AgentGov集成指南.md) §4.6（版本发布回滚）/§4.8（workspace 定制）为准。
+>
 > 文档层级：当前实现基线（pre-v2.7）上的版本治理重构方案。
 > 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；v2.7 面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
 > 归档边界：本文仍解释当前版本治理迁移和落地状态，暂不移动。

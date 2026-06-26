@@ -44,8 +44,8 @@ docker/volume/main-workspace/CLAUDE.local.md
 docker/volume/main-workspace/.mcp.local.json
 docker/volume/main-workspace/.claude/settings.local.json
 docker/volume/main-workspace/.claude/agent-memory-local/
-docker/.runtime-template-backups/
-docker/.runtime-template-staging/
+docker/.runtime-volume-seeds-backups/
+docker/.runtime-volume-seeds-staging/
 # 仓库根级 Claude Code 本地私有配置（个人偏好、本机设置，不提交）
 /CLAUDE.local.md
 /.claude/settings.local.json

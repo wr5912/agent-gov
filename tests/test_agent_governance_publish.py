@@ -338,3 +338,21 @@ def test_rejected_change_set_records_audit_event(tmp_path):
     assert rejected["status"] == "rejected"
     actions = {str(event.get("action")) for event in governance.list_change_set_events(change_set_id)}
     assert {"approval_requested", "rejected"} <= actions
+
+
+def test_repository_ops_route_per_agent_not_always_main(tmp_path):
+    """缺陷②回归：repository_status/snapshot/current_ref 按 agent_id 路由到对应 per-agent 版本库，
+    不再恒走 main 主库（per-agent 版本治理隔离）。"""
+    governance, main_store = _governance(tmp_path)
+    # main-agent 仍走传入的主库实例。
+    assert governance._store_for("main-agent") is main_store
+    # 业务 Agent 走独立 per-agent 库：不同实例、不同 repository_dir。
+    biz_store = governance._store_for("biz-x")
+    assert biz_store is not main_store
+    assert main_store.repository_dir != biz_store.repository_dir
+    assert "business-agents/biz-x/workspace" in str(biz_store.repository_dir)
+    # repository_status 按 agent_id 路由：业务 Agent 的状态来自其自己的库，不是主库。
+    biz_status = governance.repository_status("biz-x")
+    main_status = governance.repository_status("main-agent")
+    assert str(biz_store.repository_dir) == str(biz_status["repository_dir"])
+    assert biz_status["repository_dir"] != main_status["repository_dir"]

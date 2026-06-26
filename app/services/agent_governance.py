@@ -92,29 +92,42 @@ class AgentGovernanceService:
         self._agent_stores[normalized] = store
         return store
 
-    def repository_status(self) -> JsonObject:
-        return self.agent_version_store.repository_status()
+    def repository_status(self, agent_id: str | None = None) -> JsonObject:
+        return self._store_for(agent_id).repository_status()
 
-    def discard_repository_changes(self, paths: list[str]) -> JsonObject:
+    def discard_repository_changes(self, paths: list[str], agent_id: str | None = None) -> JsonObject:
         try:
-            return self.agent_version_store.discard_workspace_changes(paths)
+            return self._store_for(agent_id).discard_workspace_changes(paths)
         except AgentGitError as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
 
-    def snapshot_repository(self, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
+    def snapshot_repository(
+        self, *, operator: str = "runtime", note: str | None = None, agent_id: str | None = None
+    ) -> JsonObject:
+        normalized = self._normalize_agent_id(agent_id)
         try:
-            return self.agent_version_store.create_snapshot(
+            return self._store_for(agent_id).create_snapshot(
                 reason="manual_workspace_snapshot",
-                note=note or f"{operator} 保存 Main Agent workspace 当前未提交改动。",
+                note=note or f"{operator} 保存 {normalized} workspace 当前未提交改动。",
             )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
 
-    def current_ref(self) -> JsonObject:
-        current = self.agent_version_store.current_commit_sha()
+    def current_ref(self, agent_id: str | None = None) -> JsonObject:
+        store = self._store_for(agent_id)
+        current = store.current_commit_sha()
         if not current:
             raise AgentGovernanceError(409, "Agent Git repository is not initialized")
-        return self.agent_version_store.version_summary(current, reason="current")
+        return store.version_summary(current, reason="current")
+
+    def change_set_diff(self, change_set: JsonObject, candidate: str) -> JsonObject | None:
+        # 按 change_set 归属的 agent_id 路由到对应版本库（缺陷②：不再恒走主库）。
+        return self._store_for(change_set.get("agent_id")).diff_versions(str(change_set["base_commit_sha"]), candidate)
+
+    def change_set_file_diff(self, change_set: JsonObject, candidate: str, path: str) -> JsonObject | None:
+        return self._store_for(change_set.get("agent_id")).diff_version_file(
+            str(change_set["base_commit_sha"]), candidate, path
+        )
 
     def list_change_sets(
         self,

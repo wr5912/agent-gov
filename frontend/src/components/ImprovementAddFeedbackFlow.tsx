@@ -1,5 +1,12 @@
-import { useMemo, useState } from "react";
-import { addImprovementFeedback, type ImprovementItem } from "../api/improvements";
+import { useEffect, useMemo, useState } from "react";
+import {
+  addImprovementFeedback,
+  attachFeedbackCase,
+  getAttachableFeedbacks,
+  reassignImprovementFeedback,
+  type AttachableFeedbacks,
+  type ImprovementItem,
+} from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
 
 interface ImprovementAddFeedbackFlowProps {
@@ -11,9 +18,48 @@ interface ImprovementAddFeedbackFlowProps {
 }
 
 export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, onCancel }: ImprovementAddFeedbackFlowProps) {
+  const [mode, setMode] = useState<"select" | "new">("select");
+  const [attachable, setAttachable] = useState<AttachableFeedbacks | null>(null);
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | undefined>();
+
+  useEffect(() => {
+    void getAttachableFeedbacks(clientConfig, item.improvement_id)
+      .then(setAttachable)
+      .catch(() => setAttachable({ feedback_cases: [], other_improvement_feedbacks: [] }));
+  }, [clientConfig, item.improvement_id]);
+
+  const attachCase = async (caseId: string) => {
+    if (saving || busy) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      await attachFeedbackCase(clientConfig, item.improvement_id, caseId);
+      await onAdded();
+      onCancel();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const reassignFrom = async (sourceImprovementId: string, feedbackId: string) => {
+    if (saving || busy) return;
+    if (!window.confirm("将该反馈从其所属事项移动到当前事项？若它是来源事项最后一条反馈，移走后该事项将无来源，可稍后归并/归档/删除。")) return;
+    setSaving(true);
+    setError(undefined);
+    try {
+      await reassignImprovementFeedback(clientConfig, sourceImprovementId, feedbackId, item.improvement_id);
+      await onAdded();
+      onCancel();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
   const [draft, setDraft] = useState({
     summary: "",
     source: "playground_run",
@@ -61,8 +107,42 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
 
       {step === 1 ? (
         <div data-testid="add-feedback-select-step">
-          <div className="iw-section-kicker">步骤 1 / 3：选择或录入要加入该事项的反馈</div>
-          <div className="iw-next-step">先确定待归入的反馈实例，再审阅它是否属于当前问题模式。</div>
+          <div className="iw-section-kicker">步骤 1：选择已有反馈，或录入新反馈</div>
+          <div className="iw-mode-tabs" role="tablist">
+            <button type="button" role="tab" aria-selected={mode === "select"} className={mode === "select" ? "iw-tab active" : "iw-tab"} data-testid="add-feedback-mode-select" onClick={() => setMode("select")}>选择已有反馈</button>
+            <button type="button" role="tab" aria-selected={mode === "new"} className={mode === "new" ? "iw-tab active" : "iw-tab"} data-testid="add-feedback-mode-new" onClick={() => setMode("new")}>录入新反馈</button>
+          </div>
+          {mode === "select" ? (
+            <div data-testid="add-feedback-existing">
+              <div className="iw-content-subhead">未归属反馈（一等 FeedbackCase 池）</div>
+              {attachable?.feedback_cases?.length ? (
+                <ul className="iw-content-list">
+                  {attachable.feedback_cases.map((c) => (
+                    <li key={c.feedback_case_id}>
+                      <button type="button" className="iw-link-button" data-testid="attach-case" disabled={saving || busy} onClick={() => void attachCase(c.feedback_case_id)}>
+                        归入：{c.title || c.feedback_case_id}{c.status ? `（${c.status}）` : ""}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <div className="iw-next-step">暂无未归属反馈。</div>}
+              <div className="iw-content-subhead">其他改进事项的反馈（可调整过来）</div>
+              {attachable?.other_improvement_feedbacks?.length ? (
+                <ul className="iw-content-list">
+                  {attachable.other_improvement_feedbacks.map((f) => (
+                    <li key={f.feedback_id}>
+                      <button type="button" className="iw-link-button" data-testid="reassign-from-other" disabled={saving || busy} onClick={() => void reassignFrom(f.improvement_id, f.feedback_id)}>
+                        调整过来：{f.summary || f.feedback_id}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <div className="iw-next-step">其他事项暂无可调整的反馈。</div>}
+              <div className="iw-action-row"><button className="iw-secondary-button" type="button" onClick={onCancel}>取消</button></div>
+            </div>
+          ) : (
+          <>
+          <div className="iw-next-step">录入一条新反馈加入当前事项（若该反馈已存在，建议改用「选择已有反馈」避免重复）。</div>
           <div className="iw-form-grid">
             <label>
               <span>反馈摘要</span>
@@ -114,6 +194,8 @@ export function ImprovementAddFeedbackFlow({ clientConfig, item, busy, onAdded, 
             <button className="iw-secondary-button" type="button" onClick={onCancel}>取消</button>
             <button className="iw-primary-button" type="button" data-testid="add-feedback-next-detail" disabled={!canContinue} onClick={() => setStep(2)}>下一步：查看详情</button>
           </div>
+          </>
+          )}
         </div>
       ) : null}
 

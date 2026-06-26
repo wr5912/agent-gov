@@ -74,6 +74,7 @@ export async function requestJson<T>(config: RuntimeClientConfig, path: string, 
         throw new Error(detail || `${res.status} ${res.statusText}`);
       }
 
+      if (res.status === 204) return undefined as T;
       return (await res.json()) as T;
     } catch (error) {
       lastError = error;

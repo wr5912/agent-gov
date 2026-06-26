@@ -27,8 +27,10 @@ import {
   archiveImprovement,
   autoAdvanceImprovement,
   createImprovement,
+  deleteImprovement,
   findSimilarImprovements,
   getAutomationPolicy,
+  getImprovementDeletionImpact,
   listImprovementLinks,
   listImprovements,
   mergeImprovement,
@@ -220,6 +222,21 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void run(async () => {
       const updated = await archiveImprovement(clientConfig, item.improvement_id);
       setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+    });
+  };
+
+  const handleDelete = (item: ImprovementItem) => {
+    void run(async () => {
+      const impact = await getImprovementDeletionImpact(clientConfig, item.improvement_id);
+      const ok = window.confirm(
+        `删除改进事项「${item.title}」？此操作不可撤销，区别于「归档」（归档保留事项与反馈）。\n` +
+        `· ${impact.feedbacks} 条本事项反馈与 ${impact.links} 条链接将随删；\n` +
+        `· ${impact.source_feedback_refs} 条一等反馈将退回未归属池、可重新归入别处。`,
+      );
+      if (!ok) return;
+      await deleteImprovement(clientConfig, item.improvement_id);
+      setItems((prev) => prev.filter((entry) => entry.improvement_id !== item.improvement_id));
+      setSelectedId(undefined);
     });
   };
 
@@ -608,6 +625,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                   </button>
                   <button className="iw-secondary-button" type="button" data-testid="archive-improvement" disabled={busy} onClick={() => handleArchive(selected)}>
                     归档事项
+                  </button>
+                  <button className="iw-secondary-button iw-danger-button" type="button" data-testid="delete-improvement" disabled={busy} onClick={() => handleDelete(selected)}>
+                    删除事项
                   </button>
                 </div>
                 {lastAuto ? (

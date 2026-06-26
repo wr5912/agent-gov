@@ -22,6 +22,26 @@ export function addImprovementFeedback(config: RuntimeClientConfig, id: string, 
   return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 }
 
+// Part B：选择已有反馈（未归属 Case 池 + 其他事项反馈）/ 跨事项调整 / 删除事项。
+export type AttachableFeedbacks = components["schemas"]["AttachableFeedbacksResponse"];
+export type ImprovementDeletionImpact = components["schemas"]["ImprovementDeletionImpactResponse"];
+
+export function getAttachableFeedbacks(config: RuntimeClientConfig, id: string) {
+  return requestJson<AttachableFeedbacks>(config, `/api/improvements/${encodeURIComponent(id)}/attachable-feedbacks`);
+}
+export function attachFeedbackCase(config: RuntimeClientConfig, id: string, feedbackCaseId: string) {
+  return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/attach-feedback-case`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ feedback_case_id: feedbackCaseId }) });
+}
+export function reassignImprovementFeedback(config: RuntimeClientConfig, id: string, feedbackId: string, targetImprovementId: string) {
+  return requestJson<ImprovementFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/feedbacks/${encodeURIComponent(feedbackId)}/reassign`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_improvement_id: targetImprovementId }) });
+}
+export function getImprovementDeletionImpact(config: RuntimeClientConfig, id: string) {
+  return requestJson<ImprovementDeletionImpact>(config, `/api/improvements/${encodeURIComponent(id)}/deletion-impact`);
+}
+export function deleteImprovement(config: RuntimeClientConfig, id: string) {
+  return requestJson<void>(config, `/api/improvements/${encodeURIComponent(id)}`, { method: "DELETE" });
+}
+
 const jsonHeaders = { "Content-Type": "application/json" };
 
 export function getNormalizedFeedback(config: RuntimeClientConfig, id: string) {

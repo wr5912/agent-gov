@@ -6125,3 +6125,9 @@ body.is-resizing-evidence-panel {
   flex-direction: column;
   gap: 2px;
 }
+
+/* Part B：加反馈「选择已有 / 录入新建」模式切换 + 删除事项危险按钮。 */
+.iw-mode-tabs { display: flex; gap: 8px; margin: 8px 0 12px; }
+.iw-tab { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border, #e2e8f0); background: transparent; cursor: pointer; font-size: 13px; }
+.iw-tab.active { background: var(--accent-soft, #eef2ff); border-color: var(--accent, #6366f1); color: var(--accent, #4f46e5); }
+.iw-danger-button { color: #dc2626; }

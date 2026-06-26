@@ -30,7 +30,7 @@ from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_profiles import build_profiles
+from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
@@ -113,7 +113,16 @@ api_key_credentials = Security(bearer_auth)
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
     agent_version_store.ensure_bootstrap()
-    agent_registry_store.sync_business_agents(build_profiles(settings))
+    # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
+    # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
+    profiles = build_profiles(settings)
+    for profile in discover_seeded_business_agents(settings):
+        profiles.setdefault(profile.name, profile)
+    agent_registry_store.sync_business_agents(profiles)
+    logger.info(
+        "business agent registry synced: %s",
+        sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
+    )
     yield
 
 

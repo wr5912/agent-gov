@@ -13,9 +13,9 @@ from bootstrap_runtime_volume import resolve_runtime_root
 from runtime_cleanup import cleanup_runtime_artifacts
 from runtime_template_safety import Finding, SanitizeResult, sanitize_path, scan_path
 
-DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
-DEFAULT_BACKUP_DIR = Path("docker/.runtime-template-backups")
-DEFAULT_STAGING_DIR = Path("docker/.runtime-template-staging")
+DEFAULT_TEMPLATE_DIR = Path("docker/runtime-volume-seeds")
+DEFAULT_BACKUP_DIR = Path("docker/.runtime-volume-seeds-backups")
+DEFAULT_STAGING_DIR = Path("docker/.runtime-volume-seeds-staging")
 DEFAULT_ENV_FILE = Path("docker/.env")
 WORKSPACE_DIR_NAMES = {
     "main-workspace",
@@ -75,7 +75,7 @@ README = """# Runtime Template
 ## 使用方式
 
 - 初始化运行态目录：`make runtime-bootstrap`
-- 从当前运行态保存模板：`make runtime-template-export`
+- 从当前运行态保存模板：`make runtime-volume-seeds-export`
 - 清理运行态备份和模板临时产物：`make clean-runtime-artifacts`
 
 `runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
@@ -165,7 +165,7 @@ def _write_template_docs(staging_dir: Path, *, runtime_root: Path, copied: list[
     (staging_dir / "README.md").write_text(README, encoding="utf-8")
     manifest = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
-        "source": "runtime-template-export",
+        "source": "runtime-volume-seeds-export",
         "source_runtime_root": "${HOST_RUNTIME_VOLUME_ROOT}",
         "source_file_count": len(copied),
         "safety": {
@@ -208,7 +208,7 @@ def _canonicalize_runtime_paths(staging_dir: Path, *, runtime_root: Path) -> lis
     return changed
 
 
-def _create_backup(template_dir: Path, backup_dir: Path, prefix: str = "runtime-template") -> Path | None:
+def _create_backup(template_dir: Path, backup_dir: Path, prefix: str = "runtime-volume-seeds") -> Path | None:
     if not template_dir.exists():
         return None
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -255,7 +255,7 @@ def export_runtime_template(
     staging_root: Path,
 ) -> ExportResult:
     timestamp = _timestamp()
-    staging_dir = staging_root / f"runtime-template-{timestamp}"
+    staging_dir = staging_root / f"runtime-volume-seeds-{timestamp}"
     if staging_dir.exists():
         shutil.rmtree(staging_dir)
     staging_dir.mkdir(parents=True, exist_ok=True)
@@ -298,7 +298,7 @@ def export_runtime_template(
 
 def main() -> int:
     repo_root = _repo_root()
-    parser = argparse.ArgumentParser(description="Export runtime config files into docker/runtime-template with sanitization.")
+    parser = argparse.ArgumentParser(description="Export runtime config files into docker/runtime-volume-seeds with sanitization.")
     parser.add_argument("--runtime-root")
     parser.add_argument("--template-dir", type=Path, default=repo_root / DEFAULT_TEMPLATE_DIR)
     parser.add_argument("--backup-dir", type=Path, default=repo_root / DEFAULT_BACKUP_DIR)

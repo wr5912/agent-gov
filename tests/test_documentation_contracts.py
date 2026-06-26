@@ -38,9 +38,9 @@ def test_readme_directory_structure_matches_actual_repo_layout():
     readme = _read_repo_text("README.md")
     structure = readme.split("## 目录结构", 1)[1].split("## 快速启动", 1)[0]
 
-    # 实际模板根是 docker/runtime-template/，五个治理 workspace 已合并为单一 governor（Issue #3）。
-    assert "runtime-template/" in structure
-    template_root = REPO_ROOT / "docker" / "runtime-template"
+    # 实际模板根是 docker/runtime-volume-seeds/，五个治理 workspace 已合并为单一 governor（Issue #3）。
+    assert "runtime-volume-seeds/" in structure
+    template_root = REPO_ROOT / "docker" / "runtime-volume-seeds"
     assert template_root.is_dir()
     for workspace in (
         "main-workspace",

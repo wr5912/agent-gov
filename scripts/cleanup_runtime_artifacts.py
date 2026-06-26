@@ -15,12 +15,12 @@ def _repo_root() -> Path:
 
 def main() -> int:
     repo_root = _repo_root()
-    parser = argparse.ArgumentParser(description="Clean runtime backup and runtime-template transient artifacts.")
+    parser = argparse.ArgumentParser(description="Clean runtime backup and runtime-volume-seeds transient artifacts.")
     parser.add_argument("--runtime-root", help="Runtime root to clean. Defaults to the selected env file/mode root.")
     parser.add_argument("--runtime-volume-mode", choices=["container", "local-debug"])
     parser.add_argument("--env-file", type=Path, default=repo_root / DEFAULT_ENV_FILE)
     parser.add_argument("--template-dir", type=Path, default=repo_root / DEFAULT_TEMPLATE_DIR)
-    parser.add_argument("--template-artifacts", action="store_true", help="Also clean docker runtime-template transient artifacts.")
+    parser.add_argument("--template-artifacts", action="store_true", help="Also clean docker runtime-volume-seeds transient artifacts.")
     parser.add_argument("--runtime-artifacts", action="store_true", help="Clean runtime root backup artifacts.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()

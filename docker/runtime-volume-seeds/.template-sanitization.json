@@ -1,6 +1,6 @@
 {
   "generated_at": "2026-06-08T05:08:24.965393+00:00",
-  "source": "runtime-template-export",
+  "source": "runtime-volume-seeds-export",
   "source_runtime_root": "${HOST_RUNTIME_VOLUME_ROOT}",
   "source_file_count": 71,
   "safety": {

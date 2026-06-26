@@ -30,7 +30,7 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
         validate_rendered_config,
     )
 
-DEFAULT_TEMPLATE_DIR = Path("docker/runtime-template")
+DEFAULT_TEMPLATE_DIR = Path("docker/runtime-volume-seeds")
 DEFAULT_ENV_FILE = Path("docker/.env")
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
@@ -70,7 +70,7 @@ RUNTIME_DATA_DIRS = (
 )
 SKIP_TEMPLATE_ROOT_FILES = {"README.md", ".template-sanitization.json"}
 PRIVATE_RUNTIME_FILENAMES = {".env", ".mcp.local.json", "CLAUDE.local.md", "settings.local.json"}
-PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-template-backups", "data", "langfuse"}
+PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-volume-seeds-backups", "data", "langfuse"}
 
 
 class BootstrapResult(TypedDict):
@@ -225,7 +225,7 @@ def _backup_path(path: Path, *, runtime_root: Path) -> Path:
         rel_path = path.relative_to(runtime_root)
     except ValueError as exc:
         raise ValueError(f"Refusing to create runtime backup outside runtime root: {path}") from exc
-    return runtime_root / ".runtime-template-backups" / timestamp / rel_path
+    return runtime_root / ".runtime-volume-seeds-backups" / timestamp / rel_path
 
 
 def _template_file_set(template_dir: Path) -> set[Path]:
@@ -376,7 +376,7 @@ def bootstrap_runtime_volume(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Bootstrap runtime volume from docker/runtime-template.")
+    parser = argparse.ArgumentParser(description="Bootstrap runtime volume from docker/runtime-volume-seeds.")
     parser.add_argument("--runtime-root", help="Host runtime root. Defaults to HOST_RUNTIME_VOLUME_ROOT or the selected runtime volume mode.")
     parser.add_argument(
         "--runtime-volume-mode",
@@ -389,7 +389,7 @@ def main() -> int:
     parser.add_argument(
         "--repair-managed-config",
         action="store_true",
-        help="Re-render existing runtime-template managed text files; remove transient backups and stale template README/docs files after successful validation.",
+        help="Re-render existing runtime-volume-seeds managed text files; remove transient backups and stale template README/docs files after successful validation.",
     )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet", action="store_true")

@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN_WORKSPACE = ROOT / "docker" / "runtime-template" / "main-workspace"
+MAIN_WORKSPACE = ROOT / "docker" / "runtime-volume-seeds" / "main-workspace"
 HOOK = MAIN_WORKSPACE / "hooks" / "pre_tool_guard.py"
 SETTINGS = MAIN_WORKSPACE / ".claude" / "settings.json"
 CLAUDE_MD = MAIN_WORKSPACE / "CLAUDE.md"

@@ -33,8 +33,8 @@ FORBIDDEN_DIR_NAMES = {
     ".pytest_cache",
     ".mypy_cache",
     ".ruff_cache",
-    ".runtime-template-backups",
-    ".runtime-template-staging",
+    ".runtime-volume-seeds-backups",
+    ".runtime-volume-seeds-staging",
     "agent-governance",
     "agent-releases",
     "agent-versions",
@@ -275,7 +275,7 @@ def _scan_line(rel_path: str, line_number: int, line: str) -> list[Finding]:
                     line_number,
                     "unrenderable_placeholder",
                     "high",
-                    f"{placeholder} is a sanitization fallback, not a deployable runtime-template placeholder",
+                    f"{placeholder} is a sanitization fallback, not a deployable runtime-volume-seeds placeholder",
                     _redact_snippet(line),
                 )
             )

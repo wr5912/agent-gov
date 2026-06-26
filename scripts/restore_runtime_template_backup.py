@@ -54,8 +54,8 @@ def _safe_extract(archive: tarfile.TarFile, dest: Path) -> None:
 
 
 def restore_backup(*, backup_path: Path, template_dir: Path, backup_dir: Path) -> RestoreResult:
-    _create_backup(template_dir, backup_dir, prefix="pre-restore-runtime-template")
-    with tempfile.TemporaryDirectory(prefix="runtime-template-restore-") as tmp:
+    _create_backup(template_dir, backup_dir, prefix="pre-restore-runtime-volume-seeds")
+    with tempfile.TemporaryDirectory(prefix="runtime-volume-seeds-restore-") as tmp:
         tmp_path = Path(tmp)
         with tarfile.open(backup_path, "r:gz") as archive:
             _safe_extract(archive, tmp_path)
@@ -96,7 +96,7 @@ def restore_backup(*, backup_path: Path, template_dir: Path, backup_dir: Path) -
 
 def main() -> int:
     repo_root = _repo_root()
-    parser = argparse.ArgumentParser(description="List or restore docker/runtime-template backups.")
+    parser = argparse.ArgumentParser(description="List or restore docker/runtime-volume-seeds backups.")
     parser.add_argument("--backup-dir", type=Path, default=repo_root / DEFAULT_BACKUP_DIR)
     parser.add_argument("--template-dir", type=Path, default=repo_root / DEFAULT_TEMPLATE_DIR)
     parser.add_argument("--backup", help="Backup tar.gz path or basename to restore.")

@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends
 
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.business_agent_workspace import initialize_business_agent_workspace
 from app.runtime.schemas import (
     AgentCreateRequest,
@@ -67,7 +68,7 @@ def create_agents_router(
     )
     async def create_agent(req: AgentCreateRequest) -> AgentSummaryResponse:
         agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
-        workspace_dir = str(settings.data_dir / "business-agents" / agent_id)
+        workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
         record = agent_registry_store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
         initialize_business_agent_workspace(Path(record.workspace_dir), agent_id=record.agent_id, name=record.name)
         return _summary(record)

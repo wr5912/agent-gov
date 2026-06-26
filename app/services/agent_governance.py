@@ -7,6 +7,7 @@ from pathlib import Path
 from sqlalchemy import select
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import (
@@ -79,7 +80,7 @@ class AgentGovernanceService:
         existing = self._agent_stores.get(normalized)
         if existing is not None:
             return existing
-        base = self.feedback_store.data_dir / "business-agents" / normalized / "version"
+        base = business_agent_layout(self.feedback_store.data_dir, normalized).version_base
         store = GitAgentVersionStore(
             repository_dir=base / "repo",
             worktrees_dir=base / "worktrees",

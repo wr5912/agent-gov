@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from .agent_paths import business_agent_layout
 from .mcp_config import resolve_main_mcp_config_path
 from .settings import AppSettings
 
@@ -96,7 +97,7 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
     业务 Agent 是被治理对象：可读自身 workspace 与 data_dir、可写输出目录，
     但不得写入任何治理 Agent 根目录。role 统一为 business-agent，name 为 agent_id。
     """
-    claude_root = settings.data_dir / "business-agents" / agent_id / "claude-root"
+    claude_root = business_agent_layout(settings.data_dir, agent_id).claude_root
     return AgentRuntimeProfile(
         name=agent_id,
         role=BUSINESS_AGENT_ROLE,

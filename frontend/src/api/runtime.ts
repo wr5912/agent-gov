@@ -26,6 +26,7 @@ import type {
   ChatRequest,
   ConfigMappingResponse,
   EvalRunResponse,
+  OpenAICompatAgentConfig,
   RuntimeClientConfig,
   RuntimeHealth,
   SessionInfo,
@@ -94,13 +95,8 @@ export function getSkills(config: RuntimeClientConfig) {
   return requestJson<SkillInfo[]>(config, "/api/skills");
 }
 
-// /v1/chat/completions 出口 Agent 配置。configured=false 表示从未配置（默认走 main），
-// 与显式选 main-agent（configured=true）是不同状态；effective_agent_id 是 /v1 实际运行的 Agent。
-export interface OpenAICompatAgentConfig {
-  agent_id: string | null;
-  configured: boolean;
-  effective_agent_id: string;
-}
+// F12：/v1 出口 Agent 配置类型改用 OpenAPI 生成类型（删手写 schema 双轨），从 types/runtime re-export。
+export type { OpenAICompatAgentConfig };
 
 export function getOpenAICompatAgent(config: RuntimeClientConfig) {
   return requestJson<OpenAICompatAgentConfig>(config, "/api/settings/openai-compat-agent");

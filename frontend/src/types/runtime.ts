@@ -43,6 +43,7 @@ export type AgentInfo = OpenApiAgentInfo;
 export type AgentSummary = OpenApiAgentSummary;
 export type AgentCreateRequest = OpenApiAgentCreateRequest;
 export type BusinessAgentTemplatesResponse = OpenApiBusinessAgentTemplatesResponse;
+export type OpenAICompatAgentConfig = components["schemas"]["OpenAICompatAgentConfig"];
 export type AgentLifecycleTransitionRequest = OpenApiAgentLifecycleTransitionRequest;
 export type AgentDeleteResponse = OpenApiAgentDeleteResponse;
 export type SkillInfo = OpenApiSkillInfo;

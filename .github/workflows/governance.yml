@@ -53,6 +53,12 @@ jobs:
           corepack enable pnpm
           pnpm --dir frontend install --frozen-lockfile
 
+      - name: Verify generated API types are fresh (F9：契约边界，前端类型须由 OpenAPI 生成)
+        run: |
+          pnpm --dir frontend run generate:api-types
+          git diff --exit-code frontend/src/types/api.ts \
+            || { echo "::error::frontend/src/types/api.ts 与后端 OpenAPI 不同步——请重跑 'pnpm -C frontend generate:api-types' 并提交。"; exit 1; }
+
       - name: Frontend build
         run: pnpm --dir frontend build
 

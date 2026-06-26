@@ -25,7 +25,7 @@ import {
   type OpenAICompatAgentConfig,
 } from "../api/runtime";
 import { getAutomationPolicy, setAutomationPolicy } from "../api/improvements";
-import type { AgentDeleteResponse, AgentSummary, RuntimeClientConfig } from "../types/runtime";
+import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import "./SettingsModal.css";
 
 // v2.7 §2 平台设置：业务 Agent 管理 / 自动化策略 / 资产 Registry / Developer·Debug。
@@ -84,7 +84,6 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [agentsLoading, setAgentsLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | undefined>();
   const [idError, setIdError] = useState<string | undefined>();
-  const [impact, setImpact] = useState<Record<string, AgentDeleteResponse["impact"] | undefined>>({});
   const [policyAgent, setPolicyAgent] = useState("");
   const [policyMode, setPolicyMode] = useState("off");
   const [activeTab, setActiveTab] = useState<SettingsTab>("agents");
@@ -214,13 +213,14 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   };
 
   const handleDelete = (agentId: string) => {
-    // F1①安全快修：删除治理对象前二次确认，消除零确认不可逆删除（完整影响面预览见 P3）。
+    // F1①安全快修：删除治理对象前二次确认；F1③：删后把治理影响面放到可见的反馈横幅（替换不可达的行内 <small>）。
     const agent = agents.find((a) => a.agent_id === agentId);
     const label = agent?.name ? `${agent.name}（${agentId}）` : agentId;
     if (!window.confirm(`确认删除业务 Agent ${label}？该操作不可撤销。`)) return;
     void run(async () => {
       const res = await deleteBusinessAgent(config, agentId);
-      setImpact((prev) => ({ ...prev, [agentId]: res.impact }));
+      const i = res.impact;
+      setSuccessMsg(`已删除业务 Agent ${label}（影响：runs ${i.runs} · feedback ${i.feedback_signals} · 优化 ${i.optimization_tasks} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}）`);
       await reloadAgents();
       onAgentsChanged();
     });
@@ -288,7 +288,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
 
             {activeTab === "agents" ? (
               <section className="settings-section settings-section-agents" data-testid="settings-section-agents" role="tabpanel">
-                <div className="settings-agent-create" data-testid="settings-agent-create">
+                <form className="settings-agent-create" data-testid="settings-agent-create" onSubmit={(e) => { e.preventDefault(); handleCreate(); }}>
                   <label>
                     <span>名称</span>
                     <input className="settings-input" data-testid="settings-agent-create-name" placeholder="新业务 Agent 名称" value={newName} maxLength={120} disabled={busy} aria-required="true" onChange={(e) => setNewName(e.target.value)} />
@@ -307,10 +307,10 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选，留空自动生成" value={newId} disabled={busy} aria-describedby="settings-agent-id-help" aria-invalid={!!idError} onChange={(e) => { setNewId(e.target.value); setIdError(validateAgentId(e.target.value.trim())); }} />
                     <small id="settings-agent-id-help" className={idError ? "settings-field-error" : "settings-field-help"} data-testid="settings-agent-id-help">{idError || "仅字母、数字、点、下划线、连字符；留空将自动生成。"}</small>
                   </label>
-                  <button className="primary-button" type="button" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError} onClick={handleCreate}>
+                  <button className="primary-button" type="submit" data-testid="settings-agent-create-submit" disabled={busy || !newName.trim() || !!idError}>
                     <Plus size={15} />创建
                   </button>
-                </div>
+                </form>
 
                 <div className="settings-agent-table" data-testid="settings-agent-table">
                   <div className="settings-agent-table-head" aria-hidden="true">
@@ -324,22 +324,25 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                       <div className="empty-state" data-testid="settings-agent-loading">加载中…</div>
                     ) : !agents.length ? (
                       error ? null : <div className="empty-state">暂无业务 Agent。</div>
-                    ) : agents.map((agent) => (
+                    ) : agents.map((agent) => {
+                      const isMain = agent.agent_id === "main-agent"; // F4：样板基线不可删除/生命周期固定
+                      const isArchived = agent.status === "archived"; // F3：归档为终态，禁止再转移
+                      return (
                       <div className="settings-agent-row" data-testid="settings-agent-item" key={agent.agent_id}>
                         <div className="settings-agent-main">
-                          <strong>{agent.name}</strong>
+                          <strong>{agent.name}{isMain ? <em className="settings-agent-badge"> · 样板基线</em> : null}</strong>
                           <span>{agent.agent_id}</span>
-                          {impact[agent.agent_id] ? <small>影响：runs {impact[agent.agent_id]?.runs ?? 0} · feedback {impact[agent.agent_id]?.feedback_signals ?? 0}</small> : null}
                         </div>
                         <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
-                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} value={agent.status} disabled={busy} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
+                        <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
                           {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
-                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy} onClick={() => handleDelete(agent.agent_id)}>
+                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isMain} title={isMain ? "样板基线不可删除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
                           <Trash2 size={14} />删除
                         </button>
                       </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               </section>

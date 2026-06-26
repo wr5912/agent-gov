@@ -6,6 +6,7 @@ import type {
   AgentInfo,
   AgentSummary,
   AgentCreateRequest,
+  BusinessAgentTemplatesResponse,
   AgentDeleteResponse,
   AgentChangeSet,
   AgentChangeSetActionRequest,
@@ -60,6 +61,11 @@ export function getAgents(config: RuntimeClientConfig) {
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
 export function listBusinessAgents(config: RuntimeClientConfig) {
   return requestJson<AgentSummary[]>(config, "/api/agent-registry");
+}
+
+// 创建业务 Agent 时可选的模板 catalog（E 特性，GET /api/agent-registry/templates）。
+export function listBusinessAgentTemplates(config: RuntimeClientConfig) {
+  return requestJson<BusinessAgentTemplatesResponse>(config, "/api/agent-registry/templates");
 }
 
 export function createBusinessAgent(config: RuntimeClientConfig, payload: AgentCreateRequest) {

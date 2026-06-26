@@ -118,6 +118,25 @@ def test_create_business_agent_rejects_path_traversal_agent_id(monkeypatch, tmp_
             assert resp.status_code == 422, f"{hostile!r} 应 422，实际 {resp.status_code}"
 
 
+def test_create_with_template_id_seeds_from_template_and_unknown_rejected(monkeypatch, tmp_path: Path) -> None:
+    """F10：经 API 传 template_id 创建——合法模板播种 workspace；未知 template_id → 422；GET /templates 列 catalog。"""
+    module = _load_app(monkeypatch, tmp_path)
+    with TestClient(module.app) as client:
+        templates = client.get("/api/agent-registry/templates")
+        ok = client.post("/api/agent-registry", json={"name": "模板助手", "agent_id": "tpl-ok", "template_id": "general"})
+        unknown = client.post(
+            "/api/agent-registry", json={"name": "未知模板", "agent_id": "tpl-bad", "template_id": "does-not-exist"}
+        )
+
+    assert templates.status_code == 200
+    assert "general" in templates.json()["templates"]
+    assert ok.status_code == 201
+    # 按模板播种：workspace 起始 CLAUDE.md 存在且渲染了 agent 名称。
+    claude_md = Path(ok.json()["workspace_dir"]) / "CLAUDE.md"
+    assert claude_md.is_file() and "模板助手" in claude_md.read_text(encoding="utf-8")
+    assert unknown.status_code == 422  # 未知 template_id 不静默回退
+
+
 def test_initialize_business_agent_workspace_is_idempotent_and_preserves_edits(tmp_path: Path) -> None:
     from app.runtime.business_agent_workspace import initialize_business_agent_workspace
 

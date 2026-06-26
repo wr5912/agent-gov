@@ -227,6 +227,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-registry/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List business agent creation templates (catalog) */
+        get: operations["list_templates_api_agent_registry_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-registry/{agent_id}": {
         parameters: {
             query?: never;
@@ -353,7 +370,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get current published Agent Git ref */
+        /** Get current published Agent Git ref (default main-agent) */
         get: operations["get_current_agent_ref_api_agent_repository_current_get"];
         put?: never;
         post?: never;
@@ -372,7 +389,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Discard confirmed uncommitted changes from the main Agent workspace */
+        /** Discard confirmed uncommitted changes from a business Agent workspace (default main-agent) */
         post: operations["discard_agent_repository_changes_api_agent_repository_discard_changes_post"];
         delete?: never;
         options?: never;
@@ -389,7 +406,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Save current main Agent workspace as an Agent version */
+        /** Save a business Agent workspace as an Agent version (default main-agent) */
         post: operations["snapshot_agent_repository_api_agent_repository_snapshot_post"];
         delete?: never;
         options?: never;
@@ -529,7 +546,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task and return the full result
-         * @description Runs one Claude Agent SDK query. Set agent_id to run a registered business agent; omit it to run the main agent.
+         * @description Runs one Claude Agent SDK query. Requires a valid agent_id (main-agent or a registered business agent).
          */
         post: operations["chat_api_chat_post"];
         delete?: never;
@@ -549,7 +566,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task as server-sent events
-         * @description Streams session, message, result, error, and done events as text/event-stream. Runs the main agent; for business agents use POST /chat.
+         * @description Streams session, message, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).
          */
         post: operations["chat_stream_api_chat_stream_post"];
         delete?: never;
@@ -2144,6 +2161,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sessions/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read a session's conversation history (projected from the SDK session transcript) */
+        get: operations["get_session_messages_api_sessions__session_id__messages_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/openai-compat-agent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the /v1/chat/completions 出口 Agent (configured=False means never set -> default main) */
+        get: operations["get_openai_compat_agent_api_settings_openai_compat_agent_get"];
+        /** Set the /v1 出口 Agent (main-agent is an explicit choice; validated: unknown 404, non-business 400) */
+        put: operations["set_openai_compat_agent_api_settings_openai_compat_agent_put"];
+        post?: never;
+        /** Reset the /v1 出口 Agent to unconfigured (back to the implicit main default) */
+        delete: operations["reset_openai_compat_agent_api_settings_openai_compat_agent_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/skills": {
         parameters: {
             query?: never;
@@ -2224,7 +2277,7 @@ export interface paths {
         put?: never;
         /**
          * Run a non-streaming OpenAI-compatible chat completion
-         * @description Maps OpenAI-style messages into one Claude Agent prompt. Agent-specific controls should use /api/chat.
+         * @description Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).
          */
         post: operations["openai_chat_completions_v1_chat_completions_post"];
         delete?: never;
@@ -2362,6 +2415,8 @@ export interface components {
             agent_id?: string | null;
             /** Name */
             name: string;
+            /** Template Id */
+            template_id?: string | null;
         };
         /** AgentDeleteResponse */
         AgentDeleteResponse: {
@@ -2875,7 +2930,7 @@ export interface components {
             agent_id: string;
             /**
              * Asset Type
-             * @description regression / methodology / execution / audit。
+             * @description test_dataset / regression / methodology / execution / audit。
              */
             asset_type: string;
             /**
@@ -3048,6 +3103,14 @@ export interface components {
             mode: string;
         };
         /**
+         * BusinessAgentTemplatesResponse
+         * @description 业务 Agent 创建模板 catalog（可选 template_id 列表）。
+         */
+        BusinessAgentTemplatesResponse: {
+            /** Templates */
+            templates: string[];
+        };
+        /**
          * ChatRequest
          * @example {
          *       "max_turns": 8,
@@ -3062,7 +3125,7 @@ export interface components {
             agent?: string | null;
             /**
              * Agent Id
-             * @description Registered business agent to run (from /api/agent-registry). Omit to run the main agent.
+             * @description Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.
              */
             agent_id?: string | null;
             /**
@@ -5366,6 +5429,32 @@ export interface components {
             /** Role */
             role: string;
         };
+        /**
+         * OpenAICompatAgentConfig
+         * @description /v1/chat/completions 的出口 Agent 配置。
+         *
+         *     显式区分两个状态：从未配置（``configured=False``，走隐式 main 默认）与运营者显式配置（含
+         *     显式选 ``main-agent``）。``effective_agent_id`` 是 /v1 实际运行的 Agent（配置值，或默认 main）。
+         */
+        OpenAICompatAgentConfig: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /**
+             * Configured
+             * @default false
+             */
+            configured: boolean;
+            /**
+             * Effective Agent Id
+             * @default main-agent
+             */
+            effective_agent_id: string;
+        };
+        /** OpenAICompatAgentUpdate */
+        OpenAICompatAgentUpdate: {
+            /** Agent Id */
+            agent_id: string;
+        };
         /** OptimizationChange */
         OptimizationChange: {
             /**
@@ -5954,14 +6043,20 @@ export interface components {
             bundled_claude_code_cli?: string | null;
             /** Claude Agent Sdk */
             claude_agent_sdk?: string | null;
+            /** Httpx */
+            httpx?: string | null;
             /** Langfuse */
             langfuse?: string | null;
+            /** Litellm */
+            litellm?: string | null;
             /** Opentelemetry Exporter Otlp Proto Http */
             opentelemetry_exporter_otlp_proto_http?: string | null;
             /** Opentelemetry Sdk */
             opentelemetry_sdk?: string | null;
             /** Path Claude Code Cli */
             path_claude_code_cli?: string | null;
+            /** Starlette */
+            starlette?: string | null;
         };
         /** RuntimeDocsResponse */
         RuntimeDocsResponse: {
@@ -6017,6 +6112,10 @@ export interface components {
             legacy_file_store_enabled: boolean;
             /** Model */
             model?: string | null;
+            /** Model Provider Route */
+            model_provider_route?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
             /** Programmatic Agents */
             programmatic_agents: boolean;
             /** Provider Api Key Configured */
@@ -6210,6 +6309,8 @@ export interface components {
         };
         /** SessionInfo */
         SessionInfo: {
+            /** Agent Id */
+            agent_id?: string | null;
             /** Created At */
             created_at: string;
             /** Metadata */
@@ -6229,6 +6330,31 @@ export interface components {
             turns: number;
             /** Updated At */
             updated_at: string;
+        };
+        /**
+         * SessionMessagesResponse
+         * @description A session's conversation history, projected from the SDK session transcript.
+         *
+         *     ``messages`` are SDK ``SessionMessage`` projections in transcript order: each has
+         *     ``uuid`` / ``role`` (user|assistant) / ``parent_tool_use_id`` / ``blocks`` (Anthropic block
+         *     list: thinking/text/tool_use/tool_result). ``subagents`` carries each subagent's messages,
+         *     linkable to a main-session ``tool_use`` via ``parent_tool_use_id``.
+         */
+        SessionMessagesResponse: {
+            /** Messages */
+            messages?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Session Id */
+            session_id: string;
+            /** Subagents */
+            subagents?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Title */
+            title?: string | null;
         };
         /** SkillInfo */
         SkillInfo: {
@@ -6869,6 +6995,26 @@ export interface operations {
             };
         };
     };
+    list_templates_api_agent_registry_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BusinessAgentTemplatesResponse"];
+                };
+            };
+        };
+    };
     delete_agent_api_agent_registry__agent_id__delete: {
         parameters: {
             query?: never;
@@ -7070,7 +7216,9 @@ export interface operations {
     };
     get_agent_repository_status_api_agent_repository_get: {
         parameters: {
-            query?: never;
+            query?: {
+                agent_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7086,11 +7234,22 @@ export interface operations {
                     "application/json": components["schemas"]["AgentRepositoryStatusResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     get_current_agent_ref_api_agent_repository_current_get: {
         parameters: {
-            query?: never;
+            query?: {
+                agent_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7106,11 +7265,22 @@ export interface operations {
                     "application/json": components["schemas"]["AgentGitRefResponse"];
                 };
             };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
         };
     };
     discard_agent_repository_changes_api_agent_repository_discard_changes_post: {
         parameters: {
-            query?: never;
+            query?: {
+                agent_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7143,7 +7313,9 @@ export interface operations {
     };
     snapshot_agent_repository_api_agent_repository_snapshot_post: {
         parameters: {
-            query?: never;
+            query?: {
+                agent_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11138,6 +11310,113 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_messages_api_sessions__session_id__messages_get: {
+        parameters: {
+            query?: {
+                limit?: number | null;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionMessagesResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_openai_compat_agent_api_settings_openai_compat_agent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
+                };
+            };
+        };
+    };
+    set_openai_compat_agent_api_settings_openai_compat_agent_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpenAICompatAgentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_openai_compat_agent_api_settings_openai_compat_agent_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpenAICompatAgentConfig"];
                 };
             };
         };

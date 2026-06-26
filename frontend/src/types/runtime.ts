@@ -3,6 +3,7 @@ import type { components } from "./api";
 type OpenApiAgentInfo = components["schemas"]["AgentInfo"];
 type OpenApiAgentSummary = components["schemas"]["AgentSummaryResponse"];
 type OpenApiAgentCreateRequest = components["schemas"]["AgentCreateRequest"];
+type OpenApiBusinessAgentTemplatesResponse = components["schemas"]["BusinessAgentTemplatesResponse"];
 type OpenApiAgentLifecycleTransitionRequest = components["schemas"]["AgentLifecycleTransitionRequest"];
 type OpenApiAgentDeleteResponse = components["schemas"]["AgentDeleteResponse"];
 type OpenApiAgentChangeSetActionRequest = components["schemas"]["AgentChangeSetActionRequest"];
@@ -41,6 +42,7 @@ export type AgentInfo = OpenApiAgentInfo;
 /** 业务 Agent（治理对象，/api/agent-registry），区别于运行内 Subagent（/api/agents）。 */
 export type AgentSummary = OpenApiAgentSummary;
 export type AgentCreateRequest = OpenApiAgentCreateRequest;
+export type BusinessAgentTemplatesResponse = OpenApiBusinessAgentTemplatesResponse;
 export type AgentLifecycleTransitionRequest = OpenApiAgentLifecycleTransitionRequest;
 export type AgentDeleteResponse = OpenApiAgentDeleteResponse;
 export type SkillInfo = OpenApiSkillInfo;

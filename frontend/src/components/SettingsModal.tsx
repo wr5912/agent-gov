@@ -18,6 +18,7 @@ import {
   deleteBusinessAgent,
   getOpenAICompatAgent,
   listBusinessAgents,
+  listBusinessAgentTemplates,
   resetOpenAICompatAgent,
   setBusinessAgentLifecycle,
   setOpenAICompatAgent,
@@ -68,6 +69,8 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   const [error, setError] = useState<string | undefined>();
   const [newName, setNewName] = useState("");
   const [newId, setNewId] = useState("");
+  const [templates, setTemplates] = useState<string[]>([]);
+  const [templateId, setTemplateId] = useState("");
   const [impact, setImpact] = useState<Record<string, AgentDeleteResponse["impact"] | undefined>>({});
   const [policyAgent, setPolicyAgent] = useState("");
   const [policyMode, setPolicyMode] = useState("off");
@@ -110,6 +113,21 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
       .catch(() => {
         setOpenaiCompat(null);
         setOpenaiCompatSel("main-agent");
+      });
+  }, [open, config]);
+
+  // 拉取创建模板 catalog（E 特性）；失败回退 general 不阻断创建（F14 退化态）。
+  useEffect(() => {
+    if (!open) return;
+    void listBusinessAgentTemplates(config)
+      .then((res) => {
+        const list = res.templates ?? [];
+        setTemplates(list);
+        setTemplateId((prev) => prev || (list.includes("general") ? "general" : list[0] ?? "general"));
+      })
+      .catch(() => {
+        setTemplates([]);
+        setTemplateId("general");
       });
   }, [open, config]);
 
@@ -157,7 +175,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     const name = newName.trim();
     if (!name || busy) return;
     void run(async () => {
-      await createBusinessAgent(config, { name, agent_id: newId.trim() || undefined });
+      await createBusinessAgent(config, { name, agent_id: newId.trim() || undefined, template_id: templateId || undefined });
       setNewName("");
       setNewId("");
       await reloadAgents();
@@ -174,6 +192,10 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
   };
 
   const handleDelete = (agentId: string) => {
+    // F1①安全快修：删除治理对象前二次确认，消除零确认不可逆删除（完整影响面预览见 P3）。
+    const agent = agents.find((a) => a.agent_id === agentId);
+    const label = agent?.name ? `${agent.name}（${agentId}）` : agentId;
+    if (!window.confirm(`确认删除业务 Agent ${label}？该操作不可撤销。`)) return;
     void run(async () => {
       const res = await deleteBusinessAgent(config, agentId);
       setImpact((prev) => ({ ...prev, [agentId]: res.impact }));
@@ -248,6 +270,15 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     <span>名称</span>
                     <input className="settings-input" data-testid="settings-agent-create-name" placeholder="新业务 Agent 名称" value={newName} disabled={busy} onChange={(e) => setNewName(e.target.value)} />
                   </label>
+                  {/* F14：仅当 catalog 多于一个模板时展示选择器；单模板（general）/拉取失败时隐藏并默认 general。 */}
+                  {templates.length > 1 ? (
+                    <label>
+                      <span>模板</span>
+                      <select className="settings-input" data-testid="settings-agent-create-template" value={templateId} disabled={busy} onChange={(e) => setTemplateId(e.target.value)}>
+                        {templates.map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </label>
+                  ) : null}
                   <label>
                     <span>Agent ID</span>
                     <input className="settings-input" data-testid="settings-agent-create-id" placeholder="可选" value={newId} disabled={busy} onChange={(e) => setNewId(e.target.value)} />

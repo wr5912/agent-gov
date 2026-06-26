@@ -213,9 +213,15 @@ class _FakeRegistry:
 
 
 def test_resolve_owning_profile_main_and_registered_business() -> None:
-    settings, reg = _StubSettings(), _FakeRegistry({"biz-1": "/custom/biz-1-ws"})
+    # main-agent 已归一为预制业务 Agent：与其它业务 Agent 一样在注册表中（lifespan sync 登记），
+    # 走完全相同的解析路径，无特判。
+    settings = _StubSettings()
+    reg = _FakeRegistry(
+        {"main-agent": "/data/business-agents/main-agent/workspace", "biz-1": "/custom/biz-1-ws"}
+    )
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="main-agent"))
-    assert ws == Path("/main-workspace") and cfg == Path("/claude-roots/main/.claude")
+    assert ws == Path("/data/business-agents/main-agent/workspace")
+    assert cfg == Path("/data/business-agents/main-agent/claude-root/.claude")
     ws, cfg = sessions_mod._resolve_owning_profile(settings, reg, LocalSession(session_id="x", agent_id="biz-1"))
     assert ws == Path("/custom/biz-1-ws")  # #22：cwd 来自注册表 workspace_dir，不硬推导
     assert cfg == Path("/data/business-agents/biz-1/claude-root/.claude")

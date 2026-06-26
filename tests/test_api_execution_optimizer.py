@@ -26,7 +26,10 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
         governor_root / ".claude",
     ):
         path.mkdir(parents=True, exist_ok=True)
-    workspace.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
+    # main 已并入业务模型：执行针对派生的 main-agent workspace（/data 下），在那里写起始 CLAUDE.md。
+    main_ws = data / "business-agents" / "main-agent" / "workspace"
+    main_ws.mkdir(parents=True, exist_ok=True)
+    main_ws.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
 
     monkeypatch.setenv("WORKSPACE_DIR", str(workspace))
     monkeypatch.setenv("MAIN_WORKSPACE_DIR", str(workspace))

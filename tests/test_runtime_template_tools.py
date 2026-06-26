@@ -327,11 +327,12 @@ def test_bootstrap_runtime_volume_repairs_managed_config_and_cleans_backups(tmp_
 
 def test_repair_managed_config_removes_stale_template_docs_without_runtime_data(tmp_path):
     template = tmp_path / "template"
-    workspace_template = template / "main-workspace"
+    # main 已迁出顶层；用 governor-workspace 作为受管顶层 workspace 验证 stale-doc 清理。
+    workspace_template = template / "governor-workspace"
     workspace_template.mkdir(parents=True)
     (workspace_template / "CLAUDE.md").write_text("当前模板\n", encoding="utf-8")
     runtime_root = tmp_path / "runtime"
-    runtime_workspace = runtime_root / "main-workspace"
+    runtime_workspace = runtime_root / "governor-workspace"
     runtime_workspace.mkdir(parents=True)
     stale_readme = runtime_workspace / "README.md"
     stale_doc = runtime_workspace / "docs" / "MCP_REPLACEMENT_GUIDE.md"

@@ -70,6 +70,24 @@ def main() -> None:
             if tag != f"v{version}":
                 _fail(f"HEAD 的 release tag {tag} != v{version}（打 release tag 必须与 VERSION 一致）")
 
+    # 软告警（不 fail）：VERSION 领先本地最新 release tag = "bump 了版本但还没打 tag" 的漂移。
+    # 单向硬门有意允许"bump 后延迟 tag"的开发窗口，这里只主动提醒，发布点用 `make tag` 补齐。
+    try:
+        all_tags = subprocess.run(
+            ["git", "tag", "--list", "v*"], cwd=str(ROOT), capture_output=True, text=True, timeout=10
+        ).stdout.split()
+    except Exception:
+        all_tags = []
+    semver_tags = [t for t in all_tags if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
+    m = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
+    if semver_tags and m:
+        def _ver_key(t: str) -> tuple[int, int, int]:
+            a, b, c = t.lstrip("v").split(".")
+            return (int(a), int(b), int(c))
+        latest = max(semver_tags, key=_ver_key)
+        if (int(m.group(1)), int(m.group(2)), int(m.group(3))) > _ver_key(latest):
+            print(f"WARN: VERSION={version} 已领先最新 release tag {latest}；发布点请运行 `make tag` 补齐（不阻断）")
+
     suffix = f", HEAD release tag={release_tags}" if release_tags else ""
     print(f"OK: version consistency — VERSION={version}; app/frontend/compose 对齐{suffix}")
 

@@ -131,6 +131,9 @@ async function main() {
       // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（v2.7 W3 修订，资产复利为第三支柱）。
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
+      // App 挂载默认自动选中首个业务 Agent，会把资产视图限定到单 Agent，从而看不到跨 Agent 继承结果。
+      // 全程切到「全部业务 Agent」作用域（topbar option value=""），使创建/继承/追溯都在同一可见视图内、无 refresh 竞态。
+      await page.getByTestId("topbar-agent-switcher").selectOption("");
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
       if (await page.getByTestId("asset-create-title").isVisible().catch(() => false)) throw new Error("asset create form should not be visible before opening drawer");
       const initialCount = await page.getByTestId("asset-item").count();
@@ -157,7 +160,44 @@ async function main() {
       if (afterInheritCount < afterCreateCount + 1) throw new Error(`expected asset count to grow after inherit: ${afterCreateCount} -> ${afterInheritCount}`);
       if ((await page.getByTestId("asset-provenance").count()) < afterInheritCount) throw new Error("expected provenance for every visible asset");
 
-      console.log(JSON.stringify({ status: "passed", mode: REAL ? "real-container" : "mock", ui_base: ui, scenarios: ["asset_create", "asset_inherit", "asset_provenance"] }, null, 2));
+      // 负路径（仅 mock）：业务 Agent 列表为空时，「沉淀」按钮应禁用 + 给空态提示 + 不发 POST /api/assets（不静默吞）。
+      const scenarios = ["asset_create", "asset_inherit", "asset_provenance"];
+      if (!REAL) {
+        const page2 = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+        await page2.addInitScript(([b, key]) => { window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: b, apiKey: key })); }, [apiBase, apiKey]);
+        let assetPosts = 0;
+        await page2.route("**/*", async (route) => {
+          const req = route.request();
+          const url = new URL(req.url());
+          if (url.hostname !== "runtime.test") return route.continue();
+          const path = url.pathname;
+          const method = req.method();
+          const j = (r, body, status = 200) => r.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(body) });
+          if (method === "OPTIONS") return route.fulfill({ status: 204, headers: { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" } });
+          if (path === "/api/agent-registry") return j(route, []); // 业务 Agent 列表为空
+          if (path === "/api/assets" && method === "POST") { assetPosts += 1; return j(route, {}, 201); }
+          if (path === "/api/assets") return j(route, []);
+          return j(route, defaultPayload(path));
+        });
+        try {
+          await page2.goto(ui, { waitUntil: "domcontentloaded" });
+          await page2.getByTestId("nav-asset").click();
+          await page2.getByTestId("asset-registry").waitFor({ timeout: 20000 });
+          await page2.getByTestId("asset-create-open").click();
+          await page2.getByTestId("asset-create-drawer").waitFor({ timeout: 15000 });
+          await page2.getByTestId("asset-create-title").fill("无归属也不应静默吞");
+          await page2.getByTestId("asset-create-no-agent").waitFor({ timeout: 5000 });
+          if (!(await page2.getByTestId("asset-create-submit").isDisabled())) throw new Error("沉淀按钮在无可解析业务 Agent 时应禁用");
+          await page2.getByTestId("asset-create-submit").click({ force: true }).catch(() => {});
+          await page2.waitForTimeout(500);
+          if (assetPosts !== 0) throw new Error(`无可解析业务 Agent 时不应发出 POST /api/assets，实际 ${assetPosts}`);
+          scenarios.push("asset_create_blocked_without_agent");
+        } finally {
+          await page2.close();
+        }
+      }
+
+      console.log(JSON.stringify({ status: "passed", mode: REAL ? "real-container" : "mock", ui_base: ui, scenarios }, null, 2));
     } finally {
       await browser.close();
     }

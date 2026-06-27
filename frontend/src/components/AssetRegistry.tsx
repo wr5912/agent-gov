@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createAsset, inheritAsset, listAssets, type Asset } from "../api/assets";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
@@ -33,6 +33,13 @@ export function AssetRegistry({
   const [sourceFilter, setSourceFilter] = useState("");
   const [inheritTarget, setInheritTarget] = useState<Record<string, string>>({});
 
+  // 沉淀资产的归属 Agent：优先顶栏所选，否则回退首个业务 Agent。businessAgents 整体为空（registry
+  // 拉取失败 / 零 Agent / 挂载竞态）时为空 → 提交按钮据此禁用并给空态提示，避免点「沉淀」静默无操作。
+  const resolvedAgentId = useMemo(
+    () => scopeAgentId || businessAgents[0]?.agent_id || "",
+    [scopeAgentId, businessAgents],
+  );
+
   const refresh = useCallback(async () => {
     setError(undefined);
     try {
@@ -60,10 +67,9 @@ export function AssetRegistry({
 
   const handleCreate = () => {
     const title = newTitle.trim();
-    const agentId = scopeAgentId || businessAgents[0]?.agent_id || "";
-    if (!title || !agentId || busy) return;
+    if (!title || !resolvedAgentId || busy) return;
     void run(async () => {
-      await createAsset(clientConfig, { agent_id: agentId, asset_type: newType, title, body: newBody, source_improvement_id: "" });
+      await createAsset(clientConfig, { agent_id: resolvedAgentId, asset_type: newType, title, body: newBody, source_improvement_id: "" });
       setNewTitle("");
       setNewBody("");
       setCreateOpen(false);
@@ -183,9 +189,12 @@ export function AssetRegistry({
           </select>
           <input className="iw-input" data-testid="asset-create-title" placeholder="资产标题" value={newTitle} disabled={busy} onChange={(e) => setNewTitle(e.target.value)} />
           <textarea className="iw-input" data-testid="asset-create-body" style={{ minHeight: 120 }} placeholder="资产正文（方法论步骤 / 回归用例 / 执行脚本 / 审计说明）" value={newBody} disabled={busy} onChange={(e) => setNewBody(e.target.value)} />
+          {!resolvedAgentId ? (
+            <div className="iw-empty" data-testid="asset-create-no-agent">请先在顶栏创建或等待业务 Agent 加载后再沉淀资产。</div>
+          ) : null}
           <div className="feedback-drawer-actions">
             <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>取消</button>
-            <button className="iw-primary-button" type="button" data-testid="asset-create-submit" disabled={busy || !newTitle.trim()} onClick={handleCreate}>沉淀</button>
+            <button className="iw-primary-button" type="button" data-testid="asset-create-submit" disabled={busy || !newTitle.trim() || !resolvedAgentId} onClick={handleCreate}>沉淀</button>
           </div>
         </DrawerShell>
       ) : null}

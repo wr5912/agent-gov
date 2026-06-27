@@ -43,6 +43,9 @@ jobs:
       - name: Tests
         run: make test
 
+      - name: Runtime volume seeds safety scan (#27：新增/修改 seed 预置 Agent 子树须过脱敏门)
+        run: make runtime-volume-seeds-scan
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:

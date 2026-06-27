@@ -467,7 +467,7 @@ def test_debug_evidence_can_be_disabled(tmp_path):
     settings = _settings(tmp_path)
     store = FeedbackStore(
         data_dir=settings.data_dir,
-        agent_version_provider=lambda: "main-v-test",
+        agent_version_provider=lambda _aid=None: "main-v-test",
         enable_debug_evidence=False,
     )
     _record_run(store)

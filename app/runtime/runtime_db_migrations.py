@@ -301,3 +301,17 @@ def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_change_set_id ON agent_releases (change_set_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_rollback_of_release_id ON agent_releases (rollback_of_release_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_releases_status_created ON agent_releases (status, created_at)")
+
+
+def migrate_0018_agent_registry_origin_tombstone(connection: Connection) -> None:
+    """#26：业务 Agent 注册表加 origin（seed=声明式基线禁删 / user=用户创建可删）+ deleted_at（用户删除 tombstone，
+    重启不被 discover_seeded 复活）。已存在行默认 origin='user'，seed agent 的 origin 由启动 sync 按 seed 目录校正。"""
+    columns = _table_columns(connection, "agent_registry")
+    if not columns:
+        return
+    if "origin" not in columns:
+        connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN origin VARCHAR(16) DEFAULT 'user'")
+    connection.exec_driver_sql("UPDATE agent_registry SET origin = 'user' WHERE origin IS NULL")
+    if "deleted_at" not in columns:
+        connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN deleted_at VARCHAR(64)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_origin ON agent_registry (origin)")

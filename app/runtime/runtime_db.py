@@ -28,6 +28,7 @@ from .runtime_db_migrations import (
     migrate_0015_improvement_content_generated_by,
     migrate_0016_execution_application_binding,
     migrate_0017_regression_assessments,
+    migrate_0018_agent_registry_origin_tombstone,
 )
 
 
@@ -615,6 +616,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0015_improvement_content_generated_by", migrate_0015_improvement_content_generated_by),
         ("0016_execution_application_binding", migrate_0016_execution_application_binding),
         ("0017_regression_assessments", migrate_0017_regression_assessments),
+        ("0018_agent_registry_origin_tombstone", migrate_0018_agent_registry_origin_tombstone),
     ):
         if version in applied:
             continue

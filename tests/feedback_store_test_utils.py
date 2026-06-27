@@ -45,7 +45,7 @@ def _settings(tmp_path):
 
 def _store(tmp_path):
     settings = _settings(tmp_path)
-    return FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test"), settings
+    return FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test"), settings
 
 
 def _record_run(store: FeedbackStore):

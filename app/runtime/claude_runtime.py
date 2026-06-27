@@ -126,12 +126,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 feedback_store=feedback_store,
                 run_chat=self.run,
                 current_agent_version_id=self._current_agent_version_id,
-                run_candidate_chat=lambda req, worktree, commit, change_set: self.run_candidate(
-                    req,
-                    worktree_path=worktree,
-                    candidate_commit_sha=commit,
-                    change_set_id=change_set,
-                ),
+                run_candidate_chat=lambda req, wt, commit, cs, aid: self.run_candidate(req, worktree_path=wt, candidate_commit_sha=commit, change_set_id=cs, agent_id=aid),
             )
             if feedback_store is not None
             else None
@@ -297,10 +292,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             }
         )
 
-    def _current_agent_version_id(self) -> Optional[str]:
-        if self.agent_version_store is None:
-            return None
-        return self.agent_version_store.current_version_id()
+    def _current_agent_version_id(self, agent_id: Optional[str] = None) -> Optional[str]:
+        # #24-D：复用 feedback_store 的 per-agent 版本解析器；无 feedback_store 时回退主 store。
+        if self.feedback_store is not None:
+            return self.feedback_store._current_agent_version_id(agent_id)
+        return self.agent_version_store.current_version_id() if self.agent_version_store else None
 
     def profile_version_snapshot(self, profile_name: str) -> JsonObject | None:
         profile = self.profiles.get(profile_name)
@@ -414,7 +410,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
-        agent_version_id = agent_version_id_override if agent_version_id_override is not None else self._current_agent_version_id()
+        agent_version_id = agent_version_id_override if agent_version_id_override is not None else self._current_agent_version_id(agent_id)
         created_at = utc_now()
         prompt = self._build_prompt(req)
         telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
@@ -715,9 +711,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
 
-    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str) -> ChatResponse:
+    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE) -> ChatResponse:
+        # #24-A：候选 profile 按 change_set.agent_id 派生（归属/trace/隔离落到该业务 Agent）。
         profile = candidate_profile(
-            self.settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=worktree_path, candidate_id=change_set_id
+            self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id
         )
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 

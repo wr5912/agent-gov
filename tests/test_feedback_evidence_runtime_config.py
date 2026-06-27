@@ -27,7 +27,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     store = FeedbackStore(
         data_dir=settings.data_dir,
         workspace_dir=settings.main_workspace_dir,
-        agent_version_provider=lambda: "main-v-test",
+        agent_version_provider=lambda _aid=None: "main-v-test",
     )
     run_id = "run-mcp-config-failed"
     store.record_run(

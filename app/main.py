@@ -31,7 +31,7 @@ from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents
+from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
@@ -69,7 +69,7 @@ agent_version_store = GitAgentVersionStore(
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
     workspace_dir=settings.main_workspace_dir,
-    agent_version_provider=agent_version_store.current_version_id,
+    agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（依赖 agent_governance._store_for）。
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
@@ -82,6 +82,16 @@ agent_governance = AgentGovernanceService(
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 # 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
+
+
+# #24-C/D：单一 per-agent 版本解析器——复用 agent_governance._store_for 缓存按 agent_id 路由到各业务 Agent
+# 自己的 GitAgentVersionStore（repository_dir=该 Agent workspace）。FeedbackStore 版本 stamping 与
+# ClaudeRuntime 运行版本归属共用它，杜绝非 main Agent 的版本/基线/执行门落到 main 库（issue #24 C/D）。
+def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
+    return agent_governance._store_for(agent_id or "main-agent").current_version_id()
+
+
+feedback_store.agent_version_provider = _resolve_agent_version_id
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
@@ -119,7 +129,8 @@ async def lifespan(_: FastAPI):
     profiles = build_profiles(settings)
     for profile in discover_seeded_business_agents(settings):
         profiles.setdefault(profile.name, profile)
-    agent_registry_store.sync_business_agents(profiles)
+    # #26：以 seed 目录为准标 origin（seed 声明式基线禁删 / user 可 tombstone 删除）；sync 跳过 tombstone 不复活。
+    agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
     logger.info(
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),

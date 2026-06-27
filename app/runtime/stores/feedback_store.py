@@ -79,7 +79,7 @@ class FeedbackStore(
         *,
         data_dir: Path,
         workspace_dir: Optional[Path] = None,
-        agent_version_provider: Optional[Callable[[], Optional[str]]] = None,
+        agent_version_provider: Optional[Callable[[Optional[str]], Optional[str]]] = None,
         runtime_version: str = APP_VERSION,
         enable_debug_evidence: bool = True,
     ) -> None:
@@ -108,30 +108,52 @@ class FeedbackStore(
         # internal Agent prompts or Claude Code tool configuration.
         self.langfuse_trace_fetcher = fetcher
 
-    def _current_agent_version_id(self) -> Optional[str]:
+    def _current_agent_version_id(self, agent_id: Optional[str] = None) -> Optional[str]:
+        # #24-C/D：按归属业务 Agent 解析其自身版本库 HEAD（agent_id=None/main 走 main 库），使
+        # baseline/current/版本归属同源于该 Agent 的 GitAgentVersionStore，杜绝 main↔AAA 库错配 409。
         if not self.agent_version_provider:
             return None
         try:
-            return self.agent_version_provider()
+            return self.agent_version_provider(agent_id)
         except Exception:
             return None
 
-    def _agent_git_paths_context(self) -> JsonObject:
+    def _agent_git_paths_context(self, agent_id: Optional[str] = None) -> JsonObject:
+        # #24-B：执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析（main 走 agent-governance 顶层，
+        # 业务 Agent 走 business-agents/<id>/version），使 governor grounding 落到该 Agent 自己的版本库。
+        normalized = (agent_id or "").strip()
+        if not normalized or normalized == "main-agent":
+            repository, worktrees, releases = (
+                self.main_workspace_dir,
+                self.data_dir / "agent-governance" / "worktrees",
+                self.data_dir / "agent-governance" / "releases",
+            )
+        else:
+            layout = business_agent_layout(self.data_dir, normalized)
+            repository, worktrees, releases = (layout.workspace, layout.version_base / "worktrees", layout.version_base / "releases")
         return {
-            "main_agent_repository_path": str(self.main_workspace_dir),
-            "agent_change_set_worktrees_path": str(self.data_dir / "agent-governance" / "worktrees"),
-            "agent_release_archives_path": str(self.data_dir / "agent-governance" / "releases"),
+            "main_agent_repository_path": str(repository),
+            "agent_change_set_worktrees_path": str(worktrees),
+            "agent_release_archives_path": str(releases),
             "agent_version_source": "git",
         }
 
-    def _execution_target_policy(self) -> JsonObject:
-        return self.execution_targets.policy_json()
+    def _execution_targets_for(self, agent_id: Optional[str]) -> WorkspaceExecutionTargetPolicy:
+        # #24-B：执行目标的 sha/存在性必须按归属业务 Agent 的 workspace 计算（与 apply 目标 worktree 同源），
+        # 否则拿 main 的 sha 比对 AAA worktree 文件 → 'Target file changed'/存在性 409。main 复用主 policy。
+        normalized = (agent_id or "").strip()
+        if not normalized or normalized == "main-agent":
+            return self.execution_targets
+        return WorkspaceExecutionTargetPolicy(business_agent_layout(self.data_dir, normalized).workspace)
 
-    def _execution_target_file_contexts(self, target_paths: list[str]) -> list[JsonObject]:
-        return self.execution_targets.file_contexts(target_paths)
+    def _execution_target_policy(self, agent_id: Optional[str] = None) -> JsonObject:
+        return self._execution_targets_for(agent_id).policy_json()
 
-    def _execution_target_file_context(self, target_path: str) -> JsonObject:
-        return self.execution_targets.file_context(target_path)
+    def _execution_target_file_contexts(self, target_paths: list[str], agent_id: Optional[str] = None) -> list[JsonObject]:
+        return self._execution_targets_for(agent_id).file_contexts(target_paths)
+
+    def _execution_target_file_context(self, target_path: str, agent_id: Optional[str] = None) -> JsonObject:
+        return self._execution_targets_for(agent_id).file_context(target_path)
 
     def _target_allowed(self, target_path: str) -> bool:
         return self.execution_targets.target_allowed(target_path)

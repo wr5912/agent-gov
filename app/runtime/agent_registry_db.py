@@ -23,3 +23,7 @@ class AgentRegistryModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     # 生命周期状态（AGV-020）：draft/active/evaluating/deprecated/archived。建列由迁移 0009 保证。
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    # #26：来源——seed（声明式基线，禁删）vs user（用户创建，可 tombstone 删除）。建列由迁移 0018 保证。
+    origin: Mapped[str] = mapped_column(String(16), default="user", index=True)
+    # #26：删除 tombstone（用户删除时间）；非空表示已删除——discover/sync 跳过、list/get 过滤，重启不复活。
+    deleted_at: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)

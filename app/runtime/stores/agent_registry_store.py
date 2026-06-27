@@ -21,6 +21,7 @@ class AgentRegistryRecord:
     workspace_dir: str
     created_at: str
     status: str = "active"
+    origin: str = "user"  # #26：seed（声明式基线，禁删）vs user（用户创建，可 tombstone 删除）
 
 
 class AgentRegistryStore:
@@ -33,19 +34,23 @@ class AgentRegistryStore:
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
 
-    def sync_business_agents(self, profiles: dict[str, AgentRuntimeProfile]) -> None:
+    def sync_business_agents(self, profiles: dict[str, AgentRuntimeProfile], *, seed_agent_ids: frozenset[str] = frozenset()) -> None:
         with self._session_factory.begin() as db:
             for profile in profiles.values():
                 if profile.category != "business":
                     continue
-                # 业务 Agent（含预制 main-agent）以 profile.name 为身份；role 现统一为通用
-                # business-agent，不能再当 agent_id。
+                # 业务 Agent（含预制 main-agent）以 profile.name 为身份；origin 以 seed 目录为准
+                # 区分声明式基线 vs 用户创建（#26）。
+                origin = "seed" if profile.name in seed_agent_ids else "user"
                 existing = db.get(AgentRegistryModel, profile.name)
                 if existing is not None:
-                    # ⑤：已存在记录若 workspace_dir 漂移（升级后 main 从 /main-workspace 迁到
-                    # data/business-agents/main-agent/workspace），同步更新，避免会话历史等读旧路径。
+                    # #26：用户已删除（tombstone）的 Agent 不因磁盘 workspace 仍在而被复活。
+                    if existing.deleted_at:
+                        continue
+                    # ⑤：已存在记录若 workspace_dir 漂移（升级后路径迁移）同步更新；origin 以 seed 目录校正。
                     if existing.workspace_dir != str(profile.workspace_dir):
                         existing.workspace_dir = str(profile.workspace_dir)
+                    existing.origin = origin
                     continue
                 db.add(
                     AgentRegistryModel(
@@ -54,18 +59,24 @@ class AgentRegistryStore:
                         category=profile.category,
                         workspace_dir=str(profile.workspace_dir),
                         created_at=utc_now(),
+                        origin=origin,
                     )
                 )
 
     def list_agents(self) -> list[AgentRegistryRecord]:
         with self._session_factory.begin() as db:
-            rows = db.query(AgentRegistryModel).order_by(AgentRegistryModel.created_at, AgentRegistryModel.agent_id).all()
+            rows = (
+                db.query(AgentRegistryModel)
+                .filter(AgentRegistryModel.deleted_at.is_(None))  # #26：过滤 tombstone（已删除）
+                .order_by(AgentRegistryModel.created_at, AgentRegistryModel.agent_id)
+                .all()
+            )
             return [_record(row) for row in rows]
 
     def get_agent(self, agent_id: str) -> AgentRegistryRecord | None:
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
-            return _record(row) if row is not None else None
+            return _record(row) if row is not None and not row.deleted_at else None
 
     def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
         """注册一个业务 Agent 身份（被治理对象）。重复 agent_id 拒绝，空 name 拒绝。"""
@@ -83,6 +94,7 @@ class AgentRegistryStore:
                     category="business",
                     workspace_dir=workspace_dir,
                     created_at=created_at,
+                    origin="user",  # #26：API 创建 = 用户来源（可 tombstone 删除）
                 )
             )
         return AgentRegistryRecord(
@@ -91,6 +103,7 @@ class AgentRegistryStore:
             category="business",
             workspace_dir=workspace_dir,
             created_at=created_at,
+            origin="user",
         )
 
     def transition_business_agent(self, agent_id: str, *, status: str) -> AgentRegistryRecord:
@@ -110,7 +123,8 @@ class AgentRegistryStore:
             return _record(row)
 
     def delete_business_agent(self, agent_id: str) -> AgentRegistryRecord:
-        """删除一个注册业务 Agent；main-agent 样板不可删，未知 agent_id 报 404。
+        """删除业务 Agent。main-agent 与 seed 声明式基线不可删（去 seed 源移除）；用户创建的 Agent 逻辑删除
+        （tombstone：置 deleted_at），重启 discover_seeded 不复活。未知 / 已删除 agent_id 报 404。
 
         删除前的影响面提示由路由层基于 agent_id 归属计数给出，避免无声删除治理对象。
         """
@@ -118,10 +132,15 @@ class AgentRegistryStore:
             raise BusinessRuleViolation("Main agent is the sample baseline and cannot be deleted")
         with self._session_factory.begin() as db:
             row = db.get(AgentRegistryModel, agent_id)
-            if row is None:
+            if row is None or row.deleted_at:
                 raise NotFoundError(f"Business agent not found: {agent_id}")
+            if (row.origin or "user") == "seed":
+                raise BusinessRuleViolation(
+                    f"Seed business agent '{agent_id}' is a declarative baseline and cannot be deleted;"
+                    " remove it from docker/runtime-volume-seeds instead"
+                )
             record = _record(row)
-            db.delete(row)
+            row.deleted_at = utc_now()  # #26：tombstone 逻辑删除，重启 discover 不复活
         return record
 
 
@@ -133,4 +152,5 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         workspace_dir=row.workspace_dir,
         created_at=row.created_at,
         status=row.status or "active",
+        origin=row.origin or "user",
     )

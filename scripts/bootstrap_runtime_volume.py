@@ -168,6 +168,13 @@ def _copy_missing(
     backups: list[str],
     validation_errors: list[str],
 ) -> None:
+    # #27：data/business-agents/<agent>/ 是活的优化状态（反馈优化闭环 publish 写入的 workspace）——
+    # bootstrap 对它只做存在性对账（fill-missing：缺失才补全新 seed Agent），强制关掉 overwrite/repair，
+    # 绝不覆盖用户在卷里积累的优化成果与 per-agent git 历史。seed 只是「出生配置」，不回灌已存在 Agent。
+    parts = rel_path.parts
+    if len(parts) >= 2 and parts[0] == "data" and parts[1] == "business-agents":
+        overwrite = False
+        repair_managed_config = False
     if src.is_dir():
         if not dry_run:
             dest.mkdir(parents=True, exist_ok=True)

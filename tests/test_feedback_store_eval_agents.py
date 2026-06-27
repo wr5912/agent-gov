@@ -100,7 +100,7 @@ def test_data_incomplete_bbb_feedback_eval_calls_main_agent_and_records_result(t
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-after")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-after")
     run_id = "a0fb5319-1752-45eb-972f-0e7edee30e92"
     store.record_run(
         {
@@ -482,7 +482,7 @@ def test_update_eval_case_rejects_empty_prompt(tmp_path):
 
 def test_archived_eval_case_is_not_selected_for_automatic_feedback_eval(tmp_path):
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-after")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-after")
     eval_case, _ = _create_eval_case(store)
     store.update_eval_case(eval_case["eval_case_id"], {"status": "archived"})
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
@@ -554,7 +554,7 @@ def test_runtime_feedback_job_fails_when_formatter_cannot_normalize_agent_text(t
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test")
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])
@@ -596,7 +596,7 @@ def test_data_incomplete_bbb_case_calls_attribution_agent_and_generates_output(t
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test")
     run_id = "a0fb5319-1752-45eb-972f-0e7edee30e92"
     session_id = "sess_74a6b45e-4883-45cd-9fae-0c5323ddbcd2"
     store.record_run(
@@ -711,7 +711,7 @@ def test_attribution_agent_fragment_output_is_formatted_before_validation(tmp_pa
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test")
     _record_run(store)
     signal = store.create_signal(
         FeedbackSignalCreateRequest(
@@ -786,7 +786,7 @@ def test_proposal_generator_batch_plan_ignores_intermediate_permissions_json(tmp
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test")
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全BBB"))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全BBB")

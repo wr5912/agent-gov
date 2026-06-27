@@ -22,7 +22,7 @@ def _governance(tmp_path):
     store = FeedbackStore(
         data_dir=settings.data_dir,
         workspace_dir=settings.main_workspace_dir,
-        agent_version_provider=agent_store.current_version_id,
+        agent_version_provider=lambda _aid=None: agent_store.current_version_id(),
     )
     return AgentGovernanceService(feedback_store=store, agent_version_store=agent_store), agent_store
 

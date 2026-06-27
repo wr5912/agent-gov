@@ -14,6 +14,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
+from .schema_self_heal import sync_missing_columns
 from .runtime_db_migrations import (
     migrate_0005_agent_governance,
     migrate_0006_remove_agent_job_output_contract_column,
@@ -589,6 +590,7 @@ def make_session_factory(db_path: Path) -> sessionmaker:
 def ensure_schema(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     _run_runtime_migrations(engine)
+    sync_missing_columns(engine)  # 自愈 create_all 加列盲区（共享 Base 的模型加列后补齐已存在卷缺列）
     factory = sessionmaker(bind=engine, expire_on_commit=False, future=True)
     with factory.begin() as session:
         if not session.get(SchemaMigration, "0001_sqlalchemy_runtime_store"):

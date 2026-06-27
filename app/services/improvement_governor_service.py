@@ -61,7 +61,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        summary, boundary, evidence, generated_by = self._heuristic_attribution(item, nf)
+        summary, boundary, evidence, counter, uncertainty, verification, generated_by = self._heuristic_attribution(item, nf)
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
@@ -69,12 +69,16 @@ class ImprovementGovernorService:
                     self._build_attribution_input(item, nf, feedbacks),
                     improvement_id,
                 )
-                summary, boundary, evidence = self._map_attribution(output, summary, boundary, evidence)
+                summary, boundary, evidence, counter, uncertainty, verification = self._map_attribution(
+                    output, summary, boundary, evidence, counter, uncertainty, verification,
+                )
                 generated_by = "governor"
             except Exception:  # noqa: BLE001 — 任何 governor 失败都回退确定性，保证可用
                 pass
         return self._content.upsert_attribution(
-            improvement_id, summary=summary, responsibility_boundary=boundary, evidence=evidence, generated_by=generated_by,
+            improvement_id, summary=summary, responsibility_boundary=boundary, evidence=evidence,
+            counter_evidence=counter, uncertainty_factors=uncertainty, verification_suggestions=verification,
+            generated_by=generated_by,
         )
 
     # ---- 优化方案 ----
@@ -82,7 +86,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         attr = self._content.get_attribution(improvement_id)
-        summary, changes, generated_by = self._heuristic_plan(item, nf, attr)
+        summary, changes, risk_level, generated_by = self._heuristic_plan(item, nf, attr)
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
@@ -90,12 +94,12 @@ class ImprovementGovernorService:
                     self._build_plan_input(item, nf, attr),
                     improvement_id,
                 )
-                summary, changes = self._map_plan(output, summary, changes)
+                summary, changes, risk_level = self._map_plan(output, summary, changes, risk_level)
                 generated_by = "governor"
             except Exception:  # noqa: BLE001
                 pass
         return self._content.upsert_optimization_plan(
-            improvement_id, summary=summary, changes=changes, generated_by=generated_by,
+            improvement_id, summary=summary, changes=changes, risk_level=risk_level, generated_by=generated_by,
         )
 
     # ---- 回归保障评估（§11/§17.5）----
@@ -103,7 +107,7 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        summary, cases, generated_by = self._heuristic_regression(item, nf)
+        summary, cases, thresholds, generated_by = self._heuristic_regression(item, nf)
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
@@ -111,11 +115,13 @@ class ImprovementGovernorService:
                     self._build_regression_input(item, nf, feedbacks),
                     improvement_id,
                 )
-                summary, cases = self._map_regression(output, summary, cases)
+                summary, cases, thresholds = self._map_regression(output, summary, cases, thresholds)
                 generated_by = "governor"
             except Exception:  # noqa: BLE001
                 pass
-        return self._content.upsert_regression_assessment(improvement_id, summary=summary, cases=cases, generated_by=generated_by)
+        return self._content.upsert_regression_assessment(
+            improvement_id, summary=summary, cases=cases, suggested_gate_thresholds=thresholds, generated_by=generated_by,
+        )
 
     @staticmethod
     def _build_regression_input(item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
@@ -135,7 +141,7 @@ class ImprovementGovernorService:
         }
 
     @staticmethod
-    def _map_regression(output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem]) -> tuple[str, list[RegressionCaseItem]]:
+    def _map_regression(output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem], thresholds: dict[str, str]) -> tuple[str, list[RegressionCaseItem], dict[str, str]]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         eval_cases = d.get("eval_cases") or []
         mapped: list[RegressionCaseItem] = []
@@ -152,11 +158,13 @@ class ImprovementGovernorService:
                 expected_behavior=_text(c.get("expected_behavior")),
                 checkpoints=[str(x) for x in checkpoints][:6],
             ))
+        gt = d.get("suggested_gate_thresholds")
+        new_thresholds = {str(k): _text(v) for k, v in gt.items() if _text(v)} if isinstance(gt, dict) and gt else thresholds
         new_summary = (_text(d.get("no_action_reason")) or summary) if not mapped else f"治理 Agent 生成 {len(mapped)} 条回归用例候选。"
-        return new_summary, (mapped or cases)
+        return new_summary, (mapped or cases), new_thresholds
 
     @staticmethod
-    def _heuristic_regression(item: Any, nf: Any) -> tuple[str, list[RegressionCaseItem], str]:
+    def _heuristic_regression(item: Any, nf: Any) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
         title = getattr(item, "title", "") if item else ""
         problem = getattr(nf, "problem", "") if nf else title
         case = RegressionCaseItem(
@@ -164,7 +172,9 @@ class ImprovementGovernorService:
             expected_behavior=f"正确识别并避免重演：{problem}。",
             checkpoints=["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"],
         )
-        return "回归保障候选（启发式）：1 条复现用例。", [case], "heuristic"
+        # 发布门禁阈值：标准 SLA 默认（治理 Agent 可细化），非 mock。
+        thresholds = {"通过率": "≥95%", "新增严重问题": "0", "关键指标": "不劣于基线"}
+        return "回归保障候选（启发式）：1 条复现用例。", [case], thresholds, "heuristic"
 
     # ---- governor 调用 ----
     async def _run_governor(self, job_type: AgentJobType, job_input: JsonObject, improvement_id: str) -> FormatterOutputModel:
@@ -216,7 +226,15 @@ class ImprovementGovernorService:
 
     # ---- formatter 输出映射（agent-owned）----
     @staticmethod
-    def _map_attribution(output: FormatterOutputModel, summary: str, boundary: list[str], evidence: list[str]) -> tuple[str, list[str], list[str]]:
+    def _map_attribution(
+        output: FormatterOutputModel,
+        summary: str,
+        boundary: list[str],
+        evidence: list[str],
+        counter: list[str],
+        uncertainty: list[str],
+        verification: list[str],
+    ) -> tuple[str, list[str], list[str], list[str], list[str], list[str]]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         rationale = _text(d.get("rationale")) or summary
         confidence = _text(d.get("confidence"))
@@ -230,12 +248,16 @@ class ImprovementGovernorService:
             f"{_text(r.get('type'))}:{_text(r.get('id'))} — {_text(r.get('reason'))}".strip(" :—")
             for r in refs if isinstance(r, dict)
         ] or evidence
-        return new_summary, new_boundary, new_evidence
+        new_counter = [_text(x) for x in (d.get("counter_evidence") or []) if _text(x)] or counter
+        new_uncertainty = [_text(x) for x in (d.get("uncertainty_factors") or []) if _text(x)] or uncertainty
+        new_verification = [_text(x) for x in (d.get("verification_suggestions") or []) if _text(x)] or verification
+        return new_summary, new_boundary, new_evidence, new_counter, new_uncertainty, new_verification
 
     @staticmethod
-    def _map_plan(output: FormatterOutputModel, summary: str, changes: list[OptimizationChangeItem]) -> tuple[str, list[OptimizationChangeItem]]:
+    def _map_plan(output: FormatterOutputModel, summary: str, changes: list[OptimizationChangeItem], risk_level: str) -> tuple[str, list[OptimizationChangeItem], str]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         new_summary = _text(d.get("summary")) or _text(d.get("recommendation")) or summary
+        new_risk = _text(d.get("risk")) or risk_level
         tasks = d.get("tasks") or []
         mapped: list[OptimizationChangeItem] = []
         for t in tasks:
@@ -245,29 +267,35 @@ class ImprovementGovernorService:
             change = _text(t.get("recommendation")) or _text(t.get("summary")) or _text(t.get("title")) or _text(t.get("description"))
             if change:
                 mapped.append(OptimizationChangeItem(target=target, change=change))
-        return new_summary, (mapped or changes)
+        return new_summary, (mapped or changes), new_risk
 
     # ---- 确定性回退（与旧 /generate 同口径）----
     @staticmethod
-    def _heuristic_attribution(item: Any, nf: Any) -> tuple[str, list[str], list[str], str]:
+    def _heuristic_attribution(item: Any, nf: Any) -> tuple[str, list[str], list[str], list[str], list[str], list[str], str]:
         title = getattr(item, "title", "") if item else ""
+        obj = getattr(nf, "possible_object", "") if nf else ""
         if nf:
-            obj = getattr(nf, "possible_object", "") or "外部数据/工具"
             reason = getattr(nf, "possible_reason", "")
-            summary = f"可能与「{obj}」相关：{getattr(nf, 'problem', '')}" + (f"（{reason}）" if reason else "") + "。"
-            boundary = ["不是主 Agent 推理错误", f"主要可能在：{getattr(nf, 'possible_object', '') or '外部数据源 / 工具质量'}"]
+            summary = f"可能与「{obj or '外部数据/工具'}」相关：{getattr(nf, 'problem', '')}" + (f"（{reason}）" if reason else "") + "。"
+            boundary = ["不是主 Agent 推理错误", f"主要可能在：{obj or '外部数据源 / 工具质量'}"]
             quote = getattr(nf, "user_quote", "")
             evidence = [f"用户反馈：{quote}"] if quote else []
         else:
             summary = f"针对「{title}」的初步归因，待补充系统理解和证据。"
             boundary = ["归因对象待确认"]
             evidence = []
-        return summary, boundary, evidence, "heuristic"
+        # 反证/不确定性/验证建议：启发式给保守可执行的诚实默认（待治理 Agent 细化）。
+        counter: list[str] = []
+        uncertainty = [f"对「{obj or '归因对象'}」的判断缺少多场景复现验证"]
+        verification = ["补充关联 Run 的多场景回放，验证归因边界是否成立"]
+        return summary, boundary, evidence, counter, uncertainty, verification, "heuristic"
 
     @staticmethod
-    def _heuristic_plan(item: Any, nf: Any, attr: Any) -> tuple[str, list[OptimizationChangeItem], str]:
+    def _heuristic_plan(item: Any, nf: Any, attr: Any) -> tuple[str, list[OptimizationChangeItem], str, str]:
         title = getattr(item, "title", "") if item else ""
         base = getattr(attr, "summary", "") if attr else (getattr(nf, "suggestion", "") if nf else "")
         summary = f"针对「{title}」：{base or '补充校验/提示，避免重演该问题'}。"
         changes: list[OptimizationChangeItem] = [OptimizationChangeItem(target="prompt", change="补充对应校验与提示指令，避免重演该问题")]
-        return summary, changes, "heuristic"
+        # 风险级别：启发式按变更面估计（单点 prompt 补充=低）。
+        risk_level = "低" if len(changes) <= 1 else "中"
+        return summary, changes, risk_level, "heuristic"

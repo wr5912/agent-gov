@@ -104,6 +104,9 @@ class AttributionResponse(BaseModel):
     summary: str
     responsibility_boundary: list[str]
     evidence: list[str]
+    counter_evidence: list[str] = Field(default_factory=list, description="反证：与归因相悖的观察（agent-owned）。")
+    uncertainty_factors: list[str] = Field(default_factory=list, description="不确定性因素（agent-owned）。")
+    verification_suggestions: list[str] = Field(default_factory=list, description="验证建议（agent-owned）。")
     status: str
     generated_by: str = "heuristic"
     created_at: str
@@ -125,6 +128,7 @@ class OptimizationPlanResponse(BaseModel):
     improvement_id: str
     summary: str
     changes: list[OptimizationChange]
+    risk_level: str = Field(default="", description="方案风险级别（agent-owned，来自 formatter risk）。")
     status: str
     generated_by: str = "heuristic"
     created_at: str
@@ -148,6 +152,7 @@ class RegressionAssessmentResponse(BaseModel):
     improvement_id: str
     summary: str
     cases: list[RegressionCase]
+    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict, description="建议发布门禁阈值（agent-owned）。")
     status: str
     generated_by: str = "heuristic"
     created_at: str
@@ -160,6 +165,9 @@ class ExecutionResponse(BaseModel):
     summary: str
     changes_applied: list[str]
     agent_version: str
+    risk_level: str = Field(default="", description="执行风险级别（agent-owned）。")
+    rollback_strategy: str = Field(default="", description="回滚策略（agent-owned）。")
+    rollback_instructions: list[str] = Field(default_factory=list, description="回滚步骤（agent-owned）。")
     status: str
     generated_by: str = "heuristic"
     change_set_id: str = ""

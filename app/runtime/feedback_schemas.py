@@ -196,6 +196,9 @@ class AttributionFormatterOutput(NormalizedOutputRecord):
     responsibility_boundary: ResponsibilityBoundary
     rationale: str
     recommended_next_step: Literal["generate_proposal", "needs_human_review", "stop"] = "generate_proposal"
+    counter_evidence: list[str] = Field(default_factory=list)
+    uncertainty_factors: list[str] = Field(default_factory=list)
+    verification_suggestions: list[str] = Field(default_factory=list)
 
     @model_validator(mode="before")
     @classmethod
@@ -518,6 +521,7 @@ class GeneratedEvalCaseFormatterOutput(NormalizedOutputRecord):
 class FeedbackEvalCaseGenerationFormatterOutput(NormalizedOutputRecord):
     eval_cases: list[GeneratedEvalCaseFormatterOutput] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
+    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="before")
     @classmethod

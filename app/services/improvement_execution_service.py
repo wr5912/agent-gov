@@ -95,6 +95,9 @@ class ImprovementExecutionService:
             summary=str(data.get("summary") or "已应用优化方案并生成候选 Agent 版本（待 §12 发布门禁发布）。"),
             changes_applied=[self._op_label(op) for op in operations],
             agent_version=str(applied_version.get("agent_version_id") or ""),
+            risk_level=str(data.get("risk") or ""),
+            rollback_strategy="回滚到执行前基线 Agent 版本（一键覆盖候选）",
+            rollback_instructions=["放弃候选变更集 change_set", "恢复到执行前的 Agent 版本", "重新观测验证关键指标不劣于基线"],
             generated_by="governor",
             change_set_id=change_set_id,
             applied_agent_version_id=str(applied_version.get("agent_version_id") or ""),
@@ -152,5 +155,8 @@ class ImprovementExecutionService:
             summary=f"未自动应用：{detail}。",
             changes_applied=changes,
             agent_version="",
+            risk_level="",
+            rollback_strategy="未应用变更，无需回滚",
+            rollback_instructions=[],
             generated_by="heuristic",
         )

@@ -55,6 +55,8 @@ def _attr_response(r: AttributionRecord) -> AttributionResponse:
     return AttributionResponse(
         attribution_id=r.attribution_id, improvement_id=r.improvement_id, summary=r.summary,
         responsibility_boundary=list(r.responsibility_boundary), evidence=list(r.evidence),
+        counter_evidence=list(r.counter_evidence), uncertainty_factors=list(r.uncertainty_factors),
+        verification_suggestions=list(r.verification_suggestions),
         status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
@@ -63,6 +65,7 @@ def _opt_response(r: OptimizationPlanRecord) -> OptimizationPlanResponse:
     return OptimizationPlanResponse(
         optimization_plan_id=r.optimization_plan_id, improvement_id=r.improvement_id, summary=r.summary,
         changes=[OptimizationChange(target=c.get("target", ""), change=c.get("change", "")) for c in r.changes],
+        risk_level=r.risk_level,
         status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
@@ -71,6 +74,7 @@ def _reg_response(r: RegressionAssessmentRecord) -> RegressionAssessmentResponse
     return RegressionAssessmentResponse(
         regression_assessment_id=r.regression_assessment_id, improvement_id=r.improvement_id, summary=r.summary,
         cases=[RegressionCase(prompt=str(c.get("prompt", "")), expected_behavior=str(c.get("expected_behavior", "")), checkpoints=[str(x) for x in (c.get("checkpoints") or [])]) for c in r.cases],
+        suggested_gate_thresholds={str(k): str(v) for k, v in (r.suggested_gate_thresholds or {}).items()},
         status=r.status, generated_by=r.generated_by, created_at=r.created_at, updated_at=r.updated_at,
     )
 
@@ -79,6 +83,7 @@ def _exec_response(r: ExecutionRecord) -> ExecutionResponse:
     return ExecutionResponse(
         execution_id=r.execution_id, improvement_id=r.improvement_id, summary=r.summary,
         changes_applied=list(r.changes_applied), agent_version=r.agent_version,
+        risk_level=r.risk_level, rollback_strategy=r.rollback_strategy, rollback_instructions=list(r.rollback_instructions),
         status=r.status, generated_by=r.generated_by, change_set_id=r.change_set_id,
         applied_agent_version_id=r.applied_agent_version_id, applied_diff=dict(r.applied_diff),
         created_at=r.created_at, updated_at=r.updated_at,

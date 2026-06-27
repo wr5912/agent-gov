@@ -46,6 +46,9 @@ class AttributionRecord:
     updated_at: str = ""
     generated_by: str = "heuristic"
     extra: dict = field(default_factory=dict)
+    counter_evidence: list[str] = field(default_factory=list)
+    uncertainty_factors: list[str] = field(default_factory=list)
+    verification_suggestions: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,7 @@ class OptimizationPlanRecord:
     created_at: str
     updated_at: str = ""
     generated_by: str = "heuristic"
+    risk_level: str = ""
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ class RegressionAssessmentRecord:
     created_at: str
     updated_at: str = ""
     generated_by: str = "heuristic"
+    suggested_gate_thresholds: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -105,6 +110,9 @@ class ExecutionRecord:
     change_set_id: str = ""
     applied_agent_version_id: str = ""
     applied_diff: dict = field(default_factory=dict)
+    risk_level: str = ""
+    rollback_strategy: str = ""
+    rollback_instructions: list[str] = field(default_factory=list)
 
 
 class ImprovementContentStore:
@@ -238,7 +246,7 @@ class ImprovementContentStore:
             return _nf_record(row)
 
     # ---- Attribution（归因结果）----
-    def upsert_attribution(self, improvement_id: str, *, summary: str, responsibility_boundary: list[str] | None = None, evidence: list[str] | None = None, generated_by: str = "heuristic") -> AttributionRecord:
+    def upsert_attribution(self, improvement_id: str, *, summary: str, responsibility_boundary: list[str] | None = None, evidence: list[str] | None = None, counter_evidence: list[str] | None = None, uncertainty_factors: list[str] | None = None, verification_suggestions: list[str] | None = None, generated_by: str = "heuristic") -> AttributionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
@@ -248,6 +256,9 @@ class ImprovementContentStore:
             row.summary = summary
             row.responsibility_boundary_json = list(responsibility_boundary or [])
             row.evidence_json = list(evidence or [])
+            row.counter_evidence_json = list(counter_evidence or [])
+            row.uncertainty_factors_json = list(uncertainty_factors or [])
+            row.verification_suggestions_json = list(verification_suggestions or [])
             row.status = "draft"
             row.generated_by = generated_by
             row.updated_at = now
@@ -271,7 +282,7 @@ class ImprovementContentStore:
             return _attr_record(row)
 
     # ---- OptimizationPlan（优化方案，§106）----
-    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None, generated_by: str = "heuristic") -> OptimizationPlanRecord:
+    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None, risk_level: str = "", generated_by: str = "heuristic") -> OptimizationPlanRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
@@ -280,6 +291,7 @@ class ImprovementContentStore:
                 db.add(row)
             row.summary = summary
             row.changes_json = list(changes or [])
+            row.risk_level = risk_level
             row.status = "draft"
             row.generated_by = generated_by
             row.updated_at = now
@@ -314,6 +326,9 @@ class ImprovementContentStore:
         change_set_id: str = "",
         applied_agent_version_id: str = "",
         applied_diff: dict | None = None,
+        risk_level: str = "",
+        rollback_strategy: str = "",
+        rollback_instructions: list[str] | None = None,
     ) -> ExecutionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
@@ -329,6 +344,9 @@ class ImprovementContentStore:
             row.change_set_id = change_set_id
             row.applied_agent_version_id = applied_agent_version_id
             row.applied_diff_json = dict(applied_diff or {})
+            row.risk_level = risk_level
+            row.rollback_strategy = rollback_strategy
+            row.rollback_instructions_json = list(rollback_instructions or [])
             row.updated_at = now
             db.flush()
             return _exec_record(row)
@@ -350,7 +368,7 @@ class ImprovementContentStore:
             return _exec_record(row)
 
     # ---- RegressionAssessment（回归保障评估，§11/§17.5）----
-    def upsert_regression_assessment(self, improvement_id: str, *, summary: str, cases: list[dict] | None = None, generated_by: str = "heuristic") -> RegressionAssessmentRecord:
+    def upsert_regression_assessment(self, improvement_id: str, *, summary: str, cases: list[dict] | None = None, suggested_gate_thresholds: dict | None = None, generated_by: str = "heuristic") -> RegressionAssessmentRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
@@ -359,6 +377,7 @@ class ImprovementContentStore:
                 db.add(row)
             row.summary = summary
             row.cases_json = list(cases or [])
+            row.suggested_gate_thresholds_json = dict(suggested_gate_thresholds or {})
             row.status = "draft"
             row.generated_by = generated_by
             row.updated_at = now
@@ -388,6 +407,7 @@ def _reg_record(row: RegressionAssessmentModel) -> RegressionAssessmentRecord:
         improvement_id=row.improvement_id,
         summary=row.summary or "",
         cases=list(row.cases_json or []),
+        suggested_gate_thresholds=dict(row.suggested_gate_thresholds_json or {}),
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -401,6 +421,7 @@ def _opt_record(row: OptimizationPlanModel) -> OptimizationPlanRecord:
         improvement_id=row.improvement_id,
         summary=row.summary or "",
         changes=list(row.changes_json or []),
+        risk_level=row.risk_level or "",
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
@@ -422,6 +443,9 @@ def _exec_record(row: ExecutionRecordModel) -> ExecutionRecord:
         change_set_id=row.change_set_id or "",
         applied_agent_version_id=row.applied_agent_version_id or "",
         applied_diff=dict(row.applied_diff_json or {}),
+        risk_level=row.risk_level or "",
+        rollback_strategy=row.rollback_strategy or "",
+        rollback_instructions=list(row.rollback_instructions_json or []),
     )
 
 
@@ -448,6 +472,9 @@ def _attr_record(row: AttributionModel) -> AttributionRecord:
         summary=row.summary or "",
         responsibility_boundary=list(row.responsibility_boundary_json or []),
         evidence=list(row.evidence_json or []),
+        counter_evidence=list(row.counter_evidence_json or []),
+        uncertainty_factors=list(row.uncertainty_factors_json or []),
+        verification_suggestions=list(row.verification_suggestions_json or []),
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,

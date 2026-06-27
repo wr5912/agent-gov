@@ -47,12 +47,17 @@ class FeedbackBatchStoreMixin:
             refs_to_mark.append(ref)
         if not feedback_cases:
             return None
-        # AGV-025 误路由防护：一个优化批次只服务单个 Agent；混入跨 Agent 反馈直接拒绝，
-        # 避免 Agent A 的反馈污染 Agent B 的评估与版本治理。
+        # AGV-025 误路由防护：一个优化批次只服务单个 Agent。混入跨 Agent（>1）拒绝；无 agent 归属（0，
+        # 如仅 soc_event/pending 来源）也拒绝——不静默回退 main 掩盖未知归属（#25，no-masking）。
         if len(source_agent_ids) > 1:
             raise BusinessRuleViolation(
                 f"Cross-agent optimization batch rejected: feedback spans agents {sorted(source_agent_ids)};"
                 " create one batch per agent"
+            )
+        if not source_agent_ids:
+            raise BusinessRuleViolation(
+                "Optimization batch target business agent is undetermined: no source carries agent attribution;"
+                " feedback signals must carry agent_id (no silent main-agent fallback)"
             )
         now = utc_now()
         feedback_case_ids = self._unique_strings([item.get("feedback_case_id") for item in feedback_cases])
@@ -63,9 +68,8 @@ class FeedbackBatchStoreMixin:
             "created_at": now,
             "updated_at": now,
             "status": "draft",
-            # 批次只服务单个 Agent（上方误路由防护保证），归属用于下游 task/change set/eval 派生；
-            # 非 Agent 专属来源回退 main-agent。
-            "agent_id": next(iter(source_agent_ids), None) or "main-agent",
+            # 批次只服务单个 Agent（上方误路由防护保证恰好 1 个），归属用于下游 task/change set/eval 派生。
+            "agent_id": next(iter(source_agent_ids)),
             "title": title or f"反馈优化批次 {len(feedback_case_ids)} 条反馈",
             "priority": priority or "medium",
             "source_refs": refs,
@@ -111,7 +115,11 @@ class FeedbackBatchStoreMixin:
             return None
         now = utc_now()
         batch_id = f"fob-{uuid.uuid4()}"
-        single_case_agent_id = next((aid for ref in refs if (aid := self._source_agent_id(ref))), None) or "main-agent"
+        # #25：单 case 批次归属取自来源 signal 的 agent_id；无 agent 归属（仅 soc_event/pending）时不静默
+        # 回退 main，而是不自动建批（调用方按 None 跳过），等反馈补全 agent 归属后再优化。
+        single_case_agent_id = next((aid for ref in refs if (aid := self._source_agent_id(ref))), None)
+        if not single_case_agent_id:
+            return None
         payload = {
             "schema_version": "feedback-optimization-batch/v1",
             "batch_id": batch_id,

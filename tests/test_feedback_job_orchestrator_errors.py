@@ -21,7 +21,7 @@ from feedback_store_test_utils import (
 
 def _store(tmp_path) -> tuple[FeedbackStore, ClaudeRuntime]:
     settings = _settings(tmp_path)
-    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=settings.data_dir, agent_version_provider=lambda _aid=None: "main-v-test")
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), store)
     return store, runtime
 

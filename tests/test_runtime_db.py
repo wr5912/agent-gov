@@ -127,7 +127,7 @@ def test_runtime_db_migrates_generated_by_onto_existing_content_tables(tmp_path)
 
 
 def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):
-    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
 
     def create_signal(index: int) -> str:
         signal = store.create_signal(
@@ -148,7 +148,7 @@ def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):
 
 
 def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_path):
-    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
 
     def ingest_event(_: int) -> str:
         result = store.ingest_soc_event(
@@ -173,7 +173,7 @@ def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_pat
 
 
 def test_feedback_store_attribution_job_create_reuses_existing_under_concurrency(tmp_path):
-    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda: "main-v-test")
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
     store.record_run({"run_id": "run-1", "session_id": "session-1", "message": "并发归因"})
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["concurrency"]))
     feedback_case = store.create_case(source_ids=[signal["signal_id"]])

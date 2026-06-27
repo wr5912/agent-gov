@@ -233,6 +233,11 @@ async function main() {
 
     await page.getByTestId("add-feedback-to-improvement").click();
     await assertVisible(page, "add-feedback-select-step");
+    // Part B（132cbeb）：添加反馈默认进入「选择已有反馈」Tab；录入新反馈须先切到「录入新反馈」Tab，
+    // 否则 add-feedback-summary 等录入字段不在 DOM。改这里的步骤/testid 须同步 ImprovementAddFeedbackFlow.tsx。
+    await assertVisible(page, "add-feedback-existing");
+    await page.getByTestId("add-feedback-mode-new").click();
+    await assertVisible(page, "add-feedback-summary");
     await page.getByTestId("add-feedback-summary").fill("新增反馈：时间窗口仍然误判");
     await page.getByTestId("add-feedback-raw-text").fill("新的运行仍然没有核对事件时间和告警时间窗口。");
     await page.getByTestId("add-feedback-next-detail").click();

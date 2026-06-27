@@ -53,6 +53,21 @@ def test_user_agent_tombstone_delete_and_no_resurrect_on_restart(tmp_path) -> No
         store.delete_business_agent("BBB")
 
 
+def test_create_reuses_tombstoned_agent_id(tmp_path) -> None:
+    """#26：被 tombstone 删除的 user Agent id 可重新创建（清 tombstone、重置为 active user），id 不永久不可用。"""
+    store, profiles = _store_and_profiles(tmp_path)
+    store.sync_business_agents(profiles, seed_agent_ids=frozenset())  # AAA/BBB 都是 user
+    store.delete_business_agent("BBB")
+    assert store.get_agent("BBB") is None  # tombstone
+    rec = store.create_business_agent(name="BBB新建", agent_id="BBB", workspace_dir="/ws/bbb-new")
+    assert rec.agent_id == "BBB" and rec.origin == "user" and rec.status == "active"
+    again = store.get_agent("BBB")
+    assert again is not None and again.name == "BBB新建"  # 不再是 tombstone
+    # 活跃 id 重复仍拒绝
+    with pytest.raises(__import__("app.runtime.errors", fromlist=["ConflictError"]).ConflictError):
+        store.create_business_agent(name="重复", agent_id="BBB", workspace_dir="/ws/dup")
+
+
 def test_archived_status_not_reset_to_active_on_resync(tmp_path) -> None:
     """#26：删除前 archived 的治理意图不因 re-sync 被重置（sync 不动已存在行的 status）。"""
     store, profiles = _store_and_profiles(tmp_path)

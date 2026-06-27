@@ -79,14 +79,28 @@ class AgentRegistryStore:
             return _record(row) if row is not None and not row.deleted_at else None
 
     def create_business_agent(self, *, name: str, agent_id: str, workspace_dir: str) -> AgentRegistryRecord:
-        """注册一个业务 Agent 身份（被治理对象）。重复 agent_id 拒绝，空 name 拒绝。"""
+        """注册一个业务 Agent 身份（被治理对象）。活跃 agent_id 重复拒绝，空 name 拒绝。
+
+        #26：若该 agent_id 是被 tombstone 删除的旧行（deleted_at 非空），允许复用——清 tombstone
+        重置为新建的 user Agent，使删除后的 id 可重新创建（否则 id 永久不可用）。
+        """
         clean_name = name.strip()
         if not clean_name:
             raise BusinessRuleViolation("Business agent name cannot be empty")
         created_at = utc_now()
         with self._session_factory.begin() as db:
-            if db.get(AgentRegistryModel, agent_id) is not None:
-                raise ConflictError(f"Business agent already exists: {agent_id}")
+            existing = db.get(AgentRegistryModel, agent_id)
+            if existing is not None:
+                if not existing.deleted_at:
+                    raise ConflictError(f"Business agent already exists: {agent_id}")
+                existing.deleted_at = None
+                existing.name = clean_name
+                existing.category = "business"
+                existing.workspace_dir = workspace_dir
+                existing.origin = "user"
+                existing.status = "active"
+                existing.created_at = created_at
+                return _record(existing)
             db.add(
                 AgentRegistryModel(
                     agent_id=agent_id,

@@ -107,6 +107,26 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
     return discovered
 
 
+def seed_business_agent_ids() -> frozenset[str]:
+    """声明式 seed 预置业务 Agent 的 agent_id 集合——docker/runtime-volume-seeds/data/business-agents/<id>/workspace。
+
+    用于区分 seed（声明式基线，禁删）与用户创建（可 tombstone 删除）的业务 Agent（#26）。
+    seed 目录是「出生配置」声明源，与运行卷的活配置无关（卷配置被反馈优化闭环修改、不可覆盖）。
+    """
+    seed_root = Path(__file__).resolve().parents[2] / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
+    if not seed_root.is_dir():
+        return frozenset()
+    ids: set[str] = set()
+    for child in sorted(seed_root.iterdir()):
+        if not child.is_dir() or not (child / "workspace").is_dir():
+            continue
+        try:
+            ids.add(validate_agent_id(child.name))
+        except InvalidAgentId:
+            continue
+    return frozenset(ids)
+
+
 def candidate_profile(
     settings: AppSettings, *, agent_id: str, workspace_dir: Path, candidate_id: str
 ) -> AgentRuntimeProfile:

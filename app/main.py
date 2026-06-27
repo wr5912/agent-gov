@@ -31,7 +31,7 @@ from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents
+from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
@@ -129,7 +129,8 @@ async def lifespan(_: FastAPI):
     profiles = build_profiles(settings)
     for profile in discover_seeded_business_agents(settings):
         profiles.setdefault(profile.name, profile)
-    agent_registry_store.sync_business_agents(profiles)
+    # #26：以 seed 目录为准标 origin（seed 声明式基线禁删 / user 可 tombstone 删除）；sync 跳过 tombstone 不复活。
+    agent_registry_store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
     logger.info(
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),

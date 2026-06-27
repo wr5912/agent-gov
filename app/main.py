@@ -69,7 +69,7 @@ agent_version_store = GitAgentVersionStore(
 feedback_store = FeedbackStore(
     data_dir=settings.data_dir,
     workspace_dir=settings.main_workspace_dir,
-    agent_version_provider=agent_version_store.current_version_id,
+    agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（依赖 agent_governance._store_for）。
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
@@ -82,6 +82,16 @@ agent_governance = AgentGovernanceService(
 agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 # 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
+
+
+# #24-C/D：单一 per-agent 版本解析器——复用 agent_governance._store_for 缓存按 agent_id 路由到各业务 Agent
+# 自己的 GitAgentVersionStore（repository_dir=该 Agent workspace）。FeedbackStore 版本 stamping 与
+# ClaudeRuntime 运行版本归属共用它，杜绝非 main Agent 的版本/基线/执行门落到 main 库（issue #24 C/D）。
+def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
+    return agent_governance._store_for(agent_id or "main-agent").current_version_id()
+
+
+feedback_store.agent_version_provider = _resolve_agent_version_id
 scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
 improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))

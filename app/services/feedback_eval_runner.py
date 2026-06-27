@@ -9,7 +9,8 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import ChatRequest, ChatResponse, EvalRunResponse
 
 RunChat = Callable[[ChatRequest], Awaitable[ChatResponse]]
-RunCandidateChat = Callable[[ChatRequest, Path, str, str], Awaitable[ChatResponse]]
+# #24-A：候选回归带 agent_id（被治理的真实业务 Agent），使候选 profile/归属落到该 Agent 而非 main。
+RunCandidateChat = Callable[[ChatRequest, Path, str, str, str], Awaitable[ChatResponse]]
 
 
 class FeedbackEvalRunner:
@@ -157,7 +158,9 @@ class FeedbackEvalRunner:
         candidate_worktree_path: Optional[str],
     ) -> ChatResponse:
         if change_set_id and candidate_commit_sha and candidate_worktree_path and self.run_candidate_chat:
-            return await self.run_candidate_chat(request, Path(candidate_worktree_path), candidate_commit_sha, change_set_id)
+            # #24-A：复用 eval_run 归属的同一解析器（change_set.agent_id 单一真相），把候选回归归属到该业务 Agent。
+            agent_id = self.feedback_store._resolve_eval_run_agent_id(change_set_id)
+            return await self.run_candidate_chat(request, Path(candidate_worktree_path), candidate_commit_sha, change_set_id, agent_id)
         return await self.run_chat(request)
 
     def _selected_eval_cases(self, eval_case_ids: Optional[list[str]]) -> list[JsonObject]:

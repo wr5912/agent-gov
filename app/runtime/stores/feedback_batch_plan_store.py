@@ -135,6 +135,8 @@ class FeedbackBatchPlanStoreMixin:
         job_id: str,
         instruction: str | None,
     ) -> JsonObject:
+        # #24-B/D：优化方案 grounding 的版本/仓库路径/target policy 同源于批次归属业务 Agent 的库。
+        agent_id = self._string(batch.get("agent_id")) or "main-agent"
         payload = {
             "schema_version": "feedback-optimization-plan-input/v1",
             "job_id": job_id,
@@ -145,10 +147,10 @@ class FeedbackBatchPlanStoreMixin:
             "attribution_job_ids": self._unique_strings([self._string(item.get("_job_id") or item.get("attribution_job_id")) or "" for item in attributions]),
             "attribution_outputs": attributions,
             "eval_cases": [case for case in (self.find_eval_case(str(eval_case_id)) for eval_case_id in batch.get("eval_case_ids") or []) if case],
-            "main_agent_version_id": self._current_agent_version_id(),
-            **self._agent_git_paths_context(),
+            "main_agent_version_id": self._current_agent_version_id(agent_id),
+            **self._agent_git_paths_context(agent_id),
             "allowed_target_paths": ["<any-managed-main-workspace-relative-file>"],
-            "target_policy": self._execution_target_policy(),
+            "target_policy": self._execution_target_policy(agent_id),
             "task": "generate_feedback_optimization_plan",
         }
         if instruction:

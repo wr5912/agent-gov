@@ -42,7 +42,7 @@ class FeedbackEvidenceStoreMixin:
 
         evidence_id = f"evp-{uuid.uuid4()}"
         context = self._collect_evidence_context(feedback_case)
-        main_agent_version: JsonObject = {"main_agent_version_id": self._current_agent_version_id(), "captured_at": utc_now()}
+        main_agent_version: JsonObject = {"main_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)), "captured_at": utc_now()}
         redaction_report: JsonObject = {
             "enabled": not self.enable_debug_evidence,
             "policy": "debug-evidence-raw-v1" if self.enable_debug_evidence else "security-redaction-v1",

@@ -69,7 +69,7 @@ class FeedbackJobStoreMixin:
                 "evidence_package": evidence_package,
                 "evidence_files": evidence_files,
                 "langfuse_trace_details": evidence_files.get("langfuse_trace_details.json") or self._langfuse_trace_details_for_evidence(evidence_package),
-                "main_agent_version_id": self._current_agent_version_id(),
+                "main_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)),
                 "task": "analyze_feedback_attribution",
             }
             try:

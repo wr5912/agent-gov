@@ -48,7 +48,8 @@ class FeedbackExecutionStoreMixin:
             if existing and existing.get("status") in {"queued", "running", "completed", "needs_human_review"}:
                 return with_reused_existing(existing)
         job_id = f"fbe-{uuid.uuid4()}"
-        baseline_version_id = self._string(task.get("baseline_agent_version_id")) or self._current_agent_version_id()
+        agent_id = self._string(task.get("agent_id")) or "main-agent"
+        baseline_version_id = self._string(task.get("baseline_agent_version_id")) or self._current_agent_version_id(agent_id)
         input_payload = self._execution_job_input_payload(
             job_id=job_id,
             task_id=task_id,
@@ -56,6 +57,7 @@ class FeedbackExecutionStoreMixin:
             proposal=proposal,
             target_paths=target_paths,
             baseline_version_id=baseline_version_id,
+            agent_id=agent_id,
         )
         try:
             spec = agent_job_spec("execution")
@@ -121,21 +123,23 @@ class FeedbackExecutionStoreMixin:
         proposal: JsonObject,
         target_paths: list[str],
         baseline_version_id: Optional[str],
+        agent_id: str = "main-agent",
     ) -> JsonObject:
         return {
             "schema_version": "execution-input/v1",
             "execution_job_id": job_id,
+            "agent_id": agent_id,
             "optimization_task_id": task_id,
             "feedback_case_id": task.get("feedback_case_id"),
             "proposal_id": task.get("proposal_id"),
             "proposal": proposal,
             "target_paths": target_paths,
             "allowed_target_paths": target_paths,
-            "target_policy": self._execution_target_policy(),
-            "target_file_contexts": self._execution_target_file_contexts(target_paths),
+            "target_policy": self._execution_target_policy(agent_id),
+            "target_file_contexts": self._execution_target_file_contexts(target_paths, agent_id),
             "baseline_agent_version_id": baseline_version_id,
-            "current_agent_version_id": self._current_agent_version_id(),
-            **self._agent_git_paths_context(),
+            "current_agent_version_id": self._current_agent_version_id(agent_id),
+            **self._agent_git_paths_context(agent_id),
             "task": "generate_controlled_execution_plan",
         }
 
@@ -556,6 +560,7 @@ class FeedbackExecutionStoreMixin:
         sanitized["optimization_task_id"] = job["optimization_task_id"]
         sanitized["baseline_agent_version_id"] = job.get("baseline_agent_version_id")
         input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
+        agent_id = self._string(input_json.get("agent_id")) or "main-agent"  # #24-B：sha 回退也按归属 Agent
         target_paths = set(str(path) for path in input_json.get("target_paths") or [])
         target_contexts = {str(item.get("path")): item for item in input_json.get("target_file_contexts") or [] if isinstance(item, dict) and item.get("path")}
         operations = []
@@ -572,7 +577,7 @@ class FeedbackExecutionStoreMixin:
             op = self._string(operation.get("operation"))
             if op not in {"append_text", "replace_file", "create_file", "noop"}:
                 return None, f"operation is not supported: {op or '-'}"
-            context = target_contexts.get(path) or self._execution_target_file_context(path)
+            context = target_contexts.get(path) or self._execution_target_file_context(path, agent_id)
             skipped_reason = self._string(context.get("skipped_reason")) if isinstance(context, dict) else None
             if op != "noop":
                 if skipped_reason:
@@ -594,7 +599,7 @@ class FeedbackExecutionStoreMixin:
                 return None, f"create_file target already exists: {path}"
             operations.append(operation)
         sanitized["operations"] = operations
-        sanitized["planned_diff"] = self._build_execution_planned_diff(operations, target_contexts)
+        sanitized["planned_diff"] = self._build_execution_planned_diff(operations, target_contexts, agent_id)
         if sanitized.get("status") == "ready" and not operations:
             return None, "ready execution plan has no operations"
         return sanitized, None
@@ -603,6 +608,7 @@ class FeedbackExecutionStoreMixin:
         self,
         operations: list[JsonObject],
         target_contexts: dict[str, JsonObject],
+        agent_id: str = "main-agent",
     ) -> JsonObject:
         files: list[JsonObject] = []
         counts = {
@@ -613,7 +619,7 @@ class FeedbackExecutionStoreMixin:
             "noop": 0,
         }
         for operation in operations:
-            entry = self._build_execution_planned_diff_entry(operation, target_contexts)
+            entry = self._build_execution_planned_diff_entry(operation, target_contexts, agent_id)
             files.append(entry)
             status = self._string(entry.get("status"))
             if status in counts:
@@ -628,10 +634,11 @@ class FeedbackExecutionStoreMixin:
         self,
         operation: JsonObject,
         target_contexts: dict[str, JsonObject],
+        agent_id: str = "main-agent",
     ) -> JsonObject:
         op = self._string(operation.get("operation")) or "operation"
         path = self._string(operation.get("path")) or "-"
-        context = target_contexts.get(path) or self._execution_target_file_context(path)
+        context = target_contexts.get(path) or self._execution_target_file_context(path, agent_id)
         before_text = context.get("content_text") if isinstance(context.get("content_text"), str) else ""
         before_bytes = before_text.encode("utf-8")
         after_text = before_text

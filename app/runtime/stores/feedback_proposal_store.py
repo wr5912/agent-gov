@@ -39,7 +39,8 @@ class FeedbackProposalStoreMixin:
                     "proposal_job_id": job["job_id"],
                     "status": "pending_review",
                     "actionability": actionability,
-                    "base_agent_version_id": self._current_agent_version_id(),
+                    # #24-D：proposal 基线版本同源于归属业务 Agent 自己的库（task 继承此基线，使执行版本门同库比较）。
+                    "base_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=job["feedback_case_id"])),
                 }
             )
         if not normalized["proposals"] and not normalized["external_guidance"]:

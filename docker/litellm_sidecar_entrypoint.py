@@ -80,6 +80,12 @@ def main() -> None:
         ],
         "litellm_settings": {
             "drop_params": True,
+            # Claude Code 经 Anthropic /v1/messages 接入；litellm 默认把 OpenAI 类 provider 的
+            # /v1/messages 路由到上游 Responses API(/v1/responses)，绕过 vLLM 的 --tool-call-parser，
+            # 导致工具调用以文本泄漏、第 2 轮回放上游 /v1/responses 报 400（litellm 官方已知，见
+            # anthropic_messages handler 注释）。强制走 /v1/chat/completions——解析器在该端点生效，
+            # 多轮正常；模型无关（任意带正确 vLLM tool parser 的模型都适用，无需逐模型适配）。
+            "use_chat_completions_url_for_anthropic_messages": True,
         },
         "general_settings": {
             "health_check_details": False,

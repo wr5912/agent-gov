@@ -51,6 +51,7 @@ import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
 import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
 import { ImprovementStagePanels } from "./ImprovementStagePanels";
+import { StageDetailDrawer, type StageDetail } from "./StageDetailDrawer";
 import { ImprovementSourceManagementDrawer } from "./ImprovementSourceManagementDrawer";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
@@ -66,6 +67,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [newAgentId, setNewAgentId] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
+  const [detail, setDetail] = useState<StageDetail | null>(null);
   const [contextType, setContextType] = useState<ContextType>("problem");
   const [statusFilter, setStatusFilter] = useState("all");
   const [automationMode, setAutomationMode] = useState("off");
@@ -579,7 +581,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onGenerateRegression={() => handleGenerateRegression(selected)}
               onAdoptTestDataset={() => handleAdoptRegression(selected)}
               onOpenContext={() => setContextOpen(true)}
+              onOpenDetail={setDetail}
             />
+            {detail ? <StageDetailDrawer detail={detail} onClose={() => setDetail(null)} /> : null}
 
             {sourceDrawerOpen ? (
               <ImprovementSourceManagementDrawer

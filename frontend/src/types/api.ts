@@ -3137,6 +3137,11 @@ export interface components {
         AttributionResponse: {
             /** Attribution Id */
             attribution_id: string;
+            /**
+             * Counter Evidence
+             * @description 反证：与归因相悖的观察（agent-owned）。
+             */
+            counter_evidence?: string[];
             /** Created At */
             created_at: string;
             /** Evidence */
@@ -3154,8 +3159,18 @@ export interface components {
             status: string;
             /** Summary */
             summary: string;
+            /**
+             * Uncertainty Factors
+             * @description 不确定性因素（agent-owned）。
+             */
+            uncertainty_factors?: string[];
             /** Updated At */
             updated_at: string;
+            /**
+             * Verification Suggestions
+             * @description 验证建议（agent-owned）。
+             */
+            verification_suggestions?: string[];
         };
         /** AttributionUpsertRequest */
         AttributionUpsertRequest: {
@@ -3912,6 +3927,23 @@ export interface components {
             generated_by: string;
             /** Improvement Id */
             improvement_id: string;
+            /**
+             * Risk Level
+             * @description 执行风险级别（agent-owned）。
+             * @default
+             */
+            risk_level: string;
+            /**
+             * Rollback Instructions
+             * @description 回滚步骤（agent-owned）。
+             */
+            rollback_instructions?: string[];
+            /**
+             * Rollback Strategy
+             * @description 回滚策略（agent-owned）。
+             * @default
+             */
+            rollback_strategy: string;
             /** Status */
             status: string;
             /** Summary */
@@ -5801,6 +5833,12 @@ export interface components {
             improvement_id: string;
             /** Optimization Plan Id */
             optimization_plan_id: string;
+            /**
+             * Risk Level
+             * @description 方案风险级别（agent-owned，来自 formatter risk）。
+             * @default
+             */
+            risk_level: string;
             /** Status */
             status: string;
             /** Summary */
@@ -5986,6 +6024,13 @@ export interface components {
             regression_assessment_id: string;
             /** Status */
             status: string;
+            /**
+             * Suggested Gate Thresholds
+             * @description 建议发布门禁阈值（agent-owned）。
+             */
+            suggested_gate_thresholds?: {
+                [key: string]: string;
+            };
             /** Summary */
             summary: string;
             /** Updated At */

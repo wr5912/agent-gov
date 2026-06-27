@@ -14,7 +14,6 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
-from .schema_self_heal import sync_missing_columns
 from .runtime_db_migrations import (
     migrate_0005_agent_governance,
     migrate_0006_remove_agent_job_output_contract_column,
@@ -30,8 +29,9 @@ from .runtime_db_migrations import (
     migrate_0016_execution_application_binding,
     migrate_0017_regression_assessments,
     migrate_0018_agent_registry_origin_tombstone,
+    migrate_0019_improvement_detail_columns,
 )
-
+from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
@@ -619,6 +619,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0016_execution_application_binding", migrate_0016_execution_application_binding),
         ("0017_regression_assessments", migrate_0017_regression_assessments),
         ("0018_agent_registry_origin_tombstone", migrate_0018_agent_registry_origin_tombstone),
+        ("0019_improvement_detail_columns", migrate_0019_improvement_detail_columns),
     ):
         if version in applied:
             continue

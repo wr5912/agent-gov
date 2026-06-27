@@ -131,9 +131,8 @@ async function main() {
       // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（v2.7 W3 修订，资产复利为第三支柱）。
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
-      // App 挂载默认自动选中首个业务 Agent，会把资产视图限定到单 Agent，从而看不到跨 Agent 继承结果。
-      // 全程切到「全部业务 Agent」作用域（topbar option value=""），使创建/继承/追溯都在同一可见视图内、无 refresh 竞态。
-      await page.getByTestId("topbar-agent-switcher").selectOption("");
+      // Playground 的顶栏运行 Agent 必须是具体对象；资产页用自己的范围筛选查看跨 Agent 资产。
+      await page.getByTestId("asset-scope-filter").selectOption("");
       await page.getByTestId("asset-browser-toolbar").waitFor({ timeout: 15000 });
       if (await page.getByTestId("asset-create-title").isVisible().catch(() => false)) throw new Error("asset create form should not be visible before opening drawer");
       const initialCount = await page.getByTestId("asset-item").count();
@@ -141,6 +140,7 @@ async function main() {
       // 沉淀一个方法论资产。
       await page.getByTestId("asset-create-open").click();
       await page.getByTestId("asset-create-drawer").waitFor({ timeout: 15000 });
+      if (REAL) await page.getByTestId("asset-create-agent").selectOption("main-agent");
       await page.getByTestId("asset-create-type").selectOption("methodology");
       await page.getByTestId("asset-create-title").fill(assetTitle);
       await page.getByTestId("asset-create-submit").click();

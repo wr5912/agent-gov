@@ -32,11 +32,11 @@ from .output_formatter import DSPyOutputFormatter
 from .runtime_activity import RuntimeActivityExtractor
 from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
+from .sdk_session_errors import is_missing_sdk_session_error
 from .session_store import LocalSession, LocalSessionStore
 from .settings import AppSettings
 from .stores.feedback_store import FeedbackStore
 
-_MISSING_SDK_SESSION_MARKER = "No conversation found with session ID"
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
@@ -173,7 +173,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             and context.session.sdk_session_id is not None
             and not state.messages
             and not state.errors
-            and _MISSING_SDK_SESSION_MARKER in str(exc)
+            and is_missing_sdk_session_error(exc)
         )
 
     def _clear_stale_sdk_session(self, context: RuntimeRequestContext) -> None:

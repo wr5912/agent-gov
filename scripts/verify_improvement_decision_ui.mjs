@@ -2,8 +2,10 @@
 // 改进事项开发者决策型 UI 验收：当前待决策、来源反馈唯一入口、添加反馈三步确认。
 // 默认起 Vite + mock API；设置 RUNTIME_UI_BASE/RUNTIME_API_BASE 时使用真实容器 UI/API。
 import { spawn } from "node:child_process";
+import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
-import { mkdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import process from "node:process";
 
 const require = createRequire(new URL("../frontend/package.json", import.meta.url));
@@ -15,7 +17,7 @@ const REAL = Boolean(process.env.RUNTIME_UI_BASE);
 const port = Number(process.env.IMPROVEMENT_DECISION_PORT || 55208);
 const uiBase = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
 const apiBase = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
-const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || "/tmp/agent-gov-ui-verify";
+const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agent-gov-ui-verify-"));
 
 function dockerEnvValue(name) {
   try {
@@ -219,7 +221,7 @@ async function main() {
     if (primaryCount !== 1) throw new Error(`current-decision-card primary action count=${primaryCount}`);
 
     mkdirSync(screenshotDir, { recursive: true });
-    await page.screenshot({ path: `${screenshotDir}/${REAL ? "real" : "mock"}-improvement-decision.png`, fullPage: true });
+    await page.screenshot({ path: join(screenshotDir, `${REAL ? "real" : "mock"}-improvement-decision.png`), fullPage: true });
 
     const hiddenTable = await page.getByTestId("source-feedback-table").isVisible().catch(() => false);
     if (hiddenTable) throw new Error("source feedback table should be hidden before opening source drawer");
@@ -245,7 +247,7 @@ async function main() {
     await page.getByTestId("add-feedback-next-confirm").click();
     await assertVisible(page, "add-feedback-confirm-step");
     await assertVisible(page, "add-feedback-consequence");
-    await page.screenshot({ path: `${screenshotDir}/${REAL ? "real" : "mock"}-add-feedback-confirm.png`, fullPage: true });
+    await page.screenshot({ path: join(screenshotDir, `${REAL ? "real" : "mock"}-add-feedback-confirm.png`), fullPage: true });
     await page.getByTestId("add-feedback-confirm-submit").click();
     await page.getByTestId("add-feedback-flow").waitFor({ state: "detached", timeout: 10_000 });
     await assertVisible(page, "source-management-drawer");

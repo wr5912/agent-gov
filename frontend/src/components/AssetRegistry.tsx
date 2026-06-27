@@ -32,22 +32,36 @@ export function AssetRegistry({
   const [typeFilter, setTypeFilter] = useState("all");
   const [sourceFilter, setSourceFilter] = useState("");
   const [inheritTarget, setInheritTarget] = useState<Record<string, string>>({});
+  const [assetScopeAgentId, setAssetScopeAgentId] = useState("");
+  const [newAgentId, setNewAgentId] = useState("");
 
-  // 沉淀资产的归属 Agent：优先顶栏所选，否则回退首个业务 Agent。businessAgents 整体为空（registry
-  // 拉取失败 / 零 Agent / 挂载竞态）时为空 → 提交按钮据此禁用并给空态提示，避免点「沉淀」静默无操作。
+  useEffect(() => {
+    const agentIds = new Set(businessAgents.map((agent) => agent.agent_id));
+    if (!agentIds.size) {
+      setNewAgentId("");
+      return;
+    }
+    setNewAgentId((current) => {
+      if (current && agentIds.has(current)) return current;
+      return assetScopeAgentId || scopeAgentId || businessAgents[0]?.agent_id || "";
+    });
+  }, [assetScopeAgentId, businessAgents, scopeAgentId]);
+
+  // 沉淀资产必须有明确归属 Agent。businessAgents 整体为空（registry 拉取失败 / 零 Agent / 挂载竞态）
+  // 时为空 → 提交按钮据此禁用并给空态提示，避免点「沉淀」静默无操作。
   const resolvedAgentId = useMemo(
-    () => scopeAgentId || businessAgents[0]?.agent_id || "",
-    [scopeAgentId, businessAgents],
+    () => newAgentId || "",
+    [newAgentId],
   );
 
   const refresh = useCallback(async () => {
     setError(undefined);
     try {
-      setAssets(await listAssets(clientConfig, { agentId: scopeAgentId || undefined }));
+      setAssets(await listAssets(clientConfig, { agentId: assetScopeAgentId || undefined }));
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [clientConfig, scopeAgentId]);
+  }, [assetScopeAgentId, clientConfig]);
 
   useEffect(() => {
     void refresh();
@@ -98,7 +112,7 @@ export function AssetRegistry({
     <div className="improvement-workbench" data-testid="asset-registry" style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
       <section className="iw-detail-panel">
         <div className="iw-panel-head">
-          <h3>资产 Registry 复利中心{scopeAgentId ? ` · ${agentName(scopeAgentId)}` : "（全部业务 Agent）"}</h3>
+          <h3>资产 Registry 复利中心{assetScopeAgentId ? ` · ${agentName(assetScopeAgentId)}` : "（全部业务 Agent）"}</h3>
           <div className="iw-action-row">
             <button className="iw-secondary-button" type="button" disabled={busy} onClick={() => void refresh()}>刷新</button>
             <button className="iw-primary-button" type="button" data-testid="asset-create-open" onClick={() => setCreateOpen(true)}>沉淀新资产</button>
@@ -110,6 +124,12 @@ export function AssetRegistry({
           <div className="iw-detail-section asset-browser-toolbar" data-testid="asset-browser-toolbar">
             <h4>浏览与追溯</h4>
             <div className="iw-automation-row">
+              <select className="iw-select select-inline" data-testid="asset-scope-filter" value={assetScopeAgentId} onChange={(e) => setAssetScopeAgentId(e.target.value)}>
+                <option value="">全部业务 Agent</option>
+                {businessAgents.map((agent) => (
+                  <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
+                ))}
+              </select>
               <select className="iw-select select-inline" data-testid="asset-type-filter" value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}>
                 <option value="all">全部类型</option>
                 <option value="test_dataset">测试数据集</option>
@@ -180,6 +200,11 @@ export function AssetRegistry({
           bodyClassName="feedback-drawer-body"
           onClose={() => setCreateOpen(false)}
         >
+          <select className="iw-select" data-testid="asset-create-agent" value={newAgentId} disabled={busy || businessAgents.length === 0} onChange={(e) => setNewAgentId(e.target.value)}>
+            {businessAgents.map((agent) => (
+              <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
+            ))}
+          </select>
           <select className="iw-select" data-testid="asset-create-type" value={newType} disabled={busy} onChange={(e) => setNewType(e.target.value)}>
             <option value="test_dataset">测试数据集</option>
             <option value="methodology">方法论</option>
@@ -190,7 +215,7 @@ export function AssetRegistry({
           <input className="iw-input" data-testid="asset-create-title" placeholder="资产标题" value={newTitle} disabled={busy} onChange={(e) => setNewTitle(e.target.value)} />
           <textarea className="iw-input" data-testid="asset-create-body" style={{ minHeight: 120 }} placeholder="资产正文（方法论步骤 / 回归用例 / 执行脚本 / 审计说明）" value={newBody} disabled={busy} onChange={(e) => setNewBody(e.target.value)} />
           {!resolvedAgentId ? (
-            <div className="iw-empty" data-testid="asset-create-no-agent">请先在顶栏创建或等待业务 Agent 加载后再沉淀资产。</div>
+            <div className="iw-empty" data-testid="asset-create-no-agent">请先创建或等待业务 Agent 加载后再沉淀资产。</div>
           ) : null}
           <div className="feedback-drawer-actions">
             <button className="secondary-button" type="button" onClick={() => setCreateOpen(false)}>取消</button>

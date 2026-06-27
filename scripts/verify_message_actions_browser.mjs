@@ -4,7 +4,9 @@
 // 真实模式：设置 RUNTIME_UI_BASE + RUNTIME_API_BASE 后连真实容器 UI/API，跑真实 LLM 对话。
 import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { scrollNavigationMetrics } from "./playground_scroll_test_helpers.mjs";
@@ -32,6 +34,7 @@ const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/
 const api = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
 const key = process.env.RUNTIME_API_KEY || envv("FRONTEND_RUNTIME_API_KEY") || envv("API_KEY") || "";
 const RETRIES = Number(process.env.RETRIES || 3);
+const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agentgov-message-actions-"));
 
 function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
@@ -434,7 +437,7 @@ async function main() {
             && autoPanelChecks.autoBottomAfterSend
           ));
         detail = JSON.stringify({ counts, drawerChecks });
-        if (ok) await page.screenshot({ path: "/tmp/agentgov-v27-ui-after-message-actions.png" });
+        if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-v27-ui-after-message-actions.png") });
       } catch (e) {
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;
         console.error("retry:", detail);

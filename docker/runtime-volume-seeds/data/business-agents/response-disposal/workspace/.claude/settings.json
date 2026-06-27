@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Read(./**)",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Bash(jq *)",
+      "Bash(cat templates/**)",
+      "Write(/data/outputs/**)",
+      "mcp__sec-ops-data__*",
+      "mcp__soc-ops-query__*",
+      "mcp__soc-playbook-query__*",
+      "mcp__soc-playbook-execution-result-query__*",
+      "mcp__soc-playbook-execution__*",
+      "mcp__soc-playbook-registry__*"
+    ],
+    "ask": [
+      "Bash(*)",
+      "Edit(./**)",
+      "Write(./**)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/data/business-agents/response-disposal/claude-root/.claude.json)",
+      "Read(/data/business-agents/response-disposal/claude-root/.claude/projects/**)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(:(){ :|:& };:*)",
+      "Bash(curl *|sh*)",
+      "Bash(wget *|sh*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "检查响应处置动作风险"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/post_tool_audit.py\"",
+            "async": true,
+            "timeout": 10,
+            "statusMessage": "记录处置工具调用审计摘要"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/session_start.py\"",
+            "timeout": 5,
+            "statusMessage": "加载响应处置会话提示"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": {
+      "allowWrite": [
+        "/data/outputs",
+        "/data/transcripts",
+        "./"
+      ],
+      "denyRead": [
+        "./.env",
+        "./secrets",
+        "/data/business-agents/response-disposal/claude-root/.claude.json"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "${SERVICE_HOST}",
+        "${INTERNAL_DOMAIN}"
+      ],
+      "deniedDomains": []
+    }
+  },
+  "skillOverrides": {
+    "threat-response-disposition": "user-invocable-only"
+  },
+  "spinnerTipsOverride": {
+    "excludeDefault": false,
+    "tips": [
+      "响应处置先查实 SOC 能力，再规划、再预演。",
+      "高危处置动作需四要素：证据、审批、先 dry-run、回滚方案。",
+      "执行完成不等于效果达成，必须做效果评估。"
+    ]
+  },
+  "includeGitInstructions": false
+}

@@ -1,9 +1,10 @@
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
+from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.stores.improvement_content_store import ImprovementContentStore
 
 
 def test_runtime_db_reuses_engine_for_same_path(tmp_path):
@@ -21,9 +22,8 @@ def test_concurrent_schema_init_no_table_exists_race(tmp_path):
     用多个独立 engine（绕过进程内 engine 缓存）模拟跨进程并发；``_schema_init_lock`` 文件锁应串行化，
     否则并发 ``create_all`` 会触发 sqlite TOCTOU 竞态。
     """
-    from sqlalchemy import create_engine
-
     from app.runtime.runtime_db import _schema_init_lock, ensure_schema
+    from sqlalchemy import create_engine
 
     db_path = tmp_path / "runtime.sqlite3"
     errors: list[Exception] = []
@@ -124,6 +124,64 @@ def test_runtime_db_migrates_generated_by_onto_existing_content_tables(tmp_path)
 
     assert "generated_by" in attr_cols and "generated_by" in opt_cols
     assert attr_val == "heuristic" and opt_val == "heuristic"
+
+
+def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_path):
+    """0019：旧四阶段详情表缺新增列时，启动迁移后 API/store 写入不得 no such column。"""
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE attributions (attribution_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, responsibility_boundary_json JSON, evidence_json JSON, status VARCHAR(32), "
+            "generated_by VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute(
+            "CREATE TABLE optimization_plans (optimization_plan_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, changes_json JSON, status VARCHAR(32), generated_by VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute(
+            "CREATE TABLE execution_records (execution_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, changes_applied_json JSON, agent_version VARCHAR(128), status VARCHAR(32), generated_by VARCHAR(32), "
+            "change_set_id VARCHAR(128), applied_agent_version_id VARCHAR(128), applied_diff_json JSON, created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute(
+            "CREATE TABLE regression_assessments (regression_assessment_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "summary TEXT, cases_json JSON, status VARCHAR(32), generated_by VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+
+    factory = make_session_factory(db_path)
+    content = ImprovementContentStore(factory)
+    content.upsert_attribution(
+        "imp-0019",
+        summary="归因",
+        counter_evidence=["反证"],
+        uncertainty_factors=["不确定性"],
+        verification_suggestions=["核验"],
+    )
+    content.upsert_optimization_plan("imp-0019", summary="方案", risk_level="medium")
+    content.upsert_execution(
+        "imp-0019",
+        summary="执行",
+        risk_level="high",
+        rollback_strategy="回滚策略",
+        rollback_instructions=["恢复版本"],
+    )
+    content.upsert_regression_assessment("imp-0019", summary="回归", suggested_gate_thresholds={"pass_rate": 1.0})
+
+    with factory.kw["bind"].connect() as connection:
+        cols = {
+            table: {str(r[1]) for r in connection.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()}
+            for table in ("attributions", "optimization_plans", "execution_records", "regression_assessments")
+        }
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0019_improvement_detail_columns'"
+        ).fetchone()
+
+    assert {"counter_evidence_json", "uncertainty_factors_json", "verification_suggestions_json"} <= cols["attributions"]
+    assert "risk_level" in cols["optimization_plans"]
+    assert {"risk_level", "rollback_strategy", "rollback_instructions_json"} <= cols["execution_records"]
+    assert "suggested_gate_thresholds_json" in cols["regression_assessments"]
+    assert migration is not None
 
 
 def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):

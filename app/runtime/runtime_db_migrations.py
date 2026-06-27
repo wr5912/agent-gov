@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sqlalchemy.engine import Connection
 
-
 AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT = (
     "job_id",
     "job_type",
@@ -315,3 +314,31 @@ def migrate_0018_agent_registry_origin_tombstone(connection: Connection) -> None
     if "deleted_at" not in columns:
         connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN deleted_at VARCHAR(64)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_registry_origin ON agent_registry (origin)")
+
+
+def migrate_0019_improvement_detail_columns(connection: Connection) -> None:
+    """四阶段详情表补齐 UI/API 新增字段，避免旧运行卷在归因/方案/执行/回归写入时缺列 500。"""
+    for table, columns_to_add in {
+        "attributions": {
+            "counter_evidence_json": "JSON",
+            "uncertainty_factors_json": "JSON",
+            "verification_suggestions_json": "JSON",
+        },
+        "optimization_plans": {
+            "risk_level": "VARCHAR(32) DEFAULT ''",
+        },
+        "execution_records": {
+            "risk_level": "VARCHAR(32) DEFAULT ''",
+            "rollback_strategy": "TEXT DEFAULT ''",
+            "rollback_instructions_json": "JSON",
+        },
+        "regression_assessments": {
+            "suggested_gate_thresholds_json": "JSON",
+        },
+    }.items():
+        existing_columns = _table_columns(connection, table)
+        if not existing_columns:
+            continue
+        for column_name, ddl in columns_to_add.items():
+            if column_name not in existing_columns:
+                connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}")

@@ -70,6 +70,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [detail, setDetail] = useState<StageDetail | null>(null);
   const [contextType, setContextType] = useState<ContextType>("problem");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [workbenchScopeAgentId, setWorkbenchScopeAgentId] = useState(scopeAgentId);
   const [automationMode, setAutomationMode] = useState("off");
   const [lastAuto, setLastAuto] = useState<AutoAdvanceResult | undefined>();
   const [similar, setSimilar] = useState<ImprovementSimilarItem[]>([]);
@@ -95,20 +96,21 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     try {
       const [agents, list] = await Promise.all([
         requestJson<BusinessAgent[]>(clientConfig, "/api/agent-registry"),
-        listImprovements(clientConfig, scopeAgentId || undefined),
+        listImprovements(clientConfig, workbenchScopeAgentId || undefined),
       ]);
       setBusinessAgents(agents);
       setItems(list);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
-  }, [clientConfig, scopeAgentId]);
+  }, [clientConfig, workbenchScopeAgentId]);
 
   useEffect(() => {
     void refresh();
   }, [refresh]);
 
   useEffect(() => {
+    setWorkbenchScopeAgentId(scopeAgentId);
     if (scopeAgentId) setNewAgentId(scopeAgentId);
   }, [scopeAgentId]);
 
@@ -450,8 +452,13 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
         </div>
         <div className="iw-scope-row" data-testid="improvement-scope-label">
           <span>范围</span>
-          <strong>{scopeAgentId ? agentName(scopeAgentId) : "全部业务 Agent"}</strong>
-          <span className="iw-scope-hint">（顶栏「业务 Agent」切换）</span>
+          <select className="iw-select select-inline" data-testid="improvement-scope-filter" value={workbenchScopeAgentId} onChange={(e) => setWorkbenchScopeAgentId(e.target.value)}>
+            <option value="">全部业务 Agent</option>
+            {businessAgents.map((agent) => (
+              <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
+            ))}
+          </select>
+          <strong>{workbenchScopeAgentId ? agentName(workbenchScopeAgentId) : "全部业务 Agent"}</strong>
         </div>
         <div className="iw-status-filter" data-testid="status-filter">
           <button className={`iw-filter-pill ${statusFilter === "all" ? "active" : ""}`} type="button" data-testid="status-filter-all" onClick={() => setStatusFilter("all")}>全部 {items.length}</button>

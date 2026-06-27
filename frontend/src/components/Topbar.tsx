@@ -44,9 +44,9 @@ export function Topbar({
             data-testid="topbar-agent-switcher"
             value={selectedBusinessAgentId}
             onChange={(e) => onSelectBusinessAgent(e.target.value)}
-            title="切换当前业务 Agent；改进治理与对话按此 Agent 归属"
+            title="切换当前运行业务 Agent"
           >
-            <option value="">全部业务 Agent</option>
+            <option value="" disabled>请选择业务 Agent</option>
             {businessAgents.map((agent) => (
               <option key={agent.agent_id} value={agent.agent_id}>{agent.name}</option>
             ))}

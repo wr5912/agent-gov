@@ -31,7 +31,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -157,6 +157,10 @@ codex-guard:
 
 sync-version:
 	@v=$$(cat VERSION); sed -i '0,/"version":/s/"version": *"[^"]*"/"version": "'$$v'"/' frontend/package.json; echo "synced frontend/package.json -> $$v"
+
+# 发布点打 tag：从单一真相源 VERSION 创建 v<VERSION> 并推 origin；已存在则拒绝（提示先 bump）。
+tag:
+	@v=$$(cat VERSION); if git rev-parse "v$$v" >/dev/null 2>&1; then echo "tag v$$v 已存在（发布点请先 bump VERSION）"; exit 1; fi; git tag -a "v$$v" -m "release v$$v" && git push origin "v$$v" && echo "tagged + pushed v$$v"
 
 ruff-check:
 	$(PYTHON_RUN) -m ruff check $(PYTHON_TYPECHECK_TARGETS)

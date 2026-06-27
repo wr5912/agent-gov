@@ -50,6 +50,13 @@
 - 旧债处理策略：治理输出 `BASELINE` 表示既有超限未增长、不阻断；`FAIL` 表示新增超限或旧债增长、阻断。旧债清单只放普通 docs 或 issue，不得作为治理放行豁免。
 - CI workflow：`.github/workflows/governance.yml`（PR 及 `main`/`master` push 上运行治理硬门与测试）。
 
+## 版本与 tag 纪律
+
+- VERSION（仓库根）是版本唯一真相源：`app/version.py` 的 `APP_VERSION`、`frontend/package.json` version、docker-compose 镜像 tag 都派生它；`scripts/check_version_consistency.py` 守一致性（"HEAD 若打 v* tag 必须 == v+VERSION" 硬断言 + "VERSION 领先最新 tag" 软告警）。
+- 不在每个功能 commit 频繁 bump VERSION：版本号只在「发布点 / 里程碑收口」升一次，避免并行分支与多 Agent 各自 bump 造成版本 churn 与 tag 漂移。
+- 升版即打 tag、保持一致：bump VERSION 并发布时用 `make tag`（从 VERSION 打 `v<VERSION>` 并推 origin）创建匹配 tag；不得让 VERSION 长期领先 origin 最新 release tag。
+- Agent 行为：Claude/Codex 默认不主动 bump VERSION、不主动创建/推送 tag（属人工发布决策）；任务确需改版本先确认是否到发布点；发现 VERSION 已领先最新 tag（一致性门软告警）时提示用户用 `make tag` 补，不擅自补打。
+
 ## 配置与环境边界
 
 - 环境变量文件：私有 `docker/.env`（容器部署）、`docker/.env.local-debug`（宿主机 Python/PyCharm 调试）、`frontend/.env.local`（Vite 本机前端）；可提交示例 `docker/.env.example`。不要把这些文件关系描述成“覆盖”，用“选择 env 文件 / 私有 env 文件 / 本机调试 env 文件”。

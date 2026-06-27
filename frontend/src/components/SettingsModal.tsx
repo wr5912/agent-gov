@@ -330,17 +330,18 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                     ) : agents.map((agent) => {
                       const isMain = agent.agent_id === "main-agent"; // F4：样板基线不可删除/生命周期固定
                       const isArchived = agent.status === "archived"; // F3：归档为终态，禁止再转移
+                      const isSeed = agent.origin === "seed"; // #26：seed 声明式基线禁删（去 seed 源移除）
                       return (
                       <div className="settings-agent-row" data-testid="settings-agent-item" key={agent.agent_id}>
                         <div className="settings-agent-main">
-                          <strong>{agent.name}{isMain ? <em className="settings-agent-badge"> · 样板基线</em> : null}</strong>
+                          <strong>{agent.name}{isMain ? <em className="settings-agent-badge"> · 样板基线</em> : isSeed ? <em className="settings-agent-badge"> · 声明基线</em> : null}</strong>
                           <span>{agent.agent_id}</span>
                         </div>
                         <code title={agent.workspace_dir || "-"}>{agent.workspace_dir || "-"}</code>
                         <select className="select" data-testid="settings-agent-lifecycle" aria-label={`${agent.name} 生命周期`} aria-busy={pending === `lifecycle:${agent.agent_id}`} value={agent.status} disabled={busy || isMain || isArchived} title={isMain ? "样板基线生命周期固定" : isArchived ? "已归档为终态" : undefined} onChange={(e) => handleLifecycle(agent.agent_id, e.target.value)}>
                           {LIFECYCLE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                         </select>
-                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isMain} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
+                        <button className="secondary-button settings-danger-button" type="button" data-testid="settings-agent-delete" disabled={busy || isSeed} aria-busy={pending === `delete:${agent.agent_id}`} title={isMain ? "样板基线不可删除" : isSeed ? "seed 声明式基线不可删除，去 seed 源移除" : undefined} onClick={() => handleDelete(agent.agent_id)}>
                           {pending === `delete:${agent.agent_id}` ? <><Loader2 size={14} className="settings-spin" />删除中…</> : <><Trash2 size={14} />删除</>}
                         </button>
                       </div>

@@ -31,6 +31,7 @@ class AgentSummaryResponse(BaseModel):
     workspace_dir: str
     created_at: str
     status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
+    origin: str = Field(default="user", description="来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。")
 
 
 class AssetProvenanceTask(BaseModel):

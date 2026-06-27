@@ -2899,6 +2899,12 @@ export interface components {
             /** Name */
             name: string;
             /**
+             * Origin
+             * @description 来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。
+             * @default user
+             */
+            origin: string;
+            /**
              * Status
              * @description 生命周期状态：draft/active/evaluating/deprecated/archived。
              * @default active

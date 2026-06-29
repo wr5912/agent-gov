@@ -58,6 +58,7 @@
 - [AgentGov目标达成分阶段执行计划](./engineering/AgentGov目标达成分阶段执行计划.md)：`docs/engineering/AgentGov目标达成分阶段执行计划.md`
 - [治理 Agent 合并为单一 Governor 设计](./engineering/Governor合并设计.md)：`docs/engineering/Governor合并设计.md`
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
+- [Claude 原生业务Agent人类确认机制整改实现方案](./engineering/Claude原生业务Agent人类确认机制整改实现方案.md)：`docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md`
 
 ## 评审与复盘
 

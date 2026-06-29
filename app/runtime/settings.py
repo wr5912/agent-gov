@@ -153,7 +153,7 @@ class AppSettings(BaseSettings):
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
-    host_port: int = Field(default=58080, alias="HOST_PORT")
+    host_port: int = Field(default=48080, alias="HOST_PORT")
     log_level: str = Field(default="info", alias="LOG_LEVEL")
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
@@ -194,6 +194,7 @@ class AppSettings(BaseSettings):
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")
 
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
+    enable_claude_web_hitl: bool = Field(default=False, alias="ENABLE_CLAUDE_WEB_HITL")
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
     dspy_output_formatter_model: Optional[str] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_MODEL")
@@ -409,6 +410,7 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "model_provider_vllm_allow_direct": settings.model_provider_vllm_allow_direct,
         "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
         "provider_api_url_configured": bool(settings.provider_api_url),
+        "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
         "api_host": settings.api_host,
         "api_port": settings.api_port,
         "workspace_dir": settings.workspace_dir.as_posix(),

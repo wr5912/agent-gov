@@ -1,7 +1,7 @@
 import { Loader2, MessageSquarePlus, PanelLeftClose, PanelLeftOpen, Send, Settings2, Square } from "lucide-react";
 import { PlaygroundMessageScrollNavigator } from "./PlaygroundMessageScrollNavigator";
 import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation";
-import type { ChatMessage } from "../types/runtime";
+import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
 // v2.7 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
@@ -22,6 +22,9 @@ interface ChatPanelProps {
   onOpenTrace: (message: ChatMessage) => void;
   onGetContext: (message: ChatMessage) => void;
   onRerun: (message: ChatMessage) => void;
+  userInputErrors: Record<string, string>;
+  submittingUserInputRequests: Set<string>;
+  onSubmitUserInput: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">) => void;
 }
 
 export function ChatPanel({
@@ -41,6 +44,9 @@ export function ChatPanel({
   onOpenTrace,
   onGetContext,
   onRerun,
+  userInputErrors,
+  submittingUserInputRequests,
+  onSubmitUserInput,
 }: ChatPanelProps) {
   const {
     containerRef,
@@ -107,6 +113,9 @@ export function ChatPanel({
                 onOpenTrace={onOpenTrace}
                 onGetContext={onGetContext}
                 onRerun={onRerun}
+                userInputErrors={userInputErrors}
+                submittingUserInputRequests={submittingUserInputRequests}
+                onSubmitUserInput={onSubmitUserInput}
               />
             ))
           )}
@@ -122,6 +131,7 @@ export function ChatPanel({
 
       <footer className="composer">
         <textarea
+          data-testid="chat-composer-input"
           value={input}
           onChange={(e) => onInputChange(e.target.value)}
           onKeyDown={(e) => {
@@ -134,9 +144,9 @@ export function ChatPanel({
         />
         <div className="composer-actions">
           {streaming ? (
-            <button className="secondary-button" onClick={onStop}><Square size={15} /> 停止</button>
+            <button className="secondary-button" data-testid="chat-stop" onClick={onStop}><Square size={15} /> 停止</button>
           ) : (
-            <button className="primary-button" onClick={onSend} disabled={!input.trim()}><Send size={15} /> 发送</button>
+            <button className="primary-button" data-testid="chat-send" onClick={onSend} disabled={!input.trim()}><Send size={15} /> 发送</button>
           )}
         </div>
       </footer>

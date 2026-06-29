@@ -14,6 +14,7 @@ from app.routers.assets import create_assets_router
 from app.routers.automation import create_automation_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
+from app.routers.claude_user_input import create_claude_user_input_router
 from app.routers.config import create_config_router
 from app.routers.core import create_core_router
 from app.routers.error_handlers import register_error_handlers
@@ -40,11 +41,13 @@ from app.runtime.settings import get_settings, runtime_settings_log_message
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
+from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
+from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.services.agent_governance import AgentGovernanceService
 from app.services.execution_application import ExecutionApplicationService
 from app.services.improvement_execution_service import ImprovementExecutionService
@@ -73,13 +76,16 @@ feedback_store = FeedbackStore(
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
 )
-runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
+runtime_db_session_factory = make_session_factory(runtime_db_path_from_data_dir(settings.data_dir))
+claude_user_input_store = ClaudeUserInputStore(runtime_db_session_factory)
+claude_user_input_service = ClaudeUserInputService(claude_user_input_store)
+runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store, user_input_service=claude_user_input_service)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 agent_governance = AgentGovernanceService(
     feedback_store=feedback_store,
     agent_version_store=agent_version_store,
 )
-agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
 # 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
 
@@ -92,17 +98,17 @@ def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
 
 
 feedback_store.agent_version_provider = _resolve_agent_version_id
-scenario_pack_store = ScenarioPackStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
-improvement_store = ImprovementStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
-improvement_content_store = ImprovementContentStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+scenario_pack_store = ScenarioPackStore(runtime_db_session_factory)
+improvement_store = ImprovementStore(runtime_db_session_factory)
+improvement_content_store = ImprovementContentStore(runtime_db_session_factory)
 improvement_governor_service = ImprovementGovernorService(
     improvement_store=improvement_store,
     content_store=improvement_content_store,
     run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
 )
-automation_policy_store = AutomationPolicyStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
-asset_store = AssetStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
-runtime_settings_store = RuntimeSettingsStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
+automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)
+asset_store = AssetStore(runtime_db_session_factory)
+runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
 execution_application = ExecutionApplicationService(
     settings=settings,
     feedback_store=feedback_store,
@@ -123,6 +129,9 @@ api_key_credentials = Security(bearer_auth)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
+    cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
+    if cancelled:
+        logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
     agent_version_store.ensure_bootstrap()
     # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
     # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
@@ -189,6 +198,7 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
+app.include_router(create_claude_user_input_router(service=claude_user_input_service, require_api_key=require_api_key))
 app.include_router(create_config_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
 app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))

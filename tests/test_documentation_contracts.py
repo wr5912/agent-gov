@@ -89,8 +89,8 @@ def test_readme_env_model_uses_single_file_modes_and_local_langfuse():
         "启动日志会打印 `log_level`、`runtime_volume_mode`",
         "`provider_api_key_configured`",
         "LANGFUSE_BASE_URL=http://langfuse-web:3000",
-        "LANGFUSE_NEXTAUTH_URL=http://localhost:53000",
-        "FRONTEND_LANGFUSE_URL=http://localhost:53000",
+        "LANGFUSE_NEXTAUTH_URL=http://localhost:43000",
+        "FRONTEND_LANGFUSE_URL=http://localhost:43000",
     ]
     for phrase in current_phrases:
         assert phrase in readme

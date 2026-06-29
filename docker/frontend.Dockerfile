@@ -14,8 +14,8 @@ RUN corepack enable \
 COPY frontend/ ./
 
 ENV FRONTEND_PORT=5173
-ENV VITE_RUNTIME_API_BASE=http://localhost:58080
-ENV VITE_LANGFUSE_URL=http://localhost:53000
+ENV VITE_RUNTIME_API_BASE=http://localhost:48080
+ENV VITE_LANGFUSE_URL=http://localhost:43000
 ENV VITE_DEV_PROXY_TARGET=http://claude-agent-api:8080
 EXPOSE 5173
 

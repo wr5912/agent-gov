@@ -5,7 +5,7 @@
 //
 // 双模式：
 //   - 默认：自己起 vite + mock 后端，验证「结构性」设计规则（确定性，可进 CI / coverage_policy）。
-//   - 验收：设 RUNTIME_UI_BASE（如真实容器 http://127.0.0.1:55173）+ RUNTIME_API_BASE 直连真实 UI/API。
+//   - 验收：设 RUNTIME_UI_BASE（如真实容器 http://127.0.0.1:45173）+ RUNTIME_API_BASE 直连真实 UI/API。
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";

@@ -31,7 +31,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-hitl-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -66,7 +66,7 @@ ui-logs:
 
 ui-smoke:
 	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-55173}}; \
+	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-45173}}; \
 	i=1; \
 	while [ $$i -le 30 ]; do \
 		if curl -fsS "$$frontend_url" >/dev/null; then \
@@ -101,6 +101,9 @@ runtime-bootstrap:
 
 runtime-repair-managed-config:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --repair-managed-config
+
+runtime-reconcile-business-agent-hitl-policy:
+	$(PYTHON_RUN) scripts/reconcile_business_agent_hitl_policy.py --apply
 
 runtime-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --runtime-artifacts
@@ -138,14 +141,14 @@ runtime-volume-seeds-restore-list:
 smoke:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-48080}}; \
 	curl -s "$$api_base/health" | $(PYTHON_RUN) -m json.tool
 
 chat:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_key=$${API_KEY:-$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-48080}}; \
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \

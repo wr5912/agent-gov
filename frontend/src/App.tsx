@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
@@ -11,8 +11,9 @@ import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawe
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
 import { useLocalStorage } from "./hooks/useLocalStorage";
+import { claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
 import { messagesFromAgentRuns } from "./playgroundHistory";
-import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
 
@@ -46,7 +47,7 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 function defaultLangfuseUrl(): string {
-  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
+  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:43000").trim();
   let parsed: URL | null = null;
   try {
     parsed = new URL(configured);
@@ -58,7 +59,7 @@ function defaultLangfuseUrl(): string {
   // 配置仍是本机/缺省地址：按当前浏览器访问的 host 派生，使远端用户跳转到可达的 Langfuse 地址（端口沿用配置值）。
   if (typeof window !== "undefined" && window.location?.hostname) {
     const protocol = window.location.protocol === "https:" ? "https" : "http";
-    const port = parsed?.port || "53000";
+    const port = parsed?.port || "43000";
     return `${protocol}://${window.location.hostname}${port ? `:${port}` : ""}`;
   }
   return configured;
@@ -106,6 +107,8 @@ export default function App() {
   const [streaming, setStreaming] = useState(false);
   const [streamingAssistantMessageId, setStreamingAssistantMessageId] = useState<string | undefined>();
   const [streamEvents, setStreamEvents] = useState<StreamLogEvent[]>([]);
+  const [userInputErrors, setUserInputErrors] = useState<Record<string, string>>({});
+  const [submittingUserInputRequests, setSubmittingUserInputRequests] = useState<Set<string>>(() => new Set());
   const [lastError, setLastError] = useState<string | undefined>();
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
@@ -120,6 +123,7 @@ export default function App() {
   const [feedbackContext, setFeedbackContext] = useState<FeedbackContext | null>(null);
 
   const abortRef = useRef<AbortController | null>(null);
+  const decisionTokensRef = useRef<Record<string, string>>({});
   const shouldMigrateLegacyApiBase = isLegacyDockerApiBase(clientConfig.apiBase) && !isLegacyDockerApiBase(runtimeDefaults.apiBase);
   const migratedClientConfig = useMemo<RuntimeClientConfig>(() => {
     if (!shouldMigrateLegacyApiBase) return clientConfig;
@@ -192,11 +196,10 @@ export default function App() {
       setConfigMapping(configRes);
       setBusinessAgents(businessAgentsRes);
       // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。
-      if (!selectedBusinessAgentId && businessAgentsRes.length) {
-        setSelectedBusinessAgentId(
-          businessAgentsRes.find((a) => a.agent_id === "main-agent")?.agent_id || businessAgentsRes[0].agent_id,
-        );
-      }
+      setSelectedBusinessAgentId((current) => {
+        if (current && businessAgentsRes.some((agent) => agent.agent_id === current)) return current;
+        return businessAgentsRes.find((agent) => agent.agent_id === "main-agent")?.agent_id || businessAgentsRes[0]?.agent_id || "";
+      });
       if (!activeSessionId && sessionsRes[0]?.session_id) {
         setActiveSessionId(sessionsRes[0].session_id);
       }
@@ -274,6 +277,63 @@ export default function App() {
       ...prev,
       [sessionId]: updater(prev[sessionId] || []),
     }));
+  }
+
+  function updateUserInputRequest(requestId: string, patch: Partial<ClaudeUserInputRequest>) {
+    setMessagesBySession((prev) => {
+      const next: Record<string, ChatMessage[]> = {};
+      for (const [sessionId, messages] of Object.entries(prev)) {
+        next[sessionId] = messages.map((message) => (
+          message.userInputRequests?.some((request) => request.request_id === requestId)
+            ? { ...message, userInputRequests: patchUserInputRequest(message.userInputRequests, requestId, patch) }
+            : message
+        ));
+      }
+      return next;
+    });
+  }
+
+  async function submitUserInputDecision(
+    request: ClaudeUserInputRequest,
+    input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">,
+  ) {
+    const token = decisionTokensRef.current[request.request_id];
+    if (!token) {
+      setUserInputErrors((prev) => ({ ...prev, [request.request_id]: "当前确认已失效，请重新运行本轮任务。" }));
+      return;
+    }
+    setUserInputErrors((prev) => {
+      const next = { ...prev };
+      delete next[request.request_id];
+      return next;
+    });
+    setSubmittingUserInputRequests((prev) => new Set(prev).add(request.request_id));
+    try {
+      const result = await submitClaudeUserInputDecision(effectiveClientConfig, request.request_id, {
+        ...input,
+        decision_token: token,
+        run_id: request.run_id,
+        session_id: request.session_id,
+        business_agent_id: request.business_agent_id,
+      });
+      delete decisionTokensRef.current[request.request_id];
+      updateUserInputRequest(request.request_id, {
+        status: result.status,
+        decision: result.decision,
+        resolved_at: result.resolved_at || new Date().toISOString(),
+      });
+    } catch (error) {
+      setUserInputErrors((prev) => ({
+        ...prev,
+        [request.request_id]: error instanceof Error ? error.message : String(error),
+      }));
+    } finally {
+      setSubmittingUserInputRequests((prev) => {
+        const next = new Set(prev);
+        next.delete(request.request_id);
+        return next;
+      });
+    }
   }
 
   function createSession() {
@@ -402,10 +462,44 @@ export default function App() {
               id: newId("evt"),
               event: envelope.event,
               text: messageTextFromEnvelope(envelope),
-              data: envelope.data,
+              data: sanitizedEnvelopeData(envelope),
               createdAt: new Date().toISOString(),
             };
             appendAssistantEvent(event);
+            if (envelope.event === "claude_user_input_required") {
+              const request = claudeUserInputRequestFromData(envelope.data);
+              if (request) {
+                if (request.decision_token) decisionTokensRef.current[request.request_id] = request.decision_token;
+                setUserInputErrors((prev) => {
+                  const next = { ...prev };
+                  delete next[request.request_id];
+                  return next;
+                });
+                updateSessionMessages(sessionId, (prev) => {
+                  const next = [...prev];
+                  const last = next[next.length - 1];
+                  if (last?.role === "assistant") {
+                    const safeRequest = { ...request, decision_token: undefined };
+                    next[next.length - 1] = {
+                      ...last,
+                      userInputRequests: mergeUserInputRequest(last.userInputRequests, safeRequest),
+                    };
+                  }
+                  return next;
+                });
+              }
+            }
+            if (envelope.event === "claude_user_input_resolved" && isRecord(envelope.data)) {
+              const requestId = stringValue(envelope.data.request_id);
+              if (requestId) {
+                delete decisionTokensRef.current[requestId];
+                updateUserInputRequest(requestId, {
+                  status: envelope.data.status === "cancelled" ? "cancelled" : "resolved",
+                  decision: nullableString(envelope.data.decision),
+                  resolved_at: nullableString(envelope.data.resolved_at) || new Date().toISOString(),
+                });
+              }
+            }
           },
           onText: (text) => {
             updateSessionMessages(sessionId, (prev) => {
@@ -461,6 +555,7 @@ export default function App() {
           onDone: () => {
             setStreaming(false);
             abortRef.current = null;
+            setSubmittingUserInputRequests(new Set());
             refresh();
           },
         },
@@ -624,6 +719,9 @@ export default function App() {
             onOpenTrace={openTracePanel}
             onGetContext={getContextForMessage}
             onRerun={rerunMessage}
+            userInputErrors={userInputErrors}
+            submittingUserInputRequests={submittingUserInputRequests}
+            onSubmitUserInput={submitUserInputDecision}
           />
           {evidencePanelOpen ? (
             <PlaygroundEvidencePanel

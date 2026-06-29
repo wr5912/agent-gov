@@ -24,6 +24,8 @@ import type {
   AgentRepositorySnapshotRequest,
   AgentRepositoryStatus,
   ChatRequest,
+  ClaudeUserInputDecisionPayload,
+  ClaudeUserInputDecisionResponse,
   ConfigMappingResponse,
   EvalRunResponse,
   OpenAICompatAgentConfig,
@@ -248,6 +250,18 @@ export function restoreAgentRelease(config: RuntimeClientConfig, releaseId: stri
   return requestJson<AgentReleaseRestoreResponse>(
     config,
     `/api/agent-releases/${encodeURIComponent(releaseId)}/restore`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function submitClaudeUserInputDecision(config: RuntimeClientConfig, requestId: string, payload: ClaudeUserInputDecisionPayload) {
+  return requestJson<ClaudeUserInputDecisionResponse>(
+    config,
+    `/api/claude-user-input-requests/${encodeURIComponent(requestId)}/decision`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

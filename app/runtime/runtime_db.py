@@ -30,6 +30,7 @@ from .runtime_db_migrations import (
     migrate_0017_regression_assessments,
     migrate_0018_agent_registry_origin_tombstone,
     migrate_0019_improvement_detail_columns,
+    migrate_0020_claude_user_input_requests,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -43,6 +44,9 @@ def utc_now() -> str:
 
 class Base(DeclarativeBase):
     pass
+
+
+from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
 
 
 class SchemaMigration(Base):
@@ -620,6 +624,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0017_regression_assessments", migrate_0017_regression_assessments),
         ("0018_agent_registry_origin_tombstone", migrate_0018_agent_registry_origin_tombstone),
         ("0019_improvement_detail_columns", migrate_0019_improvement_detail_columns),
+        ("0020_claude_user_input_requests", migrate_0020_claude_user_input_requests),
     ):
         if version in applied:
             continue

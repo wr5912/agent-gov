@@ -1,10 +1,15 @@
 import type { RuntimeClientConfig } from "../types/runtime";
 
-const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:58080";
+const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:48080";
 const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
-const LEGACY_DOCKER_API_BASES = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
+const LEGACY_DOCKER_API_BASES = new Set([
+  "http://localhost:58080",
+  "http://127.0.0.1:58080",
+  "http://localhost:48080",
+  "http://127.0.0.1:48080",
+]);
 
 export type RuntimeRequestInit = RequestInit & {
   timeoutMs?: number;
@@ -12,13 +17,32 @@ export type RuntimeRequestInit = RequestInit & {
 
 export function defaultRuntimeConfig(): RuntimeClientConfig {
   return {
-    apiBase: DEFAULT_API_BASE,
+    apiBase: resolveRuntimeApiBase(DEFAULT_API_BASE),
     apiKey: DEFAULT_API_KEY,
   };
 }
 
+export function resolveRuntimeApiBase(configuredBase: string): string {
+  const normalized = normalizeBase(configuredBase || "http://localhost:48080");
+  if (typeof window === "undefined" || !window.location?.hostname) return normalized;
+  if (isLoopbackHost(window.location.hostname)) return normalized;
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return normalized;
+  }
+  if (!isLoopbackHost(parsed.hostname)) return normalized;
+  parsed.hostname = window.location.hostname;
+  return normalizeBase(parsed.toString());
+}
+
 export function normalizeBase(apiBase: string): string {
   return apiBase.trim().replace(/\/$/, "");
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1";
 }
 
 export function isLegacyDockerApiBase(apiBase: string): boolean {

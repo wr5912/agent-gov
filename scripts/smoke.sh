@@ -10,7 +10,7 @@ env_value() {
 
 HOST_PORT=${HOST_PORT:-$(env_value HOST_PORT)}
 API_BASE=${API_BASE:-$(env_value API_BASE)}
-API_BASE=${API_BASE:-http://localhost:${HOST_PORT:-58080}}
+API_BASE=${API_BASE:-http://localhost:${HOST_PORT:-48080}}
 API_KEY=${API_KEY:-$(env_value API_KEY)}
 API_KEY=${API_KEY:-change-me}
 PYTHON=${PYTHON:-$ROOT_DIR/.venv/bin/python}

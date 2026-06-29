@@ -141,6 +141,7 @@ class RuntimeHealthResponse(ExtensibleResponse):
     provider_api_url_configured: bool
     provider_api_key_configured: bool
     model_provider_route: JsonObject = Field(default_factory=dict)
+    claude_web_hitl_enabled: bool = False
     programmatic_agents: bool
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None

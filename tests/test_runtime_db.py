@@ -184,6 +184,37 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
     assert migration is not None
 
 
+def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        columns = {str(r[1]) for r in connection.exec_driver_sql("PRAGMA table_info(claude_user_input_requests)").fetchall()}
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0020_claude_user_input_requests'"
+        ).fetchone()
+        index_rows = connection.exec_driver_sql("PRAGMA index_list(claude_user_input_requests)").fetchall()
+        indexes = {str(row[1]) for row in index_rows}
+
+    assert {
+        "request_id",
+        "decision_token_hash",
+        "business_agent_id",
+        "run_id",
+        "api_session_id",
+        "request_type",
+        "tool_name",
+        "redacted_input_json",
+        "status",
+        "decision",
+        "decision_payload_json",
+        "expires_at",
+    } <= columns
+    assert "ix_claude_user_input_agent_status" in indexes
+    assert "ix_claude_user_input_run_status" in indexes
+    assert migration is not None
+
+
 def test_feedback_store_sqlite_handles_concurrent_signal_writes(tmp_path):
     store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
 

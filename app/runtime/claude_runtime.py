@@ -21,12 +21,12 @@ from .agent_profiles import (
     build_profiles,
     candidate_profile,
 )
+from .claude_user_input_service import ClaudeUserInputService
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
-from .claude_user_input_service import ClaudeUserInputService
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
@@ -348,6 +348,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile: AgentRuntimeProfile | None = None,
         execution_mode: str = "stream",
         can_use_tool: Any = None,
+        hooks: Any = None,
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
@@ -388,6 +389,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             kwargs["permission_mode"] = "default"
         if can_use_tool is not None:
             kwargs["can_use_tool"] = can_use_tool
+        if hooks is not None:
+            kwargs["hooks"] = hooks
         if self.settings.setting_sources is not None:
             kwargs["setting_sources"] = self.settings.setting_sources
         if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl"}:

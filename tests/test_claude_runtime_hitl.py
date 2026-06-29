@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
@@ -16,6 +17,11 @@ def _settings(tmp_path, *, enable_hitl: bool) -> AppSettings:
     claude_root = tmp_path / "volume" / "data" / "business-agents" / "main-agent" / "claude-root"
     claude_home = claude_root / ".claude"
     workspace.mkdir(parents=True, exist_ok=True)
+    workspace.joinpath(".claude").mkdir(parents=True, exist_ok=True)
+    workspace.joinpath(".claude", "settings.json").write_text(
+        json.dumps({"permissions": {"allow": [], "ask": ["Bash(*)"], "deny": []}}),
+        encoding="utf-8",
+    )
     claude_home.mkdir(parents=True, exist_ok=True)
     return AppSettings(
         _env_file=None,
@@ -95,6 +101,7 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
     ]
     assert getattr(seen["options"], "permission_mode", None) == "default"
     assert getattr(seen["options"], "can_use_tool", None) is not None
+    assert getattr(seen["options"], "hooks", None) is not None
     assert getattr(seen["options"], "permission_prompt_tool_name", None) is None
     assert seen["permission_result"].__class__.__name__ == "PermissionResultAllow"
     record = store.list(run_id=str(events[0]["data"]["run_id"]))[0]
@@ -127,5 +134,6 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
 
     assert [event["event"] for event in events] == ["session", "done"]
     assert getattr(seen["options"], "can_use_tool", None) is None
+    assert getattr(seen["options"], "hooks", None) is None
     assert getattr(seen["options"], "permission_mode", None) is None
     assert store.list(limit=10) == []

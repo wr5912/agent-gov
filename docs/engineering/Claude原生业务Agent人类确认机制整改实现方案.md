@@ -25,9 +25,12 @@ Claude 原生权限评估
 - 覆盖对象：所有注册业务Agent（含 `main-agent`）。
 - 排除对象：治理智能体 `governor` 和所有后台治理 job。
 - 执行语义：以 Claude Code / Claude Agent SDK 原生返回值为准。
+- `/api/chat` 非流式入口：按已敲定决策固定使用 `bypassPermissions`，不承载 Web 人工确认，不创建用户输入请求。
+- `/api/chat/stream` 流式入口：唯一承载 Web HITL 的业务 Agent 交互入口；人工确认开关 `ENABLE_CLAUDE_WEB_HITL` 只对该入口有效。
 - AgentGov 数据表：只记录 Web 等待、审计、超时和 UI 状态，不定义新的 Claude 执行状态机。
 - 首版不支持修改工具参数：工具权限确认只允许 `allow_once` 或 `deny`。
 - `AskUserQuestion` 允许选择 Claude 给出的选项，也允许输入“其他”自然语言回答；该回答等效于 Claude Code 的 `type something`，不是修改工具参数。
+- 服务重启、API 进程崩溃、容器重建后不能继续原 `can_use_tool` callback；首版只能取消孤儿等待请求并要求用户重新运行。
 
 ## 2. 治理对象预检
 
@@ -36,16 +39,16 @@ Claude 原生权限评估
 | 被治理对象 | 所有注册业务Agent（含 `main-agent`）在 Playground 运行时发起的工具使用请求和澄清问题。 |
 | 治理执行者 | Claude 原生权限系统 + AgentGov Web 人类确认桥接 + 后端审计记录。 |
 | 资产类型 | 执行资产（workspace 权限配置、hook、MCP 工具）、审计资产（用户输入请求记录）、数据资产（run/session/tool request 关联）。 |
-| 生命周期 | Claude 原生只有允许/拒绝执行语义；AgentGov 仅记录 `waiting/resolved/cancelled/expired` 这类 UI/审计状态。 |
-| 反馈归属 | 每条确认请求必须归属到 `agent_id`、`run_id`、`api_session_id`、可空 `sdk_session_id` 和可选 `tool_use_id`。 |
+| 生命周期 | Claude 原生只有允许/拒绝执行语义；AgentGov 仅记录 `waiting/resolved/cancelled` 这类 UI/审计状态；超时是 `resolved + timeout_deny`，服务中断是 `cancelled + service_restarted/runtime_interrupted`。 |
+| 反馈归属 | 每条确认请求必须归属到 `business_agent_id`、`run_id`、`api_session_id`、可空 `sdk_session_id` 和可选 `tool_use_id`；`ToolPermissionContext.agent_id` 另存为 `sdk_subagent_id`，不得混用。 |
 | 当前实现边界 | `ClaudeRuntime._build_options()` 未传 `can_use_tool`；前端 SSE 未处理用户输入请求；seed workspace 仍含对话级确认和部分 MCP mutation 放行策略。 |
-| 目标能力边界 | 在线 Playground 支持业务 Agent 工具审批和 `AskUserQuestion` 澄清；不做长等待审批中心，不改变后台治理 job。 |
+| 目标能力边界 | `/api/chat/stream` 在线 Playground 支持业务 Agent 工具审批和 `AskUserQuestion` 澄清；`/api/chat` 固定 `bypassPermissions` 直通执行；不做长等待审批中心，不改变后台治理 job。 |
 
 闭环链路：
 
 ```text
 所有注册业务Agent（含main-agent）
-  -> Playground 运行
+  -> /api/chat/stream Playground 运行
   -> Claude 原生权限评估
   -> can_use_tool / AskUserQuestion
   -> Web 人类输入
@@ -59,7 +62,7 @@ Claude 原生权限评估
 - 不把 `main-agent` 写成特殊对象；它只是注册业务Agent之一。
 - 不把治理 Agent 的发布审批、改进阶段确认、回归门禁确认混成 Claude tool approval。
 - 不把 AgentGov 的审计状态误写成 Claude SDK 生命周期。
-- 不通过 `ChatRequest.allowed_tools` / `disallowed_tools` / `permission_mode` 重建一套权限入口；继续以 `.claude/settings.json` 和 SDK options 为准。
+- 不通过 `ChatRequest.allowed_tools` / `disallowed_tools` / `permission_mode` 重建一套权限入口；`/api/chat` 的 `bypassPermissions` 与 `/api/chat/stream` 的 Web HITL 都由服务端固定选择。
 
 ## 3. Claude 原生机制核查
 
@@ -72,6 +75,10 @@ Claude 原生权限评估
 | `updated_input` | 可用于 `AskUserQuestion` 回答，也可用于修改工具输入。 | 首版仅用于 `AskUserQuestion` 的回答载体，不用于修改真实工具参数。 |
 | `updated_permissions` | 用户选择“以后不再询问”时，可回传 `context.suggestions` 中的 `PermissionUpdate`。 | 首版不做跨 session 永久记忆；后续如做，必须复用 `updated_permissions`。 |
 | `AskUserQuestion` | 作为工具触发 `canUseTool`，input 含 `questions` 数组，返回 `answers` 或 `response`。 | 前端单独渲染澄清问题卡片，允许 option 选择和“其他”自由文本。 |
+| `permission_prompt_tool_name` | 当前 Python SDK 中与 `can_use_tool` 互斥；设置二者会直接抛 `ValueError`，SDK 会在启用 `can_use_tool` 时自行把 prompt tool 设为 `stdio`。 | Web HITL 业务入口必须禁止或忽略 `PERMISSION_PROMPT_TOOL_NAME`，并在启动/测试中显式覆盖。 |
+| 触发条件 | `can_use_tool` 只在 CLI 权限规则评估为 ask/prompt 时触发；已被 settings `allow`、`allowed_tools`、`acceptEdits`、`bypassPermissions` 等放行的工具不会触发。 | P0 先收敛权限配置，确认高风险 mutation 没有被宽泛 allow 或 hook 伪 allow 吃掉。 |
+| `bypassPermissions` | 绕过 Claude Code 权限询问，不触发 `can_use_tool`。 | 仅用于 `/api/chat` 非流式直通执行；禁止用于 `/api/chat/stream` Web HITL。 |
+| `setting_sources` | SDK 可读取 user/project/local settings；上层配置源可能带入宽泛 allow、bypass 或 dontAsk。 | Playground Web HITL 必须限制或诊断 setting sources，禁止用户全局配置绕过业务 workspace 权限。 |
 | 权限评估顺序 | Hooks -> deny rules -> ask rules -> permission mode -> allow rules -> `canUseTool`。 | 硬拒绝放在 deny rules / PreToolUse；人类确认只处理原生流程落到 `can_use_tool` 的请求。 |
 | `dontAsk` | 不提示，未预批准工具直接拒绝，`canUseTool` 不会被调用。 | Playground 业务交互默认不能使用 `dontAsk`。 |
 | `defer` | 属于 `PreToolUse` hook 的 `permissionDecision: "defer"`，用于结束 query 后恢复。 | 首版不做长等待；不得把 `defer` 伪装成 `can_use_tool` 返回值。 |
@@ -95,6 +102,8 @@ Claude 原生权限评估
 - `app/runtime/claude_runtime.py` 的 `ClaudeRuntime._build_options()` 未传 `can_use_tool`。
 - `app/runtime/agent_job_runner.py` 构造治理 job options，也未传 `can_use_tool`；这本身是正确边界，后续必须保持不接入。
 - `app/runtime/policy.py` 有 `guard_tool_use()`，但未被业务运行入口挂载，只是单元级策略函数。
+- `AppSettings.permission_prompt_tool_name` 会被 `_build_options()` 无条件传给 `ClaudeAgentOptions`；启用 `can_use_tool` 前必须处理互斥，否则 SDK 直接失败。
+- 当前没有区分 `/api/chat` 与 `/api/chat/stream` 的 SDK options 策略；后续必须让 `/api/chat` 固定 `permission_mode="bypassPermissions"`，而 `/api/chat/stream` 才接 `can_use_tool`。
 - `ChatRequest.allowed_tools`、`disallowed_tools`、`permission_mode` 已标注为 SDK 执行废弃字段；不能重新把它们做成用户确认配置面。
 - 当前没有用户输入请求表、等待器、提交决策 API、超时取消逻辑和 run/session/tool 关联审计。
 
@@ -117,7 +126,7 @@ Claude 原生权限评估
 ```text
 Playground
   -> /api/chat/stream
-  -> resolve_business_profile(agent_id)
+  -> resolve_business_profile(request.agent_id as business_agent_id)
   -> ClaudeRuntime.stream(profile.category == business)
   -> event_queue + sdk_query_task + pending_decisions
   -> ClaudeAgentOptions(can_use_tool=...)
@@ -132,6 +141,15 @@ Playground
 ```
 
 明确排除链路：
+
+```text
+/api/chat 非流式入口
+  -> resolve_business_profile(request.agent_id as business_agent_id)
+  -> ClaudeRuntime.run(...)
+  -> ClaudeAgentOptions(permission_mode="bypassPermissions", can_use_tool=None)
+  -> Claude Agent SDK 直通执行
+  -> 不创建 claude_user_input_requests
+```
 
 ```text
 governor / AgentJobRunner.run_profile_json
@@ -152,20 +170,33 @@ governor / AgentJobRunner.run_profile_json
 - SDK 产生的普通 message/result/error/done 事件放入 `event_queue`。
 - `can_use_tool` 回调创建 pending request 后，把 `claude_user_input_required` 放入 `event_queue`，再等待对应 decision future。
 - 决策 API resolve future 后，`can_use_tool` 返回 Claude SDK 原生 PermissionResult。
-- 客户端断开时取消 SDK task，并把所有 pending request 标记为 `cancelled` 或 `client_disconnected`，future 统一 resolve 为 deny。
+- 客户端断开时取消 SDK task，并把所有 pending request 标记为 `status=cancelled + decision=client_cancelled`，future 统一 resolve 为 deny。
 
 ### 5.2 `/api/chat` 非流式模式
 
-`/api/chat` 是 non-interactive safe mode，不承载在线人工确认。
+`/api/chat` 是 non-interactive direct mode，不承载在线人工确认。按已敲定决策，该入口固定使用 Claude 原生 `permission_mode="bypassPermissions"`。
 
 规则：
 
-- 已由 workspace 明确允许的安全能力可以继续。
-- 工具权限落到 `ask` 时，不自动采用推荐项，不自动允许，返回 `NEEDS_PERMISSION_CONFIRMATION`。
-- `AskUserQuestion` 属于信息澄清，不等同于工具授权；默认返回 `NEEDS_USER_ANSWER`。
-- 如后续启用显式策略 `auto_use_recommended_answer`，仅当 `AskUserQuestion` 有唯一推荐答案、该答案无需自由文本、且不会直接授权高风险工具时，才可自动采用推荐答案继续。
-- 后续 Claude 因推荐答案触发工具 permission ask 时，仍然不能自动允许。
-- 禁止把 `ask` 自动升级成 `allow`，禁止默认使用 `bypassPermissions`。
+- 后端固定传 `permission_mode="bypassPermissions"`，不读取 `ChatRequest.permission_mode`。
+- 不传 `can_use_tool`，不创建 `claude_user_input_requests`，不发送 `claude_user_input_required` SSE。
+- 不传 `permission_prompt_tool_name`；该入口没有 CLI prompt tool，也没有 Web HITL。
+- 如果当前 SDK、workspace settings 或运行时策略禁止 `bypassPermissions`，必须返回结构化诊断，不得静默降级为 `default`、`dontAsk` 或 Web HITL。
+- `AskUserQuestion` 在该入口不做 Web 桥接；如果 Claude 需要澄清，只能作为普通模型输出返回，调用方应改用 `/api/chat/stream` 完成交互。
+- 该入口必须在 run metadata / trace 中记录 `permission_mode=bypassPermissions`，便于后续审计区分直通执行与 Web HITL 执行。
+- `/api/chat` 的 bypass 不得影响 `/api/chat/stream`；流式入口仍按 `default/ask/can_use_tool` 路径等待用户确认。
+
+### 5.3 服务重启与孤儿等待请求恢复
+
+首版基于内存 `decision future` 等待 SDK callback。服务重启、API 进程崩溃、容器重建或 worker 被 kill 时，原 SDK query、future 和 raw tool input 都已经消失，不能继续批准原工具调用。
+
+恢复规则：
+
+- 应用启动时扫描 `claude_user_input_requests` 中 `status=waiting` 的记录。
+- 全部改为 `status=cancelled`，`decision=service_restarted` 或 `runtime_interrupted`，`resolved_at=now`。
+- 决策 API 对这些请求返回 `409`，不得再允许 `allow_once`。
+- 前端刷新后只展示历史卡片，提示“本次执行已中断，请重新运行”，不能显示继续批准入口。
+- 后续若要跨重启恢复，必须另起基于 Claude 原生 `PreToolUse permissionDecision="defer"` 和 session resume 的长等待设计，不能复用首版内存 future 模型。
 
 ## 6. 后端实现方案
 
@@ -196,18 +227,19 @@ governor / AgentJobRunner.run_profile_json
 | 字段 | 说明 |
 | --- | --- |
 | `request_id` | AgentGov 用户输入请求 id。 |
-| `agent_id` | 所属注册业务Agent。 |
+| `business_agent_id` | 所属注册业务Agent。 |
 | `run_id` | 本次运行 id。 |
 | `api_session_id` | AgentGov 产品会话 id。 |
 | `sdk_session_id` | Claude SDK session id，可为空；创建等待请求后拿到 SDK session 时回填。 |
 | `tool_use_id` | SDK context 中的 tool use id，可为空。 |
+| `sdk_subagent_id` | `ToolPermissionContext.agent_id`，表示 Claude sub-agent id，可为空；不得与业务 Agent 归属混用。 |
 | `request_type` | `tool_permission` 或 `ask_user_question`。 |
 | `tool_name` | `Bash`、`Write`、`Edit`、MCP tool、`AskUserQuestion` 等。 |
 | `redacted_input_json` | 脱敏后的 tool input / question input 快照。 |
 | `context_json` | `ToolPermissionContext` 的可序列化字段，如 suggestions、display_name、description、decision_reason。 |
 | `risk_json` | 后端风险分类展示信息，不参与 SDK 权限决策。 |
-| `status` | `waiting`、`resolved`、`cancelled`、`expired`。 |
-| `decision` | `allow_once`、`deny`、`answer_question`、`timeout_deny`、`client_cancelled`。 |
+| `status` | `waiting`、`resolved`、`cancelled`。 |
+| `decision` | `allow_once`、`deny`、`answer_question`、`timeout_deny`、`client_cancelled`、`service_restarted`、`runtime_interrupted`。 |
 | `decision_payload_json` | `AskUserQuestion` 答案或拒绝原因；不保存修改后的工具参数。 |
 | `decided_by` | 服务端从认证上下文推导的操作者；不信任 request body。 |
 | `created_at` / `expires_at` / `resolved_at` | 审计时间。 |
@@ -217,7 +249,8 @@ governor / AgentJobRunner.run_profile_json
 - DB 只持久化 redacted snapshot，不持久化 raw tool input。
 - raw tool input 只允许保存在内存 pending request 中，用于当前 SDK callback 等待期间。
 - 对 Bash 命令、文件内容、MCP header、token-like 字段、长文本统一脱敏和长度截断。
-- `sdk_session_id` 不是创建 pending request 的硬前提；主关联使用 `api_session_id + run_id + agent_id`。
+- `sdk_session_id` 不是创建 pending request 的硬前提；主关联使用 `api_session_id + run_id + business_agent_id`。
+- 超时会向 SDK 返回 `PermissionResultDeny`，因此记录为 `status=resolved + decision=timeout_deny`；只有客户端断开、服务重启、进程崩溃等未向 SDK 返回的情况才记录为 `status=cancelled`。
 
 ### 6.3 SDK callback
 
@@ -226,10 +259,11 @@ governor / AgentJobRunner.run_profile_json
 ```python
 async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermissionContext):
     request = await user_input_service.create_request(
-        agent_id=profile.name,
+        business_agent_id=profile.name,
         run_id=context_run_id,
         api_session_id=session.session_id,
         sdk_session_id=session.sdk_session_id_or_none,
+        sdk_subagent_id=context.agent_id,
         tool_name=tool_name,
         input_data=input_data,
         context=context,
@@ -253,8 +287,24 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 - `AskUserQuestion` 的 `updated_input` 仅作为回答载体，必须包含 SDK 要求的 `questions + answers` 或 `response`。
 - 所有输入输出进入 DB 前做 JSON 序列化校验和敏感字段脱敏。
 - 超时对 SDK 的表现是 `PermissionResultDeny(message=...)`；表中记录 `decision=timeout_deny`。
+- 启用 Web HITL 的 options 不得同时传 `permission_prompt_tool_name`；如果环境配置了 `PERMISSION_PROMPT_TOOL_NAME`，业务 Agent stream/non-stream HITL 路径必须显式拒绝启动或忽略该配置并输出诊断。
 
-### 6.4 Transport heartbeat
+### 6.4 启动恢复任务
+
+服务重启、API 进程崩溃或容器重建后，原 `can_use_tool` callback 和内存 future 已经消失，不能再把用户后续点击映射回原 SDK query。首版必须做确定性取消，而不是假装可以恢复。
+
+启动恢复规则：
+
+- API/worker 启动时执行 `ClaudeUserInputService.cancel_orphan_waiting_requests(reason="service_restarted")`。
+- 查询所有 `status=waiting` 且没有活跃内存 future 的记录。
+- 更新为 `status=cancelled`、`decision=service_restarted`、`resolved_at=now`。
+- 如果运行时能区分有序停机和异常中断，可把异常中断记录为 `decision=runtime_interrupted`。
+- 决策 API 收到这类请求时返回 `409`，错误体说明“服务已重启，原 Claude 执行已中断，请重新运行本轮任务”。
+- 不尝试从 redacted snapshot 重建 raw tool input；首版没有足够原生 session resume 保障。
+
+长等待审批如需跨进程恢复，必须进入后续版本，基于 Claude hook `permissionDecision: "defer"` 与 SDK session resume 重新设计，不属于首版。
+
+### 6.5 Transport heartbeat
 
 等待人工确认时不应依赖 SDK hook 保持连接，而应由 SSE transport 层发送 heartbeat。
 
@@ -265,14 +315,30 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 - v1 默认不通过 `ClaudeAgentOptions.hooks` 注入 keepalive hook，避免覆盖或干扰 workspace 原生 `PreToolUse` hooks。
 - 如果后续确实需要 SDK hook 事件增强 UI，再单独验证 SDK hooks 与 `.claude/settings.json` hooks 的合并语义。
 
-### 6.5 权限配置
+### 6.6 配置来源、permission prompt 与入口模式边界
+
+`can_use_tool` 不是“附加在所有工具调用上的旁路回调”，它依赖 Claude 原生权限规则先落到 ask。因此配置源必须先收敛，否则 Web HITL 入口可能根本不会被触发。
+
+实现规则：
+
+- 新增服务端环境变量 `ENABLE_CLAUDE_WEB_HITL`，默认 `false`；该开关只控制 `/api/chat/stream` 是否挂载 `can_use_tool`、SSE 用户输入事件和决策 API 等 Web HITL 链路。
+- `ENABLE_CLAUDE_WEB_HITL=false` 时，`/api/chat/stream` 不创建用户输入请求、不显示审批卡片；`/api/chat` 仍固定 `bypassPermissions`。
+- `ENABLE_CLAUDE_WEB_HITL=true` 时，`/api/chat/stream` 才启用 `can_use_tool` 和 Web 等待桥接；`/api/chat` 仍固定 `bypassPermissions`。
+- Web HITL 路径指 `/api/chat/stream`；该路径不得把 `permission_prompt_tool_name` 传入 `ClaudeAgentOptions`，当前 Python SDK 会直接拒绝 `can_use_tool + permission_prompt_tool_name` 组合。
+- `PERMISSION_PROMPT_TOOL_NAME` 如需保留，只能服务非 HITL legacy 路径或治理/调试入口；业务 Agent Playground HITL 路径必须在启动诊断中明确显示“已禁用/已忽略”。
+- `/api/chat/stream` 的 `permission_mode` 默认 `default`；不得在 Playground HITL 路径使用 `dontAsk` 或 `bypassPermissions`。
+- `/api/chat` 固定传 `permission_mode="bypassPermissions"`，并且不传 `can_use_tool`；这是非流式入口的显式例外，不得外溢到 stream。
+- `setting_sources` 优先限制到业务 Agent workspace 的 project/local 配置；如果保留 user settings，必须在启动诊断中检测并报警宽泛 allow、`dontAsk`、`bypassPermissions` 等绕过条件。
+- 前端 per-request `allowed_tools`、`disallowed_tools`、`permission_mode` 继续视为废弃执行入口，不能重新成为权限真相源。
+
+### 6.7 权限配置
 
 业务 Agent workspace 权限原则：
 
 - `deny`：密钥、Claude root、破坏性系统路径、明确不可执行命令。
 - `allow`：只读工具、明确安全的 MCP 查询、受控输出目录写入。
 - `ask`：`Bash(*)`、`Edit(./**)`、`Write(./**)`、MCP mutation / disposal 工具。
-- `permission_mode`：Playground 业务交互默认 `default`；规划类业务 Agent 可用 `plan`；不得用 `dontAsk` 承载需要人类确认的交互流。
+- `permission_mode`：`/api/chat/stream` Playground 业务交互默认 `default`；规划类业务 Agent 可用 `plan`；不得用 `dontAsk` 或 `bypassPermissions` 承载需要人类确认的交互流。`/api/chat` 非流式入口固定 `bypassPermissions`，不参与 Web HITL。
 
 需要调整：
 
@@ -280,28 +346,34 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 - `pre_tool_guard.py` 不再把 MCP mutation 伪 allow；只做硬拒绝或补充上下文。
 - 保留治理 Agent 的确定性权限边界，不让其进入 Web 等待。
 - 对真实运行卷增加幂等 workspace reconcile，覆盖 `${HOME}/volume-agent-gov/data/business-agents/*`。
+- 真实 SDK 探针前必须先完成 settings / hook 收敛；否则探针只能证明“当前配置没有触发 ask”，不能证明 Web HITL 设计成立。
+- 单独验证 `/api/chat` 的 `bypassPermissions` 是否被当前 SDK 和 workspace settings 接受；如果被禁止，作为 `/api/chat` 配置错误处理，不回退到 stream 语义。
 
-### 6.6 运行卷 workspace reconcile
+### 6.8 运行卷 workspace reconcile
 
 文档和实现不能只更新 `docker/runtime-volume-seeds`。已有真实业务 Agent workspace 必须被幂等修复。
 
 reconcile 规则：
 
+- 以显式管理命令或管理员 API 执行，不在普通应用启动时静默批量改写用户运行卷。
+- 默认 `--dry-run`，先输出待改文件、待删规则、待保留用户片段和风险说明。
 - 扫描所有 business agent workspace。
 - 识别受管 `.claude/settings.json` 和 `hooks/pre_tool_guard.py`。
 - 移除宽泛 MCP mutation allow 规则。
 - 移除“预确认后伪 allow”的 hook 逻辑。
 - 保留 hard deny：secret、危险 bash、越界路径等。
-- 对用户自定义内容先备份，再只修改受管片段。
+- 对用户自定义内容先备份，再只修改受管片段；备份文件名包含 `business_agent_id`、时间戳和原始路径 hash。
+- 写入 migration event，记录 dry-run diff、实际改动、备份路径和操作者。
+- 提供 rollback 命令，能从备份恢复单个业务 Agent workspace。
 - seed 新建业务 Agent 和旧 volume 升级业务 Agent 行为一致。
 - `main-agent`、`response-disposal` 和未来新增业务 Agent 走同一 reconcile 规则，不做 `main-agent` 特判。
 
-### 6.7 API 契约
+### 6.9 API 契约
 
 新增 API：
 
 ```text
-GET /api/claude-user-input-requests?session_id=&run_id=&status=
+GET /api/claude-user-input-requests?session_id=&run_id=&status=&business_agent_id=
 POST /api/claude-user-input-requests/{request_id}/decision
 ```
 
@@ -333,16 +405,16 @@ POST /api/claude-user-input-requests/{request_id}/decision
 - 从 request body 删除 `operator`，不信任客户端自报操作者。
 - 后端从认证上下文推导 `decided_by`；如果当前只有 API key 级认证，则记录为 `api_key_client` 或服务端可识别的 key id。
 - SSE 下发 pending request 时附带一次性 `decision_token`。
-- 决策 API 必须校验 `request_id + run_id/session_id + agent_id + decision_token`。
+- 决策 API 必须校验 `request_id + run_id/session_id + business_agent_id + decision_token`。
 - 每个 pending request 只能决策一次；重复提交返回当前最终状态，不重复 resolve SDK future。
 
 错误语义：
 
 - `404`：请求不存在。
-- `409`：请求已处理、已取消、已过期或不属于当前等待 future。
+- `409`：请求已处理、已取消、服务重启后成为孤儿请求，或不属于当前等待 future。
 - `422`：`answers` 不符合 `AskUserQuestion` 问题格式，或 action 与 request type 不匹配。
 
-### 6.8 SSE 契约
+### 6.10 SSE 契约
 
 新增事件：
 
@@ -353,7 +425,7 @@ data: {
   "decision_token": "...",
   "run_id": "...",
   "session_id": "...",
-  "agent_id": "...",
+  "business_agent_id": "...",
   "request_type": "tool_permission",
   "tool_name": "Bash",
   "redacted_input": {...},
@@ -427,21 +499,26 @@ data: {
 
 - 隐藏或删除 Playground 当前 per-request `allowed_tools`、`disallowed_tools`、`permission_mode` 控件。
 - 如需保留展示，只能做只读说明：权限来自业务 Agent workspace。
-- 前端所有等待、成功、拒绝、过期、断线状态都必须有可见反馈，不只写入 stream log。
+- 前端所有等待、已处理、已取消、超时拒绝、服务重启中断和断线状态都必须有可见反馈，不只写入 stream log。
 
 ## 8. 测试同步矩阵
 
 | 行为变更 | 旧测试 | 处置 | 新增测试 | 深度要求 |
 | --- | --- | --- | --- | --- |
 | 业务 Agent stream 接入 `can_use_tool` | `tests/test_claude_runtime.py` | 改 | 模拟 SDK tool request，断言创建 user input request 并返回 PermissionResult。 | 正常、拒绝、超时、取消。 |
+| `permission_prompt_tool_name` 与 `can_use_tool` 互斥 | 无 | 加 | Web HITL options 不传 `permission_prompt_tool_name`；误配时返回结构化诊断。 | 防 SDK 启动即失败。 |
+| `ENABLE_CLAUDE_WEB_HITL` 开关 | 无 | 加 | false 时 stream 不创建用户输入请求；true 时 stream 挂 `can_use_tool`；两种情况下 `/api/chat` 都固定 bypass。 | 防开关串线。 |
+| stream `setting_sources` / 全局配置绕过 | 无 | 加 | `/api/chat/stream` HITL 中 user settings 存在宽泛 allow / `dontAsk` / `bypassPermissions` 时报警或拒绝进入 HITL。 | 防 stream 工具确认被绕过。 |
 | stream 改为 SDK task + event queue | 弱覆盖 | 加 | SDK callback 等待期间 SSE 仍能发出 `claude_user_input_required` 和 heartbeat。 | 防死锁。 |
-| 非流式 `/api/chat` 不承载在线权限确认 | 无或弱覆盖 | 加 | 工具权限 ask 返回 `NEEDS_PERMISSION_CONFIRMATION`。 | 不挂起、不自动允许。 |
-| 非流式 `/api/chat` 的 `AskUserQuestion` | 无 | 加 | 默认返回 `NEEDS_USER_ANSWER`；显式策略下唯一推荐答案可继续。 | 不等同工具授权。 |
+| 非流式 `/api/chat` 固定 bypass | 无或弱覆盖 | 加 | `/api/chat` options 固定 `permission_mode="bypassPermissions"`，不传 `can_use_tool`，不创建 user input request。 | 与 stream HITL 隔离。 |
+| `/api/chat` bypass 被禁止 | 无 | 加 | SDK/workspace 禁止 bypass 时返回结构化诊断，不静默降级为 `default` / `dontAsk` / stream HITL。 | 防语义漂移。 |
+| 非流式 `/api/chat` 的 `AskUserQuestion` | 无 | 加 | `/api/chat` 不桥接 `AskUserQuestion`；需要交互时由调用方改用 `/api/chat/stream`。 | 不等同工具授权。 |
 | governor 不接入人类确认 | 现有 Agent job 测试 | 加断言 | `AgentJobRunner` 不创建 user input request。 | 防止后台 job 卡死。 |
 | `AskUserQuestion` | 无 | 加 | input questions -> UI answers / response -> `updated_input`。 | 单选、多选、自由文本、格式错误。 |
 | 不支持修改工具参数 | 无 | 加 | decision API 拒绝 `updated_input` / `allow_modified`。 | Bash/Write/MCP 都不能改参执行。 |
+| 服务重启孤儿等待请求 | 无 | 加 | 启动恢复任务把 `waiting` 改为 `cancelled + service_restarted`；后续决策返回 409。 | 防假恢复。 |
 | MCP mutation 从伪 allow 改 ask | `tests/test_pre_tool_guard.py` | 重写 | MCP mutation 不再 hook allow；硬拒绝命令仍 deny。 | 保留安全负向测试。 |
-| 真实运行卷 reconcile | 无或弱覆盖 | 加 | 旧 main-agent / response-disposal volume 升级后移除宽泛 allow 和伪 allow hook。 | 幂等、保护用户片段。 |
+| 真实运行卷 reconcile | 无或弱覆盖 | 加 | dry-run 输出 diff；apply 前备份；旧 volume 升级后移除宽泛 allow 和伪 allow hook；rollback 可恢复。 | 幂等、保护用户片段。 |
 | 前端 SSE 新事件 | 前端 stream 测试 | 改/加 | `claude_user_input_required` 渲染卡片，decision API 调用正确。 | 成功、失败、重复提交。 |
 | OpenAPI 新接口 | `tests/test_openapi_export.py` | 改 | 新 path schema 出现，旧无关 approve/reject 路径不误增。 | 防漂移。 |
 
@@ -453,11 +530,15 @@ data: {
 
 - 所有注册业务Agent（含 `main-agent`）经 `/api/chat/stream` 运行时，未自动批准的工具请求能触发 `can_use_tool`。
 - `PermissionResultAllow()` 和 `PermissionResultDeny(message=...)` 行为符合 SDK 原生语义。
+- Web HITL options 不再与 `permission_prompt_tool_name` 同时传入 SDK。
+- `ENABLE_CLAUDE_WEB_HITL` 只影响 `/api/chat/stream`；关闭时不创建用户输入请求，开启时才创建。
+- `/api/chat/stream` 的 `setting_sources`、`permission_mode`、settings allow / ask / deny 和 hook 规则不会绕过需要确认的 mutation。
+- `/api/chat` 固定使用 `permission_mode="bypassPermissions"`，不传 `can_use_tool`，不创建用户输入请求，并在 run metadata / trace 中可审计。
 - `AskUserQuestion` 能从前端收集 option 或自由文本答案，并返回给 Claude。
-- `/api/chat` 非流式遇到工具权限 ask 时快速返回 `NEEDS_PERMISSION_CONFIRMATION`，不挂起、不自动允许。
-- `/api/chat` 非流式遇到澄清问题时默认返回 `NEEDS_USER_ANSWER`；只有显式策略允许时才可采用唯一推荐答案。
+- `/api/chat` 的 bypass 不影响 `/api/chat/stream` 的 Web HITL；同一个业务 Agent 在两个入口下 options 可被测试区分。
+- `/api/chat` 遇到 SDK/workspace 禁止 bypass 时返回结构化诊断，不静默降级。
 - governor 和后台治理 job 不会创建用户输入请求。
-- 客户端断开、超时、重复提交都有确定性处理和审计记录。
+- 客户端断开、超时、服务重启、重复提交都有确定性处理和审计记录。
 - deny rules / PreToolUse 硬拒绝优先于人工确认。
 
 ### 9.2 前端验收
@@ -472,41 +553,62 @@ data: {
 ### 9.3 文档与配置验收
 
 - README / 集成指南说明业务 Agent 支持 Web HITL，治理 Agent 不走该机制。
+- README / env 示例说明 `ENABLE_CLAUDE_WEB_HITL` 只控制 `/api/chat/stream`。
 - workspace `CLAUDE.md` 不再把“对话级确认”当唯一执行授权机制。
 - `pre_tool_guard.py` 注释删除“SDK 无法呈现 ask”的旧假设。
+- `PERMISSION_PROMPT_TOOL_NAME`、`setting_sources` 和权限配置边界在集成指南中说明清楚。
 - OpenAPI 与前端生成类型同步。
 - seed 和 `${HOME}/volume-agent-gov` 旧运行卷都完成验收；不得用 fresh seed 结果声明旧运行卷通过。
+- 运行卷 reconcile 默认 dry-run，apply 有备份、migration event 和 rollback。
 
 ## 10. 分阶段实施
 
-### 阶段 1：真实 SDK 探针与后端骨架
+### 阶段 0：原生契约与权限触发硬门
 
-- 在真实容器内用当前 `claude-agent-sdk` 跑最小交互探针。
-- 验证 `can_use_tool` 会被触发。
-- 验证 callback 等待期间 SSE heartbeat 不断。
-- 验证 `PermissionResultAllow()` 后 SDK 继续执行。
-- 验证 `PermissionResultDeny(...)` 后 SDK 收到拒绝原因。
-- 新增 `ClaudeUserInputService`、store、record 和 API。
+- 用当前 `.venv` 和真实容器分别核查 `claude-agent-sdk` 版本、`can_use_tool` 签名、`PermissionResultAllow` / `PermissionResultDeny` 字段。
+- 新增并验证 `ENABLE_CLAUDE_WEB_HITL` 配置读取，默认 `false`，启动日志输出当前值和作用入口。
+- 处理 `permission_prompt_tool_name` 互斥：业务 Agent Web HITL options 不传该字段，误配时输出结构化诊断。
+- 收敛业务 Agent seed settings 和 `pre_tool_guard.py`：MCP mutation / Bash / Edit / Write 等需要人工确认的动作必须落到 ask，不得被宽泛 allow 或 hook 伪 allow 吃掉。
+- 明确 `setting_sources` 策略，诊断 user/global settings 中的宽泛 allow、`dontAsk`、`bypassPermissions`。
+- 验证 `/api/chat` 固定 `bypassPermissions` 在当前 SDK、workspace settings 和容器环境中可用；不可用时定义结构化诊断。
+- 用类真实业务 Agent workspace 做 SDK 探针，确认目标工具确实进入 `can_use_tool`。
+
+退出标准：
+
+- P0 探针能证明“权限规则落到 ask -> SDK 触发 `can_use_tool`”，而不是只证明请求能跑通。
+- `ENABLE_CLAUDE_WEB_HITL` 开关已有 true/false 两种测试覆盖。
+- `permission_prompt_tool_name` 互斥已有测试覆盖。
+- `/api/chat` bypass options 与 `/api/chat/stream` HITL options 已有差异化测试覆盖。
+- settings / hook 的宽泛放行已被测试捕获。
+
+### 阶段 1：后端桥接骨架
+
+- 新增 `ClaudeUserInputService`、store、record、启动恢复任务和 API。
 - 在业务 Agent stream options 接入 `can_use_tool`。
-- 加后端单测覆盖 allow、deny、timeout、cancel。
+- Stream 采用 SDK 后台 task + event queue + decision future，避免 generator 与 callback 互等。
+- 非流式 `/api/chat` 固定 `permission_mode="bypassPermissions"`，不传 `can_use_tool`，不创建 user input request。
+- 加后端单测覆盖 allow、deny、timeout_deny、client_cancelled、service_restarted、runtime_interrupted。
+- 加后端单测覆盖 `/api/chat` bypass options、bypass 禁止诊断和 stream HITL options 隔离。
 - 明确排除 `AgentJobRunner` 和 governor。
 
 退出标准：
 
-- 真实 SDK 探针证明 callback + SSE 并发模型成立。
 - 后端 monkeypatch SDK 测试可完整跑通 `can_use_tool` 等待与决策。
+- `/api/chat` 直通执行测试证明不会进入 Web HITL。
+- 重启恢复测试证明孤儿 waiting 请求会变为 cancelled，后续决策返回 409。
 - 治理 job 测试证明不会进入等待。
 
 ### 阶段 2：前端 Playground 卡片
 
 - 扩展 SSE parser 和 stream handler。
-- ChatPanel 渲染 tool approval card。
-- 实现 decision API 调用。
+- ChatPanel 渲染 tool approval card 和 ask user question card。
+- 实现 decision API 调用，包含重复提交、409 中断提示和失败重试反馈。
 - 补前端测试和 build。
 
 退出标准：
 
 - 模拟 SSE 可看到卡片并提交决策。
+- 服务重启/请求取消/超时拒绝都有明确 UI 文案。
 - `pnpm --dir frontend build` 通过。
 
 ### 阶段 3：AskUserQuestion
@@ -514,18 +616,20 @@ data: {
 - 后端识别 `tool_name == "AskUserQuestion"` 或 SDK 等价 request type。
 - 前端渲染问题卡，支持单选、多选、自由文本。
 - 返回官方格式 `questions + answers` 或 `response`。
-- 非流式默认返回 `NEEDS_USER_ANSWER`；显式策略下可采用唯一推荐答案。
+- `/api/chat` 不桥接 `AskUserQuestion`；需要澄清问题交互时由调用方改用 `/api/chat/stream`。
 
 退出标准：
 
 - `AskUserQuestion` 单选、多选、自由文本路径均通过测试。
 - “其他”自由文本路径与 Claude Code `type something` 语义一致。
+- `updated_input` 只用于澄清问题回答，不用于修改真实工具参数。
 
-### 阶段 4：workspace 权限收敛
+### 阶段 4：workspace 权限收敛与运行卷 reconcile
 
 - 调整业务 Agent seed settings。
 - 重写 `pre_tool_guard.py` 旧假设。
 - 增加运行卷 policy reconcile，保护已有业务 Agent 活配置，不覆盖无关内容。
+- reconcile 默认 dry-run；apply 前备份；记录 migration event；提供 rollback。
 
 退出标准：
 
@@ -533,12 +637,16 @@ data: {
 - 硬拒绝仍优先。
 - 所有注册业务Agent（含 `main-agent`）的权限配置走同一抽象。
 - 旧 volume 和 fresh seed 行为一致。
+- dry-run、apply、rollback 均有自动化测试。
 
-### 阶段 5：真实容器验收
+### 阶段 5：真实容器端到端验收
 
 - 重建服务并在真实容器中验证业务 Agent Playground。
-- 使用一个安全 mock tool 或受控 Bash 命令触发审批。
-- 验证允许一次、拒绝、澄清问题、超时取消。
+- 使用安全 mock tool 或受控 Bash 命令触发审批。
+- 验证允许一次、拒绝、澄清问题、超时拒绝、服务重启取消。
+- 验证 `ENABLE_CLAUDE_WEB_HITL=false/true` 只改变 `/api/chat/stream` 行为。
+- 验证 `/api/chat` 使用 `bypassPermissions` 且不创建用户输入请求。
+- 验证 `setting_sources` 和 `permission_prompt_tool_name` 诊断在容器日志/API 中可见。
 
 退出标准：
 
@@ -550,15 +658,22 @@ data: {
 
 | 风险 | 影响 | 处理 |
 | --- | --- | --- |
+| `permission_prompt_tool_name` 与 `can_use_tool` 同时配置 | SDK 直接抛错，业务 Agent 无法启动 | Web HITL options 显式不传 prompt tool；误配进入启动诊断和单测。 |
+| HITL env 开关串线 | `/api/chat` bypass 或后台治理 job 被意外影响 | `ENABLE_CLAUDE_WEB_HITL` 只读于 `/api/chat/stream` options 构造；测试覆盖 stream true/false、chat bypass、governor 不接入。 |
+| user/global settings 在 `/api/chat/stream` 带入宽泛 allow 或 bypass | 高风险动作不触发 Web 确认 | 限制或诊断 `setting_sources`，把 stream 绕过条件作为 P0 硬门。 |
+| `/api/chat` 使用 `bypassPermissions` | 非流式入口不会触发 Claude 权限确认 | 仅限 `/api/chat`；要求 API 认证、run metadata 审计、结构化诊断和与 stream options 的自动化隔离测试。 |
+| `/api/chat` bypass 语义被误用到 Playground HITL | Web 人类确认被绕过 | `/api/chat/stream` 禁止 `bypassPermissions`；前端 Playground 交互默认走 stream；测试断言 stream options 不含 bypass。 |
 | stream generator 与 SDK callback 互相等待 | 核心链路死锁 | 使用 SDK 后台 task + event queue + decision future。 |
 | SDK hooks options 可能覆盖 project settings hooks | 业务 workspace 旧 hook 失效 | v1 heartbeat 放在 SSE transport 层，不注入 SDK keepalive hook；后续单独验证合并语义。 |
 | `allow` 规则过宽导致不触发 `can_use_tool` | 高风险动作绕过 Web 确认 | 收敛 business settings，把 mutation 放入 ask；deny 保留硬拒绝。 |
 | `dontAsk` 模式误用于 Playground | 不触发人类确认 | Playground 业务交互禁用 `dontAsk`，配置检测报警。 |
 | 审批等待导致 SSE idle timeout | 用户还没决策流已断 | 等待期间发送 transport heartbeat。 |
+| 服务重启后原 SDK callback 消失 | 用户点击已无法恢复原执行 | 启动时取消孤儿 waiting 请求，决策 API 返回 409 并提示重新运行。 |
 | 后台治理 job 被错误接入等待 | 归因/优化/回归卡死 | 以 `profile.category == "business"` 且入口为 stream 为硬条件。 |
-| 客户端伪造操作者或决策他人请求 | 审计失真或越权执行 | 不信任 body operator；使用 decision token 和 session/run/agent 绑定。 |
+| 客户端伪造操作者或决策他人请求 | 审计失真或越权执行 | 不信任 body operator；使用 decision token 和 session/run/business_agent 绑定。 |
 | raw tool input 入库 | 泄漏密钥、命令或文件内容 | DB 只存 redacted snapshot，raw input 只存在内存 pending request。 |
 | 用户修改工具参数绕过策略 | Bash/Write/MCP 参数变形执行 | v1 不支持 `allow_modified`，工具参数只读展示。 |
+| 运行卷 reconcile 静默改坏用户配置 | 业务 Agent workspace 损坏或审计缺失 | 只通过显式 dry-run/apply 执行，备份、migration event、rollback 缺一不可。 |
 | UI 术语混淆 | 用户分不清工具审批和治理阶段确认 | 卡片命名为“Claude 请求使用工具”或“Claude 需要补充信息”，不使用“发布审批/改进确认”。 |
 
 ## 12. 审批决策点
@@ -572,6 +687,12 @@ data: {
 5. 是否同意 `AskUserQuestion` 的“其他”自由文本等效于 Claude Code 的 `type something`，作为回答返回 Claude。
 6. 是否同意所有注册业务Agent（含 `main-agent`）统一接入，不为 `main-agent` 设计特殊分支。
 7. 是否同意治理智能体 `governor` 和后台治理 job 不接入 Web 人类确认。
+8. 是否同意业务 Agent Web HITL 路径禁用 `permission_prompt_tool_name`，以 SDK 原生 `can_use_tool` 作为交互入口。
+9. 是否同意限制或诊断 `setting_sources`，防止用户全局配置绕过业务 Agent workspace 权限。
+10. 是否同意服务重启后取消孤儿等待请求，首版不承诺恢复原 Claude 执行。
+11. 是否同意运行卷 reconcile 只能显式 dry-run/apply，必须具备备份、migration event 和 rollback。
+12. 是否同意 `/api/chat` 非流式入口固定使用 `bypassPermissions`，不接入 Web HITL，不创建用户输入请求。
+13. 是否同意人工确认 env 开关只作用于 `/api/chat/stream`，不得改变 `/api/chat` 的 bypass 语义。
 
 ## 13. 后续增强
 
@@ -579,6 +700,5 @@ data: {
 
 - 基于 Claude hook `permissionDecision: "defer"` 的长等待审批和 session resume。
 - 基于 `updated_permissions` 的 session-scoped 或 localSettings-scoped 记忆授权。
-- 非流式 `AskUserQuestion` 的 `auto_use_recommended_answer` 策略和适用边界。
 - 接入企业审批系统或外部 ticket workflow。
 - 更细的风险分类器和策略建议，但仍不得覆盖 Claude 原生 deny / ask / allow 语义。

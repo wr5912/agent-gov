@@ -261,7 +261,7 @@ export function restoreAgentRelease(config: RuntimeClientConfig, releaseId: stri
 export function submitClaudeUserInputDecision(config: RuntimeClientConfig, requestId: string, payload: ClaudeUserInputDecisionPayload) {
   return requestJson<ClaudeUserInputDecisionResponse>(
     config,
-    `/api/claude-hitl-requests/${encodeURIComponent(requestId)}/decision`,
+    `/api/claude-user-input-requests/${encodeURIComponent(requestId)}/decision`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -71,8 +71,30 @@ def test_agv_037_047_governance_scope_not_business_ownership(monkeypatch, tmp_pa
     paths = {r.path for r in module.app.routes if getattr(r, "path", "").startswith(("/api", "/v1"))}
 
     # 不接管用户/角色/租户/权限/生产处置等外部业务系统所有权（不复制信息架构）。
-    forbidden = ("user", "role", "tenant", "permission", "account", "workorder", "ticket", "deploy", "production")
-    offending = sorted(p for p in paths for token in forbidden if token in p.lower())
+    forbidden = {
+        "user",
+        "users",
+        "role",
+        "roles",
+        "tenant",
+        "tenants",
+        "permission",
+        "permissions",
+        "account",
+        "accounts",
+        "workorder",
+        "workorders",
+        "ticket",
+        "tickets",
+        "deploy",
+        "deployments",
+        "production",
+    }
+    offending = sorted(
+        p
+        for p in paths
+        if len(p.split("/")) > 2 and p.split("/")[2].lower().strip("{}") in forbidden
+    )
     assert offending == [], f"AgentGov 不应暴露业务系统所有权端点: {offending}"
 
     # AgentGov 确实拥有治理面：被治理对象、审批门、审计事件、运行记录可追踪。

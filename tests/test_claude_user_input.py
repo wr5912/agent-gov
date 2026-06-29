@@ -1,9 +1,6 @@
 import asyncio
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.claude_user_input_service import (
@@ -13,6 +10,8 @@ from app.runtime.claude_user_input_service import (
 )
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 
 
 def _service(tmp_path, *, timeout_seconds: int = 5) -> ClaudeUserInputService:
@@ -176,11 +175,11 @@ def test_decision_api_rejects_allow_modified_and_updated_input_extra(tmp_path):
     }
 
     allow_modified = client.post(
-        f"/api/claude-hitl-requests/{request['request_id']}/decision",
+        f"/api/claude-user-input-requests/{request['request_id']}/decision",
         json={**base, "action": "allow_modified"},
     )
     updated_input = client.post(
-        f"/api/claude-hitl-requests/{request['request_id']}/decision",
+        f"/api/claude-user-input-requests/{request['request_id']}/decision",
         json={**base, "action": "allow_once", "updated_input": {"command": "rm -rf /"}},
     )
 

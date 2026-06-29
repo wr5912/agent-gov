@@ -147,7 +147,7 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
         { event: "claude_user_input_required", data: requestEvent(kind) },
       ]);
     }
-    const decisionMatch = path.match(/^\/api\/claude-hitl-requests\/([^/]+)\/decision$/);
+    const decisionMatch = path.match(/^\/api\/claude-user-input-requests\/([^/]+)\/decision$/);
     if (decisionMatch && request.method() === "POST") {
       const body = request.postDataJSON();
       decisionRequests.push({ requestId: decodeURIComponent(decisionMatch[1]), body });

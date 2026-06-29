@@ -28,12 +28,18 @@ def create_claude_user_input_router(
     service: ClaudeUserInputService,
     require_api_key: Callable,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api", tags=["claude-hitl"], dependencies=[Depends(require_api_key)])
+    router = APIRouter(prefix="/api", tags=["claude-user-input"], dependencies=[Depends(require_api_key)])
 
+    @router.get(
+        "/claude-user-input-requests",
+        response_model=ClaudeUserInputRequestListResponse,
+        summary="List Claude SDK HITL requests for Playground Web confirmation",
+    )
     @router.get(
         "/claude-hitl-requests",
         response_model=ClaudeUserInputRequestListResponse,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
+        include_in_schema=False,
     )
     async def list_requests(
         session_id: str | None = Query(default=None),
@@ -56,9 +62,15 @@ def create_claude_user_input_router(
         )
 
     @router.post(
+        "/claude-user-input-requests/{request_id}/decision",
+        response_model=ClaudeUserInputDecisionResponse,
+        summary="Resolve one active Claude SDK HITL request",
+    )
+    @router.post(
         "/claude-hitl-requests/{request_id}/decision",
         response_model=ClaudeUserInputDecisionResponse,
         summary="Resolve one active Claude SDK HITL request",
+        include_in_schema=False,
     )
     async def decide(request_id: str, req: ClaudeUserInputDecisionRequest) -> ClaudeUserInputDecisionResponse:
         try:

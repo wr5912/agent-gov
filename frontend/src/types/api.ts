@@ -575,7 +575,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude-hitl-requests": {
+    "/api/claude-user-input-requests": {
         parameters: {
             query?: never;
             header?: never;
@@ -583,7 +583,7 @@ export interface paths {
             cookie?: never;
         };
         /** List Claude SDK HITL requests for Playground Web confirmation */
-        get: operations["list_requests_api_claude_hitl_requests_get"];
+        get: operations["list_requests_api_claude_user_input_requests_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -592,7 +592,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/claude-hitl-requests/{request_id}/decision": {
+    "/api/claude-user-input-requests/{request_id}/decision": {
         parameters: {
             query?: never;
             header?: never;
@@ -602,7 +602,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Resolve one active Claude SDK HITL request */
-        post: operations["decide_api_claude_hitl_requests__request_id__decision_post"];
+        post: operations["decide_api_claude_user_input_requests__request_id__decision_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8017,7 +8017,7 @@ export interface operations {
             };
         };
     };
-    list_requests_api_claude_hitl_requests_get: {
+    list_requests_api_claude_user_input_requests_get: {
         parameters: {
             query?: {
                 session_id?: string | null;
@@ -8052,7 +8052,7 @@ export interface operations {
             };
         };
     };
-    decide_api_claude_hitl_requests__request_id__decision_post: {
+    decide_api_claude_user_input_requests__request_id__decision_post: {
         parameters: {
             query?: never;
             header?: never;

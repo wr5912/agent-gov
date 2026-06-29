@@ -11,8 +11,14 @@
       "Bash(python mcp_servers/**)",
       "Bash(python -m pytest *)",
       "Bash(jq *)",
+      "Bash(date *)",
+      "Bash(date)",
+      "Bash(pwd)",
       "Bash(cat templates/**)",
+      "Bash(mkdir -p /data/outputs/**)",
+      "Bash(mkdir -p /data/reports/**)",
       "Write(/data/outputs/**)",
+      "Write(/data/reports/**)",
       "mcp__sec-ops-data__*"
     ],
     "ask": [
@@ -90,6 +96,7 @@
     "filesystem": {
       "allowWrite": [
         "/data/outputs",
+        "/data/reports",
         "/data/transcripts",
         "./"
       ],

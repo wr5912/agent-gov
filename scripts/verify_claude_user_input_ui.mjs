@@ -97,7 +97,13 @@ function requestEvent(kind) {
     sdk_session_id: "sdk-hitl-ui-session",
     status: "waiting",
     context: { tool_use_id: `toolu-${kind}` },
-    risk: kind === "question" ? { level: "info", reason: "Claude needs input." } : { level: "high", reason: "Tool execution requires user confirmation." },
+    risk: kind === "question"
+      ? { level: "info", reason: "Claude needs input.", run_allow_eligible: false }
+      : {
+          level: "high",
+          reason: "Tool execution requires user confirmation before Claude continues.",
+          run_allow_eligible: false,
+        },
     created_at: "2026-06-29T00:00:00Z",
     expires_at: "2026-06-29T00:05:00Z",
   };
@@ -204,7 +210,7 @@ async function main() {
     if (visibleAfterTool.includes("secret-tool-token") || storedAfterTool.includes("secret-tool-token")) {
       throw new Error("tool decision token leaked into visible UI or localStorage");
     }
-    await toolCard.getByTestId("claude-user-input-allow").click();
+    await toolCard.getByTestId("claude-user-input-allow-run").click();
     await waitForCondition(() => decisionRequests.length >= 1, "tool decision request was not posted");
     await toolCard.getByText("已处理").waitFor({ timeout: 10000 });
 
@@ -228,7 +234,7 @@ async function main() {
     }
     if (decisionRequests.length !== 2) throw new Error(`expected 2 decision requests, got ${decisionRequests.length}`);
     const [toolDecision, questionDecision] = decisionRequests;
-    if (toolDecision.requestId !== "cur-tool" || toolDecision.body.action !== "allow_once" || toolDecision.body.decision_token !== "secret-tool-token") {
+    if (toolDecision.requestId !== "cur-tool" || toolDecision.body.action !== "allow_for_run" || toolDecision.body.decision_token !== "secret-tool-token") {
       throw new Error(`invalid tool decision body: ${JSON.stringify(toolDecision)}`);
     }
     if (questionDecision.requestId !== "cur-question" || questionDecision.body.action !== "answer_question" || questionDecision.body.response !== "Only the current alert asset.") {

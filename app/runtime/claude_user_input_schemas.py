@@ -39,7 +39,7 @@ class ClaudeUserInputRequestListResponse(BaseModel):
 class ClaudeUserInputDecisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["allow_once", "deny", "answer_question"]
+    action: Literal["allow_once", "allow_for_run", "deny", "answer_question"]
     decision_token: str
     run_id: str
     session_id: str

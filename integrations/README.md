@@ -2,9 +2,9 @@
 
 本目录存放**发给上层业务系统**的集成辅助物，与 AgentGov 仓库自身的开发配置（`.claude/`、`.codex/`）相互独立——这里的内容面向**集成方**，不在本仓开发时触发。
 
-## agentgov-claude-skill/
+## agentgov-integration/
 
-面向用 Claude Code / Codex 开发的上层业务系统：把 `agentgov-claude-skill/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-claude-skill/SKILL.md`（或 Codex 对应 `.codex/skills/...`），集成方的开发 Agent 即可掌握集成 AgentGov 的旅程与硬边界。
+面向用 Claude Code / Codex 或其他开发 Agent 开发的上层业务系统：把 `agentgov-integration/SKILL.md` 复制到你们项目的 `.claude/skills/agentgov-integration/SKILL.md`（或 Codex 对应 `.codex/skills/...`），集成方的开发 Agent 即可掌握集成 AgentGov 的旅程、Web HITL 确认卡机制与硬边界。
 
 ## 单一真相源
 

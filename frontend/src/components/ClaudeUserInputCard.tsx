@@ -1,4 +1,4 @@
-import { Check, HelpCircle, X } from "lucide-react";
+import { Check, CheckCheck, HelpCircle, X } from "lucide-react";
 import { useMemo, useState } from "react";
 import type { ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
 import { isRecord } from "../utils/records";
@@ -118,6 +118,15 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
           <div className="claude-user-input-actions">
             <button type="button" className="primary-button" data-testid="claude-user-input-allow" disabled={submitting} onClick={() => onSubmit(request, { action: "allow_once" })}>
               <Check size={15} /> 允许一次
+            </button>
+            <button
+              type="button"
+              className="secondary-button"
+              data-testid="claude-user-input-allow-run"
+              disabled={submitting}
+              onClick={() => onSubmit(request, { action: "allow_for_run" })}
+            >
+              <CheckCheck size={15} /> 本次运行允许
             </button>
             <button type="button" className="secondary-button" data-testid="claude-user-input-deny" disabled={submitting} onClick={() => onSubmit(request, { action: "deny", message: denyMessage.trim() || undefined })}>
               <X size={15} /> 拒绝

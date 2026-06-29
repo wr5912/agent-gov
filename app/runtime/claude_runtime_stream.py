@@ -235,6 +235,8 @@ async def _complete_stream_run(
         output,
         stream_run.propagation,
     )
+    if runtime.user_input_service is not None:
+        runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
     await event_queue.put({"event": "done", "data": "[DONE]"})
     await event_queue.put(None)
 

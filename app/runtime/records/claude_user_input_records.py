@@ -9,6 +9,7 @@ ClaudeUserInputRequestType = Literal["tool_permission", "ask_user_question"]
 ClaudeUserInputStatus = Literal["waiting", "resolved", "cancelled"]
 ClaudeUserInputDecision = Literal[
     "allow_once",
+    "allow_for_run",
     "deny",
     "answer_question",
     "timeout_deny",
@@ -21,6 +22,7 @@ REQUEST_TYPES: set[str] = {"tool_permission", "ask_user_question"}
 STATUSES: set[str] = {"waiting", "resolved", "cancelled"}
 DECISIONS: set[str] = {
     "allow_once",
+    "allow_for_run",
     "deny",
     "answer_question",
     "timeout_deny",
@@ -31,6 +33,7 @@ DECISIONS: set[str] = {
 
 TERMINAL_STATUS_BY_DECISION: dict[str, str] = {
     "allow_once": "resolved",
+    "allow_for_run": "resolved",
     "deny": "resolved",
     "answer_question": "resolved",
     "timeout_deny": "resolved",

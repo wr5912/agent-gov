@@ -3389,7 +3389,7 @@ export interface components {
              * Action
              * @enum {string}
              */
-            action: "allow_once" | "deny" | "answer_question";
+            action: "allow_once" | "allow_for_run" | "deny" | "answer_question";
             /** Answers */
             answers?: {
                 [key: string]: components["schemas"]["JsonValue"];

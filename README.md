@@ -114,7 +114,7 @@ pnpm dev
 http://localhost:5173
 ```
 
-Runtime API 设置默认读取前端环境变量：`VITE_RUNTIME_API_BASE` 默认是 `http://localhost:48080`，`VITE_RUNTIME_API_KEY` 可填后端 `docker/.env` 中的 `API_KEY`。开发模式下，Vite 会把 `/api`、`/health`、`/v1` 代理到 `VITE_DEV_PROXY_TARGET`，默认也是 `http://localhost:48080`。
+Runtime API 设置默认读取前端环境变量：`VITE_RUNTIME_API_BASE` 默认是 `http://localhost:48080`，`VITE_RUNTIME_API_KEY` 可填后端 `docker/.env` 中的 `API_KEY`。如果浏览器通过远程地址访问前端（例如 `http://172.16.138.228:45173`），前端会把默认 loopback API 地址自动迁移为同一浏览器主机的 `:48080`，避免远程浏览器把 `localhost` 解析成自己的机器。开发模式下，Vite 会把 `/api`、`/health`、`/v1` 代理到 `VITE_DEV_PROXY_TARGET`，默认也是 `http://localhost:48080`。
 
 前端构建检查：
 
@@ -586,4 +586,4 @@ VITE_LANGFUSE_URL=http://localhost:43000
 pnpm dev
 ```
 
-前端会把浏览器 localStorage 中旧默认值 `http://localhost:48080` 自动迁移到 `frontend/.env.local` 的 `VITE_RUNTIME_API_BASE`；如果你手工配置过其他地址，仍可在前端设置弹窗中修改。
+前端会把浏览器 localStorage 中旧默认值 `http://localhost:48080` 自动迁移到当前默认 Runtime API 地址；远程访问前端时会使用当前浏览器主机名加 `:48080`。如果你手工配置过其他非 loopback 地址，仍可在前端设置弹窗中修改。

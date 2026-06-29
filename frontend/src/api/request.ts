@@ -17,13 +17,32 @@ export type RuntimeRequestInit = RequestInit & {
 
 export function defaultRuntimeConfig(): RuntimeClientConfig {
   return {
-    apiBase: DEFAULT_API_BASE,
+    apiBase: resolveRuntimeApiBase(DEFAULT_API_BASE),
     apiKey: DEFAULT_API_KEY,
   };
 }
 
+export function resolveRuntimeApiBase(configuredBase: string): string {
+  const normalized = normalizeBase(configuredBase || "http://localhost:48080");
+  if (typeof window === "undefined" || !window.location?.hostname) return normalized;
+  if (isLoopbackHost(window.location.hostname)) return normalized;
+  let parsed: URL;
+  try {
+    parsed = new URL(normalized);
+  } catch {
+    return normalized;
+  }
+  if (!isLoopbackHost(parsed.hostname)) return normalized;
+  parsed.hostname = window.location.hostname;
+  return normalizeBase(parsed.toString());
+}
+
 export function normalizeBase(apiBase: string): string {
   return apiBase.trim().replace(/\/$/, "");
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1";
 }
 
 export function isLegacyDockerApiBase(apiBase: string): boolean {

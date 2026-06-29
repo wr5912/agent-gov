@@ -58,8 +58,7 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        async for _ in prompt:
-            pass
+        seen["prompt_item"] = await anext(prompt)
         seen["permission_result"] = await options.can_use_tool(
             "Bash",
             {"command": "echo hi"},
@@ -101,8 +100,9 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
     ]
     assert getattr(seen["options"], "permission_mode", None) == "default"
     assert getattr(seen["options"], "can_use_tool", None) is not None
-    assert getattr(seen["options"], "hooks", None) is not None
+    assert getattr(seen["options"], "hooks", None) is None
     assert getattr(seen["options"], "permission_prompt_tool_name", None) is None
+    assert seen["prompt_item"]["message"]["content"] == "needs tool approval"
     assert seen["permission_result"].__class__.__name__ == "PermissionResultAllow"
     record = store.list(run_id=str(events[0]["data"]["run_id"]))[0]
     assert record.status == "resolved"
@@ -114,8 +114,7 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        async for _ in prompt:
-            pass
+        seen["prompt_item"] = await anext(prompt)
         if False:
             yield None
 
@@ -136,4 +135,5 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
     assert getattr(seen["options"], "can_use_tool", None) is None
     assert getattr(seen["options"], "hooks", None) is None
     assert getattr(seen["options"], "permission_mode", None) is None
+    assert seen["prompt_item"]["message"]["content"] == "no hitl"
     assert store.list(limit=10) == []

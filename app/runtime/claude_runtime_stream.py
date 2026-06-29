@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING, Any
 
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
-from .claude_hitl_hooks import ClaudeHookMap, build_control_keepalive_hooks
 from .claude_runtime import RuntimeQueryState
 from .json_types import JsonObject
 from .message_utils import to_plain
@@ -124,29 +123,40 @@ async def _emit_query_events(
     runtime = stream_run.runtime
     runtime.model_provider_router.ensure_agent_runtime_ready()
     can_use_tool = _sdk_tool_callback(stream_run, event_queue) if stream_run.web_hitl_enabled else None
-    hooks = _web_hitl_hooks() if stream_run.web_hitl_enabled else None
     options = runtime._build_options(
         stream_run.req,
         stream_run.request_context.session,
         profile=stream_run.profile,
         execution_mode="stream_hitl" if stream_run.web_hitl_enabled else "stream",
         can_use_tool=can_use_tool,
-        hooks=hooks,
     )
-    prompt_stream = AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt)
-    async for msg in query_func(prompt=prompt_stream, options=options):
-        event, text, plain, is_result, result_errors = runtime._track_query_message(
-            msg,
-            stream_run.query_state,
-            result_message_type,
-        )
-        await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
-        if is_result:
-            await _publish_result_event(stream_run, event_queue, result_errors)
+    input_done = asyncio.Event() if stream_run.web_hitl_enabled else None
+    prompt_stream = (
+        _single_prompt_stream_until_done(stream_run.request_context.prompt, input_done)
+        if input_done is not None
+        else AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt)
+    )
+    try:
+        async for msg in query_func(prompt=prompt_stream, options=options):
+            event, text, plain, is_result, result_errors = runtime._track_query_message(
+                msg,
+                stream_run.query_state,
+                result_message_type,
+            )
+            await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
+            if is_result:
+                if input_done is not None:
+                    input_done.set()
+                await _publish_result_event(stream_run, event_queue, result_errors)
+    finally:
+        if input_done is not None:
+            input_done.set()
 
 
-def _web_hitl_hooks() -> ClaudeHookMap:
-    return build_control_keepalive_hooks()
+async def _single_prompt_stream_until_done(prompt: str, done: asyncio.Event) -> AsyncIterator[JsonObject]:
+    async for item in AgentJobRunner.single_prompt_stream(prompt):
+        yield item
+    await done.wait()
 
 
 async def _publish_result_event(

@@ -71,7 +71,7 @@ def load_env(path: Path) -> Mapping[str, str]:
 def resolve_langfuse_url(env: Mapping[str, str]) -> str:
     if env.get("LANGFUSE_NEXTAUTH_URL"):
         return env["LANGFUSE_NEXTAUTH_URL"]
-    port = env.get("LANGFUSE_HOST_PORT") or "53000"
+    port = env.get("LANGFUSE_HOST_PORT") or "43000"
     return f"http://localhost:{port}"
 
 
@@ -87,7 +87,7 @@ def wait_for_health(url: str, timeout_seconds: int) -> bool:
 
 
 def print_runtime_versions(env: Mapping[str, str]) -> None:
-    api_base = env.get("API_BASE") or f"http://localhost:{env.get('HOST_PORT') or '58080'}"
+    api_base = env.get("API_BASE") or f"http://localhost:{env.get('HOST_PORT') or '48080'}"
     try:
         payload = get_json(f"{api_base.rstrip('/')}/health")
     except Exception as exc:
@@ -105,7 +105,8 @@ def print_runtime_versions(env: Mapping[str, str]) -> None:
 
 
 def check_queues(env: Mapping[str, str]) -> list[str]:
-    redis_container = env.get("LANGFUSE_REDIS_CONTAINER") or "agent-gov-langfuse-redis"
+    container_prefix = env.get("CONTAINER_NAME_PREFIX") or "agent-gov-hitl"
+    redis_container = env.get("LANGFUSE_REDIS_CONTAINER") or f"{container_prefix}-langfuse-redis"
     if not container_running(redis_container):
         print(f"Langfuse Redis queue check skipped: container {redis_container} is not running")
         return []

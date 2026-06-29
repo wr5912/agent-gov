@@ -14,14 +14,14 @@
       "mcp__sec-ops-data__*",
       "mcp__soc-ops-query__*",
       "mcp__soc-playbook-query__*",
-      "mcp__soc-playbook-execution-result-query__*",
-      "mcp__soc-playbook-execution__*",
-      "mcp__soc-playbook-registry__*"
+      "mcp__soc-playbook-execution-result-query__*"
     ],
     "ask": [
       "Bash(*)",
       "Edit(./**)",
-      "Write(./**)"
+      "Write(./**)",
+      "mcp__soc-playbook-execution__*",
+      "mcp__soc-playbook-registry__*"
     ],
     "deny": [
       "Read(./.env)",

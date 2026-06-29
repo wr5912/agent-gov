@@ -1,9 +1,7 @@
-"""Issue #1 回归：删除定时任务等高危动作在用户确认后不得陷入二次确认死循环。
+"""Claude 原生 Web HITL 回归：MCP mutation 不再由 hook 伪 allow。
 
-根因：运行时为非交互后端（无 permission_prompt_tool_name / permission_mode=default），
-SDK 无法呈现 "ask" 交互确认，返回 "ask" 的工具被无声阻断；用户确认"是"后 MCP 删除
-被阻断，Agent 反复要求二次确认。整改：pre_tool_guard 对 MCP 写入/处置动作返回 allow，
-settings.json 把 MCP 写入/更新/删除放入 allow，CLAUDE.md §4 增加"确认后直接执行、不重复确认"。
+高风险 MCP mutation 应落回 Claude Code settings 的 ask 规则，并由 Agent SDK
+can_use_tool -> Web 确认卡片完成授权；pre_tool_guard 只保留硬拒绝。
 """
 
 from __future__ import annotations
@@ -15,8 +13,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_WORKSPACE = ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents" / "main-agent" / "workspace"
+RESPONSE_WORKSPACE = ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents" / "response-disposal" / "workspace"
 HOOK = MAIN_WORKSPACE / "hooks" / "pre_tool_guard.py"
 SETTINGS = MAIN_WORKSPACE / ".claude" / "settings.json"
+RESPONSE_SETTINGS = RESPONSE_WORKSPACE / ".claude" / "settings.json"
 CLAUDE_MD = MAIN_WORKSPACE / "CLAUDE.md"
 
 
@@ -39,18 +39,15 @@ def _decision(result: dict | None) -> str | None:
     return result.get("hookSpecificOutput", {}).get("permissionDecision")
 
 
-def test_mcp_delete_is_allowed_not_ask_so_confirmed_action_executes():
-    """复现 issue #1 核心：delete_snailjob_task 用户确认后必须可执行（allow），不再返回无法满足的 ask。"""
+def test_mcp_delete_continues_to_native_permission_flow():
+    """MCP 删除不再 hook allow；由 settings ask -> can_use_tool -> Web 确认处理。"""
     result = _run_hook({"tool_name": "mcp__snailjob__delete_snailjob_task", "tool_input": {"job_id": 8}})
-    assert _decision(result) == "allow"
-    # 放行时附带"已确认才执行、不要重复确认"的提醒上下文。
-    ctx = result["hookSpecificOutput"].get("additionalContext", "")
-    assert "不要重复要求确认" in ctx or "已确认" in ctx
+    assert _decision(result) is None
 
 
-def test_mcp_other_mutations_allowed():
+def test_mcp_other_mutations_continue_to_native_permission_flow():
     for tool in ("mcp__sec-ops__block_ip", "mcp__x__update_policy", "mcp__y__write_record", "mcp__z__isolate_host"):
-        assert _decision(_run_hook({"tool_name": tool, "tool_input": {}})) == "allow", tool
+        assert _decision(_run_hook({"tool_name": tool, "tool_input": {}})) is None, tool
 
 
 def test_mcp_query_tool_continues_normal_flow():
@@ -68,17 +65,27 @@ def test_risky_production_bash_is_denied_not_ask():
         assert _decision(_run_hook({"tool_name": "Bash", "tool_input": {"command": cmd}})) == "deny", cmd
 
 
-def test_settings_permissions_have_no_unsatisfiable_ask_on_mcp_mutations():
-    """settings.json：MCP 写入/更新/删除必须在 allow，不得留在无法满足的 ask（否则确认后仍被阻断）。"""
+def test_settings_permissions_put_mcp_mutations_in_ask_not_allow():
+    """settings.json：MCP 写入/更新/删除必须进入 ask，让 Web HITL 接管确认。"""
     perms = json.loads(SETTINGS.read_text(encoding="utf-8"))["permissions"]
     for rule in ("mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"):
-        assert rule in perms["allow"], f"{rule} 应在 allow"
-        assert rule not in perms.get("ask", []), f"{rule} 不应在 ask（非交互后端无法确认）"
+        assert rule not in perms["allow"], f"{rule} 不应在 allow"
+        assert rule in perms.get("ask", []), f"{rule} 应在 ask"
+
+
+def test_response_disposal_execution_mcp_is_ask_not_allow():
+    perms = json.loads(RESPONSE_SETTINGS.read_text(encoding="utf-8"))["permissions"]
+
+    assert "mcp__soc-playbook-execution__*" not in perms["allow"]
+    assert "mcp__soc-playbook-registry__*" not in perms["allow"]
+    assert "mcp__soc-playbook-execution__*" in perms.get("ask", [])
+    assert "mcp__soc-playbook-registry__*" in perms.get("ask", [])
+    assert "mcp__soc-playbook-execution-result-query__*" in perms["allow"]
 
 
 def test_claude_md_requires_execute_after_confirmation_without_reconfirm():
-    """CLAUDE.md §4：用户确认后必须直接执行、禁止重复确认。"""
+    """CLAUDE.md §4：对话计划与 Claude 原生工具确认分层，禁止重复确认。"""
     text = CLAUDE_MD.read_text(encoding="utf-8")
-    assert "只需确认一次" in text
-    assert "禁止再次输出处置计划/确认表格" in text or "禁止重复追问" in text
-    assert "立即调用对应工具执行" in text
+    assert "Claude 原生 Web 确认卡片" in text
+    assert "不要重复输出处置计划/确认表格" in text
+    assert "不要把普通对话回复当成绕过工具权限的依据" in text

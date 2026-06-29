@@ -1,10 +1,15 @@
 import type { RuntimeClientConfig } from "../types/runtime";
 
-const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:58080";
+const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:48080";
 const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
-const LEGACY_DOCKER_API_BASES = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
+const LEGACY_DOCKER_API_BASES = new Set([
+  "http://localhost:58080",
+  "http://127.0.0.1:58080",
+  "http://localhost:48080",
+  "http://127.0.0.1:48080",
+]);
 
 export type RuntimeRequestInit = RequestInit & {
   timeoutMs?: number;

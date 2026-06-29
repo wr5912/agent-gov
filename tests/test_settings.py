@@ -178,6 +178,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "model_provider_vllm_allow_direct": False,
         "provider_api_key_configured": False,
         "provider_api_url_configured": False,
+        "claude_web_hitl_enabled": False,
         "api_host": "0.0.0.0",
         "api_port": 8080,
         "workspace_dir": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/workspace",

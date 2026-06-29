@@ -392,7 +392,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
                 <div className="settings-runtime-grid">
                   <label className="form-field">
                     <span>Runtime API Base</span>
-                    <input data-testid="settings-api-base" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:58080" />
+                    <input data-testid="settings-api-base" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:48080" />
                   </label>
                   <label className="form-field">
                     <span>Runtime API Key</span>

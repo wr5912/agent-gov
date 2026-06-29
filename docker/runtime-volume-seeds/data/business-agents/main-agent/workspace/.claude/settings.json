@@ -13,15 +13,20 @@
       "Bash(jq *)",
       "Bash(cat templates/**)",
       "Write(/data/outputs/**)",
-      "mcp__sec-ops-data__*",
-      "mcp__*__*write*",
-      "mcp__*__*update*",
-      "mcp__*__*delete*"
+      "mcp__sec-ops-data__*"
     ],
     "ask": [
       "Bash(*)",
       "Edit(./**)",
-      "Write(./**)"
+      "Write(./**)",
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*",
+      "mcp__*__*block*",
+      "mcp__*__*isolate*",
+      "mcp__*__*disable*",
+      "mcp__*__*kill*",
+      "mcp__*__*quarantine*"
     ],
     "deny": [
       "Read(./.env)",

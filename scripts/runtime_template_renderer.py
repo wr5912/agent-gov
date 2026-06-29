@@ -7,9 +7,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-CONTAINER_DEFAULT_MCP_SERVER_URL = "http://host.docker.internal:58001/mcp"
-LOCAL_DEBUG_DEFAULT_MCP_SERVER_URL = "http://localhost:58001/mcp"
+CONTAINER_DEFAULT_MCP_SERVER_URL = "http://host.docker.internal:48001/mcp"
+LOCAL_DEBUG_DEFAULT_MCP_SERVER_URL = "http://localhost:48001/mcp"
 UNRESOLVED_TEMPLATE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}")
+MCP_URL_TEMPLATE_VARS = (
+    "MCP_SERVER_URL",
+    "SOC_OPS_QUERY_MCP_URL",
+    "SOC_PLAYBOOK_QUERY_MCP_URL",
+    "SOC_PLAYBOOK_EXECUTION_MCP_URL",
+    "SOC_PLAYBOOK_EXECUTION_RESULT_QUERY_MCP_URL",
+    "SOC_PLAYBOOK_REGISTRY_MCP_URL",
+)
 
 _PROFILE_WORKSPACE_DEFAULTS = {
     "main-workspace": ("MAIN_WORKSPACE_DIR", "/main-workspace"),
@@ -41,6 +49,7 @@ class RuntimeTemplateRenderContext:
     runtime_root: Path
     data_dir: Path
     mcp_server_url: str
+    template_values: Mapping[str, str]
     allowed_network_domains: tuple[str, ...]
     container_path_map: Mapping[str, Path]
 
@@ -64,12 +73,14 @@ def build_render_context(*, mode: str, env: Mapping[str, str], runtime_root: Pat
 
     default_mcp_url = LOCAL_DEBUG_DEFAULT_MCP_SERVER_URL if normalized == "local-debug" else CONTAINER_DEFAULT_MCP_SERVER_URL
     mcp_server_url = env.get("MCP_SERVER_URL") or default_mcp_url
+    template_values = _template_values(env, mcp_server_url=mcp_server_url)
     domains = _allowed_network_domains(normalized, env)
     return RuntimeTemplateRenderContext(
         mode=normalized,
         runtime_root=runtime_root,
         data_dir=data_dir,
         mcp_server_url=mcp_server_url,
+        template_values=template_values,
         allowed_network_domains=domains,
         container_path_map=container_path_map,
     )
@@ -92,7 +103,7 @@ def render_template_file(text: str, *, rel_path: Path, context: RuntimeTemplateR
         loaded = json.loads(text)
         rendered = _render_json_value(loaded, rel_path=rel_path, context=context)
         return json.dumps(rendered, ensure_ascii=False, indent=2) + "\n"
-    return _replace_container_paths(text, context).replace("${MCP_SERVER_URL}", context.mcp_server_url)
+    return _replace_template_values(text, context)
 
 
 def validate_rendered_config(text: str, *, rel_path: Path, context: RuntimeTemplateRenderContext) -> list[str]:
@@ -115,7 +126,7 @@ def validate_rendered_config(text: str, *, rel_path: Path, context: RuntimeTempl
 
 def _render_json_value(value: Any, *, rel_path: Path, context: RuntimeTemplateRenderContext) -> Any:
     if isinstance(value, str):
-        return _replace_container_paths(value, context).replace("${MCP_SERVER_URL}", context.mcp_server_url)
+        return _replace_template_values(value, context)
     if isinstance(value, list):
         if (
             rel_path.name == "settings.json"
@@ -135,6 +146,17 @@ def _replace_container_paths(text: str, context: RuntimeTemplateRenderContext) -
     for container_path, runtime_path in sorted(context.container_path_map.items(), key=lambda item: len(item[0]), reverse=True):
         rendered = rendered.replace(container_path, runtime_path.as_posix())
     return rendered
+
+
+def _replace_template_values(text: str, context: RuntimeTemplateRenderContext) -> str:
+    rendered = _replace_container_paths(text, context)
+    for name, value in context.template_values.items():
+        rendered = rendered.replace(f"${{{name}}}", value)
+    return rendered
+
+
+def _template_values(env: Mapping[str, str], *, mcp_server_url: str) -> Mapping[str, str]:
+    return {name: env.get(name) or mcp_server_url for name in MCP_URL_TEMPLATE_VARS}
 
 
 def _path_from_env(env: Mapping[str, str], name: str, default: Path) -> Path:

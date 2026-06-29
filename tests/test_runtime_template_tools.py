@@ -11,6 +11,7 @@ if str(SCRIPTS) not in sys.path:
 
 from bootstrap_runtime_volume import LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, bootstrap_runtime_volume, resolve_runtime_root  # noqa: E402
 from export_runtime_template import _create_backup, export_runtime_template  # noqa: E402
+from reconcile_business_agent_hitl_policy import reconcile_business_agent_hitl_policy  # noqa: E402
 from restore_runtime_template_backup import restore_backup  # noqa: E402
 from runtime_cleanup import cleanup_runtime_artifacts  # noqa: E402
 from runtime_template_safety import sanitize_path, scan_path  # noqa: E402
@@ -26,7 +27,7 @@ def test_runtime_template_safety_sanitizes_network_and_secret_values(tmp_path):
                 "mcpServers": {
                     "soc": {
                         "type": "http",
-                        "url": "http://10.0.0.2:58001/mcp",
+                        "url": "http://10.0.0.2:48001/mcp",
                         "headers": {"Authorization": "Bearer private-token"},
                     }
                 }
@@ -63,12 +64,12 @@ def test_export_runtime_template_excludes_private_runtime_state_and_cleans_artif
     runtime_root = tmp_path / "runtime"
     workspace = runtime_root / "main-workspace"
     workspace.mkdir(parents=True)
-    (workspace / ".mcp.json").write_text('{"mcpServers":{"soc":{"type":"http","url":"http://10.0.0.2:58001/mcp"}}}', encoding="utf-8")
+    (workspace / ".mcp.json").write_text('{"mcpServers":{"soc":{"type":"http","url":"http://10.0.0.2:48001/mcp"}}}', encoding="utf-8")
     (workspace / "agent.yaml").write_text(
         f"paths:\n  workspace: {workspace}\n  claude_home: {runtime_root / 'claude-roots' / 'main' / '.claude'}\n  data_root: {runtime_root / 'data'}\n",
         encoding="utf-8",
     )
-    (workspace / ".mcp.local.json").write_text('{"mcpServers":{"soc":{"url":"http://10.0.0.3:58001/mcp"}}}', encoding="utf-8")
+    (workspace / ".mcp.local.json").write_text('{"mcpServers":{"soc":{"url":"http://10.0.0.3:48001/mcp"}}}', encoding="utf-8")
     (workspace / ".env").write_text("API_KEY=secret\n", encoding="utf-8")
     (workspace / ".git").mkdir()
     (workspace / ".git" / "config").write_text("[remote]\n", encoding="utf-8")
@@ -241,7 +242,7 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
         "MAIN_WORKSPACE_DIR": str(runtime_root / "main-workspace"),
         "MAIN_CLAUDE_ROOT": str(runtime_root / "claude-roots" / "main"),
         "DATA_DIR": str(runtime_root / "data"),
-        "MCP_SERVER_URL": "http://localhost:58001/mcp",
+        "MCP_SERVER_URL": "http://localhost:48001/mcp",
     }
 
     result = bootstrap_runtime_volume(
@@ -259,7 +260,7 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     report_skill = (runtime_root / "main-workspace" / ".claude" / "skills" / "report-generation" / "SKILL.md").read_text(encoding="utf-8")
     report_server = (runtime_root / "main-workspace" / "mcp_servers" / "report_template_mcp" / "server.py").read_text(encoding="utf-8")
     assert result["validation_errors"] == []
-    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
+    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:48001/mcp"
     assert str(runtime_root / "data" / "outputs") in settings["permissions"]["allow"][0]
     assert str(runtime_root / "claude-roots" / "main" / ".claude.json") in settings["permissions"]["deny"][0]
     assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\""
@@ -271,6 +272,123 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     assert f"`{runtime_root / 'data' / 'outputs' / 'reports'}`" in report_skill
     assert f'"{runtime_root / "main-workspace" / "templates" / "reports"}"' in report_server
     assert f'"{runtime_root / "data" / "outputs" / "reports"}"' in report_server
+
+
+def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
+    template = tmp_path / "template"
+    workspace_template = template / "data" / "business-agents" / "response-disposal" / "workspace"
+    workspace_template.mkdir(parents=True)
+    (workspace_template / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"},
+                    "soc-playbook-query": {"type": "http", "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"},
+                    "soc-playbook-execution": {"type": "http", "url": "${SOC_PLAYBOOK_EXECUTION_MCP_URL}"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "runtime"
+
+    result = bootstrap_runtime_volume(
+        runtime_root=runtime_root,
+        template_dir=template,
+        runtime_volume_mode="local-debug",
+        env={
+            "MCP_SERVER_URL": "http://localhost:48001/mcp",
+            "SOC_PLAYBOOK_QUERY_MCP_URL": "http://localhost:48002/mcp",
+        },
+    )
+
+    mcp = json.loads((runtime_root / "data" / "business-agents" / "response-disposal" / "workspace" / ".mcp.json").read_text(encoding="utf-8"))
+    assert result["validation_errors"] == []
+    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:48001/mcp"
+    assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://localhost:48002/mcp"
+    assert mcp["mcpServers"]["soc-playbook-execution"]["url"] == "http://localhost:48001/mcp"
+
+
+def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
+    template = tmp_path / "template"
+    template_workspace = template / "data" / "business-agents" / "main-agent" / "workspace"
+    template_settings = template_workspace / ".claude"
+    template_hooks = template_workspace / "hooks"
+    template_settings.mkdir(parents=True)
+    template_hooks.mkdir(parents=True)
+    (template_settings / "settings.json").write_text(
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": ["mcp__sec-ops-data__*"],
+                    "ask": ["mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (template_hooks / "pre_tool_guard.py").write_text("# hard deny only\nsys.exit(0)\n", encoding="utf-8")
+    (template_workspace / "CLAUDE.md").write_text(
+        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- 工具执行的最终授权由 Claude 原生 Web 确认卡片处理。\n- 触发 Web 确认后，等待用户在确认卡片中允许一次或拒绝，不要重复输出处置计划/确认表格。\n\n## 5. 输出规范\n",
+        encoding="utf-8",
+    )
+    runtime_root = tmp_path / "runtime"
+    workspace = runtime_root / "data" / "business-agents" / "main-agent" / "workspace"
+    settings_dir = workspace / ".claude"
+    hooks_dir = workspace / "hooks"
+    settings_dir.mkdir(parents=True)
+    hooks_dir.mkdir(parents=True)
+    old_settings = {
+        "permissions": {
+            "allow": ["mcp__sec-ops-data__*", "mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"],
+            "ask": [],
+        }
+    }
+    (settings_dir / "settings.json").write_text(json.dumps(old_settings), encoding="utf-8")
+    (workspace / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"soc-playbook-query": {"type": "http", "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"}}}),
+        encoding="utf-8",
+    )
+    (hooks_dir / "pre_tool_guard.py").write_text('print("permissionDecision\\": \\"allow\\"")\n# MCP 写入/处置动作放行\n', encoding="utf-8")
+    (workspace / "CLAUDE.md").write_text(
+        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- 用户确认后必须立即调用对应工具执行。\n\n## 5. 输出规范\n",
+        encoding="utf-8",
+    )
+
+    dry_run = reconcile_business_agent_hitl_policy(
+        runtime_root=runtime_root,
+        template_dir=template,
+        env_file=tmp_path / "missing.env",
+        runtime_volume_mode="container",
+        apply=False,
+    )
+
+    assert dry_run["dry_run"] is True
+    assert len(dry_run["changes"]) == 4
+    assert json.loads((settings_dir / "settings.json").read_text(encoding="utf-8")) == old_settings
+
+    applied = reconcile_business_agent_hitl_policy(
+        runtime_root=runtime_root,
+        template_dir=template,
+        env_file=tmp_path / "missing.env",
+        runtime_volume_mode="container",
+        apply=True,
+        operator="pytest",
+    )
+
+    updated = json.loads((settings_dir / "settings.json").read_text(encoding="utf-8"))["permissions"]
+    mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
+    assert "mcp__*__*write*" not in updated["allow"]
+    assert "mcp__*__*write*" in updated["ask"]
+    assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://host.docker.internal:48001/mcp"
+    assert (hooks_dir / "pre_tool_guard.py").read_text(encoding="utf-8") == "# hard deny only\nsys.exit(0)\n"
+    assert "Claude 原生 Web 确认卡片" in (workspace / "CLAUDE.md").read_text(encoding="utf-8")
+    assert applied["changes"][0].get("backup")
+    event_log = runtime_root / "data" / "transcripts" / "business-agent-hitl-reconcile.jsonl"
+    assert event_log.exists()
+    event = json.loads(event_log.read_text(encoding="utf-8").strip())
+    assert event["operator"] == "pytest"
+    assert event["change_count"] == 4
 
 
 def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_path):
@@ -311,12 +429,12 @@ def test_bootstrap_runtime_volume_repairs_managed_config_and_cleans_backups(tmp_
         runtime_root=runtime_root,
         template_dir=template,
         runtime_volume_mode="local-debug",
-        env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
+        env={"MCP_SERVER_URL": "http://localhost:48001/mcp"},
         repair_managed_config=True,
     )
 
     mcp = json.loads((runtime_workspace / ".mcp.json").read_text(encoding="utf-8"))
-    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
+    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:48001/mcp"
     assert result["repaired"] == [(runtime_workspace / ".mcp.json").as_posix()]
     assert result["backups"]
     assert not Path(result["backups"][0]).exists()

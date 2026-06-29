@@ -575,6 +575,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/claude-hitl-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Claude SDK HITL requests for Playground Web confirmation */
+        get: operations["list_requests_api_claude_hitl_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/claude-hitl-requests/{request_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve one active Claude SDK HITL request */
+        post: operations["decide_api_claude_hitl_requests__request_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/config": {
         parameters: {
             query?: never;
@@ -3348,6 +3382,106 @@ export interface components {
             usage?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
+        };
+        /** ClaudeUserInputDecisionRequest */
+        ClaudeUserInputDecisionRequest: {
+            /**
+             * Action
+             * @enum {string}
+             */
+            action: "allow_once" | "deny" | "answer_question";
+            /** Answers */
+            answers?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Business Agent Id */
+            business_agent_id: string;
+            /** Decision Token */
+            decision_token: string;
+            /** Message */
+            message?: string | null;
+            /** Response */
+            response?: string | null;
+            /** Run Id */
+            run_id: string;
+            /** Session Id */
+            session_id: string;
+        };
+        /** ClaudeUserInputDecisionResponse */
+        ClaudeUserInputDecisionResponse: {
+            /** Decision */
+            decision: string;
+            /** Request Id */
+            request_id: string;
+            /** Resolved At */
+            resolved_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "resolved" | "cancelled";
+        };
+        /** ClaudeUserInputRequestListResponse */
+        ClaudeUserInputRequestListResponse: {
+            /** Requests */
+            requests: components["schemas"]["ClaudeUserInputRequestResponse"][];
+        };
+        /** ClaudeUserInputRequestResponse */
+        ClaudeUserInputRequestResponse: {
+            /** Api Session Id */
+            api_session_id: string;
+            /** Business Agent Id */
+            business_agent_id: string;
+            /** Context */
+            context?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Created At */
+            created_at: string;
+            /** Decided By */
+            decided_by?: string | null;
+            /** Decision */
+            decision?: string | null;
+            /** Decision Payload */
+            decision_payload?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Expires At */
+            expires_at: string;
+            /** Redacted Input */
+            redacted_input?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Request Id */
+            request_id: string;
+            /**
+             * Request Type
+             * @enum {string}
+             */
+            request_type: "tool_permission" | "ask_user_question";
+            /** Resolved At */
+            resolved_at?: string | null;
+            /** Risk */
+            risk?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Run Id */
+            run_id: string;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Sdk Subagent Id */
+            sdk_subagent_id?: string | null;
+            /** Session Id */
+            session_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "waiting" | "resolved" | "cancelled";
+            /** Tool Name */
+            tool_name: string;
+            /** Tool Use Id */
+            tool_use_id?: string | null;
         };
         /** ConfigMappingItem */
         ConfigMappingItem: {
@@ -6262,6 +6396,11 @@ export interface components {
             claude_home: string;
             /** Claude Root */
             claude_root: string;
+            /**
+             * Claude Web Hitl Enabled
+             * @default false
+             */
+            claude_web_hitl_enabled: boolean;
             /** Data Dir */
             data_dir: string;
             /** Default Agent */
@@ -7865,6 +8004,76 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_requests_api_claude_hitl_requests_get: {
+        parameters: {
+            query?: {
+                session_id?: string | null;
+                run_id?: string | null;
+                status?: string | null;
+                business_agent_id?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeUserInputRequestListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_api_claude_hitl_requests__request_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaudeUserInputDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeUserInputDecisionResponse"];
                 };
             };
             /** @description Validation Error */

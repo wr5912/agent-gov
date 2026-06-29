@@ -1,5 +1,5 @@
 x-langfuse-env: &langfuse-env
-  NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}
+  NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:43000}
   DATABASE_URL: postgresql://${LANGFUSE_POSTGRES_USER:-postgres}:${LANGFUSE_POSTGRES_PASSWORD:-langfuse-postgres}@langfuse-postgres:5432/${LANGFUSE_POSTGRES_DB:-postgres}
   SALT: ${LANGFUSE_SALT:-change-me-langfuse-salt}
   ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:-0000000000000000000000000000000000000000000000000000000000000000}
@@ -24,7 +24,7 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_MEDIA_UPLOAD_REGION: ${LANGFUSE_S3_REGION:-auto}
   LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
   LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
-  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:59000}
+  LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: ${LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT:-http://localhost:49000}
   LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
   LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: ${LANGFUSE_S3_MEDIA_UPLOAD_PREFIX:-media/}
   LANGFUSE_S3_BATCH_EXPORT_ENABLED: ${LANGFUSE_S3_BATCH_EXPORT_ENABLED:-false}
@@ -32,7 +32,7 @@ x-langfuse-env: &langfuse-env
   LANGFUSE_S3_BATCH_EXPORT_PREFIX: ${LANGFUSE_S3_BATCH_EXPORT_PREFIX:-exports/}
   LANGFUSE_S3_BATCH_EXPORT_REGION: ${LANGFUSE_S3_REGION:-auto}
   LANGFUSE_S3_BATCH_EXPORT_ENDPOINT: http://langfuse-minio:9000
-  LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-http://localhost:59000}
+  LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT: ${LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT:-http://localhost:49000}
   LANGFUSE_S3_BATCH_EXPORT_ACCESS_KEY_ID: ${LANGFUSE_MINIO_ROOT_USER:-minio}
   LANGFUSE_S3_BATCH_EXPORT_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
   LANGFUSE_S3_BATCH_EXPORT_FORCE_PATH_STYLE: "true"
@@ -62,7 +62,7 @@ services:
       context: ..
       dockerfile: docker/litellm-sidecar.Dockerfile
     image: agent-gov-litellm-sidecar:${APP_VERSION:-dev}
-    container_name: agent-gov-litellm-sidecar
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-litellm-sidecar
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -79,9 +79,9 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: agent-gov-api:${APP_VERSION:-dev}
-    container_name: agent-gov-api
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-api
     ports:
-      - "${HOST_PORT:-58080}:${API_PORT:-8080}"
+      - "${HOST_PORT:-48080}:${API_PORT:-8080}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -89,7 +89,7 @@ services:
     environment:
       API_HOST: ${API_HOST:-0.0.0.0}
       API_PORT: ${API_PORT:-8080}
-      HOST_PORT: ${HOST_PORT:-58080}
+      HOST_PORT: ${HOST_PORT:-48080}
       RUNTIME_CONTAINER: "1"
       HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}
       HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}
@@ -135,7 +135,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: agent-gov-api:${APP_VERSION:-dev}
-    container_name: agent-gov-worker
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -187,16 +187,16 @@ services:
       context: ..
       dockerfile: docker/frontend.Dockerfile
     image: agent-gov-ui:${APP_VERSION:-dev}
-    container_name: agent-gov-ui
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-ui
     ports:
-      - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"
+      - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-45173}:${FRONTEND_PORT:-5173}"
     env_file:
       - .env
     environment:
       FRONTEND_PORT: ${FRONTEND_PORT:-5173}
-      VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:58080}
+      VITE_RUNTIME_API_BASE: ${FRONTEND_RUNTIME_API_BASE:-http://localhost:48080}
       VITE_RUNTIME_API_KEY: ${FRONTEND_RUNTIME_API_KEY:-${API_KEY:-}}
-      VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:53000}}
+      VITE_LANGFUSE_URL: ${FRONTEND_LANGFUSE_URL:-${LANGFUSE_NEXTAUTH_URL:-http://localhost:43000}}
       VITE_DEV_PROXY_TARGET: http://claude-agent-api:${API_PORT:-8080}
       COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
       PNPM_CONFIG_REGISTRY: https://registry.npmmirror.com
@@ -208,7 +208,7 @@ services:
   langfuse-worker:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}
-    container_name: agent-gov-langfuse-worker
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-worker
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -226,7 +226,7 @@ services:
   langfuse-web:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3}
-    container_name: agent-gov-langfuse-web
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-web
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -241,7 +241,7 @@ services:
     ports:
       # 默认绑定 0.0.0.0，使远端用户可访问 Langfuse 监测界面；仅限本机时设 LANGFUSE_BIND_IP=127.0.0.1。
       # 暴露到网络时务必在私有 docker/.env 设置强 LANGFUSE_SALT/凭据，并把 LANGFUSE_NEXTAUTH_URL 指向宿主机外部地址。
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_HOST_PORT:-53000}:3000"
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_HOST_PORT:-43000}:3000"
     environment:
       <<: *langfuse-env
       NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-nextauth-secret}
@@ -258,7 +258,7 @@ services:
   langfuse-clickhouse:
     profiles: ["langfuse"]
     image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3}
-    container_name: agent-gov-langfuse-clickhouse
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-clickhouse
     restart: unless-stopped
     logging: *default-logging
     user: "101:101"
@@ -279,7 +279,7 @@ services:
   langfuse-minio:
     profiles: ["langfuse"]
     image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio}
-    container_name: agent-gov-langfuse-minio
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-minio
     restart: unless-stopped
     logging: *default-logging
     entrypoint: sh
@@ -289,8 +289,8 @@ services:
       MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_ROOT_PASSWORD:-langfuse-minio}
       HOME: ${LANGFUSE_MINIO_HOME:-/data}
     ports:
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_HOST_PORT:-59000}:9000"
-      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-59001}:9001"
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_HOST_PORT:-49000}:9000"
+      - "${LANGFUSE_BIND_IP:-0.0.0.0}:${LANGFUSE_MINIO_CONSOLE_HOST_PORT:-49001}:9001"
     volumes:
       - ${LANGFUSE_MINIO_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/langfuse/minio}:/data
     healthcheck:
@@ -303,7 +303,7 @@ services:
   langfuse-redis:
     profiles: ["langfuse"]
     image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7}
-    container_name: agent-gov-langfuse-redis
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-redis
     restart: unless-stopped
     logging: *default-logging
     command:
@@ -325,7 +325,7 @@ services:
   langfuse-postgres:
     profiles: ["langfuse"]
     image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
-    container_name: agent-gov-langfuse-postgres
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-postgres
     restart: unless-stopped
     logging: *default-logging
     environment:

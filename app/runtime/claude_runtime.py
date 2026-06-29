@@ -26,6 +26,7 @@ from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
+from .claude_user_input_service import ClaudeUserInputService
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
@@ -95,11 +96,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         session_store: LocalSessionStore,
         feedback_store: FeedbackStore | None = None,
         agent_version_store: AgentVersionProvider | None = None,
+        user_input_service: ClaudeUserInputService | None = None,
     ) -> None:
         self.settings = settings
         self.session_store = session_store
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
+        self.user_input_service = user_input_service
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor(settings)
         self.langfuse = RuntimeLangfuseClient(settings)
@@ -337,7 +340,15 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
         return env
 
-    def _build_options(self, req: ChatRequest, session: LocalSession, *, profile: AgentRuntimeProfile | None = None) -> Any:
+    def _build_options(
+        self,
+        req: ChatRequest,
+        session: LocalSession,
+        *,
+        profile: AgentRuntimeProfile | None = None,
+        execution_mode: str = "stream",
+        can_use_tool: Any = None,
+    ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
@@ -362,7 +373,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "cli_path": self.settings.claude_cli_path,
             "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
-            "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
             "extra_args": self.settings.claude_extra_args,
@@ -372,6 +382,16 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "session_store_flush": self.settings.session_store_flush,
             "load_timeout_ms": self.settings.load_timeout_ms,
         }
+        if execution_mode == "non_stream_bypass":
+            kwargs["permission_mode"] = "bypassPermissions"
+        elif execution_mode == "stream_hitl":
+            kwargs["permission_mode"] = "default"
+        if can_use_tool is not None:
+            kwargs["can_use_tool"] = can_use_tool
+        if self.settings.setting_sources is not None:
+            kwargs["setting_sources"] = self.settings.setting_sources
+        if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl"}:
+            kwargs["permission_prompt_tool_name"] = self.settings.permission_prompt_tool_name
 
         # Resume the previous Claude Code session when possible. The API session id
         # is not necessarily equal to the internal Claude session id returned by SDK.
@@ -440,6 +460,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "alert_id": telemetry.get("alert_id"),
             "case_id": telemetry.get("case_id"),
             "mode": mode,
+            "permission_mode": telemetry.get("permission_mode"),
+            "claude_web_hitl_enabled": telemetry.get("claude_web_hitl_enabled"),
             "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
             "agent": telemetry.get("agent"),
             "skills_mode": telemetry.get("skills_mode"),
@@ -664,6 +686,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override, agent_id=profile.name)
+        context.telemetry_input["permission_mode"] = "bypassPermissions"
+        context.telemetry_input["claude_web_hitl_enabled"] = False
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
         propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)
@@ -687,7 +711,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                     try:
                         async def execute_query() -> None:
                             self.model_provider_router.ensure_agent_runtime_ready()
-                            options = self._build_options(req, context.session, profile=profile)
+                            options = self._build_options(req, context.session, profile=profile, execution_mode="non_stream_bypass")
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):
                                 self._track_query_message(msg, state, ResultMessage)
@@ -719,79 +743,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:
-        from claude_agent_sdk import ResultMessage, query
+        from .claude_runtime_stream import stream_claude_runtime
 
-        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
-        context = self._new_runtime_request_context(req, agent_id=profile.name)
-        state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
-        root_metadata = self._runtime_observation_metadata(context, "stream", profile=profile)
-        propagation = self._langfuse_propagation_attributes(req, context, "stream", profile=profile)
-        final_output: JsonObject | None = None
-        with self.langfuse.propagate_attributes(**propagation):
-            with self.langfuse.start_observation(
-                as_type="span",
-                name=profile.langfuse_observation_name,
-                input=context.telemetry_input,
-                metadata=root_metadata,
-            ) as root_span:
-                context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
-                self.langfuse.set_trace_attributes(root_span, **propagation)
-                yield self._stream_session_event(req, context)
-                with self.langfuse.start_observation(
-                    as_type="generation",
-                    name=f"{profile.langfuse_observation_name}.claude_sdk_query",
-                    input=self._generation_input(req, context),
-                    model=req.model or self.settings.agent_model,
-                    metadata=root_metadata,
-                ) as generation:
-                    self.langfuse.set_trace_attributes(generation, **propagation)
-                    try:
-                        async def emit_query_events() -> AsyncIterator[JsonObject]:
-                            self.model_provider_router.ensure_agent_runtime_ready()
-                            options = self._build_options(req, context.session, profile=profile)
-                            prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                            async for msg in query(prompt=prompt_stream, options=options):
-                                event, text, plain, is_result, result_errors = self._track_query_message(msg, state, ResultMessage)
-                                yield {"event": "message", "data": {"event": event, "text": text, "raw": plain}}
-                                if is_result:
-                                    agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
-                                    yield {
-                                        "event": "result",
-                                        "data": {
-                                            "session_id": context.session.session_id,
-                                            "sdk_session_id": state.sdk_session_id,
-                                            "run_id": context.run_id,
-                                            "agent_version_id": context.agent_version_id,
-                                            "alert_id": req.alert_id,
-                                            "case_id": req.case_id,
-                                            "agent_activity": agent_activity,
-                                            "usage": to_plain(state.usage),
-                                            "total_cost_usd": state.total_cost_usd,
-                                            "stop_reason": state.stop_reason,
-                                            "errors": result_errors,
-                                        },
-                                    }
-
-                        try:
-                            async for item in emit_query_events():
-                                yield item
-                        except Exception as exc:
-                            if not self._should_retry_without_sdk_resume(exc, context, state):
-                                raise
-                            self._clear_stale_sdk_session(context)
-                            state = RuntimeQueryState(sdk_session_id=None)
-                            async for item in emit_query_events():
-                                yield item
-                    except Exception as exc:
-                        if not self._should_suppress_exception(exc, state.errors):
-                            state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                            yield {"event": "error", "data": {"errors": state.errors}}
-                    finally:
-                        answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
-                        final_output = output
-                        self._complete_runtime_request(req, context, state, answer, agent_activity)
-                        self._update_runtime_observations(root_span, generation, context, state, output, propagation)
-                        yield {"event": "done", "data": "[DONE]"}
-        self._flush_langfuse()
-        if final_output is not None:
-            self._sync_langfuse_trace(context, propagation, final_output)
+        async for event in stream_claude_runtime(self, req, profile=profile):
+            yield event

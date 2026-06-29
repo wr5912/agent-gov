@@ -153,7 +153,9 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert getattr(options, "agents", None) is None
     assert getattr(options, "allowed_tools", None) in (None, [])
     assert getattr(options, "disallowed_tools", None) in (None, [])
-    assert getattr(options, "permission_mode", None) is None
+    assert getattr(options, "permission_mode", None) == "bypassPermissions"
+    assert getattr(options, "can_use_tool", None) is None
+    assert getattr(options, "permission_prompt_tool_name", None) is None
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
@@ -987,6 +989,8 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "alert_id": "alert-1",
                 "case_id": "case-1",
                 "mode": "non_stream",
+                "permission_mode": "bypassPermissions",
+                "claude_web_hitl_enabled": "false",
                 "profile": "main-agent",
                 "skills_mode": "default",
                 "tenant_id": "tenant-a",

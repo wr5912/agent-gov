@@ -342,3 +342,48 @@ def migrate_0019_improvement_detail_columns(connection: Connection) -> None:
         for column_name, ddl in columns_to_add.items():
             if column_name not in existing_columns:
                 connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {column_name} {ddl}")
+
+
+def migrate_0020_claude_user_input_requests(connection: Connection) -> None:
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS claude_user_input_requests (
+            request_id VARCHAR(128) NOT NULL PRIMARY KEY,
+            decision_token_hash VARCHAR(128) NOT NULL,
+            business_agent_id VARCHAR(128) NOT NULL,
+            run_id VARCHAR(128) NOT NULL,
+            api_session_id VARCHAR(128) NOT NULL,
+            sdk_session_id VARCHAR(256),
+            tool_use_id VARCHAR(128),
+            sdk_subagent_id VARCHAR(128),
+            request_type VARCHAR(32) NOT NULL,
+            tool_name VARCHAR(256) NOT NULL,
+            redacted_input_json JSON,
+            context_json JSON,
+            risk_json JSON,
+            status VARCHAR(32) NOT NULL,
+            decision VARCHAR(32),
+            decision_payload_json JSON,
+            decided_by VARCHAR(128),
+            created_at VARCHAR(64) NOT NULL,
+            expires_at VARCHAR(64) NOT NULL,
+            resolved_at VARCHAR(64)
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_business_agent_id ON claude_user_input_requests (business_agent_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_run_id ON claude_user_input_requests (run_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_api_session_id ON claude_user_input_requests (api_session_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_tool_use_id ON claude_user_input_requests (tool_use_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_request_type ON claude_user_input_requests (request_type)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_tool_name ON claude_user_input_requests (tool_name)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_status ON claude_user_input_requests (status)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_decision ON claude_user_input_requests (decision)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_created_at ON claude_user_input_requests (created_at)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_requests_expires_at ON claude_user_input_requests (expires_at)")
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_claude_user_input_agent_status ON claude_user_input_requests (business_agent_id, status, created_at)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_claude_user_input_run_status ON claude_user_input_requests (run_id, status, created_at)"
+    )

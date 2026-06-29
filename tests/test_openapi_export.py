@@ -83,6 +83,8 @@ def test_export_openapi_script_writes_schema(tmp_path):
     assert schema["openapi"].startswith("3.")
     assert "/api/feedback-signals" in schema["paths"]
     assert "/api/feedback-optimization-batches" in schema["paths"]
+    assert "/v1/chat/completions" in schema["paths"]
+    assert "/v1/responses" not in schema["paths"]
     assert_schema_ref(schema, "/health", "get", "RuntimeHealthResponse")
     assert_schema_ref(schema, "/api/evidence-packages/{evidence_package_id}", "get", "EvidencePackageResponse")
     assert_schema_ref(

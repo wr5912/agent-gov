@@ -30,6 +30,9 @@ type OpenApiAgentVersionDiffResponse = components["schemas"]["AgentVersionDiffRe
 type OpenApiAgentVersionFileEntryResponse = components["schemas"]["AgentVersionFileEntryResponse"];
 type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
 type OpenApiChatRequest = components["schemas"]["ChatRequest"];
+type OpenApiClaudeUserInputDecisionRequest = components["schemas"]["ClaudeUserInputDecisionRequest"];
+type OpenApiClaudeUserInputDecisionResponse = components["schemas"]["ClaudeUserInputDecisionResponse"];
+type OpenApiClaudeUserInputRequestResponse = components["schemas"]["ClaudeUserInputRequestResponse"];
 type OpenApiConfigMappingItem = components["schemas"]["ConfigMappingItem"];
 type OpenApiConfigMappingResponse = components["schemas"]["ConfigMappingResponse"];
 type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
@@ -115,6 +118,7 @@ export interface ChatMessage {
   alertId?: string;
   caseId?: string;
   agentActivity?: AgentActivity;
+  userInputRequests?: ClaudeUserInputRequest[];
   /** 当前 assistant 回复捕获到的完整 SSE 时间线。 */
   events?: StreamLogEvent[];
 }
@@ -132,6 +136,22 @@ export interface StreamEnvelope {
   event: string;
   data: unknown;
 }
+
+export type ClaudeUserInputRequestType = OpenApiClaudeUserInputRequestResponse["request_type"];
+export type ClaudeUserInputStatus = OpenApiClaudeUserInputRequestResponse["status"];
+export type ClaudeUserInputDecisionAction = OpenApiClaudeUserInputDecisionRequest["action"];
+
+export type ClaudeUserInputRequest = Omit<OpenApiClaudeUserInputRequestResponse, "redacted_input" | "context" | "risk" | "decision_payload"> & {
+  decision_token?: string;
+  redacted_input: Record<string, unknown>;
+  context: Record<string, unknown>;
+  risk: Record<string, unknown>;
+  decision_payload?: Record<string, unknown>;
+};
+
+export type ClaudeUserInputDecisionPayload = OpenApiClaudeUserInputDecisionRequest;
+
+export type ClaudeUserInputDecisionResponse = OpenApiClaudeUserInputDecisionResponse;
 
 export interface RuntimeClientConfig {
   apiBase: string;

@@ -77,6 +77,7 @@ def build_health_payload(
         provider_api_url_configured=bool(settings.provider_api_url),
         provider_api_key_configured=bool(settings.provider_api_key),
         model_provider_route=ModelProviderRouter(settings).health_summary(),
+        claude_web_hitl_enabled=settings.enable_claude_web_hitl,
         programmatic_agents=False,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),

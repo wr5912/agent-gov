@@ -55,7 +55,7 @@ const IMPROVEMENTS = [
   { improvement_id: "imp-demo03", agent_id: "soc-ops", title: "时间窗口误判治理 · 优化", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", created_at: ts, updated_at: ts },
 ];
-function defaultPayload(path) {
+function defaultPayload(path, request = {}) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/api/agent-registry") return AGENTS;
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];
@@ -113,7 +113,64 @@ function defaultPayload(path) {
     updated_at: ts,
   }];
   if (path === "/api/improvements") return IMPROVEMENTS;
-  if (path === "/api/config") return { mappings: [] };
+  if (path === "/api/config") return {
+    agent_id: "main-agent",
+    claude_config_mode: "native",
+    claude_root: "/data/business-agents/main-agent/claude-root",
+    claude_home: "/data/business-agents/main-agent/claude-root/.claude",
+    claude_global_config_file: "/data/business-agents/main-agent/claude-root/.claude.json",
+    claude_config_dir: null,
+    setting_sources_effective: null,
+    mappings: [
+      {
+        scope: "project",
+        kind: "instructions",
+        container_path: "/data/business-agents/main-agent/workspace/CLAUDE.md",
+        exists: true,
+        loaded_by_default: true,
+        load_semantics: "claude_loaded",
+        display_group: "agent_project_config",
+        safe_to_edit: true,
+        git_policy: "tracked",
+      },
+      {
+        scope: "project",
+        kind: "mcp",
+        container_path: "/data/business-agents/main-agent/workspace/.mcp.json",
+        exists: true,
+        loaded_by_default: true,
+        load_semantics: "claude_loaded",
+        display_group: "agent_project_config",
+        safe_to_edit: true,
+        git_policy: "tracked",
+      },
+      {
+        scope: "runtime",
+        kind: "agent-change-set-worktrees",
+        container_path: "/data/business-agents/main-agent/version/worktrees",
+        exists: true,
+        loaded_by_default: false,
+        load_semantics: "runtime_used",
+        display_group: "versioning_runtime",
+        safe_to_edit: false,
+        git_policy: "ignored",
+      },
+    ],
+  };
+  if (path === "/api/agent-config-file") {
+    const body = request.method === "PUT" ? JSON.parse(request.postData || "{}") : {};
+    return {
+      agent_id: "main-agent",
+      path: ".mcp.json",
+      container_path: "/data/business-agents/main-agent/workspace/.mcp.json",
+      exists: true,
+      content: typeof body.content === "string" ? body.content : '{\n  "mcpServers": {}\n}\n',
+      sha256: "mock-sha-after",
+      size_bytes: 24,
+      content_type: "application/json",
+      sdk_session_invalidated: request.method === "PUT",
+    };
+  }
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
   if (/^\/api\/improvements\/[^/]+\/similar$/.test(path)) return [{ improvement: { ...IMPROVEMENTS[0], improvement_id: "imp-sim01", title: "告警误报治理(相似项)" }, score: 0.55 }];
@@ -486,10 +543,14 @@ const RULES = [
     await drawer.waitFor({ timeout: 8000 }).catch(() => {});
     const open = await visible(page, "playground-runtime-settings-drawer");
     const size = open ? await drawer.getAttribute("data-size") : null;
-    const hasRuntimeSettings = open
-      && await has(page, "runtime-agent-settings")
-      && await has(page, "runtime-parameter-settings")
-      && await drawer.locator('input[placeholder="留空使用后端默认"]').count() >= 2;
+    const agentSettingsSection = open && await has(page, "runtime-agent-settings");
+    const parameterSettingsSection = open && await has(page, "runtime-parameter-settings");
+    const maxTurnsControl = open && await drawer.locator('input[type="number"]').count() === 1;
+    const hasRuntimeSettings = agentSettingsSection && parameterSettingsSection && maxTurnsControl;
+    const noMisleadingControls = open
+      && !(await textIncludes(drawer, "Skills Mode"))
+      && !(await textIncludes(drawer, "Allowed Tools"))
+      && !(await textIncludes(drawer, "Disallowed Tools"));
     const noSessionHistory = open
       && await drawer.getByText("新会话").count() === 0
       && await drawer.getByText("删除会话映射").count() === 0
@@ -499,12 +560,33 @@ const RULES = [
     const debug = open ? page.getByTestId("runtime-debug-section") : null;
     const debugClosed = debug ? await debug.evaluate((el) => !el.open).catch(() => false) : false;
     if (debug) await debug.locator("summary").click().catch(() => {});
-    const debugVisible = open ? await textIncludes(drawer, "Runtime") && await textIncludes(drawer, "Events") : false;
+    const debugVisible = open ? await textIncludes(drawer, "Runtime") && !(await textIncludes(drawer, "Events")) && !(await textIncludes(drawer, "Subagents / Skills")) : false;
+    const agentConfigVisible = open ? await textIncludes(drawer, "Agent 配置") && await textIncludes(drawer, "版本治理运行态") : false;
+    const mcpEditButton = open ? await has(page, "runtime-config-edit-mcp") : false;
+    let mcpEditorOpened = false;
+    let mcpEditorApplied = REAL;
+    if (mcpEditButton) {
+      await page.getByTestId("runtime-config-edit-mcp").click();
+      await page.getByTestId("agent-config-file-editor").waitFor({ timeout: 8000 }).catch(() => {});
+      mcpEditorOpened = await visible(page, "agent-config-file-editor");
+      if (mcpEditorOpened && !REAL) {
+        await page.getByTestId("agent-config-file-editor-content").fill('{"mcpServers":{"parity":{"command":"node","args":["server.js"]}}}\n');
+        await page.getByTestId("agent-config-file-editor-apply").click();
+        await page.getByTestId("agent-config-file-editor-status").waitFor({ timeout: 8000 }).catch(() => {});
+        mcpEditorApplied = await visible(page, "agent-config-file-editor-status");
+      }
+      if (mcpEditorOpened) await page.getByTestId("agent-config-file-editor").getByRole("button", { name: "关闭" }).click().catch(() => {});
+      await page.getByTestId("agent-config-file-editor").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+    }
+    const noLegacyGovernancePath = open ? !(await textIncludes(drawer, "/data/agent-governance")) : false;
     if (open) {
       await drawer.getByLabel("关闭").click();
       await drawer.waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     }
-    return { ok: trigger && open && size === "wide" && hasRuntimeSettings && noSessionHistory && debugClosed && debugVisible, detail: `trigger=${trigger} open=${open} size=${size} runtimeSettings=${hasRuntimeSettings} noSessionHistory=${noSessionHistory} debugClosed=${debugClosed} debugVisible=${debugVisible}` };
+    return {
+      ok: trigger && open && size === "wide" && hasRuntimeSettings && noMisleadingControls && noSessionHistory && debugClosed && debugVisible && agentConfigVisible && mcpEditorOpened && mcpEditorApplied && noLegacyGovernancePath,
+      detail: `trigger=${trigger} open=${open} size=${size} runtimeSettings=${hasRuntimeSettings} sections=${agentSettingsSection}/${parameterSettingsSection} maxTurns=${maxTurnsControl} noMisleadingControls=${noMisleadingControls} noSessionHistory=${noSessionHistory} debugClosed=${debugClosed} debugVisible=${debugVisible} agentConfig=${agentConfigVisible} mcpEditor=${mcpEditorOpened}/${mcpEditorApplied} legacyPath=${!noLegacyGovernancePath}`,
+    };
   } },
   { id: "message-actions", phase: "P1", desc: "助手回复动作含 创建反馈/查看Trace/获取上下文（领域级 data-testid）", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -955,7 +1037,15 @@ async function main() {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
-        return route.fulfill({ status: 200, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(defaultPayload(url.pathname)) });
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          headers: { "access-control-allow-origin": "*" },
+          body: JSON.stringify(defaultPayload(url.pathname, {
+            method: route.request().method(),
+            postData: route.request().postData() || "",
+          })),
+        });
       });
     }
     const results = [];

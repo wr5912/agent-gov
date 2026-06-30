@@ -22,6 +22,9 @@ type OpenApiAgentReleaseRollbackRequest = components["schemas"]["AgentReleaseRol
 type OpenApiAgentReleaseRestoreRequest = components["schemas"]["AgentReleaseRestoreRequest"];
 type OpenApiAgentReleaseRestoreResponse = components["schemas"]["AgentReleaseRestoreResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
+type OpenApiAgentConfigFileResponse = components["schemas"]["AgentConfigFileResponse"];
+type OpenApiAgentConfigFileUpdateRequest = components["schemas"]["AgentConfigFileUpdateRequest"];
+type OpenApiAgentConfigFileUpdateResponse = components["schemas"]["AgentConfigFileUpdateResponse"];
 type OpenApiAgentRepositoryDiscardChangesRequest = components["schemas"]["AgentRepositoryDiscardChangesRequest"];
 type OpenApiAgentRepositorySnapshotRequest = components["schemas"]["AgentRepositorySnapshotRequest"];
 type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentRepositoryStatusResponse"];
@@ -90,6 +93,9 @@ export type AgentChangeSetPublishRequest = OpenApiAgentChangeSetPublishRequest;
 export type AgentReleaseRollbackRequest = OpenApiAgentReleaseRollbackRequest;
 export type AgentReleaseRestoreRequest = OpenApiAgentReleaseRestoreRequest;
 export type AgentRunRecord = OpenApiAgentRunResponse;
+export type AgentConfigFileResponse = OpenApiAgentConfigFileResponse;
+export type AgentConfigFileUpdateRequest = OpenApiAgentConfigFileUpdateRequest;
+export type AgentConfigFileUpdateResponse = OpenApiAgentConfigFileUpdateResponse;
 
 export type ChatRequest = OpenApiChatRequest;
 

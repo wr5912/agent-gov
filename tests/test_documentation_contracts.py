@@ -26,8 +26,7 @@ def test_readme_api_index_uses_current_feedback_and_agent_routes():
         "/api/agent-repository/current",
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
-        "/data/agent-governance/worktrees/",
-        "/data/agent-governance/releases/",
+        "/data/business-agents/main-agent/version/{worktrees,releases}",
     ]
     for route in current_routes:
         assert route in readme

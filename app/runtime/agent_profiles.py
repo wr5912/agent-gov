@@ -36,6 +36,39 @@ PROFILE_VERSION_IDS: dict[AgentRole, str] = {
 }
 
 
+def _business_agent_readable_paths(settings: AppSettings, workspace_dir: Path) -> tuple[Path, ...]:
+    return (
+        workspace_dir,
+        settings.data_dir / "uploads",
+        settings.data_dir / "outputs",
+        settings.data_dir / "soc-events",
+        settings.data_dir / "agent-memory",
+    )
+
+
+def _business_agent_denied_paths(
+    settings: AppSettings,
+    *,
+    agent_id: str,
+    claude_root: Path,
+    deny_version_base: bool,
+) -> tuple[Path, ...]:
+    layout = business_agent_layout(settings.data_dir, agent_id)
+    denied = [
+        settings.governor_claude_root,
+        claude_root,
+        settings.data_dir / "agent-governance",
+        settings.data_dir / ".runtime-tmp",
+        settings.runtime_db_path,
+        settings.data_dir / "runtime.sqlite3-wal",
+        settings.data_dir / "runtime.sqlite3-shm",
+        settings.data_dir / "runtime.sqlite3.schema.lock",
+    ]
+    if deny_version_base:
+        denied.append(layout.version_base)
+    return tuple(denied)
+
+
 @dataclass(frozen=True)
 class AgentRuntimeProfile:
     name: str
@@ -133,7 +166,7 @@ def candidate_profile(
     """候选版本 profile：cwd=候选 worktree，claude-root 隔离到 candidate-claude-roots/<id>，
     其余边界与该 Agent 的业务 profile 同构（不再 main 专属）。"""
     base = build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=workspace_dir)
-    claude_root = settings.data_dir / "agent-governance" / "candidate-claude-roots" / candidate_id
+    claude_root = business_agent_layout(settings.data_dir, agent_id).version_base / "candidate-claude-roots" / candidate_id
     return AgentRuntimeProfile(
         name=f"{agent_id}-candidate",
         role=BUSINESS_AGENT_ROLE,
@@ -144,9 +177,14 @@ def candidate_profile(
         mcp_config_path=workspace_dir / ".mcp.json",
         project_settings_path=workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name=f"runtime.candidate.{agent_id}",
-        readable_paths=(workspace_dir, settings.data_dir),
+        readable_paths=_business_agent_readable_paths(settings, workspace_dir),
         writable_paths=base.writable_paths,
-        denied_paths=(settings.governor_claude_root, claude_root),
+        denied_paths=_business_agent_denied_paths(
+            settings,
+            agent_id=agent_id,
+            claude_root=claude_root,
+            deny_version_base=False,
+        ),
         max_turns=base.max_turns,
         max_runtime_seconds=base.max_runtime_seconds,
         max_output_bytes=base.max_output_bytes,
@@ -156,8 +194,9 @@ def candidate_profile(
 def build_business_agent_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Path) -> AgentRuntimeProfile:
     """为一个注册业务 Agent 动态构造运行时 profile（AGV-004 运行态）。
 
-    业务 Agent 是被治理对象：可读自身 workspace 与 data_dir、可写输出目录，
-    但不得写入任何治理 Agent 根目录。role 统一为 business-agent，name 为 agent_id。
+    业务 Agent 是被治理对象：可读自身 workspace 与必要共享 I/O 目录、可写输出目录，
+    但不得读取运行态凭据、版本治理工件、SQLite 或治理 Agent 根目录。
+    role 统一为 business-agent，name 为 agent_id。
     """
     claude_root = business_agent_layout(settings.data_dir, agent_id).claude_root
     return AgentRuntimeProfile(
@@ -170,11 +209,15 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
         mcp_config_path=workspace_dir / ".mcp.json",
         project_settings_path=workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name=f"runtime.business_agent.{agent_id}",
-        readable_paths=(workspace_dir, settings.data_dir),
+        readable_paths=_business_agent_readable_paths(settings, workspace_dir),
         writable_paths=(settings.data_dir / "outputs",),
-        # 业务 Agent 不得自读自身 SDK 运行态家目录（claude-root 在 data_dir 下、且可能嵌于 cwd），
-        # 否则可经 Read(./claude-root/**) 读到 session/缓存/凭据态。denied 在 policy.py 优先于 readable。
-        denied_paths=(settings.governor_claude_root, claude_root),
+        # denied 在 policy.py 优先于 readable；即便未来误扩 readable，也不能读运行态敏感目录。
+        denied_paths=_business_agent_denied_paths(
+            settings,
+            agent_id=agent_id,
+            claude_root=claude_root,
+            deny_version_base=True,
+        ),
     )
 
 

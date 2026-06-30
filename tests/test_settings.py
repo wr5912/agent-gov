@@ -155,8 +155,8 @@ def test_settings_local_debug_env_uses_tmp_runtime_root(monkeypatch):
     assert settings.claude_root == main_layout_root / "claude-root"
     assert settings.main_claude_root == main_layout_root / "claude-root"
     assert settings.claude_home == main_layout_root / "claude-root" / ".claude"
-    assert settings.agent_git_worktrees_dir == local_debug_root / "data" / "agent-governance" / "worktrees"
-    assert settings.agent_release_archives_dir == local_debug_root / "data" / "agent-governance" / "releases"
+    assert settings.agent_git_worktrees_dir == main_layout_root / "version" / "worktrees"
+    assert settings.agent_release_archives_dir == main_layout_root / "version" / "releases"
 
 
 def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):

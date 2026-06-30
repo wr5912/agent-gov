@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.schemas import ChatRequest
@@ -30,6 +31,31 @@ def _store_with_stale_session(settings, session_id):
     session.sdk_session_id = "stale-sdk"
     store.save(session)
     return store
+
+
+def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp_path):
+    settings = _settings(tmp_path)
+    store = LocalSessionStore(settings.session_dir)
+    runtime = ClaudeRuntime(settings, store)
+    session_id = str(uuid.uuid4())
+    session = store.get_or_create(session_id)
+
+    first_options = runtime._build_options(ChatRequest(message="first", session_id=session_id), session)
+    assert getattr(first_options, "session_id", None) == session_id
+    assert getattr(first_options, "resume", None) is None
+
+    session.turns = 1
+    session.sdk_session_id = None
+    store.save(session)
+    resumed_after_config_change = store.get(session_id)
+    assert resumed_after_config_change is not None
+    second_options = runtime._build_options(
+        ChatRequest(message="second", session_id=session_id),
+        resumed_after_config_change,
+    )
+
+    assert getattr(second_options, "session_id", None) is None
+    assert getattr(second_options, "resume", None) is None
 
 
 def test_run_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatch):

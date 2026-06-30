@@ -16,12 +16,12 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
     alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
-    agent: Optional[str] = Field(default=None, description="Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.")
+    agent: Optional[str] = Field(default=None, description="Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files.")
     agent_id: Optional[str] = Field(default=None, description="Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.")
-    skills: Optional[list[str]] = Field(default=None, description="Skill names to enable. Omit to use DEFAULT_SKILLS.")
-    skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated for SDK execution; configure skills in Claude Code official files.")
-    allowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated for SDK execution; configure tool permissions in .claude/settings.json.")
-    disallowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated for SDK execution; configure tool permissions in .claude/settings.json.")
+    skills: Optional[list[str]] = Field(default=None, description="Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files.")
+    skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution.")
+    allowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.")
+    disallowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.")
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
     permission_mode: Optional[str] = Field(default=None, description="Deprecated for SDK execution; configure permission mode in .claude/settings.json.")
@@ -79,11 +79,15 @@ class ConfigMappingItem(BaseModel):
     host_mount: Optional[str] = None
     exists: bool
     loaded_by_default: bool
+    load_semantics: Literal["claude_loaded", "claude_optional", "runtime_used", "not_applicable"] = "not_applicable"
+    display_group: Literal["agent_project_config", "agent_user_state", "versioning_runtime", "hidden_debug"] = "hidden_debug"
+    safe_to_edit: bool = False
     git_policy: str
     notes: Optional[str] = None
 
 
 class ConfigMappingResponse(BaseModel):
+    agent_id: str = "main-agent"
     claude_config_mode: str
     claude_root: str
     claude_home: str

@@ -119,18 +119,15 @@ class FeedbackStore(
             return None
 
     def _agent_git_paths_context(self, agent_id: Optional[str] = None) -> JsonObject:
-        # #24-B：执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析（main 走 agent-governance 顶层，
-        # 业务 Agent 走 business-agents/<id>/version），使 governor grounding 落到该 Agent 自己的版本库。
-        normalized = (agent_id or "").strip()
-        if not normalized or normalized == "main-agent":
-            repository, worktrees, releases = (
-                self.main_workspace_dir,
-                self.data_dir / "agent-governance" / "worktrees",
-                self.data_dir / "agent-governance" / "releases",
-            )
-        else:
-            layout = business_agent_layout(self.data_dir, normalized)
-            repository, worktrees, releases = (layout.workspace, layout.version_base / "worktrees", layout.version_base / "releases")
+        # 执行 prompt 的仓库/worktrees/releases 路径按归属业务 Agent 解析；main-agent 与动态
+        # 业务 Agent 同构，版本治理工件一律落 data/business-agents/<id>/version。
+        normalized = (agent_id or "main-agent").strip()
+        layout = business_agent_layout(self.data_dir, normalized)
+        repository, worktrees, releases = (
+            self.main_workspace_dir if normalized == "main-agent" else layout.workspace,
+            layout.version_base / "worktrees",
+            layout.version_base / "releases",
+        )
         return {
             "main_agent_repository_path": str(repository),
             "agent_change_set_worktrees_path": str(worktrees),

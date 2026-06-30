@@ -18,8 +18,8 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     claude_root = root / "claude-roots" / "main"
     governor_workspace = root / "governor-workspace"
     governor_root = root / "claude-roots" / "governor"
-    agent_worktrees = data / "agent-governance" / "worktrees"
-    release_archives = data / "agent-governance" / "releases"
+    agent_worktrees = data / "business-agents" / "main-agent" / "version" / "worktrees"
+    release_archives = data / "business-agents" / "main-agent" / "version" / "releases"
     for path in (
         workspace,
         data,

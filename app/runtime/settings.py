@@ -369,11 +369,15 @@ class AppSettings(BaseSettings):
 
     @property
     def agent_git_worktrees_dir(self) -> Path:
-        return self.agent_git_worktrees_dir_override or self.data_dir / "agent-governance" / "worktrees"
+        return self.agent_git_worktrees_dir_override or business_agent_layout(
+            self.data_dir, MAIN_AGENT_ID
+        ).version_base / "worktrees"
 
     @property
     def agent_release_archives_dir(self) -> Path:
-        return self.agent_release_archives_dir_override or self.data_dir / "agent-governance" / "releases"
+        return self.agent_release_archives_dir_override or business_agent_layout(
+            self.data_dir, MAIN_AGENT_ID
+        ).version_base / "releases"
 
     @property
     def runtime_db_path(self) -> Path:

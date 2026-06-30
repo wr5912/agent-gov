@@ -172,15 +172,15 @@ HOST_CLAUDE_ROOT_MOUNT=${HOST_RUNTIME_VOLUME_ROOT}/claude-roots/main
 本轮 Git 拓扑：
 
 ```text
-/main-workspace
+/data/business-agents/<agent_id>/workspace
   .git
   master/main
   tags/agent-release-...
 
-/data/agent-governance/worktrees/
+/data/business-agents/<agent_id>/version/worktrees/
   agc-<change_set_id>/
 
-/data/agent-governance/releases/
+/data/business-agents/<agent_id>/version/releases/
   agr-<release_id>.tar.gz
 ```
 

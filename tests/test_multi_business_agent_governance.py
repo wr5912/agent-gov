@@ -58,6 +58,8 @@ def test_agent_git_paths_context_is_per_agent(tmp_path: Path) -> None:
     assert aaa["agent_change_set_worktrees_path"] == str(business_agent_layout(data_dir, "AAA").version_base / "worktrees")
     main = store._agent_git_paths_context("main-agent")
     assert main["main_agent_repository_path"] == str(store.main_workspace_dir)
+    assert main["agent_change_set_worktrees_path"] == str(business_agent_layout(data_dir, "main-agent").version_base / "worktrees")
+    assert main["agent_release_archives_path"] == str(business_agent_layout(data_dir, "main-agent").version_base / "releases")
     # main 与 AAA 的仓库路径必须不同（否则 AAA 执行会落到 main 库）。
     assert aaa["main_agent_repository_path"] != main["main_agent_repository_path"]
 

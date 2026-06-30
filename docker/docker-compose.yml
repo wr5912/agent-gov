@@ -99,8 +99,8 @@ services:
       AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
       AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
       AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
-      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
-      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
+      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/business-agents/main-agent/version/worktrees}
+      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/main-agent/version/releases}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
@@ -149,8 +149,8 @@ services:
       AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
       AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
       AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
-      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/agent-governance/worktrees}
-      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/agent-governance/releases}
+      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/business-agents/main-agent/version/worktrees}
+      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/main-agent/version/releases}
       GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       DATA_DIR: ${DATA_DIR:-/data}
       GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}

@@ -9,6 +9,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
+from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
 from app.routers.automation import create_automation_router
@@ -199,8 +200,28 @@ app.include_router(
     )
 )
 app.include_router(create_claude_user_input_router(service=claude_user_input_service, require_api_key=require_api_key))
-app.include_router(create_config_router(settings=settings, require_api_key=require_api_key))
-app.include_router(create_catalog_router(settings=settings, require_api_key=require_api_key))
+app.include_router(
+    create_config_router(
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_agent_config_files_router(
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        session_store=session_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_catalog_router(
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        require_api_key=require_api_key,
+    )
+)
 app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))

@@ -16,6 +16,9 @@ import type {
   AgentGitDiff,
   AgentGitFileDiff,
   AgentGitRef,
+  AgentConfigFileResponse,
+  AgentConfigFileUpdateRequest,
+  AgentConfigFileUpdateResponse,
   AgentRelease,
   AgentReleaseRollbackRequest,
   AgentReleaseRestoreRequest,
@@ -57,8 +60,9 @@ export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
   );
 }
 
-export function getAgents(config: RuntimeClientConfig) {
-  return requestJson<AgentInfo[]>(config, "/api/agents");
+export function getAgents(config: RuntimeClientConfig, agentId?: string) {
+  const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
+  return requestJson<AgentInfo[]>(config, `/api/agents${query}`);
 }
 
 // 业务 Agent（治理对象，/api/agent-registry），用于顶栏全局 Agent 切换器与 scoping。
@@ -93,8 +97,9 @@ export function deleteBusinessAgent(config: RuntimeClientConfig, agentId: string
   });
 }
 
-export function getSkills(config: RuntimeClientConfig) {
-  return requestJson<SkillInfo[]>(config, "/api/skills");
+export function getSkills(config: RuntimeClientConfig, agentId?: string) {
+  const query = agentId ? `?${new URLSearchParams({ agent_id: agentId }).toString()}` : "";
+  return requestJson<SkillInfo[]>(config, `/api/skills${query}`);
 }
 
 // F12：/v1 出口 Agent 配置类型改用 OpenAPI 生成类型（删手写 schema 双轨），从 types/runtime re-export。
@@ -125,8 +130,30 @@ export const runtimeApi = {
   skills: getSkills,
 };
 
-export function getConfigMapping(config: RuntimeClientConfig) {
-  return requestJson<ConfigMappingResponse>(config, "/api/config");
+export function getConfigMapping(config: RuntimeClientConfig, agentId?: string) {
+  const params = new URLSearchParams();
+  if (agentId) params.set("agent_id", agentId);
+  const query = params.toString();
+  return requestJson<ConfigMappingResponse>(config, `/api/config${query ? `?${query}` : ""}`);
+}
+
+export function getAgentConfigFile(config: RuntimeClientConfig, agentId: string, path: string) {
+  const params = new URLSearchParams({ agent_id: agentId, path });
+  return requestJson<AgentConfigFileResponse>(config, `/api/agent-config-file?${params.toString()}`);
+}
+
+export function updateAgentConfigFile(
+  config: RuntimeClientConfig,
+  agentId: string,
+  path: string,
+  payload: AgentConfigFileUpdateRequest,
+) {
+  const params = new URLSearchParams({ agent_id: agentId, path });
+  return requestJson<AgentConfigFileUpdateResponse>(config, `/api/agent-config-file?${params.toString()}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getAgentRepositoryStatus(config: RuntimeClientConfig) {

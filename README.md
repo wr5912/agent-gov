@@ -171,7 +171,7 @@ pnpm --dir frontend generate:api-types
 
 - `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、`execution_applications`、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
 - 归因、方案、执行、评估用例生成和回归影响分析 Agent 的输入、输出和错误都以 SQLite 为权威存储；后端从 SQLite、证据包和 Langfuse trace 构造 prompt context，不再要求内部 Agent 读取 job 输入目录。
-- `/main-workspace` 是主智能体 Git 版本源；候选 worktree 默认在 `/data/agent-governance/worktrees/`，发布归档默认在 `/data/agent-governance/releases/`。
+- `/data/business-agents/<agent_id>/workspace` 是业务智能体 Git 版本源；候选 worktree 默认在同级 `version/worktrees/`，发布归档默认在 `version/releases/`。预制 `main-agent` 对应 `/data/business-agents/main-agent/version/{worktrees,releases}`。
 - `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/外部治理Webhook示例.yaml`。
 - `/data/feedback-signals/`、`/data/soc-events/`、`/data/feedback-cases/` 等旧目录仅为兼容路径，不再是权威存储。
 

@@ -59,8 +59,9 @@ RUNTIME_DATA_DIRS = (
     "data/feedback-analysis/jobs",
     "data/optimization-proposals",
     "data/optimization-tasks",
-    "data/agent-governance/worktrees",
-    "data/agent-governance/releases",
+    "data/business-agents/main-agent/version/worktrees",
+    "data/business-agents/main-agent/version/releases",
+    "data/business-agents/main-agent/version/candidate-claude-roots",
     "langfuse/postgres",
     "langfuse/clickhouse/data",
     "langfuse/clickhouse/logs",
@@ -70,6 +71,14 @@ RUNTIME_DATA_DIRS = (
 SKIP_TEMPLATE_ROOT_FILES = {"README.md", ".template-sanitization.json"}
 PRIVATE_RUNTIME_FILENAMES = {".env", ".mcp.local.json", "CLAUDE.local.md", "settings.local.json"}
 PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-volume-seeds-backups", "data", "langfuse"}
+LEGACY_AGENT_GOVERNANCE_MIGRATIONS = (
+    (Path("data/agent-governance/worktrees"), Path("data/business-agents/main-agent/version/worktrees")),
+    (Path("data/agent-governance/releases"), Path("data/business-agents/main-agent/version/releases")),
+    (
+        Path("data/agent-governance/candidate-claude-roots"),
+        Path("data/business-agents/main-agent/version/candidate-claude-roots"),
+    ),
+)
 
 
 class BootstrapResult(TypedDict):
@@ -80,6 +89,7 @@ class BootstrapResult(TypedDict):
     removed: list[str]
     backups: list[str]
     cleanup_removed: list[str]
+    migrated: list[str]
     validation_errors: list[str]
 
 
@@ -279,6 +289,49 @@ def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
         current = current.parent
 
 
+def _migrate_legacy_agent_governance_dirs(*, runtime_root: Path, dry_run: bool, migrated: list[str]) -> None:
+    for legacy_rel, target_rel in LEGACY_AGENT_GOVERNANCE_MIGRATIONS:
+        legacy = runtime_root / legacy_rel
+        target = runtime_root / target_rel
+        if not legacy.is_dir():
+            continue
+        if not target.exists():
+            migrated.append(f"{legacy.as_posix()} -> {target.as_posix()}")
+            if dry_run:
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(legacy.as_posix(), target.as_posix())
+            _remove_empty_parents(legacy.parent, stop_at=runtime_root / "data")
+            continue
+        _merge_legacy_dir(legacy=legacy, target=target, runtime_root=runtime_root, dry_run=dry_run, migrated=migrated)
+
+
+def _merge_legacy_dir(
+    *,
+    legacy: Path,
+    target: Path,
+    runtime_root: Path,
+    dry_run: bool,
+    migrated: list[str],
+) -> None:
+    children = sorted(legacy.iterdir())
+    if dry_run:
+        migrated.extend(f"{child.as_posix()} -> {(target / child.name).as_posix()}" for child in children if not (target / child.name).exists())
+        return
+    target.mkdir(parents=True, exist_ok=True)
+    for child in children:
+        destination = target / child.name
+        if destination.exists():
+            continue
+        migrated.append(f"{child.as_posix()} -> {destination.as_posix()}")
+        shutil.move(child.as_posix(), destination.as_posix())
+    try:
+        legacy.rmdir()
+    except OSError:
+        return
+    _remove_empty_parents(legacy.parent, stop_at=runtime_root / "data")
+
+
 def _remove_stale_template_docs(
     *,
     runtime_root: Path,
@@ -323,6 +376,7 @@ def bootstrap_runtime_volume(
     removed: list[str] = []
     backups: list[str] = []
     cleanup_removed: list[str] = []
+    migrated: list[str] = []
     validation_errors: list[str] = []
     created_dirs: list[str] = []
     render_context = build_render_context(
@@ -336,6 +390,7 @@ def bootstrap_runtime_volume(
         created_dirs.append(path.as_posix())
         if not dry_run:
             path.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_agent_governance_dirs(runtime_root=runtime_root, dry_run=dry_run, migrated=migrated)
     for profile in PROFILE_NAMES:
         path = runtime_root / "claude-roots" / profile / ".claude"
         created_dirs.append(path.as_posix())
@@ -378,6 +433,7 @@ def bootstrap_runtime_volume(
         "removed": removed,
         "backups": backups,
         "cleanup_removed": cleanup_removed,
+        "migrated": migrated,
         "validation_errors": validation_errors,
     }
 

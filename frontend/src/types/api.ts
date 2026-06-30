@@ -175,6 +175,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-config-file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read an editable business-agent project config file */
+        get: operations["read_agent_config_file_api_agent_config_file_get"];
+        /** Update an editable business-agent project config file */
+        put: operations["update_agent_config_file_api_agent_config_file_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-jobs": {
         parameters: {
             query?: never;
@@ -2512,6 +2530,85 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** AgentConfigFileResponse */
+        AgentConfigFileResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Container Path */
+            container_path: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Content Type
+             * @default application/json
+             */
+            content_type: string;
+            /** Exists */
+            exists: boolean;
+            /** Path */
+            path: string;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+        };
+        /** AgentConfigFileUpdateRequest */
+        AgentConfigFileUpdateRequest: {
+            /**
+             * Content
+             * @description New UTF-8 file content.
+             */
+            content: string;
+            /**
+             * Expected Sha256
+             * @description Current file sha256 returned by GET; rejects stale edits when mismatched.
+             */
+            expected_sha256?: string | null;
+            /**
+             * Session Id
+             * @description Optional API session to detach from its Claude SDK resume id after applying this config.
+             */
+            session_id?: string | null;
+        };
+        /** AgentConfigFileUpdateResponse */
+        AgentConfigFileUpdateResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Container Path */
+            container_path: string;
+            /**
+             * Content
+             * @default
+             */
+            content: string;
+            /**
+             * Content Type
+             * @default application/json
+             */
+            content_type: string;
+            /** Exists */
+            exists: boolean;
+            /** Path */
+            path: string;
+            /**
+             * Sdk Session Invalidated
+             * @default false
+             */
+            sdk_session_invalidated: boolean;
+            /** Sha256 */
+            sha256?: string | null;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+        };
         /** AgentCreateRequest */
         AgentCreateRequest: {
             /** Agent Id */
@@ -3276,7 +3373,7 @@ export interface components {
         ChatRequest: {
             /**
              * Agent
-             * @description Subagent name, for example security-triage. Omit to use DEFAULT_AGENT.
+             * @description Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files.
              */
             agent?: string | null;
             /**
@@ -3291,7 +3388,7 @@ export interface components {
             alert_id?: string | null;
             /**
              * Allowed Tools
-             * @description Deprecated for SDK execution; configure tool permissions in .claude/settings.json.
+             * @description Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.
              */
             allowed_tools?: string[] | null;
             /**
@@ -3301,7 +3398,7 @@ export interface components {
             case_id?: string | null;
             /**
              * Disallowed Tools
-             * @description Deprecated for SDK execution; configure tool permissions in .claude/settings.json.
+             * @description Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.
              */
             disallowed_tools?: string[] | null;
             /**
@@ -3335,12 +3432,12 @@ export interface components {
             session_id?: string | null;
             /**
              * Skills
-             * @description Skill names to enable. Omit to use DEFAULT_SKILLS.
+             * @description Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files.
              */
             skills?: string[] | null;
             /**
              * Skills Mode
-             * @description Deprecated for SDK execution; configure skills in Claude Code official files.
+             * @description Deprecated; not passed to Claude SDK execution.
              */
             skills_mode?: ("all" | "default" | "none") | null;
             /**
@@ -3487,6 +3584,12 @@ export interface components {
         ConfigMappingItem: {
             /** Container Path */
             container_path: string;
+            /**
+             * Display Group
+             * @default hidden_debug
+             * @enum {string}
+             */
+            display_group: "agent_project_config" | "agent_user_state" | "versioning_runtime" | "hidden_debug";
             /** Exists */
             exists: boolean;
             /** Git Policy */
@@ -3495,15 +3598,31 @@ export interface components {
             host_mount?: string | null;
             /** Kind */
             kind: string;
+            /**
+             * Load Semantics
+             * @default not_applicable
+             * @enum {string}
+             */
+            load_semantics: "claude_loaded" | "claude_optional" | "runtime_used" | "not_applicable";
             /** Loaded By Default */
             loaded_by_default: boolean;
             /** Notes */
             notes?: string | null;
+            /**
+             * Safe To Edit
+             * @default false
+             */
+            safe_to_edit: boolean;
             /** Scope */
             scope: string;
         };
         /** ConfigMappingResponse */
         ConfigMappingResponse: {
+            /**
+             * Agent Id
+             * @default main-agent
+             */
+            agent_id: string;
             /** Claude Config Dir */
             claude_config_dir?: string | null;
             /** Claude Config Mode */
@@ -7192,6 +7311,78 @@ export interface operations {
             };
         };
     };
+    read_agent_config_file_api_agent_config_file_get: {
+        parameters: {
+            query: {
+                /** @description Business agent id from /api/agent-registry. */
+                agent_id?: string;
+                /** @description Editable project config path. Currently only .mcp.json is supported. */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigFileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_agent_config_file_api_agent_config_file_put: {
+        parameters: {
+            query: {
+                /** @description Business agent id from /api/agent-registry. */
+                agent_id?: string;
+                /** @description Editable project config path. Currently only .mcp.json is supported. */
+                path: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentConfigFileUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentConfigFileUpdateResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_agent_jobs_api_agent_jobs_get: {
         parameters: {
             query?: {
@@ -7702,7 +7893,10 @@ export interface operations {
     };
     list_agents_api_agents_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Business agent id from /api/agent-registry. */
+                agent_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -7716,6 +7910,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AgentInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -8089,7 +8292,12 @@ export interface operations {
     };
     config_mapping_api_config_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Business agent id from /api/agent-registry. */
+                agent_id?: string;
+                /** @description Include host mount paths for operator diagnostics. */
+                include_host_mounts?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -8103,6 +8311,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ConfigMappingResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -11971,7 +12188,10 @@ export interface operations {
     };
     list_skills_api_skills_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Business agent id from /api/agent-registry. */
+                agent_id?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -11985,6 +12205,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SkillInfo"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

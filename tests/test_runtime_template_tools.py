@@ -186,8 +186,26 @@ def test_bootstrap_runtime_volume_fills_missing_without_overwrite(tmp_path):
     assert (runtime_root / "main-workspace" / "CLAUDE.md").read_text(encoding="utf-8") == "custom"
     assert (runtime_root / "main-workspace" / "agent.yaml").read_text(encoding="utf-8") == "agent"
     assert (runtime_root / "data" / "outputs" / "reports").is_dir()
-    assert (runtime_root / "data" / "agent-governance" / "worktrees").is_dir()
+    assert (runtime_root / "data" / "business-agents" / "main-agent" / "version" / "worktrees").is_dir()
     assert result["skipped_existing"]
+
+
+def test_bootstrap_runtime_volume_migrates_legacy_agent_governance_dirs(tmp_path):
+    template = tmp_path / "template"
+    template.mkdir()
+    runtime_root = tmp_path / "runtime"
+    legacy_worktree = runtime_root / "data" / "agent-governance" / "worktrees" / "cs-old"
+    legacy_release = runtime_root / "data" / "agent-governance" / "releases" / "release-old.tar.gz"
+    legacy_worktree.mkdir(parents=True)
+    legacy_release.parent.mkdir(parents=True)
+    legacy_release.write_text("archive", encoding="utf-8")
+
+    result = bootstrap_runtime_volume(runtime_root=runtime_root, template_dir=template)
+
+    version_root = runtime_root / "data" / "business-agents" / "main-agent" / "version"
+    assert (version_root / "worktrees" / "cs-old").is_dir()
+    assert (version_root / "releases" / "release-old.tar.gz").read_text(encoding="utf-8") == "archive"
+    assert result["migrated"]
 
 
 def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):

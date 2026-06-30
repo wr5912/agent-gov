@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgents, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConfigMapping, getCurrentAgentRef, getHealth, getSessions, getSkills, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
 import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
@@ -10,10 +10,12 @@ import { PlaygroundSessionSidebar } from "./components/PlaygroundSessionSidebar"
 import { FeedbackDrawer, type FeedbackContext } from "./components/FeedbackDrawer";
 import { SettingsModal } from "./components/SettingsModal";
 import { Topbar } from "./components/Topbar";
+import { useAgentCatalog } from "./hooks/useAgentCatalog";
+import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
 import { messagesFromAgentRuns } from "./playgroundHistory";
-import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentInfo, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, ConfigMappingResponse, RuntimeClientConfig, RuntimeHealth, SessionInfo, SkillInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
+import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
 
@@ -25,15 +27,6 @@ function newId(prefix: string) {
 // 会话 ID 使用裸 UUID（不带 sess_ 前缀），便于后端首次 SDK 调用直接把 session_id 传给 Claude SDK 并对齐 sdk_session_id（整改方案 §4.3 / Phase 1）。消息等临时 UI ID 仍可带前缀。
 function newSessionId(): string {
   return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-}
-
-function parseCsv(value: string): string[] {
-  return value.split(",").map((item) => item.trim()).filter(Boolean);
-}
-
-function parseOptionalCsv(value: string): string[] | undefined {
-  const items = parseCsv(value);
-  return items.length ? items : undefined;
 }
 
 function makeApiDocsUrl(apiBase: string): string {
@@ -86,20 +79,12 @@ export default function App() {
 
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [agents, setAgents] = useState<AgentInfo[]>([]);
-  const [skills, setSkills] = useState<SkillInfo[]>([]);
-  const [configMapping, setConfigMapping] = useState<ConfigMappingResponse | null>(null);
   const [agentRepository, setAgentRepository] = useState<AgentRepositoryStatus | null>(null);
   const [currentAgentRef, setCurrentAgentRef] = useState<AgentGitRef | null>(null);
   const [agentChangeSets, setAgentChangeSets] = useState<AgentChangeSet[]>([]);
   const [agentReleases, setAgentReleases] = useState<AgentRelease[]>([]);
   const [businessAgents, setBusinessAgents] = useState<AgentSummary[]>([]);
   const [selectedBusinessAgentId, setSelectedBusinessAgentId] = useState("");
-  const [selectedAgent, setSelectedAgent] = useState("");
-  const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
-  const [allowedTools, setAllowedTools] = useState("");
-  const [disallowedTools, setDisallowedTools] = useState("");
-  const [skillsMode, setSkillsMode] = useState<"all" | "default" | "none">("default");
   const [alertId, setAlertId] = useState("");
   const [caseId, setCaseId] = useState("");
   const [maxTurns, setMaxTurns] = useState(16);
@@ -137,6 +122,8 @@ export default function App() {
     apiBase: migratedClientConfig.apiBase || runtimeDefaults.apiBase,
     apiKey: migratedClientConfig.apiKey || runtimeDefaults.apiKey,
   }), [migratedClientConfig, runtimeDefaults]);
+  const configMapping = useConfigMapping(effectiveClientConfig, selectedBusinessAgentId, setLastError);
+  const { agents, skills } = useAgentCatalog(effectiveClientConfig, selectedBusinessAgentId, setLastError);
 
   useEffect(() => {
     if (!shouldMigrateLegacyApiBase) return;
@@ -181,19 +168,13 @@ export default function App() {
     setLoading(true);
     setLastError(undefined);
     try {
-      const [healthRes, sessionsRes, agentsRes, skillsRes, configRes, businessAgentsRes] = await Promise.all([
+      const [healthRes, sessionsRes, businessAgentsRes] = await Promise.all([
         getHealth(effectiveClientConfig),
         getSessions(effectiveClientConfig),
-        getAgents(effectiveClientConfig),
-        getSkills(effectiveClientConfig),
-        getConfigMapping(effectiveClientConfig),
         listBusinessAgents(effectiveClientConfig),
       ]);
       setHealth(healthRes);
       setSessions(sessionsRes);
-      setAgents(agentsRes);
-      setSkills(skillsRes);
-      setConfigMapping(configRes);
       setBusinessAgents(businessAgentsRes);
       // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。
       setSelectedBusinessAgentId((current) => {
@@ -375,10 +356,6 @@ export default function App() {
     }
   }
 
-  function toggleSkill(skillName: string) {
-    setSelectedSkills((prev) => prev.includes(skillName) ? prev.filter((name) => name !== skillName) : [...prev, skillName]);
-  }
-
   async function sendMessage() {
     const message = input.trim();
     if (!message || streaming) return;
@@ -440,12 +417,7 @@ export default function App() {
           alert_id: alertId.trim() || undefined,
           case_id: caseId.trim() || undefined,
           message,
-          agent: selectedAgent || undefined,
           agent_id: selectedBusinessAgentId || undefined,
-          skills: selectedSkills.length ? selectedSkills : undefined,
-          skills_mode: skillsMode,
-          allowed_tools: parseOptionalCsv(allowedTools),
-          disallowed_tools: parseOptionalCsv(disallowedTools),
           max_turns: maxTurns,
           metadata: {
             client: "agent-gov-ui",
@@ -736,28 +708,22 @@ export default function App() {
           ) : null}
           {playgroundDrawer === "runtime-settings" ? (
             <PlaygroundRuntimeSettingsDrawer
+              clientConfig={effectiveClientConfig}
               agents={agents}
               skills={skills}
-              selectedAgent={selectedAgent}
-              selectedSkills={selectedSkills}
-              onSelectAgent={setSelectedAgent}
-              onToggleSkill={toggleSkill}
+              activeSessionId={activeSessionId}
               alertId={alertId}
               caseId={caseId}
-              allowedTools={allowedTools}
-              disallowedTools={disallowedTools}
               maxTurns={maxTurns}
-              skillsMode={skillsMode}
+              streaming={streaming}
               onAlertIdChange={setAlertId}
               onCaseIdChange={setCaseId}
-              onAllowedToolsChange={setAllowedTools}
-              onDisallowedToolsChange={setDisallowedTools}
               onMaxTurnsChange={setMaxTurns}
-              onSkillsModeChange={setSkillsMode}
               health={health}
               configMapping={configMapping}
-              streamEvents={streamEvents}
+              selectedBusinessAgentId={selectedBusinessAgentId}
               lastError={lastError}
+              onConfigApplied={() => setTimeout(refresh, 0)}
               onClose={() => setPlaygroundDrawer(null)}
             />
           ) : null}

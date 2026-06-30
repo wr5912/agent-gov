@@ -1,5 +1,11 @@
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from app.runtime.config_mapping import build_config_mapping
+from app.runtime.runtime_db import make_session_factory
 from app.runtime.settings import AppSettings
+from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.routers.config import create_config_router
 
 
 def test_config_mapping_uses_native_claude_code_paths(tmp_path):
@@ -18,9 +24,10 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     (workspace / "CLAUDE.md").write_text("# Project", encoding="utf-8")
     (claude_root / ".claude.json").write_text("{}", encoding="utf-8")
 
-    response = build_config_mapping(settings)
+    response = build_config_mapping(settings, expose_host_mount=True)
     by_kind = {(item.scope, item.kind): item for item in response.mappings}
 
+    assert response.agent_id == "main-agent"
     assert response.claude_config_mode == "native"
     assert response.claude_root == str(claude_root)
     assert response.claude_config_dir is None
@@ -35,3 +42,53 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
         == "volume-agent-gov/data/business-agents/main-agent/workspace/CLAUDE.md"
     )
     assert by_kind[("global", "state")].exists is True
+    assert by_kind[("project", "instructions")].display_group == "agent_project_config"
+    assert by_kind[("project", "instructions")].load_semantics == "claude_loaded"
+    assert by_kind[("project", "instructions")].safe_to_edit is True
+    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(
+        data / "business-agents" / "main-agent" / "version" / "worktrees"
+    )
+
+
+def test_config_mapping_is_agent_scoped_and_hides_host_mounts_by_default(tmp_path):
+    data = tmp_path / "volume-agent-gov" / "data"
+    settings = AppSettings(
+        _env_file=None,
+        DATA_DIR=data,
+        HOST_DATA_MOUNT="./volume-agent-gov/data",
+    )
+    workspace = data / "business-agents" / "response-disposal" / "workspace"
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "CLAUDE.md").write_text("# Response Disposal", encoding="utf-8")
+
+    response = build_config_mapping(settings, agent_id="response-disposal")
+    by_kind = {(item.scope, item.kind): item for item in response.mappings}
+
+    assert response.agent_id == "response-disposal"
+    assert response.claude_root == str(data / "business-agents" / "response-disposal" / "claude-root")
+    assert all(item.host_mount is None for item in response.mappings)
+    assert by_kind[("project", "instructions")].container_path == str(workspace / "CLAUDE.md")
+    assert by_kind[("runtime", "agent-git-repository")].display_group == "versioning_runtime"
+    assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(
+        data / "business-agents" / "response-disposal" / "version" / "worktrees"
+    )
+
+
+def test_config_mapping_router_requires_registered_agent(tmp_path):
+    data = tmp_path / "volume-agent-gov" / "data"
+    settings = AppSettings(_env_file=None, DATA_DIR=data)
+    session_factory = make_session_factory(data / "runtime.sqlite3")
+    registry = AgentRegistryStore(session_factory)
+    workspace = data / "business-agents" / "response-disposal" / "workspace"
+    workspace.mkdir(parents=True)
+    registry.create_business_agent(name="Response Disposal", agent_id="response-disposal", workspace_dir=str(workspace))
+    app = FastAPI()
+    app.include_router(create_config_router(settings=settings, agent_registry_store=registry, require_api_key=lambda: None))
+    client = TestClient(app)
+
+    response = client.get("/api/config?agent_id=response-disposal")
+    assert response.status_code == 200
+    assert response.json()["agent_id"] == "response-disposal"
+
+    missing = client.get("/api/config?agent_id=missing-agent")
+    assert missing.status_code == 404

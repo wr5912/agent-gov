@@ -6202,6 +6202,24 @@ body.is-resizing-evidence-panel {
 .runtime-settings-head h4 { margin: 0; font-size: 14px; color: var(--text); }
 .runtime-settings-head span { color: var(--muted); font-size: 12px; }
 .runtime-skill-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+.runtime-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.runtime-capability-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.runtime-capability-list > strong {
+  font-size: 12px;
+  color: var(--text);
+}
+.runtime-chip-static {
+  cursor: default;
+}
 .runtime-settings-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -6246,8 +6264,45 @@ body.is-resizing-evidence-panel {
   font-size: 12px;
 }
 .runtime-debug-card code { white-space: pre-wrap; word-break: break-all; color: #8f4b32; }
+.runtime-config-path-button {
+  display: block;
+  padding: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+}
+.runtime-config-path-button:hover code {
+  text-decoration: underline;
+}
 .runtime-debug-card span,
 .runtime-debug-card p { margin: 0; color: var(--muted); }
+.config-file-editor-backdrop {
+  z-index: 80;
+}
+.config-file-editor-modal {
+  width: min(760px, calc(100vw - 36px));
+}
+.config-file-editor-textarea {
+  min-height: 360px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.config-file-editor-modal .error-box {
+  margin: 10px 0 0;
+}
+@media (max-width: 680px) {
+  .runtime-capability-grid,
+  .runtime-settings-grid,
+  .runtime-debug-grid {
+    grid-template-columns: 1fr;
+  }
+  .config-file-editor-textarea {
+    min-height: 260px;
+  }
+}
 
 /* 创建反馈 Drawer（两阶段） */
 .feedback-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }

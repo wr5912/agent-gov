@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import get_args
 
+from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profiles import (
     GOVERNANCE_AGENT_ROLES,
     AgentRole,
@@ -55,8 +56,7 @@ def test_build_business_agent_profile_is_governed_business_object() -> None:
 def test_business_agent_cannot_self_read_claude_root() -> None:
     """越权读防护：业务 Agent 不得 Read 自身 SDK 运行态家目录（claude-root）。
 
-    claude-root 在 data_dir 下、且可能嵌于 cwd（workspace），Read(./**) / readable=data_dir
-    会让它落入可读面；denied_paths 必须显式拦截，policy.py 中 denied 优先于 readable。
+    denied_paths 必须显式拦截，policy.py 中 denied 优先于 readable。
     """
     from app.runtime.policy import _path_policy_denial
 
@@ -73,6 +73,30 @@ def test_business_agent_cannot_self_read_claude_root() -> None:
 
     # 对照：读自身 workspace 配置文件不受影响，仍允许。
     assert _path_policy_denial("Read", {"file_path": str(workspace / "CLAUDE.md")}, profile) is None
+
+
+def test_business_agent_read_scope_excludes_runtime_and_other_agents() -> None:
+    from app.runtime.policy import _path_policy_denial
+
+    settings = _settings()
+    workspace = business_agent_layout(settings.data_dir, "soc-ops").workspace
+    profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
+
+    assert _path_policy_denial("Read", {"file_path": str(workspace / "CLAUDE.md")}, profile) is None
+    assert _path_policy_denial("Read", {"file_path": str(settings.data_dir / "uploads" / "input.json")}, profile) is None
+    assert _path_policy_denial("Write", {"file_path": str(settings.data_dir / "outputs" / "report.md")}, profile) is None
+
+    own_version = business_agent_layout(settings.data_dir, "soc-ops").version_base
+    other_workspace = business_agent_layout(settings.data_dir, "other-agent").workspace
+    denied_targets = [
+        own_version / "worktrees" / "cs-1" / "CLAUDE.md",
+        settings.data_dir / "agent-governance" / "worktrees" / "legacy" / "CLAUDE.md",
+        settings.runtime_db_path,
+        other_workspace / "CLAUDE.md",
+    ]
+    for target in denied_targets:
+        denial = _path_policy_denial("Read", {"file_path": str(target)}, profile)
+        assert denial is not None
 
 
 def test_build_profiles_expose_category() -> None:

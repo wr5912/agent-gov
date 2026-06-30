@@ -129,7 +129,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 feedback_store=feedback_store,
                 run_chat=self.run,
                 current_agent_version_id=self._current_agent_version_id,
-                run_candidate_chat=lambda req, wt, commit, cs, aid: self.run_candidate(req, worktree_path=wt, candidate_commit_sha=commit, change_set_id=cs, agent_id=aid),
+                run_candidate_chat=lambda req, wt, commit, cs, aid: self.run_candidate(
+                    req, worktree_path=wt, candidate_commit_sha=commit, change_set_id=cs, agent_id=aid
+                ),
             )
             if feedback_store is not None
             else None
@@ -147,18 +149,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             parts.append(f"本次任务优先使用这些 Skills：{', '.join(skills)}。")
         parts.append(req.message)
         return "\n\n".join(parts)
-
-    def _skills_option(self, req: ChatRequest) -> Any:
-        skills_mode = req.skills_mode or self.settings.default_skills_mode
-        if skills_mode == "all":
-            return "all"
-        if skills_mode == "none":
-            return []
-        if req.skills:
-            return req.skills
-        if self.settings.default_skills:
-            return self.settings.default_skills
-        return None
 
     def _should_suppress_exception(self, exc: Exception, errors: list[str]) -> bool:
         if not errors:
@@ -397,7 +387,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         # is not necessarily equal to the internal Claude session id returned by SDK.
         if self.settings.enable_sdk_session_resume and session.sdk_session_id:
             kwargs["resume"] = session.sdk_session_id
-        else:
+        elif session.turns == 0:
             # If caller provides a UUID-looking session id, use it for the first Claude session.
             # Invalid IDs are simply ignored by the SDK if omitted.
             try:
@@ -426,7 +416,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         return await run_governor_profile_json(self.langfuse, run, governor)
 
-    def _new_runtime_request_context(self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE) -> RuntimeRequestContext:
+    def _new_runtime_request_context(
+        self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE
+    ) -> RuntimeRequestContext:
         self._raise_if_version_maintenance()
         session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
@@ -709,6 +701,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 ) as generation:
                     self.langfuse.set_trace_attributes(generation, **propagation)
                     try:
+
                         async def execute_query() -> None:
                             self.model_provider_router.ensure_agent_runtime_ready()
                             options = self._build_options(req, context.session, profile=profile, execution_mode="non_stream_bypass")
@@ -735,11 +728,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self._complete_runtime_request(req, context, state, answer, agent_activity)
         return self._run_response(context, state, answer, agent_activity)
 
-    async def run_candidate(self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE) -> ChatResponse:
+    async def run_candidate(
+        self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE
+    ) -> ChatResponse:
         # #24-A：候选 profile 按 change_set.agent_id 派生（归属/trace/隔离落到该业务 Agent）。
-        profile = candidate_profile(
-            self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id
-        )
+        profile = candidate_profile(self.settings, agent_id=agent_id, workspace_dir=worktree_path, candidate_id=change_set_id)
         return await self.run(req, profile=profile, agent_version_id_override=candidate_commit_sha)
 
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:

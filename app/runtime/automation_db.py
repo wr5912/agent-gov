@@ -7,7 +7,7 @@ from .runtime_db import Base, utc_now
 
 
 class AutomationPolicyModel(Base):
-    """自动化策略（v2.7 W2）：按业务 Agent 配置改进事项的自动推进模式。
+    """自动化策略（四阶段改进治理 W2）：按业务 Agent 配置改进事项的自动推进模式。
 
     mode: off（全人工触发，默认）/ semi（自动推进至关键判断点停下）/ full（自动推进至发布门禁前）。
     表由 runtime_db.ensure_schema 的 create_all 创建（全新表，无需改表迁移）。

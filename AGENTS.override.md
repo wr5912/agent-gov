@@ -38,7 +38,7 @@
 - 治理对象矩阵：区分业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace 和开发者离线工具。
 - 配置面矩阵：区分当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、Codex/Claude rules、skill、script、hook、docs 和 memory；能按需触发的流程不写成长篇常驻规则。
 - 验收路径矩阵：区分 docs/skill 治理、专项测试、主流程测试、真实容器验收和发版完整硬门；不得用 local-debug 结果声明容器验收通过。
-- UI 语义矩阵：涉及 v2.7 或用户可见交互时，先确认按钮名称、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”。
+- UI 语义矩阵：涉及四阶段改进治理方案或用户可见交互时，先确认按钮名称、业务产物、API 副作用、状态推进、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”；决策卡主按钮不得只推进状态，状态推进只能作为业务动作的副作用。
 
 ## 反馈闭环 / Agent Job / DSPy 契约专项要求
 
@@ -78,12 +78,13 @@
 本仓库的非琐碎代码、配置、测试和治理文档变更，必须运行：
 
 ```bash
-.venv/bin/python scripts/check_codex_governance.py --mode fail
+make codex-guard
 ```
 
-- `--mode warn` 只允许在 Analyze 阶段观察问题，不允许作为 Verify 通过标准。
-- `make test` 已依赖 `codex-guard`，会先运行上述 fail 模式治理检查。
-- `.codex/hooks.json` 的 `Stop` hook 会运行同一条治理硬门。
+- `codex-guard` 包含 `.venv/bin/python scripts/check_codex_governance.py --mode fail`、阶段语言检查和版本一致性检查。
+- `check_codex_governance.py --mode warn` 只允许在 Analyze 阶段观察问题，不允许作为 Verify 通过标准。
+- `make test` 已依赖 `codex-guard`，会先运行上述治理硬门。
+- `.codex/hooks.json` 的 `Stop` hook 会运行同一组治理硬门中的 Codex 治理和阶段语言检查。
 - `.github/workflows/governance.yml` 是本仓库 CI 入口，会在 PR 以及 `main` / `master` push 上运行治理硬门与测试。
 
 ## 本仓库差异治理

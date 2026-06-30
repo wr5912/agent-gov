@@ -25,6 +25,7 @@
 # 必须先执行：
 #
 # - `.venv/bin/python scripts/check_codex_governance.py --mode fail`
+# - `.venv/bin/python scripts/check_stage_language.py`
 # - 对本轮新增或修改的 Python 文件运行 ruff check/format；如果文件未纳入 Makefile 白名单，也必须单独覆盖。
 #
 # 如果中段 checkpoint 发现新增 JsonObject 边界、长函数、超限文件、未归属 dict、公开 store JsonObject 返回、

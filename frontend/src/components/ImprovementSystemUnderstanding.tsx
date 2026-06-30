@@ -1,4 +1,4 @@
-// v2.7 §4 系统理解 NormalizedFeedback 展示（从 ImprovementWorkbench 拆出以控制单文件体量）。
+// 四阶段改进治理 §4 系统理解 NormalizedFeedback 展示（从 ImprovementWorkbench 拆出以控制单文件体量）。
 import type { NormalizedFeedback } from "../api/improvements";
 
 export function ImprovementSystemUnderstanding({ nf, fallbackSummary }: { nf: NormalizedFeedback | null; fallbackSummary: string }) {

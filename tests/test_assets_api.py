@@ -1,4 +1,4 @@
-"""v2.7 W3：/api/assets Registry + 跨 Agent 继承复用 API 验收。"""
+"""四阶段改进治理 W3：/api/assets Registry + 跨 Agent 继承复用 API 验收。"""
 
 from __future__ import annotations
 

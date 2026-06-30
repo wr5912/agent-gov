@@ -108,7 +108,7 @@ def test_dspy_output_formatter_lm_uses_configured_max_tokens(tmp_path, monkeypat
 def test_dspy_output_formatter_timeout_default_matches_agent_job_timeout(tmp_path):
     settings = _settings(tmp_path)
 
-    assert settings.dspy_output_formatter_timeout_seconds == 300
+    assert settings.dspy_output_formatter_timeout_seconds == settings.governance_agent_timeout_seconds == 300
 
 
 def test_dspy_output_formatter_retries_transient_predictor_failure(tmp_path, monkeypatch):

@@ -1,4 +1,4 @@
-"""v2.7 W2-a：/api/automation-policy + /api/improvements/{id}/auto-advance API 验收。"""
+"""四阶段改进治理 W2-a：/api/automation-policy + /api/improvements/{id}/auto-advance API 验收。"""
 
 from __future__ import annotations
 

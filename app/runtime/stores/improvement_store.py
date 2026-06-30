@@ -34,7 +34,7 @@ class ImprovementLinkRecord:
 
 @dataclass(frozen=True)
 class ImprovementItemRecord:
-    """改进事项事项级领域记录（v2.7 跨代重建的单一事实来源）。"""
+    """改进事项事项级领域记录（四阶段改进治理 跨代重建的单一事实来源）。"""
 
     improvement_id: str
     agent_id: str

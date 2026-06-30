@@ -4,7 +4,7 @@ import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 import "../improvement-workbench.css";
 
-// 治理资产 Registry 复利中心（v2.7 W3）：沉淀方法论/回归/执行/审计资产，并跨业务 Agent 继承复用。
+// 治理资产 Registry 复利中心（四阶段改进治理 W3）：沉淀方法论/回归/执行/审计资产，并跨业务 Agent 继承复用。
 const ASSET_TYPE_LABEL: Record<string, string> = {
   test_dataset: "测试数据集",
   methodology: "方法论",

@@ -1,4 +1,4 @@
-"""v2.7 §17.5：改进事项归因/方案 governor 生成服务（真 LLM 路径 + 确定性回退 + 字段所有权）。"""
+"""四阶段改进治理 §17.5：改进事项归因/方案 governor 生成服务（真 LLM 路径 + 确定性回退 + 字段所有权）。"""
 
 from __future__ import annotations
 

@@ -12,13 +12,13 @@ description: "当用户提到新增 docs 文档、迁移文档、重命名、旧
 ## 使用边界
 
 - 使用本技能：新增文档、文档重复治理、旧文档归档或删除、拆分大文档、移动/重命名文档、修复 `docs/README.md` 或 `docs/archive/README.md`。
-- 不使用本技能：判断 AgentGov 产品方向是否正确、评审 v2.7 UI 方案是否合理、设计反馈闭环业务模型、修改运行时代码。
+- 不使用本技能：判断 AgentGov 产品方向是否正确、评审四阶段改进治理工作台方案是否合理、设计反馈闭环业务模型、修改运行时代码。
 - 详细判断矩阵见 [docs-boundary.md](references/docs-boundary.md)；`SKILL.md` 只保留执行入口和动作流程。
 
 ## 工作流
 
 1. 读取 `docs/README.md`、`docs/archive/README.md`、涉及的源文档和必要的权威文档。
-2. 给每个候选文档标注角色：权威入口、当前实现基线、v2.7 规划、工程治理、评审/复盘、归档历史或临时材料。
+2. 给每个候选文档标注角色：权威入口、当前实现基线、四阶段改进治理方案、工程治理、评审/复盘、归档历史或临时材料。
 3. 给每个候选文档选择一个动作：`keep`、`merge`、`split`、`move-to-skill`、`archive`、`delete` 或 `no-op`。
 4. 按动作更新入口和引用：活跃文档进入 `docs/README.md`，归档文档进入 `docs/archive/README.md`，移动或删除前先用 `rg` 检查旧路径引用。
 5. 对拆分或合并后的原文档，只保留短入口、替代关系和权威链接，不继续维护重复正文。
@@ -28,9 +28,9 @@ description: "当用户提到新增 docs 文档、迁移文档、重命名、旧
 - 活跃文档入口：`docs/README.md`。
 - 归档文档入口：`docs/archive/README.md`。
 - 术语和版本层级：`docs/AgentGov术语与版本边界.md`。
-- 改进治理工作台 UI、四阶段主链路和效果图验收：`docs/AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md`。
+- 改进治理工作台 UI、四阶段主链路和效果图验收：`docs/AgentGov_四阶段改进治理工作台UI整改方案.md`。
 - 文档治理入口说明：`docs/文档治理与归档策略.md`。
-- 机械治理规则：`scripts/check_docs_governance.py` 与 `scripts/check_codex_governance.py`。
+- 机械治理规则：`scripts/check_docs_governance.py`、`scripts/check_stage_language.py` 与 `scripts/check_codex_governance.py`。
 
 ## 验证
 
@@ -39,6 +39,7 @@ description: "当用户提到新增 docs 文档、迁移文档、重命名、旧
 ```bash
 git diff --check
 .venv/bin/python scripts/check_docs_governance.py
+.venv/bin/python scripts/check_stage_language.py
 .venv/bin/python scripts/check_codex_governance.py --mode fail
 ```
 

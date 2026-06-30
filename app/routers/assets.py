@@ -24,7 +24,7 @@ def _response(record: AssetRecord) -> AssetResponse:
 
 
 def create_assets_router(*, asset_store: AssetStore, require_api_key: Callable) -> APIRouter:
-    """治理资产 Registry 复利中心（v2.7 W3）：沉淀、查询、跨 Agent 继承复用。"""
+    """治理资产 Registry 复利中心（四阶段改进治理 W3）：沉淀、查询、跨 Agent 继承复用。"""
     router = APIRouter(prefix="/api", tags=["assets"], dependencies=[Depends(require_api_key)])
 
     @router.get("/assets", response_model=list[AssetResponse], summary="List governance assets, scoped by agent / type")

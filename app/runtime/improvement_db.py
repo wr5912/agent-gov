@@ -7,7 +7,7 @@ from .runtime_db import Base, utc_now
 
 
 class ImprovementItemModel(Base):
-    """改进事项 ImprovementItem —— v2.7 跨代重建的事项级单一领域实体。
+    """改进事项 ImprovementItem —— 四阶段改进治理 跨代重建的事项级单一领域实体。
 
     它是 AgentGov 闭环治理的唯一事项级对象，归属到某个业务 Agent（agent_id），
     串起来源反馈、归因、方案、执行、回归与发布。阶段 improvement_stage 由集中状态机
@@ -29,7 +29,7 @@ class ImprovementItemModel(Base):
 
 
 class ImprovementLinkModel(Base):
-    """改进事项 ↔ 既有闭环对象的轻引用（v2.7 W2-c）。
+    """改进事项 ↔ 既有闭环对象的轻引用（四阶段改进治理 W2-c）。
 
     kind 标明被引对象类型（attribution / optimization_plan / eval_run / change_set / batch），
     ref_id 为该对象 ID。独立新表，create_all 创建，无需改表迁移；不在 improvement_items 上加列。
@@ -45,7 +45,7 @@ class ImprovementLinkModel(Base):
 
 
 class NormalizedFeedbackModel(Base):
-    """系统理解 NormalizedFeedback（v2.7 §4/§6 P3）：把自然语言反馈整理成可确认的结构化理解。
+    """系统理解 NormalizedFeedback（四阶段改进治理 §4/§6 P3）：把自然语言反馈整理成可确认的结构化理解。
 
     与改进事项 1:1（improvement_id 唯一）。status：draft（系统初步整理）/ confirmed（用户已确认）。
     独立新表，create_all 创建，无需改表迁移。
@@ -67,10 +67,10 @@ class NormalizedFeedbackModel(Base):
 
 
 class ImprovementFeedbackModel(Base):
-    """改进事项来源反馈 Feedback（v2.7 §8.4 P3）：一等反馈内容（摘要/来源/状态/原文/Run-Trace）。
+    """改进事项来源反馈 Feedback（四阶段改进治理 §8.4 P3）：一等反馈内容（摘要/来源/状态/原文/Run-Trace）。
 
     与改进事项 1:多（improvement_id index）。source：playground_run/feedback_inbox/trace 等；
-    status：merged/standalone 等。区别于 pre-v2.7 的 feedback_signals(旧反馈优化 workspace)。独立新表。
+    status：merged/standalone 等。区别于 迁移前 的 feedback_signals(旧反馈优化 workspace)。独立新表。
     """
 
     __tablename__ = "improvement_feedbacks"
@@ -93,7 +93,7 @@ class ImprovementFeedbackModel(Base):
 
 
 class AttributionModel(Base):
-    """归因结果 Attribution（v2.7 §6 P3）：归因正文 + 责任边界 + 证据 + 确认状态。
+    """归因结果 Attribution（四阶段改进治理 §6 P3）：归因正文 + 责任边界 + 证据 + 确认状态。
 
     与改进事项 1:1（improvement_id 唯一）。status：draft / confirmed。独立新表，create_all 创建。
     """
@@ -115,7 +115,7 @@ class AttributionModel(Base):
 
 
 class OptimizationPlanModel(Base):
-    """优化方案 OptimizationPlan（v2.7 §6→optimization P3，草图 §106）：方案正文 + 变更项 + 确认状态。
+    """优化方案 OptimizationPlan（四阶段改进治理 §6→optimization P3，草图 §106）：方案正文 + 变更项 + 确认状态。
 
     与改进事项 1:1。变更项 changes_json：[{target, change}]。status：draft / confirmed。独立新表。
     """
@@ -134,7 +134,7 @@ class OptimizationPlanModel(Base):
 
 
 class ExecutionRecordModel(Base):
-    """执行记录 ExecutionRecord（v2.7 execution P3，草图 §107）：执行结果 + 已应用变更 + Agent 版本 + 状态。
+    """执行记录 ExecutionRecord（四阶段改进治理 execution P3，草图 §107）：执行结果 + 已应用变更 + Agent 版本 + 状态。
 
     与改进事项 1:1。status：draft / confirmed（确认=已应用/已生成版本）。独立新表。
     """
@@ -159,7 +159,7 @@ class ExecutionRecordModel(Base):
 
 
 class RegressionAssessmentModel(Base):
-    """回归保障评估 RegressionAssessment（v2.7 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
+    """回归保障评估 RegressionAssessment（四阶段改进治理 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
 
     与改进事项 1:1。cases_json：[{prompt, expected_behavior, checkpoints[]}]。status：draft / confirmed
     （确认=已采纳为回归资产）。generated_by：governor / heuristic。独立新表。

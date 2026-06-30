@@ -1,4 +1,4 @@
-"""v2.7 §17.5 第二阶段：执行记录 governor 自动 apply + 候选版本绑定（编排逻辑，git 层用 fake）。"""
+"""四阶段改进治理 §17.5 第二阶段：执行记录 governor 自动 apply + 候选版本绑定（编排逻辑，git 层用 fake）。"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""v2.7 跨代重建：改进事项 ImprovementItem 的 /api/improvements API 验收。
+"""四阶段改进治理 跨代重建：改进事项 ImprovementItem 的 /api/improvements API 验收。
 
 覆盖：事项级单一领域实体端到端（创建→列表 scoping→详情→阶段转移）、非法转移 409、
 未知 404、空字段 400、以及 backend-owned 字段所有权（hostile 输入不得越权覆盖）。

@@ -40,6 +40,7 @@ def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
         agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（与 API 进程同口径）。
         runtime_version=APP_VERSION,
         enable_debug_evidence=settings.enable_feedback_debug_evidence,
+        agent_job_timeout_seconds=settings.governance_agent_timeout_seconds,
     )
     runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store)
     feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)

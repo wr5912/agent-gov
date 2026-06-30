@@ -72,6 +72,10 @@ class RuntimeSettingsLogFields(TypedDict):
     model_provider_vllm_allow_direct: bool
     provider_api_key_configured: bool
     provider_api_url_configured: bool
+    governance_agent_timeout_seconds: int
+    dspy_output_formatter_timeout_seconds: int
+    claude_web_hitl_enabled: bool
+    hitl_timeout_seconds: int
     api_host: str
     api_port: int
     workspace_dir: str
@@ -195,10 +199,14 @@ class AppSettings(BaseSettings):
 
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
     enable_claude_web_hitl: bool = Field(default=False, alias="ENABLE_CLAUDE_WEB_HITL")
+    governance_agent_timeout_seconds: int = Field(default=300, alias="GOVERNANCE_AGENT_TIMEOUT_SECONDS")
+    hitl_timeout_seconds: int = Field(default=300, alias="HITL_TIMEOUT_SECONDS")
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
     dspy_output_formatter_model: Optional[str] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_MODEL")
-    dspy_output_formatter_timeout_seconds: int = Field(default=300, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS")
+    dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(
+        default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS"
+    )
     dspy_output_formatter_max_retries: int = Field(default=1, alias="DSPY_OUTPUT_FORMATTER_MAX_RETRIES")
     dspy_output_formatter_max_tokens: int = Field(default=8192, alias="DSPY_OUTPUT_FORMATTER_MAX_TOKENS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
@@ -292,6 +300,10 @@ class AppSettings(BaseSettings):
     @property
     def provider_api_url(self) -> Optional[str]:
         return self.model_provider_api_url or self.anthropic_base_url
+
+    @property
+    def dspy_output_formatter_timeout_seconds(self) -> int:
+        return self.dspy_output_formatter_timeout_seconds_override or self.governance_agent_timeout_seconds
 
     @property
     def resolved_claude_config_dir(self) -> Optional[Path]:
@@ -414,7 +426,10 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "model_provider_vllm_allow_direct": settings.model_provider_vllm_allow_direct,
         "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
         "provider_api_url_configured": bool(settings.provider_api_url),
+        "governance_agent_timeout_seconds": settings.governance_agent_timeout_seconds,
+        "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
+        "hitl_timeout_seconds": settings.hitl_timeout_seconds,
         "api_host": settings.api_host,
         "api_port": settings.api_port,
         "workspace_dir": settings.workspace_dir.as_posix(),

@@ -1,4 +1,4 @@
-"""v2.7 W2-a：自动化策略编排（auto_advance）单元测试——确定性沿真实状态机推进。"""
+"""四阶段改进治理 W2-a：自动化策略编排（auto_advance）单元测试——确定性沿真实状态机推进。"""
 
 from __future__ import annotations
 

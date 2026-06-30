@@ -38,6 +38,8 @@ function json(route, payload, status = 200) {
   return route.fulfill({ status, contentType: "application/json", headers: { "access-control-allow-origin": "*" }, body: JSON.stringify(payload) });
 }
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function startVite() {
   const child = spawn("pnpm", ["--dir", "frontend", "exec", "vite", "--host", "127.0.0.1", "--port", String(port), "--strictPort"], {
     cwd: repoRoot,
@@ -94,7 +96,7 @@ async function putJson(path, body) {
 async function seedRealData() {
   const agents = await apiJson("/api/agent-registry").catch(() => []);
   const agentId = agents.find((agent) => agent.status === "active")?.agent_id || agents[0]?.agent_id || "main-agent";
-  const stamp = `decision-v27-${Date.now().toString(36)}`;
+  const stamp = `decision-improvement-${Date.now().toString(36)}`;
   const item = await postJson("/api/improvements", {
     agent_id: agentId,
     title: `${stamp} sec-ops-data 时间窗口误判治理`,
@@ -141,6 +143,7 @@ function mockState() {
       [target.improvement_id]: [{ feedback_id: "fb-1", improvement_id: target.improvement_id, agent_id: "soc-ops", summary: "这个告警其实是误报", source: "playground_run", status: "merged", raw_text: "事件时间和告警时间窗口不一致。", run_id: "run-1", session_id: "sess-1", agent_version_id: "v1", scenario: "alert-triage", task_id: "task-1", alert_id: "alert-1", case_id: "case-1", created_at: ts }],
     },
     feedbackSeq: 1,
+    attribution: null,
   };
 }
 
@@ -167,14 +170,27 @@ async function installMockRoutes(page, state) {
       item.source_feedback_refs = [...(item.source_feedback_refs || []), row.feedback_id];
       return json(route, row, 201);
     }
+    if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) return json(route, { normalized_feedback_id: "nf-1", improvement_id: state.target.improvement_id, problem: "告警误判", possible_reason: "事件时间与告警时间窗口不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入归因分析", user_quote: "这个告警其实是误报。", status: "confirmed", created_at: ts, updated_at: ts });
     if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return json(route, { normalized_feedback_id: "nf-1", improvement_id: state.target.improvement_id, problem: "告警误判", possible_reason: "事件时间与告警时间窗口不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入归因分析", user_quote: "这个告警其实是误报。", status: "draft", created_at: ts, updated_at: ts });
-    if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return json(route, { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], status: "draft", created_at: ts, updated_at: ts });
+    if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) {
+      await delay(900);
+      state.attribution = { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+      return json(route, state.attribution);
+    }
+    if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) {
+      return state.attribution ? json(route, state.attribution) : json(route, { detail: "not found" }, 404);
+    }
     if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return json(route, { optimization_plan_id: "opt-1", improvement_id: state.target.improvement_id, summary: "补充时间窗口核验", changes: [], status: "draft", created_at: ts, updated_at: ts });
     if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return json(route, { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "尚未执行", changes_applied: [], agent_version: "", status: "draft", created_at: ts, updated_at: ts });
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
     if (/^\/api\/automation-policy/.test(path)) return json(route, { agent_id: "soc-ops", mode: "off" });
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
-    if (/^\/api\/improvements\/[^/]+\/lifecycle$/.test(path)) return json(route, state.target);
+    if (/^\/api\/improvements\/[^/]+\/lifecycle$/.test(path)) {
+      const body = req.postDataJSON();
+      if (body.stage) state.target.improvement_stage = body.stage;
+      state.target.updated_at = ts;
+      return json(route, state.target);
+    }
     if (["/api/agents", "/api/skills", "/api/sessions", "/api/agent-releases", "/api/agent-change-sets"].includes(path)) return json(route, []);
     if (path === "/api/config") return json(route, { mappings: [] });
     if (path === "/api/agent-repository") return json(route, { status: "active", dirty: false, changed_files: [], file_diffs: [] });
@@ -254,6 +270,19 @@ async function main() {
     await assertVisible(page, "source-feedback-table");
     const rowsAfter = await page.getByTestId("source-feedback-row").count();
     if (rowsAfter <= rowsBefore) throw new Error(`source feedback rows did not increase: ${rowsBefore} -> ${rowsAfter}`);
+
+    if (!REAL) {
+      await page.getByLabel("关闭").click();
+      await page.getByTestId("source-management-drawer").waitFor({ state: "detached", timeout: 8000 });
+      await page.getByTestId("primary-action").click();
+      await assertVisible(page, "decision-operation-status");
+      await assertVisible(page, "attribution-generation-status");
+      const operationText = await page.getByTestId("decision-operation-status").innerText();
+      if (!operationText.includes("正在生成归因分析")) throw new Error(`unexpected operation status: ${operationText}`);
+      const recordState = await page.getByTestId("stage-local-record-node").filter({ hasText: "生成归因分析" }).first().getAttribute("data-state");
+      if (recordState !== "current") throw new Error(`expected generating record state current, got ${recordState}`);
+      await page.getByTestId("attribution-source").waitFor({ timeout: 10_000 });
+    }
 
     await browser.close();
     console.log(JSON.stringify({ mode: REAL ? "real-container" : "mock", ui_base: uiBase, api_base: apiBase, improvement_id: target.id || target.improvement_id, rows_before: rowsBefore, rows_after: rowsAfter, screenshots: screenshotDir }, null, 2));

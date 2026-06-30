@@ -1,4 +1,4 @@
-"""v2.7 W3：治理资产 Registry 复利中心 store 单元测试。"""
+"""四阶段改进治理 W3：治理资产 Registry 复利中心 store 单元测试。"""
 
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ def test_inherit_compounds_to_target_agent(tmp_path: Path) -> None:
 
 
 def test_list_by_source_improvement_id(tmp_path: Path) -> None:
-    """v2.7 §11.2：按沉淀来源改进事项过滤资产。"""
+    """四阶段改进治理 §11.2：按沉淀来源改进事项过滤资产。"""
     store = _store(tmp_path)
     store.create_asset(agent_id="soc", asset_type="regression", title="回归A", source_improvement_id="imp-1")
     store.create_asset(agent_id="soc", asset_type="methodology", title="方法B", source_improvement_id="imp-1")

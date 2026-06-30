@@ -48,7 +48,7 @@ def create_improvements_router(
     improvement_store: ImprovementStore,
     require_api_key: Callable,
 ) -> APIRouter:
-    """改进事项 ImprovementItem 路由（v2.7 跨代重建：事项级单一领域实体）。
+    """改进事项 ImprovementItem 路由（四阶段改进治理 跨代重建：事项级单一领域实体）。
 
     统一术语：资源 /improvements、ID improvement_id、阶段 improvement_stage。无旧名/无双轨。
     """
@@ -125,7 +125,7 @@ def create_improvement_relations_router(
     improvement_store: ImprovementStore,
     require_api_key: Callable,
 ) -> APIRouter:
-    """改进事项关系路由（v2.7 W2-b/c）：相似度归并 / 拆分 + 闭环对象轻引用。
+    """改进事项关系路由（四阶段改进治理 W2-b/c）：相似度归并 / 拆分 + 闭环对象轻引用。
 
     与 create_improvements_router 分离以保持单函数体量可控（架构卫生：单函数 ≤ 80 行）。
     """

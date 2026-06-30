@@ -377,7 +377,7 @@ class FeedbackJobStoreMixin:
         base = self._parse_datetime(self._string(job.get("started_at")) or self._string(job.get("created_at")))
         if not base:
             return False
-        timeout_seconds = int(job.get("timeout_seconds") or 300)
+        timeout_seconds = int(job.get("timeout_seconds") or getattr(self, "agent_job_timeout_seconds", 300))
         return datetime.now(timezone.utc) >= base + timedelta(seconds=timeout_seconds)
 
     def _evidence_package_context(self, evidence_package_id: str) -> tuple[JsonObject, JsonObject]:

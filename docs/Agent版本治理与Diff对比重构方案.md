@@ -5,10 +5,10 @@
 > - 版本治理改为**按 `agent_id` 的 per-agent 版本库**（repo 就地在各业务 Agent 的 `workspace/`，`claude-root/`、`version/` 去嵌套并列）；`repository_status`/`snapshot`/`current`/`diff` 及批次执行均按 agent_id 路由，不再恒走主库。
 > - 用户面契约以 [AgentGov集成指南](./AgentGov集成指南.md) §4.6（版本发布回滚）/§4.8（workspace 定制）为准。
 >
-> 文档层级：当前实现基线（pre-v2.7）上的版本治理重构方案。
-> 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；v2.7 面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
+> 文档层级：当前实现基线（迁移前）上的版本治理重构方案。
+> 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；四阶段改进治理面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
 > 归档边界：本文仍解释当前版本治理迁移和落地状态，暂不移动。
-> v2.7 覆盖规则：本文描述版本治理和 Diff 能力的当前实现与迁移边界；改进治理工作台中的发布门禁、回归验证、Diff 查看入口和用户主动作，以 [AgentGov v2.7 四阶段改进治理工作台 UI 整改方案](./AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md) 的“测试发布”阶段及四张效果图为准。
+> 四阶段改进治理覆盖规则：本文描述版本治理和 Diff 能力的当前实现与迁移边界；改进治理工作台中的发布门禁、回归验证、Diff 查看入口和用户主动作，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](./AgentGov_四阶段改进治理工作台UI整改方案.md) 的“测试发布”阶段及四张效果图为准。
 
 ## 0. 评审采纳状态
 

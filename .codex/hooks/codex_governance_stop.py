@@ -6,14 +6,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
-GOVERNANCE_COMMAND = [
-    str(ROOT / ".venv/bin/python"),
-    str(ROOT / "scripts/check_codex_governance.py"),
-    "--mode",
-    "fail",
-]
+PYTHON = str(ROOT / ".venv/bin/python")
+GOVERNANCE_COMMANDS = (
+    ("codex governance", [PYTHON, str(ROOT / "scripts/check_codex_governance.py"), "--mode", "fail"]),
+    ("stage language", [PYTHON, str(ROOT / "scripts/check_stage_language.py")]),
+)
 MAX_REASON_CHARS = 20000
 
 
@@ -41,29 +39,23 @@ def _emit_block(reason: str) -> None:
 
 
 def main() -> int:
-    try:
-        result = subprocess.run(
-            GOVERNANCE_COMMAND,
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except Exception as exc:
-        _emit_block(f"Codex governance Stop hook wrapper failed:\n{exc}")
+    failures: list[str] = []
+    for label, command in GOVERNANCE_COMMANDS:
+        try:
+            result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
+        except Exception as exc:
+            _emit_block(f"Codex governance Stop hook wrapper failed while running {label}:\n{exc}")
+            return 0
+
+        if result.returncode == 0:
+            continue
+        output = _combined_output(result) or f"{label} exited with status {result.returncode}."
+        failures.append(f"[{label}]\n{output}")
+
+    if not failures:
         return 0
 
-    if result.returncode == 0:
-        return 0
-
-    output = _combined_output(result)
-    if not output:
-        output = f"Governance command exited with status {result.returncode}."
-    reason = (
-        "Codex governance check failed. Fix the reported issues, then rerun "
-        "`.venv/bin/python scripts/check_codex_governance.py --mode fail`.\n\n"
-        f"{output}"
-    )
+    reason = f"Codex governance checks failed. Fix the reported issues, then rerun `make codex-guard`.\n\n{chr(10).join(failures)}"
     _emit_block(reason)
     return 0
 

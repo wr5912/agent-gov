@@ -82,6 +82,7 @@ class FeedbackStore(
         agent_version_provider: Optional[Callable[[Optional[str]], Optional[str]]] = None,
         runtime_version: str = APP_VERSION,
         enable_debug_evidence: bool = True,
+        agent_job_timeout_seconds: int = 300,
     ) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -98,6 +99,7 @@ class FeedbackStore(
         self.agent_version_provider = agent_version_provider
         self.runtime_version = runtime_version
         self.enable_debug_evidence = enable_debug_evidence
+        self.agent_job_timeout_seconds = agent_job_timeout_seconds
         self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[JsonObject]]] = None
         # Legacy cleanup anchor only. New Agent jobs keep input/output/error in SQLite.
         self.tmp_jobs_dir = data_dir / ".runtime-tmp" / "jobs"

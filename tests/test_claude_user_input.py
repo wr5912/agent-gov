@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.routers.claude_user_input import create_claude_user_input_router
@@ -77,6 +78,25 @@ def test_tool_permission_allow_once_resolves_sdk_wait_and_redacts_input(tmp_path
         assert record.decision == "allow_once"
         stored = service.list_requests(run_id="run-1")[0]
         assert stored.decision_token_hash != request["decision_token"]
+
+    asyncio.run(scenario())
+
+
+def test_user_input_request_expiry_uses_configured_timeout(tmp_path):
+    async def scenario():
+        service = _service(tmp_path, timeout_seconds=11)
+        before = datetime.now(timezone.utc)
+        _event_queue, task, request = await _start_wait(service)
+
+        expires_at = datetime.fromisoformat(request["expires_at"])
+        assert before + timedelta(seconds=9) <= expires_at <= before + timedelta(seconds=13)
+
+        service.submit_decision(
+            request["request_id"],
+            decision=_decision(request["decision_token"], action="deny"),
+            decided_by="tester",
+        )
+        assert (await task).action == "deny"
 
     asyncio.run(scenario())
 

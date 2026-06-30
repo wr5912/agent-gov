@@ -1,0 +1,56 @@
+agent:
+  id: security-data-standardization-review
+  name: 安全数据标准化审查智能体
+  english_name: Security Data Standardization Review Agent
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: security-data-standardization-review
+
+capabilities:
+  - raw_security_data_intake
+  - ocsf_mapping_conformance_review
+  - stix_threat_model_review
+  - evidence_gap_analysis
+  - semantic_mismatch_attribution
+  - correction_recommendation
+  - regression_case_generation
+
+paths:
+  workspace: /data/business-agents/security-data-standardization-review/workspace
+  claude_home: /data/business-agents/security-data-standardization-review/claude-root/.claude
+  data_root: /data
+  uploads: /data/uploads
+  outputs: /data/outputs
+  transcripts: /data/transcripts
+
+mcp:
+  default_transport: http
+  servers:
+    sec-ops-data:
+      purpose: 读取样例日志、告警、事件、检测结果和标准化链路证据
+      risk: read-only
+
+subagents:
+  ocsf_review: ocsf-mapping-reviewer
+  stix_review: stix-threat-model-reviewer
+  regression_case: regression-case-curator
+
+review_policy:
+  evidence_first: true
+  preserve_raw_data: false
+  require_field_path: true
+  require_standard_reference: true
+  no_production_mutation: true
+  output_dir: /data/outputs/security-data-standardization-review
+
+observability:
+  hook_audit_log: /data/transcripts/claude-hook-audit.jsonl
+  review_output_dir: /data/outputs/security-data-standardization-review
+
+extension_points:
+  add_mcp_server: .mcp.json
+  add_skill: .claude/skills/<skill-name>/SKILL.md
+  add_subagent: .claude/agents/<agent-name>.md
+  add_command: .claude/commands/<command-name>.md
+  add_rule: .claude/rules/<rule-name>.md

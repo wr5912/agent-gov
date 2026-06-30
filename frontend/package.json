@@ -9,7 +9,7 @@
     "generate:api-types": "../.venv/bin/python ../scripts/export_openapi.py --output /tmp/agent-gov-openapi.json && openapi-typescript /tmp/agent-gov-openapi.json -o src/types/api.ts",
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "verify:design-parity": "cd .. && node scripts/verify_v27_ui_design_parity.mjs",
+    "verify:design-parity": "cd .. && node scripts/verify_improvement_ui_design_parity.mjs",
     "verify:improvement-decision": "cd .. && node scripts/verify_improvement_decision_ui.mjs",
     "verify:asset-registry": "cd .. && node scripts/verify_asset_registry.mjs",
     "verify:claude-user-input": "cd .. && node scripts/verify_claude_user_input_ui.mjs",

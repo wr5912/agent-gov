@@ -84,6 +84,8 @@ make logs
 
 `make up` 会同时启动 API、前端相关服务和 `claude-agent-worker`。反馈闭环中需要模型执行的归因、方案、执行计划、回归用例生成和回归影响分析都会先写入 `/api/agent-jobs` 队列，再由 worker 消费并把结构化输出投影回对应领域表。
 
+治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响 `/api/chat/stream` 的人工确认请求。
+
 健康检查：
 
 ```bash
@@ -533,7 +535,7 @@ make local-debug-bootstrap
 
 本机后台 Agent job 不复用交互式 Claude `/login` 状态。运行“重新生成回归用例”等 worker 任务前，必须在私有 `docker/.env.local-debug` 配置模型后端：Anthropic-compatible 路径需要 `MODEL_PROVIDER_API_KEY`，本地/内网 vLLM 路径需要 `MODEL_PROVIDER_BACKEND=vllm` 和不带 `/v1` 的 `MODEL_PROVIDER_API_URL`。缺少模型凭据或模型 URL 时，job 会在启动 Claude Code 前失败；缺少 Anthropic-compatible key 时错误码为 `AGENT_AUTH_REQUIRED`，并提示当前 profile 和 env 文件。
 
-API 和 worker 统一使用 `LOG_LEVEL` 控制应用日志级别：容器部署的 `docker/.env` 默认 `LOG_LEVEL=info`，本机调试的 `docker/.env.local-debug` 默认 `LOG_LEVEL=debug`。API 和 worker 启动日志会打印 `log_level`、`runtime_volume_mode`、`settings_env_file`、`model_provider_backend`、`model_provider_vllm_sidecar_threshold`、`model_provider_vllm_allow_direct`、`provider_api_key_configured`、`provider_api_url_configured`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
+API 和 worker 统一使用 `LOG_LEVEL` 控制应用日志级别：容器部署的 `docker/.env` 默认 `LOG_LEVEL=info`，本机调试的 `docker/.env.local-debug` 默认 `LOG_LEVEL=debug`。API 和 worker 启动日志会打印 `log_level`、`runtime_volume_mode`、`settings_env_file`、`model_provider_backend`、`model_provider_vllm_sidecar_threshold`、`model_provider_vllm_allow_direct`、`provider_api_key_configured`、`provider_api_url_configured`、`governance_agent_timeout_seconds`、`dspy_output_formatter_timeout_seconds`、`claude_web_hitl_enabled`、`hitl_timeout_seconds`、`workspace_dir`、`data_dir`、`claude_root` 和 `langfuse_base_url`。如果 PyCharm 调试时看到 `runtime_volume_mode=container`，说明进程被误标记为容器或环境变量被外部覆盖。
 
 本机 PyCharm 调试如果需要访问本机 Docker 暴露的 HTTP MCP 服务，在 `docker/.env.local-debug` 中设置 `MCP_SERVER_URL=http://localhost:48001/mcp`，然后执行 `make local-debug-repair-managed-config` 修复 `${HOST_RUNTIME_VOLUME_ROOT}/main-workspace/.mcp.json`。main profile 和 feedback profiles 都只使用各自 workspace 的官方 `.mcp.json`。宿主机存在代理变量时，同时在 `CLAUDE_ENV_JSON` 中设置 `NO_PROXY` 和 `no_proxy`，避免本机地址请求被代理转发。
 

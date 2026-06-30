@@ -4,7 +4,7 @@ import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation"
 import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
 
-// v2.7 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
+// 四阶段改进治理 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
 interface ChatPanelProps {
   messages: ChatMessage[];
   input: string;
@@ -59,7 +59,7 @@ export function ChatPanel({
   } = useMessageScrollNavigation({ activeSessionId, messages, streamingAssistantMessageId });
 
   return (
-    <main className="chat-panel chat-panel-v27" data-testid="playground">
+    <main className="chat-panel chat-panel-improvement" data-testid="playground">
       <header className="chat-header">
         <div className="chat-header-left">
           <button

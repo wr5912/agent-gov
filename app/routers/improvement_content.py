@@ -246,7 +246,7 @@ def create_improvement_content_router(
     execution_service: ImprovementExecutionService,
     require_api_key: Callable,
 ) -> APIRouter:
-    """改进事项内容子资源（v2.7 §4/§6/§8/§106/§107 P3）：系统理解 / 归因 / 优化方案 / 执行记录 / 来源反馈。"""
+    """改进事项内容子资源（四阶段改进治理 §4/§6/§8/§106/§107 P3）：系统理解 / 归因 / 优化方案 / 执行记录 / 来源反馈。"""
     router = APIRouter(prefix="/api", tags=["improvements"], dependencies=[Depends(require_api_key)])
 
     def _require(improvement_id: str) -> None:

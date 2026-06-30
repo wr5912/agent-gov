@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addImprovementLink,
   getNormalizedFeedback,
+  confirmNormalizedFeedback,
   getAttribution,
   generateAttribution,
   upsertAttribution,
@@ -44,9 +45,12 @@ import {
 } from "../api/improvements";
 import { requestJson } from "../api/request";
 import { IMPROVEMENT_STAGE_ORDER, describeImprovementStage, stageLabel, type VisibleImprovementStageKey } from "../improvementStage";
+import { deriveImprovementListDecisionLabel, deriveImprovementPrimaryDecision, nextImprovementStagePath, type ImprovementPrimaryDecision } from "../improvementDecisionActions";
 import { buildContext, type ContextType } from "../contextPackage";
-import { listAssets, createAsset, type Asset } from "../api/assets";
+import { listAssets, type Asset } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
+import { adoptRegressionArtifacts } from "../improvementRegressionAssets";
+import { operationLabel, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
 import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
@@ -64,6 +68,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [pendingOperation, setPendingOperation] = useState<ImprovementPendingOperation | null>(null);
+  const [operationError, setOperationError] = useState<ImprovementOperationError | null>(null);
   const [newAgentId, setNewAgentId] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const [contextOpen, setContextOpen] = useState(false);
@@ -191,16 +197,36 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     return () => { cancelled = true; };
   }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id]);
 
-  const run = async (action: () => Promise<void>) => {
+  const run = async (action: () => Promise<void>, operation?: ImprovementPendingOperation) => {
     setBusy(true);
     setError(undefined);
+    if (operation) {
+      setPendingOperation(operation);
+      setOperationError(null);
+    }
     try {
       await action();
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      const message = e instanceof Error ? e.message : String(e);
+      if (operation) setOperationError({ ...operation, message });
+      else setError(message);
     } finally {
+      if (operation) setPendingOperation(null);
       setBusy(false);
     }
+  };
+
+  const replaceItem = (updated: ImprovementItem) => {
+    setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+  };
+
+  const ensureStage = async (item: ImprovementItem, targetStage: string) => {
+    let updated = item;
+    for (const stage of nextImprovementStagePath(item.improvement_stage, targetStage)) {
+      updated = await setImprovementStage(clientConfig, item.improvement_id, stage);
+      replaceItem(updated);
+    }
+    return updated;
   };
 
   const handleCreate = () => {
@@ -217,7 +243,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const handleAdvance = (item: ImprovementItem, targetStage: string) => {
     void run(async () => {
       const updated = await setImprovementStage(clientConfig, item.improvement_id, targetStage);
-      setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+      replaceItem(updated);
       setReviewStageKey(null);
     });
   };
@@ -225,7 +251,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const handleArchive = (item: ImprovementItem) => {
     void run(async () => {
       const updated = await archiveImprovement(clientConfig, item.improvement_id);
-      setItems((prev) => prev.map((entry) => (entry.improvement_id === updated.improvement_id ? updated : entry)));
+      replaceItem(updated);
     });
   };
 
@@ -254,7 +280,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const handleAutoAdvance = (item: ImprovementItem) => {
     void run(async () => {
       const result = await autoAdvanceImprovement(clientConfig, item.improvement_id);
-      setItems((prev) => prev.map((entry) => (entry.improvement_id === result.improvement.improvement_id ? result.improvement : entry)));
+      replaceItem(result.improvement);
       setLastAuto(result);
     });
   };
@@ -275,19 +301,12 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     });
   };
 
-  const handleConfirmAttribution = (item: ImprovementItem) => {
-    void run(async () => {
-      const a = await confirmAttribution(clientConfig, item.improvement_id);
-      setAttribution(a);
-    });
-  };
-
   const handleGenerateAttribution = (item: ImprovementItem) => {
     void run(async () => {
       const a = await generateAttribution(clientConfig, item.improvement_id);
       setAttribution(a);
       setEditingAttribution(false);
-    });
+    }, { kind: "generate_attribution", label: operationLabel("generate_attribution") });
   };
 
   const handleEditAttribution = (a: Attribution) => {
@@ -311,10 +330,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const handleGenerateOptPlan = (item: ImprovementItem) => {
     void run(async () => {
       setOptPlan(await generateOptimizationPlan(clientConfig, item.improvement_id));
-    });
-  };
-  const handleConfirmOptPlan = (item: ImprovementItem) => {
-    void run(async () => { setOptPlan(await confirmOptimizationPlan(clientConfig, item.improvement_id)); });
+    }, { kind: "generate_optimization_plan", label: operationLabel("generate_optimization_plan") });
   };
 
   // §107 执行记录：从已确认方案确定性生成执行结果（应用变更 + 版本占位）。
@@ -329,67 +345,75 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setExecution(e);
     });
   };
-  const handleApplyExecution = (item: ImprovementItem) => {
-    void run(async () => { setExecution(await applyExecution(clientConfig, item.improvement_id)); });
-  };
-  const handleConfirmExecution = (item: ImprovementItem) => {
-    void run(async () => { setExecution(await confirmExecution(clientConfig, item.improvement_id)); });
-  };
-
   const handleGenerateRegression = (item: ImprovementItem) => {
-    void run(async () => { setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id)); });
+    void run(async () => { setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id)); }, { kind: "generate_regression", label: operationLabel("generate_regression") });
   };
 
   const handleAdoptRegression = (item: ImprovementItem) => {
     void run(async () => {
-      const cases = regressionAssessment?.cases ?? [];
-      const sourceFeedbackIds = feedbacks.map((f) => f.feedback_id || "").filter(Boolean);
-      const baselineVersion = feedbacks.find((f) => f.agent_version_id)?.agent_version_id || "";
-      const candidateVersion = execution?.applied_agent_version_id || execution?.agent_version || "";
-      const testDatasetId = `tds-${item.improvement_id}`;
-      const datasetBody = JSON.stringify({
-        test_dataset_id: testDatasetId,
-        agent_id: item.agent_id,
-        improvement_id: item.improvement_id,
-        lifecycle: "candidate",
-        source_feedback_refs: sourceFeedbackIds.length ? sourceFeedbackIds : item.source_feedback_refs ?? [],
-        test_cases: cases.map((c, i) => ({
-          case_id: `${testDatasetId}-case-${i + 1}`,
-          prompt: c.prompt,
-          expected_behavior: c.expected_behavior,
-          checkpoints: c.checkpoints,
-        })),
-        selection_strategy: "current-improvement-regression",
-        scope: "改进事项测试发布阶段",
-        baseline_version: baselineVersion || "missing",
-        candidate_version: candidateVersion || "missing",
-        provenance: {
-          normalized_feedback_id: normalizedFeedback?.normalized_feedback_id,
-          attribution_id: attribution?.attribution_id,
-          optimization_plan_id: optPlan?.optimization_plan_id,
-          execution_id: execution?.execution_id,
-        },
-      }, null, 2);
-      await createAsset(clientConfig, {
-        agent_id: item.agent_id,
-        asset_type: "test_dataset",
-        title: `测试数据集：${item.title}`,
-        body: datasetBody,
-        source_improvement_id: item.improvement_id,
-      });
-      const body = cases.length
-        ? cases.map((c, i) => `用例${i + 1}：${c.prompt}\n期望：${c.expected_behavior}\n检查点：\n${(c.checkpoints || []).map((x) => `- ${x}`).join("\n")}`).join("\n\n")
-        : `用例：当出现「${item.title}」类问题时，Agent 应正确处理，不得直接误判。\n检查点：\n${["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"].map((c) => `- ${c}`).join("\n")}`;
-      await createAsset(clientConfig, {
-        agent_id: item.agent_id,
-        asset_type: "regression",
-        title: `回归保障：${item.title}`,
-        body,
-        source_improvement_id: item.improvement_id,
+      const assets = await adoptRegressionArtifacts({
+        clientConfig,
+        item,
+        regressionAssessment,
+        feedbacks,
+        execution,
+        normalizedFeedback,
+        attribution,
+        optimizationPlan: optPlan,
       });
       if (regressionAssessment) await confirmRegressionAssessment(clientConfig, item.improvement_id).catch(() => undefined);
-      setSedimentAssets(await listAssets(clientConfig, { sourceImprovementId: item.improvement_id }));
+      setSedimentAssets(assets);
     });
+  };
+
+  const handlePrimaryDecision = (item: ImprovementItem, decision: ImprovementPrimaryDecision | null) => {
+    if (!decision || busy) return;
+    void run(async () => {
+      if (decision.kind === "generate_attribution") {
+        if (normalizedFeedback && normalizedFeedback.status !== "confirmed") {
+          setNormalizedFeedback(await confirmNormalizedFeedback(clientConfig, item.improvement_id));
+        }
+        await ensureStage(item, "attribution");
+        setAttribution(await generateAttribution(clientConfig, item.improvement_id));
+        setEditingAttribution(false);
+        return;
+      }
+      if (decision.kind === "generate_optimization_plan") {
+        let currentAttribution = attribution;
+        if (!currentAttribution) currentAttribution = await generateAttribution(clientConfig, item.improvement_id);
+        if (currentAttribution.status !== "confirmed") currentAttribution = await confirmAttribution(clientConfig, item.improvement_id);
+        setAttribution(currentAttribution);
+        await ensureStage(item, "optimization");
+        setOptPlan(await generateOptimizationPlan(clientConfig, item.improvement_id));
+        return;
+      }
+      if (decision.kind === "apply_execution") {
+        let currentPlan = optPlan;
+        if (!currentPlan) currentPlan = await generateOptimizationPlan(clientConfig, item.improvement_id);
+        if (currentPlan.status !== "confirmed") currentPlan = await confirmOptimizationPlan(clientConfig, item.improvement_id);
+        setOptPlan(currentPlan);
+        await ensureStage(item, "execution");
+        setExecution(await applyExecution(clientConfig, item.improvement_id));
+        return;
+      }
+      if (decision.kind === "generate_regression") {
+        let currentExecution = execution;
+        if (!currentExecution && optPlan) {
+          let currentPlan = optPlan;
+          if (currentPlan.status !== "confirmed") currentPlan = await confirmOptimizationPlan(clientConfig, item.improvement_id);
+          setOptPlan(currentPlan);
+          await ensureStage(item, "execution");
+          currentExecution = await applyExecution(clientConfig, item.improvement_id);
+        }
+        if (currentExecution?.status && currentExecution.status !== "confirmed") {
+          currentExecution = await confirmExecution(clientConfig, item.improvement_id);
+          setExecution(currentExecution);
+        }
+        await ensureStage(item, "regression");
+        setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id));
+        return;
+      }
+    }, { kind: decision.kind, label: operationLabel(decision.kind) });
   };
 
   const handleAddLink = (item: ImprovementItem) => {
@@ -429,6 +453,15 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
 
   const agentName = (agentId: string) => businessAgents.find((agent) => agent.agent_id === agentId)?.name || agentId;
   const stageView = selected ? describeImprovementStage(selected.improvement_stage) : null;
+  const primaryDecision = selected ? deriveImprovementPrimaryDecision({
+    item: selected,
+    normalizedFeedback,
+    attribution,
+    optimizationPlan: optPlan,
+    execution,
+    regressionAssessment,
+    feedbacks,
+  }) : null;
   const reviewStageDef = reviewStageKey ? IMPROVEMENT_STAGE_ORDER.find((stage) => stage.key === reviewStageKey) : undefined;
   const reviewStageIndex = reviewStageDef ? IMPROVEMENT_STAGE_ORDER.findIndex((stage) => stage.key === reviewStageDef.key) : -1;
   const canReviewStage = !!stageView && !!reviewStageDef && reviewStageIndex >= 0 && reviewStageIndex <= stageView.stageIndex;
@@ -474,7 +507,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
             <div className="iw-empty">{items.length === 0 ? "当前范围暂无改进事项。新建后即可推进治理闭环。" : "该状态下暂无改进事项。"}</div>
           ) : (
             visibleItems.map((item) => {
-              const itemStage = describeImprovementStage(item.improvement_stage);
               const sourceCount = item.source_feedback_refs?.length ?? 0;
               return (
                 <button
@@ -488,7 +520,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 >
                   <span className="iw-list-item-title">{item.title}</span>
                   <span className="iw-list-item-decision" data-testid="improvement-list-decision">
-                    待决策：{itemStage.primaryAction?.label ?? (itemStage.isTerminal ? "查看发布状态" : `确认${itemStage.label}`)}
+                    待决策：{deriveImprovementListDecisionLabel(item)}
                   </span>
                   <span className="iw-list-item-meta">
                     {agentName(item.agent_id)} · {stageLabel(item.improvement_stage)} · 来源 {sourceCount || "未记录"} 条反馈
@@ -549,9 +581,12 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               item={selected}
               agentName={agentName(selected.agent_id)}
               stageView={stageView}
+              primaryDecision={primaryDecision}
               feedbacks={feedbacks}
               busy={busy}
-              onPrimaryAction={() => handleAdvance(selected, stageView.primaryAction!.stage)}
+              pendingOperation={pendingOperation}
+              operationError={operationError}
+              onPrimaryAction={() => handlePrimaryDecision(selected, primaryDecision)}
               onBackAction={(stage) => handleAdvance(selected, stage)}
               onManageSources={() => setSourceDrawerOpen(true)}
             />
@@ -569,22 +604,20 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               editingAttribution={editingAttribution}
               attrDraft={attrDraft}
               busy={busy}
+              pendingOperation={pendingOperation}
+              operationError={operationError}
               langfuseUrl={langfuseUrl}
               readOnly={reviewingPastStage}
               reviewingLabel={reviewingPastStage ? panelStageView.label : undefined}
               onOpenSources={() => setSourceDrawerOpen(true)}
               onReturnCurrentStage={() => setReviewStageKey(null)}
               onGenerateAttribution={() => handleGenerateAttribution(selected)}
-              onConfirmAttribution={() => handleConfirmAttribution(selected)}
               onEditAttribution={handleEditAttribution}
               onSaveAttribution={() => handleSaveAttribution(selected)}
               onCancelAttribution={() => setEditingAttribution(false)}
               onAttrDraftChange={setAttrDraft}
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
-              onConfirmOpt={() => handleConfirmOptPlan(selected)}
               onRecordExec={() => handleRecordExecution(selected)}
-              onApplyExec={() => handleApplyExecution(selected)}
-              onConfirmExec={() => handleConfirmExecution(selected)}
               onGenerateRegression={() => handleGenerateRegression(selected)}
               onAdoptTestDataset={() => handleAdoptRegression(selected)}
               onOpenContext={() => setContextOpen(true)}
@@ -712,7 +745,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 item: selected,
                 agentName: agentName(selected.agent_id),
                 links,
-                primaryActionLabel: stageView?.primaryAction?.label || "（已到终态）",
+                primaryActionLabel: primaryDecision?.label || "（已到终态）",
                 normalizedFeedback,
                 attribution,
                 feedbacks,

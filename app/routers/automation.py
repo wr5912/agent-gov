@@ -36,7 +36,7 @@ def create_automation_router(
     automation_policy_store: AutomationPolicyStore,
     require_api_key: Callable,
 ) -> APIRouter:
-    """自动化策略编排（v2.7 W2）：策略读写 + 改进事项按策略自动推进。"""
+    """自动化策略编排（四阶段改进治理 W2）：策略读写 + 改进事项按策略自动推进。"""
     router = APIRouter(prefix="/api", tags=["automation"], dependencies=[Depends(require_api_key)])
 
     @router.get("/automation-policy", response_model=AutomationPolicyResponse, summary="Get automation policy for a business agent")

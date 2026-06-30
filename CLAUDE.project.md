@@ -32,13 +32,13 @@
 - 治理对象矩阵：业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、开发者离线工具。
 - 配置面矩阵：当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、Codex/Claude rules、skill、script、hook、docs、memory。
 - 验收路径矩阵：docs/skill 治理、专项测试、主流程测试、真实容器验收、发版完整硬门；不得用 local-debug 结果声明容器验收通过。
-- UI 语义矩阵：涉及 v2.7 或用户可见交互时，确认按钮名称、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”。
+- UI 语义矩阵：涉及四阶段改进治理方案或用户可见交互时，确认按钮名称、业务产物、API 副作用、状态推进、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”；决策卡主按钮不得只推进状态，状态推进只能作为业务动作的副作用。
 
 ## 项目验证入口
 
 - 局部开发验证：`.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。
 - 主流程验证：`make main-flow-test`（改动反馈优化主流程、Agent job、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/coverage_policy.json` 已绑定对应 nodeid 或 UI verification script）。
-- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 `.venv/bin/python scripts/check_codex_governance.py --mode fail`，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
+- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Codex 治理、阶段语言和版本一致性检查，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
 - 覆盖清单或测试 manifest：`tests/coverage_policy.json`（主流程覆盖清单与全局覆盖率基线的单一入口）。
 
 `warn`、dry-run 或只读审计类命令只能用于 Analyze 阶段观察；Verify 阶段必须运行正式 `--mode fail`，不得以 `warn` 作为通过标准。

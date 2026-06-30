@@ -116,7 +116,7 @@ class ExecutionRecord:
 
 
 class ImprovementContentStore:
-    """改进事项内容子资源（v2.7 P3）：系统理解 NormalizedFeedback + 归因 Attribution + 优化方案 OptimizationPlan + 执行记录 ExecutionRecord（均与事项 1:1）+ 来源反馈 Feedback（1:多）。"""
+    """改进事项内容子资源（四阶段改进治理 P3）：系统理解 NormalizedFeedback + 归因 Attribution + 优化方案 OptimizationPlan + 执行记录 ExecutionRecord（均与事项 1:1）+ 来源反馈 Feedback（1:多）。"""
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory

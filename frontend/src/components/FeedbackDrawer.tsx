@@ -3,7 +3,7 @@ import { createImprovement, upsertNormalizedFeedback, addImprovementFeedback, ty
 import type { RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 
-// v2.7 §4 创建反馈 Drawer（两阶段）：自然语言反馈 → 整理为系统理解 → 确认保存 → 生成改进事项。
+// 四阶段改进治理 §4 创建反馈 Drawer（两阶段）：自然语言反馈 → 整理为系统理解 → 确认保存 → 生成改进事项。
 // 注：P1 阶段「系统理解」为客户端初步整理（占位），真正的 NormalizedFeedback 后端实体在 P3 接入；
 // 这里明确标注「初步」，不冒充已有后端归一化能力。
 

@@ -76,10 +76,14 @@ feedback_store = FeedbackStore(
     agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（依赖 agent_governance._store_for）。
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
+    agent_job_timeout_seconds=settings.governance_agent_timeout_seconds,
 )
 runtime_db_session_factory = make_session_factory(runtime_db_path_from_data_dir(settings.data_dir))
 claude_user_input_store = ClaudeUserInputStore(runtime_db_session_factory)
-claude_user_input_service = ClaudeUserInputService(claude_user_input_store)
+claude_user_input_service = ClaudeUserInputService(
+    claude_user_input_store,
+    timeout_seconds=settings.hitl_timeout_seconds,
+)
 runtime = ClaudeRuntime(settings, session_store, feedback_store, agent_version_store, user_input_service=claude_user_input_service)
 feedback_store.set_langfuse_trace_fetcher(runtime.fetch_langfuse_trace)
 agent_governance = AgentGovernanceService(
@@ -160,9 +164,9 @@ app = FastAPI(
         {"name": "chat", "description": "Claude Agent task execution endpoints."},
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "agents", "description": "List registered business agents (governance objects)."},
-        {"name": "improvements", "description": "Improvement items: the event-level governance work unit (v2.7)."},
-        {"name": "automation", "description": "Automation policy and stage auto-advance orchestration (v2.7 W2)."},
-        {"name": "assets", "description": "Governance asset registry and cross-agent inheritance (v2.7 W3)."},
+        {"name": "improvements", "description": "Improvement items: the event-level governance work unit (四阶段改进治理)."},
+        {"name": "automation", "description": "Automation policy and stage auto-advance orchestration (四阶段改进治理 W2)."},
+        {"name": "assets", "description": "Governance asset registry and cross-agent inheritance (四阶段改进治理 W3)."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},

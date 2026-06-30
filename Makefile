@@ -21,6 +21,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/check_codex_governance.py \
 	scripts/check_docs_governance.py \
 	scripts/check_orphan_tests.py \
+	scripts/check_stage_language.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
 	scripts/runtime_template_renderer.py \
@@ -156,6 +157,7 @@ chat:
 
 codex-guard:
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
+	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
 
 sync-version:

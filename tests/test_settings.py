@@ -24,6 +24,9 @@ _PROFILE_ENV_KEYS = (
     "GOVERNOR_CLAUDE_ROOT",
     "CLAUDE_HOME",
     "LANGFUSE_BASE_URL",
+    "GOVERNANCE_AGENT_TIMEOUT_SECONDS",
+    "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
+    "HITL_TIMEOUT_SECONDS",
 )
 
 
@@ -178,7 +181,10 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "model_provider_vllm_allow_direct": False,
         "provider_api_key_configured": False,
         "provider_api_url_configured": False,
+        "governance_agent_timeout_seconds": 300,
+        "dspy_output_formatter_timeout_seconds": 300,
         "claude_web_hitl_enabled": False,
+        "hitl_timeout_seconds": 300,
         "api_host": "0.0.0.0",
         "api_port": 8080,
         "workspace_dir": "/tmp/local-debug-volume-agent-gov/data/business-agents/main-agent/workspace",
@@ -188,6 +194,28 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
     }
     assert fields["provider_api_key_configured"] is False
     assert not any("secret" in name.lower() for name in fields)
+
+
+def test_governance_and_hitl_timeout_defaults_and_overrides(monkeypatch):
+    for key in _PROFILE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    defaults = AppSettings(_env_file=None)
+    inherited_formatter = AppSettings(_env_file=None, GOVERNANCE_AGENT_TIMEOUT_SECONDS=123)
+    overridden_formatter = AppSettings(
+        _env_file=None,
+        GOVERNANCE_AGENT_TIMEOUT_SECONDS=123,
+        DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS=45,
+        HITL_TIMEOUT_SECONDS=67,
+    )
+
+    assert defaults.governance_agent_timeout_seconds == 300
+    assert defaults.dspy_output_formatter_timeout_seconds == 300
+    assert defaults.hitl_timeout_seconds == 300
+    assert inherited_formatter.dspy_output_formatter_timeout_seconds == 123
+    assert overridden_formatter.governance_agent_timeout_seconds == 123
+    assert overridden_formatter.dspy_output_formatter_timeout_seconds == 45
+    assert overridden_formatter.hitl_timeout_seconds == 67
 
 
 def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):

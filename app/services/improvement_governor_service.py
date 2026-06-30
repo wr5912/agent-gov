@@ -1,4 +1,4 @@
-"""改进事项归因/优化方案的治理 Agent 生成服务（v2.7 §17.5 引擎波次）。
+"""改进事项归因/优化方案的治理 Agent 生成服务（四阶段改进治理 §17.5 引擎波次）。
 
 复用既有 governor 引擎（`agent_job_spec` 的 prompt-builder + formatter + 注入的 `run_profile_json`），
 按 improvement 作用域生成 Attribution / OptimizationPlan 内容子资源。

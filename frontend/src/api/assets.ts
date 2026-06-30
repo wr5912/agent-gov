@@ -1,4 +1,4 @@
-// 治理资产 Registry 复利中心 API 客户端（v2.7 W3）。
+// 治理资产 Registry 复利中心 API 客户端（四阶段改进治理 W3）。
 import { requestJson } from "./request";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";

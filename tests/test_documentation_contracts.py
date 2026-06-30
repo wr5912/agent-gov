@@ -131,7 +131,7 @@ def test_feedback_current_baseline_replaces_archived_product_docs():
 
     current_phrases = [
         "本文收敛并替代已归档的",
-        "当前闭环仍以反馈信息、优化批次、回归资产、版本治理等 pre-v2.7 对象承载",
+        "当前闭环仍以反馈信息、优化批次、回归资产、版本治理等迁移前对象承载",
         "optimization batch / optimization plan",
         "optimization task / execution plan",
         "eval run / regression gate",

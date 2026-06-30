@@ -235,6 +235,7 @@ def _governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
             observation="runtime.governor",
             max_turns=16,
             settings=settings,
+            max_runtime_seconds=settings.governance_agent_timeout_seconds,
         )
     )
 
@@ -247,6 +248,7 @@ def _readonly_feedback_kwargs(
     observation: str,
     max_turns: int | None,
     settings: AppSettings,
+    max_runtime_seconds: int,
     readable_paths: tuple[Path, ...] | None = None,
     denied_paths: tuple[Path, ...] | None = None,
 ) -> dict[str, object]:
@@ -264,4 +266,5 @@ def _readonly_feedback_kwargs(
         "writable_paths": (),
         "denied_paths": denied_paths or (business_agents_root(settings.data_dir),),
         "max_turns": max_turns,
+        "max_runtime_seconds": max_runtime_seconds,
     }

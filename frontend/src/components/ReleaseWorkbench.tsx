@@ -4,7 +4,7 @@ import type { AgentChangeSet, AgentRelease } from "../types/runtime";
 import type { RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
 
-// 发布工作台（v2.7 §12）：回答「能不能发 / 为什么 / 发了包含什么」，并呈现三门门禁与动作。
+// 发布工作台（四阶段改进治理 §12）：回答「能不能发 / 为什么 / 发了包含什么」，并呈现三门门禁与动作。
 // 按当前业务 Agent 防御式过滤（响应含 agent_id 时按 Agent scoping，否则不过滤避免误隐藏）。
 type WithAgent = { agent_id?: string };
 

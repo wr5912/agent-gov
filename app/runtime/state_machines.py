@@ -190,7 +190,7 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
 
-# 改进事项阶段（v2.7 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
+# 改进事项阶段（四阶段改进治理 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
 # 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
 # 允许回退边（如 regression -> optimization）以支持返工，但不得跨段跳跃，由状态机统一判定。
 IMPROVEMENT_STAGES = {

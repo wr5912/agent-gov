@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// v2.7 §3 助手回复动作验收。
+// 四阶段改进治理 §3 助手回复动作验收。
 // 默认模式：自启动 Vite + mock SSE，进入 main-flow 硬门，验证回复动作结构不回归。
 // 真实模式：设置 RUNTIME_UI_BASE + RUNTIME_API_BASE 后连真实容器 UI/API，跑真实 LLM 对话。
 import { createRequire } from "node:module";
@@ -437,7 +437,7 @@ async function main() {
             && autoPanelChecks.autoBottomAfterSend
           ));
         detail = JSON.stringify({ counts, drawerChecks });
-        if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-v27-ui-after-message-actions.png") });
+        if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });
       } catch (e) {
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;
         console.error("retry:", detail);

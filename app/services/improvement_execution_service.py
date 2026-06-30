@@ -1,4 +1,4 @@
-"""改进事项执行记录的治理 Agent 自动 apply + 版本生成服务（v2.7 §17.5 引擎波次第二阶段）。
+"""改进事项执行记录的治理 Agent 自动 apply + 版本生成服务（四阶段改进治理 §17.5 引擎波次第二阶段）。
 
 把已确认优化方案交给治理 Agent governor 生成执行操作（ExecutionPlanFormatterOutput.operations），
 复用既有安全原语在**隔离的 change set worktree** 上落盘 → 提交 → 生成候选 Agent 版本，

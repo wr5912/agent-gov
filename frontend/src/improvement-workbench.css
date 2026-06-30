@@ -1,4 +1,4 @@
-/* v2.7 可信治理工作台主题 Governance Light，作用域限定在改进工作台（不改写既有界面）。 */
+/* 四阶段改进治理 可信治理工作台主题 Governance Light，作用域限定在改进工作台（不改写既有界面）。 */
 .improvement-workbench {
   --bg-page: #f7f8fa;
   --bg-surface: #ffffff;
@@ -109,16 +109,25 @@
 .iw-decision-card {
   background: linear-gradient(180deg, #fff, #f8fafc);
   border-color: #bfdbfe;
+  padding: 10px 12px;
+}
+.iw-decision-title-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
 }
 .iw-section-kicker {
   color: var(--color-primary);
   font-size: 12px;
   font-weight: 700;
-  margin-bottom: 6px;
+  margin-bottom: 0;
+  white-space: nowrap;
 }
 .iw-decision-card h3 {
-  margin: 0 0 10px;
-  font-size: 17px;
+  margin: 0;
+  font-size: 16px;
   line-height: 1.4;
 }
 .iw-decision-grid {
@@ -200,6 +209,25 @@
 
 .iw-done-note { color: var(--color-success); font-size: 13px; font-weight: 600; }
 .iw-error { margin: 10px 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #fecaca; background: #fef2f2; color: #dc2626; font-size: 13px; }
+.iw-operation-status,
+.iw-operation-error {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.iw-operation-status {
+  border: 1px solid #bfdbfe;
+  background: var(--color-primary-soft);
+  color: var(--color-primary);
+  font-weight: 700;
+}
+.iw-operation-error {
+  border: 1px solid #fecaca;
+  background: #fef2f2;
+  color: #b91c1c;
+}
 .iw-empty { color: var(--text-muted); font-size: 13px; padding: 16px; text-align: center; }
 
 .iw-create { border-top: 1px solid var(--border-subtle); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
@@ -248,36 +276,36 @@
 .iw-context-body { background: var(--bg-debug); color: var(--text-debug); margin: 0; padding: 12px; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-word; max-height: 320px; overflow: auto; user-select: text; }
 .iw-source-refs { display: flex; flex-wrap: wrap; gap: 6px; }
 .iw-ref { font-size: 11px; padding: 2px 8px; border-radius: 6px; background: var(--bg-surface-muted); color: var(--text-secondary); border: 1px solid var(--border-subtle); }
-/* v2.7 §10 ContextPackage 四类型 */
+/* 四阶段改进治理 §10 ContextPackage 四类型 */
 .iw-context-types { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
 .iw-context-type { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 10px; border: 1px solid var(--border-subtle); border-radius: 999px; cursor: pointer; color: var(--text-secondary); }
 .iw-context-type.active { background: var(--color-primary-soft, #eff6ff); border-color: var(--color-primary-border, #bfdbfe); color: var(--color-primary, #1d4ed8); }
 .iw-context-type input { margin: 0; }
-/* v2.7 P3 改进详情内容（系统理解 / 归因） */
+/* 四阶段改进治理 P3 改进详情内容（系统理解 / 归因） */
 .iw-content-list { margin: 4px 0 6px; padding-left: 18px; font-size: 13px; line-height: 1.7; color: var(--text-primary); }
 .iw-content-quote { font-size: 12px; color: var(--text-secondary); border-left: 2px solid var(--border-subtle); padding-left: 8px; }
 .iw-content-subhead { font-size: 12px; color: var(--text-secondary); margin-top: 6px; font-weight: 600; }
-/* v2.7 §8.4 来源反馈表 */
+/* 四阶段改进治理 §8.4 来源反馈表 */
 .iw-feedback-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .iw-feedback-table th, .iw-feedback-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
 .iw-feedback-table th { color: var(--text-secondary); font-weight: 600; }
 .iw-feedback-table td:first-child, .iw-feedback-table th:first-child { width: 28px; color: var(--text-muted); }
-/* v2.7 改进详情收纳：高级（自动化/相似/链接）默认折叠 */
+/* 四阶段改进治理 改进详情收纳：高级（自动化/相似/链接）默认折叠 */
 .iw-advanced { margin-top: 12px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
 .iw-advanced > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); list-style: revert; padding: 4px 0; }
 .iw-advanced > summary:hover { color: var(--text-primary); }
-/* v2.7 §7 完整链路 */
+/* 四阶段改进治理 §7 完整链路 */
 .iw-chain { margin: 6px 0; padding-left: 18px; font-size: 13px; line-height: 1.8; color: var(--text-secondary); }
 .iw-chain li.is-done { color: var(--color-success); }
 .iw-chain li.is-current { color: var(--color-primary); font-weight: 600; }
-/* v2.7 §5 改进列表状态过滤 pills */
+/* 四阶段改进治理 §5 改进列表状态过滤 pills */
 .iw-status-filter { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--border-subtle); }
 .iw-filter-pill { font-size: 11px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-subtle); background: #fff; color: var(--text-secondary); cursor: pointer; }
 .iw-filter-pill.active { background: var(--color-primary-soft); border-color: #bfdbfe; color: var(--color-primary); font-weight: 600; }
-/* v2.7 §9 Trace 摘要（深色调试区） */
+/* 四阶段改进治理 §9 Trace 摘要（深色调试区） */
 .iw-trace-summary { background: var(--bg-debug); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
 
-/* v2.7 发布门禁台 */
+/* 四阶段改进治理 发布门禁台 */
 .release-workbench-grid { grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); }
 .release-candidate-panel .iw-panel-body { display: flex; flex-direction: column; gap: 12px; }
 .release-gate-summary { margin-top: 0; }
@@ -289,14 +317,14 @@
 .release-force-button { color: #dc2626; border-color: #fecaca; }
 .release-force-button:hover { border-color: #fca5a5; }
 
-/* v2.7 资产 Registry 浏览优先 */
+/* 四阶段改进治理 资产 Registry 浏览优先 */
 .asset-browser-toolbar { margin-top: 0; }
 .asset-browser-toolbar .iw-automation-row { align-items: stretch; }
-/* v2.7 §17.5 归因/方案 来源标注（治理 Agent 生成 vs 启发式初步） */
+/* 四阶段改进治理 §17.5 归因/方案 来源标注（治理 Agent 生成 vs 启发式初步） */
 .iw-source-badge { margin-left: 8px; font-size: 11px; font-weight: 500; padding: 1px 8px; border-radius: 999px; vertical-align: middle; border: 1px solid var(--border-subtle); color: var(--text-secondary); background: #fff; }
 .iw-source-badge[data-source="governor"] { color: var(--color-primary); border-color: #bfdbfe; background: var(--color-primary-soft); }
 
-/* v2.7 权威四阶段工作台 */
+/* 四阶段改进治理 权威四阶段工作台 */
 .iw-four-stage-spine {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -355,26 +383,30 @@
 
 .iw-decision-card {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr) 220px;
-  gap: 18px;
+  grid-template-columns: 56px minmax(0, 1fr) 160px;
+  gap: 12px;
   align-items: center;
-  min-height: 150px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .iw-decision-icon {
   display: grid;
   place-items: center;
-  width: 72px;
-  height: 72px;
+  width: 48px;
+  height: 48px;
   border-radius: 999px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 34px;
+  font-size: 24px;
   font-weight: 700;
 }
 .iw-decision-main { min-width: 0; }
+.iw-decision-main .iw-detail-summary {
+  margin: 0;
+  line-height: 1.45;
+}
+.iw-decision-card .iw-action-row { margin-top: 8px; }
 .iw-decision-score {
-  min-height: 106px;
+  min-height: 76px;
   border-left: 1px solid var(--border-subtle);
   display: grid;
   align-content: center;
@@ -383,13 +415,13 @@
   color: var(--color-primary);
 }
 .iw-decision-score span { color: var(--text-secondary); font-size: 12px; }
-.iw-decision-score strong { font-size: 42px; line-height: 1; }
-.iw-decision-score small { font-size: 16px; font-weight: 700; }
+.iw-decision-score strong { font-size: 30px; line-height: 1; }
+.iw-decision-score small { font-size: 13px; font-weight: 700; }
 .iw-evidence-state {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  margin-top: 8px;
+  margin-top: 6px;
   padding: 6px 10px;
   border-radius: 8px;
   background: var(--color-success-soft);
@@ -421,12 +453,18 @@
 .iw-stage-panel-grid {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(220px, auto);
+  align-items: stretch;
 }
 .iw-stage-panel-grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .iw-stage-panel-grid.attribution { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .iw-stage-panel-grid.optimization,
-.iw-stage-panel-grid.test-release { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.iw-stage-panel-grid.test-release {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-auto-rows: minmax(220px, auto);
+}
+.iw-stage-panel-grid.test-release .iw-stage-card.is-stage-wide { grid-column: span 2; }
 .iw-stage-card {
   min-width: 0;
   border: 1px solid var(--border-subtle);
@@ -435,7 +473,15 @@
   padding: 12px;
   box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
 }
+.iw-stage-panel-grid > .iw-stage-card {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.iw-stage-panel-grid > .iw-stage-card > :not(.iw-stage-card-head) { min-height: 0; }
 .iw-stage-card-head {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -453,6 +499,22 @@
   letter-spacing: 0;
 }
 .iw-stage-card-head h4 span { color: var(--color-primary); font-weight: 800; }
+.iw-stage-card .iw-detail-summary {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.iw-stage-card.is-stage-wide .iw-compact-dl dd { -webkit-line-clamp: 3; }
+.iw-stage-card .iw-compact-dl dd,
+.iw-stage-card .iw-list-item-meta,
+.iw-stage-card .iw-regression-empty span,
+.iw-stage-card .iw-regression-empty strong {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .source-management-drawer-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 .iw-link-button {
   border: 0;
@@ -515,20 +577,37 @@
   background: var(--color-primary-soft);
   font-size: 11px;
 }
-.iw-test-plan-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 10px; font-size: 12px; }
+.iw-test-plan-card-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 176px;
+  gap: 12px;
+  align-items: start;
+}
+.iw-test-plan-side { display: grid; gap: 10px; min-width: 0; }
+.iw-test-plan-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; font-size: 12px; }
 .iw-test-plan-stats span { padding: 8px; border-radius: 8px; background: var(--bg-surface-muted); color: var(--text-secondary); }
 .iw-test-plan-stats strong { display: block; color: var(--text-primary); font-size: 15px; }
-.iw-regression-empty {
-  min-height: 88px;
-  display: grid;
-  place-items: center;
-  gap: 4px;
-  color: var(--text-muted);
-  text-align: center;
-  border-bottom: 1px solid var(--border-subtle);
-  margin-bottom: 10px;
+.iw-test-plan-actions {
+  margin-top: 0;
+  align-items: stretch;
 }
-.iw-regression-empty strong { color: var(--text-secondary); }
+.iw-test-plan-actions .iw-primary-button,
+.iw-test-plan-actions .iw-secondary-button { width: 100%; }
+.iw-regression-empty {
+  display: grid;
+  align-content: start;
+  justify-items: start;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px;
+  color: var(--text-muted);
+  text-align: left;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-muted);
+}
+.iw-regression-empty strong { color: var(--text-primary); font-size: 13px; }
+.iw-regression-empty span { font-size: 13px; line-height: 1.5; }
 .iw-gate-pass {
   margin-top: 10px;
   padding: 10px;
@@ -562,7 +641,7 @@
   right: calc(-50% + 14px);
   top: 11px;
   height: 2px;
-  background: var(--color-primary);
+  background: var(--border-subtle);
 }
 .iw-record-node span {
   display: grid;
@@ -570,7 +649,7 @@
   width: 24px;
   height: 24px;
   border-radius: 999px;
-  background: var(--color-primary);
+  background: var(--color-disabled-soft);
   color: #fff;
   z-index: 1;
 }
@@ -580,7 +659,21 @@
   background: var(--color-success-soft);
   color: var(--color-success);
 }
+.iw-record-node.done span,
+.iw-record-node.done:not(:last-child)::after { background: var(--color-success); }
+.iw-record-node.done span { color: #fff; }
+.iw-record-node.current span {
+  background: var(--color-primary);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--color-primary-soft);
+}
 .iw-record-node.current small { background: var(--color-primary-soft); color: var(--color-primary); }
+.iw-record-node.pending span {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+}
+.iw-record-node.pending small { background: var(--bg-surface-muted); color: var(--text-muted); }
 
 @media (max-width: 1200px) {
   .iw-stage-panel-grid.optimization,

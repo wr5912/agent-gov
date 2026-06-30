@@ -1,4 +1,5 @@
 import { requestJson } from "./request";
+import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 import type {
   AgentJobRecord,
   EvidencePackageFileRecord,
@@ -41,8 +42,6 @@ import type {
   SocEventRecord,
 } from "../types/feedback";
 import type { RuntimeClientConfig } from "../types/runtime";
-
-const LONG_FEEDBACK_ACTION_TIMEOUT_MS = 10 * 60_000;
 
 function feedbackQueryString(filters?: FeedbackFilters): string {
   const params = new URLSearchParams();
@@ -180,7 +179,7 @@ export function runFeedbackOptimizationBatchAttribution(
       method: "POST",
       headers: options ? { "Content-Type": "application/json" } : undefined,
       body: options ? JSON.stringify(options) : undefined,
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -197,7 +196,7 @@ export function generateFeedbackOptimizationBatchPlan(
       method: "POST",
       headers: options ? { "Content-Type": "application/json" } : undefined,
       body: options ? JSON.stringify(options) : undefined,
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -214,7 +213,7 @@ export function executeFeedbackOptimizationBatchPlanAll(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -232,7 +231,7 @@ export function rollbackFeedbackOptimizationBatchExecution(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -250,7 +249,7 @@ export function executeFeedbackOptimizationPlanTask(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -268,7 +267,7 @@ export function updateFeedbackOptimizationPlanTask(
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }
@@ -383,7 +382,7 @@ export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId
   return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs`,
-    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
+    { method: "POST", timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS },
   );
 }
 
@@ -391,7 +390,7 @@ export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCa
   return requestJson<AgentJobRecord>(
     config,
     `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs/regenerate`,
-    { method: "POST", timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS },
+    { method: "POST", timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS },
   );
 }
 
@@ -407,7 +406,7 @@ export function generateFeedbackCaseOptimizationPlan(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }

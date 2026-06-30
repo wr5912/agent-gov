@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Read(./**)",
+      "Read(/data/uploads/**)",
+      "Read(/data/outputs/**)",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Bash(jq *)",
+      "Bash(date *)",
+      "Bash(date)",
+      "Bash(pwd)",
+      "Bash(mkdir -p /data/outputs/security-data-standardization-review/**)",
+      "Write(/data/outputs/security-data-standardization-review/**)",
+      "mcp__sec-ops-data__*"
+    ],
+    "ask": [],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude.json)",
+      "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude/projects/**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(:(){ :|:& };:*)",
+      "Bash(curl *|sh*)",
+      "Bash(wget *|sh*)",
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*",
+      "mcp__*__*block*",
+      "mcp__*__*isolate*",
+      "mcp__*__*disable*",
+      "mcp__*__*kill*",
+      "mcp__*__*quarantine*",
+      "mcp__*__*execute*",
+      "mcp__*__*submit*"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "检查标准化审查工具风险"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash|mcp__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/post_tool_audit.py\"",
+            "async": true,
+            "timeout": 10,
+            "statusMessage": "记录标准化审查工具调用摘要"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/session_start.py\"",
+            "timeout": 5,
+            "statusMessage": "加载标准化审查会话提示"
+          }
+        ]
+      }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": false,
+    "filesystem": {
+      "allowWrite": [
+        "/data/outputs/security-data-standardization-review",
+        "/data/transcripts"
+      ],
+      "denyRead": [
+        "./.env",
+        "./secrets",
+        "/data/business-agents/security-data-standardization-review/claude-root/.claude.json"
+      ]
+    },
+    "network": {
+      "allowedDomains": [
+        "${SERVICE_HOST}",
+        "${INTERNAL_DOMAIN}"
+      ],
+      "deniedDomains": []
+    }
+  },
+  "skillOverrides": {
+    "security-data-standardization-review": "user-invocable-only"
+  },
+  "spinnerTipsOverride": {
+    "excludeDefault": false,
+    "tips": [
+      "标准化审查先定位字段路径，再判断语义映射。",
+      "OCSF 到 STIX 的每个对象和关系都必须有证据支撑。",
+      "无法确认时输出 evidence_gap，不补造字段或威胁事实。"
+    ]
+  },
+  "includeGitInstructions": false
+}

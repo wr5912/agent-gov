@@ -1,4 +1,4 @@
-"""自动化策略与自动推进 API 契约（v2.7 W2）。"""
+"""自动化策略与自动推进 API 契约（四阶段改进治理 W2）。"""
 
 from __future__ import annotations
 

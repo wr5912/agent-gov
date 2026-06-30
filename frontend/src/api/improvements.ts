@@ -1,6 +1,7 @@
-// 改进事项 ImprovementItem API 客户端（v2.7 跨代重建：事项级单一领域实体）。
+// 改进事项 ImprovementItem API 客户端（四阶段改进治理 跨代重建：事项级单一领域实体）。
 // 统一术语：资源 /api/improvements、ID improvement_id、阶段 improvement_stage。无旧名/无双轨。
 import { requestJson } from "./request";
+import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 import type { components } from "../types/api";
 import type { RuntimeClientConfig } from "../types/runtime";
 
@@ -63,7 +64,7 @@ export function confirmAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/confirm`, { method: "POST", headers: jsonHeaders });
 }
 export function generateAttribution(config: RuntimeClientConfig, id: string) {
-  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/generate`, { method: "POST", headers: jsonHeaders });
+  return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
 
 export type OptimizationPlan = components["schemas"]["OptimizationPlanResponse"];
@@ -78,7 +79,7 @@ export function confirmOptimizationPlan(config: RuntimeClientConfig, id: string)
   return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/confirm`, { method: "POST", headers: jsonHeaders });
 }
 export function generateOptimizationPlan(config: RuntimeClientConfig, id: string) {
-  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/generate`, { method: "POST", headers: jsonHeaders });
+  return requestJson<OptimizationPlan>(config, `/api/improvements/${encodeURIComponent(id)}/optimization-plan/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
 export function getExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`);
@@ -90,7 +91,7 @@ export function confirmExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/confirm`, { method: "POST", headers: jsonHeaders });
 }
 export function applyExecution(config: RuntimeClientConfig, id: string) {
-  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/apply`, { method: "POST", headers: jsonHeaders });
+  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/apply`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
 
 export type RegressionAssessment = components["schemas"]["RegressionAssessmentResponse"];
@@ -98,7 +99,7 @@ export function getRegressionAssessment(config: RuntimeClientConfig, id: string)
   return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment`);
 }
 export function generateRegressionAssessment(config: RuntimeClientConfig, id: string) {
-  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/generate`, { method: "POST", headers: jsonHeaders });
+  return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
 }
 export function confirmRegressionAssessment(config: RuntimeClientConfig, id: string) {
   return requestJson<RegressionAssessment>(config, `/api/improvements/${encodeURIComponent(id)}/regression-assessment/confirm`, { method: "POST", headers: jsonHeaders });

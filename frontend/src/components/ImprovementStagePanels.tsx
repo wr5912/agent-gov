@@ -10,7 +10,14 @@ import type {
   RegressionAssessment,
 } from "../api/improvements";
 import type { ImprovementStageView } from "../improvementStage";
+import {
+  isPendingOperation,
+  operationStatusText,
+  type ImprovementOperationError,
+  type ImprovementPendingOperation,
+} from "../improvementOperationState";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
+import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
 import type { StageDetail } from "./StageDetailDrawer";
 
 interface AttrDraft {
@@ -19,7 +26,7 @@ interface AttrDraft {
   evidence: string;
 }
 
-// v2.7 W3 修订：面板头部动作 2 类口径——只读下钻=「查看详情」，可编辑=「管理」；
+// 四阶段改进治理 W3 修订：面板头部动作 2 类口径——只读下钻=「查看详情」，可编辑=「管理」；
 // 全部经统一 StageDetailDrawer（onOpenDetail）或对应管理抽屉打开，内容与卡片一一对应，无死按钮。
 const VIEW = "查看详情";
 const MANAGE = "管理";
@@ -37,6 +44,14 @@ function Lines({ items, empty }: { items: string[]; empty: string }) {
   return <ul className="iw-check-list">{items.map((x, i) => <li key={`${i}-${x}`}>{x}</li>)}</ul>;
 }
 
+function GenerationStatus({ operation, testId }: { operation: ImprovementPendingOperation; testId: string }) {
+  return <div className="iw-operation-status" data-testid={testId}>{operationStatusText(operation)}</div>;
+}
+
+function GenerationError({ message, testId }: { message: string; testId: string }) {
+  return <div className="iw-operation-error" data-testid={testId}><strong>生成失败：</strong>{message}</div>;
+}
+
 export function ImprovementStagePanels({
   item,
   stageView,
@@ -50,22 +65,20 @@ export function ImprovementStagePanels({
   editingAttribution,
   attrDraft,
   busy,
+  pendingOperation,
+  operationError,
   langfuseUrl,
   readOnly = false,
   reviewingLabel,
   onOpenSources,
   onReturnCurrentStage,
   onGenerateAttribution,
-  onConfirmAttribution,
   onEditAttribution,
   onSaveAttribution,
   onCancelAttribution,
   onAttrDraftChange,
   onGenerateOpt,
-  onConfirmOpt,
   onRecordExec,
-  onApplyExec,
-  onConfirmExec,
   onGenerateRegression,
   onAdoptTestDataset,
   onOpenContext,
@@ -83,22 +96,20 @@ export function ImprovementStagePanels({
   editingAttribution: boolean;
   attrDraft: AttrDraft;
   busy: boolean;
+  pendingOperation?: ImprovementPendingOperation | null;
+  operationError?: ImprovementOperationError | null;
   langfuseUrl: string;
   readOnly?: boolean;
   reviewingLabel?: string;
   onOpenSources: () => void;
   onReturnCurrentStage?: () => void;
   onGenerateAttribution: () => void;
-  onConfirmAttribution: () => void;
   onEditAttribution: (value: Attribution) => void;
   onSaveAttribution: () => void;
   onCancelAttribution: () => void;
   onAttrDraftChange: (value: AttrDraft) => void;
   onGenerateOpt: () => void;
-  onConfirmOpt: () => void;
   onRecordExec: () => void;
-  onApplyExec: () => void;
-  onConfirmExec: () => void;
   onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
   onOpenContext: () => void;
@@ -136,10 +147,11 @@ export function ImprovementStagePanels({
           editingAttribution={editingAttribution}
           attrDraft={attrDraft}
           busy={busy}
+          pendingOperation={pendingOperation}
+          operationError={operationError}
           langfuseUrl={langfuseUrl}
           readOnly={readOnly}
           onGenerateAttribution={onGenerateAttribution}
-          onConfirmAttribution={onConfirmAttribution}
           onEditAttribution={onEditAttribution}
           onSaveAttribution={onSaveAttribution}
           onCancelAttribution={onCancelAttribution}
@@ -154,12 +166,11 @@ export function ImprovementStagePanels({
           optimizationPlan={optimizationPlan}
           execution={execution}
           busy={busy}
+          pendingOperation={pendingOperation}
+          operationError={operationError}
           readOnly={readOnly}
           onGenerateOpt={onGenerateOpt}
-          onConfirmOpt={onConfirmOpt}
           onRecordExec={onRecordExec}
-          onApplyExec={onApplyExec}
-          onConfirmExec={onConfirmExec}
           onOpenDetail={onOpenDetail}
         />
       ) : null}
@@ -171,13 +182,22 @@ export function ImprovementStagePanels({
           regressionAssessment={regressionAssessment}
           assets={assets}
           busy={busy}
+          pendingOperation={pendingOperation}
+          operationError={operationError}
           readOnly={readOnly}
           onGenerateRegression={onGenerateRegression}
           onAdoptTestDataset={onAdoptTestDataset}
           onOpenDetail={onOpenDetail}
         />
       ) : null}
-      <StageProcessingRecord stageView={stageView} />
+      <ImprovementStageProcessingRecord
+        stageView={stageView}
+        attribution={attribution}
+        optimizationPlan={optimizationPlan}
+        execution={execution}
+        regressionAssessment={regressionAssessment}
+        pendingOperation={pendingOperation}
+      />
     </div>
   );
 }
@@ -215,18 +235,18 @@ function FeedbackSortingPanels({
             key: "sorting-result", title: "整理结果详情", size: "medium",
             content: <Dl rows={[
               ["问题模式", normalizedFeedback?.problem || item.summary || item.title],
-              ["系统理解", normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，等待人工确认。"],
+              ["系统理解", normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，可生成归因分析。"],
               ["可能对象", normalizedFeedback?.possible_object || item.agent_id],
               ["影响", normalizedFeedback?.impact || "待确认"],
-              ["建议下一步", normalizedFeedback?.suggestion || "进入归因分析。"],
+              ["建议下一步", normalizedFeedback?.suggestion || "生成归因分析。"],
               ["用户原话", normalizedFeedback?.user_quote || "-"],
             ]} />,
           })}>
           <dl className="iw-compact-dl" data-testid="normalized-feedback">
             <div><dt>问题模式</dt><dd>{normalizedFeedback?.problem || item.summary || item.title}</dd></div>
-            <div><dt>系统理解</dt><dd>{normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，等待人工确认。"}</dd></div>
+            <div><dt>系统理解</dt><dd>{normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，可生成归因分析。"}</dd></div>
             <div><dt>影响范围</dt><dd>{normalizedFeedback?.possible_object || item.agent_id}</dd></div>
-            <div><dt>建议下一步</dt><dd>{normalizedFeedback?.suggestion || "进入归因分析。"}</dd></div>
+            <div><dt>建议下一步</dt><dd>{normalizedFeedback?.suggestion || "生成归因分析。"}</dd></div>
           </dl>
         </StageCard>
         <StageCard letter="B" title="证据确认" actionLabel={VIEW} testId="stage-panel-evidence"
@@ -234,7 +254,7 @@ function FeedbackSortingPanels({
             key: "evidence", title: "证据确认详情", size: "medium",
             content: <>
               <Lines items={evidenceLines} empty="暂无证据。" />
-              <div className="iw-evidence-state">证据状态：足够进入归因分析</div>
+              <div className="iw-evidence-state">证据状态：足够生成归因分析</div>
             </>,
           })}>
           <ul className="iw-check-list">
@@ -243,7 +263,7 @@ function FeedbackSortingPanels({
             <li className="ok">Trace 可查看 <strong>{feedbacks.some((f) => f.run_id) ? "1/1" : "待补充"}</strong></li>
             <li className="pending">版本影响待后续确认</li>
           </ul>
-          <div className="iw-evidence-state">证据状态：足够进入归因分析</div>
+          <div className="iw-evidence-state">证据状态：足够生成归因分析</div>
         </StageCard>
         <StageCard letter="C" title="来源反馈" actionLabel={readOnly ? VIEW : MANAGE} onAction={onOpenSources} testId="stage-panel-source-feedback">
           <SourceFeedbackList item={item} feedbacks={feedbacks} compact />
@@ -265,10 +285,11 @@ function AttributionPanels({
   editingAttribution,
   attrDraft,
   busy,
+  pendingOperation,
+  operationError,
   langfuseUrl,
   readOnly,
   onGenerateAttribution,
-  onConfirmAttribution,
   onEditAttribution,
   onSaveAttribution,
   onCancelAttribution,
@@ -282,10 +303,11 @@ function AttributionPanels({
   editingAttribution: boolean;
   attrDraft: AttrDraft;
   busy: boolean;
+  pendingOperation?: ImprovementPendingOperation | null;
+  operationError?: ImprovementOperationError | null;
   langfuseUrl: string;
   readOnly: boolean;
   onGenerateAttribution: () => void;
-  onConfirmAttribution: () => void;
   onEditAttribution: (value: Attribution) => void;
   onSaveAttribution: () => void;
   onCancelAttribution: () => void;
@@ -294,6 +316,8 @@ function AttributionPanels({
 }) {
   const evidence = attribution?.evidence?.length ? attribution.evidence : ["来源反馈一致", "关联 Run 可复现", "Trace 定位到问题节点"];
   const traceRunId = feedbacks.find((f) => f.run_id)?.run_id || "";
+  const generating = isPendingOperation(pendingOperation, "generate_attribution");
+  const generationError = operationError?.kind === "generate_attribution" ? operationError.message : "";
   return (
     <div className="iw-stage-panel-grid attribution">
       <StageCard letter="A" title="归因结论" actionLabel={attribution ? VIEW : undefined} testId="attribution"
@@ -322,7 +346,6 @@ function AttributionPanels({
               <div className="iw-detail-summary">{attribution.summary}</div>
               <span className="iw-source-badge" data-testid="attribution-source" data-source={attribution.generated_by}>{attribution.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
               {!readOnly ? <div className="iw-action-row">
-                {attribution.status !== "confirmed" ? <button className="iw-secondary-button" type="button" data-testid="confirm-attribution" disabled={busy} onClick={onConfirmAttribution}>确认归因</button> : null}
                 <button className="iw-secondary-button" type="button" data-testid="edit-attribution" disabled={busy} onClick={() => onEditAttribution(attribution)}>修改</button>
                 <button className="iw-secondary-button" type="button" data-testid="regenerate-attribution" disabled={busy} onClick={onGenerateAttribution}>重新归因</button>
               </div> : null}
@@ -330,8 +353,9 @@ function AttributionPanels({
           )
         ) : (
           <>
-            <div className="iw-next-step">尚未生成归因。可从系统理解生成初步归因，再确认或修改。</div>
-            {!readOnly ? <button className="iw-secondary-button" type="button" data-testid="generate-attribution" disabled={busy} onClick={onGenerateAttribution}>生成归因（初步）</button> : null}
+            {generating ? <GenerationStatus operation={pendingOperation!} testId="attribution-generation-status" /> : null}
+            {generationError ? <GenerationError message={generationError} testId="attribution-generation-error" /> : null}
+            {!generating ? <div className="iw-next-step">尚未生成归因。请使用上方主按钮生成归因分析。</div> : null}
           </>
         )}
       </StageCard>
@@ -398,12 +422,11 @@ function OptimizationPanels({
   optimizationPlan,
   execution,
   busy,
+  pendingOperation,
+  operationError,
   readOnly,
   onGenerateOpt,
-  onConfirmOpt,
   onRecordExec,
-  onApplyExec,
-  onConfirmExec,
   onOpenDetail,
 }: {
   item: ImprovementItem;
@@ -411,16 +434,19 @@ function OptimizationPanels({
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
   busy: boolean;
+  pendingOperation?: ImprovementPendingOperation | null;
+  operationError?: ImprovementOperationError | null;
   readOnly: boolean;
   onGenerateOpt: () => void;
-  onConfirmOpt: () => void;
   onRecordExec: () => void;
-  onApplyExec: () => void;
-  onConfirmExec: () => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
   const changes = optimizationPlan?.changes || [{ target: "Prompt / 规则", change: "新增时间窗口核验约束" }];
   const appliedDiff = execution?.applied_diff && Object.keys(execution.applied_diff).length ? execution.applied_diff : null;
+  const planPending = isPendingOperation(pendingOperation, "generate_optimization_plan");
+  const executionPending = isPendingOperation(pendingOperation, "apply_execution");
+  const planError = operationError?.kind === "generate_optimization_plan" ? operationError.message : "";
+  const executionError = operationError?.kind === "apply_execution" ? operationError.message : "";
   return (
     <div className="iw-stage-panel-grid optimization">
       <StageCard letter="A" title="优化方案" actionLabel={VIEW} testId="optimization-plan"
@@ -433,9 +459,11 @@ function OptimizationPanels({
             <div className="iw-diff-summary">{changes.map((c, i) => <div key={`${c.target}-${i}`}><strong>{c.target}</strong><span>{c.change}</span></div>)}</div>
           </>,
         })}>
+        {planPending ? <GenerationStatus operation={pendingOperation!} testId="optimization-generation-status" /> : null}
+        {planError ? <GenerationError message={planError} testId="optimization-generation-error" /> : null}
         <ImprovementPlanExecution
           item={item} busy={busy} optPlan={optimizationPlan} execution={null} attribution={attribution} readOnly={readOnly}
-          onGenerateOpt={onGenerateOpt} onConfirmOpt={onConfirmOpt} onRecordExec={onRecordExec} onApplyExec={onApplyExec} onConfirmExec={onConfirmExec}
+          onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
       </StageCard>
       <StageCard letter="B" title="Diff / 变更预览" actionLabel={VIEW} testId="stage-panel-diff-preview"
@@ -497,9 +525,11 @@ function OptimizationPanels({
             <h4>已应用变更</h4><Lines items={execution?.changes_applied ?? []} empty="暂无已应用变更。" />
           </>,
         })}>
+        {executionPending ? <GenerationStatus operation={pendingOperation!} testId="execution-generation-status" /> : null}
+        {executionError ? <GenerationError message={executionError} testId="execution-generation-error" /> : null}
         <ImprovementPlanExecution
           item={item} busy={busy} optPlan={null} execution={execution} attribution={attribution} readOnly={readOnly}
-          onGenerateOpt={onGenerateOpt} onConfirmOpt={onConfirmOpt} onRecordExec={onRecordExec} onApplyExec={onApplyExec} onConfirmExec={onConfirmExec}
+          onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
       </StageCard>
     </div>
@@ -513,6 +543,8 @@ function TestReleasePanels({
   regressionAssessment,
   assets,
   busy,
+  pendingOperation,
+  operationError,
   readOnly,
   onGenerateRegression,
   onAdoptTestDataset,
@@ -524,6 +556,8 @@ function TestReleasePanels({
   regressionAssessment: RegressionAssessment | null;
   assets: Asset[];
   busy: boolean;
+  pendingOperation?: ImprovementPendingOperation | null;
+  operationError?: ImprovementOperationError | null;
   readOnly: boolean;
   onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
@@ -540,11 +574,13 @@ function TestReleasePanels({
   const gateRows: [string, ReactNode][] = Object.keys(gateThresholds).length
     ? Object.entries(gateThresholds).map(([k, v]) => [k, v])
     : [["通过率", "≥95%"], ["新增严重问题", "0"], ["关键指标", "不劣于基线"]];
+  const regressionPending = isPendingOperation(pendingOperation, "generate_regression");
+  const regressionError = operationError?.kind === "generate_regression" ? operationError.message : "";
 
   return (
     <>
       <div className="iw-stage-panel-grid test-release">
-        <StageCard letter="A" title="测试资产与计划" actionLabel={MANAGE} testId="test-dataset-asset"
+        <StageCard letter="A" title="测试资产与计划" actionLabel={MANAGE} testId="test-dataset-asset" className="is-stage-wide"
           onAction={() => onOpenDetail({
             key: "test-dataset", title: "管理测试用例", size: "wide",
             content: <>
@@ -559,21 +595,27 @@ function TestReleasePanels({
               )) : <div className="iw-empty">尚未生成回归用例候选。</div>}
             </>,
           })}>
-          <dl className="iw-compact-dl">
-            <div><dt>test_dataset_id</dt><dd data-testid="test-dataset-id">{datasetId}</dd></div>
-            <div><dt>agent_id</dt><dd>{item.agent_id}</dd></div>
-            <div><dt>improvement_id</dt><dd>{item.improvement_id}</dd></div>
-            <div><dt>生命周期</dt><dd>{datasetAsset ? "candidate" : "draft"}</dd></div>
-            <div><dt>基线 / 候选版本</dt><dd>{baselineVersion} → {candidateVersion}</dd></div>
-          </dl>
-          <div className="iw-test-plan-stats">
-            <span>默认回归用例 <strong>{caseCount}</strong></span>
-            <span>反馈来源数 <strong>{sourceRefs.length}</strong></span>
+          <div className="iw-test-plan-card-body">
+            <dl className="iw-compact-dl">
+              <div><dt>test_dataset_id</dt><dd data-testid="test-dataset-id">{datasetId}</dd></div>
+              <div><dt>agent_id</dt><dd>{item.agent_id}</dd></div>
+              <div><dt>improvement_id</dt><dd>{item.improvement_id}</dd></div>
+              <div><dt>生命周期</dt><dd>{datasetAsset ? "candidate" : "draft"}</dd></div>
+              <div><dt>基线 / 候选版本</dt><dd>{baselineVersion} → {candidateVersion}</dd></div>
+            </dl>
+            <div className="iw-test-plan-side">
+              <div className="iw-test-plan-stats">
+                <span>默认回归用例 <strong>{caseCount}</strong></span>
+                <span>反馈来源数 <strong>{sourceRefs.length}</strong></span>
+              </div>
+              {!readOnly ? <div className="iw-action-row iw-test-plan-actions">
+                <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
+                <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!datasetAsset} onClick={onAdoptTestDataset}>{datasetAsset ? "已纳入测试集" : "纳入测试集"}</button>
+              </div> : null}
+            </div>
           </div>
-          {!readOnly ? <div className="iw-action-row">
-            <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
-            <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!datasetAsset} onClick={onAdoptTestDataset}>{datasetAsset ? "已纳入测试集" : "纳入测试集"}</button>
-          </div> : null}
+          {regressionPending ? <GenerationStatus operation={pendingOperation!} testId="regression-generation-status" /> : null}
+          {regressionError ? <GenerationError message={regressionError} testId="regression-generation-error" /> : null}
         </StageCard>
         <StageCard letter="B" title="回归执行状态" actionLabel={VIEW} testId="regression-guarantee"
           onAction={() => onOpenDetail({
@@ -660,44 +702,12 @@ function SourceFeedbackList({ item, feedbacks, compact }: { item: ImprovementIte
   );
 }
 
-function StageProcessingRecord({ stageView }: { stageView: ImprovementStageView }) {
-  const records = localRecords(stageView.visibleKey);
-  return (
-    <section className="iw-stage-card iw-processing-record" data-testid="stage-local-record">
-      <div className="iw-stage-card-head">
-        <h4>处理记录</h4>
-        <details className="iw-full-chain-inline" data-testid="full-chain">
-          <summary>查看完整链路</summary>
-          <ol className="iw-chain">
-            {stageView.stages.map((stage, index) => {
-              const word = index < stageView.stageIndex ? "已完成" : index === stageView.stageIndex ? "当前阶段" : "待开始";
-              return (
-                <li key={stage.key} data-testid="full-chain-step" className={index === stageView.stageIndex ? "is-current" : index < stageView.stageIndex ? "is-done" : ""}>
-                  <strong>{stage.label}</strong> - {word}
-                </li>
-              );
-            })}
-          </ol>
-        </details>
-      </div>
-      <div className="iw-record-track">
-        {records.map((record, index) => (
-          <div className={`iw-record-node ${index === records.length - 1 ? "current" : "done"}`} data-testid="stage-local-record-node" key={record}>
-            <span>{index === records.length - 1 ? "●" : "✓"}</span>
-            <strong>{record}</strong>
-            <small>{index === records.length - 1 ? "当前节点" : "已完成"}</small>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function StageCard({
   letter,
   title,
   actionLabel,
   testId,
+  className,
   onAction,
   children,
 }: {
@@ -705,11 +715,12 @@ function StageCard({
   title: string;
   actionLabel?: string;
   testId?: string;
+  className?: string;
   onAction?: () => void;
   children: ReactNode;
 }) {
   return (
-    <section className="iw-stage-card" data-testid={testId}>
+    <section className={`iw-stage-card${className ? ` ${className}` : ""}`} data-testid={testId}>
       <div className="iw-stage-card-head">
         <h4><span>{letter}</span>{title}</h4>
         {actionLabel && onAction ? <button className="iw-link-button" type="button" onClick={onAction}>{actionLabel}</button> : null}
@@ -717,17 +728,4 @@ function StageCard({
       {children}
     </section>
   );
-}
-
-function localRecords(stage: ImprovementStageView["visibleKey"]) {
-  switch (stage) {
-    case "feedback_sorting":
-      return ["收到反馈", "相似归并", "系统整理", "证据确认", "等待人工确认"];
-    case "attribution_analysis":
-      return ["进入归因分析", "收集证据链", "Trace 定位", "生成归因结论", "等待人工确认"];
-    case "optimization_execution":
-      return ["进入优化执行", "生成优化方案", "风险评估", "生成执行计划", "等待确认执行"];
-    case "test_release":
-      return ["进入测试发布", "生成测试计划", "确认测试集", "等待执行回归测试"];
-  }
 }

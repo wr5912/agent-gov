@@ -844,7 +844,7 @@ def test_current_baseline_legacy_governance_agent_terms_pass(tmp_path: Path) -> 
     _write_text(
         tmp_path / "docs" / "反馈闭环当前实现基线.md",
         "# Current Baseline\n\n"
-        "`attribution-analyzer` 是 pre-v2.7 历史 profile 名，当前已合并为 `governor`。\n",
+        "`attribution-analyzer` 是迁移前历史 profile 名，当前已合并为 `governor`。\n",
     )
     _commit_all(tmp_path)
 

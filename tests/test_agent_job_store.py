@@ -50,6 +50,23 @@ def test_agent_job_claim_is_single_consumer(tmp_path):
     assert second_claim is None
 
 
+def test_agent_job_default_timeout_uses_store_governance_timeout(tmp_path):
+    store, _ = _store(tmp_path)
+    store.agent_job_timeout_seconds = 123
+    spec = agent_job_spec("eval_case_generation")
+
+    job = store.create_agent_job(
+        job_id="evg-configured-timeout",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
+    )
+
+    assert job["timeout_seconds"] == 123
+
+
 def test_stale_running_agent_job_times_out_and_next_job_can_claim(tmp_path):
     store, _ = _store(tmp_path)
     spec = agent_job_spec("eval_case_generation")

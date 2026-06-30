@@ -1,4 +1,4 @@
-// v2.7 W3 资产 Registry 复利中心 UI 验收：沉淀资产 → 跨 Agent 继承复用。
+// 四阶段改进治理 W3 资产 Registry 复利中心 UI 验收：沉淀资产 → 跨 Agent 继承复用。
 // 默认启动 Vite + mock 后端；设置 RUNTIME_UI_BASE/RUNTIME_API_BASE 时直连真实容器。
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
@@ -128,7 +128,7 @@ async function main() {
     try {
       await page.goto(ui, { waitUntil: "domcontentloaded" });
       await page.getByTestId("topbar-agent-switcher").waitFor({ timeout: 20000 });
-      // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（v2.7 W3 修订，资产复利为第三支柱）。
+      // 资产 Registry 经一级导航「资产复利」(nav-asset) 进入（四阶段改进治理 W3 修订，资产复利为第三支柱）。
       await page.getByTestId("nav-asset").click();
       await page.getByTestId("asset-registry").waitFor({ timeout: 20000 });
       // Playground 的顶栏运行 Agent 必须是具体对象；资产页用自己的范围筛选查看跨 Agent 资产。

@@ -1,4 +1,4 @@
-// v2.7 §10 ContextPackage：四种上下文类型（问题摘要 / AI 分析 / Playwright 复现 / 完整 JSON）。
+// 四阶段改进治理 §10 ContextPackage：四种上下文类型（问题摘要 / AI 分析 / Playwright 复现 / 完整 JSON）。
 // 缺失归因、证据、Trace 或版本时输出 missing reason，不用空对象冒充完整上下文。
 import type { Asset } from "./api/assets";
 import type {
@@ -90,7 +90,7 @@ function problemSummary(inputs: ContextInputs): string {
     feedbackBlock(inputs),
     ``,
     `### 当前阻塞`,
-    `需要推进/确认「${primaryActionLabel}」。`,
+    `需要执行「${primaryActionLabel}」。`,
   ].filter((line) => line !== "").join("\n");
 }
 

@@ -17,7 +17,7 @@ interface TopbarProps {
   onOpenSettings: () => void;
 }
 
-// v2.7 四阶段权威方案 + W3 修订：一级导航 = 工作台/改进治理/资产复利；测试发布仍归改进治理第四阶段（不作一级导航）。
+// 四阶段改进治理 四阶段权威方案 + W3 修订：一级导航 = 工作台/改进治理/资产复利；测试发布仍归改进治理第四阶段（不作一级导航）。
 export function Topbar({
   health,
   activeWindow,

@@ -1,12 +1,17 @@
 import type { ImprovementFeedback, ImprovementItem } from "../api/improvements";
+import type { ImprovementPrimaryDecision } from "../improvementDecisionActions";
+import { operationStatusText, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
 import type { ImprovementStageView } from "../improvementStage";
 
 interface ImprovementDecisionPanelProps {
   item: ImprovementItem;
   agentName: string;
   stageView: ImprovementStageView;
+  primaryDecision: ImprovementPrimaryDecision | null;
   feedbacks: ImprovementFeedback[];
   busy: boolean;
+  pendingOperation?: ImprovementPendingOperation | null;
+  operationError?: ImprovementOperationError | null;
   onPrimaryAction: () => void;
   onBackAction: (stage: string) => void;
   onManageSources: () => void;
@@ -16,8 +21,11 @@ export function ImprovementDecisionPanel({
   item,
   agentName,
   stageView,
+  primaryDecision,
   feedbacks,
   busy,
+  pendingOperation,
+  operationError,
   onPrimaryAction,
   onBackAction,
   onManageSources,
@@ -26,7 +34,15 @@ export function ImprovementDecisionPanel({
   const runIds = [...new Set(feedbacks.map((f) => f.run_id).filter(Boolean))];
   const versionCount = new Set(feedbacks.map((f) => f.agent_version_id).filter(Boolean)).size;
   const sourceCount = feedbacks.length || refs.length;
-  const signal = decisionSignal(stageView.visibleKey);
+  const signal = primaryDecision ?? decisionSignal(stageView.visibleKey);
+  const primaryDisabled = busy || !!primaryDecision?.disabledReason;
+  const question = pendingOperation
+    ? `正在${pendingOperation.label}...`
+    : primaryDecision?.question ?? decisionQuestion(stageView.visibleKey, sourceCount);
+  const summary = pendingOperation
+    ? operationStatusText(pendingOperation)
+    : primaryDecision?.summary ?? decisionSummary(stageView.visibleKey);
+  const evidence = pendingOperation ? "治理 Agent 正在处理" : signal.evidence;
 
   return (
     <>
@@ -43,19 +59,29 @@ export function ImprovementDecisionPanel({
       <section className="iw-decision-card" data-testid="current-decision-card" data-visible-stage={stageView.visibleKey}>
         <div className="iw-decision-icon" aria-hidden="true">{signal.icon}</div>
         <div className="iw-decision-main">
-          <div className="iw-section-kicker">当前需要你确认</div>
-          <h3 data-testid="current-decision-question">{decisionQuestion(stageView.visibleKey, sourceCount)}</h3>
-          <p className="iw-detail-summary">{decisionSummary(stageView.visibleKey)}</p>
+          <div className="iw-decision-title-row">
+            <div className="iw-section-kicker">{pendingOperation ? "生成中" : "请确认"}</div>
+            <h3 data-testid="current-decision-question">{question}</h3>
+          </div>
+          <p className="iw-detail-summary">{summary}</p>
+          {pendingOperation ? (
+            <div className="iw-operation-status" data-testid="decision-operation-status">{operationStatusText(pendingOperation)}</div>
+          ) : null}
+          {operationError ? (
+            <div className="iw-operation-error" data-testid="decision-operation-error">
+              <strong>{operationError.label ?? "操作失败"}：</strong>{operationError.message}
+            </div>
+          ) : null}
           <div className="iw-evidence-state" data-testid="decision-basis">
             <span>证据状态：</span>
-            <strong>{signal.evidence}</strong>
+            <strong>{evidence}</strong>
           </div>
           <div className="iw-action-row">
             {item.improvement_status === "archived" ? (
               <span className="iw-done-note" data-testid="improvement-archived">本改进事项已归档。</span>
-            ) : stageView.primaryAction ? (
-              <button className="iw-primary-button" type="button" data-testid="primary-action" data-action={stageView.primaryAction.stage} disabled={busy} onClick={onPrimaryAction}>
-                {stageView.primaryAction.label}
+            ) : primaryDecision ? (
+              <button className="iw-primary-button" type="button" data-testid="primary-action" data-action={primaryDecision.dataAction} disabled={primaryDisabled} title={primaryDecision.disabledReason} onClick={onPrimaryAction}>
+                {pendingOperation ? `正在${pendingOperation.label}...` : primaryDecision.label}
               </button>
             ) : (
               <span className="iw-done-note" data-testid="improvement-terminal">测试发布已完成，等待发布门禁或资产复用。</span>
@@ -87,7 +113,7 @@ function decisionQuestion(stage: ImprovementStageView["visibleKey"], sourceCount
     case "feedback_sorting":
       return `系统建议将 ${Math.max(sourceCount, 1)} 条反馈归并为同一个改进事项，是否确认？`;
     case "attribution_analysis":
-      return "系统已完成根因归因分析，是否确认归因结论并进入优化方案生成？";
+      return "系统已完成根因归因分析，是否生成优化方案？";
     case "optimization_execution":
       return "优化方案已生成，是否确认执行该优化方案？";
     case "test_release":
@@ -111,7 +137,7 @@ function decisionSummary(stage: ImprovementStageView["visibleKey"]) {
 function decisionSignal(stage: ImprovementStageView["visibleKey"]) {
   switch (stage) {
     case "feedback_sorting":
-      return { icon: "□", score: 96, scoreLabel: "当前置信度", level: "高度可信", evidence: "足够进入归因分析" };
+      return { icon: "□", score: 96, scoreLabel: "当前置信度", level: "高度可信", evidence: "足够生成归因分析" };
     case "attribution_analysis":
       return { icon: "⌁", score: 87, scoreLabel: "当前置信度", level: "中等风险", evidence: "归因证据链已生成" };
     case "optimization_execution":

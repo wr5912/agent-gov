@@ -1,4 +1,4 @@
-"""v2.7 P3：系统理解 NormalizedFeedback + 归因 Attribution 内容子资源（store + API）。"""
+"""四阶段改进治理 P3：系统理解 NormalizedFeedback + 归因 Attribution 内容子资源（store + API）。"""
 
 from __future__ import annotations
 
@@ -113,7 +113,7 @@ def test_content_api_lifecycle(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
-    """v2.7 §8.4：来源反馈一等内容（摘要/来源/状态），1:多，未知事项 404。"""
+    """四阶段改进治理 §8.4：来源反馈一等内容（摘要/来源/状态），1:多，未知事项 404。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "告警误报治理"}).json()["improvement_id"]
@@ -144,7 +144,7 @@ def test_feedback_table_create_and_list(monkeypatch, tmp_path: Path) -> None:
 
 
 def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
-    """v2.7 §106/§107：优化方案 + 执行记录 1:1 子资源，upsert→get→confirm，未知事项/无内容 404。"""
+    """四阶段改进治理 §106/§107：优化方案 + 执行记录 1:1 子资源，upsert→get→confirm，未知事项/无内容 404。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
@@ -187,7 +187,7 @@ def test_backend_generates_initial_attribution_and_plan(monkeypatch, tmp_path: P
 
 
 def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path) -> None:
-    """v2.7 §11/§17.5：回归保障评估 generate(治理 Agent，测试环境 heuristic 兜底)→get→confirm，未知事项 404。"""
+    """四阶段改进治理 §11/§17.5：回归保障评估 generate(治理 Agent，测试环境 heuristic 兜底)→get→confirm，未知事项 404。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]

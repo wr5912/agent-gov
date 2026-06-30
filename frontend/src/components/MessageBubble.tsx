@@ -10,7 +10,7 @@ interface Props {
   message: ChatMessage;
   isActiveStreaming?: boolean;
   onMessageElement?: (messageId: string, element: HTMLElement | null) => void;
-  // v2.7 §3 助手回复动作：创建反馈(两阶段 Drawer)/查看 Trace/获取上下文/重新运行。
+  // 四阶段改进治理 §3 助手回复动作：创建反馈(两阶段 Drawer)/查看 Trace/获取上下文/重新运行。
   onOpenFeedback?: (message: ChatMessage) => void;
   onOpenTrace?: (message: ChatMessage) => void;
   onGetContext?: (message: ChatMessage) => void;

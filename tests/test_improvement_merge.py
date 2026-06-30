@@ -1,4 +1,4 @@
-"""v2.7 W2-b：相似度归并/拆分 + 确定性相似度 单元测试。"""
+"""四阶段改进治理 W2-b：相似度归并/拆分 + 确定性相似度 单元测试。"""
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ def test_similarity_score_and_find(tmp_path: Path) -> None:
 
 
 def test_similarity_finds_chinese_semantic_case_without_shared_refs(tmp_path: Path) -> None:
-    """v2.7 W2：中文长标题/摘要即使没有共享 feedback ref，也应命中同 Agent 相似事项。"""
+    """四阶段改进治理 W2：中文长标题/摘要即使没有共享 feedback ref，也应命中同 Agent 相似事项。"""
     store = _store(tmp_path)
     target = store.create_improvement(
         agent_id="soc-ops",

@@ -1,4 +1,4 @@
-"""改进事项 ImprovementItem 的 API 契约（v2.7 跨代重建，统一术语单一来源）。
+"""改进事项 ImprovementItem 的 API 契约（四阶段改进治理 跨代重建，统一术语单一来源）。
 
 字段所有权：请求 DTO 只承载用户/前端可提供的字段（agent_id、title、summary、source_feedback_refs、
 目标 stage）；backend-owned 的 improvement_id / improvement_stage / improvement_status 不出现在请求体里，

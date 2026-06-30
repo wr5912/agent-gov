@@ -28,7 +28,7 @@ import { getAutomationPolicy, setAutomationPolicy } from "../api/improvements";
 import type { AgentSummary, RuntimeClientConfig } from "../types/runtime";
 import "./SettingsModal.css";
 
-// v2.7 §2 平台设置：业务 Agent 管理 / 自动化策略 / Developer·Debug（纯配置）。
+// 四阶段改进治理 §2 平台设置：业务 Agent 管理 / 自动化策略 / Developer·Debug（纯配置）。
 // 资产 Registry 已提升为一级导航「资产复利」（W3 修订，三支柱 Playground/改进事项/资产复利）；旧反馈优化、API Docs、Langfuse 仍在此处。
 
 const LIFECYCLE_OPTIONS = [

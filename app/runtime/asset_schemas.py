@@ -1,4 +1,4 @@
-"""治理资产 Registry API 契约（v2.7 W3 复利中心）。"""
+"""治理资产 Registry API 契约（四阶段改进治理 W3 复利中心）。"""
 
 from __future__ import annotations
 

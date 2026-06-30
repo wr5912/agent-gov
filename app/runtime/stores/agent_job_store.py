@@ -68,7 +68,7 @@ class AgentJobStoreMixin:
             error_path=f"sqlite://agent_jobs/{job_id}/error_json",
             runtime_version=self.runtime_version,
             schema_version=f"{job_type}-agent-job/v1",
-            timeout_seconds=300,
+            timeout_seconds=int(getattr(self, "agent_job_timeout_seconds", 300)),
             retry_count=0,
             profile_version_json=profile_version,
             input_json=input_payload,
@@ -145,7 +145,7 @@ class AgentJobStoreMixin:
                 base = self._parse_datetime(row.started_at or row.created_at)
                 if not base:
                     continue
-                timeout_seconds = int(row.timeout_seconds or 300)
+                timeout_seconds = int(row.timeout_seconds or getattr(self, "agent_job_timeout_seconds", 300))
                 if now_dt < base + timedelta(seconds=timeout_seconds):
                     continue
                 error_payload = {

@@ -1,5 +1,5 @@
-// v2.7 四阶段改进治理工作台：后端仍可保留更细 improvement_stage，
-// 但用户主链路只展示四个阶段，所有按钮和 ContextPackage 以这里为展示真相源。
+// 四阶段改进治理工作台：后端仍可保留更细 improvement_stage，
+// 但用户主链路只展示四个阶段；主决策按钮由业务产物状态派生。
 
 export interface StageDef {
   key: string;
@@ -40,16 +40,6 @@ const VISIBLE_STAGE_BY_INTERNAL: Record<string, VisibleImprovementStageKey> = {
   release: "test_release",
 };
 
-// data-action 仍使用后端内部 stage key，合法转移由后端状态机校验。
-const PRIMARY_ACTION: Record<string, { stage: string; label: string }> = {
-  feedback_intake: { stage: "triage", label: "整理反馈" },
-  triage: { stage: "attribution", label: "确认整理结果，进入归因分析" },
-  attribution: { stage: "optimization", label: "确认归因，生成优化方案" },
-  optimization: { stage: "execution", label: "确认并执行优化" },
-  execution: { stage: "regression", label: "确认执行结果，进入测试发布" },
-  regression: { stage: "release", label: "执行回归测试" },
-};
-
 const BACK_ACTION: Partial<Record<string, { stage: string; label: string }>> = {
   attribution: { stage: "triage", label: "返回反馈整理" },
   optimization: { stage: "attribution", label: "返回归因分析" },
@@ -67,7 +57,6 @@ export interface ImprovementStageView {
   internalLabel: string;
   description: string;
   isTerminal: boolean;
-  primaryAction: { stage: string; label: string } | null;
   backAction: { stage: string; label: string } | null;
 }
 
@@ -94,7 +83,6 @@ export function describeImprovementStage(stage: string): ImprovementStageView {
     internalLabel: internalStageLabel(stage),
     description: def.description,
     isTerminal: stage === "release",
-    primaryAction: PRIMARY_ACTION[stage] ?? null,
     backAction: BACK_ACTION[stage] ?? null,
   };
 }

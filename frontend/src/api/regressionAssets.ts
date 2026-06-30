@@ -1,4 +1,5 @@
 import { requestJson } from "./request";
+import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 import type {
   EvalCaseGovernanceEventRecord,
   EvalCaseRecord,
@@ -15,8 +16,6 @@ import type {
   RegressionPlanRecord,
 } from "../types/feedback";
 import type { RuntimeClientConfig } from "../types/runtime";
-
-const LONG_FEEDBACK_ACTION_TIMEOUT_MS = 10 * 60_000;
 
 function feedbackQueryString(filters?: FeedbackFilters): string {
   const params = new URLSearchParams();
@@ -53,7 +52,7 @@ export function runFeedbackOptimizationBatchRegression(
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
-      timeoutMs: LONG_FEEDBACK_ACTION_TIMEOUT_MS,
+      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
     },
   );
 }

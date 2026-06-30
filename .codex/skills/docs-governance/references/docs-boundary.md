@@ -8,7 +8,7 @@
 | --- | --- | --- | --- |
 | 权威入口 | `docs/` 顶层 | 定义长期产品口径、术语、核心验收或主设计依据 | `keep`、`merge` |
 | 当前实现基线 | `docs/` 顶层 | 解释当前代码、API、数据库、测试和运行态事实 | `keep`、`merge`、`split` |
-| v2.7 规划 | `docs/` 顶层 | 定义下一大版本用户主流程、UI、领域模型或代码整改原则 | `keep`、`merge` |
+| 四阶段改进治理方案 | `docs/` 顶层 | 定义目标态用户主流程、UI、领域模型或代码整改原则 | `keep`、`merge` |
 | 工程治理 | `docs/engineering/` | 约束协作、重构、验证、发布和质量门 | `keep`、`move-to-skill` |
 | 评审/复盘 | 既有评审目录或 `docs/archive/` | 保留证据链、差距清单、事故复盘或治理反思 | `keep`、`archive` |
 | 归档历史 | `docs/archive/` | 已被替代，但仍有审计或迁移价值 | `archive` |
@@ -42,7 +42,7 @@
 
 ## 权威冲突处理
 
-- 与 `docs/AgentGov_v2.7_四阶段改进治理工作台UI整改方案.md` 冲突的改进治理工作台 UI、流程或效果图描述，以四阶段方案为准。
+- 与 `docs/AgentGov_四阶段改进治理工作台UI整改方案.md` 冲突的改进治理工作台 UI、流程或效果图描述，以四阶段方案为准。
 - 与 `docs/AgentGov术语与版本边界.md` 冲突的长期术语，以术语边界文档为准；当前实现基线可保留真实 API、数据库和 UI 名称。
 - 与 `docs/README.md` 阅读路径冲突的文档状态，先修 README，使活跃入口可发现。
 - 与 `docs/archive/README.md` 归档索引冲突的历史文档，先修归档索引和替代关系。
@@ -70,7 +70,7 @@
 
 ## 当前仓库反例
 
-- `docs/AgentGov_ASCII_UI_草图方案_v2.7.md` 已归档，只能追溯旧草图，不再定义 v2.7 UI。
+- 已归档旧 ASCII UI 草图只能追溯旧草图，不再定义四阶段改进治理 UI。
 - 旧的 `attribution-analyzer`、`proposal-generator`、`execution-optimizer`、`eval-case-governor`、`regression-impact-analyzer` 设计若与 Governor 合并设计冲突，只能作为历史来源或迁移线索。
 - 旧反馈闭环长文已收敛为 `docs/反馈闭环当前实现基线.md`，不得继续作为活跃主设计并列入口。
 - 目录细则、归档日期明细和术语正文不应复制进 `SKILL.md`。

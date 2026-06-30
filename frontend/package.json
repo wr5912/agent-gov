@@ -17,6 +17,10 @@
     "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs"
   },
   "dependencies": {
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/view": "^6.43.4",
+    "@uiw/react-codemirror": "^4.25.10",
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
     "react": "latest",

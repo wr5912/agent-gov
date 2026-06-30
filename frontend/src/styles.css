@@ -6280,18 +6280,122 @@ body.is-resizing-evidence-panel {
 .runtime-debug-card p { margin: 0; color: var(--muted); }
 .config-file-editor-backdrop {
   z-index: 80;
+  padding: 24px;
 }
 .config-file-editor-modal {
-  width: min(760px, calc(100vw - 36px));
+  width: min(1180px, calc(100vw - 48px));
+  height: min(88vh, 920px);
+  padding: 0;
+  border-radius: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
-.config-file-editor-textarea {
-  min-height: 360px;
+.config-file-editor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+.config-file-editor-title {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.config-file-editor-title svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: #8f4b32;
+}
+.config-file-editor-title h3 {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.25;
+}
+.config-file-editor-title p {
+  margin: 5px 0 0;
+  color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
+  word-break: break-all;
+}
+.config-file-editor-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.config-file-editor-chip {
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--panel-2);
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+.config-file-editor-chip.good {
+  color: var(--good);
+  border-color: rgba(61, 123, 82, 0.24);
+  background: rgba(61, 123, 82, 0.08);
+}
+.config-file-editor-chip.warn {
+  color: #92400e;
+  border-color: rgba(217, 119, 6, 0.24);
+  background: rgba(217, 119, 6, 0.08);
+}
+.config-file-editor-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fffdf8;
+}
+.config-file-editor-body .cm-editor {
+  height: 100%;
+  outline: none;
+}
+.config-file-editor-body .cm-focused {
+  outline: 2px solid rgba(143, 75, 50, 0.22);
+  outline-offset: -2px;
+}
+.config-file-editor-body .cm-content {
+  min-height: 100%;
+  padding: 12px 0;
+}
+.config-file-editor-feedback {
+  max-height: 128px;
+  overflow: auto;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.config-file-editor-feedback:empty {
+  display: none;
 }
 .config-file-editor-modal .error-box {
-  margin: 10px 0 0;
+  margin: 10px 14px;
+}
+.config-file-editor-modal .success-box {
+  margin: 10px 14px;
+}
+.config-file-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 18px;
+  background: var(--panel);
+}
+.config-file-editor-modal button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+  transform: none;
 }
 @media (max-width: 680px) {
   .runtime-capability-grid,
@@ -6299,8 +6403,22 @@ body.is-resizing-evidence-panel {
   .runtime-debug-grid {
     grid-template-columns: 1fr;
   }
-  .config-file-editor-textarea {
-    min-height: 260px;
+  .config-file-editor-backdrop {
+    padding: 10px;
+  }
+  .config-file-editor-modal {
+    width: calc(100vw - 20px);
+    height: calc(100vh - 20px);
+  }
+  .config-file-editor-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .config-file-editor-toolbar {
+    justify-content: flex-start;
+  }
+  .config-file-editor-actions {
+    flex-wrap: wrap;
   }
 }
 

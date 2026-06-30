@@ -205,6 +205,17 @@ const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0
 const visible = async (page, testid) => (await page.getByTestId(testid).count()) > 0 && (await page.getByTestId(testid).first().isVisible());
 const textIncludes = async (locator, value) => (await locator.innerText().catch(() => "")).includes(value);
 const scrollDistance = async (page) => page.getByTestId("playground-messages").evaluate((el) => Math.round(el.scrollHeight - el.clientHeight - el.scrollTop));
+async function fillJsonEditor(page, value) {
+  const root = page.getByTestId("agent-config-file-editor-content");
+  const cmContent = root.locator(".cm-content");
+  if (await cmContent.count()) {
+    await cmContent.click();
+    await page.keyboard.press(process.platform === "darwin" ? "Meta+A" : "Control+A");
+    await page.keyboard.type(value);
+    return;
+  }
+  await root.fill(value);
+}
 async function waitNearBottom(page) {
   await page.waitForFunction(() => {
     const el = document.querySelector('[data-testid="playground-messages"]');
@@ -570,7 +581,8 @@ const RULES = [
       await page.getByTestId("agent-config-file-editor").waitFor({ timeout: 8000 }).catch(() => {});
       mcpEditorOpened = await visible(page, "agent-config-file-editor");
       if (mcpEditorOpened && !REAL) {
-        await page.getByTestId("agent-config-file-editor-content").fill('{"mcpServers":{"parity":{"command":"node","args":["server.js"]}}}\n');
+        await fillJsonEditor(page, '{"mcpServers":{"parity":{"command":"node","args":["server.js"]}}}\n');
+        await page.getByTestId("agent-config-file-editor-format").click();
         await page.getByTestId("agent-config-file-editor-apply").click();
         await page.getByTestId("agent-config-file-editor-status").waitFor({ timeout: 8000 }).catch(() => {});
         mcpEditorApplied = await visible(page, "agent-config-file-editor-status");

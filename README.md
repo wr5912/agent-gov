@@ -92,6 +92,22 @@ make logs
 make smoke
 ```
 
+远端部署到 Docker Compose 主机：
+
+```bash
+scripts/deploy_agent_gov_to_host
+# 或指定目标主机，默认用户 root、默认目录 ~/work/agent-gov
+scripts/deploy_agent_gov_to_host 172.16.112.232
+```
+
+该脚本会把 `origin/master` 的跟踪代码同步到 `root@<host>:~/work/agent-gov`，
+在本机构建 `VERSION` 对应的 `agent-gov-api`、`agent-gov-ui` 和
+`agent-gov-litellm-sidecar` 镜像，并把项目镜像包和 Langfuse 依赖镜像包写入远端
+`root@<host>:~/work/agent-gov/images/`。远端私有 `docker/.env` 会被保留；如果远端尚未
+创建该文件，脚本才会从 `docker/.env.example` 初始化。启动时使用远端 `docker/.env`
+和远端 `${HOME}/volume-agent-gov` 运行态目录，先停止删除已有 agent-gov 容器，再用已
+导入镜像启动包含 Langfuse profile 的全量服务。
+
 ## 前端 UI
 
 `frontend/` 是一个 React/Vite 前端，用于对接本项目已有的 AgentGov API。它包含 Playground 聊天、会话管理、subagents/skills 发现、Claude 配置映射摘要、反馈信号、改进事项、证据包、归因分析、优化方案、执行记录、回归评估和 Agent 版本管理。前端默认使用 Claude 暖色系界面。

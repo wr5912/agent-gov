@@ -1,0 +1,358 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+DEFAULT_HOST="172.16.112.232"
+DEFAULT_REMOTE_DIR="~/work/agent-gov"
+COMPOSE_FILE="docker/docker-compose.yml"
+LOCAL_COMPOSE_ENV_FILE="${LOCAL_COMPOSE_ENV_FILE:-docker/.env}"
+
+usage() {
+  cat <<'USAGE'
+Usage: scripts/deploy_agent_gov_to_host [host]
+
+Deploy latest origin/master to a remote Docker Compose host.
+
+Defaults:
+  host        172.16.112.232
+  user        root          (override with DEPLOY_USER)
+  remote dir  ~/work/agent-gov (override with REMOTE_DIR)
+
+The script preserves the remote private docker/.env, stores image archives in
+remote images/, loads the images on the remote host, removes existing agent-gov
+containers, starts the full Compose stack including Langfuse, and validates
+API/UI/Langfuse endpoints.
+USAGE
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+if (( $# > 1 )); then
+  usage >&2
+  exit 2
+fi
+
+DEPLOY_HOST="${1:-${DEPLOY_HOST:-$DEFAULT_HOST}}"
+DEPLOY_USER="${DEPLOY_USER:-root}"
+REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"
+REMOTE="${DEPLOY_USER}@${DEPLOY_HOST}"
+SSH_CONNECT_TIMEOUT="${SSH_CONNECT_TIMEOUT:-10}"
+SSH_OPTIONS=(
+  -o StrictHostKeyChecking=accept-new
+  -o BatchMode=yes
+  -o "ConnectTimeout=${SSH_CONNECT_TIMEOUT}"
+)
+
+log() {
+  printf '[deploy] %s\n' "$*"
+}
+
+die() {
+  printf '[deploy] ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+quote() {
+  printf '%q' "$1"
+}
+
+remote_run() {
+  ssh "${SSH_OPTIONS[@]}" "$REMOTE" "$@"
+}
+
+rsync_ssh_command() {
+  local command="ssh"
+  local option
+  for option in "${SSH_OPTIONS[@]}"; do
+    command+=" $(quote "$option")"
+  done
+  printf '%s' "$command"
+}
+
+require_command() {
+  local name=$1
+  command -v "$name" >/dev/null 2>&1 || die "required command not found: $name"
+}
+
+fetch_origin_master() {
+  git fetch origin master --prune --tags
+
+  ORIGIN_MASTER=$(git rev-parse origin/master)
+  VERSION=$(git show origin/master:VERSION | tr -d '[:space:]')
+  [[ -n "$VERSION" ]] || die "origin/master VERSION is empty"
+}
+
+ensure_local_image() {
+  local image=$1
+  if docker image inspect "$image" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  log "Local image missing, pulling: $image"
+  docker pull "$image"
+}
+
+dedupe_images() {
+  local image
+  declare -A seen=()
+  for image in "$@"; do
+    [[ -n "$image" ]] || continue
+    if [[ -z "${seen[$image]+x}" ]]; then
+      seen[$image]=1
+      printf '%s\n' "$image"
+    fi
+  done
+}
+
+upload_image_archive() {
+  local archive=$1
+  shift
+  local images=("$@")
+
+  log "Writing remote image archive: images/$archive"
+  docker save "${images[@]}" | gzip -1 | remote_run "bash -c 'set -euo pipefail
+    remote_path=\$1
+    archive=\$2
+    mkdir -p \"\$remote_path/images\"
+    cat > \"\$remote_path/images/\${archive}.tmp\"
+    mv \"\$remote_path/images/\${archive}.tmp\" \"\$remote_path/images/\$archive\"
+    sha256sum \"\$remote_path/images/\$archive\" > \"\$remote_path/images/\$archive.sha256\"
+    ls -lh \"\$remote_path/images/\$archive\"
+    cat \"\$remote_path/images/\$archive.sha256\"
+  ' bash $(quote "$REMOTE_PATH") $(quote "$archive")"
+}
+
+cd "$ROOT_DIR"
+
+for command_name in git docker gzip rsync ssh tar; do
+  require_command "$command_name"
+done
+
+[[ -f VERSION ]] || die "VERSION file not found"
+[[ -f "$COMPOSE_FILE" ]] || die "$COMPOSE_FILE not found"
+
+log "Consumer x Mode x Boundary: remote containers use docker/.env, runtime root stays on the remote host, secrets stay in private env files"
+fetch_origin_master
+
+TMP_DIR=$(mktemp -d /tmp/agent-gov-master.XXXXXX)
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+log "Exporting origin/master ${ORIGIN_MASTER}"
+git archive origin/master | tar -x -C "$TMP_DIR"
+
+if [[ "$LOCAL_COMPOSE_ENV_FILE" = /* ]]; then
+  LOCAL_COMPOSE_ENV_PATH="$LOCAL_COMPOSE_ENV_FILE"
+else
+  LOCAL_COMPOSE_ENV_PATH="$ROOT_DIR/$LOCAL_COMPOSE_ENV_FILE"
+fi
+
+if [[ ! -f "$LOCAL_COMPOSE_ENV_PATH" ]]; then
+  LOCAL_COMPOSE_ENV_PATH="$TMP_DIR/docker/.env.example"
+  log "$LOCAL_COMPOSE_ENV_FILE not found; using origin/master docker/.env.example for local build interpolation"
+fi
+[[ -f "$LOCAL_COMPOSE_ENV_PATH" ]] || die "compose env file not found"
+
+log "Checking remote prerequisites on $REMOTE"
+remote_run "command -v python3 >/dev/null && command -v docker >/dev/null && docker compose version >/dev/null"
+
+REMOTE_PATH=$(remote_run "REMOTE_DIR=$(quote "$REMOTE_DIR") python3 - <<'PY'
+import os
+
+print(os.path.abspath(os.path.expanduser(os.environ['REMOTE_DIR'])))
+PY
+")
+[[ -n "$REMOTE_PATH" ]] || die "failed to resolve remote path"
+
+log "Remote path: $REMOTE:$REMOTE_PATH"
+remote_run "mkdir -p $(quote "$REMOTE_PATH") $(quote "$REMOTE_PATH/images")"
+
+log "Building project images for version $VERSION"
+APP_VERSION="$VERSION" docker compose --env-file "$LOCAL_COMPOSE_ENV_PATH" -f "$TMP_DIR/$COMPOSE_FILE" build \
+  agent-gov-litellm-sidecar \
+  claude-agent-api \
+  claude-agent-ui
+
+PROJECT_IMAGES=(
+  "agent-gov-api:${VERSION}"
+  "agent-gov-ui:${VERSION}"
+  "agent-gov-litellm-sidecar:${VERSION}"
+)
+for image in "${PROJECT_IMAGES[@]}"; do
+  ensure_local_image "$image"
+done
+
+log "Syncing origin/master tracked code"
+rsync -az --delete \
+  -e "$(rsync_ssh_command)" \
+  --exclude='/.git/' \
+  --exclude='/images/' \
+  --exclude='/docker/.env' \
+  --exclude='/docker/.env.local-debug' \
+  --exclude='/frontend/.env.local' \
+  "$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"
+
+remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_SYNC'
+set -euo pipefail
+remote_path=$1
+cd "$remote_path"
+mkdir -p images
+cp -n docker/.env.example docker/.env
+printf 'remote VERSION=%s\n' "$(tr -d '[:space:]' < VERSION)"
+REMOTE_SYNC
+
+log "Resolving Langfuse dependency image names from remote docker/.env"
+mapfile -t DEPENDENCY_IMAGES < <(remote_run "bash -s -- $(quote "$REMOTE_PATH")" <<'REMOTE_IMAGES'
+set -euo pipefail
+remote_path=$1
+cd "$remote_path"
+
+env_value() {
+  local key=$1
+  local default=$2
+  local value
+  value=$(awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      sub(/[[:space:]]+#.*$/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' docker/.env 2>/dev/null || true)
+  printf '%s\n' "${value:-$default}"
+}
+
+env_value LANGFUSE_WORKER_IMAGE docker.io/langfuse/langfuse-worker:3
+env_value LANGFUSE_WEB_IMAGE docker.io/langfuse/langfuse:3
+env_value LANGFUSE_POSTGRES_IMAGE docker.io/postgres:17
+env_value LANGFUSE_CLICKHOUSE_IMAGE docker.io/clickhouse/clickhouse-server:24.3
+env_value LANGFUSE_REDIS_IMAGE docker.io/redis:7
+env_value LANGFUSE_MINIO_IMAGE cgr.dev/chainguard/minio
+REMOTE_IMAGES
+)
+mapfile -t DEPENDENCY_IMAGES < <(dedupe_images "${DEPENDENCY_IMAGES[@]}")
+for image in "${DEPENDENCY_IMAGES[@]}"; do
+  ensure_local_image "$image"
+done
+
+PROJECT_ARCHIVE="agent-gov-${VERSION}-images.tar.gz"
+DEPENDENCY_ARCHIVE="agent-gov-${VERSION}-langfuse-deps-images.tar.gz"
+upload_image_archive "$PROJECT_ARCHIVE" "${PROJECT_IMAGES[@]}"
+upload_image_archive "$DEPENDENCY_ARCHIVE" "${DEPENDENCY_IMAGES[@]}"
+
+log "Loading images and restarting all agent-gov services on $REMOTE"
+remote_run "bash -s -- $(quote "$REMOTE_PATH") $(quote "$VERSION")" <<'REMOTE_DEPLOY'
+set -euo pipefail
+remote_path=$1
+version=$2
+cd "$remote_path"
+
+project_archive="images/agent-gov-${version}-images.tar.gz"
+dependency_archive="images/agent-gov-${version}-langfuse-deps-images.tar.gz"
+for archive in "$project_archive" "$dependency_archive"; do
+  [ -f "$archive" ] || { echo "missing archive: $archive" >&2; exit 1; }
+  [ -f "$archive.sha256" ] || { echo "missing checksum: $archive.sha256" >&2; exit 1; }
+  sha256sum -c "$archive.sha256"
+done
+
+gzip -dc "$project_archive" | docker load
+gzip -dc "$dependency_archive" | docker load
+
+read_env() {
+  local key=$1
+  local default=$2
+  local value
+  value=$(awk -F= -v key="$key" '
+    $1 == key {
+      sub(/^[^=]*=/, "")
+      sub(/[[:space:]]+#.*$/, "")
+      gsub(/^"|"$/, "")
+      print
+      exit
+    }
+  ' docker/.env 2>/dev/null || true)
+  printf '%s' "${value:-$default}"
+}
+
+expand_remote_value() {
+  local value=$1
+  value=${value//\$\{HOME\}/$HOME}
+  value=${value//\$HOME/$HOME}
+  value=${value/#\~/$HOME}
+  printf '%s' "$value"
+}
+
+runtime_root=$(expand_remote_value "$(read_env HOST_RUNTIME_VOLUME_ROOT '$HOME/volume-agent-gov')")
+echo "Using runtime root=$runtime_root"
+mkdir -p \
+  "$runtime_root/data" \
+  "$runtime_root/governor-workspace" \
+  "$runtime_root/claude-roots/governor" \
+  "$runtime_root/langfuse/postgres" \
+  "$runtime_root/langfuse/clickhouse/data" \
+  "$runtime_root/langfuse/clickhouse/logs" \
+  "$runtime_root/langfuse/redis" \
+  "$runtime_root/langfuse/minio"
+chmod a+rwx \
+  "$runtime_root/langfuse" \
+  "$runtime_root/langfuse/postgres" \
+  "$runtime_root/langfuse/clickhouse" \
+  "$runtime_root/langfuse/clickhouse/data" \
+  "$runtime_root/langfuse/clickhouse/logs" \
+  "$runtime_root/langfuse/redis" \
+  "$runtime_root/langfuse/minio" 2>/dev/null || true
+
+# Cleanup for the historical accidental literal path created by shell-side ${HOME} handling.
+rm -rf '${HOME}'
+
+export APP_VERSION="$version"
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse down --remove-orphans || true
+leftover_containers=$(docker ps -aq --filter "name=agent-gov" || true)
+if [ -n "$leftover_containers" ]; then
+  docker rm -f $leftover_containers
+fi
+
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse up -d --no-build --pull never
+docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
+
+host_port=$(expand_remote_value "$(read_env HOST_PORT 48080)")
+frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 45173)")
+langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 43000)")
+
+python3 - <<PY
+from urllib.error import HTTPError
+from urllib.request import Request, urlopen
+import time
+
+checks = [
+    ("API health", "http://127.0.0.1:${host_port}/health", 60, True),
+    ("UI", "http://127.0.0.1:${frontend_port}", 60, False),
+    ("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False),
+]
+
+for name, url, attempts, print_body in checks:
+    last_error = None
+    for _ in range(attempts):
+        try:
+            request = Request(url, headers={"User-Agent": "agent-gov-deploy-smoke"})
+            with urlopen(request, timeout=5) as response:
+                body = response.read(500)
+                print(f"{name} OK: {url} status={response.status}")
+                if print_body:
+                    print(body.decode("utf-8", "replace"))
+                break
+        except HTTPError as exc:
+            print(f"{name} OK: {url} status={exc.code}")
+            break
+        except Exception as exc:  # noqa: BLE001 - remote smoke reports final failure text.
+            last_error = exc
+            time.sleep(2)
+    else:
+        raise SystemExit(f"{name} failed: {url}: {last_error!r}")
+PY
+REMOTE_DEPLOY
+
+log "Deployment completed on ${REMOTE}:${REMOTE_PATH}"

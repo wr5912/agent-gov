@@ -3,25 +3,14 @@ from app.runtime.errors import FeedbackStoreError
 from app.runtime.state_machines import JOB_IN_PROGRESS_STATES, JOB_STATES, StateTransitionError, validate_transition
 
 
-def test_execution_job_state_machine_allows_apply_lifecycle():
-    validate_transition("execution_job", "queued", "running")
-    validate_transition("execution_job", "running", "ready")
-    validate_transition("execution_job", "ready", "completed")
-
-
-def test_execution_job_state_machine_rejects_completed_reopen():
+def test_job_state_machine_rejects_completed_reopen():
     assert issubclass(StateTransitionError, FeedbackStoreError)
     assert not issubclass(StateTransitionError, ValueError)
-    with pytest.raises(StateTransitionError, match="completed -> running"):
-        validate_transition("execution_job", "completed", "running")
-
-
-def test_job_state_machine_rejects_completed_reopen():
     with pytest.raises(StateTransitionError, match="completed -> running"):
         validate_transition("job", "completed", "running")
 
 
-def test_agent_job_state_machine_rejects_completed_reopen():
+def test_agent_job_state_machine_allows_current_lifecycle():
     validate_transition("agent_job", "queued", "running")
     validate_transition("agent_job", "running", "schema_validating")
     validate_transition("agent_job", "schema_validating", "timeout")
@@ -31,111 +20,16 @@ def test_agent_job_state_machine_rejects_completed_reopen():
         validate_transition("agent_job", "completed", "running")
 
 
-def test_execution_application_state_machine_rejects_applied_reopen():
-    validate_transition("execution_application", "created", "applied")
-    with pytest.raises(StateTransitionError, match="applied -> failed"):
-        validate_transition("execution_application", "applied", "failed")
-
-
 def test_job_in_progress_states_are_known_job_states():
     assert JOB_IN_PROGRESS_STATES <= JOB_STATES
     assert "completed" not in JOB_IN_PROGRESS_STATES
 
 
-def test_batch_state_machine_allows_main_lifecycle():
-    validate_transition("batch", "draft", "attribution_running")
-    validate_transition("batch", "attribution_running", "draft")
-    validate_transition("batch", "attribution_running", "attribution_completed")
-    validate_transition("batch", "attribution_completed", "optimization_plan_queued")
-    validate_transition("batch", "optimization_plan_queued", "pending_execution")
-    validate_transition("batch", "pending_execution", "execution_planning")
-    validate_transition("batch", "execution_planning", "execution_ready")
-    validate_transition("batch", "execution_ready", "applied_pending_regression")
-    validate_transition("batch", "applied_pending_regression", "regression_running")
-    validate_transition("batch", "regression_running", "completed")
-
-
-def test_batch_state_machine_allows_completed_attribution_rerun_reset():
-    validate_transition("batch", "attribution_completed", "draft")
-
-
-@pytest.mark.parametrize(
-    ("current", "target"),
-    [
-        ("attribution_failed", "draft"),
-        ("optimization_plan_queued", "draft"),
-        ("blocked", "draft"),
-        ("execution_planning", "draft"),
-        ("execution_ready", "draft"),
-        ("execution_failed", "draft"),
-        ("execution_planning", "optimization_plan_queued"),
-        ("execution_ready", "optimization_plan_queued"),
-        ("execution_failed", "optimization_plan_queued"),
-        ("notification_failed", "draft"),
-        ("notification_failed", "optimization_plan_queued"),
-    ],
-)
-def test_batch_state_machine_allows_rerun_before_external_side_effects(current, target):
-    validate_transition("batch", current, target)
-
-
-def test_batch_and_task_state_machine_allow_execution_rollback_to_pending():
-    validate_transition("batch", "execution_planning", "completed")
-    validate_transition("batch", "execution_ready", "execution_planning")
-    validate_transition("batch", "applied_pending_regression", "pending_execution")
-    validate_transition("batch", "pending_execution", "draft")
-    validate_transition("batch", "pending_execution", "optimization_plan_queued")
-    validate_transition("task", "applied_pending_regression", "pending_execution")
-
-
-def test_batch_state_machine_rejects_pending_execution_to_rejected():
-    with pytest.raises(StateTransitionError, match="pending_execution -> rejected"):
-        validate_transition("batch", "pending_execution", "rejected")
-
-
-def test_batch_state_machine_rejects_terminal_reopen():
-    with pytest.raises(StateTransitionError, match="completed -> draft"):
-        validate_transition("batch", "completed", "draft")
-
-
-@pytest.mark.parametrize(
-    ("current", "target"),
-    [
-        ("sent", "draft"),
-        ("sent", "optimization_plan_queued"),
-        ("applied_pending_regression", "draft"),
-        ("completed", "optimization_plan_queued"),
-    ],
-)
-def test_batch_state_machine_rejects_rerun_after_external_side_effects(current, target):
-    with pytest.raises(StateTransitionError, match=f"{current} -> {target}"):
-        validate_transition("batch", current, target)
-
-
-def test_batch_state_machine_rejects_rejected_to_approved():
-    with pytest.raises(StateTransitionError, match="rejected -> approved"):
-        validate_transition("batch", "rejected", "approved")
-
-
-def test_task_state_machine_allows_execution_and_regression_lifecycle():
-    validate_transition("task", "pending_execution", "execution_planning")
-    validate_transition("task", "execution_planning", "execution_ready")
-    validate_transition("task", "execution_ready", "applied_pending_regression")
-    validate_transition("task", "applied_pending_regression", "regression_running")
-    validate_transition("task", "regression_running", "regression_failed")
-    validate_transition("task", "regression_running", "completed")
-
-
-def test_task_state_machine_rejects_completed_reopen():
-    with pytest.raises(StateTransitionError, match="completed -> pending_execution"):
-        validate_transition("task", "completed", "pending_execution")
-
-
 def test_case_state_machine_allows_retry_to_attribution():
     validate_transition("case", "pending_evidence", "pending_attribution")
     validate_transition("case", "pending_attribution", "attribution_queued")
-    validate_transition("case", "attribution_queued", "pending_proposal")
-    validate_transition("case", "pending_proposal", "pending_attribution")
+    validate_transition("case", "attribution_queued", "pending_review")
+    validate_transition("case", "pending_review", "pending_attribution")
 
 
 def test_case_state_machine_rejects_review_to_pending_evidence():
@@ -146,13 +40,6 @@ def test_case_state_machine_rejects_review_to_pending_evidence():
 def test_eval_run_state_machine_rejects_completed_to_failed():
     with pytest.raises(StateTransitionError, match="completed -> failed"):
         validate_transition("eval_run", "completed", "failed")
-
-
-def test_regression_impact_analysis_state_machine_allows_rerun_only_to_pending():
-    validate_transition("regression_impact_analysis", "pending", "completed")
-    validate_transition("regression_impact_analysis", "completed", "pending")
-    with pytest.raises(StateTransitionError, match="completed -> failed"):
-        validate_transition("regression_impact_analysis", "completed", "failed")
 
 
 def test_pending_correlation_state_machine_rejects_resolved_to_pending():
@@ -173,14 +60,21 @@ def test_eval_case_state_machine_rejects_archived_reopen():
         validate_transition("eval_case", "archived", "active")
 
 
-def test_proposal_state_machine_rejects_rejected_to_approved():
-    with pytest.raises(StateTransitionError, match="rejected -> approved"):
-        validate_transition("proposal", "rejected", "approved")
+def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
+    validate_transition("agent_change_set", "draft", "candidate_committed")
+    validate_transition("agent_change_set", "candidate_committed", "regression_running")
+    validate_transition("agent_change_set", "regression_running", "regression_passed")
+    validate_transition("agent_change_set", "regression_passed", "published")
 
 
-def test_external_governance_item_state_machine_rejects_superseded_reopen():
-    with pytest.raises(StateTransitionError, match="superseded -> notified"):
-        validate_transition("external_governance_item", "superseded", "notified")
+def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():
+    validate_transition("improvement_stage", "feedback_intake", "triage")
+    validate_transition("improvement_stage", "triage", "attribution")
+    validate_transition("improvement_stage", "attribution", "optimization")
+    validate_transition("improvement_stage", "optimization", "execution")
+    validate_transition("improvement_stage", "execution", "regression")
+    validate_transition("improvement_stage", "regression", "release")
+    validate_transition("improvement_stage", "regression", "optimization")
 
 
 def test_state_machine_rejects_unknown_status():

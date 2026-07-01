@@ -54,6 +54,23 @@ def test_attribution_governor_path_maps_agent_owned_fields(tmp_path: Path) -> No
     assert content.get_attribution("imp-1").status == "draft"
 
 
+def test_attribution_governor_persists_generation_trace(tmp_path: Path) -> None:
+    async def fake_run(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-attr", "trace_url": "http://lf/tr-attr"})
+        return {
+            "rationale": "时间窗口不一致导致误判",
+            "confidence": "high",
+            "responsibility_boundary": {"owner": "sec-ops-data", "reason": "数据语义"},
+            "evidence_refs": [{"type": "trace", "id": "run-1", "reason": "工具调用证据"}],
+        }
+
+    svc, _ = _service(tmp_path, fake_run)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+
+    assert rec.generation_trace_id == "tr-attr"
+    assert rec.generation_trace_url == "http://lf/tr-attr"
+
+
 def test_attribution_falls_back_to_heuristic_on_governor_failure(tmp_path: Path) -> None:
     async def boom(**_kwargs):
         raise RuntimeError("missing model credentials")
@@ -88,7 +105,8 @@ def test_hostile_formatter_output_does_not_crash_or_pollute(tmp_path: Path) -> N
 
 
 def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> None:
-    async def fake_run(**_kwargs):
+    async def fake_run(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-plan", "trace_url": "http://lf/tr-plan"})
         return {
             "summary": "收紧时间一致性校验",
             "tasks": [
@@ -100,6 +118,7 @@ def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> Non
     svc = ImprovementGovernorService(improvement_store=_FakeImprovements(_item()), content_store=content, run_profile_json=fake_run)
     rec = asyncio.run(svc.generate_optimization_plan("imp-1"))
     assert rec.generated_by == "governor"
+    assert rec.generation_trace_id == "tr-plan"
     assert rec.summary == "收紧时间一致性校验"
     assert {c["target"] for c in rec.changes} == {"prompt", "skills/triage.md"}
     assert content.get_optimization_plan("imp-1").status == "draft"
@@ -107,13 +126,15 @@ def test_optimization_plan_governor_maps_tasks_to_changes(tmp_path: Path) -> Non
 
 def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
     """governor EVAL_CASE_GENERATION → 回归用例候选（prompt/期望/检查点），generated_by=governor。"""
-    async def fake_run(**_kwargs):
+    async def fake_run(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
         return {"eval_cases": [
             {"prompt": "当事件时间与告警时间不一致时如何处置？", "expected_behavior": "先核验时间一致性，不直接升级", "checks_json": {"c1": "是否核验时间", "c2": "是否避免误升级"}},
         ]}
     svc, content = _service(tmp_path, fake_run)
     rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
     assert rec.generated_by == "governor"
+    assert rec.generation_trace_id == "tr-regression"
     assert rec.cases and rec.cases[0]["prompt"].startswith("当事件时间")
     assert rec.cases[0]["checkpoints"] == ["是否核验时间", "是否避免误升级"]
     assert content.get_regression_assessment("imp-1").status == "draft"

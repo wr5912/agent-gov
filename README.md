@@ -8,7 +8,7 @@ AgentGov 不提供通用协作看板，也不替代 Multica、Jira、GitHub Issu
 
 - 不重写 Claude Agent loop。
 - 通过 Docker 容器封装 Claude Agent SDK / Claude Code Runtime。
-- 通过 Runtime Profile 隔离业务 Agent 与单一治理智能体（governor）：业务 Agent（含预制 `main-agent`）住 `data/business-agents/<agent_id>/workspace`、各自独立并列的 `claude-root`；唯一特殊的是治理智能体 governor（`/governor-workspace` 与 `claude-roots/governor`），按 job_type 承担归因、优化方案、执行、用例治理和回归影响分析。
+- 通过 Runtime Profile 隔离业务 Agent 与单一治理智能体（governor）：业务 Agent（含预制 `main-agent`）住 `data/business-agents/<agent_id>/workspace`、各自独立并列的 `claude-root`；唯一特殊的是治理智能体 governor（`/governor-workspace` 与 `claude-roots/governor`），承担归因、优化方案、执行和回归用例生成。
 - 容器对外提供 HTTP API，供 Web UI、业务系统、Agent 平台控制面调用。上层业务系统集成 AgentGov 底座的权威参考见 [docs/AgentGov集成指南.md](docs/AgentGov集成指南.md)（契约真相源是容器 OpenAPI `/openapi.json`、`/docs`）。
 
 ## 目录结构
@@ -82,7 +82,7 @@ make up
 make logs
 ```
 
-`make up` 会同时启动 API、前端相关服务和 `claude-agent-worker`。反馈闭环中需要模型执行的归因、方案、执行计划、回归用例生成和回归影响分析都会先写入 `/api/agent-jobs` 队列，再由 worker 消费并把结构化输出投影回对应领域表。
+`make up` 会同时启动 API、前端相关服务和 `claude-agent-worker`。改进事项闭环中需要模型执行的归因、方案、执行计划和回归用例生成由 governor 生成，结果写入 `/api/improvements/{improvement_id}/...` 对应内容子资源，并保留 Langfuse Trace 引用供前端查看。
 
 治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响 `/api/chat/stream` 的人工确认请求。
 
@@ -94,7 +94,7 @@ make smoke
 
 ## 前端 UI
 
-`frontend/` 是一个 React/Vite 前端，用于对接本项目已有的 AgentGov API。它包含 Playground 聊天、会话管理、subagents/skills 发现、Claude 配置映射摘要、反馈信号、反馈处置单、证据包、归因分析、优化方案、外部治理、优化任务、回归评估和 Agent 版本管理。前端默认使用 Claude 暖色系界面。
+`frontend/` 是一个 React/Vite 前端，用于对接本项目已有的 AgentGov API。它包含 Playground 聊天、会话管理、subagents/skills 发现、Claude 配置映射摘要、反馈信号、改进事项、证据包、归因分析、优化方案、执行记录、回归评估和 Agent 版本管理。前端默认使用 Claude 暖色系界面。
 
 先启动后端：
 
@@ -133,7 +133,7 @@ make ui-up
 make ui-smoke
 ```
 
-反馈优化工作台浏览器回归使用 Playwright，默认读取 `docker/.env` 中的 `API_KEY` 并按 Compose 端口访问 `http://localhost:45173` 和 `http://localhost:48080`。该检查会创建一条测试反馈信号和优化批次，并把截图写入根目录 `artifacts/`：
+反馈优化工作台浏览器回归使用 Playwright，默认读取 `docker/.env` 中的 `API_KEY` 并按 Compose 端口访问 `http://localhost:45173` 和 `http://localhost:48080`。该检查会创建一条测试反馈信号和改进事项，并把截图写入根目录 `artifacts/`：
 
 ```bash
 make ui-feedback-smoke
@@ -153,7 +153,7 @@ http://localhost:45173
 
 ## 反馈优化闭环
 
-Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；归因分析、批次优化方案、执行计划、回归用例生成和回归影响分析统一走 `agent_jobs` 异步队列，前端通过 `GET /api/agent-jobs/{job_id}` 轮询状态。
+Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化方案/执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归评估都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
 
 完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:48080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
@@ -165,16 +165,15 @@ pnpm --dir frontend generate:api-types
 
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。
 - Agent job 队列：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}`。
-- 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`、`POST /api/feedback-cases/{feedback_case_id}/optimization-plan`。归因、单条优化方案和批次优化方案输出通过 `GET /api/agent-jobs/{job_id}` 的 `validated_output_json` 读取。
-- 批次优化、任务和外部治理：`POST/GET /api/feedback-optimization-batches`、`GET/POST /api/feedback-optimization-batches/{batch_id}/eval-cases`、`PATCH/DELETE /api/feedback-optimization-batches/{batch_id}/eval-cases/{eval_case_id}`、`POST /api/feedback-optimization-batches/{batch_id}/attribution-jobs`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan`、`PATCH /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/tasks/{plan_task_id}/execute`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/execute-all`、`POST /api/feedback-optimization-batches/{batch_id}/optimization-plan/executions/{execution_run_id}/rollback`、`POST/GET /api/feedback-optimization-batches/{batch_id}/regression-plan`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/impact-analysis`、`POST /api/feedback-optimization-batches/{batch_id}/regression-runs/{eval_run_id}/gate-overrides`、`GET /api/optimization-tasks`、`GET /api/optimization-tasks/{task_id}`、`POST /api/optimization-tasks/{task_id}/mark-applied`、`POST /api/optimization-tasks/{task_id}/execution-jobs`、`POST /api/optimization-tasks/{task_id}/execution-jobs/{execution_job_id}/apply`、`POST/GET /api/optimization-tasks/{task_id}/regression-runs`、`GET /api/external-governance-webhooks`、`GET /api/external-governance-items`、`POST /api/external-governance-items/{external_item_id}/notify`。
+- 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。
+- 改进事项四阶段内容：`POST/GET /api/improvements`、`GET /api/improvements/{improvement_id}`、`POST /api/improvements/{improvement_id}/lifecycle`、`POST /api/improvements/{improvement_id}/archive`、`GET/PUT /api/improvements/{improvement_id}/normalized-feedback`、`POST /api/improvements/{improvement_id}/normalized-feedback/confirm`、`GET/PUT /api/improvements/{improvement_id}/attribution`、`POST /api/improvements/{improvement_id}/attribution/generate`、`POST /api/improvements/{improvement_id}/attribution/confirm`、`GET/PUT /api/improvements/{improvement_id}/optimization-plan`、`POST /api/improvements/{improvement_id}/optimization-plan/generate`、`POST /api/improvements/{improvement_id}/optimization-plan/confirm`、`GET/PUT /api/improvements/{improvement_id}/execution`、`POST /api/improvements/{improvement_id}/execution/apply`、`POST /api/improvements/{improvement_id}/execution/confirm`、`GET /api/improvements/{improvement_id}/regression-assessment`、`POST /api/improvements/{improvement_id}/regression-assessment/generate`、`POST /api/improvements/{improvement_id}/regression-assessment/confirm`、`GET /api/langfuse/traces/{trace_id}`。
 - 评估、回归资产和版本治理：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`POST/GET /api/eval-runs/{eval_run_id}/impact-analysis`、`GET /api/regression-assets`、`GET/PATCH /api/regression-assets/{eval_case_id}`、`POST /api/regression-assets/{eval_case_id}/promote`、`POST /api/regression-assets/{eval_case_id}/archive`、`POST /api/regression-assets/{eval_case_id}/mark-flaky`、`POST /api/regression-assets/{eval_case_id}/unmark-flaky`、`POST /api/regression-assets/{eval_case_id}/supersede`、`GET /api/regression-assets/{eval_case_id}/revisions`、`GET /api/regression-assets/{eval_case_id}/governance-events`、`GET /api/agent-repository`、`POST /api/agent-repository/discard-changes`、`POST /api/agent-repository/snapshot`、`GET /api/agent-repository/current`、`POST/GET /api/agent-change-sets`、`GET /api/agent-change-sets/{change_set_id}`、`GET /api/agent-change-sets/{change_set_id}/events`、`GET /api/agent-change-sets/{change_set_id}/diff`、`GET /api/agent-change-sets/{change_set_id}/file-diff`、`POST /api/agent-change-sets/{change_set_id}/publish`、`GET /api/agent-releases`、`GET /api/agent-releases/{release_id}`、`POST /api/agent-releases/{release_id}/restore`。
 
 运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `${HOME}/volume-agent-gov/data/`：
 
-- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、`execution_applications`、优化方案、优化任务、评估用例、评估运行和 API session 的权威存储。
-- 归因、方案、执行、评估用例生成和回归影响分析 Agent 的输入、输出和错误都以 SQLite 为权威存储；后端从 SQLite、证据包和 Langfuse trace 构造 prompt context，不再要求内部 Agent 读取 job 输入目录。
+- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、改进事项、四阶段内容子资源、评估用例、评估运行和 API session 的权威存储。
+- 归因、方案、执行和回归用例生成的治理 Agent 结果都以 SQLite 为权威存储；后端从 SQLite、证据包和 Langfuse trace 构造 prompt context，不再要求内部 Agent 读取 job 输入目录。
 - `/data/business-agents/<agent_id>/workspace` 是业务智能体 Git 版本源；候选 worktree 默认在同级 `version/worktrees/`，发布归档默认在 `version/releases/`。预制 `main-agent` 对应 `/data/business-agents/main-agent/version/{worktrees,releases}`。
-- `/data/external-governance-webhooks.yaml` 是外部治理 Webhook 配置文件；示例见 `docs/外部治理Webhook示例.yaml`。
 - `/data/feedback-signals/`、`/data/soc-events/`、`/data/feedback-cases/` 等旧目录仅为兼容路径，不再是权威存储。
 
 当前实现基线见 [反馈闭环当前实现基线.md](docs/反馈闭环当前实现基线.md)。旧版 `FEEDBACK_OPTIMIZATION_LOOP_MVP.md` 已废弃，旧接口语义不再作为实现依据。

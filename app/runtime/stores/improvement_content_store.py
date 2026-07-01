@@ -45,6 +45,8 @@ class AttributionRecord:
     created_at: str
     updated_at: str = ""
     generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
     extra: dict = field(default_factory=dict)
     counter_evidence: list[str] = field(default_factory=list)
     uncertainty_factors: list[str] = field(default_factory=list)
@@ -81,6 +83,8 @@ class OptimizationPlanRecord:
     updated_at: str = ""
     generated_by: str = "heuristic"
     risk_level: str = ""
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -94,6 +98,8 @@ class RegressionAssessmentRecord:
     updated_at: str = ""
     generated_by: str = "heuristic"
     suggested_gate_thresholds: dict = field(default_factory=dict)
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -113,6 +119,8 @@ class ExecutionRecord:
     risk_level: str = ""
     rollback_strategy: str = ""
     rollback_instructions: list[str] = field(default_factory=list)
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
 
 
 class ImprovementContentStore:
@@ -145,16 +153,40 @@ class ImprovementContentStore:
         fid = f"fb-{uuid4().hex[:12]}"
         now = utc_now()
         with self._session_factory.begin() as db:
-            db.add(ImprovementFeedbackModel(
-                feedback_id=fid, improvement_id=improvement_id, agent_id=agent_id, summary=clean_summary,
-                source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id,
-                agent_version_id=agent_version_id, scenario=scenario, task_id=task_id, alert_id=alert_id, case_id=case_id,
-                created_at=now,
-            ))
+            db.add(
+                ImprovementFeedbackModel(
+                    feedback_id=fid,
+                    improvement_id=improvement_id,
+                    agent_id=agent_id,
+                    summary=clean_summary,
+                    source=source,
+                    status=status,
+                    raw_text=raw_text,
+                    run_id=run_id,
+                    session_id=session_id,
+                    agent_version_id=agent_version_id,
+                    scenario=scenario,
+                    task_id=task_id,
+                    alert_id=alert_id,
+                    case_id=case_id,
+                    created_at=now,
+                )
+            )
         return ImprovementFeedbackRecord(
-            feedback_id=fid, improvement_id=improvement_id, agent_id=agent_id, summary=clean_summary,
-            source=source, status=status, raw_text=raw_text, run_id=run_id, session_id=session_id,
-            agent_version_id=agent_version_id, scenario=scenario, task_id=task_id, alert_id=alert_id, case_id=case_id,
+            feedback_id=fid,
+            improvement_id=improvement_id,
+            agent_id=agent_id,
+            summary=clean_summary,
+            source=source,
+            status=status,
+            raw_text=raw_text,
+            run_id=run_id,
+            session_id=session_id,
+            agent_version_id=agent_version_id,
+            scenario=scenario,
+            task_id=task_id,
+            alert_id=alert_id,
+            case_id=case_id,
             created_at=now,
         )
 
@@ -246,7 +278,20 @@ class ImprovementContentStore:
             return _nf_record(row)
 
     # ---- Attribution（归因结果）----
-    def upsert_attribution(self, improvement_id: str, *, summary: str, responsibility_boundary: list[str] | None = None, evidence: list[str] | None = None, counter_evidence: list[str] | None = None, uncertainty_factors: list[str] | None = None, verification_suggestions: list[str] | None = None, generated_by: str = "heuristic") -> AttributionRecord:
+    def upsert_attribution(
+        self,
+        improvement_id: str,
+        *,
+        summary: str,
+        responsibility_boundary: list[str] | None = None,
+        evidence: list[str] | None = None,
+        counter_evidence: list[str] | None = None,
+        uncertainty_factors: list[str] | None = None,
+        verification_suggestions: list[str] | None = None,
+        generated_by: str = "heuristic",
+        generation_trace_id: str = "",
+        generation_trace_url: str = "",
+    ) -> AttributionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(AttributionModel).filter(AttributionModel.improvement_id == improvement_id).one_or_none()
@@ -261,6 +306,8 @@ class ImprovementContentStore:
             row.verification_suggestions_json = list(verification_suggestions or [])
             row.status = "draft"
             row.generated_by = generated_by
+            row.generation_trace_id = generation_trace_id
+            row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
             return _attr_record(row)
@@ -282,7 +329,17 @@ class ImprovementContentStore:
             return _attr_record(row)
 
     # ---- OptimizationPlan（优化方案，§106）----
-    def upsert_optimization_plan(self, improvement_id: str, *, summary: str, changes: list[dict] | None = None, risk_level: str = "", generated_by: str = "heuristic") -> OptimizationPlanRecord:
+    def upsert_optimization_plan(
+        self,
+        improvement_id: str,
+        *,
+        summary: str,
+        changes: list[dict] | None = None,
+        risk_level: str = "",
+        generated_by: str = "heuristic",
+        generation_trace_id: str = "",
+        generation_trace_url: str = "",
+    ) -> OptimizationPlanRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(OptimizationPlanModel).filter(OptimizationPlanModel.improvement_id == improvement_id).one_or_none()
@@ -294,6 +351,8 @@ class ImprovementContentStore:
             row.risk_level = risk_level
             row.status = "draft"
             row.generated_by = generated_by
+            row.generation_trace_id = generation_trace_id
+            row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
             return _opt_record(row)
@@ -329,6 +388,8 @@ class ImprovementContentStore:
         risk_level: str = "",
         rollback_strategy: str = "",
         rollback_instructions: list[str] | None = None,
+        generation_trace_id: str = "",
+        generation_trace_url: str = "",
     ) -> ExecutionRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
@@ -347,6 +408,8 @@ class ImprovementContentStore:
             row.risk_level = risk_level
             row.rollback_strategy = rollback_strategy
             row.rollback_instructions_json = list(rollback_instructions or [])
+            row.generation_trace_id = generation_trace_id
+            row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
             return _exec_record(row)
@@ -368,7 +431,17 @@ class ImprovementContentStore:
             return _exec_record(row)
 
     # ---- RegressionAssessment（回归保障评估，§11/§17.5）----
-    def upsert_regression_assessment(self, improvement_id: str, *, summary: str, cases: list[dict] | None = None, suggested_gate_thresholds: dict | None = None, generated_by: str = "heuristic") -> RegressionAssessmentRecord:
+    def upsert_regression_assessment(
+        self,
+        improvement_id: str,
+        *,
+        summary: str,
+        cases: list[dict] | None = None,
+        suggested_gate_thresholds: dict | None = None,
+        generated_by: str = "heuristic",
+        generation_trace_id: str = "",
+        generation_trace_url: str = "",
+    ) -> RegressionAssessmentRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
             row = db.query(RegressionAssessmentModel).filter(RegressionAssessmentModel.improvement_id == improvement_id).one_or_none()
@@ -380,6 +453,8 @@ class ImprovementContentStore:
             row.suggested_gate_thresholds_json = dict(suggested_gate_thresholds or {})
             row.status = "draft"
             row.generated_by = generated_by
+            row.generation_trace_id = generation_trace_id
+            row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
             return _reg_record(row)
@@ -412,6 +487,8 @@ def _reg_record(row: RegressionAssessmentModel) -> RegressionAssessmentRecord:
         created_at=row.created_at,
         updated_at=row.updated_at,
         generated_by=row.generated_by or "heuristic",
+        generation_trace_id=row.generation_trace_id or "",
+        generation_trace_url=row.generation_trace_url or "",
     )
 
 
@@ -426,6 +503,8 @@ def _opt_record(row: OptimizationPlanModel) -> OptimizationPlanRecord:
         created_at=row.created_at,
         updated_at=row.updated_at,
         generated_by=row.generated_by or "heuristic",
+        generation_trace_id=row.generation_trace_id or "",
+        generation_trace_url=row.generation_trace_url or "",
     )
 
 
@@ -446,6 +525,8 @@ def _exec_record(row: ExecutionRecordModel) -> ExecutionRecord:
         risk_level=row.risk_level or "",
         rollback_strategy=row.rollback_strategy or "",
         rollback_instructions=list(row.rollback_instructions_json or []),
+        generation_trace_id=row.generation_trace_id or "",
+        generation_trace_url=row.generation_trace_url or "",
     )
 
 
@@ -479,13 +560,26 @@ def _attr_record(row: AttributionModel) -> AttributionRecord:
         created_at=row.created_at,
         updated_at=row.updated_at,
         generated_by=row.generated_by or "heuristic",
+        generation_trace_id=row.generation_trace_id or "",
+        generation_trace_url=row.generation_trace_url or "",
     )
 
 
 def _fb_record(row: ImprovementFeedbackModel) -> ImprovementFeedbackRecord:
     return ImprovementFeedbackRecord(
-        feedback_id=row.feedback_id, improvement_id=row.improvement_id, agent_id=row.agent_id, summary=row.summary,
-        source=row.source, status=row.status, raw_text=row.raw_text or "", run_id=row.run_id or "",
-        session_id=row.session_id or "", agent_version_id=row.agent_version_id or "", scenario=row.scenario or "",
-        task_id=row.task_id or "", alert_id=row.alert_id or "", case_id=row.case_id or "", created_at=row.created_at,
+        feedback_id=row.feedback_id,
+        improvement_id=row.improvement_id,
+        agent_id=row.agent_id,
+        summary=row.summary,
+        source=row.source,
+        status=row.status,
+        raw_text=row.raw_text or "",
+        run_id=row.run_id or "",
+        session_id=row.session_id or "",
+        agent_version_id=row.agent_version_id or "",
+        scenario=row.scenario or "",
+        task_id=row.task_id or "",
+        alert_id=row.alert_id or "",
+        case_id=row.case_id or "",
+        created_at=row.created_at,
     )

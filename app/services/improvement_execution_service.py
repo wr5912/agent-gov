@@ -24,7 +24,7 @@ from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import ExecutionRecord, ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
-from app.services.execution_application import ExecutionApplicationService
+from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ class ImprovementExecutionService:
         improvement_store: ImprovementStore,
         content_store: ImprovementContentStore,
         agent_governance: AgentGovernanceService,
-        execution_app: ExecutionApplicationService,
+        execution_app: WorkspaceExecutionApplier,
         run_profile_json: RunProfileJson | None,
     ) -> None:
         self._improvements = improvement_store
@@ -71,18 +71,19 @@ class ImprovementExecutionService:
             note=f"改进事项 {improvement_id} 自动执行优化方案候选。",
         )
         change_set_id = str(change_set["change_set_id"])
+        trace_ref: dict[str, str] = {}
         try:
             worktree = self._gov.change_set_worktree_path(change_set)
             store = self._gov._store_for(agent_id)
             pre_version = store.version_summary(str(change_set["base_commit_sha"]), reason="improvement_execution_base", note=None)
             policy = WorkspaceExecutionTargetPolicy(worktree)
-            output = await self._run_execution_governor(plan, policy)
+            output = await self._run_execution_governor(plan, policy, trace_ref=trace_ref)
             data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
             operations = data.get("operations") or []
             if data.get("status") != "ready" or not operations:
                 self._gov.abandon_change_set(change_set_id, note="governor 未产出可应用执行操作")
                 return self._heuristic(plan, improvement_id, reason=str(data.get("no_action_reason") or ""))
-            self._execution_app.apply_execution_operations(operations, workspace_dir=worktree)
+            self._execution_app.apply_execution_operations(operations, workspace_dir=worktree, target_policy=policy)
             applied_version, applied_diff = self._commit_candidate(store, worktree, pre_version, change_set_id, improvement_id)
         except Exception:
             try:
@@ -90,7 +91,7 @@ class ImprovementExecutionService:
             except Exception:  # noqa: BLE001
                 logger.exception("failed to abandon change set after execution failure: %s", change_set_id)
             raise
-        return self._content.upsert_execution(
+        execution = self._content.upsert_execution(
             improvement_id,
             summary=str(data.get("summary") or "已应用优化方案并生成候选 Agent 版本（待 §12 发布门禁发布）。"),
             changes_applied=[self._op_label(op) for op in operations],
@@ -102,9 +103,19 @@ class ImprovementExecutionService:
             change_set_id=change_set_id,
             applied_agent_version_id=str(applied_version.get("agent_version_id") or ""),
             applied_diff=applied_diff or {},
+            generation_trace_id=trace_ref.get("trace_id", ""),
+            generation_trace_url=trace_ref.get("trace_url", ""),
         )
+        self._improvements.add_link(improvement_id, kind="change_set", ref_id=change_set_id)
+        return execution
 
-    async def _run_execution_governor(self, plan: Any, policy: WorkspaceExecutionTargetPolicy) -> FormatterOutputModel:
+    async def _run_execution_governor(
+        self,
+        plan: Any,
+        policy: WorkspaceExecutionTargetPolicy,
+        *,
+        trace_ref: dict[str, str] | None = None,
+    ) -> FormatterOutputModel:
         spec = agent_job_spec(AgentJobType.EXECUTION)
         changes = [c for c in (getattr(plan, "changes", []) or []) if isinstance(c, dict)]
         recommendations = [str(c.get("change", "")).strip() for c in changes if c.get("change")]
@@ -132,9 +143,12 @@ class ImprovementExecutionService:
             job_type=str(spec.job_type),
             job_input=job_input,
             governor={"job_type": str(spec.job_type), "scope_kind": "improvement", "scope_id": getattr(plan, "improvement_id", "")},
+            trace_callback=trace_ref.update if trace_ref is not None else None,
         )
 
-    def _commit_candidate(self, store: Any, worktree: Any, pre_version: JsonObject, change_set_id: str, improvement_id: str) -> tuple[JsonObject, JsonObject | None]:
+    def _commit_candidate(
+        self, store: Any, worktree: Any, pre_version: JsonObject, change_set_id: str, improvement_id: str
+    ) -> tuple[JsonObject, JsonObject | None]:
         candidate = store.commit_worktree(worktree, message=f"Improvement {improvement_id} execution apply")
         applied_version = store.version_summary(candidate, reason="improvement_execution_candidate", note=f"改进事项 {improvement_id} 执行候选提交。")
         applied_diff = store.diff_versions(str(pre_version.get("agent_version_id") or ""), str(applied_version.get("agent_version_id") or ""))

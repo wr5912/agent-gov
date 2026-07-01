@@ -13,6 +13,7 @@ import 引用，作为重构时「该删/该改哪些测试」的机械信号。
 - 目标模块包含 `from x import *` 时无法判定其符号集合，跳过该模块的符号级检查。
 - 只在目标模块文件确实不存在、或符号确实缺失时报告。
 """
+
 from __future__ import annotations
 
 import argparse

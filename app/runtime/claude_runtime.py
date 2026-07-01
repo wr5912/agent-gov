@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Optional
 
 from app.services.feedback_eval_runner import FeedbackEvalRunner
-from app.services.feedback_job_orchestrator import FeedbackJobOrchestrator
 
 from .agent_git_store import AgentVersionProvider
 from .agent_job_runner import AgentJobRunner, ClaudeCodeResultError
@@ -114,15 +113,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             env_builder=self._profile_env,
             output_formatter=self.output_formatter,
             provider_router=self.model_provider_router,
-        )
-        self.job_orchestrator = (
-            FeedbackJobOrchestrator(
-                feedback_store=feedback_store,
-                profiles=self.profiles,
-                run_profile_json=lambda **kwargs: self._run_profile_json(**kwargs),
-            )
-            if feedback_store is not None
-            else None
         )
         self.eval_runner = (
             FeedbackEvalRunner(
@@ -408,13 +398,14 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         job_type: str,
         job_input: JsonObject,
         governor: Optional[JsonObject] = None,
+        trace_callback: Callable[[JsonObject], None] | None = None,
     ) -> FormatterOutputModel:
         self.job_runner.output_formatter = self.output_formatter
 
         async def run() -> FormatterOutputModel:
             return await self.job_runner.run_profile_json(profile_name=profile_name, prompt=prompt, job_type=job_type, job_input=job_input)
 
-        return await run_governor_profile_json(self.langfuse, run, governor)
+        return await run_governor_profile_json(self.langfuse, run, governor, trace_callback=trace_callback)
 
     def _new_runtime_request_context(
         self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE
@@ -481,7 +472,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
     def _business_metadata(metadata: JsonObject) -> Mapping[str, str]:
         aliases = {
             "tenant_id": ("tenant_id", "tenantId"),
-            "feedback_batch_id": ("feedback_batch_id", "feedbackBatchId"),
             "agent_id": ("agent_id", "agentId"),
         }
         values: dict[str, str] = {}

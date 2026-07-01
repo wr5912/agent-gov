@@ -19,6 +19,8 @@ import {
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
 import type { StageDetail } from "./StageDetailDrawer";
+import type { RuntimeClientConfig } from "../types/runtime";
+import { TraceButton, TraceDetail } from "./ImprovementGenerationTrace";
 
 interface AttrDraft {
   summary: string;
@@ -54,6 +56,7 @@ function GenerationError({ message, testId }: { message: string; testId: string 
 
 export function ImprovementStagePanels({
   item,
+  clientConfig,
   stageView,
   normalizedFeedback,
   attribution,
@@ -85,6 +88,7 @@ export function ImprovementStagePanels({
   onOpenDetail,
 }: {
   item: ImprovementItem;
+  clientConfig: RuntimeClientConfig;
   stageView: ImprovementStageView;
   normalizedFeedback: NormalizedFeedback | null;
   attribution: Attribution | null;
@@ -115,6 +119,19 @@ export function ImprovementStagePanels({
   onOpenContext: () => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
+  const openGenerationTrace = (traceId: string, traceUrl: string, title: string) => {
+    onOpenDetail({
+      key: `generation-trace-${traceId}`,
+      title: `${title} Trace`,
+      size: "wide",
+      description: traceId,
+      headerActions: traceUrl
+        ? <a className="iw-link-button" data-testid="generation-trace-langfuse" href={traceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a>
+        : undefined,
+      content: <TraceDetail clientConfig={clientConfig} traceId={traceId} />,
+    });
+  };
+
   return (
     <div className="iw-stage-work-area" data-testid="stage-work-area" data-visible-stage={stageView.visibleKey}>
       {readOnly && reviewingLabel ? (
@@ -151,6 +168,7 @@ export function ImprovementStagePanels({
           operationError={operationError}
           langfuseUrl={langfuseUrl}
           readOnly={readOnly}
+          onOpenTrace={openGenerationTrace}
           onGenerateAttribution={onGenerateAttribution}
           onEditAttribution={onEditAttribution}
           onSaveAttribution={onSaveAttribution}
@@ -169,6 +187,7 @@ export function ImprovementStagePanels({
           pendingOperation={pendingOperation}
           operationError={operationError}
           readOnly={readOnly}
+          onOpenTrace={openGenerationTrace}
           onGenerateOpt={onGenerateOpt}
           onRecordExec={onRecordExec}
           onOpenDetail={onOpenDetail}
@@ -185,6 +204,7 @@ export function ImprovementStagePanels({
           pendingOperation={pendingOperation}
           operationError={operationError}
           readOnly={readOnly}
+          onOpenTrace={openGenerationTrace}
           onGenerateRegression={onGenerateRegression}
           onAdoptTestDataset={onAdoptTestDataset}
           onOpenDetail={onOpenDetail}
@@ -289,6 +309,7 @@ function AttributionPanels({
   operationError,
   langfuseUrl,
   readOnly,
+  onOpenTrace,
   onGenerateAttribution,
   onEditAttribution,
   onSaveAttribution,
@@ -307,6 +328,7 @@ function AttributionPanels({
   operationError?: ImprovementOperationError | null;
   langfuseUrl: string;
   readOnly: boolean;
+  onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
   onGenerateAttribution: () => void;
   onEditAttribution: (value: Attribution) => void;
   onSaveAttribution: () => void;
@@ -348,7 +370,9 @@ function AttributionPanels({
               {!readOnly ? <div className="iw-action-row">
                 <button className="iw-secondary-button" type="button" data-testid="edit-attribution" disabled={busy} onClick={() => onEditAttribution(attribution)}>修改</button>
                 <button className="iw-secondary-button" type="button" data-testid="regenerate-attribution" disabled={busy} onClick={onGenerateAttribution}>重新归因</button>
+                <TraceButton source={attribution} label="归因分析" onOpenTrace={onOpenTrace} />
               </div> : null}
+              {readOnly ? <TraceButton source={attribution} label="归因分析" onOpenTrace={onOpenTrace} /> : null}
             </>
           )
         ) : (
@@ -425,6 +449,7 @@ function OptimizationPanels({
   pendingOperation,
   operationError,
   readOnly,
+  onOpenTrace,
   onGenerateOpt,
   onRecordExec,
   onOpenDetail,
@@ -437,6 +462,7 @@ function OptimizationPanels({
   pendingOperation?: ImprovementPendingOperation | null;
   operationError?: ImprovementOperationError | null;
   readOnly: boolean;
+  onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
   onGenerateOpt: () => void;
   onRecordExec: () => void;
   onOpenDetail: (detail: StageDetail) => void;
@@ -465,6 +491,7 @@ function OptimizationPanels({
           item={item} busy={busy} optPlan={optimizationPlan} execution={null} attribution={attribution} readOnly={readOnly}
           onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
+        <TraceButton source={optimizationPlan} label="优化方案" onOpenTrace={onOpenTrace} />
       </StageCard>
       <StageCard letter="B" title="Diff / 变更预览" actionLabel={VIEW} testId="stage-panel-diff-preview"
         onAction={() => onOpenDetail({
@@ -531,6 +558,7 @@ function OptimizationPanels({
           item={item} busy={busy} optPlan={null} execution={execution} attribution={attribution} readOnly={readOnly}
           onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
+        <TraceButton source={execution} label="执行记录" onOpenTrace={onOpenTrace} />
       </StageCard>
     </div>
   );
@@ -546,6 +574,7 @@ function TestReleasePanels({
   pendingOperation,
   operationError,
   readOnly,
+  onOpenTrace,
   onGenerateRegression,
   onAdoptTestDataset,
   onOpenDetail,
@@ -559,6 +588,7 @@ function TestReleasePanels({
   pendingOperation?: ImprovementPendingOperation | null;
   operationError?: ImprovementOperationError | null;
   readOnly: boolean;
+  onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
   onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
   onOpenDetail: (detail: StageDetail) => void;
@@ -611,7 +641,9 @@ function TestReleasePanels({
               {!readOnly ? <div className="iw-action-row iw-test-plan-actions">
                 <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
                 <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!datasetAsset} onClick={onAdoptTestDataset}>{datasetAsset ? "已纳入测试集" : "纳入测试集"}</button>
+                <TraceButton source={regressionAssessment} label="测试发布" onOpenTrace={onOpenTrace} />
               </div> : null}
+              {readOnly ? <TraceButton source={regressionAssessment} label="测试发布" onOpenTrace={onOpenTrace} /> : null}
             </div>
           </div>
           {regressionPending ? <GenerationStatus operation={pendingOperation!} testId="regression-generation-status" /> : null}

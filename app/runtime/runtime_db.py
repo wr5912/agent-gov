@@ -23,7 +23,6 @@ from .runtime_db_migrations import (
     migrate_0010_scenario_packs,
     migrate_0011_change_set_release_agent_id,
     migrate_0012_eval_run_agent_id,
-    migrate_0013_optimization_task_agent_id,
     migrate_0014_improvement_feedback_context,
     migrate_0015_improvement_content_generated_by,
     migrate_0016_execution_application_binding,
@@ -31,6 +30,10 @@ from .runtime_db_migrations import (
     migrate_0018_agent_registry_origin_tombstone,
     migrate_0019_improvement_detail_columns,
     migrate_0020_claude_user_input_requests,
+    migrate_0021_improvement_generation_trace_refs,
+    migrate_0022_remove_legacy_batch_optimization_chain,
+    migrate_0023_eval_case_targeted_regression_layer,
+    migrate_0024_feedback_case_agent_id,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -147,6 +150,7 @@ class FeedbackCaseModel(Base):
     __tablename__ = "feedback_cases"
 
     feedback_case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
@@ -154,7 +158,6 @@ class FeedbackCaseModel(Base):
     priority: Mapped[str] = mapped_column(String(32), index=True)
     current_evidence_package_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     current_attribution_job_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    current_proposal_job_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     source_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     signal_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     event_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -219,84 +222,6 @@ Index("ix_agent_jobs_type_status_created", AgentJobModel.job_type, AgentJobModel
 Index("ix_agent_jobs_scope_type_created", AgentJobModel.scope_kind, AgentJobModel.scope_id, AgentJobModel.job_type, AgentJobModel.created_at)
 
 
-class OptimizationProposalModel(Base):
-    __tablename__ = "optimization_proposals"
-
-    proposal_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    feedback_case_id: Mapped[str] = mapped_column(String(128), index=True)
-    proposal_job_id: Mapped[str] = mapped_column(String(128), index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    actionability: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    target_path: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class ProposalReviewModel(Base):
-    __tablename__ = "proposal_reviews"
-
-    review_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    proposal_id: Mapped[str] = mapped_column(String(128), ForeignKey("optimization_proposals.proposal_id"), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    action: Mapped[str] = mapped_column(String(64))
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class OptimizationTaskModel(Base):
-    __tablename__ = "optimization_tasks"
-
-    optimization_task_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
-    proposal_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class FeedbackOptimizationBatchModel(Base):
-    __tablename__ = "feedback_optimization_batches"
-
-    batch_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    title: Mapped[str] = mapped_column(String(512))
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class ExecutionCompensationModel(Base):
-    __tablename__ = "execution_compensations"
-
-    compensation_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    compensation_type: Mapped[str] = mapped_column(String(128), index=True)
-    optimization_task_id: Mapped[str] = mapped_column(String(128), index=True)
-    execution_job_id: Mapped[str] = mapped_column(String(128), index=True)
-    pre_execution_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    restore_status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class ExecutionApplicationModel(Base):
-    __tablename__ = "execution_applications"
-
-    application_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    execution_job_id: Mapped[str] = mapped_column(String(128), index=True)
-    optimization_task_id: Mapped[str] = mapped_column(String(128), ForeignKey("optimization_tasks.optimization_task_id"), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-Index("ix_execution_applications_job_created", ExecutionApplicationModel.execution_job_id, ExecutionApplicationModel.created_at)
-Index("ix_execution_applications_task_created", ExecutionApplicationModel.optimization_task_id, ExecutionApplicationModel.created_at)
-
-
 class AgentChangeSetModel(Base):
     __tablename__ = "agent_change_sets"
 
@@ -305,7 +230,6 @@ class AgentChangeSetModel(Base):
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
-    optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     execution_job_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     base_commit_sha: Mapped[str] = mapped_column(String(64), index=True)
     candidate_commit_sha: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
@@ -314,7 +238,6 @@ class AgentChangeSetModel(Base):
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
-Index("ix_agent_change_sets_task_created", AgentChangeSetModel.optimization_task_id, AgentChangeSetModel.created_at)
 Index("ix_agent_change_sets_status_updated", AgentChangeSetModel.status, AgentChangeSetModel.updated_at)
 
 
@@ -350,34 +273,6 @@ class AgentReleaseModel(Base):
 
 
 Index("ix_agent_releases_status_created", AgentReleaseModel.status, AgentReleaseModel.created_at)
-
-
-class ExternalGovernanceItemModel(Base):
-    __tablename__ = "external_governance_items"
-
-    external_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    feedback_case_id: Mapped[str] = mapped_column(String(128), index=True)
-    proposal_job_id: Mapped[str] = mapped_column(String(128), index=True)
-    owner: Mapped[str] = mapped_column(String(256), index=True)
-    actionability: Mapped[str] = mapped_column(String(128), index=True)
-    latest_notification_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class ExternalNotificationModel(Base):
-    __tablename__ = "external_notifications"
-
-    notification_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    external_item_id: Mapped[str] = mapped_column(String(128), ForeignKey("external_governance_items.external_item_id"), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    webhook_alias: Mapped[str] = mapped_column(String(128), index=True)
-    http_status: Mapped[Optional[int]] = mapped_column(nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class EvalCaseModel(Base):
@@ -453,9 +348,7 @@ class EvalRunModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
     agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    optimization_task_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
-    regression_plan_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
@@ -469,50 +362,6 @@ class EvalRunItemModel(Base):
     status: Mapped[str] = mapped_column(String(64), index=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-class RegressionPlanModel(Base):
-    __tablename__ = "regression_plans"
-
-    regression_plan_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    batch_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_optimization_batches.batch_id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), default="created", index=True)
-    applied_agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
-    selection_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-Index("ix_regression_plans_batch_fingerprint", RegressionPlanModel.batch_id, RegressionPlanModel.selection_fingerprint, unique=True)
-
-
-class RegressionImpactAnalysisModel(Base):
-    __tablename__ = "regression_impact_analyses"
-
-    impact_analysis_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    status: Mapped[str] = mapped_column(String(64), default="pending", index=True)
-    job_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-
-
-Index("ix_regression_impact_analyses_eval_run", RegressionImpactAnalysisModel.eval_run_id, unique=True)
-
-
-class RegressionGateOverrideModel(Base):
-    __tablename__ = "regression_gate_overrides"
-
-    override_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    batch_id: Mapped[str] = mapped_column(String(128), ForeignKey("feedback_optimization_batches.batch_id", ondelete="CASCADE"), index=True)
-    eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
-    operator: Mapped[str] = mapped_column(String(128), index=True)
-    reason: Mapped[str] = mapped_column(String(2048))
-    expires_at: Mapped[str] = mapped_column(String(64), index=True)
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    before_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-    after_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
 class RuntimeSettingModel(Base):
@@ -617,7 +466,6 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0010_scenario_packs", migrate_0010_scenario_packs),
         ("0011_change_set_release_agent_id", migrate_0011_change_set_release_agent_id),
         ("0012_eval_run_agent_id", migrate_0012_eval_run_agent_id),
-        ("0013_optimization_task_agent_id", migrate_0013_optimization_task_agent_id),
         ("0014_improvement_feedback_context", migrate_0014_improvement_feedback_context),
         ("0015_improvement_content_generated_by", migrate_0015_improvement_content_generated_by),
         ("0016_execution_application_binding", migrate_0016_execution_application_binding),
@@ -625,6 +473,10 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0018_agent_registry_origin_tombstone", migrate_0018_agent_registry_origin_tombstone),
         ("0019_improvement_detail_columns", migrate_0019_improvement_detail_columns),
         ("0020_claude_user_input_requests", migrate_0020_claude_user_input_requests),
+        ("0021_improvement_generation_trace_refs", migrate_0021_improvement_generation_trace_refs),
+        ("0022_remove_legacy_batch_optimization_chain", migrate_0022_remove_legacy_batch_optimization_chain),
+        ("0023_eval_case_targeted_regression_layer", migrate_0023_eval_case_targeted_regression_layer),
+        ("0024_feedback_case_agent_id", migrate_0024_feedback_case_agent_id),
     ):
         if version in applied:
             continue
@@ -642,6 +494,8 @@ def _migrate_0002_regression_assets(connection: Connection) -> None:
         "asset_layer": "VARCHAR(64) DEFAULT 'candidate'",
         "promotion_status": "VARCHAR(64) DEFAULT 'candidate'",
         "blocking_policy": "VARCHAR(64) DEFAULT 'non_blocking'",
+        "source_feedback_case_id": "VARCHAR(128)",
+        "source_run_id": "VARCHAR(128)",
         "scenario_pack": "VARCHAR(128)",
         "severity": "VARCHAR(64) DEFAULT 'medium'",
         "flaky_status": "VARCHAR(64) DEFAULT 'stable'",
@@ -651,13 +505,10 @@ def _migrate_0002_regression_assets(connection: Connection) -> None:
         "last_result_status": "VARCHAR(64)",
         "failure_rate": "FLOAT",
         "superseded_by_eval_case_id": "VARCHAR(128)",
+        "payload_json": "JSON",
     }.items():
         if column_name not in columns:
             connection.exec_driver_sql(f"ALTER TABLE eval_cases ADD COLUMN {column_name} {ddl}")
-    eval_run_columns = _table_columns(connection, "eval_runs")
-    if "regression_plan_id" not in eval_run_columns:
-        connection.exec_driver_sql("ALTER TABLE eval_runs ADD COLUMN regression_plan_id VARCHAR(128)")
-
     connection.exec_driver_sql(
         """
         UPDATE eval_cases
@@ -665,7 +516,7 @@ def _migrate_0002_regression_assets(connection: Connection) -> None:
             asset_layer = CASE
                 WHEN status = 'draft' THEN 'candidate'
                 WHEN status = 'archived' THEN COALESCE(asset_layer, 'candidate')
-                WHEN source_feedback_case_id IS NULL THEN 'batch_specific'
+                WHEN source_feedback_case_id IS NULL THEN 'targeted_regression'
                 ELSE 'historical_bug'
             END,
             promotion_status = CASE
@@ -700,7 +551,6 @@ def _migrate_0002_regression_assets(connection: Connection) -> None:
     connection.exec_driver_sql(
         "CREATE UNIQUE INDEX IF NOT EXISTS ix_eval_cases_source_variant_hash ON eval_cases (source_feedback_case_id, variant_role, content_hash)"
     )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_regression_plan_id ON eval_runs (regression_plan_id)")
 
 
 def _migrate_0003_agent_jobs(connection: Connection) -> None:
@@ -749,29 +599,6 @@ def _migrate_0003_agent_jobs(connection: Connection) -> None:
 def _migrate_0004_unify_agent_jobs(connection: Connection) -> None:
     connection.exec_driver_sql("DROP TABLE IF EXISTS feedback_jobs")
     connection.exec_driver_sql("DROP TABLE IF EXISTS optimization_executions")
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS execution_applications (
-            application_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            execution_job_id VARCHAR(128) NOT NULL,
-            optimization_task_id VARCHAR(128) NOT NULL,
-            created_at VARCHAR(64) NOT NULL,
-            completed_at VARCHAR(64),
-            status VARCHAR(64) NOT NULL,
-            payload_json JSON NOT NULL,
-            FOREIGN KEY(optimization_task_id) REFERENCES optimization_tasks (optimization_task_id)
-        )
-        """
-    )
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_execution_job_id ON execution_applications (execution_job_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_optimization_task_id ON execution_applications (optimization_task_id)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_execution_applications_created_at ON execution_applications (created_at)")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_execution_applications_job_created ON execution_applications (execution_job_id, created_at)"
-    )
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_execution_applications_task_created ON execution_applications (optimization_task_id, created_at)"
-    )
 
 
 def _table_columns(connection: Connection, table_name: str) -> set[str]:

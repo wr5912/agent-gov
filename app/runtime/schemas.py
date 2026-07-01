@@ -182,8 +182,8 @@ from app.runtime.agent_governance_schemas import (  # noqa: E402,F401
     AgentDeletionImpact,
     AgentLifecycleTransitionRequest,
     AgentSummaryResponse,
+    AssetProvenanceImprovement,
     AssetProvenanceResponse,
-    AssetProvenanceTask,
     BusinessAgentTemplatesResponse,
     FeedbackSignalReassignRequest,
 )
@@ -195,8 +195,8 @@ __all_agent_governance__ = [
     "AgentLifecycleTransitionRequest",
     "AgentSummaryResponse",
     "BusinessAgentTemplatesResponse",
+    "AssetProvenanceImprovement",
     "AssetProvenanceResponse",
-    "AssetProvenanceTask",
     "FeedbackSignalReassignRequest",
 ]
 
@@ -345,33 +345,6 @@ class FeedbackEvalCaseGenerateRequest(BaseModel):
     force: bool = False
 
 
-class FeedbackOptimizationBatchCreateRequest(BaseModel):
-    source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
-    title: Optional[str] = None
-    priority: Literal["high", "medium", "low"] = "medium"
-
-
-class FeedbackOptimizationBatchAttributionRequest(BaseModel):
-    force: bool = False
-
-
-class FeedbackOptimizationBatchPlanGenerateRequest(BaseModel):
-    regeneration_instruction: Optional[str] = Field(default=None, max_length=2000)
-
-    @field_validator("regeneration_instruction", mode="before")
-    @classmethod
-    def _trim_instruction(cls, value: object) -> object:
-        if value is None or not isinstance(value, str):
-            return value
-        text = value.strip()
-        return text or None
-
-
-class FeedbackOptimizationPlanTaskExecuteRequest(BaseModel):
-    webhook_alias: Optional[str] = None
-    force: bool = False
-
-
 class AgentRunResponse(BaseModel):
     run_id: str
     session_id: Optional[str] = None
@@ -399,6 +372,7 @@ class FeedbackCaseCreateRequest(BaseModel):
 
 class FeedbackCaseResponse(BaseModel):
     feedback_case_id: str
+    agent_id: str = "main-agent"
     created_at: str
     updated_at: str
     status: str
@@ -414,20 +388,6 @@ class FeedbackCaseResponse(BaseModel):
     case_ids: list[str] = Field(default_factory=list)
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    proposal_job_ids: list[str] = Field(default_factory=list)
-
-
-class OptimizationTaskMarkAppliedRequest(BaseModel):
-    note: Optional[str] = None
-
-
-class OptimizationExecutionCreateRequest(BaseModel):
-    force: bool = False
-
-
-class OptimizationExecutionApplyRequest(BaseModel):
-    confirm: bool = True
-    note: Optional[str] = None
 
 
 class FeedbackEvalDatasetSyncRequest(BaseModel):
@@ -441,7 +401,7 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
     checks_json: Optional[JsonObject] = None
     labels: Optional[list[str]] = None
     status: Optional[Literal["active", "draft", "archived"]] = None
-    asset_layer: Optional[Literal["candidate", "batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
+    asset_layer: Optional[Literal["candidate", "targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
     promotion_status: Optional[Literal["candidate", "needs_review", "approved", "rejected", "superseded", "archived"]] = None
     blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
     scenario_pack: Optional[str] = None
@@ -454,24 +414,11 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
     reason: Optional[str] = None
 
 
-class FeedbackOptimizationBatchEvalCaseCreateRequest(BaseModel):
-    prompt: str
-    expected_behavior: Optional[str] = None
-    checks_json: JsonObject = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)
-    status: Literal["active", "draft", "archived"] = "active"
-    asset_layer: Optional[Literal["batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = "batch_specific"
-    promotion_status: Optional[Literal["approved", "needs_review", "candidate"]] = "approved"
-    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = "blocking"
-    scenario_pack: Optional[str] = None
-    severity: Optional[str] = "medium"
-
-
 class RegressionAssetGovernanceActionRequest(BaseModel):
     operator: str = "system"
     role: str = "developer"
     reason: str
-    asset_layer: Optional[Literal["batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
+    asset_layer: Optional[Literal["targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
     blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
 
 
@@ -488,23 +435,8 @@ class RegressionAssetSupersedeRequest(BaseModel):
     reason: str
 
 
-class RegressionPlanCreateRequest(BaseModel):
-    force: bool = False
-
-
-class FeedbackOptimizationBatchRegressionRunRequest(BaseModel):
-    regression_plan_id: str
-
-
-class RegressionGateOverrideRequest(BaseModel):
-    operator: str
-    reason: str
-    expires_at: str
-
-
 class FeedbackEvalRunCreateRequest(BaseModel):
     eval_case_ids: list[str] = Field(default_factory=list)
-    optimization_task_id: Optional[str] = None
 
 
 class EvalCaseSourceSummaryResponse(ExtensibleResponse):
@@ -524,13 +456,10 @@ class EvalCaseAttributionSummaryResponse(ExtensibleResponse):
     rationale: Optional[str] = None
 
 
-class EvalCaseProposalSummaryResponse(ExtensibleResponse):
-    proposal_id: Optional[str] = None
-    title: Optional[str] = None
-    target_type: Optional[str] = None
-    target_path: Optional[str] = None
-    validation: Optional[str] = None
-    expected_effect: Optional[str] = None
+class EvalCaseOptimizationPlanSummaryResponse(ExtensibleResponse):
+    summary: Optional[str] = None
+    changes: list[JsonObject] = Field(default_factory=list)
+    risk_level: Optional[str] = None
 
 
 class EvalCaseResponse(ExtensibleResponse):
@@ -563,7 +492,7 @@ class EvalCaseResponse(ExtensibleResponse):
     checks_json: JsonObject = Field(default_factory=dict)
     source_summary: Optional[EvalCaseSourceSummaryResponse] = None
     attribution_summary: Optional[EvalCaseAttributionSummaryResponse] = None
-    proposal_summary: Optional[EvalCaseProposalSummaryResponse] = None
+    optimization_plan_summary: Optional[EvalCaseOptimizationPlanSummaryResponse] = None
 
 
 class FeedbackEvalCaseGenerateResultResponse(BaseModel):
@@ -623,9 +552,7 @@ class EvalRunResponse(ExtensibleResponse):
     status: str
     result_status: Optional[str] = None
     agent_version_id: Optional[str] = None
-    optimization_task_id: Optional[str] = None
     source: str
-    regression_plan_id: Optional[str] = None
     change_set_id: Optional[str] = None
     candidate_commit_sha: Optional[str] = None
     candidate_worktree_path: Optional[str] = None
@@ -658,50 +585,6 @@ class EvalCaseGovernanceEventResponse(ExtensibleResponse):
     created_at: str
     before: JsonObject = Field(default_factory=dict)
     after: JsonObject = Field(default_factory=dict)
-
-
-class RegressionPlanResponse(ExtensibleResponse):
-    schema_version: Optional[str] = None
-    regression_plan_id: str
-    batch_id: str
-    created_at: str
-    status: str
-    applied_agent_version_id: Optional[str] = None
-    selection_fingerprint: str
-    eval_case_ids: list[str] = Field(default_factory=list)
-    selected_cases: list[JsonObject] = Field(default_factory=list)
-    selection_summary: JsonObject = Field(default_factory=dict)
-    change_summary: JsonObject = Field(default_factory=dict)
-
-
-class RegressionImpactAnalysisResponse(ExtensibleResponse):
-    schema_version: Optional[str] = None
-    impact_analysis_id: str
-    eval_run_id: str
-    created_at: str
-    completed_at: Optional[str] = None
-    status: str
-    job_id: Optional[str] = None
-    result_status: Optional[str] = None
-    gate_result: JsonObject = Field(default_factory=dict)
-    impacted_assets: list[JsonObject] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
-
-
-class RegressionGateOverrideResponse(ExtensibleResponse):
-    override_id: str
-    batch_id: str
-    eval_run_id: str
-    operator: str
-    reason: str
-    expires_at: str
-    created_at: str
-    before: JsonObject = Field(default_factory=dict)
-    after: JsonObject = Field(default_factory=dict)
-
-
-class ExternalGovernanceNotifyRequest(BaseModel):
-    webhook_alias: str
 
 
 class EvidenceSourceRefsResponse(BaseModel):

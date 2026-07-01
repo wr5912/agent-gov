@@ -6,8 +6,8 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from ..records.case_records import FeedbackCaseRecord
 from ..json_types import JsonObject
+from ..records.case_records import FeedbackCaseRecord
 from ..runtime_db import FeedbackCaseModel, utc_now
 
 
@@ -68,6 +68,7 @@ class FeedbackCaseStoreMixin:
     def list_cases(
         self,
         *,
+        agent_id: Optional[str] = None,
         status: Optional[str] = None,
         q: Optional[str] = None,
         limit: int = 100,
@@ -75,7 +76,10 @@ class FeedbackCaseStoreMixin:
         query_text = q.lower() if q else None
         result: list[JsonObject] = []
         with self.Session() as db:
-            rows = db.scalars(select(FeedbackCaseModel).order_by(FeedbackCaseModel.updated_at.desc())).all()
+            stmt = select(FeedbackCaseModel).order_by(FeedbackCaseModel.updated_at.desc())
+            if agent_id:
+                stmt = stmt.where(FeedbackCaseModel.agent_id == agent_id)
+            rows = db.scalars(stmt).all()
             for row in rows:
                 record = self._case_to_dict(row)
                 if status and record.get("status") != status:
@@ -109,6 +113,7 @@ class FeedbackCaseStoreMixin:
         return self._scrub_record(
             {
                 "feedback_case_id": f"fbc-{uuid.uuid4()}",
+                "agent_id": self._feedback_case_agent_id(signals),
                 "created_at": now,
                 "updated_at": now,
                 "status": "pending_evidence",
@@ -124,7 +129,6 @@ class FeedbackCaseStoreMixin:
                 "case_ids": self._unique_strings([self._string(record.get("case_id")) or "" for record in records]),
                 "evidence_package_ids": [],
                 "attribution_job_ids": [],
-                "proposal_job_ids": [],
             }
         )
 
@@ -147,6 +151,7 @@ class FeedbackCaseStoreMixin:
         record = FeedbackCaseRecord.model_validate(feedback_case)
         return FeedbackCaseModel(
             feedback_case_id=record.feedback_case_id,
+            agent_id=record.agent_id,
             created_at=record.created_at,
             updated_at=record.updated_at,
             status=record.status,
@@ -154,7 +159,6 @@ class FeedbackCaseStoreMixin:
             priority=record.priority,
             current_evidence_package_id=self._latest(record.evidence_package_ids),
             current_attribution_job_id=self._latest(record.attribution_job_ids),
-            current_proposal_job_id=self._latest(record.proposal_job_ids),
             source_ids_json=record.source_ids,
             signal_ids_json=record.signal_ids,
             event_ids_json=record.event_ids,
@@ -175,7 +179,6 @@ class FeedbackCaseStoreMixin:
         status: Optional[str] = None,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
-        proposal_job_id: Optional[str] = None,
     ) -> JsonObject:
         with self.Session.begin() as db:
             if not self._append_case_update_row(
@@ -184,7 +187,6 @@ class FeedbackCaseStoreMixin:
                 status=status,
                 evidence_package_id=evidence_package_id,
                 attribution_job_id=attribution_job_id,
-                proposal_job_id=proposal_job_id,
             ):
                 return feedback_case
         return self.find_case(feedback_case["feedback_case_id"]) or feedback_case
@@ -197,7 +199,6 @@ class FeedbackCaseStoreMixin:
         status: Optional[str] = None,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
-        proposal_job_id: Optional[str] = None,
     ) -> bool:
         row = db.get(FeedbackCaseModel, feedback_case["feedback_case_id"])
         if not row:
@@ -207,20 +208,19 @@ class FeedbackCaseStoreMixin:
             status=status,
             evidence_package_id=evidence_package_id,
             attribution_job_id=attribution_job_id,
-            proposal_job_id=proposal_job_id,
         )
         self._apply_case_record(row, record)
         return True
 
     def _apply_case_record(self, row: FeedbackCaseModel, record: FeedbackCaseRecord) -> None:
         row.created_at = record.created_at
+        row.agent_id = record.agent_id
         row.updated_at = record.updated_at
         row.status = record.status
         row.title = record.title
         row.priority = record.priority
         row.current_evidence_package_id = self._latest(record.evidence_package_ids)
         row.current_attribution_job_id = self._latest(record.attribution_job_ids)
-        row.current_proposal_job_id = self._latest(record.proposal_job_ids)
         row.source_ids_json = record.source_ids
         row.signal_ids_json = record.signal_ids
         row.event_ids_json = record.event_ids
@@ -242,3 +242,7 @@ class FeedbackCaseStoreMixin:
             if isinstance(labels, list) and labels:
                 return ", ".join(map(str, labels[:3]))
         return "反馈处置单"
+
+    def _feedback_case_agent_id(self, signals: list[JsonObject]) -> str:
+        agent_ids = self._unique_strings([self._string(signal.get("agent_id")) or "" for signal in signals])
+        return agent_ids[0] if len(agent_ids) == 1 else "main-agent"

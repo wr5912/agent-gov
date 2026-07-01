@@ -91,7 +91,6 @@ class AgentChangeSetResponse(ExtensibleResponse):
     created_at: str
     updated_at: str
     status: str
-    optimization_task_id: Optional[str] = None
     execution_job_id: Optional[str] = None
     base_commit_sha: str
     candidate_commit_sha: Optional[str] = None
@@ -123,7 +122,6 @@ class AgentReleaseResponse(ExtensibleResponse):
 
 
 class AgentChangeSetCreateRequest(BaseModel):
-    optimization_task_id: Optional[str] = None
     base_commit_sha: Optional[str] = None
     title: Optional[str] = None
     note: Optional[str] = None

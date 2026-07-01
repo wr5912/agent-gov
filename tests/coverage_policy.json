@@ -8,118 +8,43 @@
   },
   "main_flows": [
     {
-      "id": "feedback_batch_optimization_plan",
-      "description": "Feedback batch optimization plan generation from request to API/UI projection.",
-      "scenarios": [
-        {
-          "id": "api_full_success_path",
-          "description": "Signal, batch, attribution, batch plan, execution, regression, and publish complete successfully.",
-          "pytest": [
-            "tests/test_api_execution_optimizer.py::test_feedback_optimization_batch_full_api_e2e"
-          ]
-        },
-        {
-          "id": "fob_da60_candidate_regression_assets",
-          "description": "fob-da60-like batch generated candidate eval cases must be promoted before regression, then the optimization loop runs through execution, regression, impact analysis, and publish.",
-          "pytest": [
-            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression",
-            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion",
-            "tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish"
-          ]
-        },
-        {
-          "id": "duplicate_click_reuses_running_job_and_replaces_failed_job",
-          "description": "Repeated plan generation does not leave duplicate active jobs and failed jobs are replaced.",
-          "pytest": [
-            "tests/test_feedback_store_batch_plans.py::test_batch_plan_running_job_is_reused_and_failed_job_is_replaced_on_retry"
-          ]
-        },
-        {
-          "id": "formatter_failure_is_projected_to_batch_error",
-          "description": "Formatter failure preserves diagnostics and exposes optimization_plan_error.",
-          "pytest": [
-            "tests/test_feedback_store_batch_plans.py::test_batch_plan_failure_preserves_raw_output_diagnostics",
-            "tests/test_feedback_job_orchestrator_errors.py::test_batch_plan_orchestrator_preserves_formatter_raw_output"
-          ]
-        },
-        {
-          "id": "backend_fields_are_authoritative",
-          "description": "Backend-owned identifiers and context fields override polluted agent output.",
-          "pytest": [
-            "tests/test_feedback_store_batch_plans.py::test_batch_plan_output_context_fields_are_backend_authoritative"
-          ]
-        },
-        {
-          "id": "incomplete_formatter_task_is_visible_as_blocked_item",
-          "description": "Incomplete formatter task does not disappear and is projected as a visible blocker.",
-          "pytest": [
-            "tests/test_feedback_store_batch_plans.py::test_complete_batch_plan_job_projects_incomplete_formatter_task_as_blocked_item"
-          ]
-        },
-        {
-          "id": "plan_task_edit_updates_execution_inputs",
-          "description": "Human edits to plan tasks update future optimization task inputs and invalidate stale execution jobs.",
-          "pytest": [
-            "tests/test_batch_plan_task_edit.py::test_edit_plan_task_updates_future_optimization_task_snapshot",
-            "tests/test_batch_plan_task_edit.py::test_edit_existing_task_invalidates_stale_execution_job",
-            "tests/test_batch_plan_task_edit.py::test_edit_rejects_running_execution_job",
-            "tests/test_batch_plan_task_edit.py::test_edit_rejects_applied_optimization_task",
-            "tests/test_batch_plan_task_edit.py::test_edit_failed_external_task_resets_notification_payload",
-            "tests/test_batch_plan_task_edit.py::test_edit_plan_task_api_returns_updated_batch",
-            "tests/test_batch_plan_task_execution_queue.py::test_batch_plan_task_execute_endpoint_reports_unqueueable_existing_task"
-          ]
-        },
-        {
-          "id": "batch_plan_one_click_execution",
-          "description": "One-click execution runs all actionable plan tasks, creates one Agent version for workspace tasks, rejects unsafe inputs and dirty workspace preflight, and can roll back to the pre-execution version.",
-          "pytest": [
-            "tests/test_batch_plan_execute_all.py::test_execute_all_workspace_tasks_creates_one_agent_version",
-            "tests/test_batch_plan_execute_all.py::test_execute_all_rejects_invalid_task_before_creating_run",
-            "tests/test_batch_plan_execute_all.py::test_execute_all_rejects_dirty_workspace_before_creating_run",
-            "tests/test_batch_plan_execute_all.py::test_execute_all_requires_webhook_alias_for_external_tasks",
-            "tests/test_batch_plan_execute_all.py::test_rollback_execute_all_resets_workspace_task_projection"
-          ]
-        },
-        {
-          "id": "worker_executes_legacy_profile_name_job_via_governor",
-          "description": "Pre-merge queued agent jobs persisted with a removed profile_name (e.g. attribution-analyzer) execute via the job_type to spec governor profile, not the stale persisted name (no DB migration after Governor merge).",
-          "pytest": [
-            "tests/test_batch_plan_task_execution_queue.py::test_worker_resolves_profile_from_job_type_not_persisted_stale_name"
-          ]
-        },
-        {
-          "id": "model_provider_route_and_capability_gate",
-          "description": "Runtime, Agent job and formatter model access use explicit MODEL_PROVIDER_BACKEND routing; vLLM probes derive /version and /v1/models from MODEL_PROVIDER_API_URL, route through LiteLLM sidecar, and block when sidecar capability checks fail.",
-          "pytest": [
-            "tests/test_model_provider_router.py::test_vllm_route_probes_version_and_derives_litellm_sidecar",
-            "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
-            "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
-            "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
-          ]
-        },
-        {
-          "id": "plan_tab_empty_success_failure_states",
-          "description": "Optimization plan tab renders empty state, generated plan, generation failure and timeout details including background job refresh, editable plan task states, dirty workspace preflight, one-click execution controls, and execution record details.",
-          "ui_scripts": [
-            "verify:design-parity"
-          ]
-        }
-      ]
-    },
-    {
       "id": "improvement_item_governance",
-      "description": "四阶段改进治理 cross-gen rebuild: ImprovementItem is the single event-level governance domain entity, created and advanced through its stage state machine, scoped by business agent, and exposed through the target governance UI path.",
+      "description": "四阶段改进治理：ImprovementItem 作为单一事项级治理实体，承载反馈整理、归因、优化方案、执行、回归测试和发布前证据。",
       "scenarios": [
         {
           "id": "improvement_item_single_source_lifecycle",
-          "description": "Create an improvement item under a business agent, list it scoped by agent, read detail, advance stages through the central state machine, and reject illegal stage transitions.",
+          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情、经状态机推进阶段并拒绝非法阶段跳转。",
           "pytest": [
             "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle"
           ]
         },
         {
+          "id": "governor_generation_trace_and_heuristic_fallback",
+          "description": "治理 Agent 为归因、优化方案、执行和回归生成内容，保存生成 Trace；失败时回退确定性启发式且不污染 backend-owned 字段。",
+          "pytest": [
+            "tests/test_improvement_governor_service.py::test_attribution_governor_path_maps_agent_owned_fields",
+            "tests/test_improvement_governor_service.py::test_attribution_governor_persists_generation_trace",
+            "tests/test_improvement_governor_service.py::test_attribution_falls_back_to_heuristic_on_governor_failure",
+            "tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute",
+            "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
+            "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
+            "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
+            "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
+            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied"
+          ]
+        },
+        {
+          "id": "legacy_batch_optimization_chain_removed",
+          "description": "旧 batch/task/proposal/regression-impact 链路不再出现在 OpenAPI 和新库 schema，旧表由迁移删除。",
+          "pytest": [
+            "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema",
+            "tests/test_runtime_db.py::test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain",
+            "tests/test_documentation_contracts.py::test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain"
+          ]
+        },
+        {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "The 四阶段改进治理 user-facing governance path exposes the simplified Playground, restores historical Playground runs after refresh, renders Markdown for both user and assistant messages, keeps long chat streaming pinned to the bottom unless the user scrolls up, exposes one-click bottom jump plus vertically centered user-question scroll anchors with capped/adaptive density marks and preview navigation across few/many-message cases, separates session navigation into the left sidebar, runtime settings into a drawer, Trace into the right evidence tab panel, keeps platform settings in a wide workspace-style dialog, keeps feedback creation and source management in drawers, and verifies the four-stage ImprovementItem workbench, read-only stage review from the spine, slim decision card whose primary action calls the next business artifact API instead of only lifecycle, ContextPackage drawer, test-release panels with TestDataset assets, and Asset Registry provenance using stable selectors.",
+          "description": "Playground、Trace、HITL、四阶段改进事项工作台、来源反馈管理、决策卡、ContextPackage 和 Asset Registry provenance 的浏览器验收。",
           "pytest": [
             "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore"
           ],
@@ -131,20 +56,21 @@
             "verify:remote-api-base",
             "verify:message-actions-browser"
           ]
-        },
+        }
+      ]
+    },
+    {
+      "id": "model_provider_route_and_capability_gate",
+      "description": "Runtime、Agent job 和 formatter 模型访问统一使用 MODEL_PROVIDER_BACKEND 路由，vLLM/LiteLLM sidecar 能力检查失败时硬阻断。",
+      "scenarios": [
         {
-          "id": "governor_generation_and_heuristic_fallback",
-          "description": "§17.5: improvement-scoped attribution/optimization-plan are generated by the governor LLM via reused agent_job_spec prompt/formatter, mapping agent-owned formatter fields to content sub-resources with generated_by=governor; on governor unavailability or failure the service falls back to deterministic heuristic (generated_by=heuristic); hostile/malformed agent output cannot pollute backend-owned id/status.",
+          "id": "vllm_route_and_sidecar_gate",
+          "description": "vLLM route 探测 /version 与 /v1/models，使用 LiteLLM sidecar 并在 sidecar 不可用时报告能力错误。",
           "pytest": [
-            "tests/test_improvement_governor_service.py::test_attribution_governor_path_maps_agent_owned_fields",
-            "tests/test_improvement_governor_service.py::test_attribution_falls_back_to_heuristic_on_governor_failure",
-            "tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute",
-            "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
-            "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
-            "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
-            "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
-            "tests/test_improvement_content.py::test_regression_assessment_generate_get_confirm"
+            "tests/test_model_provider_router.py::test_vllm_route_probes_version_and_derives_litellm_sidecar",
+            "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
+            "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
+            "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
           ]
         }
       ]

@@ -220,7 +220,7 @@ export function SettingsModal({ open, config, apiDocsUrl, langfuseUrl, onClose, 
     void run(async () => {
       const res = await deleteBusinessAgent(config, agentId);
       const i = res.impact;
-      setSuccessMsg(`已删除业务 Agent ${label}（影响：runs ${i.runs} · feedback ${i.feedback_signals} · 优化 ${i.optimization_tasks} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}）`);
+      setSuccessMsg(`已删除业务 Agent ${label}（影响：runs ${i.runs} · feedback ${i.feedback_signals} · 改进事项 ${i.improvements} · eval ${i.eval_runs} · 变更集 ${i.change_sets} · 发布 ${i.releases}）`);
       await reloadAgents();
       onAgentsChanged();
     }, `delete:${agentId}`);

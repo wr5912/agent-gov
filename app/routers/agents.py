@@ -24,6 +24,7 @@ from app.runtime.schemas import (
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
 
 _PASSED_EVAL_RESULT_STATUSES = {"passed", "passed_with_notes"}
@@ -74,6 +75,7 @@ def create_agents_router(
     settings: AppSettings,
     agent_registry_store: AgentRegistryStore,
     feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
     agent_governance: AgentGovernanceService,
     require_api_key: Callable,
 ) -> APIRouter:
@@ -136,7 +138,7 @@ def create_agents_router(
         impact = AgentDeletionImpact(
             runs=len(feedback_store.list_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
             feedback_signals=len(feedback_store.list_signals(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
-            optimization_tasks=len(feedback_store.list_tasks(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
+            improvements=len(improvement_store.list_improvements(agent_id=agent_id)),
             eval_runs=len(feedback_store.list_eval_runs(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
             change_sets=len(agent_governance.list_change_sets(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),
             releases=len(agent_governance.list_releases(agent_id=agent_id, limit=_IMPACT_COUNT_CAP)),

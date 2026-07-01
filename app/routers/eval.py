@@ -14,7 +14,6 @@ from app.runtime.schemas import (
     FeedbackEvalCaseUpdateRequest,
     FeedbackEvalDatasetSyncRequest,
     FeedbackEvalRunCreateRequest,
-    RegressionImpactAnalysisResponse,
 )
 
 
@@ -28,7 +27,6 @@ def create_eval_router(
     _register_eval_dataset_routes(router, runtime)
     _register_eval_case_routes(router, feedback_store)
     _register_eval_run_routes(router, feedback_store, runtime)
-    _register_eval_impact_routes(router, feedback_store, runtime)
     return router
 
 
@@ -97,13 +95,11 @@ def _register_eval_run_routes(
         summary="List feedback dataset eval runs",
     )
     async def list_eval_runs(
-        optimization_task_id: str | None = None,
         agent_version_id: str | None = None,
         status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[EvalRunResponse]:
         return feedback_store.list_eval_runs(
-            optimization_task_id=optimization_task_id,
             agent_version_id=agent_version_id,
             status=status,
             limit=limit,
@@ -119,26 +115,6 @@ def _register_eval_run_routes(
         return ensure_found(eval_run, "Eval run not found")
 
 
-def _register_eval_impact_routes(router: APIRouter, feedback_store: FeedbackStore, runtime: ClaudeRuntime) -> None:
-    @router.post(
-        "/eval-runs/{eval_run_id}/impact-analysis",
-        response_model=AgentJobResponse,
-        summary="Queue regression impact analysis for one eval run",
-    )
-    async def create_regression_impact_analysis(eval_run_id: str, force: bool = Query(default=False)) -> AgentJobResponse:
-        analysis = runtime.queue_regression_impact_analysis_job(eval_run_id, force=force)
-        return ensure_found(analysis, "Eval run not found")
-
-    @router.get(
-        "/eval-runs/{eval_run_id}/impact-analysis",
-        response_model=RegressionImpactAnalysisResponse,
-        summary="Get regression impact analysis for one eval run",
-    )
-    async def get_regression_impact_analysis(eval_run_id: str) -> RegressionImpactAnalysisResponse:
-        analysis = feedback_store.get_regression_impact_analysis(eval_run_id)
-        return ensure_found(analysis, "Regression impact analysis not found")
-
-
 async def _run_manual_feedback_eval(
     *,
     feedback_store: FeedbackStore,
@@ -147,7 +123,6 @@ async def _run_manual_feedback_eval(
 ) -> EvalRunResponse:
     result = await runtime.run_feedback_eval(
         eval_case_ids=req.eval_case_ids or None,
-        optimization_task_id=req.optimization_task_id,
         source="manual_feedback_dataset",
     )
     if not result:

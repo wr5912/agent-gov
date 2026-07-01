@@ -5,11 +5,13 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Mapping, cast
 
 CONTAINER_RUNTIME_VOLUME_ROOT = Path.home() / "volume-agent-gov"
 LOCAL_DEBUG_RUNTIME_VOLUME_ROOT = Path("/tmp/local-debug-volume-agent-gov")
 _CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
 _TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
+OpenApiSchema = Mapping[str, object]
 
 
 def main() -> None:
@@ -21,17 +23,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(build_openapi_schema(), ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    print(str(output_path))
+
+
+def build_openapi_schema() -> OpenApiSchema:
     project_root = Path(__file__).resolve().parents[1]
     if str(project_root) not in sys.path:
         sys.path.insert(0, str(project_root))
-    _apply_local_defaults(project_root)
+    original_env = os.environ.copy()
+    try:
+        _apply_local_defaults(project_root)
 
-    from app.main import app
+        from app.main import app
 
-    output_path = Path(args.output)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(json.dumps(app.openapi(), ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(str(output_path))
+        return cast(OpenApiSchema, app.openapi())
+    finally:
+        os.environ.clear()
+        os.environ.update(original_env)
 
 
 def _local_default_volume_root() -> Path:

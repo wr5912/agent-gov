@@ -87,11 +87,6 @@ class AgentJobWorker:
 
     async def _run_job(self, job: JsonObject) -> FormatterOutputModel | ProjectedOutputModel | JsonObject:
         job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
-        if job_type == AgentJobType.EXECUTION:
-            execution = self.feedback_store.get_execution_job(str(job["job_id"]))
-            deterministic = self.feedback_store.deterministic_execution_plan_output(execution or {})
-            if deterministic:
-                return deterministic
         job_input = cast(JsonObject, job.get("input_json")) if isinstance(job.get("input_json"), dict) else {}
         # 治理 job 富化上下文：使其 Langfuse trace 走 runtime.governor.{job_type} + scope sessionId
         # + role:governance tag，与业务 Agent 区分（整改方案 §4.4 / §5.6）。

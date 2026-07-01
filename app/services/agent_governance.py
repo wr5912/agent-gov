@@ -14,8 +14,6 @@ from app.runtime.runtime_db import (
     AgentChangeSetEventModel,
     AgentChangeSetModel,
     AgentReleaseModel,
-    FeedbackOptimizationBatchModel,
-    OptimizationTaskModel,
     utc_now,
 )
 from app.runtime.state_machines import validate_transition
@@ -24,8 +22,7 @@ from app.runtime.stores.feedback_store import FeedbackStore
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
 # pending_approval 不可直接发布：高风险变更必须先经 approve_change_set 转为 approved（AGV-041）。
 PUBLISHABLE_CHANGE_SET_STATES = {"candidate_committed", "approved", "regression_passed"}
-BATCH_REGRESSION_SOURCE = "optimization_batch_regression"
-BATCH_REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "passed_with_notes", "failed", "needs_human_review"}
+REGRESSION_BLOCKING_STATUSES = {"blocked", "review_required", "failed", "needs_human_review"}
 MAIN_AGENT_ID = "main-agent"
 
 
@@ -138,15 +135,12 @@ class AgentGovernanceService:
         self,
         *,
         status: str | None = None,
-        optimization_task_id: str | None = None,
         agent_id: str | None = None,
         limit: int = 100,
     ) -> list[JsonObject]:
         stmt = select(AgentChangeSetModel).order_by(AgentChangeSetModel.created_at.desc()).limit(limit)
         if status:
             stmt = stmt.where(AgentChangeSetModel.status == status)
-        if optimization_task_id:
-            stmt = stmt.where(AgentChangeSetModel.optimization_task_id == optimization_task_id)
         if agent_id:
             stmt = stmt.where(AgentChangeSetModel.agent_id == agent_id)
         with self.feedback_store.Session() as db:
@@ -168,36 +162,9 @@ class AgentGovernanceService:
             ).all()
             return [self._event_to_payload(row) for row in rows]
 
-    def _resolve_optimization_context(
-        self,
-        optimization_task_id: str | None,
-        base_commit_sha: str | None,
-        title: str | None,
-        agent_id: str | None,
-    ) -> tuple[JsonObject | None, str | None, str | None, str | None]:
-        """解析优化任务上下文，回填 base_commit/title/agent_id。
-
-        返回 ``(existing_change_set, base_commit_sha, title, agent_id)``；
-        命中既有活跃 change set 时 existing 非空，调用方应直接返回它。
-        """
-        if not optimization_task_id:
-            return None, base_commit_sha, title, agent_id
-        existing = self.latest_active_change_set_for_task(optimization_task_id)
-        if existing:
-            return existing, base_commit_sha, title, agent_id
-        task = self.feedback_store.find_task(optimization_task_id)
-        if not task:
-            raise AgentGovernanceError(404, "Optimization task not found")
-        base_commit_sha = base_commit_sha or str(task.get("baseline_agent_version_id") or "")
-        title = title or str(task.get("proposal_id") or optimization_task_id)
-        # 优化任务已 agent-scoped：未显式传入时归属随任务，缺失回退 main-agent。
-        agent_id = agent_id or task.get("agent_id")
-        return None, base_commit_sha, title, agent_id
-
     def create_change_set(
         self,
         *,
-        optimization_task_id: str | None = None,
         execution_job_id: str | None = None,
         base_commit_sha: str | None = None,
         title: str | None = None,
@@ -205,11 +172,6 @@ class AgentGovernanceService:
         agent_id: str | None = None,
         operator: str = "runtime",
     ) -> JsonObject:
-        existing, base_commit_sha, title, agent_id = self._resolve_optimization_context(
-            optimization_task_id, base_commit_sha, title, agent_id
-        )
-        if existing:
-            return existing
         agent_id = self._normalize_agent_id(agent_id)
         store = self._store_for(agent_id)
         base_commit_sha = base_commit_sha or store.current_commit_sha()
@@ -228,7 +190,6 @@ class AgentGovernanceService:
             "created_at": now,
             "updated_at": now,
             "status": "draft",
-            "optimization_task_id": optimization_task_id,
             "execution_job_id": execution_job_id,
             "base_commit_sha": worktree.base_commit_sha,
             "candidate_commit_sha": None,
@@ -247,7 +208,6 @@ class AgentGovernanceService:
                 created_at=now,
                 updated_at=now,
                 status="draft",
-                optimization_task_id=optimization_task_id,
                 execution_job_id=execution_job_id,
                 base_commit_sha=worktree.base_commit_sha,
                 candidate_commit_sha=None,
@@ -258,29 +218,7 @@ class AgentGovernanceService:
             db.add(row)
             db.flush()
             self._add_event_row(db, change_set_id, "created", operator, before={}, after=payload)
-            if optimization_task_id:
-                self.feedback_store._update_task_payload_row(
-                    db,
-                    optimization_task_id,
-                    status="execution_ready",
-                    fields={
-                        "latest_change_set_id": change_set_id,
-                        "latest_change_set": payload,
-                    },
-                )
         return self.get_change_set(change_set_id) or payload
-
-    def latest_active_change_set_for_task(self, optimization_task_id: str) -> JsonObject | None:
-        with self.feedback_store.Session() as db:
-            rows = db.scalars(
-                select(AgentChangeSetModel)
-                .where(AgentChangeSetModel.optimization_task_id == optimization_task_id)
-                .order_by(AgentChangeSetModel.created_at.desc())
-            ).all()
-            for row in rows:
-                if row.status not in TERMINAL_CHANGE_SET_STATES:
-                    return self._change_set_to_payload(row)
-        return None
 
     def mark_candidate_committed(
         self,
@@ -353,7 +291,7 @@ class AgentGovernanceService:
         result_status = str(eval_run.get("result_status") or "")
         target = (
             "regression_passed"
-            if result_status in {"passed", "passed_with_notes"} and not self._batch_regression_publication_blocker(eval_run)
+            if result_status in {"passed", "passed_with_notes"} and not self._eval_run_publication_blocker(eval_run)
             else "regression_failed"
         )
         return self._transition_change_set(
@@ -497,22 +435,6 @@ class AgentGovernanceService:
             row.payload_json = payload
             after = self._change_set_to_payload(row)
             self._add_event_row(db, change_set_id, action, operator, before=before, after=after)
-            task_id = after.get("optimization_task_id")
-            if isinstance(task_id, str) and task_id:
-                next_task_status = self._task_status_for_change_set(after)
-                task_row = db.get(OptimizationTaskModel, task_id)
-                if task_row and task_row.status == "completed" and next_task_status != "completed":
-                    next_task_status = "completed"
-                self.feedback_store._update_task_payload_row(
-                    db,
-                    task_id,
-                    status=next_task_status,
-                    fields={
-                        "latest_change_set_id": change_set_id,
-                        "latest_change_set": after,
-                        "candidate_commit_sha": after.get("candidate_commit_sha"),
-                    },
-                )
         return self.get_change_set(change_set_id) or after
 
     def _transition_release(self, release_id: str, status: str, *, fields: JsonObject, operator: str) -> JsonObject:
@@ -601,7 +523,6 @@ class AgentGovernanceService:
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,
-                "optimization_task_id": row.optimization_task_id,
                 "execution_job_id": row.execution_job_id,
                 "base_commit_sha": row.base_commit_sha,
                 "candidate_commit_sha": row.candidate_commit_sha,
@@ -609,50 +530,15 @@ class AgentGovernanceService:
                 "worktree_path": row.worktree_path,
             }
         )
-        payload["publication_blocker"] = self._batch_regression_publication_blocker(payload.get("latest_eval_run"))
+        payload["publication_blocker"] = self._eval_run_publication_blocker(payload.get("latest_eval_run"))
         return payload
 
     def _publication_blocker_for_change_set(self, change_set: JsonObject) -> str | None:
-        blocker = self._batch_regression_publication_blocker(change_set.get("latest_eval_run"))
-        if blocker:
-            return blocker
-        task_id = change_set.get("optimization_task_id")
-        if not isinstance(task_id, str) or not task_id:
-            return None
-        batch = self._latest_batch_for_optimization_task(task_id)
-        if not batch:
-            return None
-        latest_eval_run = batch.get("latest_eval_run")
-        if not isinstance(latest_eval_run, dict):
-            return None
-        change_set_id = str(change_set.get("change_set_id") or "")
-        run_change_set_id = latest_eval_run.get("change_set_id")
-        if run_change_set_id and str(run_change_set_id) != change_set_id:
-            return None
-        return self._batch_regression_publication_blocker(latest_eval_run)
-
-    def _latest_batch_for_optimization_task(self, optimization_task_id: str) -> JsonObject | None:
-        with self.feedback_store.Session() as db:
-            rows = db.scalars(select(FeedbackOptimizationBatchModel).order_by(FeedbackOptimizationBatchModel.updated_at.desc())).all()
-            for row in rows:
-                payload = dict(row.payload_json or {})
-                task_ids = {str(item) for item in payload.get("optimization_task_ids") or [] if item}
-                if payload.get("optimization_task_id") == optimization_task_id or optimization_task_id in task_ids:
-                    payload.update(
-                        {
-                            "batch_id": row.batch_id,
-                            "created_at": row.created_at,
-                            "updated_at": row.updated_at,
-                            "status": row.status,
-                            "title": row.title,
-                        }
-                    )
-                    return payload
-        return None
+        return self._eval_run_publication_blocker(change_set.get("latest_eval_run"))
 
     @staticmethod
-    def _batch_regression_publication_blocker(eval_run: object) -> str | None:
-        if not isinstance(eval_run, dict) or eval_run.get("source") != BATCH_REGRESSION_SOURCE:
+    def _eval_run_publication_blocker(eval_run: object) -> str | None:
+        if not isinstance(eval_run, dict):
             return None
         failed_case_ids = [
             str(item.get("eval_case_id"))
@@ -663,11 +549,11 @@ class AgentGovernanceService:
         summary_failed = _safe_int(summary.get("failed")) + _safe_int(summary.get("needs_human_review"))
         gate_result = eval_run.get("gate_result") if isinstance(eval_run.get("gate_result"), dict) else {}
         status = str(eval_run.get("result_status") or gate_result.get("status") or "")
-        if not failed_case_ids and summary_failed <= 0 and status not in BATCH_REGRESSION_BLOCKING_STATUSES:
+        if not failed_case_ids and summary_failed <= 0 and status not in REGRESSION_BLOCKING_STATUSES:
             return None
         failed_count = len(failed_case_ids) or summary_failed
         detail = f"{failed_count} 条用例失败" if failed_count else f"状态 {status}"
-        return f"批次回归存在失败用例（{detail}），禁止发布。请修复后重新运行批次回归并确认通过。"
+        return f"回归验证存在失败用例（{detail}），禁止发布。请修复后重新运行回归并确认通过。"
 
     def _event_to_payload(self, row: AgentChangeSetEventModel) -> JsonObject:
         return {
@@ -704,24 +590,6 @@ class AgentGovernanceService:
             "modified": len(diff.get("modified") or []),
             "deleted": len(diff.get("deleted") or []),
         }
-
-    def _task_status_for_change_set(self, change_set: JsonObject) -> str:
-        status = str(change_set.get("status") or "")
-        if status in {"draft", "execution_ready"}:
-            return "execution_ready"
-        if status in {"candidate_committed", "pending_approval", "approved"}:
-            return "applied_pending_regression"
-        if status == "regression_running":
-            return "regression_running"
-        if status == "regression_passed":
-            return "regression_passed"
-        if status in {"regression_failed", "rejected"}:
-            return "regression_failed"
-        if status == "published":
-            return "completed"
-        if status == "failed":
-            return "failed"
-        return "needs_human_review"
 
     def change_set_worktree_path(self, change_set: JsonObject) -> Path:
         return Path(str(change_set.get("worktree_path") or ""))

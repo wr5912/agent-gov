@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import select
 
-from ..errors import BusinessRuleViolation
-from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..json_types import JsonObject
+from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
 from ..runtime_db import (
     AgentChangeSetModel,
     EvalRunItemModel,
@@ -34,55 +33,12 @@ class FeedbackEvalStoreMixin:
             "results": [],
         }
 
-    def _build_manual_batch_eval_case(self, batch: JsonObject, fields: JsonObject) -> JsonObject:
-        prompt = (self._string(fields.get("prompt")) or "").strip()
-        if not prompt:
-            raise BusinessRuleViolation("Eval case prompt cannot be empty")
-        checks = fields.get("checks_json")
-        if checks is not None and not isinstance(checks, dict):
-            raise BusinessRuleViolation("Eval case checks_json must be an object")
-        labels = fields.get("labels")
-        if labels is not None and not isinstance(labels, list):
-            raise BusinessRuleViolation("Eval case labels must be a list")
-        status = self._string(fields.get("status")) or "active"
-        if status not in {"active", "draft", "archived"}:
-            raise BusinessRuleViolation("Eval case status must be active, draft, or archived")
-        now = utc_now()
-        normalized_labels = self._unique_strings(
-            [*(str(item).strip() for item in labels or [] if str(item).strip()), "feedback_optimization", "optimization_batch"]
-        )
-        return {
-            "schema_version": "feedback-eval-case/v1",
-            "eval_case_id": f"evc-{uuid.uuid4()}",
-            "created_at": now,
-            "updated_at": now,
-            "status": status,
-            "source": "optimization_batch_manual",
-            "source_feedback_case_id": None,
-            "source_run_id": None,
-            "source_kind": "optimization_batch",
-            "source_id": batch.get("batch_id"),
-            "source_refs": batch.get("source_refs") or [],
-            "asset_layer": "batch_specific",
-            "promotion_status": "approved",
-            "blocking_policy": "blocking",
-            "severity": "medium",
-            "flaky_status": "stable",
-            "variant_role": "manual_regression",
-            "prompt": prompt,
-            "expected_behavior": (self._string(fields.get("expected_behavior")) or "").strip(),
-            "checks_json": dict(checks or {}),
-            "labels": normalized_labels,
-        }
-
     def create_eval_run(
         self,
         *,
         eval_case_ids: list[str],
         agent_version_id: Optional[str],
-        optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
-        regression_plan_id: Optional[str] = None,
         change_set_id: Optional[str] = None,
         candidate_commit_sha: Optional[str] = None,
         candidate_worktree_path: Optional[str] = None,
@@ -100,9 +56,7 @@ class FeedbackEvalStoreMixin:
             "result_status": "running",
             "agent_id": resolved_agent_id,
             "agent_version_id": agent_version_id,
-            "optimization_task_id": optimization_task_id,
             "source": source,
-            "regression_plan_id": regression_plan_id,
             "change_set_id": change_set_id,
             "candidate_commit_sha": candidate_commit_sha,
             "candidate_worktree_path": candidate_worktree_path,
@@ -121,9 +75,7 @@ class FeedbackEvalStoreMixin:
                     status=record.status,
                     agent_id=record.agent_id,
                     agent_version_id=record.agent_version_id,
-                    optimization_task_id=record.optimization_task_id,
                     source=record.source,
-                    regression_plan_id=record.regression_plan_id,
                     payload_json=record.to_payload(),
                 )
             )
@@ -210,7 +162,7 @@ class FeedbackEvalStoreMixin:
             summary = self._eval_run_summary(items)
             gate_result = self._gate_result_for_items(items)
             record = EvalRunRecord.from_row(run)
-            gated = bool(record.regression_plan_id or record.source == "optimization_batch_regression")
+            gated = bool(record.change_set_id or record.source == "agent_change_set_regression")
             result_status = gate_result["status"] if gated else self._eval_result_status(summary)
             record = record.transition_to(
                 "completed",
@@ -226,11 +178,6 @@ class FeedbackEvalStoreMixin:
             run.payload_json = record.to_payload()
             self._update_eval_case_run_stats(db, items, completed_at)
         finished = self.get_eval_run(eval_run_id)
-        task_id = self._string((finished or {}).get("optimization_task_id"))
-        if task_id and finished:
-            next_status = self._task_status_for_eval_result(str(finished.get("result_status") or "needs_human_review"))
-            self._attach_task_regression_run(task_id, finished, status=next_status)
-            return self.get_eval_run(eval_run_id)
         return finished
 
     def fail_eval_run(self, eval_run_id: str, *, error_code: str, message: str) -> Optional[JsonObject]:
@@ -247,23 +194,17 @@ class FeedbackEvalStoreMixin:
             run.completed_at = record.completed_at
             run.payload_json = record.to_payload()
         failed = self.get_eval_run(eval_run_id)
-        task_id = self._string((failed or {}).get("optimization_task_id"))
-        if task_id and failed:
-            self._attach_task_regression_run(task_id, failed, status="failed")
         return failed
 
     def list_eval_runs(
         self,
         *,
-        optimization_task_id: Optional[str] = None,
         agent_version_id: Optional[str] = None,
         agent_id: Optional[str] = None,
         status: Optional[str] = None,
         limit: int = 100,
     ) -> list[JsonObject]:
         stmt = select(EvalRunModel).order_by(EvalRunModel.created_at.desc()).limit(limit)
-        if optimization_task_id:
-            stmt = stmt.where(EvalRunModel.optimization_task_id == optimization_task_id)
         if agent_version_id:
             stmt = stmt.where(EvalRunModel.agent_version_id == agent_version_id)
         if agent_id:
@@ -349,10 +290,6 @@ class FeedbackEvalStoreMixin:
         attribution_output = self.get_job_output(attribution_job_id, "attribution") or {}
         if not attribution_output:
             return None
-        optimization_plan = self._latest_optimization_plan_for_feedback_case(str(feedback_case.get("feedback_case_id") or "")) or {}
-        plan_tasks = [item for item in optimization_plan.get("tasks") or [] if isinstance(item, dict)]
-        primary_plan_item = plan_tasks[0] if plan_tasks else optimization_plan
-
         source_run_id = self._latest(feedback_case.get("run_ids"))
         source_run = self.find_run(run_id=source_run_id) if source_run_id else None
         prompt = self._string((source_run or {}).get("message")) or self._string(feedback_case.get("title"))
@@ -367,8 +304,8 @@ class FeedbackEvalStoreMixin:
                 self._string(attribution_output.get("optimization_object_type")) or "",
             ]
         )
-        expected_behavior = self._eval_expected_behavior(feedback_case, attribution_output, primary_plan_item)
-        checks_json = self._eval_checks(labels, attribution_output, primary_plan_item)
+        expected_behavior = self._eval_expected_behavior(feedback_case, attribution_output, {})
+        checks_json = self._eval_checks(labels, attribution_output, {})
         created_at = utc_now()
         return {
             "schema_version": "feedback-eval-case/v1",
@@ -404,15 +341,6 @@ class FeedbackEvalStoreMixin:
                 "actionability": attribution_output.get("actionability"),
                 "confidence": attribution_output.get("confidence"),
                 "rationale": attribution_output.get("rationale"),
-            },
-            "proposal_summary": {
-                "optimization_plan_id": optimization_plan.get("optimization_plan_id"),
-                "plan_task_id": primary_plan_item.get("plan_task_id"),
-                "title": primary_plan_item.get("title") or optimization_plan.get("title"),
-                "target_type": primary_plan_item.get("target_type") or optimization_plan.get("target_type"),
-                "target_path": primary_plan_item.get("target_path") or optimization_plan.get("target_path"),
-                "validation": primary_plan_item.get("validation") or optimization_plan.get("validation"),
-                "expected_effect": primary_plan_item.get("expected_effect") or optimization_plan.get("expected_effect"),
             },
         }
 
@@ -475,9 +403,7 @@ class FeedbackEvalStoreMixin:
             items = [
                 EvalRunItemRecord.from_row(item).to_payload()
                 for item in db.scalars(
-                    select(EvalRunItemModel)
-                    .where(EvalRunItemModel.eval_run_id == row.eval_run_id)
-                    .order_by(EvalRunItemModel.eval_run_item_id.asc())
+                    select(EvalRunItemModel).where(EvalRunItemModel.eval_run_id == row.eval_run_id).order_by(EvalRunItemModel.eval_run_item_id.asc())
                 ).all()
             ]
         return record.to_response(items=items)

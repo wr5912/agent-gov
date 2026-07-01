@@ -57,6 +57,17 @@
 - 升版即打 tag、保持一致：bump VERSION 并发布时用 `make tag`（从 VERSION 打 `v<VERSION>` 并推 origin）创建匹配 tag；不得让 VERSION 长期领先 origin 最新 release tag。
 - Agent 行为：Claude/Codex 默认不主动 bump VERSION、不主动创建/推送 tag（属人工发布决策）；任务确需改版本先确认是否到发布点；发现 VERSION 已领先最新 tag（一致性门软告警）时提示用户用 `make tag` 补，不擅自补打。
 
+## 提交说明纪律
+
+用户要求“提交”或“提交、推送”时，先按当前 staged/unstaged diff 判断提交复杂度，再生成提交说明。普通小改可只有标题；以下 AgentGov 场景属于非琐碎提交，必须写正文并包含 `Compatibility` 和 `Verification`：
+
+- 修改 SQLite schema、migration、runtime data 布局或 `${HOME}/volume-agent-gov` 兼容策略。
+- 修改公开 API、OpenAPI、前端生成类型、用户可见 UI 主流程或容器部署行为。
+- 修改反馈优化主流程、Agent job、formatter、store 投影、业务 Agent workspace 模板或 runtime/env。
+- 删除旧 router/store/schema/test/UI 入口，或一次提交跨后端、前端、docs、tests、配置中的两个及以上配置面。
+
+提交正文只写工程意图、兼容影响和已完成验证；不要复述大段 diff，不写 prompt 流水账，不写真实密钥、本机私有路径或运行态数据。
+
 ## 配置与环境边界
 
 - 环境变量文件：私有 `docker/.env`（容器部署）、`docker/.env.local-debug`（宿主机 Python/PyCharm 调试）、`frontend/.env.local`（Vite 本机前端）；可提交示例 `docker/.env.example`。不要把这些文件关系描述成“覆盖”，用“选择 env 文件 / 私有 env 文件 / 本机调试 env 文件”。

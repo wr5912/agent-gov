@@ -61,9 +61,7 @@ class EvalRunRecord(StrictRuntimeRecord):
     result_status: EvalRunResultStatus = "running"
     agent_id: str = "main-agent"
     agent_version_id: Optional[str] = None
-    optimization_task_id: Optional[str] = None
     source: str
-    regression_plan_id: Optional[str] = None
     change_set_id: Optional[str] = None
     candidate_commit_sha: Optional[str] = None
     candidate_worktree_path: Optional[str] = None
@@ -151,9 +149,7 @@ class EvalRunRecord(StrictRuntimeRecord):
                 "status": row.status,
                 "agent_id": row.agent_id or "main-agent",
                 "agent_version_id": row.agent_version_id,
-                "optimization_task_id": row.optimization_task_id,
                 "source": row.source,
-                "regression_plan_id": row.regression_plan_id,
             }
         )
         return cls.model_validate(payload)

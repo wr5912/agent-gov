@@ -5,7 +5,7 @@ from __future__ import annotations
 业务 Agent 聊天经 ClaudeRuntime.run/stream 富化；治理 job 经 run_profile_json 执行，
 此前不富化、不可观测。本模块为治理 job 套一层 in-process Langfuse 观测，使其 trace：
   - trace name = runtime.governor.{job_type}（与业务 runtime.business_agent.* 区分）
-  - sessionId  = 治理范围 id（case:/batch:，统一规则而非聊天 session_id）
+  - sessionId  = 治理范围 id（case:/improvement:/eval:，统一规则而非聊天 session_id）
   - tags       = role:governance + agent:governor + job_type:{job_type}
   - userId     = system:governor
 从而在同一 Langfuse project 内按 role/agent/session 区分治理与业务、并定位治理活动。
@@ -16,12 +16,11 @@ from typing import Any, Optional
 
 from .json_types import JsonObject
 
-# scope_kind -> sessionId 前缀。治理范围天然分组单元：归因按 case，批次/执行/评估/回归按 batch。
+# scope_kind -> sessionId 前缀。治理范围天然分组单元：归因按 case，四阶段按 improvement，评估按 eval。
 _SCOPE_SESSION_PREFIX = {
     "feedback_case": "case",
-    "optimization_batch": "batch",
-    "optimization_task": "batch",
-    "eval_run": "batch",
+    "eval_run": "eval",
+    "improvement": "improvement",
 }
 
 
@@ -46,11 +45,14 @@ async def run_governor_profile_json(
     langfuse: Any,
     run: Callable[[], Awaitable[Any]],
     governor: Optional[JsonObject],
+    trace_callback: Callable[[JsonObject], None] | None = None,
 ) -> Any:
     """在治理 job 富化上下文内执行 run()；governor 缺省或 Langfuse 关闭时直接执行。"""
     enabled = bool(getattr(getattr(langfuse, "settings", None), "langfuse_enabled", False))
     if not governor or not enabled:
-        return await run()
+        result = await run()
+        _notify_trace_callback(langfuse, trace_callback)
+        return result
     attrs = governor_trace_attributes(
         job_type=str(governor.get("job_type") or ""),
         scope_kind=str(governor.get("scope_kind") or ""),
@@ -60,4 +62,13 @@ async def run_governor_profile_json(
     with langfuse.propagate_attributes(**attrs):
         with langfuse.start_observation(as_type="span", name=attrs["trace_name"], metadata=attrs["metadata"]) as root_span:
             langfuse.set_trace_attributes(root_span, **attrs)
-            return await run()
+            result = await run()
+            _notify_trace_callback(langfuse, trace_callback)
+            return result
+
+
+def _notify_trace_callback(langfuse: Any, trace_callback: Callable[[JsonObject], None] | None) -> None:
+    if trace_callback is None:
+        return
+    trace_id, trace_url = langfuse.current_trace_ref()
+    trace_callback({"trace_id": trace_id or "", "trace_url": trace_url or ""})

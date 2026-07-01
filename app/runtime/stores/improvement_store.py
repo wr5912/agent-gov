@@ -19,8 +19,8 @@ from ..improvement_db import (
 from ..runtime_db import utc_now
 from ..state_machines import validate_transition
 
-# 改进事项可引用的既有闭环对象类型（W2-c 轻引用）。
-LINK_KINDS = {"attribution", "optimization_plan", "eval_run", "change_set", "batch"}
+# 改进事项可引用的当前闭环对象类型（W2-c 轻引用）。
+LINK_KINDS = {"attribution", "optimization_plan", "eval_run", "change_set"}
 
 
 @dataclass(frozen=True)

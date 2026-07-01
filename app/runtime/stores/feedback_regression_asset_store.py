@@ -10,7 +10,6 @@ from sqlalchemy import select
 from ..errors import BusinessRuleViolation
 from ..json_types import JsonObject
 from ..records.eval_case_records import (
-    ACTIVE_ASSET_LAYERS,
     ASSET_LAYERS,
     BLOCKING_POLICIES,
     FLAKY_STATUSES,
@@ -21,17 +20,12 @@ from ..records.eval_case_records import (
     apply_eval_case_record,
 )
 from ..records.eval_run_records import EvalRunItemRecord, EvalRunRecord
-from ..records.regression_impact_records import RegressionImpactAnalysisRecord, RegressionImpactedAssetRecord
-from ..records.regression_plan_records import RegressionGateOverrideRecord, RegressionPlanRecord
 from ..runtime_db import (
     EvalCaseGovernanceEventModel,
     EvalCaseModel,
     EvalCaseRevisionModel,
     EvalRunItemModel,
     EvalRunModel,
-    RegressionGateOverrideModel,
-    RegressionImpactAnalysisModel,
-    RegressionPlanModel,
     utc_now,
 )
 
@@ -140,7 +134,7 @@ class FeedbackRegressionAssetStoreMixin:
     def promote_eval_case(self, eval_case_id: str, fields: JsonObject) -> Optional[JsonObject]:
         asset_layer = self._string(fields.get("asset_layer")) or "core_regression"
         blocking_policy = self._string(fields.get("blocking_policy")) or (
-            "blocking" if asset_layer in {"batch_specific", "smoke", "safety"} else "blocking_if_relevant"
+            "blocking" if asset_layer in {"targeted_regression", "smoke", "safety"} else "blocking_if_relevant"
         )
         return self.update_eval_case(
             eval_case_id,
@@ -199,143 +193,6 @@ class FeedbackRegressionAssetStoreMixin:
             ).all()
             return [self._eval_case_governance_event_to_dict(row) for row in rows]
 
-    def create_regression_plan(self, batch_id: str, *, force: bool = False) -> Optional[JsonObject]:
-        batch = self.find_optimization_batch(batch_id)
-        if not batch:
-            return None
-        selected_cases = self._selected_regression_cases_for_batch(batch)
-        if not selected_cases:
-            detail, error_details = self._batch_regression_asset_empty_error(batch)
-            raise BusinessRuleViolation(detail, error_details=error_details)
-        created_at = utc_now()
-        base_fingerprint = self._regression_plan_fingerprint(batch, selected_cases)
-        if not force:
-            existing = self._find_regression_plan_by_fingerprint(batch_id, base_fingerprint)
-            if existing:
-                return existing
-        fingerprint = base_fingerprint if not force else self._forced_regression_plan_fingerprint(base_fingerprint)
-        plan_id = f"rgp-{uuid.uuid4()}"
-        task = self.find_task(self._string(batch.get("optimization_task_id")) or "") if batch.get("optimization_task_id") else None
-        payload = {
-            "schema_version": "regression-plan/v1",
-            "regression_plan_id": plan_id,
-            "batch_id": batch_id,
-            "created_at": created_at,
-            "status": "created",
-            "applied_agent_version_id": (task or {}).get("applied_agent_version_id") or batch.get("applied_agent_version_id"),
-            "selection_fingerprint": fingerprint,
-            "base_selection_fingerprint": base_fingerprint,
-            "eval_case_ids": [case["eval_case_id"] for case in selected_cases],
-            "selected_cases": [self._regression_case_snapshot(case) for case in selected_cases],
-            "selection_summary": self._regression_selection_summary(selected_cases),
-            "change_summary": self._change_summary_for_batch(batch),
-        }
-        record = RegressionPlanRecord.model_validate(payload)
-        with self.Session.begin() as db:
-            db.add(
-                RegressionPlanModel(
-                    regression_plan_id=record.regression_plan_id,
-                    batch_id=record.batch_id,
-                    created_at=record.created_at,
-                    status=record.status,
-                    applied_agent_version_id=record.applied_agent_version_id,
-                    selection_fingerprint=record.selection_fingerprint,
-                    payload_json=record.to_payload(),
-                )
-            )
-            batch_row = self._batch_row_for_update(db, batch_id)
-            if batch_row:
-                self._update_batch_row(
-                    db,
-                    batch_id,
-                    status=batch_row.status,
-                    fields={"regression_plan_id": plan_id, "latest_regression_plan": record.to_payload()},
-                )
-        return self.get_regression_plan(plan_id)
-
-    def get_regression_plan(self, regression_plan_id: str) -> Optional[JsonObject]:
-        if not regression_plan_id:
-            return None
-        with self.Session() as db:
-            row = db.get(RegressionPlanModel, regression_plan_id)
-            return self._regression_plan_to_dict(row) if row else None
-
-    def get_latest_regression_plan(self, batch_id: str) -> Optional[JsonObject]:
-        with self.Session() as db:
-            row = db.scalars(
-                select(RegressionPlanModel).where(RegressionPlanModel.batch_id == batch_id).order_by(RegressionPlanModel.created_at.desc())
-            ).first()
-            return self._regression_plan_to_dict(row) if row else None
-
-    def create_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
-        job = self.queue_regression_impact_agent_job(eval_run_id)
-        if not job:
-            return None
-        return self.get_regression_impact_analysis(eval_run_id)
-
-    def get_regression_impact_analysis(self, eval_run_id: str) -> Optional[JsonObject]:
-        with self.Session() as db:
-            row = db.scalars(select(RegressionImpactAnalysisModel).where(RegressionImpactAnalysisModel.eval_run_id == eval_run_id)).first()
-            return self._impact_analysis_to_dict(row) if row else None
-
-    def record_regression_gate_override(self, batch_id: str, eval_run_id: str, fields: JsonObject) -> Optional[JsonObject]:
-        eval_run = self.get_eval_run(eval_run_id)
-        if not eval_run:
-            return None
-        operator = (self._string(fields.get("operator")) or "").strip()
-        reason = (self._string(fields.get("reason")) or "").strip()
-        expires_at = (self._string(fields.get("expires_at")) or "").strip()
-        if not operator or not reason or not expires_at:
-            raise BusinessRuleViolation("operator, reason, and expires_at are required")
-        override_id = f"rgo-{uuid.uuid4()}"
-        created_at = utc_now()
-        before = dict(eval_run)
-        after = dict(eval_run)
-        gate_result = dict(after.get("gate_result") or {})
-        gate_result.update({"status": "passed_with_notes", "override_id": override_id, "override_reason": reason})
-        after["gate_result"] = gate_result
-        after["result_status"] = "passed_with_notes"
-        after["gate_overridden_at"] = created_at
-        after["gate_override_id"] = override_id
-        override = RegressionGateOverrideRecord.model_validate(
-            {
-                "override_id": override_id,
-                "batch_id": batch_id,
-                "eval_run_id": eval_run_id,
-                "operator": operator,
-                "reason": reason,
-                "expires_at": expires_at,
-                "created_at": created_at,
-                "before": before,
-                "after": after,
-            }
-        )
-        with self.Session.begin() as db:
-            run = db.get(EvalRunModel, eval_run_id)
-            if not run:
-                return None
-            run.payload_json = EvalRunRecord.from_payload(after).to_payload()
-            db.add(
-                RegressionGateOverrideModel(
-                    override_id=override.override_id,
-                    batch_id=override.batch_id,
-                    eval_run_id=override.eval_run_id,
-                    operator=override.operator,
-                    reason=override.reason,
-                    expires_at=override.expires_at,
-                    created_at=override.created_at,
-                    before_json=override.before,
-                    after_json=override.after,
-                )
-            )
-        self.record_batch_regression_result(batch_id, after)
-        return self.get_regression_gate_override(override_id)
-
-    def get_regression_gate_override(self, override_id: str) -> Optional[JsonObject]:
-        with self.Session() as db:
-            row = db.get(RegressionGateOverrideModel, override_id)
-            return self._gate_override_to_dict(row) if row else None
-
     def _update_eval_case_row(self, db: Any, payload: JsonObject) -> bool:
         row = db.get(EvalCaseModel, payload["eval_case_id"])
         if not row:
@@ -364,7 +221,7 @@ class FeedbackRegressionAssetStoreMixin:
         normalized["asset_layer"] = self._defaulted_enum(
             normalized.get("asset_layer"),
             ASSET_LAYERS,
-            "batch_specific" if is_batch_manual else "candidate",
+            "targeted_regression" if is_batch_manual else "candidate",
             "asset_layer",
         )
         normalized["promotion_status"] = self._defaulted_enum(
@@ -541,154 +398,10 @@ class FeedbackRegressionAssetStoreMixin:
             record = EvalCaseRecord.model_validate(self._eval_case_with_asset_defaults(payload))
             apply_eval_case_record(row, record)
 
-    def _task_status_for_eval_result(self, result_status: str) -> str:
-        if result_status in {"passed", "passed_with_notes"}:
-            return "completed"
-        if result_status == "review_required":
-            return "needs_human_review"
-        if result_status in {"blocked", "failed"}:
-            return "regression_failed"
-        return result_status or "needs_human_review"
-
-    def _regression_plan_to_dict(self, row: RegressionPlanModel) -> JsonObject:
-        return RegressionPlanRecord.from_row(row).to_payload()
-
-    def _find_regression_plan_by_fingerprint(self, batch_id: str, fingerprint: str) -> Optional[JsonObject]:
-        with self.Session() as db:
-            row = db.scalars(
-                select(RegressionPlanModel).where(RegressionPlanModel.batch_id == batch_id).where(RegressionPlanModel.selection_fingerprint == fingerprint)
-            ).first()
-            return self._regression_plan_to_dict(row) if row else None
-
-    def _selected_regression_cases_for_batch(self, batch: JsonObject) -> list[JsonObject]:
-        batch_case_ids = {str(item) for item in batch.get("eval_case_ids") or [] if item}
-        selected: list[JsonObject] = []
-        seen: set[str] = set()
-        for eval_case_id in batch_case_ids:
-            case = self.find_eval_case(eval_case_id)
-            if self._eval_case_enters_regression_plan(case):
-                selected.append(case)
-                seen.add(str(case["eval_case_id"]))
-        for case in self.list_eval_cases(status="active", promotion_status="approved", limit=500):
-            case_id = str(case["eval_case_id"])
-            if case_id in seen:
-                continue
-            if case.get("asset_layer") in ACTIVE_ASSET_LAYERS:
-                selected.append(case)
-                seen.add(case_id)
-        return selected
-
-    def _eval_case_enters_regression_plan(self, eval_case: Optional[JsonObject]) -> bool:
-        return bool(
-            eval_case
-            and eval_case.get("status") == "active"
-            and eval_case.get("promotion_status") == "approved"
-            and eval_case.get("asset_layer") in ACTIVE_ASSET_LAYERS
-            and eval_case.get("flaky_status") != "flaky"
-        )
-
-    def _regression_plan_fingerprint(self, batch: JsonObject, selected_cases: list[JsonObject]) -> str:
-        task = self.find_task(self._string(batch.get("optimization_task_id")) or "") if batch.get("optimization_task_id") else None
-        stable = {
-            "batch_id": batch.get("batch_id"),
-            "applied_agent_version_id": (task or {}).get("applied_agent_version_id") or batch.get("applied_agent_version_id"),
-            "cases": [
-                {
-                    "eval_case_id": case.get("eval_case_id"),
-                    "content_hash": case.get("content_hash"),
-                    "blocking_policy": case.get("blocking_policy"),
-                    "asset_layer": case.get("asset_layer"),
-                }
-                for case in selected_cases
-            ],
-        }
-        encoded = json.dumps(stable, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
-    def _forced_regression_plan_fingerprint(self, base_fingerprint: str) -> str:
-        return hashlib.sha256(f"{base_fingerprint}:{uuid.uuid4()}".encode()).hexdigest()
-
-    def _regression_case_snapshot(self, case: JsonObject) -> JsonObject:
-        return {
-            "eval_case_id": case.get("eval_case_id"),
-            "status": case.get("status"),
-            "asset_layer": case.get("asset_layer"),
-            "promotion_status": case.get("promotion_status"),
-            "blocking_policy": case.get("blocking_policy"),
-            "severity": case.get("severity"),
-            "flaky_status": case.get("flaky_status"),
-            "variant_role": case.get("variant_role"),
-            "content_hash": case.get("content_hash"),
-            "labels": list(case.get("labels") or []),
-            "prompt": case.get("prompt"),
-            "expected_behavior": case.get("expected_behavior"),
-            "checks_json": dict(case.get("checks_json") or {}),
-        }
-
-    def _regression_selection_summary(self, selected_cases: list[JsonObject]) -> JsonObject:
-        by_layer: dict[str, int] = {}
-        by_policy: dict[str, int] = {}
-        for case in selected_cases:
-            by_layer[str(case.get("asset_layer") or "unknown")] = by_layer.get(str(case.get("asset_layer") or "unknown"), 0) + 1
-            by_policy[str(case.get("blocking_policy") or "unknown")] = by_policy.get(str(case.get("blocking_policy") or "unknown"), 0) + 1
-        return {"total": len(selected_cases), "by_asset_layer": by_layer, "by_blocking_policy": by_policy}
-
-    def _change_summary_for_batch(self, batch: JsonObject) -> JsonObject:
-        task = batch.get("optimization_task") if isinstance(batch.get("optimization_task"), dict) else None
-        return {
-            "batch_title": batch.get("title"),
-            "batch_status": batch.get("status"),
-            "feedback_case_ids": list(batch.get("feedback_case_ids") or []),
-            "source_refs": list(batch.get("source_refs") or []),
-            "optimization_task_id": (task or {}).get("optimization_task_id") or batch.get("optimization_task_id"),
-            "target_paths": list((task or {}).get("target_paths") or []),
-        }
-
-    def _batch_row_for_update(self, db: Any, batch_id: str) -> Any:
-        from ..runtime_db import FeedbackOptimizationBatchModel
-
-        return db.get(FeedbackOptimizationBatchModel, batch_id)
-
-    def _impact_analysis_to_dict(self, row: RegressionImpactAnalysisModel) -> JsonObject:
-        return RegressionImpactAnalysisRecord.from_row(row).to_payload()
-
-    def _impacted_assets_from_eval_run(self, eval_run: JsonObject) -> list[JsonObject]:
-        impacted: list[JsonObject] = []
-        for item in eval_run.get("items") or []:
-            if not isinstance(item, dict) or item.get("status") == "passed":
-                continue
-            snapshot = item.get("eval_case_snapshot") if isinstance(item.get("eval_case_snapshot"), dict) else {}
-            impacted.append(
-                RegressionImpactedAssetRecord.model_validate(
-                    {
-                        "eval_case_id": item.get("eval_case_id"),
-                        "status": item.get("status"),
-                        "asset_layer": snapshot.get("asset_layer"),
-                        "blocking_policy": snapshot.get("blocking_policy"),
-                        "labels": list(snapshot.get("labels") or []),
-                        "answer_summary": item.get("answer_summary"),
-                    }
-                ).to_payload()
-            )
-        return impacted
-
-    def _impact_recommendations(self, eval_run: JsonObject) -> list[str]:
-        status = str(eval_run.get("result_status") or "")
-        if status == "blocked":
-            return ["阻断发布；先修复 blocking 回归失败，再重新生成回归计划并执行。"]
-        if status == "review_required":
-            return ["进入人工复核；确认 blocking_if_relevant 失败是否与本次变更相关。"]
-        if status == "passed_with_notes":
-            return ["允许继续，但应跟踪 non_blocking 失败并决定是否提升资产层级。"]
-        return ["门禁通过；保留本次运行记录作为长期回归资产趋势基线。"]
-
-    def _gate_override_to_dict(self, row: RegressionGateOverrideModel) -> JsonObject:
-        return RegressionGateOverrideRecord.from_row(row).to_payload()
-
     def _default_blocking_policy(self, asset_layer: str, promotion_status: str, status: str) -> str:
         if status != "active" or promotion_status != "approved":
             return "non_blocking"
-        if asset_layer in {"batch_specific", "smoke", "safety"}:
+        if asset_layer in {"targeted_regression", "smoke", "safety"}:
             return "blocking"
         if asset_layer in {"core_regression", "scenario_pack", "historical_bug"}:
             return "blocking_if_relevant"

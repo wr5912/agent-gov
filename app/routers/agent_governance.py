@@ -91,10 +91,9 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     )
     async def list_agent_change_sets(
         status: str | None = None,
-        optimization_task_id: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentChangeSetResponse]:
-        return agent_governance.list_change_sets(status=status, optimization_task_id=optimization_task_id, limit=limit)
+        return agent_governance.list_change_sets(status=status, limit=limit)
 
     @router.post(
         "/agent-change-sets",
@@ -103,7 +102,6 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
     )
     async def create_agent_change_set(req: AgentChangeSetCreateRequest) -> AgentChangeSetResponse:
         return agent_governance.create_change_set(
-            optimization_task_id=req.optimization_task_id,
             base_commit_sha=req.base_commit_sha,
             title=req.title,
             note=req.note,
@@ -193,7 +191,6 @@ def _register_change_set_action_routes(
         agent_governance.mark_regression_running(change_set_id, eval_run_id="pending")
         result = await runtime.run_feedback_eval(
             eval_case_ids=eval_case_ids,
-            optimization_task_id=change_set.get("optimization_task_id") if isinstance(change_set.get("optimization_task_id"), str) else None,
             source="agent_change_set_regression",
             change_set_id=change_set_id,
             candidate_commit_sha=candidate,
@@ -263,15 +260,11 @@ def _require_candidate_commit(change_set: JsonObject) -> str:
 def _change_set_eval_case_ids(feedback_store: FeedbackStore, change_set: JsonObject, requested: list[str] | None) -> list[str]:
     if requested:
         return requested
-    task_id = change_set.get("optimization_task_id")
-    task = feedback_store.find_task(task_id) if isinstance(task_id, str) else None
-    if not task or not task.get("feedback_case_id"):
-        return []
     return [
         item["eval_case_id"]
         for item in feedback_store.list_eval_cases(
             status="active",
-            source_feedback_case_id=str(task["feedback_case_id"]),
+            promotion_status="approved",
             limit=100,
         )
     ]

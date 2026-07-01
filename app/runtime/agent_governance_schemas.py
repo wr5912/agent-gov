@@ -34,21 +34,22 @@ class AgentSummaryResponse(BaseModel):
     origin: str = Field(default="user", description="来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。")
 
 
-class AssetProvenanceTask(BaseModel):
-    optimization_task_id: str
-    status: Optional[str] = None
-    target_paths: list[str] = Field(default_factory=list, description="本次优化改动的资产路径（改了哪些资产）。")
-    eval_case_ids: list[str] = Field(default_factory=list)
-    latest_change_set_id: Optional[str] = None
-    applied_agent_version_id: Optional[str] = Field(default=None, description="改动进入的 Agent 版本（进入哪个版本）。")
+class AssetProvenanceImprovement(BaseModel):
+    improvement_id: str
+    agent_id: str
+    title: str
+    improvement_stage: str
+    improvement_status: str
+    source_feedback_refs: list[str] = Field(default_factory=list)
+    change_set_ids: list[str] = Field(default_factory=list, description="该改进事项已关联的 Agent change set。")
 
 
 class AssetProvenanceResponse(BaseModel):
-    """某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、改了哪些资产、进入哪个版本。"""
+    """某次反馈的资产关系链（AGV-022）：反馈影响了哪个 Agent、进入哪些改进事项和变更集。"""
 
     feedback_case_id: str
     agent_ids: list[str] = Field(default_factory=list, description="该反馈归属的 Agent（影响了哪个 Agent）。")
-    optimization_tasks: list[AssetProvenanceTask] = Field(default_factory=list)
+    improvements: list[AssetProvenanceImprovement] = Field(default_factory=list)
 
 
 class AgentLifecycleTransitionRequest(BaseModel):
@@ -64,7 +65,7 @@ class FeedbackSignalReassignRequest(BaseModel):
 class AgentDeletionImpact(BaseModel):
     runs: int = Field(description="该 Agent 归属的运行记录数（影响面提示，按 limit 截顶）。")
     feedback_signals: int = Field(description="该 Agent 归属的反馈信号数（影响面提示，按 limit 截顶）。")
-    optimization_tasks: int = Field(default=0, description="该 Agent 归属的优化任务数（影响面提示，按 limit 截顶）。")
+    improvements: int = Field(default=0, description="该 Agent 归属的改进事项数（影响面提示，按 limit 截顶）。")
     eval_runs: int = Field(default=0, description="该 Agent 归属的评估运行数（影响面提示，按 limit 截顶）。")
     change_sets: int = Field(default=0, description="该 Agent 归属的版本 change set 数（影响面提示，按 limit 截顶）。")
     releases: int = Field(default=0, description="该 Agent 归属的版本 release 数（影响面提示，按 limit 截顶）。")

@@ -13,7 +13,7 @@ class AgentVersionSummaryResponse(ExtensibleResponse):
     created_at: str
     reason: str
     rollback_of_version_id: Optional[str] = None
-    source_proposal_ids: list[str] = Field(default_factory=list)
+    source_change_set_ids: list[str] = Field(default_factory=list)
     note: Optional[str] = None
     agent_yaml_version: Optional[str] = None
     snapshot_policy_version: Optional[str] = None

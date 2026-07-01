@@ -181,7 +181,7 @@ def create_improvement_relations_router(
         "/improvements/{improvement_id}/links",
         response_model=ImprovementLinkResponse,
         status_code=201,
-        summary="Link an improvement to a closed-loop object (attribution/plan/eval/change_set/batch)",
+        summary="Link an improvement to a closed-loop object (attribution/plan/eval/change_set)",
     )
     async def add_link(improvement_id: str, req: ImprovementLinkRequest) -> ImprovementLinkResponse:
         # 未知 kind / 空 ref_id 由 store 拒绝（400）；未知改进事项 404。

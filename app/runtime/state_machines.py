@@ -34,62 +34,12 @@ JOB_IN_PROGRESS_STATES = {
 
 AGENT_JOB_STATES = JOB_STATES
 
-EXECUTION_JOB_STATES = {
-    "queued",
-    "running",
-    "ready",
-    "needs_human_review",
-    "failed",
-    "completed",
-}
-
 CASE_STATES = {
     "pending_evidence",
     "pending_attribution",
     "attribution_queued",
-    "pending_proposal",
-    "proposal_queued",
     "pending_review",
     "needs_human_review",
-}
-
-BATCH_STATES = {
-    "draft",
-    "attribution_running",
-    "attribution_completed",
-    "attribution_failed",
-    "optimization_plan_queued",
-    "pending_approval",
-    "approved",
-    "rejected",
-    "execution_planning",
-    "execution_ready",
-    "needs_human_review",
-    "failed",
-    "applied_pending_regression",
-    "regression_running",
-    "regression_passed",
-    "regression_failed",
-    "completed",
-    "blocked",
-    "sent",
-    "notification_failed",
-    "pending_execution",
-    "execution_failed",
-}
-
-TASK_STATES = {
-    "pending_execution",
-    "execution_planning",
-    "execution_ready",
-    "needs_human_review",
-    "failed",
-    "execution_failed",
-    "applied_pending_regression",
-    "regression_running",
-    "regression_passed",
-    "regression_failed",
-    "completed",
 }
 
 EVAL_RUN_STATES = {
@@ -111,36 +61,6 @@ EVAL_CASE_PROMOTION_STATES = {
     "rejected",
     "superseded",
     "archived",
-}
-
-PROPOSAL_STATES = {
-    "pending_review",
-    "approved",
-    "rejected",
-    "needs_more_analysis",
-    "superseded",
-}
-
-EXTERNAL_GOVERNANCE_ITEM_STATES = {
-    "pending_notification",
-    "notification_failed",
-    "notified",
-    "superseded",
-}
-
-EXECUTION_APPLICATION_STATES = {
-    "created",
-    "applied",
-    "failed",
-    "pending_manual_recovery",
-    "compensated",
-}
-
-REGRESSION_IMPACT_ANALYSIS_STATES = {
-    "pending",
-    "completed",
-    "needs_human_review",
-    "failed",
 }
 
 PENDING_CORRELATION_STATES = {
@@ -247,106 +167,12 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "completed": set(),
         "timeout": {"failed"},
     },
-    "execution_job": {
-        "queued": {"running", "ready", "needs_human_review", "failed"},
-        "running": {"ready", "needs_human_review", "failed"},
-        "ready": {"completed", "failed"},
-        "needs_human_review": {"running", "failed"},
-        "failed": {"running"},
-        "completed": set(),
-    },
     "case": {
         "pending_evidence": {"pending_attribution", "attribution_queued", "needs_human_review"},
-        "pending_attribution": {"attribution_queued", "needs_human_review"},
-        "attribution_queued": {"pending_attribution", "pending_proposal", "needs_human_review"},
-        "pending_proposal": {"pending_attribution", "proposal_queued", "needs_human_review"},
-        "proposal_queued": {"pending_proposal", "pending_review", "needs_human_review"},
-        "pending_review": {"proposal_queued", "pending_attribution", "needs_human_review"},
-        "needs_human_review": {"pending_attribution", "attribution_queued", "pending_proposal", "proposal_queued"},
-    },
-    "batch": {
-        "draft": {"attribution_running", "attribution_completed", "optimization_plan_queued", "pending_execution", "needs_human_review"},
-        "attribution_running": {"draft", "attribution_running", "attribution_completed", "attribution_failed", "needs_human_review"},
-        "attribution_completed": {"draft", "optimization_plan_queued", "pending_execution", "needs_human_review"},
-        "attribution_failed": {"draft", "attribution_running", "needs_human_review"},
-        "optimization_plan_queued": {"draft", "optimization_plan_queued", "pending_execution", "needs_human_review", "failed"},
-        "pending_approval": {"draft", "optimization_plan_queued", "execution_planning", "needs_human_review", "pending_execution", "blocked"},
-        "approved": {"draft", "optimization_plan_queued", "execution_planning", "needs_human_review", "pending_execution", "blocked"},
-        "rejected": {"draft", "optimization_plan_queued", "needs_human_review", "pending_execution"},
-        "execution_planning": {
-            "execution_planning",
-            "draft",
-            "optimization_plan_queued",
-            "execution_ready",
-            "needs_human_review",
-            "execution_failed",
-            "failed",
-            "applied_pending_regression",
-            "pending_execution",
-            "sent",
-            "notification_failed",
-            "blocked",
-            "completed",
-        },
-        "execution_ready": {
-            "draft",
-            "optimization_plan_queued",
-            "pending_execution",
-            "execution_planning",
-            "applied_pending_regression",
-            "execution_failed",
-            "needs_human_review",
-            "failed",
-        },
-        "needs_human_review": {
-            "draft",
-            "attribution_running",
-            "optimization_plan_queued",
-            "pending_execution",
-            "execution_planning",
-            "failed",
-        },
-        "failed": {"pending_execution", "execution_planning", "regression_running", "applied_pending_regression"},
-        "applied_pending_regression": {
-            "pending_execution",
-            "regression_running",
-            "regression_passed",
-            "regression_failed",
-            "completed",
-            "failed",
-            "needs_human_review",
-            "blocked",
-        },
-        "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review", "blocked"},
-        "regression_passed": {"completed"},
-        "regression_failed": {"regression_running", "failed", "completed", "needs_human_review"},
-        "completed": set(),
-        "blocked": {"draft", "pending_execution", "optimization_plan_queued", "needs_human_review"},
-        "sent": {"notification_failed", "pending_execution", "execution_planning"},
-        "notification_failed": {"draft", "optimization_plan_queued", "sent", "pending_execution", "execution_planning", "needs_human_review"},
-        "pending_execution": {
-            "draft",
-            "optimization_plan_queued",
-            "execution_planning",
-            "execution_ready",
-            "execution_failed",
-            "applied_pending_regression",
-            "failed",
-        },
-        "execution_failed": {"draft", "optimization_plan_queued", "pending_execution", "execution_planning", "failed", "needs_human_review"},
-    },
-    "task": {
-        "pending_execution": {"execution_planning", "execution_ready", "needs_human_review", "failed", "execution_failed", "applied_pending_regression"},
-        "execution_planning": {"execution_planning", "execution_ready", "needs_human_review", "failed", "execution_failed", "applied_pending_regression"},
-        "execution_ready": {"pending_execution", "applied_pending_regression", "execution_failed", "failed", "needs_human_review"},
-        "needs_human_review": {"pending_execution", "execution_planning", "execution_ready", "failed", "execution_failed", "applied_pending_regression"},
-        "failed": {"pending_execution", "execution_planning", "regression_running", "applied_pending_regression"},
-        "execution_failed": {"pending_execution", "execution_planning", "failed", "needs_human_review"},
-        "applied_pending_regression": {"pending_execution", "regression_running", "regression_passed", "regression_failed", "completed", "failed"},
-        "regression_running": {"regression_passed", "regression_failed", "completed", "failed", "needs_human_review"},
-        "regression_passed": {"completed"},
-        "regression_failed": {"regression_running", "failed", "completed", "needs_human_review"},
-        "completed": set(),
+        "pending_attribution": {"attribution_queued", "pending_review", "needs_human_review"},
+        "attribution_queued": {"pending_attribution", "pending_review", "needs_human_review"},
+        "pending_review": {"pending_attribution", "needs_human_review"},
+        "needs_human_review": {"pending_attribution", "attribution_queued", "pending_review"},
     },
     "eval_run": {
         "running": {"completed", "failed"},
@@ -365,32 +191,6 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rejected": {"candidate", "archived"},
         "superseded": set(),
         "archived": set(),
-    },
-    "proposal": {
-        "pending_review": {"approved", "rejected", "needs_more_analysis", "superseded"},
-        "approved": set(),
-        "rejected": set(),
-        "needs_more_analysis": {"approved", "rejected", "superseded"},
-        "superseded": set(),
-    },
-    "external_governance_item": {
-        "pending_notification": {"pending_notification", "notified", "notification_failed", "superseded"},
-        "notification_failed": {"pending_notification", "notified", "notification_failed", "superseded"},
-        "notified": {"notified", "notification_failed", "superseded"},
-        "superseded": set(),
-    },
-    "execution_application": {
-        "created": {"applied", "failed", "pending_manual_recovery", "compensated"},
-        "applied": set(),
-        "failed": set(),
-        "pending_manual_recovery": {"compensated", "failed"},
-        "compensated": set(),
-    },
-    "regression_impact_analysis": {
-        "pending": {"completed", "needs_human_review", "failed"},
-        "completed": {"pending"},
-        "needs_human_review": {"pending"},
-        "failed": {"pending"},
     },
     "pending_correlation": {
         "pending": {"resolved"},
@@ -423,17 +223,10 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
 _KNOWN_STATES = {
     "job": JOB_STATES,
     "agent_job": AGENT_JOB_STATES,
-    "execution_job": EXECUTION_JOB_STATES,
     "case": CASE_STATES,
-    "batch": BATCH_STATES,
-    "task": TASK_STATES,
     "eval_run": EVAL_RUN_STATES,
     "eval_case": EVAL_CASE_STATES,
     "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
-    "proposal": PROPOSAL_STATES,
-    "external_governance_item": EXTERNAL_GOVERNANCE_ITEM_STATES,
-    "execution_application": EXECUTION_APPLICATION_STATES,
-    "regression_impact_analysis": REGRESSION_IMPACT_ANALYSIS_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,

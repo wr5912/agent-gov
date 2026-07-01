@@ -20,14 +20,13 @@ from app.routers.config import create_config_router
 from app.routers.core import create_core_router
 from app.routers.error_handlers import register_error_handlers
 from app.routers.eval import create_eval_router
-from app.routers.feedback_batches import create_feedback_batches_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.improvement_content import create_improvement_content_router
 from app.routers.improvement_feedback_ops import create_improvement_feedback_ops_router
 from app.routers.improvements import create_improvement_relations_router, create_improvements_router
+from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.routers.openai import create_openai_router
-from app.routers.optimization import create_optimization_router
 from app.routers.regression_assets import create_regression_assets_router
 from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
@@ -50,9 +49,9 @@ from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.services.agent_governance import AgentGovernanceService
-from app.services.execution_application import ExecutionApplicationService
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
+from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 from app.version import APP_VERSION
 
 settings = get_settings()
@@ -114,12 +113,7 @@ improvement_governor_service = ImprovementGovernorService(
 automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)
 asset_store = AssetStore(runtime_db_session_factory)
 runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
-execution_application = ExecutionApplicationService(
-    settings=settings,
-    feedback_store=feedback_store,
-    agent_version_store=agent_version_store,
-    agent_governance=agent_governance,
-)
+execution_application = WorkspaceExecutionApplier()
 improvement_execution_service = ImprovementExecutionService(
     improvement_store=improvement_store,
     content_store=improvement_content_store,
@@ -242,6 +236,7 @@ app.include_router(
         settings=settings,
         agent_registry_store=agent_registry_store,
         feedback_store=feedback_store,
+        improvement_store=improvement_store,
         agent_governance=agent_governance,
         require_api_key=require_api_key,
     )
@@ -275,6 +270,7 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
+app.include_router(create_langfuse_traces_router(runtime=runtime, require_api_key=require_api_key))
 app.include_router(
     create_automation_router(
         improvement_store=improvement_store,
@@ -291,29 +287,12 @@ app.include_router(
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))
-app.include_router(create_feedback_cases_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
-app.include_router(
-    create_feedback_batches_router(
-        feedback_store=feedback_store,
-        runtime=runtime,
-        execution_application=execution_application,
-        agent_governance=agent_governance,
-        require_api_key=require_api_key,
-    )
-)
+app.include_router(create_feedback_cases_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(
     create_feedback_workbench_router(
         feedback_store=feedback_store,
+        improvement_store=improvement_store,
         runtime=runtime,
-        require_api_key=require_api_key,
-    )
-)
-app.include_router(
-    create_optimization_router(
-        feedback_store=feedback_store,
-        runtime=runtime,
-        execution_application=execution_application,
-        agent_governance=agent_governance,
         require_api_key=require_api_key,
     )
 )

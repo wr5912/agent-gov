@@ -41,6 +41,8 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "- evidence_refs：引用哪些证据文件、证据引用原因、证据支持了什么结论。\n"
             "- responsibility_boundary：责任方 owner、责任边界和责任边界 reason。\n"
             "- rationale：完整归因理由。\n"
+            "- counter_evidence 和 uncertainty_factors：反证、冲突证据或仍不确定的因素。\n"
+            "- verification_suggestions：后续应如何复核或回归验证。\n"
             "- recommended_next_step：生成优化方案、人工复核或停止，并说明原因。",
         ),
         (
@@ -69,66 +71,36 @@ def _prompt_context_section(context_name: str, prompt_context: JsonObject | None
     return f"以下是后端构造的输入上下文，不需要调用工具读取 job 输入文件。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
 
 
-def proposal_generator_prompt(*, prompt_context: JsonObject | None = None) -> str:
+def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
-            "你是反馈闭环中的优化方案生成智能体 proposal-generator。你的职责是统筹输入中的所有已校验归因结果，"
-            "直接生成可供开发人员阅读并点击执行的优化任务列表。",
+            "你是改进事项闭环中的优化方案生成智能体。你的职责是基于已确认的反馈整理和归因分析，生成事项级优化方案。",
         ),
-        ("输入", "输入上下文由后端从 SQLite 中的归因、评估用例和批次状态构造；不需要读取 job 输入文件或临时目录。"),
+        (
+            "输入",
+            "输入上下文由后端从当前改进事项、NormalizedFeedback 和 Attribution 构造；不需要读取 job 输入文件或临时目录。",
+        ),
         (
             "工作方式",
-            "围绕输入中的反馈、归因输出、回归用例和 target_policy 生成任务。单条反馈也会以 size=1 优化批次输入。"
-            "不要假设后端会根据空泛理由再补全业务含义；不要把归因过程当作任务描述。",
+            "先确认问题、责任边界和证据，再提出可以被后续执行阶段消费的优化方向。"
+            "本阶段只产出方案，不推进状态、不创建批次、不创建任务队列、不生成外部治理 webhook。",
         ),
         (
             "业务信息要点",
-            "顶层方案必须能直接读出：标题、摘要、问题类型、置信度、可执行性、目标对象、目标路径或外部对象、"
-            "优化建议、预期效果、验证方式、风险、生成理由和证据引用。\n"
-            "批次标识、计划标识、创建时间、来源关联、反馈范围、评估范围和归因关联由后端保存时补齐；"
-            "Agent 不需要复述任何系统 ID 或时间戳。重新生成意图只作为本次业务约束参考。\n"
-            "tasks 是开发人员可以点击执行的优化任务。每个 task 必须围绕任务本身描述："
-            "任务标题、描述、目标、目标摘要、建议、建议动作、验收标准、预期效果、验证方式、风险、分析摘要、证据摘要和证据引用。"
-            "归因依据只可放到 analysis_summary、evidence_summary 或 evidence_refs。\n"
-            "blocked_items 只用于不能执行且不能派发的项；每个 blocked item 必须说明 title、reason、recommendation 和缺失条件。",
-        ),
-        (
-            "workspace 可执行任务",
-            "workspace 可执行任务要求：execution_kind=workspace_execution；target_path 必须是相对 main-workspace 的受管文件路径，"
-            "并且必须来自 input.target_policy 允许范围；actionability 使用 direct_workspace_change、workspace_config_change 或 eval_only。\n"
-            "优化范围严格限定在 main-workspace：任何涉及 main-workspace 之外的写入建议（绝对路径、上级目录 ..、/data、"
-            "/data/outputs、其他 *-workspace 或 claude-roots 等）都不得作为 workspace_execution 任务输出，必须写入 blocked_items "
-            "说明越界原因与缺失条件，或在能定位到外部系统/工具时改为 external_webhook 任务；后端也会对越界 target_path 拒绝执行。",
-        ),
-        (
-            "外部系统任务",
-            "外部系统任务要求：execution_kind=external_webhook；必须明确 owner，并在 tasks[].task_context 中给出可执行定位信息。\n"
-            "task_context 必须直接放在对应 task 内，不能作为顶层字段输出。外部任务至少包含："
-            "external_system 或 mcp_server、tool_name/tool_names 或 api_name/api_path/endpoint、以及 query_ids/alert_ids/case_ids/"
-            "asset_ids/affected_fields/observed_issue 中的至少一类具体对象或问题描述。\n"
-            "对外部 MCP 工具、数据源、知识库或 SOC 流程问题，只要能定位到系统、工具或 API、具体问题描述，"
-            "就必须生成 external_webhook 任务。例如 sec-ops-data 的 list_vulnerabilities 存在 2026 年漏洞数据缺失时，"
-            "应输出通知 sec-ops-data 工具提供方修复数据覆盖的 external_webhook 任务，而不是放入 blocked_items。\n"
-            "如果无法明确到外部对象、接口、工具、ID 或受影响字段，不要生成 external_webhook 任务，改写入 blocked_items 并说明缺什么。",
-        ),
-        (
-            "回归用例纳入（不生成任务）",
-            "不要生成把评估用例纳入长期回归资产的任务（不得输出 execution_kind=internal_action 或 internal_action=promote_eval_cases）。"
-            "评估用例是否纳入长期回归资产由用户在“回归测试用例”界面自行决定（手动晋级），不作为优化方案任务自动产出，避免增加认知负担。"
-            "本批次生成的候选评估用例保持候选状态即可；优化方案只产出 workspace_execution、external_webhook 任务和 blocked_items。",
+            "输出中必须能直接读出：summary、changes 和 risk_level。\n"
+            "summary 用一段话说明优化策略、目标和收益。\n"
+            "changes 是变更项列表，每项必须包含 target 和 change；target 应是 prompt、skill、subagent、mcp_config、"
+            "runtime_config、eval_case 或其他明确治理资产，change 写清要改什么以及为什么。\n"
+            "risk_level 说明低/中/高风险或等价中文描述。",
         ),
         (
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
-            "不要输出 JSON、代码块、schema payload 或带 ``` 的代码围栏；只输出 Markdown 小节或列表形式的结构化业务要点。\n"
-            "标题、摘要、建议、预期效果、验证方式、风险、理由、任务标题、任务描述、任务目标、任务建议动作、"
-            "任务验收标准、阻断项原因和阻断项建议必须使用简体中文。\n"
-            "不要用 manual_review 表示可执行任务。开发人员阅读优化方案后点击执行即表示同意执行对应 task，因此不要设计二次审批字段。\n"
-            "如果 optimization_plan_prompt_context.regeneration_instruction 非空，可作为本次重新生成的开发人员补充意图；"
-            "但它不能覆盖中文输出、证据约束、target_policy 和可执行性要求。",
+            "不要输出后端系统 ID、路由名、队列名、工具调用参数或后端版本字段。"
+            "不要输出 JSON 代码块；用自然语言小节或列表表达即可，formatter 会转换为结构化模型。",
         ),
-        ("输入上下文", _prompt_context_section("optimization_plan_prompt_context", prompt_context)),
+        ("输入上下文", _prompt_context_section("improvement_optimization_plan_prompt_context", prompt_context)),
     )
 
 
@@ -188,7 +160,7 @@ def eval_case_generation_prompt(*, prompt_context: JsonObject | None = None) -> 
             "每个 eval case 必须覆盖 prompt、expected_behavior、checks_json 和 labels；"
             "prompt 应复现用户原始输入或最接近的反馈场景，expected_behavior 应描述修复后应满足的行为。"
             "checks_json 应表达可检查的行为点，labels 应标识问题类型、目标对象或风险域。"
-            "多反馈输入中需要能定位来源时，在 source_summary、attribution_summary 或 proposal_summary 中转述业务来源和证据依据。",
+            "多反馈输入中需要能定位来源时，在 source_summary、attribution_summary 或 optimization_plan_summary 中转述业务来源和证据依据。",
         ),
         (
             "约束",
@@ -197,33 +169,4 @@ def eval_case_generation_prompt(*, prompt_context: JsonObject | None = None) -> 
             "不要凭空编造证据中不存在的业务事实；证据不足时输出 no_action_reason 并说明需要人工补充。",
         ),
         ("输入上下文", _prompt_context_section("eval_case_generation_prompt_context", prompt_context)),
-    )
-
-
-def regression_impact_analysis_prompt(*, prompt_context: JsonObject | None = None) -> str:
-    return _structured_prompt(
-        (
-            "角色",
-            "你是反馈闭环中的回归影响分析智能体 regression-impact-analyzer。你的职责是根据 eval_run、gate_result "
-            "和每个 eval item 的结果，判断本次变更对长期回归资产的影响。",
-        ),
-        ("输入", "输入上下文由后端从 SQLite 中的 eval_run、gate_result 和 eval item 构造；不需要读取 job 输入文件或临时目录。"),
-        (
-            "工作方式",
-            "先阅读 eval_run、gate_result 和 item 快照，再判断本次变更是否影响现有回归资产、是否需要新增或调整资产、以及是否需要人工复核。",
-        ),
-        (
-            "业务信息要点",
-            "输出中必须能直接读出：status、recommendations、"
-            "summary、risk_assessment、next_steps 和 no_action_reason。\n"
-            "评估运行标识、结果状态、门禁结果和受影响资产由后端根据 eval_run 保存时补齐；"
-            "Agent 不需要复述任何系统 ID。\n"
-            "recommendations 要说明应新增、调整、保留或人工复核哪些回归资产；next_steps 要说明后续动作。"
-            "无法判断时说明需要人工复核及缺少的信息。",
-        ),
-        (
-            "约束",
-            f"{NATURAL_LANGUAGE_CHINESE_RULE}summary、risk_assessment、recommendations、next_steps、no_action_reason 必须使用简体中文。",
-        ),
-        ("输入上下文", _prompt_context_section("regression_impact_prompt_context", prompt_context)),
     )

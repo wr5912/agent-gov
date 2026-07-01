@@ -69,12 +69,8 @@ function defaultPayload(path, request = {}) {
     || path === "/api/soc-events"
     || path === "/api/pending-correlations"
     || path === "/api/feedback-cases"
-    || path === "/api/optimization-tasks"
-    || path === "/api/external-governance-items"
-    || path === "/api/external-governance-webhooks"
     || path === "/api/eval-cases"
     || path === "/api/eval-runs"
-    || path === "/api/feedback-optimization-batches"
   ) return [];
   if (path === "/api/agent-change-sets") return [{
     change_set_id: "agc-demo",
@@ -82,7 +78,6 @@ function defaultPayload(path, request = {}) {
     created_at: ts,
     updated_at: ts,
     status: "regression_failed",
-    optimization_task_id: "opt-task-demo",
     execution_job_id: "job-demo",
     base_commit_sha: "base-demo",
     candidate_commit_sha: "candidate-demo",
@@ -90,7 +85,7 @@ function defaultPayload(path, request = {}) {
     worktree_path: "/tmp/agc-demo",
     title: "告警误报治理候选变更",
     diff_summary: { modified: 2 },
-    publication_blocker: "批次回归存在失败用例",
+    publication_blocker: "回归验证存在失败用例",
   }];
   if (/^\/api\/agent-change-sets\/[^/]+\/regression-runs$/.test(path)) return { eval_run_id: "evr-demo", result_status: "passed", items: [], summary: { total: 0, passed: 0, failed: 0 } };
   if (/^\/api\/agent-change-sets\/[^/]+\/publish$/.test(path)) return { release_id: "agr-demo", agent_id: "soc-ops", status: "published", tag_name: "agent-release-demo", commit_sha: "candidate-demo", created_at: ts, updated_at: ts };

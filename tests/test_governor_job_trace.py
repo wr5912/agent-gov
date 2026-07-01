@@ -16,11 +16,14 @@ def test_governor_trace_attributes_case_scope_tags_and_name():
     assert attrs["metadata"]["scope_kind"] == "feedback_case"
 
 
-def test_governor_trace_attributes_batch_and_task_scope_use_batch_prefix():
-    batch = governor_trace_attributes(job_type="batch_plan", scope_kind="optimization_batch", scope_id="b-1", job_id="j")
-    task = governor_trace_attributes(job_type="execution", scope_kind="optimization_task", scope_id="t-1", job_id="j")
-    assert batch["session_id"] == "batch:b-1"
-    assert task["session_id"] == "batch:t-1"
+def test_governor_trace_attributes_improvement_scope_uses_improvement_prefix():
+    attrs = governor_trace_attributes(
+        job_type="optimization_plan",
+        scope_kind="improvement",
+        scope_id="imp-1",
+        job_id="j",
+    )
+    assert attrs["session_id"] == "improvement:imp-1"
 
 
 def test_governor_trace_attributes_falls_back_to_job_id_session():

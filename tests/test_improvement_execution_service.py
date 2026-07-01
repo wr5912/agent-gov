@@ -16,8 +16,15 @@ def _content(tmp_path: Path) -> ImprovementContentStore:
 
 
 class _FakeImprovements:
+    def __init__(self) -> None:
+        self.links: list[tuple[str, str, str]] = []
+
     def get_improvement(self, improvement_id: str) -> object:
         return SimpleNamespace(improvement_id=improvement_id, agent_id="soc-ops", title="告警误报治理")
+
+    def add_link(self, improvement_id: str, *, kind: str, ref_id: str) -> object:
+        self.links.append((improvement_id, kind, ref_id))
+        return SimpleNamespace(improvement_id=improvement_id, kind=kind, ref_id=ref_id)
 
 
 class _FakeStore:
@@ -60,7 +67,7 @@ class _FakeExecApp:
         self.raises = raises
         self.applied: list[list] = []
 
-    def apply_execution_operations(self, operations, *, workspace_dir=None):
+    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None):
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)
@@ -117,7 +124,8 @@ def test_governor_decline_abandons_and_falls_back(tmp_path):
 def test_governor_success_applies_and_binds_version(tmp_path):
     gov = _FakeGovernance(tmp_path)
     exec_app = _FakeExecApp()
-    async def ready(**_k):
+    async def ready(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-exec", "trace_url": "http://lf/tr-exec"})
         return {"status": "ready", "summary": "已在 CLAUDE.md 补充时间校验指令",
                 "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready, exec_app=exec_app)
@@ -127,6 +135,8 @@ def test_governor_success_applies_and_binds_version(tmp_path):
     assert rec.applied_agent_version_id == "ver-cand-sha"
     assert rec.change_set_id == "agc-1"
     assert rec.applied_diff.get("changed_files") == ["CLAUDE.md"]
+    assert rec.generation_trace_id == "tr-exec"
+    assert rec.generation_trace_url == "http://lf/tr-exec"
     assert exec_app.applied and gov.committed == ["agc-1"] and not gov.abandoned
 
 

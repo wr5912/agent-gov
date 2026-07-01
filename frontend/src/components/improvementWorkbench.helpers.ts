@@ -29,7 +29,6 @@ export const LINK_KIND_LABEL: Record<string, string> = {
   optimization_plan: "优化方案",
   eval_run: "评估",
   change_set: "变更集",
-  batch: "批次",
 };
 
 const STOP_REASON_LABEL: Record<string, string> = {

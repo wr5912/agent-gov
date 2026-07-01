@@ -28,10 +28,6 @@ type OpenApiAgentConfigFileUpdateResponse = components["schemas"]["AgentConfigFi
 type OpenApiAgentRepositoryDiscardChangesRequest = components["schemas"]["AgentRepositoryDiscardChangesRequest"];
 type OpenApiAgentRepositorySnapshotRequest = components["schemas"]["AgentRepositorySnapshotRequest"];
 type OpenApiAgentRepositoryStatusResponse = components["schemas"]["AgentRepositoryStatusResponse"];
-type OpenApiAgentVersionDiffEntryResponse = components["schemas"]["AgentVersionDiffEntryResponse"];
-type OpenApiAgentVersionDiffResponse = components["schemas"]["AgentVersionDiffResponse"];
-type OpenApiAgentVersionFileEntryResponse = components["schemas"]["AgentVersionFileEntryResponse"];
-type OpenApiAgentVersionSummaryResponse = components["schemas"]["AgentVersionSummaryResponse"];
 type OpenApiChatRequest = components["schemas"]["ChatRequest"];
 type OpenApiClaudeUserInputDecisionRequest = components["schemas"]["ClaudeUserInputDecisionRequest"];
 type OpenApiClaudeUserInputDecisionResponse = components["schemas"]["ClaudeUserInputDecisionResponse"];
@@ -163,13 +159,3 @@ export interface RuntimeClientConfig {
   apiBase: string;
   apiKey: string;
 }
-
-export type AgentVersionSummary = OpenApiAgentVersionSummaryResponse;
-export type AgentVersionFileEntry = OpenApiAgentVersionFileEntryResponse;
-export type AgentVersionDiffEntry = OpenApiAgentVersionDiffEntryResponse;
-export type AgentVersionDiff = Omit<OpenApiAgentVersionDiffResponse, "added" | "modified" | "deleted" | "unchanged_count"> & {
-  added: AgentVersionFileEntry[];
-  modified: AgentVersionDiffEntry[];
-  deleted: AgentVersionFileEntry[];
-  unchanged_count: number;
-};

@@ -82,10 +82,10 @@ def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
                 schema_version, output_schema_version, timeout_seconds, retry_count
             )
             VALUES (
-                'job-old', 'batch_plan', 'optimization_batch', 'fob-old', 'queued',
-                'proposal-generator', '2026-06-01T00:00:00+00:00', '/tmp/input.json',
+                'job-old', 'eval_case_generation', 'feedback_dataset', 'feedback-dataset', 'queued',
+                'governor', '2026-06-01T00:00:00+00:00', '/tmp/input.json',
                 'sqlite://raw', 'sqlite://validated', 'sqlite://error', '0.0.0',
-                'batch_plan-agent-job/v1', 'feedback-optimization-plan-output/v1', 300, 0
+                'agent-job/v1', 'feedback-eval-case-generation-output/v1', 300, 0
             )
             """
         )
@@ -96,7 +96,7 @@ def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
         row = connection.exec_driver_sql("SELECT job_id, job_type FROM agent_jobs WHERE job_id = 'job-old'").fetchone()
 
     assert "output_schema_version" not in columns
-    assert tuple(row) == ("job-old", "batch_plan")
+    assert tuple(row) == ("job-old", "eval_case_generation")
 
 
 def test_runtime_db_migrates_generated_by_onto_existing_content_tables(tmp_path):
@@ -178,10 +178,148 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
         ).fetchone()
 
     assert {"counter_evidence_json", "uncertainty_factors_json", "verification_suggestions_json"} <= cols["attributions"]
+    assert {"generation_trace_id", "generation_trace_url"} <= cols["attributions"]
     assert "risk_level" in cols["optimization_plans"]
+    assert {"generation_trace_id", "generation_trace_url"} <= cols["optimization_plans"]
     assert {"risk_level", "rollback_strategy", "rollback_instructions_json"} <= cols["execution_records"]
+    assert {"generation_trace_id", "generation_trace_url"} <= cols["execution_records"]
     assert "suggested_gate_thresholds_json" in cols["regression_assessments"]
+    assert {"generation_trace_id", "generation_trace_url"} <= cols["regression_assessments"]
     assert migration is not None
+
+
+def test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+    legacy_tables = [
+        "regression_gate_overrides",
+        "regression_impact_analyses",
+        "regression_plans",
+        "execution_applications",
+        "execution_compensations",
+        "external_notifications",
+        "external_governance_items",
+        "proposal_reviews",
+        "optimization_proposals",
+        "optimization_tasks",
+        "feedback_optimization_batches",
+    ]
+    with sqlite3.connect(db_path) as connection:
+        for table in legacy_tables:
+            connection.execute(f"CREATE TABLE {table} (id VARCHAR(128) PRIMARY KEY)")
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        tables = {str(row[0]) for row in connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0022_remove_legacy_batch_optimization_chain'"
+        ).fetchone()
+
+    assert set(legacy_tables).isdisjoint(tables)
+    assert migration is not None
+
+
+def test_runtime_db_renames_eval_case_targeted_regression_layer(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE eval_cases (
+                eval_case_id VARCHAR(128) PRIMARY KEY,
+                created_at VARCHAR(64),
+                updated_at VARCHAR(64),
+                status VARCHAR(64),
+                source VARCHAR(64),
+                prompt TEXT,
+                expected_behavior TEXT,
+                checks_json JSON,
+                labels_json JSON,
+                source_ids_json JSON,
+                signal_ids_json JSON,
+                event_ids_json JSON,
+                pending_correlation_ids_json JSON,
+                run_ids_json JSON,
+                session_ids_json JSON,
+                alert_ids_json JSON,
+                case_ids_json JSON,
+                evidence_package_ids_json JSON,
+                attribution_job_ids_json JSON,
+                asset_layer VARCHAR(64)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO eval_cases (eval_case_id, status, prompt, asset_layer) VALUES ('evc-old', 'active', 'p', 'batch_specific')"
+        )
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        value = connection.exec_driver_sql("SELECT asset_layer FROM eval_cases WHERE eval_case_id = 'evc-old'").fetchone()[0]
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0023_eval_case_targeted_regression_layer'"
+        ).fetchone()
+
+    assert value == "targeted_regression"
+    assert migration is not None
+
+
+def test_runtime_db_backfills_feedback_case_agent_id_from_signals(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE feedback_signals (
+                signal_id VARCHAR(128) PRIMARY KEY,
+                agent_id VARCHAR(128)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE feedback_cases (
+                feedback_case_id VARCHAR(128) PRIMARY KEY,
+                created_at VARCHAR(64),
+                updated_at VARCHAR(64),
+                status VARCHAR(64),
+                title VARCHAR(512),
+                priority VARCHAR(32),
+                current_evidence_package_id VARCHAR(128),
+                current_attribution_job_id VARCHAR(128),
+                source_ids_json JSON,
+                signal_ids_json JSON,
+                event_ids_json JSON,
+                pending_correlation_ids_json JSON,
+                run_ids_json JSON,
+                session_ids_json JSON,
+                alert_ids_json JSON,
+                case_ids_json JSON
+            )
+            """
+        )
+        connection.execute("INSERT INTO feedback_signals (signal_id, agent_id) VALUES ('fbs-a', 'agent-alpha')")
+        connection.execute(
+            """
+            INSERT INTO feedback_cases (
+                feedback_case_id, status, title, priority, source_ids_json, signal_ids_json
+            ) VALUES (
+                'fbc-a', 'pending_evidence', 'case', 'medium', '["fbs-a"]', '["fbs-a"]'
+            )
+            """
+        )
+        connection.execute(
+            """
+            UPDATE feedback_cases
+            SET created_at = '2026-06-12T00:00:00Z', updated_at = '2026-06-12T00:00:00Z'
+            WHERE feedback_case_id = 'fbc-a'
+            """
+        )
+
+    factory = make_session_factory(db_path)
+    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
+    store.Session = factory
+    case = store.find_case("fbc-a")
+
+    assert case is not None
+    assert case["agent_id"] == "agent-alpha"
 
 
 def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):
@@ -259,20 +397,3 @@ def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_pat
     assert statuses.count("duplicate") == 23
     assert len(store.list_events(limit=50)) == 1
     assert len(store.list_pending(status="pending", limit=50)) == 1
-
-
-def test_feedback_store_attribution_job_create_reuses_existing_under_concurrency(tmp_path):
-    store = FeedbackStore(data_dir=tmp_path / "data", agent_version_provider=lambda _aid=None: "main-v-test")
-    store.record_run({"run_id": "run-1", "session_id": "session-1", "message": "并发归因"})
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["concurrency"]))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
-
-    def create_job(_: int) -> str:
-        job = store.create_attribution_job(feedback_case["feedback_case_id"])
-        return job["job_id"]
-
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        job_ids = list(executor.map(create_job, range(24)))
-
-    assert len(set(job_ids)) == 1
-    assert store.find_case(feedback_case["feedback_case_id"])["attribution_job_ids"] == [job_ids[0]]

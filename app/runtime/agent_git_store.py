@@ -148,7 +148,7 @@ class GitAgentVersionStore:
         self,
         *,
         reason: str = "manual_snapshot",
-        source_proposal_ids: Optional[list[str]] = None,
+        source_change_set_ids: Optional[list[str]] = None,
         note: Optional[str] = None,
         parent_version_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
@@ -160,7 +160,7 @@ class GitAgentVersionStore:
                 self._git(["commit", "-m", note or reason], cwd=self.repository_dir)
             commit_sha = self._current_commit_sha_no_bootstrap() or ""
             summary = self.version_summary(commit_sha, reason=reason, note=note, rollback_of_version_id=rollback_of_version_id)
-            summary["source_proposal_ids"] = source_proposal_ids or []
+            summary["source_change_set_ids"] = source_change_set_ids or []
             if parent_version_id:
                 summary["parent_version_id"] = parent_version_id
             return summary
@@ -248,7 +248,7 @@ class GitAgentVersionStore:
             "created_at": created_at,
             "reason": reason,
             "rollback_of_version_id": rollback_of_version_id,
-            "source_proposal_ids": [],
+            "source_change_set_ids": [],
             "note": note,
             "snapshot_policy_version": "git-main-workspace-v1",
             "repository_dir": str(self.repository_dir),

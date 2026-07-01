@@ -593,6 +593,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
 
             <ImprovementStagePanels
               item={selected}
+              clientConfig={clientConfig}
               stageView={panelStageView}
               normalizedFeedback={normalizedFeedback}
               attribution={attribution}
@@ -715,7 +716,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                     ))}
                   </div>
                 ) : (
-                  <div className="iw-next-step">尚未关联归因 / 方案 / 评估 / 变更集 / 批次。</div>
+                  <div className="iw-next-step">尚未关联归因 / 方案 / 评估 / 变更集。</div>
                 )}
                 <div className="iw-automation-row" style={{ marginTop: 8 }}>
                   <select className="iw-select select-inline" data-testid="link-kind" value={newLinkKind} disabled={busy} onChange={(e) => setNewLinkKind(e.target.value)}>
@@ -723,7 +724,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                     <option value="optimization_plan">优化方案</option>
                     <option value="eval_run">评估</option>
                     <option value="change_set">变更集</option>
-                    <option value="batch">批次</option>
                   </select>
                   <input
                     className="iw-input"

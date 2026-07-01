@@ -54,12 +54,8 @@ class AgentJobRecord(StrictRuntimeRecord):
     feedback_case_id: Optional[str] = None
     evidence_package_id: Optional[str] = None
     attribution_job_id: Optional[str] = None
-    batch_id: Optional[str] = None
-    optimization_task_id: Optional[str] = None
-    execution_job_id: Optional[str] = None
-    baseline_agent_version_id: Optional[str] = None
+    improvement_id: Optional[str] = None
     eval_run_id: Optional[str] = None
-    regression_plan_id: Optional[str] = None
     compensations: list[JsonObject] = Field(default_factory=list)
 
     @field_validator("status")
@@ -132,18 +128,13 @@ class AgentJobRecord(StrictRuntimeRecord):
             "feedback_case_id",
             "evidence_package_id",
             "attribution_job_id",
-            "batch_id",
-            "optimization_task_id",
-            "execution_job_id",
-            "baseline_agent_version_id",
+            "improvement_id",
             "eval_run_id",
-            "regression_plan_id",
         ):
             if input_json.get(key) is not None:
                 payload[key] = input_json.get(key)
-        if row.job_type == "execution":
-            payload["execution_job_id"] = payload.get("execution_job_id") or row.job_id
-            payload["compensations"] = compensations or []
+        if compensations:
+            payload["compensations"] = compensations
         return cls.model_validate(payload)
 
 
@@ -173,7 +164,7 @@ class AgentJobErrorRecord(StrictRuntimeRecord):
 
 
 class AgentJobProjectionRecord(StrictRuntimeRecord):
-    """Embedded agent job snapshot used by batch/task projections.
+    """Embedded agent job snapshot used by higher-level projections.
 
     Persisted agent job rows are validated by AgentJobRecord. Embedded snapshots
     can be historical, partial, or decorated with display fields, so they keep a
@@ -208,10 +199,6 @@ class AgentJobProjectionRecord(StrictRuntimeRecord):
     feedback_case_id: Optional[str] = None
     evidence_package_id: Optional[str] = None
     attribution_job_id: Optional[str] = None
-    batch_id: Optional[str] = None
-    optimization_task_id: Optional[str] = None
-    execution_job_id: Optional[str] = None
-    baseline_agent_version_id: Optional[str] = None
+    improvement_id: Optional[str] = None
     eval_run_id: Optional[str] = None
-    regression_plan_id: Optional[str] = None
     compensations: list[JsonObject] = Field(default_factory=list)

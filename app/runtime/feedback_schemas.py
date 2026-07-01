@@ -10,125 +10,25 @@ from .normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
     normalize_feedback_eval_case_generation_output,
-    normalize_feedback_optimization_plan_output,
-    normalize_regression_impact_analysis_output,
-)
-from .normalizers.feedback_output_normalizers import (
-    task_context_has_external_specificity as _task_context_has_external_specificity,
 )
 from .normalizers.feedback_output_records import (
     NormalizedAttributionOutput,
-    NormalizedAttributionSummary,
-    NormalizedBlockedOptimizationItem,
     NormalizedEvidenceRef,
     NormalizedExecutionOperation,
     NormalizedExecutionPlanOutput,
     NormalizedFeedbackEvalCaseGenerationOutput,
-    NormalizedFeedbackOptimizationPlanOutput,
     NormalizedGeneratedEvalCase,
-    NormalizedOptimizationPlanTask,
     NormalizedOutputRecord,
-    NormalizedRegressionImpactAnalysisOutput,
     NormalizedResponsibilityBoundary,
-    NormalizedSummaryItem,
-    NormalizedTaskContext,
 )
 
 TOutputModel = TypeVar("TOutputModel", bound=BaseModel)
 FormatterAgentOutputNormalizer = Callable[[JsonObject], JsonObject]
 
-_EXECUTABLE_PLAN_TASK_REQUIRED_FIELDS = (
-    "execution_kind",
-    "objective",
-    "target_type",
-    "actionability",
-    "recommendation",
-    "expected_effect",
-    "validation",
-    "risk",
-)
-
-
 def _normalize_formatter_agent_output(value: object, normalizer: FormatterAgentOutputNormalizer) -> object:
     if not isinstance(value, dict):
         return value
     return normalizer(cast(JsonObject, value))
-
-
-def _normalize_feedback_plan_formatter_agent_output(value: object) -> object:
-    if not isinstance(value, dict):
-        return value
-    return normalize_feedback_optimization_plan_output(_annotate_incomplete_formatter_tasks(cast(JsonObject, value)))
-
-
-def _annotate_incomplete_formatter_tasks(agent_output: JsonObject) -> JsonObject:
-    tasks = agent_output.get("tasks")
-    if not isinstance(tasks, list):
-        return agent_output
-
-    changed = False
-    annotated_tasks: list[object] = []
-    for task in tasks:
-        if not isinstance(task, dict):
-            annotated_tasks.append(task)
-            continue
-        missing_fields = _missing_formatter_task_fields(task)
-        if not missing_fields:
-            annotated_tasks.append(task)
-            continue
-
-        annotated = dict(task)
-        annotated["execution_kind"] = "blocked"
-        annotated["status"] = "blocked"
-        annotated.setdefault("actionability", "needs_human_analysis")
-        if not _has_formatter_value(annotated.get("reason")):
-            annotated["reason"] = f"Agent 输出的优化任务缺少可执行字段：{', '.join(missing_fields)}。"
-        if not _has_formatter_value(annotated.get("recommendation")):
-            annotated["recommendation"] = (
-                _first_formatter_text(annotated.get("description"), annotated.get("summary"), annotated.get("title"))
-                or "请补充任务目标、执行范围、建议动作、预期效果、验证方式和风险后重新生成优化方案。"
-            )
-        annotated_tasks.append(cast(JsonObject, annotated))
-        changed = True
-
-    if not changed:
-        return agent_output
-    annotated_output = dict(agent_output)
-    annotated_output["tasks"] = annotated_tasks
-    return cast(JsonObject, annotated_output)
-
-
-def _missing_formatter_task_fields(task: JsonObject) -> list[str]:
-    return [field_name for field_name in _EXECUTABLE_PLAN_TASK_REQUIRED_FIELDS if not _formatter_task_field_present(task, field_name)]
-
-
-def _formatter_task_field_present(task: JsonObject, field_name: str) -> bool:
-    if _has_formatter_value(task.get(field_name)):
-        return True
-    if field_name == "target_type":
-        return _has_formatter_value(task.get("target_path"))
-    if field_name == "execution_kind":
-        return _has_formatter_value(task.get("target_path")) or _has_formatter_value(task.get("actionability"))
-    return False
-
-
-def _has_formatter_value(value: object) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, str):
-        return bool(value.strip())
-    if isinstance(value, (list, dict)):
-        return bool(value)
-    return True
-
-
-def _first_formatter_text(*values: object) -> str | None:
-    for value in values:
-        if isinstance(value, str):
-            text = value.strip()
-            if text:
-                return text
-    return None
 
 
 ProblemType = Literal[
@@ -221,159 +121,36 @@ class AttributionOutput(NormalizedAttributionOutput):
     recommended_next_step: Literal["generate_proposal", "needs_human_review", "stop"] = "generate_proposal"
 
 
-class TaskContext(NormalizedTaskContext):
-    pass
+class ImprovementOptimizationChangeFormatterOutput(NormalizedOutputRecord):
+    target: str = Field(description="变更对象，如 CLAUDE.md、skill、subagent、mcp_config、runtime_config。")
+    change: str = Field(description="具体优化建议。")
 
 
-class OptimizationPlanTaskFormatterOutput(NormalizedOptimizationPlanTask):
-    plan_task_id: Optional[str] = None
-    source_index: int = 0
-    execution_kind: Literal["workspace_execution", "external_webhook"]
-    status: Literal["pending_execution", "pending_notification", "needs_human_review"] | str = ""
-    title: str
-    description: str
-    objective: str
-    target_summary: Optional[str] = None
-    target_type: str
-    target_path: Optional[str] = None
-    owner: Optional[str] = None
-    actionability: Actionability
-    confidence: Optional[Confidence] = None
-    problem_type: Optional[ProblemType] = None
-    recommendation: str
-    recommended_actions: list[str] = Field(default_factory=list)
-    acceptance_criteria: list[str] = Field(default_factory=list)
-    expected_effect: str
-    validation: str
-    risk: str
-    analysis_summary: Optional[str] = None
-    evidence_summary: Optional[str] = None
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    rationale: Optional[str] = None
-    reason: Optional[str] = None
-    feedback_case_ids: list[str] = Field(default_factory=list)
-    eval_case_ids: list[str] = Field(default_factory=list)
-    attribution_job_ids: list[str] = Field(default_factory=list)
-    task_context: TaskContext = Field(default_factory=TaskContext)
+class ImprovementOptimizationPlanFormatterOutput(NormalizedOutputRecord):
+    summary: str
+    changes: list[ImprovementOptimizationChangeFormatterOutput] = Field(default_factory=list)
+    risk_level: str = "medium"
 
     @model_validator(mode="after")
-    def _is_executable_task(self) -> OptimizationPlanTaskFormatterOutput:
-        if self.execution_kind == "workspace_execution":
-            if not self.target_path:
-                raise ValueError("workspace_execution task must include target_path")
-            if not self.status:
-                self.status = "pending_execution"
-        if self.execution_kind == "external_webhook":
-            if not _task_context_has_external_specificity(self.task_context.model_dump(mode="json")):
-                raise ValueError("external_webhook task must include actionable task_context")
-            if not self.status:
-                self.status = "pending_notification"
+    def _has_summary_or_changes(self) -> ImprovementOptimizationPlanFormatterOutput:
+        if not self.summary and not self.changes:
+            raise ValueError("improvement optimization plan must include summary or changes")
         return self
 
 
-class OptimizationPlanTaskOutput(OptimizationPlanTaskFormatterOutput):
+class ImprovementOptimizationChangeOutput(ImprovementOptimizationChangeFormatterOutput):
     pass
 
 
-class BlockedOptimizationItemFormatterOutput(NormalizedBlockedOptimizationItem):
-    blocked_item_id: Optional[str] = None
-    source_index: int = 0
-    status: Literal["blocked", "needs_human_review"] | str = "blocked"
-    title: str
-    target_type: str = "not_actionable"
-    target_path: Optional[str] = None
-    owner: Optional[str] = None
-    actionability: Actionability = "needs_human_analysis"
-    confidence: Optional[Confidence] = None
-    problem_type: Optional[ProblemType] = None
-    recommendation: Optional[str] = None
-    reason: str
-    analysis_summary: Optional[str] = None
-    evidence_summary: Optional[str] = None
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    feedback_case_ids: list[str] = Field(default_factory=list)
-    eval_case_ids: list[str] = Field(default_factory=list)
-    attribution_job_ids: list[str] = Field(default_factory=list)
-    task_context: TaskContext = Field(default_factory=TaskContext)
-
-
-class BlockedOptimizationItemOutput(BlockedOptimizationItemFormatterOutput):
-    pass
-
-
-class AttributionSummary(NormalizedAttributionSummary):
-    pass
-
-
-class FeedbackOptimizationPlanFormatterOutput(NormalizedOutputRecord):
-    status: Literal["pending_execution", "needs_human_review"] = "pending_execution"
-    title: str
-    summary: Optional[str] = None
-    problem_types: list[str] = Field(default_factory=list)
-    confidence: Confidence = "medium"
-    actionability: Actionability = "needs_human_analysis"
-    target_type: Optional[str] = None
-    target_path: Optional[str] = None
-    recommendation: str
-    expected_effect: str
-    validation: str
-    risk: str
-    rationale: Optional[str] = None
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    tasks: list[OptimizationPlanTaskFormatterOutput] = Field(default_factory=list)
-    blocked_items: list[BlockedOptimizationItemFormatterOutput] = Field(default_factory=list)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_formatter_output(cls, value: object) -> object:
-        return _normalize_feedback_plan_formatter_agent_output(value)
+class ImprovementOptimizationPlanOutput(NormalizedOutputRecord):
+    summary: str
+    changes: list[ImprovementOptimizationChangeOutput] = Field(default_factory=list)
+    risk_level: str = "medium"
 
     @model_validator(mode="after")
-    def _has_tasks_or_blockers(self) -> FeedbackOptimizationPlanFormatterOutput:
-        if not self.tasks and not self.blocked_items:
-            raise ValueError("feedback optimization plan must include tasks or blocked_items")
-        if not self.tasks:
-            self.status = "needs_human_review"
-        elif self.status != "needs_human_review":
-            self.status = "pending_execution"
-        return self
-
-
-class FeedbackOptimizationPlanOutput(NormalizedFeedbackOptimizationPlanOutput):
-    batch_id: str
-    optimization_plan_id: Optional[str] = None
-    created_at: Optional[str] = None
-    status: Literal["pending_execution", "needs_human_review"] = "pending_execution"
-    title: str
-    summary: Optional[str] = None
-    problem_types: list[str] = Field(default_factory=list)
-    confidence: Confidence = "medium"
-    actionability: Actionability = "needs_human_analysis"
-    target_type: Optional[str] = None
-    target_path: Optional[str] = None
-    recommendation: str
-    expected_effect: str
-    validation: str
-    risk: str
-    source_refs: list[JsonObject] = Field(default_factory=list)
-    feedback_case_ids: list[str] = Field(default_factory=list)
-    eval_case_ids: list[str] = Field(default_factory=list)
-    attribution_job_ids: list[str] = Field(default_factory=list)
-    attribution_summaries: list[AttributionSummary] = Field(default_factory=list)
-    rationale: Optional[str] = None
-    evidence_refs: list[EvidenceRef] = Field(default_factory=list)
-    tasks: list[OptimizationPlanTaskOutput] = Field(default_factory=list)
-    blocked_items: list[BlockedOptimizationItemOutput] = Field(default_factory=list)
-    regeneration_instruction: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _has_tasks_or_blockers(self) -> FeedbackOptimizationPlanOutput:
-        if not self.tasks and not self.blocked_items:
-            raise ValueError("feedback optimization plan must include tasks or blocked_items")
-        if not self.tasks:
-            self.status = "needs_human_review"
-        elif self.status != "needs_human_review":
-            self.status = "pending_execution"
+    def _has_summary_or_changes(self) -> ImprovementOptimizationPlanOutput:
+        if not self.summary and not self.changes:
+            raise ValueError("improvement optimization plan must include summary or changes")
         return self
 
 
@@ -405,14 +182,6 @@ def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None,
     normalized = normalize_attribution_output(payload)
     try:
         return _validated_payload(AttributionOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
-def validate_feedback_optimization_plan_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_feedback_optimization_plan_output(payload)
-    try:
-        return _validated_payload(FeedbackOptimizationPlanOutput, normalized), None
     except ValidationError as exc:
         return None, exc.json()
 
@@ -450,10 +219,7 @@ class ExecutionPlanFormatterOutput(NormalizedOutputRecord):
 
 
 class ExecutionPlanOutput(NormalizedExecutionPlanOutput):
-    optimization_task_id: str
-    execution_job_id: str
     status: Literal["ready", "needs_human_review"] = "ready"
-    baseline_agent_version_id: Optional[str] = None
     summary: str
     operations: list[ExecutionOperation] = Field(default_factory=list)
     validation: Optional[str] = None
@@ -500,7 +266,7 @@ class GeneratedEvalCaseOutput(NormalizedGeneratedEvalCase):
     labels: list[str] = Field(default_factory=list)
     source_summary: Optional[JsonObject] = None
     attribution_summary: Optional[JsonObject] = None
-    proposal_summary: Optional[JsonObject] = None
+    optimization_plan_summary: Optional[JsonObject] = None
 
 
 class GeneratedEvalCaseFormatterOutput(NormalizedOutputRecord):
@@ -515,7 +281,7 @@ class GeneratedEvalCaseFormatterOutput(NormalizedOutputRecord):
     labels: list[str] = Field(default_factory=list)
     source_summary: Optional[JsonObject] = None
     attribution_summary: Optional[JsonObject] = None
-    proposal_summary: Optional[JsonObject] = None
+    optimization_plan_summary: Optional[JsonObject] = None
 
 
 class FeedbackEvalCaseGenerationFormatterOutput(NormalizedOutputRecord):
@@ -553,75 +319,14 @@ class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutpu
         return self
 
 
-class ImpactedAssetSummary(NormalizedSummaryItem):
-    pass
-
-
-class RegressionImpactAnalysisFormatterOutput(NormalizedOutputRecord):
-    status: Literal["completed", "needs_human_review"] = "completed"
-    recommendations: list[str] = Field(default_factory=list)
-    summary: Optional[str] = None
-    risk_assessment: Optional[str] = None
-    next_steps: list[str] = Field(default_factory=list)
-    no_action_reason: Optional[str] = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_formatter_output(cls, value: object) -> object:
-        return _normalize_formatter_agent_output(value, normalize_regression_impact_analysis_output)
-
-    @model_validator(mode="after")
-    def _has_recommendation_or_reason(self) -> RegressionImpactAnalysisFormatterOutput:
-        if not self.recommendations and not self.next_steps and not self.summary and not self.no_action_reason:
-            raise ValueError("regression impact output must include recommendations, next_steps, summary, or no_action_reason")
-        return self
-
-
-class RegressionImpactAnalysisOutput(NormalizedRegressionImpactAnalysisOutput):
-    impact_analysis_id: Optional[str] = None
-    eval_run_id: str
-    status: Literal["completed", "needs_human_review"] = "completed"
-    result_status: Optional[str] = None
-    gate_result: JsonObject = Field(default_factory=dict)
-    impacted_assets: list[ImpactedAssetSummary] = Field(default_factory=list)
-    recommendations: list[str] = Field(default_factory=list)
-    summary: Optional[str] = None
-    risk_assessment: Optional[str] = None
-    next_steps: list[str] = Field(default_factory=list)
-    no_action_reason: Optional[str] = None
-
-    @model_validator(mode="after")
-    def _has_recommendation_or_reason(self) -> RegressionImpactAnalysisOutput:
-        if not self.recommendations and not self.next_steps and not self.no_action_reason:
-            raise ValueError("regression impact output must include recommendations, next_steps, or no_action_reason")
-        return self
-
-
 def validate_feedback_eval_case_generation_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
     normalized = normalize_feedback_eval_case_generation_output(payload)
     try:
         return _validated_payload(FeedbackEvalCaseGenerationOutput, normalized), None
     except ValidationError as exc:
         return None, exc.json()
-
-
-def validate_regression_impact_analysis_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_regression_impact_analysis_output(payload)
-    try:
-        return _validated_payload(RegressionImpactAnalysisOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
 def coerce_attribution_output_model(value: BaseModel | JsonObject) -> tuple[AttributionOutput | None, str | None]:
     return _coerce_output_model(value, model=AttributionOutput, normalizer=normalize_attribution_output)
-
-
-def coerce_feedback_optimization_plan_output_model(
-    value: BaseModel | JsonObject,
-) -> tuple[FeedbackOptimizationPlanOutput | None, str | None]:
-    return _coerce_output_model(value, model=FeedbackOptimizationPlanOutput, normalizer=normalize_feedback_optimization_plan_output)
-
 
 def coerce_execution_plan_output_model(value: BaseModel | JsonObject) -> tuple[ExecutionPlanOutput | None, str | None]:
     return _coerce_output_model(value, model=ExecutionPlanOutput, normalizer=normalize_execution_plan_output)
@@ -631,9 +336,3 @@ def coerce_feedback_eval_case_generation_output_model(
     value: BaseModel | JsonObject,
 ) -> tuple[FeedbackEvalCaseGenerationOutput | None, str | None]:
     return _coerce_output_model(value, model=FeedbackEvalCaseGenerationOutput, normalizer=normalize_feedback_eval_case_generation_output)
-
-
-def coerce_regression_impact_analysis_output_model(
-    value: BaseModel | JsonObject,
-) -> tuple[RegressionImpactAnalysisOutput | None, str | None]:
-    return _coerce_output_model(value, model=RegressionImpactAnalysisOutput, normalizer=normalize_regression_impact_analysis_output)

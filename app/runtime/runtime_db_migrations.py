@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy.engine import Connection
 
 AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT = (
@@ -133,15 +135,6 @@ def migrate_0012_eval_run_agent_id(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_eval_runs_agent_id ON eval_runs (agent_id)")
 
 
-def migrate_0013_optimization_task_agent_id(connection: Connection) -> None:
-    if "agent_id" not in _table_columns(connection, "optimization_tasks"):
-        connection.exec_driver_sql("ALTER TABLE optimization_tasks ADD COLUMN agent_id VARCHAR(128)")
-    connection.exec_driver_sql("UPDATE optimization_tasks SET agent_id = 'main-agent' WHERE agent_id IS NULL")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_optimization_tasks_agent_id ON optimization_tasks (agent_id)"
-    )
-
-
 def migrate_0014_improvement_feedback_context(connection: Connection) -> None:
     columns = _table_columns(connection, "improvement_feedbacks")
     if not columns:
@@ -235,7 +228,6 @@ def migrate_0005_agent_governance(connection: Connection) -> None:
             created_at VARCHAR(64) NOT NULL,
             updated_at VARCHAR(64) NOT NULL,
             status VARCHAR(64) NOT NULL,
-            optimization_task_id VARCHAR(128),
             execution_job_id VARCHAR(128),
             base_commit_sha VARCHAR(64) NOT NULL,
             candidate_commit_sha VARCHAR(64),
@@ -248,12 +240,10 @@ def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_created_at ON agent_change_sets (created_at)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_updated_at ON agent_change_sets (updated_at)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_status ON agent_change_sets (status)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_optimization_task_id ON agent_change_sets (optimization_task_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_execution_job_id ON agent_change_sets (execution_job_id)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_base_commit_sha ON agent_change_sets (base_commit_sha)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_candidate_commit_sha ON agent_change_sets (candidate_commit_sha)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_branch_name ON agent_change_sets (branch_name)")
-    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_task_created ON agent_change_sets (optimization_task_id, created_at)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_sets_status_updated ON agent_change_sets (status, updated_at)")
     connection.exec_driver_sql(
         """
@@ -387,3 +377,83 @@ def migrate_0020_claude_user_input_requests(connection: Connection) -> None:
     connection.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_claude_user_input_run_status ON claude_user_input_requests (run_id, status, created_at)"
     )
+
+
+def migrate_0021_improvement_generation_trace_refs(connection: Connection) -> None:
+    """四阶段治理内容记录保存 Langfuse trace ref，旧卷幂等补列。"""
+    for table in ("attributions", "optimization_plans", "execution_records", "regression_assessments"):
+        existing_columns = _table_columns(connection, table)
+        if not existing_columns:
+            continue
+        if "generation_trace_id" not in existing_columns:
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN generation_trace_id VARCHAR(256) DEFAULT ''")
+        if "generation_trace_url" not in existing_columns:
+            connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN generation_trace_url VARCHAR(2048) DEFAULT ''")
+
+
+def migrate_0022_remove_legacy_batch_optimization_chain(connection: Connection) -> None:
+    """Remove the replaced batch/task/proposal/external-governance optimization chain tables."""
+    for table in (
+        "regression_gate_overrides",
+        "regression_impact_analyses",
+        "regression_plans",
+        "execution_applications",
+        "execution_compensations",
+        "external_notifications",
+        "external_governance_items",
+        "proposal_reviews",
+        "optimization_proposals",
+        "optimization_tasks",
+        "feedback_optimization_batches",
+    ):
+        connection.exec_driver_sql(f"DROP TABLE IF EXISTS {table}")
+
+
+def migrate_0023_eval_case_targeted_regression_layer(connection: Connection) -> None:
+    """Rename old eval-case asset layer value batch_specific to targeted_regression."""
+    columns = _table_columns(connection, "eval_cases")
+    if "asset_layer" not in columns:
+        return
+    connection.exec_driver_sql(
+        "UPDATE eval_cases SET asset_layer = 'targeted_regression' WHERE asset_layer = 'batch_specific'"
+    )
+
+
+def migrate_0024_feedback_case_agent_id(connection: Connection) -> None:
+    """Persist feedback case ownership for per-business-agent filtering and isolation."""
+    case_columns = _table_columns(connection, "feedback_cases")
+    if not case_columns:
+        return
+    if "agent_id" not in case_columns:
+        connection.exec_driver_sql("ALTER TABLE feedback_cases ADD COLUMN agent_id VARCHAR(128) DEFAULT 'main-agent'")
+    connection.exec_driver_sql("UPDATE feedback_cases SET agent_id = 'main-agent' WHERE agent_id IS NULL OR agent_id = ''")
+    signal_columns = _table_columns(connection, "feedback_signals")
+    if {"signal_id", "agent_id"}.issubset(signal_columns) and "signal_ids_json" in _table_columns(connection, "feedback_cases"):
+        rows = connection.exec_driver_sql("SELECT feedback_case_id, signal_ids_json FROM feedback_cases").fetchall()
+        for feedback_case_id, signal_ids_json in rows:
+            signal_ids = _json_string_list(signal_ids_json)
+            if not signal_ids:
+                continue
+            placeholders = ",".join("?" for _ in signal_ids)
+            signal_rows = connection.exec_driver_sql(
+                f"SELECT DISTINCT agent_id FROM feedback_signals WHERE signal_id IN ({placeholders}) AND agent_id IS NOT NULL AND agent_id != ''",
+                tuple(signal_ids),
+            ).fetchall()
+            agent_ids = sorted({str(row[0]) for row in signal_rows if row[0]})
+            if len(agent_ids) == 1:
+                connection.exec_driver_sql(
+                    "UPDATE feedback_cases SET agent_id = ? WHERE feedback_case_id = ?",
+                    (agent_ids[0], feedback_case_id),
+                )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_feedback_cases_agent_id ON feedback_cases (agent_id)")
+
+
+def _json_string_list(value: object) -> list[str]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if item]

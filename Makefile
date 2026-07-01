@@ -12,11 +12,15 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/agent_job_runner.py \
 	app/runtime/claude_runtime.py \
 	app/services/agent_job_worker.py \
-	app/services/feedback_job_orchestrator.py \
+	app/services/improvement_execution_service.py \
+	app/services/improvement_governor_service.py \
+	app/services/workspace_execution_applier.py \
 	app/runtime/stores/agent_job_store.py \
-	app/runtime/stores/feedback_job_store.py \
-	app/runtime/stores/feedback_batch_plan_store.py \
-	app/runtime/stores/feedback_execution_store.py \
+	app/runtime/stores/feedback_case_store.py \
+	app/runtime/stores/feedback_eval_store.py \
+	app/runtime/stores/feedback_store.py \
+	app/runtime/stores/improvement_content_store.py \
+	app/runtime/stores/improvement_store.py \
 	scripts/bootstrap_runtime_volume.py \
 	scripts/check_codex_governance.py \
 	scripts/check_docs_governance.py \

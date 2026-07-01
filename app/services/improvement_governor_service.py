@@ -62,23 +62,38 @@ class ImprovementGovernorService:
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
         summary, boundary, evidence, counter, uncertainty, verification, generated_by = self._heuristic_attribution(item, nf)
+        trace_ref: dict[str, str] = {}
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
                     AgentJobType.ATTRIBUTION,
                     self._build_attribution_input(item, nf, feedbacks),
                     improvement_id,
+                    trace_ref=trace_ref,
                 )
                 summary, boundary, evidence, counter, uncertainty, verification = self._map_attribution(
-                    output, summary, boundary, evidence, counter, uncertainty, verification,
+                    output,
+                    summary,
+                    boundary,
+                    evidence,
+                    counter,
+                    uncertainty,
+                    verification,
                 )
                 generated_by = "governor"
             except Exception:  # noqa: BLE001 — 任何 governor 失败都回退确定性，保证可用
                 pass
         return self._content.upsert_attribution(
-            improvement_id, summary=summary, responsibility_boundary=boundary, evidence=evidence,
-            counter_evidence=counter, uncertainty_factors=uncertainty, verification_suggestions=verification,
+            improvement_id,
+            summary=summary,
+            responsibility_boundary=boundary,
+            evidence=evidence,
+            counter_evidence=counter,
+            uncertainty_factors=uncertainty,
+            verification_suggestions=verification,
             generated_by=generated_by,
+            generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
+            generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
         )
 
     # ---- 优化方案 ----
@@ -87,19 +102,27 @@ class ImprovementGovernorService:
         nf = self._content.get_normalized_feedback(improvement_id)
         attr = self._content.get_attribution(improvement_id)
         summary, changes, risk_level, generated_by = self._heuristic_plan(item, nf, attr)
+        trace_ref: dict[str, str] = {}
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
-                    AgentJobType.BATCH_PLAN,
+                    AgentJobType.OPTIMIZATION_PLAN,
                     self._build_plan_input(item, nf, attr),
                     improvement_id,
+                    trace_ref=trace_ref,
                 )
                 summary, changes, risk_level = self._map_plan(output, summary, changes, risk_level)
                 generated_by = "governor"
             except Exception:  # noqa: BLE001
                 pass
         return self._content.upsert_optimization_plan(
-            improvement_id, summary=summary, changes=changes, risk_level=risk_level, generated_by=generated_by,
+            improvement_id,
+            summary=summary,
+            changes=changes,
+            risk_level=risk_level,
+            generated_by=generated_by,
+            generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
+            generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
         )
 
     # ---- 回归保障评估（§11/§17.5）----
@@ -108,19 +131,27 @@ class ImprovementGovernorService:
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
         summary, cases, thresholds, generated_by = self._heuristic_regression(item, nf)
+        trace_ref: dict[str, str] = {}
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
                     AgentJobType.EVAL_CASE_GENERATION,
                     self._build_regression_input(item, nf, feedbacks),
                     improvement_id,
+                    trace_ref=trace_ref,
                 )
                 summary, cases, thresholds = self._map_regression(output, summary, cases, thresholds)
                 generated_by = "governor"
             except Exception:  # noqa: BLE001
                 pass
         return self._content.upsert_regression_assessment(
-            improvement_id, summary=summary, cases=cases, suggested_gate_thresholds=thresholds, generated_by=generated_by,
+            improvement_id,
+            summary=summary,
+            cases=cases,
+            suggested_gate_thresholds=thresholds,
+            generated_by=generated_by,
+            generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
+            generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
         )
 
     @staticmethod
@@ -141,7 +172,9 @@ class ImprovementGovernorService:
         }
 
     @staticmethod
-    def _map_regression(output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem], thresholds: dict[str, str]) -> tuple[str, list[RegressionCaseItem], dict[str, str]]:
+    def _map_regression(
+        output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem], thresholds: dict[str, str]
+    ) -> tuple[str, list[RegressionCaseItem], dict[str, str]]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         eval_cases = d.get("eval_cases") or []
         mapped: list[RegressionCaseItem] = []
@@ -153,11 +186,13 @@ class ImprovementGovernorService:
                 continue
             checks = c.get("checks_json") or {}
             checkpoints = list(checks.values()) if isinstance(checks, dict) else []
-            mapped.append(RegressionCaseItem(
-                prompt=prompt,
-                expected_behavior=_text(c.get("expected_behavior")),
-                checkpoints=[str(x) for x in checkpoints][:6],
-            ))
+            mapped.append(
+                RegressionCaseItem(
+                    prompt=prompt,
+                    expected_behavior=_text(c.get("expected_behavior")),
+                    checkpoints=[str(x) for x in checkpoints][:6],
+                )
+            )
         gt = d.get("suggested_gate_thresholds")
         new_thresholds = {str(k): _text(v) for k, v in gt.items() if _text(v)} if isinstance(gt, dict) and gt else thresholds
         new_summary = (_text(d.get("no_action_reason")) or summary) if not mapped else f"治理 Agent 生成 {len(mapped)} 条回归用例候选。"
@@ -177,7 +212,14 @@ class ImprovementGovernorService:
         return "回归保障候选（启发式）：1 条复现用例。", [case], thresholds, "heuristic"
 
     # ---- governor 调用 ----
-    async def _run_governor(self, job_type: AgentJobType, job_input: JsonObject, improvement_id: str) -> FormatterOutputModel:
+    async def _run_governor(
+        self,
+        job_type: AgentJobType,
+        job_input: JsonObject,
+        improvement_id: str,
+        *,
+        trace_ref: dict[str, str] | None = None,
+    ) -> FormatterOutputModel:
         spec = agent_job_spec(job_type)
         assert self._run_profile_json is not None
         return await self._run_profile_json(
@@ -186,6 +228,7 @@ class ImprovementGovernorService:
             job_type=str(spec.job_type),
             job_input=job_input,
             governor={"job_type": str(spec.job_type), "scope_kind": "improvement", "scope_id": improvement_id},
+            trace_callback=trace_ref.update if trace_ref is not None else None,
         )
 
     # ---- prompt 输入（backend-owned grounding）----
@@ -201,8 +244,7 @@ class ImprovementGovernorService:
                 "possible_object": getattr(nf, "possible_object", "") if nf else "",
                 "user_quote": getattr(nf, "user_quote", "") if nf else "",
                 "feedbacks": [
-                    {"summary": getattr(f, "summary", ""), "source": getattr(f, "source", ""), "raw_text": getattr(f, "raw_text", "")}
-                    for f in feedbacks
+                    {"summary": getattr(f, "summary", ""), "source": getattr(f, "source", ""), "raw_text": getattr(f, "raw_text", "")} for f in feedbacks
                 ],
             },
             "task": getattr(item, "title", ""),
@@ -212,13 +254,24 @@ class ImprovementGovernorService:
     @staticmethod
     def _build_plan_input(item: Any, nf: Any, attr: Any) -> JsonObject:
         return {
-            "batch": {
+            "improvement": {
                 "improvement_id": getattr(item, "improvement_id", ""),
                 "title": getattr(item, "title", ""),
-                "attribution_summary": getattr(attr, "summary", "") if attr else "",
+                "agent_id": getattr(item, "agent_id", ""),
+                "summary": getattr(item, "summary", ""),
+            },
+            "normalized_feedback": {
                 "problem": getattr(nf, "problem", "") if nf else "",
+                "possible_reason": getattr(nf, "possible_reason", "") if nf else "",
                 "possible_object": getattr(nf, "possible_object", "") if nf else "",
+                "impact": getattr(nf, "impact", "") if nf else "",
                 "suggestion": getattr(nf, "suggestion", "") if nf else "",
+                "user_quote": getattr(nf, "user_quote", "") if nf else "",
+            },
+            "attribution": {
+                "summary": getattr(attr, "summary", "") if attr else "",
+                "responsibility_boundary": list(getattr(attr, "responsibility_boundary", []) or []) if attr else [],
+                "evidence": list(getattr(attr, "evidence", []) or []) if attr else [],
             },
             "task": getattr(item, "title", ""),
             "main_agent_version_id": getattr(item, "agent_id", ""),
@@ -244,27 +297,28 @@ class ImprovementGovernorService:
         if isinstance(rb, dict) and (rb.get("owner") or rb.get("reason")):
             new_boundary = [f"{_text(rb.get('owner')) or '责任方'}：{_text(rb.get('reason'))}"]
         refs = d.get("evidence_refs") or []
-        new_evidence = [
-            f"{_text(r.get('type'))}:{_text(r.get('id'))} — {_text(r.get('reason'))}".strip(" :—")
-            for r in refs if isinstance(r, dict)
-        ] or evidence
+        new_evidence = [f"{_text(r.get('type'))}:{_text(r.get('id'))} — {_text(r.get('reason'))}".strip(" :—") for r in refs if isinstance(r, dict)] or evidence
         new_counter = [_text(x) for x in (d.get("counter_evidence") or []) if _text(x)] or counter
         new_uncertainty = [_text(x) for x in (d.get("uncertainty_factors") or []) if _text(x)] or uncertainty
         new_verification = [_text(x) for x in (d.get("verification_suggestions") or []) if _text(x)] or verification
         return new_summary, new_boundary, new_evidence, new_counter, new_uncertainty, new_verification
 
     @staticmethod
-    def _map_plan(output: FormatterOutputModel, summary: str, changes: list[OptimizationChangeItem], risk_level: str) -> tuple[str, list[OptimizationChangeItem], str]:
+    def _map_plan(
+        output: FormatterOutputModel, summary: str, changes: list[OptimizationChangeItem], risk_level: str
+    ) -> tuple[str, list[OptimizationChangeItem], str]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         new_summary = _text(d.get("summary")) or _text(d.get("recommendation")) or summary
         new_risk = _text(d.get("risk")) or risk_level
         tasks = d.get("tasks") or []
+        if not tasks:
+            tasks = d.get("changes") or []
         mapped: list[OptimizationChangeItem] = []
         for t in tasks:
             if not isinstance(t, dict):
                 continue
-            target = _text(t.get("target_type")) or _text(t.get("target_path")) or "prompt"
-            change = _text(t.get("recommendation")) or _text(t.get("summary")) or _text(t.get("title")) or _text(t.get("description"))
+            target = _text(t.get("target")) or _text(t.get("target_type")) or _text(t.get("target_path")) or "prompt"
+            change = _text(t.get("change")) or _text(t.get("recommendation")) or _text(t.get("summary")) or _text(t.get("title")) or _text(t.get("description"))
             if change:
                 mapped.append(OptimizationChangeItem(target=target, change=change))
         return new_summary, (mapped or changes), new_risk

@@ -664,7 +664,7 @@ class FeedbackSourceStoreMixin:
             attribution_job_record = attribution_jobs_by_id.get(attribution_job_id or "")
             attribution_job = attribution_job_record.to_payload() if attribution_job_record else None
         else:
-            attribution_job = self.get_job(attribution_job_id) if attribution_job_id else None
+            attribution_job = self.get_agent_job(attribution_job_id) if attribution_job_id else None
         run_id = (
             self._string(raw.get("run_id"))
             or self._string(raw.get("matched_run_id"))

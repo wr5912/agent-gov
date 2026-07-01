@@ -25,24 +25,43 @@ def build_attribution_prompt_context(input_json: JsonObject) -> JsonObject:
     )
 
 
-def build_proposal_prompt_context(input_json: JsonObject) -> JsonObject:
-    """Return the business context needed by proposal-generator.
-
-    The persisted job input remains the audit source of truth. This projection is
-    intentionally narrower because it is embedded into Claude Code's user prompt.
-    """
-
-    attributions = _json_list(input_json.get("attribution_outputs"))
-    eval_cases = _json_list(input_json.get("eval_cases"))
+def build_improvement_optimization_prompt_context(input_json: JsonObject) -> JsonObject:
+    improvement = _json_dict(input_json.get("improvement"))
+    normalized_feedback = _json_dict(input_json.get("normalized_feedback"))
+    attribution = _json_dict(input_json.get("attribution"))
     return _json_object(
         {
-            "feedback_case_count": len(_json_list(input_json.get("feedback_case_ids"))),
-            "eval_case_count": len(_json_list(input_json.get("eval_case_ids"))),
-            "regeneration_instruction": _text(input_json.get("regeneration_instruction"), MAX_PROMPT_TEXT_CHARS),
-            "target_policy": _target_policy_summary(_json_dict(input_json.get("target_policy"))),
-            "allowed_target_paths": _limited_text_list(input_json.get("allowed_target_paths"), MAX_PROMPT_LIST_ITEMS),
-            "attribution_summaries": _limited_objects(attributions, _attribution_summary),
-            "eval_case_summaries": _limited_objects(eval_cases, _eval_case_summary),
+            "improvement": _json_object(
+                {
+                    "improvement_id": _text(improvement.get("improvement_id"), 300),
+                    "title": _text(improvement.get("title"), 500),
+                    "agent_id": _text(improvement.get("agent_id"), 200),
+                    "summary": _text(improvement.get("summary"), MAX_PROMPT_TEXT_CHARS),
+                }
+            ),
+            "normalized_feedback": _json_object(
+                {
+                    "problem": _text(normalized_feedback.get("problem"), MAX_PROMPT_TEXT_CHARS),
+                    "possible_reason": _text(normalized_feedback.get("possible_reason"), MAX_PROMPT_TEXT_CHARS),
+                    "possible_object": _text(normalized_feedback.get("possible_object"), 500),
+                    "impact": _text(normalized_feedback.get("impact"), 300),
+                    "suggestion": _text(normalized_feedback.get("suggestion"), MAX_PROMPT_TEXT_CHARS),
+                    "user_quote": _text(normalized_feedback.get("user_quote"), MAX_PROMPT_TEXT_CHARS),
+                }
+            ),
+            "attribution": _json_object(
+                {
+                    "summary": _text(attribution.get("summary"), MAX_PROMPT_TEXT_CHARS),
+                    "responsibility_boundary": _limited_text_list(
+                        attribution.get("responsibility_boundary"), MAX_PROMPT_LIST_ITEMS
+                    ),
+                    "evidence": _limited_text_list(attribution.get("evidence"), MAX_PROMPT_LIST_ITEMS),
+                }
+            ),
+            "target_guidance": [
+                "只输出事项级优化方案，不输出批次、任务队列、外部 webhook 或执行 job。",
+                "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、eval_case 等治理资产。",
+            ],
         }
     )
 
@@ -68,19 +87,6 @@ def build_eval_case_generation_prompt_context(input_json: JsonObject) -> JsonObj
             "source_refs": _limited_objects(_json_list(input_json.get("source_refs")), _source_ref_summary),
             "feedback_cases": _limited_objects(feedback_cases, _eval_case_generation_case_summary),
             "existing_eval_case_summaries": _limited_objects(existing_eval_cases, _eval_case_summary),
-        }
-    )
-
-
-def build_regression_impact_prompt_context(input_json: JsonObject) -> JsonObject:
-    eval_run = _json_dict(input_json.get("eval_run"))
-    items = _json_list(eval_run.get("items"))
-    return _json_object(
-        {
-            "result_status": _text(eval_run.get("result_status"), 200),
-            "summary": _compact_json_object(eval_run.get("summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "gate_result": _gate_result_summary(_json_dict(eval_run.get("gate_result"))),
-            "item_summaries": _limited_objects(items, _eval_run_item_summary),
         }
     )
 
@@ -150,7 +156,9 @@ def _eval_case_summary(source: JsonObject) -> JsonObject:
             "labels": _limited_text_list(source.get("labels"), MAX_PROMPT_LIST_ITEMS),
             "source_summary": _compact_json_object(source.get("source_summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
             "attribution_summary": _compact_json_object(source.get("attribution_summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "proposal_summary": _compact_json_object(source.get("proposal_summary"), MAX_PROMPT_NESTED_TEXT_CHARS),
+            "optimization_plan_summary": _compact_json_object(
+                source.get("optimization_plan_summary"), MAX_PROMPT_NESTED_TEXT_CHARS
+            ),
         }
     )
 
@@ -245,64 +253,16 @@ def _feedback_source_summary(source: JsonObject) -> JsonObject:
 def _optimization_plan_summary(source: JsonObject) -> JsonObject:
     return _json_object(
         {
-            "title": _text(source.get("title"), 500),
             "summary": _text(source.get("summary"), MAX_PROMPT_TEXT_CHARS),
-            "recommendation": _text(source.get("recommendation"), MAX_PROMPT_TEXT_CHARS),
-            "expected_effect": _text(source.get("expected_effect"), MAX_PROMPT_TEXT_CHARS),
-            "validation": _text(source.get("validation"), MAX_PROMPT_TEXT_CHARS),
-            "risk": _text(source.get("risk"), MAX_PROMPT_TEXT_CHARS),
-            "tasks": _limited_objects(_json_list(source.get("tasks")), _plan_task_summary),
-            "blocked_items": _limited_objects(_json_list(source.get("blocked_items")), _blocked_item_summary),
+            "changes": _limited_objects(_json_list(source.get("changes")), _optimization_change_summary),
+            "risk_level": _text(source.get("risk_level"), 200),
         }
     )
 
 
-def _blocked_item_summary(source: JsonObject) -> JsonObject:
+def _optimization_change_summary(source: JsonObject) -> JsonObject:
     return _json_object(
-        {
-            "title": _text(source.get("title"), 500),
-            "target_type": _text(source.get("target_type"), 200),
-            "target_path": _text(source.get("target_path"), 500),
-            "owner": _text(source.get("owner"), 200),
-            "actionability": _text(source.get("actionability"), 100),
-            "reason": _text(source.get("reason"), MAX_PROMPT_TEXT_CHARS),
-            "recommendation": _text(source.get("recommendation"), MAX_PROMPT_TEXT_CHARS),
-        }
-    )
-
-
-def _gate_result_summary(source: JsonObject) -> JsonObject:
-    return _json_object(
-        {
-            "status": _text(source.get("status"), 100),
-            "blocked_case_ids": _limited_text_list(source.get("blocked_case_ids"), MAX_PROMPT_LIST_ITEMS),
-            "review_case_ids": _limited_text_list(source.get("review_case_ids"), MAX_PROMPT_LIST_ITEMS),
-            "note_case_ids": _limited_text_list(source.get("note_case_ids"), MAX_PROMPT_LIST_ITEMS),
-            "reason": _text(source.get("reason"), MAX_PROMPT_TEXT_CHARS),
-        }
-    )
-
-
-def _eval_run_item_summary(source: JsonObject) -> JsonObject:
-    return _json_object(
-        {
-            "status": _text(source.get("status"), 100),
-            "score": source.get("score") if isinstance(source.get("score"), int | float) else None,
-            "answer_summary": _text(source.get("answer_summary"), MAX_PROMPT_TEXT_CHARS),
-            "error_json": _compact_json_object(source.get("error_json"), MAX_PROMPT_NESTED_TEXT_CHARS),
-            "eval_case_snapshot": _eval_case_summary(_json_dict(source.get("eval_case_snapshot"))),
-            "check_results": _limited_objects(_json_list(source.get("check_results")), _check_result_summary),
-        }
-    )
-
-
-def _check_result_summary(source: JsonObject) -> JsonObject:
-    return _json_object(
-        {
-            "name": _text(source.get("name"), 200),
-            "passed": source.get("passed") if isinstance(source.get("passed"), bool) else None,
-            "message": _text(source.get("message"), MAX_PROMPT_NESTED_TEXT_CHARS),
-        }
+        {"target": _text(source.get("target"), 500), "change": _text(source.get("change"), MAX_PROMPT_TEXT_CHARS)}
     )
 
 

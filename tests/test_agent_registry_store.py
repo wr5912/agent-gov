@@ -207,8 +207,14 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
     fs = module.feedback_store
     fs.record_run({"run_id": "run-x", "agent_id": "soc-ops", "created_at": "2026-06-12T00:00:00Z"})
     signal = fs.create_signal(FeedbackSignalCreateRequest(run_id="run-x", labels=["tool_data_incomplete"]))
-    batch = fs.create_optimization_batch([{"source_kind": "signal", "source_id": signal["signal_id"]}])
-    case_id = batch["feedback_case_ids"][0]
+    case = fs.create_case(source_ids=[signal["signal_id"]], title="数据标准化反馈")
+    case_id = case["feedback_case_id"]
+    improvement = module.improvement_store.create_improvement(
+        agent_id="soc-ops",
+        title="数据标准化映射治理",
+        source_feedback_refs=[case_id],
+    )
+    module.improvement_store.add_link(improvement.improvement_id, kind="change_set", ref_id="agc-test")
 
     with TestClient(module.app) as client:
         prov = client.get(f"/api/asset-registry/feedback/{case_id}")
@@ -217,8 +223,8 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
         assert body["feedback_case_id"] == case_id
         # 影响了哪个 Agent：从反馈归属可追溯。
         assert "soc-ops" in body["agent_ids"]
-        # 资产关系结构（target_paths/version 等随优化任务出现）；此处尚无优化任务。
-        assert isinstance(body["optimization_tasks"], list)
+        assert body["improvements"][0]["improvement_id"] == improvement.improvement_id
+        assert body["improvements"][0]["change_set_ids"] == ["agc-test"]
         # 未知 case -> 404。
         assert client.get("/api/asset-registry/feedback/nope").status_code == 404
 

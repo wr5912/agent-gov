@@ -9,10 +9,10 @@ from app.runtime.state_machines import EVAL_CASE_PROMOTION_STATES, EVAL_CASE_STA
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
-from .common_records import EvalCaseSourceRefRecord
+from .common_records import EvalCaseOptimizationPlanSummaryRecord, EvalCaseSourceRefRecord
 
 
-ACTIVE_ASSET_LAYERS = {"batch_specific", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug"}
+ACTIVE_ASSET_LAYERS = {"targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug"}
 ASSET_LAYERS = {"candidate", *ACTIVE_ASSET_LAYERS, "exploratory"}
 PROMOTION_STATUSES = EVAL_CASE_PROMOTION_STATES
 BLOCKING_POLICIES = {"blocking", "blocking_if_relevant", "non_blocking"}
@@ -22,7 +22,7 @@ EvalCaseStatus = Literal["draft", "active", "archived"]
 EvalCasePromotionStatus = Literal["candidate", "needs_review", "approved", "rejected", "superseded", "archived"]
 EvalCaseAssetLayer = Literal[
     "candidate",
-    "batch_specific",
+    "targeted_regression",
     "smoke",
     "core_regression",
     "scenario_pack",
@@ -66,11 +66,10 @@ class EvalCaseRecord(StrictRuntimeRecord):
     checks_json: JsonObject = Field(default_factory=dict)
     source_summary: Optional[JsonObject] = None
     attribution_summary: Optional[JsonObject] = None
-    proposal_summary: Optional[JsonObject] = None
+    optimization_plan_summary: Optional[EvalCaseOptimizationPlanSummaryRecord] = None
     source_signal_ids: list[str] = Field(default_factory=list)
     source_evidence_package_id: Optional[str] = None
     source_attribution_job_id: Optional[str] = None
-    source_proposal_job_id: Optional[str] = None
 
     @field_validator("status")
     @classmethod

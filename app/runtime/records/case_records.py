@@ -15,8 +15,6 @@ FeedbackCaseStatus = Literal[
     "pending_evidence",
     "pending_attribution",
     "attribution_queued",
-    "pending_proposal",
-    "proposal_queued",
     "pending_review",
     "needs_human_review",
 ]
@@ -26,6 +24,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
     """Internal source of truth for one feedback case row."""
 
     feedback_case_id: str
+    agent_id: str = "main-agent"
     created_at: str
     updated_at: str
     status: FeedbackCaseStatus
@@ -41,7 +40,6 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
     case_ids: list[str] = Field(default_factory=list)
     evidence_package_ids: list[str] = Field(default_factory=list)
     attribution_job_ids: list[str] = Field(default_factory=list)
-    proposal_job_ids: list[str] = Field(default_factory=list)
 
     @field_validator("status")
     @classmethod
@@ -61,7 +59,6 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         "case_ids",
         "evidence_package_ids",
         "attribution_job_ids",
-        "proposal_job_ids",
     )
     @classmethod
     def validate_string_list(cls, value: list[str]) -> list[str]:
@@ -82,7 +79,6 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         status: str | None = None,
         evidence_package_id: Optional[str] = None,
         attribution_job_id: Optional[str] = None,
-        proposal_job_id: Optional[str] = None,
     ) -> "FeedbackCaseRecord":
         payload = self.to_payload()
         payload["updated_at"] = updated_at
@@ -93,8 +89,6 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
             payload["evidence_package_ids"] = [evidence_package_id]
         if attribution_job_id:
             payload["attribution_job_ids"] = [attribution_job_id]
-        if proposal_job_id:
-            payload["proposal_job_ids"] = [proposal_job_id]
         return type(self).model_validate(payload)
 
     def to_payload(self) -> JsonObject:
@@ -105,6 +99,7 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
         return cls.model_validate(
             {
                 "feedback_case_id": row.feedback_case_id,
+                "agent_id": row.agent_id,
                 "created_at": row.created_at,
                 "updated_at": row.updated_at,
                 "status": row.status,
@@ -120,6 +115,5 @@ class FeedbackCaseRecord(StrictRuntimeRecord):
                 "case_ids": row.case_ids_json or [],
                 "evidence_package_ids": [row.current_evidence_package_id] if row.current_evidence_package_id else [],
                 "attribution_job_ids": [row.current_attribution_job_id] if row.current_attribution_job_id else [],
-                "proposal_job_ids": [row.current_proposal_job_id] if row.current_proposal_job_id else [],
             }
         )

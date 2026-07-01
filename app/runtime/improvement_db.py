@@ -110,6 +110,8 @@ class AttributionModel(Base):
     verification_suggestions_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     status: Mapped[str] = mapped_column(String(32), default="draft")
     generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
+    generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
+    generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
@@ -129,6 +131,8 @@ class OptimizationPlanModel(Base):
     risk_level: Mapped[str] = mapped_column(String(32), default="")
     status: Mapped[str] = mapped_column(String(32), default="draft")
     generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
+    generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
+    generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
@@ -154,6 +158,8 @@ class ExecutionRecordModel(Base):
     change_set_id: Mapped[str] = mapped_column(String(128), default="")
     applied_agent_version_id: Mapped[str] = mapped_column(String(128), default="")
     applied_diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
+    generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
@@ -174,5 +180,7 @@ class RegressionAssessmentModel(Base):
     suggested_gate_thresholds_json: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), default="draft")
     generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
+    generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
+    generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)

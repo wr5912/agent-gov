@@ -5,6 +5,7 @@
 下 Markdown 的未完成标记和镜像同步（见 TEXT_GOVERNANCE_ROOTS / collect_mirrored_skill_pairs）；
 产品内容是否正确仍由 agentgov-governance-preflight 负责，本脚本只做容器治理。
 """
+
 from __future__ import annotations
 
 import argparse
@@ -42,13 +43,11 @@ MIRRORED_SKILL_EXCLUSIONS = frozenset(
     }
 )
 # CJK 标记按子串匹配；ASCII 标记按整词匹配，避免 `test_xxx.py`、掩码值等误报。
-_CJK_UNFINISHED_MARKERS = ("待" "补充", "占" "位")
-_WORD_UNFINISHED_MARKERS = ("TO" "DO", "TB" "D", "place" "holder", "x" "xx", "X" "XX")
+_CJK_UNFINISHED_MARKERS = ("待补充", "占位")
+_WORD_UNFINISHED_MARKERS = ("TODO", "TBD", "placeholder", "xxx", "XXX")
 _WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
 _ARCHIVE_ORIGINAL_PATH_PATTERN = re.compile(r"`(docs/[^`]+\.md)`")
-_LEGACY_GOVERNANCE_AGENT_PATTERN = re.compile(
-    r"(?:attribution|proposal|execution|eval-case|regression-impact).{0,120}治理 Agent"
-)
+_LEGACY_GOVERNANCE_AGENT_PATTERN = re.compile(r"(?:attribution|proposal|execution|eval-case|regression-impact).{0,120}治理 Agent")
 
 
 @dataclass(frozen=True)
@@ -141,11 +140,7 @@ def _active_doc_index_issues(root: Path, new_active_docs: list[str]) -> list[Doc
     index = _read_existing(root, DOCS_INDEX)
     if not index:
         return [DocsGovernanceIssue(DOCS_INDEX, "docs index is required when adding active docs")]
-    return [
-        DocsGovernanceIssue(path, f"new active docs file is not linked from {DOCS_INDEX}")
-        for path in new_active_docs
-        if path not in index
-    ]
+    return [DocsGovernanceIssue(path, f"new active docs file is not linked from {DOCS_INDEX}") for path in new_active_docs if path not in index]
 
 
 def _archive_index_issues(root: Path, new_archive_docs: list[str]) -> list[DocsGovernanceIssue]:
@@ -155,13 +150,9 @@ def _archive_index_issues(root: Path, new_archive_docs: list[str]) -> list[DocsG
     if not index:
         return [DocsGovernanceIssue(ARCHIVE_INDEX, "archive index is required when adding archived docs")]
     issues = [
-        DocsGovernanceIssue(ARCHIVE_INDEX, f"archive index is missing required column: {header}")
-        for header in ARCHIVE_INDEX_HEADERS
-        if header not in index
+        DocsGovernanceIssue(ARCHIVE_INDEX, f"archive index is missing required column: {header}") for header in ARCHIVE_INDEX_HEADERS if header not in index
     ]
-    issues.extend(
-        DocsGovernanceIssue(path, f"new archived docs file is not listed in {ARCHIVE_INDEX}") for path in new_archive_docs if path not in index
-    )
+    issues.extend(DocsGovernanceIssue(path, f"new archived docs file is not listed in {ARCHIVE_INDEX}") for path in new_archive_docs if path not in index)
     return issues
 
 
@@ -231,8 +222,7 @@ def _long_term_authority_term_issues(root: Path, paths: Iterable[str]) -> list[D
                 issues.append(
                     DocsGovernanceIssue(
                         rel_path,
-                        "long-term authority doc uses legacy governance-agent terminology "
-                        f"at line {line_number}; use `governor` plus job type",
+                        f"long-term authority doc uses legacy governance-agent terminology at line {line_number}; use `governor` plus job type",
                     )
                 )
     return issues

@@ -2,9 +2,8 @@ from __future__ import annotations
 
 from typing import Literal, Optional
 
-from pydantic import ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
 
 
@@ -73,93 +72,58 @@ class EvalCaseSourceRefRecord(StrictRuntimeRecord):
         return self
 
 
-class ExtensibleRuntimeRecord(StrictRuntimeRecord):
-    """Base for normalized runtime records with schema-owned persisted fields."""
-
-    model_config = ConfigDict(extra="ignore")
-
-
-class FeedbackOptimizationTaskContextRecord(ExtensibleRuntimeRecord):
-    external_system: Optional[str] = None
-    mcp_server: Optional[str] = None
-    tool_name: Optional[str] = None
-    tool_names: list[str] = Field(default_factory=list)
-    api_name: Optional[str] = None
-    api_path: Optional[str] = None
-    api_method: Optional[str] = None
-    endpoint: Optional[str] = None
-    query_ids: list[str] = Field(default_factory=list)
-    alert_ids: list[str] = Field(default_factory=list)
-    case_ids: list[str] = Field(default_factory=list)
-    asset_ids: list[str] = Field(default_factory=list)
-    dates: list[str] = Field(default_factory=list)
-    affected_fields: list[str] = Field(default_factory=list)
-    observed_issue: Optional[str] = None
-    expected_fix: Optional[str] = None
-    target_file: Optional[str] = None
-    config_section: Optional[str] = None
-    symbol: Optional[str] = None
-
-    def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
-
-
-class FeedbackOptimizationEvidenceRefRecord(ExtensibleRuntimeRecord):
-    type: str = "evidence_file"
-    id: str
-    reason: str = ""
-
-    @model_validator(mode="after")
-    def validate_evidence_ref_shape(self) -> FeedbackOptimizationEvidenceRefRecord:
-        if not self.id.strip():
-            raise ValueError("evidence ref id cannot be empty")
-        if not self.type.strip():
-            raise ValueError("evidence ref type cannot be empty")
-        return self
-
-    def to_payload(self) -> JsonObject:
-        return self.model_dump(mode="json", exclude_none=True)
-
-
-class FeedbackOptimizationAttributionSummaryRecord(StrictRuntimeRecord):
-    attribution_job_id: Optional[str] = None
-    feedback_case_id: Optional[str] = None
-    problem_type: Optional[str] = None
-    optimization_object_type: Optional[str] = None
-    actionability: Optional[str] = None
-    confidence: Optional[str] = None
+class EvalCaseOptimizationPlanChangeRecord(StrictRuntimeRecord):
+    target: Optional[str] = None
+    change: Optional[str] = None
     rationale: Optional[str] = None
-    summary: Optional[str] = None
+    acceptance_criteria: list[str] = Field(default_factory=list)
 
-
-class FeedbackOptimizationPlanTaskSummaryRecord(StrictRuntimeRecord):
-    total: int = Field(default=0, ge=0)
-    workspace_execution: int = Field(default=0, ge=0)
-    external_webhook: int = Field(default=0, ge=0)
-
-
-class FeedbackOptimizationBlockedSummaryRecord(StrictRuntimeRecord):
-    total: int = Field(default=0, ge=0)
-
-
-class FeedbackBatchEvalCaseGenerationRecord(StrictRuntimeRecord):
-    created: int = Field(default=0, ge=0)
-    reused: int = Field(default=0, ge=0)
-    updated: int = Field(default=0, ge=0)
-    skipped: int = Field(default=0, ge=0)
-    eval_cases: list[JsonObject] = Field(default_factory=list)
-    results: list[JsonObject] = Field(default_factory=list)
-    eval_case_ids: list[str] = Field(default_factory=list)
-    result_ids: list[str] = Field(default_factory=list)
-
-    @field_validator("eval_case_ids", "result_ids")
+    @model_validator(mode="before")
     @classmethod
-    def validate_string_list(cls, value: list[str]) -> list[str]:
-        return [str(item) for item in value if item]
+    def normalize_change(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return {}
+        return {
+            "target": value.get("target"),
+            "change": value.get("change"),
+            "rationale": value.get("rationale"),
+            "acceptance_criteria": value.get("acceptance_criteria") or [],
+        }
+
+    @field_validator("target", "change", "rationale")
+    @classmethod
+    def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @field_validator("acceptance_criteria")
+    @classmethod
+    def normalize_acceptance_criteria(cls, value: list[str]) -> list[str]:
+        return [str(item).strip() for item in value if str(item).strip()]
 
 
-class FeedbackBatchAttributionSummaryRecord(StrictRuntimeRecord):
-    total: int = Field(default=0, ge=0)
-    completed: int = Field(default=0, ge=0)
-    running: int = Field(default=0, ge=0)
-    needs_review_or_failed: int = Field(default=0, ge=0)
+class EvalCaseOptimizationPlanSummaryRecord(StrictRuntimeRecord):
+    summary: Optional[str] = None
+    changes: list[EvalCaseOptimizationPlanChangeRecord] = Field(default_factory=list)
+    risk_level: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_summary(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return None
+        return {
+            "summary": value.get("summary"),
+            "changes": value.get("changes") if isinstance(value.get("changes"), list) else [],
+            "risk_level": value.get("risk_level"),
+        }
+
+    @field_validator("summary", "risk_level")
+    @classmethod
+    def normalize_optional_text(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None

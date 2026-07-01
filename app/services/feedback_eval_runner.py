@@ -33,25 +33,18 @@ class FeedbackEvalRunner:
         self,
         *,
         eval_case_ids: Optional[list[str]] = None,
-        optimization_task_id: Optional[str] = None,
         source: str = "manual_feedback_dataset",
-        regression_plan_id: Optional[str] = None,
         existing_eval_run_id: Optional[str] = None,
         change_set_id: Optional[str] = None,
         candidate_commit_sha: Optional[str] = None,
         candidate_worktree_path: Optional[str] = None,
     ) -> EvalRunResponse | None:
-        if regression_plan_id and not eval_case_ids:
-            plan = self.feedback_store.get_regression_plan(regression_plan_id)
-            eval_case_ids = [str(item) for item in (plan or {}).get("eval_case_ids") or [] if item]
         eval_cases = self._selected_eval_cases(eval_case_ids)
         if not eval_cases:
             return None
         eval_run = self._create_or_get_eval_run(
             eval_cases,
-            optimization_task_id=optimization_task_id,
             source=source,
-            regression_plan_id=regression_plan_id,
             existing_eval_run_id=existing_eval_run_id,
             change_set_id=change_set_id,
             candidate_commit_sha=candidate_commit_sha,
@@ -59,17 +52,11 @@ class FeedbackEvalRunner:
         )
         if not eval_run:
             return None
-        if optimization_task_id:
-            self.feedback_store.update_task_status(
-                optimization_task_id,
-                status="regression_running",
-                fields={"latest_regression_run_id": eval_run.eval_run_id},
-            )
         try:
             for eval_case in eval_cases:
                 result: ChatResponse | None = None
                 try:
-                    request = self._eval_chat_request(eval_run, eval_case, optimization_task_id, regression_plan_id)
+                    request = self._eval_chat_request(eval_run, eval_case)
                     result = await asyncio.wait_for(self._run_eval_chat(request, change_set_id, candidate_commit_sha, candidate_worktree_path), timeout=300)
                     status, score, check_results = self._evaluate_eval_case(eval_case, result)
                     self.feedback_store.append_eval_run_item(
@@ -104,9 +91,7 @@ class FeedbackEvalRunner:
         self,
         eval_cases: list[JsonObject],
         *,
-        optimization_task_id: Optional[str],
         source: str,
-        regression_plan_id: Optional[str],
         existing_eval_run_id: Optional[str],
         change_set_id: Optional[str],
         candidate_commit_sha: Optional[str],
@@ -118,9 +103,7 @@ class FeedbackEvalRunner:
             self.feedback_store.create_eval_run(
                 eval_case_ids=[str(item["eval_case_id"]) for item in eval_cases],
                 agent_version_id=candidate_commit_sha or self.current_agent_version_id(),
-                optimization_task_id=optimization_task_id,
                 source=source,
-                regression_plan_id=regression_plan_id,
                 change_set_id=change_set_id,
                 candidate_commit_sha=candidate_commit_sha,
                 candidate_worktree_path=candidate_worktree_path,
@@ -131,8 +114,6 @@ class FeedbackEvalRunner:
         self,
         eval_run: EvalRunResponse,
         eval_case: JsonObject,
-        optimization_task_id: Optional[str],
-        regression_plan_id: Optional[str],
     ) -> ChatRequest:
         return ChatRequest(
             message=str(eval_case.get("prompt") or ""),
@@ -142,8 +123,6 @@ class FeedbackEvalRunner:
                 "source": "regression_eval",
                 "eval_run_id": eval_run.eval_run_id,
                 "eval_case_id": eval_case["eval_case_id"],
-                "optimization_task_id": optimization_task_id,
-                "regression_plan_id": regression_plan_id,
                 "change_set_id": eval_run.change_set_id,
                 "candidate_commit_sha": eval_run.candidate_commit_sha,
                 "candidate_worktree_path": eval_run.candidate_worktree_path,

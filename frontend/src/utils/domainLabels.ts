@@ -11,7 +11,7 @@ export const EVAL_CASE_STATUS_OPTIONS = [
 
 export const EVAL_CASE_ASSET_LAYER_OPTIONS = [
   { value: "candidate", label: "候选资产" },
-  { value: "batch_specific", label: "批次专用" },
+  { value: "targeted_regression", label: "专项回归" },
   { value: "smoke", label: "冒烟回归" },
   { value: "core_regression", label: "核心回归" },
   { value: "scenario_pack", label: "场景包" },

@@ -109,6 +109,8 @@ class AttributionResponse(BaseModel):
     verification_suggestions: list[str] = Field(default_factory=list, description="验证建议（agent-owned）。")
     status: str
     generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
     created_at: str
     updated_at: str
 
@@ -131,6 +133,8 @@ class OptimizationPlanResponse(BaseModel):
     risk_level: str = Field(default="", description="方案风险级别（agent-owned，来自 formatter risk）。")
     status: str
     generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
     created_at: str
     updated_at: str
 
@@ -155,6 +159,8 @@ class RegressionAssessmentResponse(BaseModel):
     suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict, description="建议发布门禁阈值（agent-owned）。")
     status: str
     generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
     created_at: str
     updated_at: str
 
@@ -173,5 +179,7 @@ class ExecutionResponse(BaseModel):
     change_set_id: str = ""
     applied_agent_version_id: str = ""
     applied_diff: dict = Field(default_factory=dict)
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
     created_at: str
     updated_at: str

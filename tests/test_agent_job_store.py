@@ -4,7 +4,6 @@ import logging
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
 from app.runtime.agent_job_types import agent_job_spec
-from app.runtime.records.regression_impact_records import RegressionImpactAnalysisRecord
 from app.runtime.runtime_db import AgentJobModel
 from app.services.agent_job_worker import AgentJobWorker
 from pydantic import ValidationError
@@ -24,7 +23,7 @@ def test_unified_agent_job_schema_drops_legacy_job_tables(tmp_path):
         table_names = {str(row[0]) for row in db.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).all()}
 
     assert "agent_jobs" in table_names
-    assert "execution_applications" in table_names
+    assert "execution_applications" not in table_names
     assert "feedback_jobs" not in table_names
     assert "optimization_executions" not in table_names
 
@@ -321,142 +320,3 @@ def test_eval_case_generation_uses_backend_source_and_lifecycle_fields(tmp_path)
     assert eval_case["source"] == "eval_case_governor"
     assert eval_case["source_feedback_case_id"] == feedback_case["feedback_case_id"]
     assert eval_case["source_run_id"] == "run-1"
-
-
-def test_batch_projection_refreshes_eval_case_generation_job_status(tmp_path):
-    store, _ = _store(tmp_path)
-    _record_run(store)
-    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
-    batch = store.create_optimization_batch(
-        [{"source_kind": "signal", "source_id": signal["signal_id"]}],
-        title="数据不全批次",
-    )
-    queued_job = batch["eval_case_generation_job"]
-    feedback_case = queued_job["input_json"]["feedback_cases"][0]["feedback_case"]
-
-    _complete_eval_case_generation_job(store, queued_job, feedback_case=feedback_case)
-    refreshed = store.find_optimization_batch(batch["batch_id"])
-
-    assert refreshed["eval_case_generation_job"]["status"] == "completed"
-    assert refreshed["eval_case_generation_job"]["completed_at"]
-    assert refreshed["eval_case_ids"]
-
-
-def test_regression_impact_agent_job_projects_to_impact_analysis(tmp_path):
-    store, _ = _store(tmp_path)
-    spec = agent_job_spec("regression_impact_analysis")
-    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="manual_feedback_dataset")
-    finished_eval_run = store.finish_eval_run(eval_run["eval_run_id"])
-    job = store.create_agent_job(
-        job_id="riaj-projection",
-        job_type=spec.job_type,
-        scope_kind="eval_run",
-        scope_id=eval_run["eval_run_id"],
-        profile_name=spec.profile_name,
-        input_payload={"schema_version": "regression-impact-analysis-input/v1", "eval_run_id": eval_run["eval_run_id"]},
-    )
-
-    completed = store.complete_projected_agent_job(
-        job,
-        {
-            "impact_analysis_id": "ria-agent-wrong",
-            "eval_run_id": "evr-agent-wrong",
-            "status": "completed",
-            "result_status": "failed",
-            "gate_result": {"status": "agent_wrong"},
-            "impacted_assets": [
-                {
-                    "asset_id": "eval-asset-1",
-                    "summary": "核心回归资产受影响。",
-                    "agent_note": {"source": "regression-impact-analyzer"},
-                }
-            ],
-            "recommendations": ["继续保留当前回归资产。"],
-            "summary": "未发现回归影响。",
-            "risk_assessment": "low",
-            "next_steps": [],
-            "_formatter": {"name": "dspy", "source": "fallback", "candidate_count": 0},
-        },
-    )
-
-    impact = store.get_regression_impact_analysis(eval_run["eval_run_id"])
-    completed_job = store.get_agent_job("riaj-projection")
-    assert completed["status"] == "completed"
-    assert "_formatter" not in completed_job["raw_output_json"]
-    assert impact["job_id"] == "riaj-projection"
-    assert "_formatter" not in impact
-    assert impact["impact_analysis_id"] != "ria-agent-wrong"
-    assert impact["eval_run_id"] == eval_run["eval_run_id"]
-    assert impact["result_status"] == finished_eval_run["result_status"]
-    assert impact["gate_result"] == finished_eval_run["gate_result"]
-    assert impact["impacted_assets"] == []
-    assert impact["recommendations"] == ["继续保留当前回归资产。"]
-
-
-def test_regression_impact_force_rerun_clears_previous_error_json(tmp_path):
-    store, _ = _store(tmp_path)
-    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="manual_feedback_dataset")
-    failed_job = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
-
-    store.complete_projected_agent_job(
-        failed_job,
-        {
-            "eval_run_id": eval_run["eval_run_id"],
-            "status": "completed",
-            "impacted_assets": [],
-        },
-    )
-    failed = store.get_regression_impact_analysis(eval_run["eval_run_id"])
-
-    rerun_job = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
-    pending = store.get_regression_impact_analysis(eval_run["eval_run_id"])
-    store.complete_projected_agent_job(
-        rerun_job,
-        {
-            "eval_run_id": eval_run["eval_run_id"],
-            "status": "completed",
-            "result_status": "passed",
-            "gate_result": {"status": "passed"},
-            "impacted_assets": [],
-            "recommendations": ["重跑通过。"],
-        },
-    )
-    completed = store.get_regression_impact_analysis(eval_run["eval_run_id"])
-
-    assert failed["status"] == "failed"
-    assert failed["error_json"]
-    assert pending["status"] == "pending"
-    assert pending["error_json"] is None
-    assert completed["status"] == "completed"
-    assert completed["error_json"] is None
-
-
-def test_regression_impact_record_rejects_unidentified_impacted_asset():
-    with pytest.raises(ValidationError):
-        RegressionImpactAnalysisRecord.model_validate(
-            {
-                "schema_version": "regression-impact-analysis/v1",
-                "impact_analysis_id": "ria-invalid",
-                "eval_run_id": "erun-invalid",
-                "created_at": "2026-06-02T00:00:00+00:00",
-                "completed_at": "2026-06-02T00:00:01+00:00",
-                "status": "completed",
-                "impacted_assets": [{"agent_note": {"source": "bad-agent"}}],
-                "recommendations": ["复查输出。"],
-            }
-        )
-
-
-def test_regression_impact_projection_rejects_invalid_persisted_status(tmp_path):
-    store, _ = _store(tmp_path)
-    eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id="main-v-test", source="manual_feedback_dataset")
-    job = store.queue_regression_impact_agent_job(eval_run["eval_run_id"], force=True)
-    with store.Session.begin() as db:
-        db.execute(
-            text("UPDATE regression_impact_analyses SET status = 'unknown_status' WHERE eval_run_id = :eval_run_id"),
-            {"eval_run_id": eval_run["eval_run_id"]},
-        )
-
-    assert job is not None
-    with pytest.raises(ValidationError):
-        store.get_regression_impact_analysis(eval_run["eval_run_id"])

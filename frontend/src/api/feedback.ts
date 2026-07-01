@@ -7,36 +7,18 @@ import type {
   EvalCaseRecord,
   EvalCaseUpdateRequest,
   EvalRunRecord,
-  ExternalGovernanceItemRecord,
-  ExternalGovernanceWebhookRecord,
   FeedbackCaseCreateRequest,
   FeedbackCaseRecord,
   FeedbackEvalCaseGenerateRequest,
   FeedbackFilters,
-  FeedbackOptimizationBatchAttributionResponse,
-  FeedbackOptimizationBatchCreateRequest,
-  FeedbackOptimizationBatchEvalCaseCreateRequest,
-  FeedbackOptimizationBatchEvalCasePromotionResponse,
-  FeedbackOptimizationBatchExecuteAllRequest,
-  FeedbackOptimizationBatchExecuteAllResponse,
-  FeedbackOptimizationBatchExecutionRollbackRequest,
-  FeedbackOptimizationBatchExecutionRollbackResponse,
-  FeedbackOptimizationBatchRegressionResponse,
-  FeedbackOptimizationBatchRecord,
-  FeedbackOptimizationPlanTaskExecuteRequest,
-  FeedbackOptimizationPlanTaskExecuteResponse,
-  FeedbackOptimizationPlanTaskUpdateRequest,
-  FeedbackOptimizationPlanTaskUpdateResponse,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
   FeedbackSignalRecord,
   FeedbackSourceRecord,
   FeedbackSourceUpdateRequest,
   FeedbackWorkbenchData,
-  OptimizationTaskRecord,
   PendingCorrelationRecord,
   PendingCorrelationResolveRequest,
-  RegressionAssetGovernanceActionRequest,
   SocEventCreateRequest,
   SocEventCreateResponse,
   SocEventRecord,
@@ -149,197 +131,6 @@ export function generateFeedbackSourceEvalCases(config: RuntimeClientConfig, pay
   });
 }
 
-export function getFeedbackOptimizationBatches(config: RuntimeClientConfig, filters?: FeedbackFilters) {
-  return requestJson<FeedbackOptimizationBatchRecord[]>(
-    config,
-    `/api/feedback-optimization-batches${feedbackQueryString(filters)}`,
-  );
-}
-
-export function createFeedbackOptimizationBatch(
-  config: RuntimeClientConfig,
-  payload: FeedbackOptimizationBatchCreateRequest,
-) {
-  return requestJson<FeedbackOptimizationBatchRecord>(config, "/api/feedback-optimization-batches", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
-export function runFeedbackOptimizationBatchAttribution(
-  config: RuntimeClientConfig,
-  batchId: string,
-  options?: { force?: boolean },
-) {
-  return requestJson<FeedbackOptimizationBatchAttributionResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/attribution-jobs`,
-    {
-      method: "POST",
-      headers: options ? { "Content-Type": "application/json" } : undefined,
-      body: options ? JSON.stringify(options) : undefined,
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function generateFeedbackOptimizationBatchPlan(
-  config: RuntimeClientConfig,
-  batchId: string,
-  options?: { regeneration_instruction?: string },
-) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan`,
-    {
-      method: "POST",
-      headers: options ? { "Content-Type": "application/json" } : undefined,
-      body: options ? JSON.stringify(options) : undefined,
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function executeFeedbackOptimizationBatchPlanAll(
-  config: RuntimeClientConfig,
-  batchId: string,
-  payload: FeedbackOptimizationBatchExecuteAllRequest = {},
-) {
-  return requestJson<FeedbackOptimizationBatchExecuteAllResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/execute-all`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function rollbackFeedbackOptimizationBatchExecution(
-  config: RuntimeClientConfig,
-  batchId: string,
-  executionRunId: string,
-  payload: FeedbackOptimizationBatchExecutionRollbackRequest = {},
-) {
-  return requestJson<FeedbackOptimizationBatchExecutionRollbackResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/executions/${encodeURIComponent(executionRunId)}/rollback`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function executeFeedbackOptimizationPlanTask(
-  config: RuntimeClientConfig,
-  batchId: string,
-  planTaskId: string,
-  payload: FeedbackOptimizationPlanTaskExecuteRequest,
-) {
-  return requestJson<FeedbackOptimizationPlanTaskExecuteResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/tasks/${encodeURIComponent(planTaskId)}/execute`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function updateFeedbackOptimizationPlanTask(
-  config: RuntimeClientConfig,
-  batchId: string,
-  planTaskId: string,
-  payload: FeedbackOptimizationPlanTaskUpdateRequest,
-) {
-  return requestJson<FeedbackOptimizationPlanTaskUpdateResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/optimization-plan/tasks/${encodeURIComponent(planTaskId)}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function getFeedbackOptimizationBatchEvalCases(config: RuntimeClientConfig, batchId: string) {
-  return requestJson<EvalCaseRecord[]>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases`,
-  );
-}
-
-export function createFeedbackOptimizationBatchEvalCase(
-  config: RuntimeClientConfig,
-  batchId: string,
-  payload: FeedbackOptimizationBatchEvalCaseCreateRequest,
-) {
-  return requestJson<EvalCaseRecord>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function promoteFeedbackOptimizationBatchEvalCases(
-  config: RuntimeClientConfig,
-  batchId: string,
-  payload: RegressionAssetGovernanceActionRequest,
-) {
-  return requestJson<FeedbackOptimizationBatchEvalCasePromotionResponse>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/promote`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function updateFeedbackOptimizationBatchEvalCase(
-  config: RuntimeClientConfig,
-  batchId: string,
-  evalCaseId: string,
-  payload: EvalCaseUpdateRequest,
-) {
-  return requestJson<EvalCaseRecord>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/${encodeURIComponent(evalCaseId)}`,
-    {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    },
-  );
-}
-
-export function removeFeedbackOptimizationBatchEvalCase(
-  config: RuntimeClientConfig,
-  batchId: string,
-  evalCaseId: string,
-) {
-  return requestJson<FeedbackOptimizationBatchRecord>(
-    config,
-    `/api/feedback-optimization-batches/${encodeURIComponent(batchId)}/eval-cases/${encodeURIComponent(evalCaseId)}`,
-    { method: "DELETE" },
-  );
-}
-
 export function getFeedbackCases(config: RuntimeClientConfig, filters?: Pick<FeedbackFilters, "status" | "limit"> & { q?: string }) {
   return requestJson<FeedbackCaseRecord[]>(config, `/api/feedback-cases${feedbackQueryString(filters)}`);
 }
@@ -378,69 +169,6 @@ export function getEvidencePackageFile(config: RuntimeClientConfig, evidencePack
   );
 }
 
-export function createAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs`,
-    { method: "POST", timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS },
-  );
-}
-
-export function regenerateAttributionJob(config: RuntimeClientConfig, feedbackCaseId: string) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/attribution-jobs/regenerate`,
-    { method: "POST", timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS },
-  );
-}
-
-export function generateFeedbackCaseOptimizationPlan(
-  config: RuntimeClientConfig,
-  feedbackCaseId: string,
-  payload: { regeneration_instruction?: string | null } = {},
-) {
-  return requestJson<AgentJobRecord>(
-    config,
-    `/api/feedback-cases/${encodeURIComponent(feedbackCaseId)}/optimization-plan`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS,
-    },
-  );
-}
-
-export function getOptimizationTasks(config: RuntimeClientConfig, filters?: FeedbackFilters) {
-  return requestJson<OptimizationTaskRecord[]>(
-    config,
-    `/api/optimization-tasks${feedbackQueryString(filters)}`,
-  );
-}
-
-export function getExternalGovernanceWebhooks(config: RuntimeClientConfig) {
-  return requestJson<ExternalGovernanceWebhookRecord[]>(config, "/api/external-governance-webhooks");
-}
-
-export function getExternalGovernanceItems(config: RuntimeClientConfig, filters?: FeedbackFilters & { proposal_job_id?: string }) {
-  return requestJson<ExternalGovernanceItemRecord[]>(
-    config,
-    `/api/external-governance-items${feedbackQueryString(filters)}`,
-  );
-}
-
-export function notifyExternalGovernanceItem(config: RuntimeClientConfig, externalItemId: string, webhookAlias: string) {
-  return requestJson<ExternalGovernanceItemRecord>(
-    config,
-    `/api/external-governance-items/${encodeURIComponent(externalItemId)}/notify`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ webhook_alias: webhookAlias }),
-    },
-  );
-}
-
 export function syncFeedbackEvalDataset(config: RuntimeClientConfig, feedbackCaseId?: string) {
   return requestJson<AgentJobRecord>(
     config,
@@ -465,7 +193,7 @@ export function updateEvalCase(config: RuntimeClientConfig, evalCaseId: string, 
   });
 }
 
-export function getEvalRuns(config: RuntimeClientConfig, filters?: FeedbackFilters & { optimization_task_id?: string; agent_version_id?: string }) {
+export function getEvalRuns(config: RuntimeClientConfig, filters?: FeedbackFilters & { agent_version_id?: string }) {
   return requestJson<EvalRunRecord[]>(config, `/api/eval-runs${feedbackQueryString(filters)}`);
 }
 
@@ -496,12 +224,8 @@ export async function getFeedbackWorkbenchData(
     events,
     pendingCorrelations,
     cases,
-    tasks,
-    externalItems,
-    externalWebhooks,
     evalCases,
     evalRuns,
-    optimizationBatches,
   ] = await Promise.all([
     optionalList(getFeedbackSources(config, { limit })),
     optionalList(getAgentRuns(config, { limit })),
@@ -509,12 +233,8 @@ export async function getFeedbackWorkbenchData(
     optionalList(getSocEvents(config, { limit })),
     optionalList(getPendingCorrelations(config, { limit })),
     optionalList(getFeedbackCases(config, { limit })),
-    optionalList(getOptimizationTasks(config, { limit })),
-    optionalList(getExternalGovernanceItems(config, { limit })),
-    optionalList(getExternalGovernanceWebhooks(config)),
     optionalList(getEvalCases(config, { limit })),
     optionalList(getEvalRuns(config, { limit })),
-    optionalList(getFeedbackOptimizationBatches(config, { limit })),
   ]);
   return {
     sources,
@@ -523,11 +243,7 @@ export async function getFeedbackWorkbenchData(
     events,
     pending_correlations: pendingCorrelations,
     cases,
-    tasks,
-    external_governance_items: externalItems,
-    external_webhooks: externalWebhooks,
     eval_cases: evalCases,
     eval_runs: evalRuns,
-    optimization_batches: optimizationBatches,
   };
 }

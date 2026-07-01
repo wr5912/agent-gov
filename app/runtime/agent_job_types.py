@@ -19,62 +19,46 @@ from .feedback_schemas import (
     ExecutionPlanOutput,
     FeedbackEvalCaseGenerationFormatterOutput,
     FeedbackEvalCaseGenerationOutput,
-    FeedbackOptimizationPlanFormatterOutput,
-    FeedbackOptimizationPlanOutput,
-    RegressionImpactAnalysisFormatterOutput,
-    RegressionImpactAnalysisOutput,
+    ImprovementOptimizationPlanFormatterOutput,
+    ImprovementOptimizationPlanOutput,
 )
 from .json_types import JsonObject
 from .prompts.feedback_prompt_contexts import (
     build_attribution_prompt_context,
     build_eval_case_generation_prompt_context,
     build_execution_prompt_context,
-    build_proposal_prompt_context,
-    build_regression_impact_prompt_context,
+    build_improvement_optimization_prompt_context,
 )
 from .prompts.feedback_prompts import (
     attribution_prompt,
     eval_case_generation_prompt,
     execution_plan_prompt,
-    proposal_generator_prompt,
-    regression_impact_analysis_prompt,
+    improvement_optimization_plan_prompt,
 )
 
 
 PromptBuilder = Callable[[JsonObject], str]
 
 FormatterOutputModel: TypeAlias = (
-    AttributionFormatterOutput
-    | FeedbackOptimizationPlanFormatterOutput
-    | ExecutionPlanFormatterOutput
-    | FeedbackEvalCaseGenerationFormatterOutput
-    | RegressionImpactAnalysisFormatterOutput
+    AttributionFormatterOutput | ImprovementOptimizationPlanFormatterOutput | ExecutionPlanFormatterOutput | FeedbackEvalCaseGenerationFormatterOutput
 )
-ProjectedOutputModel: TypeAlias = (
-    AttributionOutput | FeedbackOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput | RegressionImpactAnalysisOutput
-)
+ProjectedOutputModel: TypeAlias = AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput
 FormatterOutputModelClass: TypeAlias = (
     type[AttributionFormatterOutput]
-    | type[FeedbackOptimizationPlanFormatterOutput]
+    | type[ImprovementOptimizationPlanFormatterOutput]
     | type[ExecutionPlanFormatterOutput]
     | type[FeedbackEvalCaseGenerationFormatterOutput]
-    | type[RegressionImpactAnalysisFormatterOutput]
 )
 ProjectedOutputModelClass: TypeAlias = (
-    type[AttributionOutput]
-    | type[FeedbackOptimizationPlanOutput]
-    | type[ExecutionPlanOutput]
-    | type[FeedbackEvalCaseGenerationOutput]
-    | type[RegressionImpactAnalysisOutput]
+    type[AttributionOutput] | type[ImprovementOptimizationPlanOutput] | type[ExecutionPlanOutput] | type[FeedbackEvalCaseGenerationOutput]
 )
 
 
 class AgentJobType(StrEnum):
     ATTRIBUTION = "attribution"
-    BATCH_PLAN = "batch_plan"
+    OPTIMIZATION_PLAN = "optimization_plan"
     EXECUTION = "execution"
     EVAL_CASE_GENERATION = "eval_case_generation"
-    REGRESSION_IMPACT_ANALYSIS = "regression_impact_analysis"
 
 
 class AttributionFormattingSignature(dspy.Signature):
@@ -89,18 +73,11 @@ class AttributionFormattingSignature(dspy.Signature):
     formatted_output: AttributionFormatterOutput = dspy.OutputField(desc="归因业务内容，不包含 feedback_case_id 和 attribution_job_id。")
 
 
-class BatchPlanFormattingSignature(dspy.Signature):
-    """把优化方案生成智能体的输出转换为优化方案输出模型。
+class ImprovementOptimizationPlanFormattingSignature(dspy.Signature):
+    """把改进事项优化方案智能体输出转换为四阶段 OptimizationPlan 内容模型。"""
 
-    只能使用 raw_agent_output 中已有的优化方案业务要点。可执行任务必须放在
-    tasks 中，外部任务的 task_context 必须嵌套在对应 task 内；能定位到外部系统、
-    工具/API 和具体问题描述的项必须生成 external_webhook 任务；不能定位到具体对象、
-    接口、工具或问题 ID 的项才放入 blocked_items。评估用例是否纳入长期回归资产由用户
-    在“回归测试用例”界面手动决定，不生成为优化方案任务。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="优化方案生成智能体原始输出。")
-    formatted_output: FeedbackOptimizationPlanFormatterOutput = dspy.OutputField(desc="优化方案业务内容，不包含批次、方案、时间和来源 ID 等后端上下文字段。")
+    raw_agent_output: str = dspy.InputField(desc="改进事项优化方案智能体原始输出。")
+    formatted_output: ImprovementOptimizationPlanFormatterOutput = dspy.OutputField(desc="事项级优化方案业务内容，只包含 summary、changes 和 risk_level。")
 
 
 class ExecutionFormattingSignature(dspy.Signature):
@@ -111,7 +88,7 @@ class ExecutionFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="执行优化智能体原始输出。")
     formatted_output: ExecutionPlanFormatterOutput = dspy.OutputField(
-        desc="执行方案业务内容，不包含 execution_job_id、optimization_task_id 和 baseline_agent_version_id。"
+        desc="执行方案业务内容，只包含 status、summary、operations、validation、risk 和人工复核原因。"
     )
 
 
@@ -124,16 +101,6 @@ class EvalCaseGenerationFormattingSignature(dspy.Signature):
 
     raw_agent_output: str = dspy.InputField(desc="eval-case-governor 原始输出。")
     formatted_output: FeedbackEvalCaseGenerationFormatterOutput = dspy.OutputField(desc="评估用例草案业务内容，不包含 job、scope、结果计数和生命周期字段。")
-
-
-class RegressionImpactFormattingSignature(dspy.Signature):
-    """把 regression-impact-analyzer 的自然语言或片段 JSON 转换为回归影响分析输出模型。
-
-    只能使用 raw_agent_output 中已有的回归影响业务要点；不确定时输出 needs_human_review。
-    """
-
-    raw_agent_output: str = dspy.InputField(desc="regression-impact-analyzer 原始输出。")
-    formatted_output: RegressionImpactAnalysisFormatterOutput = dspy.OutputField(desc="回归影响解释内容，不包含 eval_run、gate_result 和持久化 ID。")
 
 
 @dataclass(frozen=True)
@@ -150,8 +117,8 @@ def _attribution_prompt_builder(job_input: JsonObject) -> str:
     return attribution_prompt(prompt_context=build_attribution_prompt_context(job_input))
 
 
-def _proposal_prompt_builder(job_input: JsonObject) -> str:
-    return proposal_generator_prompt(prompt_context=build_proposal_prompt_context(job_input))
+def _improvement_optimization_prompt_builder(job_input: JsonObject) -> str:
+    return improvement_optimization_plan_prompt(prompt_context=build_improvement_optimization_prompt_context(job_input))
 
 
 def _execution_prompt_builder(job_input: JsonObject) -> str:
@@ -160,10 +127,6 @@ def _execution_prompt_builder(job_input: JsonObject) -> str:
 
 def _eval_case_prompt_builder(job_input: JsonObject) -> str:
     return eval_case_generation_prompt(prompt_context=build_eval_case_generation_prompt_context(job_input))
-
-
-def _regression_impact_prompt_builder(job_input: JsonObject) -> str:
-    return regression_impact_analysis_prompt(prompt_context=build_regression_impact_prompt_context(job_input))
 
 
 AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
@@ -175,13 +138,13 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         formatter_output_model=AttributionFormatterOutput,
         formatter_signature=AttributionFormattingSignature,
     ),
-    AgentJobType.BATCH_PLAN: AgentJobSpec(
-        job_type=AgentJobType.BATCH_PLAN,
+    AgentJobType.OPTIMIZATION_PLAN: AgentJobSpec(
+        job_type=AgentJobType.OPTIMIZATION_PLAN,
         profile_name=GOVERNOR_PROFILE,
-        prompt_builder=_proposal_prompt_builder,
-        output_model=FeedbackOptimizationPlanOutput,
-        formatter_output_model=FeedbackOptimizationPlanFormatterOutput,
-        formatter_signature=BatchPlanFormattingSignature,
+        prompt_builder=_improvement_optimization_prompt_builder,
+        output_model=ImprovementOptimizationPlanOutput,
+        formatter_output_model=ImprovementOptimizationPlanFormatterOutput,
+        formatter_signature=ImprovementOptimizationPlanFormattingSignature,
     ),
     AgentJobType.EXECUTION: AgentJobSpec(
         job_type=AgentJobType.EXECUTION,
@@ -198,14 +161,6 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         output_model=FeedbackEvalCaseGenerationOutput,
         formatter_output_model=FeedbackEvalCaseGenerationFormatterOutput,
         formatter_signature=EvalCaseGenerationFormattingSignature,
-    ),
-    AgentJobType.REGRESSION_IMPACT_ANALYSIS: AgentJobSpec(
-        job_type=AgentJobType.REGRESSION_IMPACT_ANALYSIS,
-        profile_name=GOVERNOR_PROFILE,
-        prompt_builder=_regression_impact_prompt_builder,
-        output_model=RegressionImpactAnalysisOutput,
-        formatter_output_model=RegressionImpactAnalysisFormatterOutput,
-        formatter_signature=RegressionImpactFormattingSignature,
     ),
 }
 

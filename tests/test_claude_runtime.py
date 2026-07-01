@@ -401,7 +401,7 @@ def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
     assert "Write target is denied for profile governor" in output["permissionDecisionReason"]
 
 
-def test_feedback_batch_plan_job_options_use_proposal_generator_profile_minimum_max_turns(tmp_path):
+def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
 
@@ -412,7 +412,7 @@ def test_feedback_batch_plan_job_options_use_proposal_generator_profile_minimum_
     assert getattr(options, "disallowed_tools", None) in (None, [])
 
 
-def test_feedback_batch_plan_job_options_allow_global_max_turn_override(tmp_path):
+def test_governor_job_options_allow_global_max_turn_override(tmp_path):
     settings = _settings(tmp_path)
     settings.max_turns = 20
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))

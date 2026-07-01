@@ -32,35 +32,24 @@ def test_feedback_route_conflict_returns_structured_error(monkeypatch, tmp_path)
     module = _load_app(monkeypatch, tmp_path)
 
     with TestClient(module.app) as client:
-        response = client.post(
-            "/api/feedback-optimization-batches",
-            json={"source_refs": [{"source_kind": "signal", "source_id": "fbs-missing"}]},
-        )
+        created = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "非法跨段"})
+        response = client.post(f"/api/improvements/{created.json()['improvement_id']}/lifecycle", json={"stage": "release"})
 
     assert response.status_code == 409
-    assert response.json() == {
-        "detail": "No selected feedback source can create an optimization batch",
-        "error_code": "CONFLICT",
-    }
+    assert response.json()["error_code"] == "STATE_TRANSITION_ERROR"
+    assert "transition" in response.json()["detail"].lower()
 
 
 def test_feedback_workbench_preserves_domain_error_code(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
 
-    def find_batch(batch_id):
-        return {"batch_id": batch_id, "feedback_case_ids": []}
-
-    def reset_batch_attribution(batch_id):
+    def create_improvement(**_kwargs):
         raise BusinessRuleViolation("domain-specific failure")
 
-    monkeypatch.setattr(module.feedback_store, "find_optimization_batch", find_batch)
-    monkeypatch.setattr(module.feedback_store, "reset_batch_attribution", reset_batch_attribution)
+    monkeypatch.setattr(module.improvement_store, "create_improvement", create_improvement)
 
     with TestClient(module.app) as client:
-        response = client.post(
-            "/api/feedback-optimization-batches/fob-domain/attribution-jobs",
-            json={"force": True},
-        )
+        response = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "领域错误"})
 
     assert response.status_code == 400
     assert response.json() == {

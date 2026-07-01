@@ -12,8 +12,8 @@ from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResp
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentRunResponse,
+    AssetProvenanceImprovement,
     AssetProvenanceResponse,
-    AssetProvenanceTask,
     FeedbackEvalCaseGenerateRequest,
     FeedbackSignalCreateRequest,
     FeedbackSignalReassignRequest,
@@ -26,17 +26,19 @@ from app.runtime.schemas import (
     SocEventIngestResponse,
     SocEventResponse,
 )
+from app.runtime.stores.improvement_store import ImprovementStore
 
 
 def create_feedback_workbench_router(
     *,
     feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
     runtime: ClaudeRuntime,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
     _register_agent_run_routes(router, feedback_store)
-    _register_feedback_signal_routes(router, feedback_store)
+    _register_feedback_signal_routes(router, feedback_store, improvement_store)
     _register_soc_event_routes(router, feedback_store)
     _register_pending_correlation_routes(router, feedback_store)
     _register_feedback_source_routes(router, feedback_store, runtime)
@@ -104,7 +106,11 @@ def _extract_agent_run_answer(messages: list[JsonObject]) -> str | None:
     return answer or None
 
 
-def _register_feedback_signal_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:
+def _register_feedback_signal_routes(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
+) -> None:
 
     @router.post(
         "/feedback-signals",
@@ -172,18 +178,28 @@ def _register_feedback_signal_routes(router: APIRouter, feedback_store: Feedback
             agent_id = (signal or {}).get("agent_id")
             if agent_id and agent_id not in agent_ids:
                 agent_ids.append(agent_id)
-        tasks = [
-            AssetProvenanceTask(
-                optimization_task_id=str(task.get("optimization_task_id") or ""),
-                status=task.get("status"),
-                target_paths=list(task.get("target_paths") or []),
-                eval_case_ids=list(task.get("eval_case_ids") or []),
-                latest_change_set_id=task.get("latest_change_set_id"),
-                applied_agent_version_id=task.get("applied_agent_version_id"),
-            )
-            for task in feedback_store.list_tasks(feedback_case_id=feedback_case_id)
+        improvements = [
+            _asset_provenance_improvement(improvement_store, item)
+            for item in improvement_store.list_improvements()
+            if feedback_case_id in item.source_feedback_refs
         ]
-        return AssetProvenanceResponse(feedback_case_id=feedback_case_id, agent_ids=agent_ids, optimization_tasks=tasks)
+        return AssetProvenanceResponse(feedback_case_id=feedback_case_id, agent_ids=agent_ids, improvements=improvements)
+
+
+def _asset_provenance_improvement(
+    improvement_store: ImprovementStore,
+    item: object,
+) -> AssetProvenanceImprovement:
+    links = improvement_store.list_links(getattr(item, "improvement_id"))
+    return AssetProvenanceImprovement(
+        improvement_id=getattr(item, "improvement_id"),
+        agent_id=getattr(item, "agent_id"),
+        title=getattr(item, "title"),
+        improvement_stage=getattr(item, "improvement_stage"),
+        improvement_status=getattr(item, "improvement_status"),
+        source_feedback_refs=list(getattr(item, "source_feedback_refs")),
+        change_set_ids=[link.ref_id for link in links if link.kind == "change_set"],
+    )
 
 
 def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

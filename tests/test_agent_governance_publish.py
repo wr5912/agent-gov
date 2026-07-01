@@ -114,17 +114,16 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
 
     records: dict[str, dict] = {}
     for agent_id in agents:
-        # 每个业务 Agent 一条独立闭环记录：run→signal→case→batch(优化) + change set/release(版本) + eval(评估)。
+        # 每个业务 Agent 一条独立闭环记录：run→signal→case + change set/release(版本) + eval(评估)。
         store.record_run({"run_id": f"run-{agent_id}", "agent_id": agent_id, "created_at": "2026-06-12T00:00:00Z"})
         signal = store.create_signal(FeedbackSignalCreateRequest(run_id=f"run-{agent_id}", labels=["tool_data_incomplete"]))
         case = store.create_case(source_ids=[signal["signal_id"]], title=f"{agent_id} 反馈")
-        batch = store.ensure_single_case_optimization_batch(case["feedback_case_id"])
         change_set = _candidate_change_set(governance, main_store, content=f"# {agent_id}\n\n候选\n", agent_id=agent_id)
         release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
         eval_run = store.create_eval_run(
             eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"])
         )
-        records[agent_id] = {"signal": signal, "batch": batch, "change_set": change_set, "release": release, "eval": eval_run}
+        records[agent_id] = {"signal": signal, "case": case, "change_set": change_set, "release": release, "eval": eval_run}
 
     # 治理 Agent（单一 governance 实例）为不同业务 Agent 各自管理独立版本 store（物理隔离）。
     assert governance._store_for("agent-alpha") is not governance._store_for("agent-beta")
@@ -133,7 +132,7 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
     for agent_id in agents:
         assert {r["agent_id"] for r in store.list_runs(agent_id=agent_id)} == {agent_id}
         assert {s["agent_id"] for s in store.list_signals(agent_id=agent_id)} == {agent_id}
-        assert records[agent_id]["batch"]["agent_id"] == agent_id
+        assert records[agent_id]["case"]["agent_id"] == agent_id
         assert {e["agent_id"] for e in store.list_eval_runs(agent_id=agent_id)} == {agent_id}
         assert {c["agent_id"] for c in governance.list_change_sets(agent_id=agent_id)} == {agent_id}
         assert {rel["agent_id"] for rel in governance.list_releases(agent_id=agent_id)} == {agent_id}
@@ -238,7 +237,7 @@ def test_terminal_change_set_cannot_publish(tmp_path):
     assert exc.value.status_code == 409
 
 
-def test_batch_regression_failed_cases_block_publish(tmp_path):
+def test_change_set_regression_failed_cases_block_publish(tmp_path):
     governance, agent_store = _governance(tmp_path)
     change_set = _candidate_change_set(governance, agent_store)
     governance.mark_regression_running(str(change_set["change_set_id"]), eval_run_id="pending", operator="tester")
@@ -246,7 +245,7 @@ def test_batch_regression_failed_cases_block_publish(tmp_path):
         str(change_set["change_set_id"]),
         eval_run={
             "eval_run_id": "evr-batch-failed",
-            "source": "optimization_batch_regression",
+            "source": "change_set_regression",
             "change_set_id": change_set["change_set_id"],
             "result_status": "passed_with_notes",
             "summary": {"total": 1, "passed": 0, "failed": 1, "needs_human_review": 0},
@@ -257,8 +256,8 @@ def test_batch_regression_failed_cases_block_publish(tmp_path):
     )
 
     assert regression_failed["status"] == "regression_failed"
-    assert "批次回归存在失败用例" in regression_failed["publication_blocker"]
-    with pytest.raises(AgentGovernanceError, match="批次回归存在失败用例") as exc:
+    assert "回归验证存在失败用例" in regression_failed["publication_blocker"]
+    with pytest.raises(AgentGovernanceError, match="回归验证存在失败用例") as exc:
         governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
 
     assert exc.value.status_code == 409
@@ -275,7 +274,7 @@ def test_force_publish_failed_regression_records_audit_event(tmp_path):
         change_set_id,
         eval_run={
             "eval_run_id": "evr-force-failed",
-            "source": "optimization_batch_regression",
+            "source": "change_set_regression",
             "change_set_id": change_set_id,
             "result_status": "failed",
             "summary": {"total": 1, "passed": 0, "failed": 1, "needs_human_review": 0},
@@ -293,7 +292,7 @@ def test_force_publish_failed_regression_records_audit_event(tmp_path):
     assert release["status"] == "published"
     assert persisted["status"] == "published"
     assert persisted["force_published"] is True
-    assert "批次回归存在失败用例" in persisted["force_publication_blocker"]
+    assert "回归验证存在失败用例" in persisted["force_publication_blocker"]
     assert agent_store.current_commit_sha() == change_set["candidate_commit_sha"]
     assert "force_published" in {str(event["action"]) for event in governance.list_change_set_events(change_set_id)}
 

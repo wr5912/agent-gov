@@ -4,29 +4,24 @@ from typing import Callable
 
 from fastapi import APIRouter, Depends, Query
 
-from app.routers.error_helpers import ensure_found, raise_conflict, require_request
-from app.runtime.claude_runtime import ClaudeRuntime
-from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
+from app.routers.error_helpers import ensure_found, require_request
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     EvidencePackageFileResponse,
     EvidencePackageResponse,
     FeedbackCaseCreateRequest,
     FeedbackCaseResponse,
-    FeedbackOptimizationBatchPlanGenerateRequest,
 )
 
 
 def create_feedback_cases_router(
     *,
     feedback_store: FeedbackStore,
-    runtime: ClaudeRuntime,
     require_api_key: Callable,
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
     _register_case_routes(router, feedback_store)
     _register_evidence_routes(router, feedback_store)
-    _register_feedback_analysis_job_routes(router, runtime)
     return router
 
 
@@ -38,11 +33,12 @@ def _register_case_routes(router: APIRouter, feedback_store: FeedbackStore) -> N
         summary="List feedback disposition cases",
     )
     async def list_feedback_cases(
+        agent_id: str | None = None,
         status: str | None = None,
         q: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[FeedbackCaseResponse]:
-        return feedback_store.list_cases(status=status, q=q, limit=limit)
+        return feedback_store.list_cases(agent_id=agent_id, status=status, q=q, limit=limit)
 
     @router.get(
         "/feedback-cases/{feedback_case_id}",
@@ -92,44 +88,3 @@ def _register_evidence_routes(router: APIRouter, feedback_store: FeedbackStore) 
     async def get_evidence_package_file(evidence_package_id: str, file_name: str) -> EvidencePackageFileResponse:
         evidence_file = feedback_store.get_evidence_package_file(evidence_package_id, file_name)
         return ensure_found(evidence_file, "Evidence package file not found")
-
-
-def _register_feedback_analysis_job_routes(router: APIRouter, runtime: ClaudeRuntime) -> None:
-
-    @router.post(
-        "/feedback-cases/{feedback_case_id}/attribution-jobs",
-        response_model=AgentJobResponse,
-        summary="Queue one attribution job for a feedback case",
-    )
-    async def create_attribution_job(feedback_case_id: str) -> AgentJobResponse:
-        job = runtime.queue_attribution_job(feedback_case_id)
-        return ensure_found(job, "Feedback case not found or missing evidence")
-
-    @router.post(
-        "/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate",
-        response_model=AgentJobResponse,
-        summary="Force queue one attribution job for a feedback case",
-    )
-    async def regenerate_attribution_job(feedback_case_id: str) -> AgentJobResponse:
-        job = runtime.queue_attribution_job(feedback_case_id, force=True)
-        return ensure_found(job, "Feedback case not found or missing evidence")
-
-    @router.post(
-        "/feedback-cases/{feedback_case_id}/optimization-plan",
-        response_model=AgentJobResponse,
-        summary="Queue one optimization plan job for a single feedback case",
-    )
-    async def generate_feedback_case_optimization_plan(
-        feedback_case_id: str,
-        req: FeedbackOptimizationBatchPlanGenerateRequest | None = None,
-    ) -> AgentJobResponse:
-        batch = runtime.feedback_store.ensure_single_case_optimization_batch(feedback_case_id) if runtime.feedback_store else None
-        batch = ensure_found(batch, "Feedback case not found or has no valid feedback source")
-        job = runtime.queue_batch_optimization_plan(
-            str(batch["batch_id"]),
-            force=True,
-            regeneration_instruction=(req or FeedbackOptimizationBatchPlanGenerateRequest()).regeneration_instruction,
-        )
-        if not job:
-            raise_conflict("Feedback case cannot queue an optimization plan without actionable attributions")
-        return job

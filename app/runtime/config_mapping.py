@@ -10,6 +10,8 @@ from .settings import AppSettings
 DEFAULT_AGENT_ID = "main-agent"
 
 
+# This module only projects Claude Code/AgentGov paths for the runtime-settings UI.
+# The execution truth remains the Claude SDK options and the business-agent workspace files.
 def _host_path(path: Path, settings: AppSettings, *, expose_host_mount: bool) -> str | None:
     if not expose_host_mount:
         return None

@@ -1,6 +1,13 @@
 from pathlib import Path
 
-from app.runtime.settings import AppSettings, runtime_settings_log_fields, settings_env_file_for_mode
+import pytest
+
+from app.runtime.settings import (
+    AppSettings,
+    runtime_settings_log_fields,
+    settings_env_file_for_mode,
+    validate_hitl_single_api_process,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -216,6 +223,18 @@ def test_governance_and_hitl_timeout_defaults_and_overrides(monkeypatch):
     assert overridden_formatter.governance_agent_timeout_seconds == 123
     assert overridden_formatter.dspy_output_formatter_timeout_seconds == 45
     assert overridden_formatter.hitl_timeout_seconds == 67
+
+
+def test_validate_hitl_single_api_process_rejects_multi_worker_env():
+    enabled = AppSettings(_env_file=None, ENABLE_CLAUDE_WEB_HITL=True)
+    disabled = AppSettings(_env_file=None, ENABLE_CLAUDE_WEB_HITL=False)
+
+    validate_hitl_single_api_process(enabled, env={"WEB_CONCURRENCY": "1"})
+    validate_hitl_single_api_process(disabled, env={"WEB_CONCURRENCY": "4"})
+    with pytest.raises(RuntimeError, match="single API process"):
+        validate_hitl_single_api_process(enabled, env={"WEB_CONCURRENCY": "2"})
+    with pytest.raises(RuntimeError, match="must be an integer"):
+        validate_hitl_single_api_process(enabled, env={"API_WORKERS": "many"})
 
 
 def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):

@@ -448,6 +448,31 @@ def migrate_0024_feedback_case_agent_id(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_feedback_cases_agent_id ON feedback_cases (agent_id)")
 
 
+def migrate_0025_agent_governance_legacy_paths(connection: Connection) -> None:
+    """Rewrite legacy main-agent governance FS paths stored in SQLite rows."""
+    replacements = (
+        (
+            "agent_change_sets",
+            "worktree_path",
+            "/data/agent-governance/worktrees",
+            "/data/business-agents/main-agent/version/worktrees",
+        ),
+        (
+            "agent_releases",
+            "archive_path",
+            "/data/agent-governance/releases",
+            "/data/business-agents/main-agent/version/releases",
+        ),
+    )
+    for table, column, old_root, new_root in replacements:
+        if column not in _table_columns(connection, table):
+            continue
+        connection.exec_driver_sql(
+            f"UPDATE {table} SET {column} = REPLACE({column}, ?, ?) WHERE {column} LIKE ?",
+            (old_root, new_root, f"{old_root}%"),
+        )
+
+
 def _json_string_list(value: object) -> list[str]:
     if isinstance(value, str):
         try:

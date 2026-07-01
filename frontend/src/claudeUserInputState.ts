@@ -1,4 +1,4 @@
-import type { ClaudeUserInputRequest, StreamEnvelope } from "./types/runtime";
+import type { ChatMessage, ClaudeUserInputRequest, StreamEnvelope } from "./types/runtime";
 import { isRecord } from "./utils/records";
 
 export function sanitizedEnvelopeData(envelope: StreamEnvelope): unknown {
@@ -53,6 +53,28 @@ export function mergeUserInputRequest(items: ClaudeUserInputRequest[] | undefine
 
 export function patchUserInputRequest(items: ClaudeUserInputRequest[] | undefined, requestId: string, patch: Partial<ClaudeUserInputRequest>) {
   return (items || []).map((item) => item.request_id === requestId ? { ...item, ...patch, decision_token: undefined } : item);
+}
+
+export function cancelWaitingUserInputRequests(
+  messages: ChatMessage[],
+  assistantMessageId: string | undefined,
+  decision: "client_cancelled" | "runtime_interrupted",
+  resolvedAt: string,
+) {
+  const requestIds: string[] = [];
+  if (!assistantMessageId) return { messages, requestIds };
+  const next = messages.map((message) => {
+    if (message.id !== assistantMessageId || message.role !== "assistant" || !message.userInputRequests?.length) {
+      return message;
+    }
+    const userInputRequests = message.userInputRequests.map((request) => {
+      if (request.status !== "waiting") return request;
+      requestIds.push(request.request_id);
+      return { ...request, status: "cancelled" as const, decision, resolved_at: resolvedAt, decision_token: undefined };
+    });
+    return { ...message, userInputRequests };
+  });
+  return { messages: requestIds.length ? next : messages, requestIds };
 }
 
 export function stringValue(value: unknown): string | undefined {

@@ -8,6 +8,12 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.routers.config import create_config_router
 
 
+class ProjectOnlySettings(AppSettings):
+    @property
+    def setting_sources(self) -> list[str]:
+        return ["project"]
+
+
 def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     # main 已并入 /data：workspace/claude-root 由 data_dir 派生，host 映射经 data 挂载（无独立 main 挂载）。
     data = tmp_path / "volume-agent-gov" / "data"
@@ -48,6 +54,22 @@ def test_config_mapping_uses_native_claude_code_paths(tmp_path):
     assert by_kind[("runtime", "agent-change-set-worktrees")].container_path == str(
         data / "business-agents" / "main-agent" / "version" / "worktrees"
     )
+
+
+def test_config_mapping_loaded_flags_follow_sdk_setting_sources(tmp_path):
+    data = tmp_path / "volume-agent-gov" / "data"
+    settings = ProjectOnlySettings(_env_file=None, DATA_DIR=data)
+
+    response = build_config_mapping(settings)
+    by_kind = {(item.scope, item.kind): item for item in response.mappings}
+
+    assert response.setting_sources_effective == ["project"]
+    assert by_kind[("project", "instructions")].loaded_by_default is True
+    assert by_kind[("project", "mcp")].loaded_by_default is True
+    assert by_kind[("project", "skills")].loaded_by_default is True
+    assert by_kind[("user", "settings")].loaded_by_default is False
+    assert by_kind[("local", "settings")].loaded_by_default is False
+    assert by_kind[("runtime", "agent-git-repository")].loaded_by_default is False
 
 
 def test_config_mapping_is_agent_scoped_and_hides_host_mounts_by_default(tmp_path):

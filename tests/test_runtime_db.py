@@ -1,10 +1,15 @@
 import sqlite3
+import subprocess
+import sys
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_runtime_db_reuses_engine_for_same_path(tmp_path):
@@ -40,6 +45,18 @@ def test_concurrent_schema_init_no_table_exists_race(tmp_path):
         list(executor.map(init, range(8)))
 
     assert not errors, f"并发 schema 初始化报错（竞态未被串行化）: {errors}"
+
+
+def test_claude_user_input_db_cold_import_has_no_runtime_db_cycle():
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.runtime.claude_user_input_db"],
+        cwd=REPO_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
@@ -320,6 +337,80 @@ def test_runtime_db_backfills_feedback_case_agent_id_from_signals(tmp_path):
 
     assert case is not None
     assert case["agent_id"] == "agent-alpha"
+
+
+def test_runtime_db_migrates_legacy_agent_governance_paths(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+    applied_before_0025 = (
+        "0002_regression_assets",
+        "0003_agent_jobs",
+        "0004_unify_agent_jobs",
+        "0005_agent_governance",
+        "0006_remove_agent_job_output_contract_column",
+        "0007_agent_registry",
+        "0008_feedback_signal_agent_id",
+        "0009_agent_registry_status",
+        "0010_scenario_packs",
+        "0011_change_set_release_agent_id",
+        "0012_eval_run_agent_id",
+        "0014_improvement_feedback_context",
+        "0015_improvement_content_generated_by",
+        "0016_execution_application_binding",
+        "0017_regression_assessments",
+        "0018_agent_registry_origin_tombstone",
+        "0019_improvement_detail_columns",
+        "0020_claude_user_input_requests",
+        "0021_improvement_generation_trace_refs",
+        "0022_remove_legacy_batch_optimization_chain",
+        "0023_eval_case_targeted_regression_layer",
+        "0024_feedback_case_agent_id",
+    )
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("CREATE TABLE schema_migrations (version VARCHAR(128) PRIMARY KEY, applied_at VARCHAR(64) NOT NULL)")
+        connection.executemany(
+            "INSERT INTO schema_migrations (version, applied_at) VALUES (?, '2026-07-01T00:00:00+00:00')",
+            [(version,) for version in applied_before_0025],
+        )
+        connection.execute(
+            """
+            CREATE TABLE agent_change_sets (
+                change_set_id VARCHAR(128) PRIMARY KEY,
+                worktree_path VARCHAR(2048) NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE agent_releases (
+                release_id VARCHAR(128) PRIMARY KEY,
+                archive_path VARCHAR(2048)
+            )
+            """
+        )
+        connection.execute(
+            "INSERT INTO agent_change_sets (change_set_id, worktree_path) "
+            "VALUES ('cs-old', '/data/agent-governance/worktrees/cs-old')"
+        )
+        connection.execute(
+            "INSERT INTO agent_releases (release_id, archive_path) "
+            "VALUES ('rel-old', '/data/agent-governance/releases/rel-old.tar.gz')"
+        )
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        worktree_path = connection.exec_driver_sql(
+            "SELECT worktree_path FROM agent_change_sets WHERE change_set_id = 'cs-old'"
+        ).fetchone()[0]
+        archive_path = connection.exec_driver_sql(
+            "SELECT archive_path FROM agent_releases WHERE release_id = 'rel-old'"
+        ).fetchone()[0]
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0025_agent_governance_legacy_paths'"
+        ).fetchone()
+
+    assert worktree_path == "/data/business-agents/main-agent/version/worktrees/cs-old"
+    assert archive_path == "/data/business-agents/main-agent/version/releases/rel-old.tar.gz"
+    assert migration is not None
 
 
 def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):

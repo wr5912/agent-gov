@@ -210,12 +210,20 @@ async def _run_sdk_query(
             stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
             await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
     finally:
-        await _complete_stream_run(stream_run, event_queue, root_span, generation)
+        try:
+            await _complete_stream_run(stream_run, root_span, generation)
+        except Exception as exc:
+            if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
+                stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+            if stream_run.runtime.user_input_service is not None:
+                stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+        await event_queue.put({"event": "done", "data": "[DONE]"})
+        await event_queue.put(None)
 
 
 async def _complete_stream_run(
     stream_run: StreamRun,
-    event_queue: asyncio.Queue[JsonObject | None],
     root_span: Any,
     generation: Any,
 ) -> None:
@@ -237,8 +245,6 @@ async def _complete_stream_run(
     )
     if runtime.user_input_service is not None:
         runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
-    await event_queue.put({"event": "done", "data": "[DONE]"})
-    await event_queue.put(None)
 
 
 async def _drain_stream_queue(
@@ -251,6 +257,12 @@ async def _drain_stream_queue(
             try:
                 item = await asyncio.wait_for(event_queue.get(), timeout=15)
             except asyncio.TimeoutError:
+                if sdk_task.done() and event_queue.empty():
+                    if not sdk_task.cancelled():
+                        exc = sdk_task.exception()
+                        if exc is not None:
+                            yield {"event": "error", "data": {"errors": [f"{exc.__class__.__name__}: {exc}"]}}
+                    break
                 yield {"event": "heartbeat", "data": {"run_id": stream_run.request_context.run_id, "timestamp": utc_now()}}
                 continue
             if item is None:

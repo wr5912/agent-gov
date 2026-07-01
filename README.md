@@ -84,7 +84,7 @@ make logs
 
 `make up` 会同时启动 API、前端相关服务和 `claude-agent-worker`。改进事项闭环中需要模型执行的归因、方案、执行计划和回归用例生成由 governor 生成，结果写入 `/api/improvements/{improvement_id}/...` 对应内容子资源，并保留 Langfuse Trace 引用供前端查看。
 
-治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响 `/api/chat/stream` 的人工确认请求。
+治理类 Agent job、改进事项生成动作和前端治理请求默认使用 `GOVERNANCE_AGENT_TIMEOUT_SECONDS=300`。`DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS` 只是高级覆盖项，未配置时跟随治理超时；业务 Playground 的流式 idle timeout、模型探测超时和 Docker healthcheck 不共用该值。Web HITL 人工确认等待使用独立的 `HITL_TIMEOUT_SECONDS=300`，只影响 `/api/chat/stream` 的人工确认请求。Web HITL 的 SDK callback 等待态保存在 API 进程内存中，开启 `ENABLE_CLAUDE_WEB_HITL=true` 时必须保持单 API 进程；`WEB_CONCURRENCY`、`API_WORKERS` 或 `UVICORN_WORKERS` 大于 1 会在启动时失败。
 
 健康检查：
 

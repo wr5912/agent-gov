@@ -175,6 +175,7 @@ function isSelected(value: string | string[] | undefined, label: string) {
 function statusLabel(request: ClaudeUserInputRequest) {
   if (request.status === "waiting") return "等待确认";
   if (request.decision === "service_restarted") return "执行已中断";
+  if (request.decision === "runtime_interrupted") return "执行已中断";
   if (request.decision === "timeout_deny") return "等待超时";
   if (request.status === "cancelled") return "已取消";
   return "已处理";

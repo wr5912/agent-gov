@@ -13,7 +13,7 @@ import { Topbar } from "./components/Topbar";
 import { useAgentCatalog } from "./hooks/useAgentCatalog";
 import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
-import { claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
+import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
 import { messagesFromAgentRuns } from "./playgroundHistory";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
@@ -274,6 +274,24 @@ export default function App() {
     });
   }
 
+  function cancelUserInputForMessage(
+    sessionId: string | undefined,
+    messageId: string | undefined,
+    decision: "client_cancelled" | "runtime_interrupted",
+  ) {
+    if (!sessionId || !messageId) return;
+    const resolvedAt = new Date().toISOString();
+    let changed = false;
+    setMessagesBySession((prev) => {
+      const result = cancelWaitingUserInputRequests(prev[sessionId] || [], messageId, decision, resolvedAt);
+      changed = result.requestIds.length > 0;
+      return changed ? { ...prev, [sessionId]: result.messages } : prev;
+    });
+    decisionTokensRef.current = {};
+    setUserInputErrors({});
+    setSubmittingUserInputRequests(new Set());
+  }
+
   async function submitUserInputDecision(
     request: ClaudeUserInputRequest,
     input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">,
@@ -409,6 +427,7 @@ export default function App() {
       });
     };
 
+    let streamCompleted = false;
     try {
       await streamChat(
         effectiveClientConfig,
@@ -525,6 +544,7 @@ export default function App() {
             });
           },
           onDone: () => {
+            streamCompleted = true;
             setStreaming(false);
             abortRef.current = null;
             setSubmittingUserInputRequests(new Set());
@@ -553,6 +573,13 @@ export default function App() {
         });
       }
     } finally {
+      if (!streamCompleted) {
+        cancelUserInputForMessage(
+          sessionId,
+          assistantMessage.id,
+          controller.signal.aborted ? "client_cancelled" : "runtime_interrupted",
+        );
+      }
       setStreaming(false);
       setStreamingAssistantMessageId(undefined);
       abortRef.current = null;
@@ -560,6 +587,7 @@ export default function App() {
   }
 
   function stopStream() {
+    cancelUserInputForMessage(activeSessionId, streamingAssistantMessageId, "client_cancelled");
     abortRef.current?.abort();
     abortRef.current = null;
     setStreaming(false);

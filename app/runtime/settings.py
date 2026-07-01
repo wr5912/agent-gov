@@ -54,6 +54,7 @@ _SETTINGS_ENV_FILES = {
 }
 _CONTAINER_MARKER_ENV = "RUNTIME_CONTAINER"
 _TRUTHY_CONTAINER_MARKERS = {"1", "true", "yes", "on", "container"}
+_API_WORKER_ENV_KEYS = ("WEB_CONCURRENCY", "API_WORKERS", "UVICORN_WORKERS")
 
 
 @dataclass(frozen=True)
@@ -442,3 +443,21 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
 def runtime_settings_log_message(settings: AppSettings) -> str:
     fields = runtime_settings_log_fields(settings)
     return "runtime settings configured " + " ".join(f"{key}={value}" for key, value in fields.items())
+
+
+def validate_hitl_single_api_process(settings: AppSettings, env: Mapping[str, str] | None = None) -> None:
+    if not settings.enable_claude_web_hitl:
+        return
+    values = env or os.environ
+    for key in _API_WORKER_ENV_KEYS:
+        raw = values.get(key)
+        if raw is None or not raw.strip():
+            continue
+        try:
+            count = int(raw)
+        except ValueError as exc:
+            raise RuntimeError(f"{key} must be an integer when ENABLE_CLAUDE_WEB_HITL=true") from exc
+        if count > 1:
+            raise RuntimeError(
+                f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions"
+            )

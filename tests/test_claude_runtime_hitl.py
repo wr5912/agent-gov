@@ -137,3 +137,34 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
     assert getattr(seen["options"], "permission_mode", None) is None
     assert seen["prompt_item"]["message"]["content"] == "no hitl"
     assert store.list(limit=10) == []
+
+
+def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
+    async def fake_query(*, prompt, options, transport=None):
+        await anext(prompt)
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path, enable_hitl=False)
+    service, _store = _service(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+
+    def fail_complete(*args, **kwargs):
+        raise RuntimeError("completion boom")
+
+    monkeypatch.setattr(runtime, "_complete_runtime_request", fail_complete)
+
+    async def collect():
+        return [event async for event in runtime.stream(ChatRequest(message="completion fails"))]
+
+    async def scenario():
+        return await asyncio.wait_for(collect(), timeout=2)
+
+    events = asyncio.run(scenario())
+
+    assert [event["event"] for event in events] == ["session", "error", "done"]
+    assert "RuntimeError: completion boom" in events[1]["data"]["errors"]

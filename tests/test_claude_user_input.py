@@ -165,6 +165,7 @@ def test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions(
         assert second_decision.action == "allow_once"
         assert event_queue.empty()
 
+        # Product contract: allow_for_run grants the whole current run, including later high-risk tools.
         third_decision = await service.create_and_wait(
             event_queue=event_queue,
             business_agent_id="main-agent",
@@ -258,7 +259,7 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
         "ls; rm -rf /",
     ],
 )
-def test_mutating_or_private_bash_keeps_high_risk_run_allow_available(tmp_path, command):
+def test_mutating_or_private_bash_keeps_high_risk_run_allow_available_by_design(tmp_path, command):
     async def scenario():
         service = _service(tmp_path)
         _event_queue, task, request = await _start_wait(service, input_data={"command": command})
@@ -447,3 +448,54 @@ def test_decision_api_rejects_allow_modified_and_updated_input_extra(tmp_path):
 
     assert allow_modified.status_code == 422
     assert updated_input.status_code == 422
+
+
+def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
+    service = _service(tmp_path)
+    app = FastAPI()
+    app.include_router(create_claude_user_input_router(service=service, require_api_key=lambda: None))
+    client = TestClient(app)
+
+    async def create_request() -> dict[str, object]:
+        _event_queue, _task, request = await _start_wait(service)
+        return request
+
+    request = asyncio.run(create_request())
+    base = {
+        "action": "allow_once",
+        "decision_token": request["decision_token"],
+        "run_id": request["run_id"],
+        "session_id": request["session_id"],
+        "business_agent_id": request["business_agent_id"],
+    }
+
+    missing = client.post("/api/claude-user-input-requests/cur-missing/decision", json=base)
+    wrong_token = client.post(
+        f"/api/claude-user-input-requests/{request['request_id']}/decision",
+        json={**base, "decision_token": "wrong-token"},
+    )
+
+    assert missing.status_code == 404
+    assert wrong_token.status_code == 409
+    assert "token is invalid" in wrong_token.json()["detail"]
+
+
+def test_submit_decision_rejects_duplicate_submit(tmp_path):
+    async def scenario():
+        service = _service(tmp_path)
+        _event_queue, task, request = await _start_wait(service)
+
+        service.submit_decision(
+            request["request_id"],
+            decision=_decision(request["decision_token"]),
+            decided_by="tester",
+        )
+        assert (await task).action == "allow_once"
+        with pytest.raises(ClaudeUserInputConflict, match="already resolved"):
+            service.submit_decision(
+                request["request_id"],
+                decision=_decision(request["decision_token"]),
+                decided_by="tester",
+            )
+
+    asyncio.run(scenario())

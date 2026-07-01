@@ -94,6 +94,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/improvements/{improvement_id}/execution/apply",
         "/api/improvements/{improvement_id}/regression-assessment/generate",
         "/api/langfuse/traces/{trace_id}",
+        "/api/agent-config-file",
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
         "/api/claude-user-input-requests/{request_id}/decision",
@@ -126,3 +127,8 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     for component in (attribution, optimization, execution, regression):
         assert "generation_trace_id" in component["properties"]
         assert "generation_trace_url" in component["properties"]
+
+    agent_config_file = schema["paths"]["/api/agent-config-file"]
+    assert {"get", "put"} <= set(agent_config_file)
+    agent_config_update = schema["components"]["schemas"]["AgentConfigFileUpdateResponse"]
+    assert "sdk_session_invalidated" in agent_config_update["properties"]

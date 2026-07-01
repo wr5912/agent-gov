@@ -102,7 +102,8 @@ function requestEvent(kind) {
       : {
           level: "high",
           reason: "Tool execution requires user confirmation before Claude continues.",
-          run_allow_eligible: false,
+          run_allow_eligible: true,
+          run_allow_scope: "run",
         },
     created_at: "2026-06-29T00:00:00Z",
     expires_at: "2026-06-29T00:05:00Z",
@@ -151,6 +152,7 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
       return sse(route, [
         { event: "session", data: { session_id: body.session_id, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
         { event: "claude_user_input_required", data: requestEvent(kind) },
+        { event: "done", data: "[DONE]" },
       ]);
     }
     const decisionMatch = path.match(/^\/api\/claude-user-input-requests\/([^/]+)\/decision$/);

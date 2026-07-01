@@ -6,7 +6,7 @@ from sqlalchemy import JSON, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .json_types import JsonObject
-from .runtime_db import Base, utc_now
+from .runtime_db_base import Base, utc_now
 
 
 class ClaudeUserInputRequestModel(Base):

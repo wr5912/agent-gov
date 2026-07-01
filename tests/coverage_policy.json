@@ -46,7 +46,11 @@
           "id": "improvement_design_parity_and_message_actions",
           "description": "Playground、Trace、HITL、四阶段改进事项工作台、来源反馈管理、决策卡、ContextPackage 和 Asset Registry provenance 的浏览器验收。",
           "pytest": [
-            "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore"
+            "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore",
+            "tests/test_claude_runtime_hitl.py::test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow",
+            "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
+            "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions",
+            "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token"
           ],
           "ui_scripts": [
             "verify:design-parity",

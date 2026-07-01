@@ -3,17 +3,17 @@ from __future__ import annotations
 import hashlib
 import json
 from contextlib import contextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from typing import Optional
 
 from sqlalchemy import JSON, Float, ForeignKey, Index, String, create_engine, event
 from sqlalchemy.engine import Connection, Engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
 
 from .json_types import JsonObject
+from .runtime_db_base import Base, utc_now
 from .runtime_db_migrations import (
     migrate_0005_agent_governance,
     migrate_0006_remove_agent_job_output_contract_column,
@@ -34,20 +34,12 @@ from .runtime_db_migrations import (
     migrate_0022_remove_legacy_batch_optimization_chain,
     migrate_0023_eval_case_targeted_regression_layer,
     migrate_0024_feedback_case_agent_id,
+    migrate_0025_agent_governance_legacy_paths,
 )
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-class Base(DeclarativeBase):
-    pass
-
 
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
 
@@ -477,6 +469,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0022_remove_legacy_batch_optimization_chain", migrate_0022_remove_legacy_batch_optimization_chain),
         ("0023_eval_case_targeted_regression_layer", migrate_0023_eval_case_targeted_regression_layer),
         ("0024_feedback_case_agent_id", migrate_0024_feedback_case_agent_id),
+        ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
     ):
         if version in applied:
             continue

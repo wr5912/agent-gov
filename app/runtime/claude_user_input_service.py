@@ -128,6 +128,7 @@ class ClaudeUserInputService:
         self._store = store
         self._timeout_seconds = timeout_seconds
         self._pending: dict[str, _PendingRuntimeRequest] = {}
+        # Product decision: "allow for run" is an explicit whole-run grant, not a low-risk-category grant.
         self._run_grants: set[tuple[str, str]] = set()
 
     def cancel_orphan_waiting_requests(self, *, reason: str = "service_restarted") -> list[ClaudeUserInputRequestRecord]:

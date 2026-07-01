@@ -37,7 +37,7 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.session_store import LocalSessionStore
-from app.runtime.settings import get_settings, runtime_settings_log_message
+from app.runtime.settings import get_settings, runtime_settings_log_message, validate_hitl_single_api_process
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.asset_store import AssetStore
 from app.runtime.stores.automation_policy_store import AutomationPolicyStore
@@ -128,6 +128,7 @@ api_key_credentials = Security(bearer_auth)
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
+    validate_hitl_single_api_process(settings)
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))

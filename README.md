@@ -57,12 +57,12 @@ MODEL_PROVIDER_API_KEY=<your-model-provider-api-key>
 # vLLM 场景改为 MODEL_PROVIDER_BACKEND=vllm，并填写不带 /v1 的 base URL。
 # MODEL_PROVIDER_API_URL=http://vllm:8000
 API_KEY=<your-runtime-api-key>
-HOST_PORT=48080
+HOST_PORT=58080
 API_PORT=8080
 AGENT_MODEL=claude-sonnet-4-5
 ```
 
-`docker/.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。当前实现分支临时使用 `4XXXX` 端口段，默认端口映射为 `48080:8080`，避免与 master 默认 `5XXXX` 服务并行冲突。
+`docker/.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口遵循项目规则 `50000 + 容器端口`，例如 API 端口映射为 `58080:8080`。
 
 离线部署表示不依赖公网远程服务，不表示无模型运行；反馈闭环、执行优化和 DSPy 输出规范化应指向本地或内网模型网关。模型接入通过 `MODEL_PROVIDER_BACKEND` 显式选择 adapter，不通过 URL 字符串推断 provider；`MODEL_PROVIDER_API_URL` 是唯一真实模型服务 URL。vLLM 场景中 `ANTHROPIC_BASE_URL` 由 Runtime 派生为内部 LiteLLM sidecar 地址，不要求用户维护第二个 upstream URL。Agent 若没有输出精确匹配 `schema_version` 的完整 JSON，Runtime 会交给 DSPy formatter 规范化，formatter 不可用时 job 会失败并写入 `error_json`，不会生成 offline/raw 占位结果。
 
@@ -116,7 +116,7 @@ pnpm dev
 http://localhost:5173
 ```
 
-Runtime API 设置默认读取前端环境变量：`VITE_RUNTIME_API_BASE` 默认是 `http://localhost:48080`，`VITE_RUNTIME_API_KEY` 可填后端 `docker/.env` 中的 `API_KEY`。如果浏览器通过远程地址访问前端（例如 `http://172.16.138.228:45173`），前端会把默认 loopback API 地址自动迁移为同一浏览器主机的 `:48080`，避免远程浏览器把 `localhost` 解析成自己的机器。开发模式下，Vite 会把 `/api`、`/health`、`/v1` 代理到 `VITE_DEV_PROXY_TARGET`，默认也是 `http://localhost:48080`。
+Runtime API 设置默认读取前端环境变量：`VITE_RUNTIME_API_BASE` 默认是 `http://localhost:58080`，`VITE_RUNTIME_API_KEY` 可填后端 `docker/.env` 中的 `API_KEY`。如果浏览器通过远程地址访问前端（例如 `http://172.16.138.228:55173`），前端会把默认 loopback API 地址自动迁移为同一浏览器主机的 `:58080`，避免远程浏览器把 `localhost` 解析成自己的机器。开发模式下，Vite 会把 `/api`、`/health`、`/v1` 代理到 `VITE_DEV_PROXY_TARGET`，默认也是 `http://localhost:58080`。
 
 前端构建检查：
 
@@ -133,7 +133,7 @@ make ui-up
 make ui-smoke
 ```
 
-反馈优化工作台浏览器回归使用 Playwright，默认读取 `docker/.env` 中的 `API_KEY` 并按 Compose 端口访问 `http://localhost:45173` 和 `http://localhost:48080`。该检查会创建一条测试反馈信号和改进事项，并把截图写入根目录 `artifacts/`：
+反馈优化工作台浏览器回归使用 Playwright，默认读取 `docker/.env` 中的 `API_KEY` 并按 Compose 端口访问 `http://localhost:55173` 和 `http://localhost:58080`。该检查会创建一条测试反馈信号和改进事项，并把截图写入根目录 `artifacts/`：
 
 ```bash
 make ui-feedback-smoke
@@ -142,7 +142,7 @@ make ui-feedback-smoke
 默认访问地址：
 
 ```text
-http://localhost:45173
+http://localhost:55173
 ```
 
 相关配置项为 `FRONTEND_HOST_PORT`、`FRONTEND_RUNTIME_API_BASE`、`FRONTEND_RUNTIME_API_KEY`、`FRONTEND_LANGFUSE_URL`。`FRONTEND_RUNTIME_API_KEY` 留空时，Compose 会复用 `API_KEY`。
@@ -155,7 +155,7 @@ http://localhost:45173
 
 Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 `/api/chat/stream` 都会生成 `run_id`，并在 SQLite 中写入本次回答的轻量运行记录。Playground 回复上的反馈入口只采集 feedback signal；用户在“改进事项”中把反馈归并为事项后，按反馈整理、归因分析、优化方案/执行、测试发布四个工作面板推进。治理 Agent 生成的归因、优化方案、执行记录和回归评估都写入事项级内容子资源，并保存 `generation_trace_id` / `generation_trace_url`。
 
-完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:48080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
+完整 API 以运行时 OpenAPI 为准：本地运行后访问 `http://localhost:58080/openapi.json`，或使用 `scripts/export_openapi.py` 导出临时 OpenAPI JSON。下面仅保留按职责分组的高层索引，避免 README 随接口细节频繁漂移：
 
 前端 OpenAPI 类型由运行时 schema 临时导出后生成，命令为：
 
@@ -192,8 +192,8 @@ LANGFUSE_ENABLED=true
 LANGFUSE_PUBLIC_KEY=pk-lf-local-dev
 LANGFUSE_SECRET_KEY=sk-lf-local-dev
 LANGFUSE_BASE_URL=http://langfuse-web:3000
-LANGFUSE_NEXTAUTH_URL=http://localhost:43000
-FRONTEND_LANGFUSE_URL=http://localhost:43000
+LANGFUSE_NEXTAUTH_URL=http://localhost:53000
+FRONTEND_LANGFUSE_URL=http://localhost:53000
 LANGFUSE_OTEL_SIGNALS=traces,metrics,logs
 ```
 
@@ -223,17 +223,17 @@ make langfuse-smoke
 
 默认访问地址：
 
-- Langfuse UI: `http://localhost:43000`
-- MinIO API: `http://localhost:49000`
-- MinIO Console: `http://localhost:49001`
+- Langfuse UI: `http://localhost:53000`
+- MinIO API: `http://localhost:59000`
+- MinIO Console: `http://localhost:59001`
 
-这些端口均可在 `docker/.env` 中调整：`LANGFUSE_HOST_PORT`、`LANGFUSE_MINIO_HOST_PORT`、`LANGFUSE_MINIO_CONSOLE_HOST_PORT`。当前实现分支临时使用 `4XXXX` 端口段，避免与 master 默认 `5XXXX` 服务并行冲突。
+这些端口均可在 `docker/.env` 中调整：`LANGFUSE_HOST_PORT`、`LANGFUSE_MINIO_HOST_PORT`、`LANGFUSE_MINIO_CONSOLE_HOST_PORT`。默认端口遵循项目规则 `50000 + 容器端口`。
 
 #### 远端访问
 
-Langfuse Web 与 MinIO 端口默认绑定 `0.0.0.0`，远端用户可通过 `http://<宿主机地址>:43000` 访问 Langfuse 界面。仅限本机访问时在 `docker/.env` 设 `LANGFUSE_BIND_IP=127.0.0.1`。
+Langfuse Web 与 MinIO 端口默认绑定 `0.0.0.0`，远端用户可通过 `http://<宿主机地址>:53000` 访问 Langfuse 界面。仅限本机访问时在 `docker/.env` 设 `LANGFUSE_BIND_IP=127.0.0.1`。
 
-前端 topbar 的 Langfuse 按钮在地址为本机/缺省（`http://localhost:43000`）时，会按当前浏览器访问的 host 自动派生跳转地址（端口沿用配置值），因此远端用户点击会跳到 `http://<当前访问host>:43000` 而非 `localhost`，无需为每个部署硬编码 IP。若把 `FRONTEND_LANGFUSE_URL` 显式设为非本机的可达地址，则按该配置跳转。
+前端 topbar 的 Langfuse 按钮在地址为本机/缺省（`http://localhost:53000`）时，会按当前浏览器访问的 host 自动派生跳转地址（端口沿用配置值），因此远端用户点击会跳到 `http://<当前访问host>:53000` 而非 `localhost`，无需为每个部署硬编码 IP。若把 `FRONTEND_LANGFUSE_URL` 显式设为非本机的可达地址，则按该配置跳转。
 
 要让 Langfuse 自身的登录与媒体上传在远端完全可用，需在私有 `docker/.env` 把以下地址指向宿主机外部地址：`LANGFUSE_NEXTAUTH_URL`、`LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT`、`LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT`。暴露到网络时务必同时替换 `LANGFUSE_SALT`、`LANGFUSE_NEXTAUTH_SECRET`、`LANGFUSE_ENCRYPTION_KEY`、数据库/Redis/MinIO 密码和初始化账号密码。
 
@@ -292,17 +292,17 @@ OTEL_LOG_RAW_API_BODIES=1
 
 容器启动后，FastAPI 自动提供详细 OpenAPI 文档：
 
-- Swagger UI: `http://localhost:48080/docs`
-- ReDoc: `http://localhost:48080/redoc`
-- OpenAPI JSON: `http://localhost:48080/openapi.json`
+- Swagger UI: `http://localhost:58080/docs`
+- ReDoc: `http://localhost:58080/redoc`
+- OpenAPI JSON: `http://localhost:58080/openapi.json`
 
-如果你在 `docker/.env` 中修改了 `HOST_PORT`，把上面的 `48080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
+如果你在 `docker/.env` 中修改了 `HOST_PORT`，把上面的 `58080` 替换成对应端口。`/health` 响应也会返回这些文档 URL。
 当 `API_KEY` 非空时，Swagger UI 里先点击 `Authorize`，输入 `docker/.env` 中的 `API_KEY`；curl 请求则添加 `Authorization: Bearer $API_KEY`。
 
 ## 聊天 API
 
 ```bash
-export API_BASE=http://localhost:48080
+export API_BASE=http://localhost:58080
 export API_KEY="$(awk -F= '$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' docker/.env)"
 
 curl -X POST "$API_BASE/api/chat" \
@@ -576,7 +576,7 @@ cp .env.example .env.local
 ```env
 VITE_RUNTIME_API_BASE=http://localhost:8080
 VITE_DEV_PROXY_TARGET=http://localhost:8080
-VITE_LANGFUSE_URL=http://localhost:43000
+VITE_LANGFUSE_URL=http://localhost:53000
 ```
 
 如果后端 `API_KEY` 非空，可在 `frontend/.env.local` 中手工加入 `VITE_RUNTIME_API_KEY=<your-runtime-api-key>`，或在 UI 设置弹窗中保存。
@@ -587,4 +587,4 @@ VITE_LANGFUSE_URL=http://localhost:43000
 pnpm dev
 ```
 
-前端会把浏览器 localStorage 中旧默认值 `http://localhost:48080` 自动迁移到当前默认 Runtime API 地址；远程访问前端时会使用当前浏览器主机名加 `:48080`。如果你手工配置过其他非 loopback 地址，仍可在前端设置弹窗中修改。
+前端会把浏览器 localStorage 中旧默认值 `http://localhost:58080` 自动迁移到当前默认 Runtime API 地址；远程访问前端时会使用当前浏览器主机名加 `:58080`。如果你手工配置过其他非 loopback 地址，仍可在前端设置弹窗中修改。

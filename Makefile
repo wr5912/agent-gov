@@ -71,7 +71,7 @@ ui-logs:
 
 ui-smoke:
 	@frontend_port=$${FRONTEND_HOST_PORT:-$$(awk -F= '$$1 == "FRONTEND_HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-45173}}; \
+	frontend_url=$${FRONTEND_URL:-http://localhost:$${frontend_port:-55173}}; \
 	i=1; \
 	while [ $$i -le 30 ]; do \
 		if curl -fsS "$$frontend_url" >/dev/null; then \
@@ -146,14 +146,14 @@ runtime-volume-seeds-restore-list:
 smoke:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-48080}}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	curl -s "$$api_base/health" | $(PYTHON_RUN) -m json.tool
 
 chat:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_key=$${API_KEY:-$$(awk -F= '$$1 == "API_KEY" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-48080}}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \

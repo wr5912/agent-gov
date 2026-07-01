@@ -16,8 +16,8 @@ if (!host) {
   throw new Error("No non-loopback IPv4 address found for remote API base verification");
 }
 const uiBase = `http://${host}:${port}`;
-const expectedApiBase = `http://${host}:48080`;
-const forbiddenApiBases = new Set(["http://localhost:48080", "http://127.0.0.1:48080"]);
+const expectedApiBase = `http://${host}:58080`;
+const forbiddenApiBases = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
 
 function firstRoutableIPv4() {
   for (const entries of Object.values(networkInterfaces())) {
@@ -35,7 +35,7 @@ function startVite() {
     detached: true,
     env: {
       ...process.env,
-      VITE_RUNTIME_API_BASE: "http://localhost:48080",
+      VITE_RUNTIME_API_BASE: "http://localhost:58080",
       VITE_RUNTIME_API_KEY: "",
     },
   });
@@ -108,7 +108,7 @@ async function main() {
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
     await page.addInitScript(() => {
-      window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: "http://localhost:48080", apiKey: "" }));
+      window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: "http://localhost:58080", apiKey: "" }));
       window.localStorage.removeItem("playground-session-messages");
       window.localStorage.removeItem("playground-active-session");
     });

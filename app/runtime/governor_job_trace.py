@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """治理 Agent（governor）job 的 Langfuse 富化（整改方案 §4.4 / §5.6）。
 
 业务 Agent 聊天经 ClaudeRuntime.run/stream 富化；治理 job 经 run_profile_json 执行，
@@ -11,10 +9,13 @@ from __future__ import annotations
 从而在同一 Langfuse project 内按 role/agent/session 区分治理与业务、并定位治理活动。
 """
 
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from typing import Any, Optional
 
 from .json_types import JsonObject
+from .message_utils import to_plain
 
 # scope_kind -> sessionId 前缀。治理范围天然分组单元：归因按 case，四阶段按 improvement，评估按 eval。
 _SCOPE_SESSION_PREFIX = {
@@ -60,11 +61,57 @@ async def run_governor_profile_json(
         job_id=str(governor.get("job_id") or ""),
     )
     with langfuse.propagate_attributes(**attrs):
-        with langfuse.start_observation(as_type="span", name=attrs["trace_name"], metadata=attrs["metadata"]) as root_span:
+        trace_input = _governor_input_payload(governor, attrs)
+        with langfuse.start_observation(
+            as_type="span",
+            name=attrs["trace_name"],
+            input=trace_input,
+            metadata=attrs["metadata"],
+        ) as root_span:
             langfuse.set_trace_attributes(root_span, **attrs)
-            result = await run()
+            try:
+                result = await run()
+            except Exception as exc:
+                trace_output: JsonObject = {
+                    "status": "failed",
+                    "error_type": exc.__class__.__name__,
+                    "error_message": str(exc),
+                }
+                _update_root_observation(langfuse, root_span, trace_input=trace_input, trace_output=trace_output)
+                _notify_trace_callback(langfuse, trace_callback)
+                raise
+            trace_output = _governor_output_payload(result)
+            _update_root_observation(langfuse, root_span, trace_input=trace_input, trace_output=trace_output)
             _notify_trace_callback(langfuse, trace_callback)
             return result
+
+
+def _governor_input_payload(governor: JsonObject, attrs: JsonObject) -> JsonObject:
+    raw_input = governor.get("input")
+    if isinstance(raw_input, dict):
+        return _json_object(raw_input)
+    return _json_object({"metadata": attrs["metadata"]})
+
+
+def _governor_output_payload(result: Any) -> JsonObject:
+    payload = to_plain(result)
+    if isinstance(payload, dict):
+        return _json_object({"status": "completed", "result": payload})
+    return _json_object({"status": "completed", "result": payload})
+
+
+def _update_root_observation(langfuse: Any, root_span: Any, *, trace_input: JsonObject, trace_output: JsonObject) -> None:
+    update = getattr(langfuse, "update_observation", None)
+    if update is not None:
+        update(root_span, output=trace_output)
+    set_trace_io = getattr(langfuse, "set_trace_io", None)
+    if set_trace_io is not None:
+        set_trace_io(root_span, input=trace_input, output=trace_output)
+
+
+def _json_object(value: Any) -> JsonObject:
+    plain = to_plain(value)
+    return plain if isinstance(plain, dict) else {"value": plain}
 
 
 def _notify_trace_callback(langfuse: Any, trace_callback: Callable[[JsonObject], None] | None) -> None:

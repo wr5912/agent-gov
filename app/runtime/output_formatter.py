@@ -165,16 +165,21 @@ class DSPyOutputFormatter:
         start = getattr(self.langfuse, "start_observation", None)
         if propagate is None or start is None:
             return _NullContext()
-        session_id = metadata.get("scope_id") or metadata.get("job_id")
+        session_id = (
+            metadata.get("scope_id")
+            or metadata.get("improvement_id")
+            or metadata.get("feedback_case_id")
+            or metadata.get("eval_run_id")
+            or metadata.get("job_id")
+        )
         return _NestedContext(
             propagate(
                 session_id=session_id,
                 metadata=metadata,
-                trace_name=f"runtime.output_formatter.{metadata['job_type']}",
             ),
             start(
                 as_type="span",
-                name=f"runtime.output_formatter.{metadata['job_type']}",
+                name=f"runtime.governor.{metadata['job_type']}.formatter",
                 input=metadata,
                 metadata=metadata,
             ),

@@ -235,7 +235,7 @@ governor / AgentJobRunner.run_profile_json
 | `sdk_subagent_id` | `ToolPermissionContext.agent_id`，表示 Claude sub-agent id，可为空；不得与业务 Agent 归属混用。 |
 | `request_type` | `tool_permission` 或 `ask_user_question`。 |
 | `tool_name` | `Bash`、`Write`、`Edit`、MCP tool、`AskUserQuestion` 等。 |
-| `redacted_input_json` | 脱敏后的 tool input / question input 快照。 |
+| `redacted_input_json` | 历史物理列名；当前开发调试契约中保存完整 tool input / question input 快照，公开 API 字段名为 `input`。 |
 | `context_json` | `ToolPermissionContext` 的可序列化字段，如 suggestions、display_name、description、decision_reason。 |
 | `risk_json` | 后端风险分类展示信息，不参与 SDK 权限决策。 |
 | `status` | `waiting`、`resolved`、`cancelled`。 |
@@ -244,11 +244,10 @@ governor / AgentJobRunner.run_profile_json
 | `decided_by` | 服务端从认证上下文推导的操作者；不信任 request body。 |
 | `created_at` / `expires_at` / `resolved_at` | 审计时间。 |
 
-敏感数据策略：
+开发调试观测策略：
 
-- DB 只持久化 redacted snapshot，不持久化 raw tool input。
-- raw tool input 只允许保存在内存 pending request 中，用于当前 SDK callback 等待期间。
-- 对 Bash 命令、文件内容、MCP header、token-like 字段、长文本统一脱敏和长度截断。
+- 当前前端和自托管 Langfuse 只面向开发调试人员，不作为生产安全边界；DB 审计投影和 Web 卡片默认保留完整 tool input / question input，便于定位 Claude 原生工具请求。
+- 真实密钥、MCP header、数据库凭据和本机私有路径仍不得写入 Git、提交说明、公开文档或最终回复；生产化时另起 redaction policy，不反向污染当前 dev/debug 默认。
 - `sdk_session_id` 不是创建 pending request 的硬前提；主关联使用 `api_session_id + run_id + business_agent_id`。
 - 超时会向 SDK 返回 `PermissionResultDeny`，因此记录为 `status=resolved + decision=timeout_deny`；只有客户端断开、服务重启、进程崩溃等未向 SDK 返回的情况才记录为 `status=cancelled`。
 
@@ -285,7 +284,7 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 - v1 永远不对 `Bash`、`Write`、`Edit`、MCP 等真实工具返回 `updated_input`。
 - v1 不开放 `updated_permissions`，不提供“总是允许”。
 - `AskUserQuestion` 的 `updated_input` 仅作为回答载体，必须包含 SDK 要求的 `questions + answers` 或 `response`。
-- 所有输入输出进入 DB 前做 JSON 序列化校验和敏感字段脱敏。
+- 所有输入输出进入 DB 前做 JSON 序列化校验；当前开发调试面保留完整参数，不做默认脱敏。
 - 超时对 SDK 的表现是 `PermissionResultDeny(message=...)`；表中记录 `decision=timeout_deny`。
 - 启用 Web HITL 的 options 不得同时传 `permission_prompt_tool_name`；如果环境配置了 `PERMISSION_PROMPT_TOOL_NAME`，业务 Agent stream/non-stream HITL 路径必须显式拒绝启动或忽略该配置并输出诊断。
 
@@ -300,7 +299,7 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 - 更新为 `status=cancelled`、`decision=service_restarted`、`resolved_at=now`。
 - 如果运行时能区分有序停机和异常中断，可把异常中断记录为 `decision=runtime_interrupted`。
 - 决策 API 收到这类请求时返回 `409`，错误体说明“服务已重启，原 Claude 执行已中断，请重新运行本轮任务”。
-- 不尝试从 redacted snapshot 重建 raw tool input；首版没有足够原生 session resume 保障。
+- 不尝试从 DB 审计投影重建原 SDK callback；首版没有足够原生 session resume 保障。
 
 长等待审批如需跨进程恢复，必须进入后续版本，基于 Claude hook `permissionDecision: "defer"` 与 SDK session resume 重新设计，不属于首版。
 
@@ -428,7 +427,7 @@ data: {
   "business_agent_id": "...",
   "request_type": "tool_permission",
   "tool_name": "Bash",
-  "redacted_input": {...},
+  "input": {...},
   "context": {...},
   "risk": {...},
   "expires_at": "..."
@@ -458,8 +457,8 @@ data: {
 
 - 工具名。
 - 风险等级和原因。
-- 参数摘要。
-- 完整 JSON 展开，但仅展示脱敏快照。
+- 完整参数。
+- 完整 JSON 展开；当前开发调试面不做脱敏展示。
 - 操作：
   - 允许一次。
   - 拒绝并填写原因。
@@ -671,7 +670,7 @@ data: {
 | 服务重启后原 SDK callback 消失 | 用户点击已无法恢复原执行 | 启动时取消孤儿 waiting 请求，决策 API 返回 409 并提示重新运行。 |
 | 后台治理 job 被错误接入等待 | 归因/优化/回归卡死 | 以 `profile.category == "business"` 且入口为 stream 为硬条件。 |
 | 客户端伪造操作者或决策他人请求 | 审计失真或越权执行 | 不信任 body operator；使用 decision token 和 session/run/business_agent 绑定。 |
-| raw tool input 入库 | 泄漏密钥、命令或文件内容 | DB 只存 redacted snapshot，raw input 只存在内存 pending request。 |
+| raw tool input 入库 | 开发调试面可见完整工具参数 | 当前前端 / Langfuse / 本地运行态 DB 均按开发调试面处理，允许完整参数；真实凭据仍不得进入仓库、提交说明、公开文档或最终回复。 |
 | 用户修改工具参数绕过策略 | Bash/Write/MCP 参数变形执行 | v1 不支持 `allow_modified`，工具参数只读展示。 |
 | 运行卷 reconcile 静默改坏用户配置 | 业务 Agent workspace 损坏或审计缺失 | 只通过显式 dry-run/apply 执行，备份、migration event、rollback 缺一不可。 |
 | UI 术语混淆 | 用户分不清工具审批和治理阶段确认 | 卡片命名为“Claude 请求使用工具”或“Claude 需要补充信息”，不使用“发布审批/改进确认”。 |

@@ -143,9 +143,9 @@ export type ClaudeUserInputRequestType = OpenApiClaudeUserInputRequestResponse["
 export type ClaudeUserInputStatus = OpenApiClaudeUserInputRequestResponse["status"];
 export type ClaudeUserInputDecisionAction = OpenApiClaudeUserInputDecisionRequest["action"];
 
-export type ClaudeUserInputRequest = Omit<OpenApiClaudeUserInputRequestResponse, "redacted_input" | "context" | "risk" | "decision_payload"> & {
+export type ClaudeUserInputRequest = Omit<OpenApiClaudeUserInputRequestResponse, "input" | "context" | "risk" | "decision_payload"> & {
   decision_token?: string;
-  redacted_input: Record<string, unknown>;
+  input: Record<string, unknown>;
   context: Record<string, unknown>;
   risk: Record<string, unknown>;
   decision_payload?: Record<string, unknown>;

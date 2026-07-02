@@ -405,6 +405,17 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         async def run() -> FormatterOutputModel:
             return await self.job_runner.run_profile_json(profile_name=profile_name, prompt=prompt, job_type=job_type, job_input=job_input)
 
+        if governor is not None:
+            governor = {
+                **governor,
+                "input": {
+                    "profile_name": profile_name,
+                    "job_type": job_type,
+                    "prompt": prompt,
+                    "job_input": job_input,
+                    "governor": dict(governor),
+                },
+            }
         return await run_governor_profile_json(self.langfuse, run, governor, trace_callback=trace_callback)
 
     def _new_runtime_request_context(

@@ -71,7 +71,7 @@ class ClaudeUserInputRequestRecord:
     sdk_session_id: Optional[str] = None
     tool_use_id: Optional[str] = None
     sdk_subagent_id: Optional[str] = None
-    redacted_input_json: JsonObject = field(default_factory=dict)
+    input_json: JsonObject = field(default_factory=dict)
     context_json: JsonObject = field(default_factory=dict)
     risk_json: JsonObject = field(default_factory=dict)
     decision: Optional[ClaudeUserInputDecision] = None
@@ -91,7 +91,7 @@ class ClaudeUserInputRequestRecord:
             "sdk_subagent_id": self.sdk_subagent_id,
             "request_type": self.request_type,
             "tool_name": self.tool_name,
-            "redacted_input": self.redacted_input_json,
+            "input": self.input_json,
             "context": self.context_json,
             "risk": self.risk_json,
             "status": self.status,

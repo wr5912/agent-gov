@@ -29,7 +29,7 @@ export function claudeUserInputRequestFromData(data: unknown): ClaudeUserInputRe
     sdk_subagent_id: nullableString(data.sdk_subagent_id),
     request_type: requestType,
     tool_name: toolName,
-    redacted_input: isRecord(data.redacted_input) ? data.redacted_input : {},
+    input: isRecord(data.input) ? data.input : {},
     context: isRecord(data.context) ? data.context : {},
     risk: isRecord(data.risk) ? data.risk : {},
     status,

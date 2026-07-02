@@ -17,8 +17,8 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 | --- | --- | --- | --- | --- | --- |
 | API / worker container | container | `docker/.env` + Compose `RUNTIME_CONTAINER=1` | `${HOME}/volume-agent-gov` | private `docker/.env`, no real value in examples | `AppSettings`, Compose config sanitized check, startup log |
 | Host Python / PyCharm | local-debug | `docker/.env.local-debug` selected by non-container process | `/tmp/local-debug-volume-agent-gov` by default | private `docker/.env.local-debug`, no real value in examples | settings tests, bootstrap test, startup log |
-| Vite frontend dev | frontend-local | `frontend/.env.local` | none | `VITE_*` only | frontend build or browser smoke |
-| Langfuse self-hosted | container profile + host browser | Compose service URL in containers, `localhost:53000` on host/browser | `${HOME}/volume-agent-gov/langfuse` | Langfuse keys stay private | health fields and docs tests |
+| Vite frontend dev | frontend-local | `frontend/.env.local` | none | debug UI can show full runtime input/output; `VITE_*` only in env | frontend build or browser smoke |
+| Langfuse self-hosted | container profile + host browser | Compose service URL in containers, `localhost:53000` on host/browser | `${HOME}/volume-agent-gov/langfuse` | dev trace keeps full prompt/tool/job I/O; Langfuse keys stay private | health fields and docs tests |
 | Background Agent job | same as API/worker process | selected runtime env file | selected runtime root | `MODEL_PROVIDER_API_KEY` required privately | auth precheck tests and main-flow test |
 
 ## 术语规则
@@ -35,6 +35,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 - 用户要求“启动、重启、重建、部署、生效最新代码”时，默认在原 Docker Compose 容器服务中生效，优先重建/重启既有 `agent-gov-ui` / `agent-gov-api` / `agent-gov-worker` 服务并验证既有端口；除非用户明确要求本机调试，不另起临时 Vite 或旁路 API 服务。
 - API 与 worker 应统一使用 `LOG_LEVEL` 控制应用日志级别；container 默认 `info`，local-debug 默认 `debug`，不要新增 worker 专属日志级别变量。
 - 真实 API key、MCP header、数据库凭据、本机私有路径和运行态 SQLite 不得提交。
+- 当前前端调试界面、Playground 证据面板和自托管 Langfuse 不是生产安全边界；开发期优先保留完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，不为这些面默认做脱敏、遮蔽或摘要化。需要生产化时另起 production redaction 方案，不反向污染当前 dev/debug 默认。
 - 数据库和 workspace 路径必须随 mode 分离：container 默认 `${HOME}/volume-agent-gov`，local-debug 默认 `/tmp/local-debug-volume-agent-gov`。
 
 ## 验证清单

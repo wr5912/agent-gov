@@ -57,13 +57,14 @@ async def _start_wait(
     return event_queue, task, request
 
 
-def test_tool_permission_allow_once_resolves_sdk_wait_and_redacts_input(tmp_path):
+def test_tool_permission_allow_once_resolves_sdk_wait_and_keeps_debug_input(tmp_path):
     async def scenario():
         service = _service(tmp_path)
         _event_queue, task, request = await _start_wait(service)
 
         assert request["request_type"] == "tool_permission"
-        assert request["redacted_input"]["api_key"] == "<redacted>"
+        assert request["input"]["api_key"] == "sk-secret"
+        assert request["context"]["tool_use_id"] == "toolu-1"
         assert request["business_agent_id"] == "main-agent"
 
         record = service.submit_decision(

@@ -16,7 +16,12 @@ def test_coverage_policy_rejects_coverage_regression(tmp_path):
         ],
     }
     coverage_data = {
-        "totals": {"percent_covered": 80.0, "num_branches": 10, "missing_branches": 4},
+        "totals": {
+            "percent_covered": 76.0,
+            "percent_statements_covered": 80.0,
+            "num_branches": 10,
+            "missing_branches": 4,
+        },
         "files": {},
     }
     test_file = tmp_path / "tests" / "test_policy.py"
@@ -44,6 +49,31 @@ def test_coverage_policy_rejects_unbound_main_flow_scenario(tmp_path):
     assert errors == ["main flow scenario flow.scenario has no pytest or ui_scripts binding"]
 
 
+def test_coverage_policy_uses_statement_percent_for_line_threshold(tmp_path):
+    policy = {
+        "coverage": {"global": {"line_percent_min": 90.0, "branch_percent_min": 50.0}},
+        "main_flows": [
+            {"id": "flow", "scenarios": [{"id": "scenario", "pytest": ["tests/test_policy.py::test_main_flow"]}]}
+        ],
+    }
+    coverage_data = {
+        "totals": {
+            "percent_covered": 75.0,
+            "percent_statements_covered": 95.0,
+            "num_branches": 10,
+            "missing_branches": 5,
+        },
+        "files": {},
+    }
+    test_file = tmp_path / "tests" / "test_policy.py"
+    test_file.parent.mkdir()
+    test_file.write_text("def test_main_flow():\n    assert True\n", encoding="utf-8")
+
+    errors = evaluate_policy(coverage_data=coverage_data, policy=policy, repo_root=tmp_path)
+
+    assert errors == []
+
+
 def test_coverage_policy_accepts_pytest_and_frontend_bindings(tmp_path):
     test_file = tmp_path / "tests" / "test_policy.py"
     test_file.parent.mkdir()
@@ -67,7 +97,7 @@ def test_coverage_policy_accepts_pytest_and_frontend_bindings(tmp_path):
         ],
     }
     coverage_data = {
-        "totals": {"percent_covered": 82.0, "num_branches": 10, "missing_branches": 5},
+        "totals": {"percent_covered": 80.0, "percent_statements_covered": 82.0, "num_branches": 10, "missing_branches": 5},
         "files": {},
     }
 

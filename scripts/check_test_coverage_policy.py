@@ -107,7 +107,7 @@ def main_flow_test_bindings(policy: JsonObject) -> tuple[list[str], list[str]]:
 
 def _check_summary_thresholds(name: str, summary: JsonObject, policy: JsonObject) -> list[str]:
     errors: list[str] = []
-    line_percent = _number(summary.get("percent_covered"), f"{name}.percent_covered", errors)
+    line_percent = _line_percent(summary, f"{name}.line_percent", errors)
     branch_percent = _branch_percent(summary, f"{name}.branch_percent", errors)
     min_line = _number(policy.get("line_percent_min", 0), f"{name}.line_percent_min", errors)
     min_branch = _number(policy.get("branch_percent_min", 0), f"{name}.branch_percent_min", errors)
@@ -116,6 +116,13 @@ def _check_summary_thresholds(name: str, summary: JsonObject, policy: JsonObject
     if branch_percent + 0.00001 < min_branch:
         errors.append(f"{name} branch coverage {branch_percent:.2f}% is below required {min_branch:.2f}%")
     return errors
+
+
+def _line_percent(summary: JsonObject, context: str, errors: list[str]) -> float:
+    value = summary.get("percent_statements_covered")
+    if isinstance(value, int | float):
+        return float(value)
+    return _number(summary.get("percent_covered"), f"{context}.percent_covered", errors)
 
 
 def _branch_percent(summary: JsonObject, context: str, errors: list[str]) -> float:
@@ -214,8 +221,9 @@ def main() -> int:
         print(f"coverage policy OK: manifest-only {suffix}")
     else:
         totals = _mapping(coverage_data.get("totals"), "coverage_json.totals")
+        line_percent = _line_percent(totals, "global.line_percent", [])
         branch_percent = _branch_percent(totals, "global.branch_percent", [])
-        print(f"coverage policy OK: line={float(totals.get('percent_covered', 0)):.2f}% branch={branch_percent:.2f}% {suffix}")
+        print(f"coverage policy OK: line={line_percent:.2f}% branch={branch_percent:.2f}% {suffix}")
     return 0
 
 

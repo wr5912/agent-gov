@@ -15,13 +15,12 @@ from __future__ import annotations
 from app.runtime.agent_job_types import AGENT_JOB_SPECS, AgentJobType
 from app.runtime.agent_profiles import GOVERNANCE_AGENT_ROLES
 
-# 五个核心治理方法（如何分析 / 如何优化 / 如何评估）。
+# 四个核心治理方法（如何分析 / 如何优化 / 如何执行 / 如何评估）。
 _GOVERNANCE_METHODS = (
     AgentJobType.ATTRIBUTION,
-    AgentJobType.BATCH_PLAN,
+    AgentJobType.OPTIMIZATION_PLAN,
     AgentJobType.EXECUTION,
     AgentJobType.EVAL_CASE_GENERATION,
-    AgentJobType.REGRESSION_IMPACT_ANALYSIS,
 )
 
 

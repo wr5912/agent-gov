@@ -136,13 +136,19 @@ class ImprovementExecutionService:
             "target_policy": policy.policy_json(),
             "target_file_contexts": policy.file_contexts(list(_DEFAULT_TARGETS)),
         }
+        prompt = spec.prompt_builder(job_input)
         assert self._run_profile_json is not None
         return await self._run_profile_json(
             profile_name=spec.profile_name,
-            prompt=spec.prompt_builder(job_input),
+            prompt=prompt,
             job_type=str(spec.job_type),
             job_input=job_input,
-            governor={"job_type": str(spec.job_type), "scope_kind": "improvement", "scope_id": getattr(plan, "improvement_id", "")},
+            governor={
+                "job_type": str(spec.job_type),
+                "scope_kind": "improvement",
+                "scope_id": getattr(plan, "improvement_id", ""),
+                "job_id": f"{spec.job_type}:{getattr(plan, 'improvement_id', '')}",
+            },
             trace_callback=trace_ref.update if trace_ref is not None else None,
         )
 

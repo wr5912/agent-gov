@@ -108,6 +108,74 @@ def test_dspy_output_formatter_timeout_default_matches_agent_job_timeout(tmp_pat
     assert settings.dspy_output_formatter_timeout_seconds == settings.governance_agent_timeout_seconds == 300
 
 
+def test_dspy_output_formatter_langfuse_child_span_keeps_governor_trace_name(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    fake_langfuse = _FakeLangfuse()
+    formatter = DSPyOutputFormatter(settings, langfuse=fake_langfuse)
+
+    monkeypatch.setattr(
+        formatter,
+        "_format_with_dspy",
+        lambda **_kwargs: ImprovementOptimizationPlanFormatterOutput.model_validate(
+            {"summary": "完整调试输出", "changes": [{"target": "CLAUDE.md", "change": "保留 raw input。"}]}
+        ),
+    )
+
+    formatter.format(
+        job_type=AgentJobType.OPTIMIZATION_PLAN,
+        raw_text="治理 Agent 原始输出",
+        job_input={"improvement_id": "imp-1"},
+    )
+
+    assert fake_langfuse.propagations == [
+        {
+            "session_id": "imp-1",
+            "metadata": {
+                "component": "dspy_output_formatter",
+                "job_type": "optimization_plan",
+                "output_model": "ImprovementOptimizationPlanFormatterOutput",
+                "improvement_id": "imp-1",
+            },
+        }
+    ]
+    assert "trace_name" not in fake_langfuse.propagations[0]
+    assert fake_langfuse.observations[0].kwargs["name"] == "runtime.governor.optimization_plan.formatter"
+    assert fake_langfuse.observations[0].updates[-1]["output"]["raw_text"] == "治理 Agent 原始输出"
+
+
+class _FakeLangfuse:
+    def __init__(self) -> None:
+        self.propagations: list[dict[str, object]] = []
+        self.observations: list[_FakeObservation] = []
+
+    def propagate_attributes(self, **kwargs: object):
+        self.propagations.append(kwargs)
+        return nullcontext()
+
+    def start_observation(self, **kwargs: object):
+        observation = _FakeObservation(kwargs)
+        self.observations.append(observation)
+        return observation
+
+    def update_observation(self, observation: "_FakeObservation", **kwargs: object) -> None:
+        observation.update(**kwargs)
+
+
+class _FakeObservation:
+    def __init__(self, kwargs: dict[str, object]) -> None:
+        self.kwargs = kwargs
+        self.updates: list[dict[str, object]] = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
+        return False
+
+    def update(self, **kwargs: object) -> None:
+        self.updates.append(kwargs)
+
+
 def test_dspy_output_formatter_retries_transient_predictor_failure(tmp_path, monkeypatch):
     formatter = DSPyOutputFormatter(_settings(tmp_path))
     calls: list[dict[str, object]] = []

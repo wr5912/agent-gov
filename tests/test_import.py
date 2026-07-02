@@ -17,13 +17,16 @@ def test_import_app(tmp_path, monkeypatch):
     import app.main
 
     paths = {route.path for route in app.main.app.routes}
-    assert "/api/feedback-cases/{feedback_case_id}/optimization-plan" in paths
+    assert "/api/improvements/{improvement_id}/optimization-plan" in paths
+    assert "/api/improvements/{improvement_id}/attribution/generate" in paths
+    assert "/api/improvements/{improvement_id}/optimization-plan/generate" in paths
+    assert "/api/feedback-cases/{feedback_case_id}/optimization-plan" not in paths
     assert "/api/feedback-cases/{feedback_case_id}/proposal-jobs" not in paths
     assert "/api/optimization-proposals/{proposal_id}" not in paths
     assert "/api/agent-repository/current" in paths
     assert "/api/agent-change-sets/{change_set_id}/publish" in paths
     assert "/api/agent-versions/main/current" not in paths
-    assert "/api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate" in paths
+    assert "/api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate" not in paths
     assert "/api/feedback" not in paths
     assert "/api/feedback/events" not in paths
     assert "/api/feedback/attributions/{attribution_id}/review" not in paths

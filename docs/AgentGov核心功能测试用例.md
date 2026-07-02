@@ -1052,19 +1052,19 @@
 
 测试步骤：
 
-1. 查询配置摘要、运行详情、trace、导出包或 UI 详情。
-2. 检查是否出现真实密钥、header 或敏感路径。
+1. 查询配置摘要、导出包、仓库文件或公开文档。
+2. 检查是否出现真实密钥、header 或本机私有路径。
 3. 对受保护 API 使用错误凭据请求。
 
 成功标准：
 
-- 敏感信息不会出现在日志、trace、diagnostics、导出包或 UI 中。
+- 真实密钥、MCP header、数据库凭据和本机私有路径不会进入仓库、提交说明、公开文档或导出模板。
+- 当前前端调试界面和自托管 Langfuse 属开发调试面，可展示完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，不作为生产安全边界。
 - 错误凭据被拒绝。
-- 脱敏字段仍能支撑诊断。
 
-证据要求：脱敏检查结果和 401 响应。
+证据要求：仓库/env 示例检查结果、调试观测面边界说明和 401 响应。
 
-自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`；日志/trace 脱敏与错误凭据拒绝由运行时测试与人工验收覆盖。
+自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`；前端/Langfuse 完整调试观测由运行时和 UI 验收覆盖。
 
 ### AGV-043 第一阶段 main agent 样板闭环
 
@@ -1199,7 +1199,7 @@
 
 1. 检查前端是否提供 Terminal、敏感文件编辑或生产系统直接操作。
 2. 检查高风险治理动作是否需要确认。
-3. 检查前端输出是否脱敏。
+3. 检查前端是否明确作为开发调试观测面展示完整运行证据，而不是生产控制台。
 
 成功标准：
 

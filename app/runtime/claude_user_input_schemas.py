@@ -20,7 +20,7 @@ class ClaudeUserInputRequestResponse(BaseModel):
     sdk_subagent_id: Optional[str] = None
     request_type: Literal["tool_permission", "ask_user_question"]
     tool_name: str
-    redacted_input: JsonObject = Field(default_factory=dict)
+    input: JsonObject = Field(default_factory=dict)
     context: JsonObject = Field(default_factory=dict)
     risk: JsonObject = Field(default_factory=dict)
     status: Literal["waiting", "resolved", "cancelled"]

@@ -11,8 +11,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from pydantic.types import JsonValue
-
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.json_types import JsonObject
 from app.runtime.message_utils import to_plain
@@ -20,9 +18,6 @@ from app.runtime.records.claude_user_input_records import ClaudeUserInputRequest
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
 _DEFAULT_TIMEOUT_SECONDS = 300
-_SENSITIVE_KEY_PARTS = ("authorization", "token", "secret", "password", "api_key", "apikey", "key", "credential")
-_MAX_STRING_LENGTH = 600
-_MAX_LIST_ITEMS = 50
 _REPORT_OUTPUT_ROOTS = ("/data/outputs", "/data/reports")
 _READ_ONLY_MCP_PREFIXES = (
     "mcp__sec-ops-data__",
@@ -94,30 +89,6 @@ def _token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def redact_user_input(value: object) -> JsonValue:
-    if isinstance(value, dict):
-        redacted: JsonObject = {}
-        for key, item in value.items():
-            key_text = str(key)
-            if any(part in key_text.lower() for part in _SENSITIVE_KEY_PARTS):
-                redacted[key_text] = "<redacted>"
-            else:
-                redacted[key_text] = redact_user_input(item)
-        return redacted
-    if isinstance(value, (list, tuple)):
-        items = [redact_user_input(item) for item in value[:_MAX_LIST_ITEMS]]
-        if len(value) > _MAX_LIST_ITEMS:
-            items.append({"truncated_items": len(value) - _MAX_LIST_ITEMS})
-        return items
-    if isinstance(value, str):
-        if len(value) <= _MAX_STRING_LENGTH:
-            return value
-        return value[:_MAX_STRING_LENGTH] + f"...<truncated {len(value) - _MAX_STRING_LENGTH} chars>"
-    if value is None or isinstance(value, (int, float, bool)):
-        return value
-    return str(value)
-
-
 def json_object(value: Any) -> JsonObject:
     plain = to_plain(value)
     return plain if isinstance(plain, dict) else {"value": plain}
@@ -167,8 +138,8 @@ class ClaudeUserInputService:
             sdk_subagent_id=_optional_str(context_json.get("agent_id")),
             request_type=request_type,
             tool_name=tool_name,
-            redacted_input_json=json_object(redact_user_input(raw_input)),
-            context_json=json_object(redact_user_input(context_json)),
+            input_json=raw_input,
+            context_json=context_json,
             risk_json=self._risk_payload(tool_name, request_type, low_risk_category),
             expires_at=expires_at,
         )

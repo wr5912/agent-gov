@@ -121,6 +121,8 @@ make codex-guard
 - Docker 持久化默认宿主机根目录统一为 `${HOME}/volume-agent-gov`；`docker/volume/` 只作为迁移来源或显式兼容路径。
 - 环境变量放在 `docker/.env`；应用配置放在 `config/*.yaml` 或 `config/*.json`。
 - 不得将 API key、MCP header、数据库凭据或本机私有路径写入仓库。
+- 当前前端调试界面、Playground 证据面板和自托管 Langfuse 只面向开发调试人员，不作为生产安全边界；这些面默认保留完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，不做脱敏、遮蔽或安全摘要，除非用户明确要求生产化整改。
+- 上述调试观测例外不放宽仓库、提交、公开文档和最终回复边界：真实密钥、MCP header、数据库凭据、本机私有路径和私有运行态数据仍不得提交或外泄。
 
 ## Runtime / Env 治理专项
 

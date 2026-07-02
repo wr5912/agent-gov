@@ -287,6 +287,8 @@ OTEL_LOG_TOOL_CONTENT=1
 OTEL_LOG_RAW_API_BODIES=1
 ```
 
+当前前端调试界面、Playground 证据面板和自托管 Langfuse 只面向开发调试人员，不作为生产安全边界；这些面默认保留完整 prompt、tool input/output、job input/output、raw text 和 trace I/O，便于定位 Claude Code / Agent SDK 运行问题。真实密钥、MCP header、数据库凭据、本机私有路径和运行态数据仍不得写入仓库、提交说明或公开文档。
+
 容器启动后可通过 `/health` 查看状态字段：`langfuse_enabled`、`langfuse_public_key_configured`、`langfuse_secret_key_configured`、`langfuse_otel_signals`。不要把真实 Langfuse key 写入 `docker/.env.example` 或提交到仓库。
 
 `/health` 还会返回 `runtime_dependency_versions`，用于确认当前运行时实际解析到的 `claude-agent-sdk`、bundled Claude Code CLI、`langfuse` 和 OpenTelemetry 版本。`make langfuse-smoke` 会检查本地 Langfuse health、Runtime 版本、Redis/Bull ingestion 队列和最近一条 `runtime.*` trace 的基本结构；没有配置 Langfuse API key 或尚未产生 trace 时，会跳过对应深度检查。

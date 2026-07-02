@@ -28,7 +28,7 @@ class ClaudeUserInputRequestModel(Base):
     sdk_subagent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     request_type: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     tool_name: Mapped[str] = mapped_column(String(256), index=True, nullable=False)
-    redacted_input_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    input_json: Mapped[JsonObject] = mapped_column("redacted_input_json", JSON, default=dict)
     context_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     risk_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(32), index=True, nullable=False)

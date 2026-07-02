@@ -26,12 +26,12 @@
 | F2 | Critical | `permission_prompt_tool_name` 与 `can_use_tool` 同时配置会被 SDK 拒绝，导致 Web HITL 一启动就失败。 | `_build_options()` 必须知道 execution mode；Web HITL 和 `/api/chat` bypass 路径都不传 `permission_prompt_tool_name`。启动日志或 health 中展示 HITL 开关和 prompt tool 处理结果。 | 构造误配环境时，HITL options 仍不含 prompt tool；测试覆盖该互斥保护。 |
 | F3 | Critical | `can_use_tool` 在 SDK callback 内等待用户决策，若直接在 async generator 里运行 SDK，会造成 SSE 无法发出等待事件。 | `ClaudeRuntime.stream()` 改成后台 SDK task + `event_queue` 并发模型；SDK 普通事件、等待事件、错误、done 都写入队列；generator drain 队列并定时 heartbeat。 | 真 SDK 或 fake SDK 测试能先收到 `claude_user_input_required`，再提交决策并继续收到后续输出。 |
 | F4 | Critical | 等待请求若只存在内存，服务重启后用户还能在 UI 上点击批准已经不存在的 callback。 | 新增 `claude_user_input_requests` 表记录审计投影；应用启动时把 `waiting` 请求改为 `cancelled + service_restarted`；决策 API 对非 waiting 请求返回 `409`。 | SQLite 迁移测试覆盖旧库升级；启动恢复测试覆盖 orphan waiting 被取消。 |
-| F5 | Important | 工具参数修改能力会扩大权限面，用户确认可能变成用户重写命令。 | 删除或拒绝 `allow_modified`；决策 API schema 只接受 `allow_once`、`deny`、`answer_question`；工具 permission 卡片只读展示脱敏输入。 | API 对 `allow_modified` 或自带 `updated_input` 的工具授权请求返回 `422`；前端无可编辑工具参数入口。 |
+| F5 | Important | 工具参数修改能力会扩大权限面，用户确认可能变成用户重写命令。 | 删除或拒绝 `allow_modified`；决策 API schema 只接受 `allow_once`、`deny`、`answer_question`；工具 permission 卡片只读展示完整输入。 | API 对 `allow_modified` 或自带 `updated_input` 的工具授权请求返回 `422`；前端无可编辑工具参数入口。 |
 | F6 | Important | `AskUserQuestion` 容易被误判为工具参数修改，或被非流式入口错误 fail-fast。 | 对 `tool_name == "AskUserQuestion"` 单独建 `ask_user_question` request type；UI 渲染 Claude 给出的问题和选项，并支持“其他”自由文本。后端把用户回答映射为 SDK `updated_input` 的 `answers` 或 `response`，不写回工具 input。 | 单选、多选、自由文本、“其他”回答都有测试；确认自由文本等效 Claude Code `type something`。 |
 | F7 | Important | “ask 时自动采用推荐项”会隐藏用户意图，尤其在 destructive 或业务判断问题中风险高。 | stream UI 可以把 Claude 标注的默认/推荐选项预选或高亮，但提交动作仍由用户触发。非流式入口不能自动提交推荐项；如 SDK 实际要求交互，应返回结构化诊断或普通澄清输出，并提示调用方改用 stream。 | 测试断言非流式不创建用户输入请求；stream 中推荐项需要用户提交后才进入 SDK。 |
 | F8 | Important | Workspace settings / hooks 中的宽泛 allow、旧“对话级确认”提示词会吞掉 Claude 原生 ask 路径。 | 收敛业务 Agent seed workspace：移除旧对话级确认口径，保留硬拒绝类 hook，把 mutation 工具交给 Claude 原生 ask。同步渲染到 `${HOME}/volume-agent-gov/data/business-agents/*`，避免旧运行卷继续失效。 | 重启真实容器后，业务 Agent workspace 中能看到新 seed；高风险工具在 stream 中触发 Web HITL，而不是静默执行。 |
 | F9 | Important | 前端 SSE 只处理普通消息，无法承接等待、决策和中断状态。 | `frontend/src/api/runtime.ts` 增加 `claude_user_input_required` / `claude_user_input_resolved` 事件类型；ChatPanel 渲染阻塞卡片，提交 `POST /api/claude-user-input-requests/{id}/decision`。 | Playwright 在真实容器中验证等待卡片、允许一次、拒绝、AskUserQuestion 自由文本路径。 |
-| F10 | Important | DB 若保存 raw tool input，可能泄露命令、token、MCP header 或长文件内容。 | DB 只保存 redacted snapshot；raw input 只留在内存 pending request。增加 token-like 字段、headers、长文本、Bash 命令截断脱敏策略。 | 单测断言敏感字段被脱敏，数据库记录不含原始 secret。 |
+| F10 | Important | 当前前端 / Langfuse / 本地运行态 DB 会保留完整工具参数，若误当生产面使用会扩大暴露面。 | 明确这些面只服务开发调试；生产化另起 redaction policy。decision token 仍只存 hash，真实凭据不得进入仓库、提交说明、公开文档或最终回复。 | 单测断言 API/UI 返回 `input` 完整参数；仓库 env 示例和配置治理检查仍禁止真实凭据。 |
 | F11 | Important | OpenAPI / 前端类型 / coverage policy 不同步会让主流程硬门形同虚设。 | 新增决策 API 后同步 schema、前端类型、`tests/coverage_policy.json`；主流程测试纳入业务 Agent Playground HITL。 | `make main-flow-test` 和 coverage policy 均包含 HITL 相关 nodeid 或 UI verification script。 |
 | F12 | Important | Sidecar `/v1/responses` 若无调用方，会保留一条误导性兼容入口；若仍被外部依赖，直接删除会破坏集成。 | 先用 `rg` 和真实容器日志确认调用图。若只剩 dead code，删除路由、测试和文档，并保留迁移说明；若外部兼容仍需要，标注 deprecated、补 smoke 和移除条件。 | 删除或保留都有明确测试：无调用方时路由不存在；保留时有契约测试和文档说明。 |
 
@@ -70,7 +70,7 @@
 
 - Runtime SSE 类型增加用户输入事件。
 - ChatPanel 增加阻塞式确认卡片。
-- 工具权限卡片只展示脱敏输入，按钮只有“允许一次”和“拒绝”。
+- 工具权限卡片只读展示完整输入，按钮只有“允许一次”和“拒绝”。
 - `AskUserQuestion` 卡片展示选项、推荐/默认提示和“其他”自由文本输入。
 - 已取消或已过期请求只显示历史状态，不允许继续提交。
 
@@ -105,4 +105,3 @@
 - 不新增 AgentGov 自建工具权限状态机。
 - 不自动代表用户选择 `AskUserQuestion` 推荐项。
 - 不允许用户在工具权限确认时修改 Bash、Write、Edit 或 MCP tool 参数。
-

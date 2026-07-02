@@ -22,7 +22,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
   const [denyMessage, setDenyMessage] = useState("");
   const [otherResponse, setOtherResponse] = useState("");
   const [answers, setAnswers] = useState<Record<string, string | string[]>>({});
-  const questions = useMemo(() => questionList(request.redacted_input), [request.redacted_input]);
+  const questions = useMemo(() => questionList(request.input), [request.input]);
   const waiting = request.status === "waiting";
   const riskLevel = stringValue(request.risk.level) || "medium";
   const riskReason = stringValue(request.risk.reason) || "Claude 请求继续执行。";
@@ -102,8 +102,8 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
       </div>
       <p className="claude-user-input-note">{riskReason}</p>
       <details className="claude-user-input-json">
-        <summary>查看参数摘要</summary>
-        <pre>{JSON.stringify(request.redacted_input, null, 2)}</pre>
+        <summary>查看完整参数</summary>
+        <pre>{JSON.stringify(request.input, null, 2)}</pre>
       </details>
       {waiting ? (
         <>

@@ -1,8 +1,8 @@
 {
   "coverage": {
     "global": {
-      "line_percent_min": 73.73,
-      "branch_percent_min": 53.92
+      "line_percent_min": 75.85,
+      "branch_percent_min": 52.31
     },
     "files": []
   },

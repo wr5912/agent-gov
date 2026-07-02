@@ -2951,8 +2951,8 @@ export interface components {
             };
             /** Expires At */
             expires_at: string;
-            /** Redacted Input */
-            redacted_input?: {
+            /** Input */
+            input?: {
                 [key: string]: components["schemas"]["JsonValue"];
             };
             /** Request Id */

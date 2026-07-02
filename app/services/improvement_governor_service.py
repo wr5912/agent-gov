@@ -221,13 +221,19 @@ class ImprovementGovernorService:
         trace_ref: dict[str, str] | None = None,
     ) -> FormatterOutputModel:
         spec = agent_job_spec(job_type)
+        prompt = spec.prompt_builder(job_input)
         assert self._run_profile_json is not None
         return await self._run_profile_json(
             profile_name=spec.profile_name,
-            prompt=spec.prompt_builder(job_input),
+            prompt=prompt,
             job_type=str(spec.job_type),
             job_input=job_input,
-            governor={"job_type": str(spec.job_type), "scope_kind": "improvement", "scope_id": improvement_id},
+            governor={
+                "job_type": str(spec.job_type),
+                "scope_kind": "improvement",
+                "scope_id": improvement_id,
+                "job_id": f"{spec.job_type}:{improvement_id}",
+            },
             trace_callback=trace_ref.update if trace_ref is not None else None,
         )
 

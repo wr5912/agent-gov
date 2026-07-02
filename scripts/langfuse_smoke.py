@@ -10,9 +10,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Mapping
-
 
 QUEUE_NAMES = (
     "otel-ingestion-queue",
@@ -155,12 +154,17 @@ def check_latest_trace(env: Mapping[str, str], langfuse_url: str) -> list[str]:
         )
 
     names = {str(item.get("name") or "") for item in observations}
-    print(f"Langfuse latest runtime trace: {trace_id} ({runtime_trace.get('name')})")
+    trace_name = str(runtime_trace.get("name") or "")
+    print(f"Langfuse latest runtime trace: {trace_id} ({trace_name})")
     print(f"  observations={len(observations)}")
 
     errors: list[str] = []
+    if trace_name.startswith("runtime.output_formatter."):
+        errors.append(f"trace {trace_id} is named after formatter child span instead of runtime root")
     if not any(name.startswith("runtime.") for name in names):
         errors.append(f"trace {trace_id} does not include a runtime root observation")
+    if trace_name.startswith("runtime.governor.") and trace_name not in names:
+        errors.append(f"governor trace {trace_id} is missing matching root observation {trace_name}")
     if not any(name.startswith("claude_code.") for name in names):
         errors.append(f"trace {trace_id} does not include Claude Code observations")
     if trace.get("input") is None:

@@ -31,7 +31,7 @@ class ClaudeUserInputStore:
         api_session_id: str,
         request_type: str,
         tool_name: str,
-        redacted_input_json: JsonObject,
+        input_json: JsonObject,
         context_json: JsonObject,
         risk_json: JsonObject,
         expires_at: str,
@@ -52,7 +52,7 @@ class ClaudeUserInputStore:
                 sdk_subagent_id=sdk_subagent_id,
                 request_type=request_type,
                 tool_name=tool_name,
-                redacted_input_json=redacted_input_json,
+                input_json=input_json,
                 context_json=context_json,
                 risk_json=risk_json,
                 status="waiting",
@@ -156,7 +156,7 @@ class ClaudeUserInputStore:
             sdk_subagent_id=row.sdk_subagent_id,
             request_type=row.request_type,  # type: ignore[arg-type]
             tool_name=row.tool_name,
-            redacted_input_json=dict(row.redacted_input_json or {}),
+            input_json=dict(row.input_json or {}),
             context_json=dict(row.context_json or {}),
             risk_json=dict(row.risk_json or {}),
             status=row.status,  # type: ignore[arg-type]

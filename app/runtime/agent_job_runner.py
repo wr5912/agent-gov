@@ -44,6 +44,8 @@ class AgentJobRunner:
     def build_options(self, profile: AgentRuntimeProfile) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
+        from app.runtime.policy import build_default_hooks
+
         env = self.env_builder(profile)
         env.update(self.provider_router.claude_env())
 
@@ -68,6 +70,10 @@ class AgentJobRunner:
             "enable_file_checkpointing": False,
             "session_store_flush": self.settings.session_store_flush,
             "load_timeout_ms": self.settings.load_timeout_ms,
+            # 接线：让 profile 的路径权限（readable/writable/denied）经 PreToolUse hook 真正强制，
+            # 并加载 project 的 .claude/settings.json / CLAUDE.md / skills（否则声明≠实际）。
+            "setting_sources": ["project"],
+            "hooks": build_default_hooks(profile),
         }
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
         return ClaudeAgentOptions(**kwargs)

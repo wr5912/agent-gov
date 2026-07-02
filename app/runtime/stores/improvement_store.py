@@ -279,6 +279,19 @@ class ImprovementStore:
             row.updated_at = utc_now()
             return _record(row)
 
+    def update_title(self, improvement_id: str, *, title: str) -> ImprovementItemRecord:
+        """回填/更新事项标题（反馈整理生成的简洁 title 取代前端截断的自动标题）。"""
+        clean = (title or "").strip()
+        if not clean:
+            raise BusinessRuleViolation("ImprovementItem title cannot be empty")
+        with self._session_factory.begin() as db:
+            row = db.get(ImprovementItemModel, improvement_id)
+            if row is None:
+                raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+            row.title = clean
+            row.updated_at = utc_now()
+            return _record(row)
+
     def deletion_impact(self, improvement_id: str) -> ImprovementDeletionImpact:
         """删除前影响面（dry-run，区别于归档）：将随删的反馈/链接/内容计数 + 退回未归属池的来源反馈引用数。"""
         with self._session_factory.begin() as db:

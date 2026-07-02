@@ -488,3 +488,29 @@ def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_pat
     assert statuses.count("duplicate") == 23
     assert len(store.list_events(limit=50)) == 1
     assert len(store.list_pending(status="pending", limit=50)) == 1
+
+
+def test_runtime_db_migrates_normalized_feedback_provenance_columns(tmp_path):
+    """旧 normalized_feedbacks 表（无 provenance 列）经 0026 迁移幂等补列，旧行保留、默认 heuristic。"""
+    db_path = tmp_path / "runtime.sqlite3"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE normalized_feedbacks (normalized_feedback_id VARCHAR(128) PRIMARY KEY, improvement_id VARCHAR(128), "
+            "problem TEXT, possible_reason TEXT, possible_object TEXT, impact TEXT, suggestion TEXT, user_quote TEXT, "
+            "status VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
+        )
+        connection.execute(
+            "INSERT INTO normalized_feedbacks VALUES ('nf-1','imp-1','p','','','','','q','draft','t','t')"
+        )
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        cols = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(normalized_feedbacks)").fetchall()}
+        row = connection.exec_driver_sql("SELECT generated_by FROM normalized_feedbacks WHERE normalized_feedback_id='nf-1'").fetchone()
+        migration = connection.exec_driver_sql(
+            "SELECT version FROM schema_migrations WHERE version = '0026_normalized_feedback_generation_refs'"
+        ).fetchone()
+
+    assert {"generated_by", "generation_trace_id", "generation_trace_url"} <= cols
+    assert row is not None and row[0] == "heuristic"  # 旧行保留、默认值
+    assert migration is not None

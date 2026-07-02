@@ -32,6 +32,9 @@ class NormalizedFeedbackRecord:
     status: str
     created_at: str
     updated_at: str
+    generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
 
 
 @dataclass(frozen=True)
@@ -243,6 +246,9 @@ class ImprovementContentStore:
         impact: str = "",
         suggestion: str = "",
         user_quote: str = "",
+        generated_by: str = "heuristic",
+        generation_trace_id: str = "",
+        generation_trace_url: str = "",
     ) -> NormalizedFeedbackRecord:
         now = utc_now()
         with self._session_factory.begin() as db:
@@ -257,6 +263,9 @@ class ImprovementContentStore:
             row.suggestion = suggestion
             row.user_quote = user_quote
             row.status = "draft"
+            row.generated_by = generated_by
+            row.generation_trace_id = generation_trace_id
+            row.generation_trace_url = generation_trace_url
             row.updated_at = now
             db.flush()
             return _nf_record(row)
@@ -543,6 +552,9 @@ def _nf_record(row: NormalizedFeedbackModel) -> NormalizedFeedbackRecord:
         status=row.status or "draft",
         created_at=row.created_at,
         updated_at=row.updated_at,
+        generated_by=row.generated_by or "heuristic",
+        generation_trace_id=row.generation_trace_id or "",
+        generation_trace_url=row.generation_trace_url or "",
     )
 
 

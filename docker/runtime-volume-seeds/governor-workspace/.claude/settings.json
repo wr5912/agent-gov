@@ -3,17 +3,16 @@
   "permissions": {
     "defaultMode": "default",
     "allow": [
+      "Read",
       "Glob",
       "Grep"
     ],
     "ask": [],
     "deny": [
-      "Write(/main-workspace/**)",
-      "Edit(/main-workspace/**)",
-      "Write(/claude-roots/main/**)",
-      "Edit(/claude-roots/main/**)",
-      "Read(/**/.env)",
-      "Read(/**/credentials/**)",
+      "Write(/**)",
+      "Edit(/**)",
+      "MultiEdit(/**)",
+      "NotebookEdit(/**)",
       "Bash(*)"
     ]
   },

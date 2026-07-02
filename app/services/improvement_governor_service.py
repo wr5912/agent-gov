@@ -19,14 +19,15 @@ from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
     ImprovementContentStore,
+    NormalizedFeedbackRecord,
     OptimizationPlanRecord,
     RegressionAssessmentRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-# 业务 Agent 配置 grounding：agent_id -> backend-owned 配置快照（CLAUDE.md/权限/MCP/skills/agents）。
-ConfigGrounding = Callable[[str], JsonObject]
+# 反馈整理不需要 governor（无工具/无多轮）：直接一次 DSPy formatter 把原始反馈归纳成 title+problem。
+FormatNormalizedFeedback = Callable[[str], Awaitable[FormatterOutputModel]]
 
 
 class OptimizationChangeItem(TypedDict):
@@ -53,21 +54,67 @@ class ImprovementGovernorService:
         improvement_store: ImprovementStore,
         content_store: ImprovementContentStore,
         run_profile_json: RunProfileJson | None,
-        config_grounding: ConfigGrounding | None = None,
+        format_normalized_feedback: FormatNormalizedFeedback | None = None,
     ) -> None:
         self._improvements = improvement_store
         self._content = content_store
         self._run_profile_json = run_profile_json
-        self._config_grounding = config_grounding
+        self._format_normalized_feedback = format_normalized_feedback
 
-    def _agent_config(self, agent_id: str) -> JsonObject:
-        """业务 Agent 当前配置 grounding（backend-owned 输入）；未接线或读取失败均返回空。"""
-        if not self._config_grounding or not agent_id:
-            return {}
-        try:
-            return self._config_grounding(agent_id)
-        except Exception:  # noqa: BLE001 — grounding 读取失败不阻断 governor 生成
-            return {}
+    # ---- 系统理解 NormalizedFeedback（只整理反馈：一次 DSPy formatter，无 governor）----
+    async def generate_normalized_feedback(self, improvement_id: str) -> NormalizedFeedbackRecord:
+        item = self._improvements.get_improvement(improvement_id)
+        feedbacks = self._content.list_feedbacks(improvement_id)
+        existing = self._content.get_normalized_feedback(improvement_id)
+        raw = self._feedback_text(feedbacks)
+        title, problem, generated_by = self._heuristic_normalized_feedback(item, feedbacks)
+        if self._format_normalized_feedback is not None and raw:
+            try:
+                output = await self._format_normalized_feedback(raw)
+                data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
+                problem = _text(data.get("problem")) or problem
+                title = _text(data.get("title")) or title
+                generated_by = "llm"
+            except Exception:  # noqa: BLE001 — formatter 不可用/校验失败回退启发式，保证可用
+                pass
+        user_quote = (getattr(feedbacks[0], "raw_text", "") if feedbacks else "") or (getattr(existing, "user_quote", "") if existing else "")
+        record = self._content.upsert_normalized_feedback(
+            improvement_id,
+            problem=problem,
+            # 原因/对象/影响是归因阶段的分析，不在整理阶段产出：保留既有值（或留空占位待归因）。
+            possible_reason=getattr(existing, "possible_reason", "") if existing else "",
+            possible_object=getattr(existing, "possible_object", "") if existing else "",
+            impact=getattr(existing, "impact", "") if existing else "",
+            suggestion=getattr(existing, "suggestion", "") if existing else "",
+            user_quote=user_quote,
+            generated_by=generated_by,
+        )
+        self._backfill_title(item, feedbacks, title)
+        return record
+
+    @staticmethod
+    def _feedback_text(feedbacks: list[Any]) -> str:
+        parts = [str(getattr(f, "raw_text", "") or getattr(f, "summary", "")).strip() for f in feedbacks]
+        return "\n\n".join(p for p in parts if p)
+
+    @staticmethod
+    def _heuristic_normalized_feedback(item: Any, feedbacks: list[Any]) -> tuple[str, str, str]:
+        raw = getattr(feedbacks[0], "raw_text", "") if feedbacks else ""
+        problem = (getattr(feedbacks[0], "summary", "") if feedbacks else "") or raw or getattr(item, "title", "")
+        title = getattr(item, "title", "") or problem
+        return title, problem, "heuristic"
+
+    def _backfill_title(self, item: Any, feedbacks: list[Any], title: str) -> None:
+        """把整理生成的简洁 title 回填到 improvement.title——仅当现 title 仍是自动截断态（空或原文前缀），不覆盖用户手改。"""
+        new_title = _text(title)
+        improvement_id = getattr(item, "improvement_id", "")
+        if not new_title or not improvement_id:
+            return
+        current = _text(getattr(item, "title", ""))
+        raw = getattr(feedbacks[0], "raw_text", "") if feedbacks else ""
+        is_auto = (not current) or (bool(raw) and raw.startswith(current))
+        if is_auto and new_title != current:
+            self._improvements.update_title(improvement_id, title=new_title)
 
     # ---- 归因 ----
     async def generate_attribution(self, improvement_id: str) -> AttributionRecord:
@@ -181,7 +228,6 @@ class ImprovementGovernorService:
             ],
             "source_refs": [{"kind": "improvement", "id": getattr(item, "improvement_id", "")}],
             "existing_eval_cases": [],
-            "agent_config": self._agent_config(getattr(item, "agent_id", "")),
         }
 
     @staticmethod
@@ -268,7 +314,6 @@ class ImprovementGovernorService:
             },
             "task": getattr(item, "title", ""),
             "main_agent_version_id": agent_id,
-            "agent_config": self._agent_config(agent_id),
         }
 
     def _build_plan_input(self, item: Any, nf: Any, attr: Any) -> JsonObject:
@@ -295,7 +340,6 @@ class ImprovementGovernorService:
             },
             "task": getattr(item, "title", ""),
             "main_agent_version_id": agent_id,
-            "agent_config": self._agent_config(agent_id),
         }
 
     # ---- formatter 输出映射（agent-owned）----

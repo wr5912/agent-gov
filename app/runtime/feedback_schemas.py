@@ -154,6 +154,23 @@ class ImprovementOptimizationPlanOutput(NormalizedOutputRecord):
         return self
 
 
+class NormalizedFeedbackFormatterOutput(NormalizedOutputRecord):
+    """把用户原始反馈归纳成一句话 title + 清晰的 problem。"""
+
+    title: str = ""
+    problem: str
+
+    @model_validator(mode="after")
+    def _has_problem(self) -> NormalizedFeedbackFormatterOutput:
+        if not self.problem:
+            raise ValueError("normalized feedback must include a non-empty problem")
+        return self
+
+
+class NormalizedFeedbackOutput(NormalizedFeedbackFormatterOutput):
+    pass
+
+
 def output_model_payload(output: BaseModel) -> JsonObject:
     return output.model_dump(mode="json", exclude_none=True)
 

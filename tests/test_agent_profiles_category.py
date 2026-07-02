@@ -118,3 +118,44 @@ def test_business_agent_is_governed_object_governance_agents_are_executors() -> 
     # 治理 Agent（执行者）不持有可写工作区，输出经后端投影而非直接落地。
     for role in GOVERNANCE_AGENT_ROLES:
         assert profiles[role].writable_paths == ()
+
+
+def test_governor_has_full_read_of_business_agents_and_no_write() -> None:
+    """整改：governor 对所有业务 Agent 有完全读取权限（含 .env/secrets）；自身写被硬阻断（写走受治理 apply）。"""
+    from app.runtime.agent_profiles import GOVERNOR_PROFILE, build_profiles
+    from app.runtime.policy import _path_policy_denial
+
+    settings = _settings()
+    gov = build_profiles(settings)[GOVERNOR_PROFILE]
+    assert settings.data_dir in set(gov.readable_paths)  # data_dir 覆盖所有业务 Agent workspace
+    assert gov.writable_paths == ()  # 写锁死
+    assert gov.denied_paths == ()  # 读无 denied（放开）
+
+    ws = settings.data_dir / "business-agents" / "soc-ops" / "workspace"
+    # 读放开：可读业务 Agent 的 .env / CLAUDE.md（原则：读全部内容含密钥）。
+    assert _path_policy_denial("Read", {"file_path": str(ws / ".env")}, gov) is None
+    assert _path_policy_denial("Read", {"file_path": str(ws / "CLAUDE.md")}, gov) is None
+    # 非法写入：自身 Write/Edit 被拒（writable_paths 空 + 接线 hook），写业务配置只能走受治理 apply。
+    assert _path_policy_denial("Write", {"file_path": str(ws / "CLAUDE.md")}, gov) is not None
+    assert _path_policy_denial("Edit", {"file_path": str(ws / ".claude" / "settings.json")}, gov) is not None
+
+
+def test_governor_build_options_wires_hooks_and_setting_sources() -> None:
+    """整改：build_options 必须传 hooks + setting_sources，否则 profile 权限/settings/CLAUDE.md/skill 声明≠实际。"""
+    from types import SimpleNamespace
+
+    from app.runtime.agent_job_runner import AgentJobRunner
+    from app.runtime.agent_profiles import GOVERNOR_PROFILE, build_profiles
+
+    settings = _settings()
+    profiles = build_profiles(settings)
+    runner = AgentJobRunner(
+        settings=settings,
+        profiles=profiles,
+        env_builder=lambda p: {},
+        output_formatter=SimpleNamespace(),
+        provider_router=SimpleNamespace(claude_env=lambda: {}),
+    )
+    options = runner.build_options(profiles[GOVERNOR_PROFILE])
+    assert list(getattr(options, "setting_sources")) == ["project"]
+    assert getattr(options, "hooks")  # PreToolUse 路径钩子已接线，profile 权限才真正生效

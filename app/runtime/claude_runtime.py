@@ -418,6 +418,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             }
         return await run_governor_profile_json(self.langfuse, run, governor, trace_callback=trace_callback)
 
+    async def _format_agent_text(self, *, job_type: str, raw_text: str, job_input: JsonObject) -> FormatterOutputModel:
+        """直接把一段原始文本经 DSPy formatter 结构化（无 governor loop）；供反馈整理等无需工具的归纳复用。"""
+        self.job_runner.output_formatter = self.output_formatter
+        return await self.job_runner.format_agent_text(job_type=job_type, raw_text=raw_text, job_input=job_input)
+
     def _new_runtime_request_context(
         self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE
     ) -> RuntimeRequestContext:

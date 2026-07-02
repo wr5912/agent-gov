@@ -39,6 +39,7 @@ def _nf_response(r: NormalizedFeedbackRecord) -> NormalizedFeedbackResponse:
         normalized_feedback_id=r.normalized_feedback_id, improvement_id=r.improvement_id, problem=r.problem,
         possible_reason=r.possible_reason, possible_object=r.possible_object, impact=r.impact,
         suggestion=r.suggestion, user_quote=r.user_quote, status=r.status, created_at=r.created_at, updated_at=r.updated_at,
+        generated_by=r.generated_by, generation_trace_id=r.generation_trace_id, generation_trace_url=r.generation_trace_url,
     )
 
 
@@ -163,6 +164,12 @@ def _register_governance_generation_routes(
     require: Callable,
 ) -> None:
     """§17.5：归因/方案由治理 Agent governor LLM 生成；执行由 governor 在隔离 worktree 自动 apply + 生成候选版本（均启发式兜底，见 service）。"""
+
+    @router.post("/improvements/{improvement_id}/normalized-feedback/generate", response_model=NormalizedFeedbackResponse, summary="Organize feedback into title/problem via DSPy formatter (heuristic fallback)")
+    async def generate_nf(improvement_id: str) -> NormalizedFeedbackResponse:
+        if improvement_store.get_improvement(improvement_id) is None:
+            raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
+        return _nf_response(await governor_service.generate_normalized_feedback(improvement_id))
 
     @router.post("/improvements/{improvement_id}/attribution/generate", response_model=AttributionResponse, summary="Generate attribution via governor LLM (heuristic fallback)")
     async def generate_attr(improvement_id: str) -> AttributionResponse:

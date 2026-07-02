@@ -224,8 +224,10 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
 def _governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
     """单一治理 Agent profile：按 job_type 承担归因/方案/执行/用例/回归影响分析。
 
-    它是只读闭环执行者：不持有可写工作区，输出经后端投影；不得读写 main workspace
-    与 main claude_root（denied_paths）。各 job 的 prompt 与输出契约仍按 job_type 选择。
+    它对所有业务 Agent 有**完全读取权限**：可 Read/Glob/Grep `data_dir` 下任意业务 Agent workspace
+    的全部内容（含 .env/secrets），用于归因/优化的按需读取。但**不持有可写工作区**
+    （``writable_paths=()`` + 接线的 PreToolUse hook 硬阻断自身 Write/Edit/Bash）——写业务配置只能走
+    受治理 apply（隔离 worktree→operations→applier 护栏→change set→审批门）。各 job 的 prompt 与输出契约按 job_type 选择。
     """
     return AgentRuntimeProfile(
         **_readonly_feedback_kwargs(
@@ -236,6 +238,8 @@ def _governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
             max_turns=16,
             settings=settings,
             max_runtime_seconds=settings.governance_agent_timeout_seconds,
+            readable_paths=(settings.data_dir, settings.governor_workspace_dir, settings.governor_claude_root),
+            denied_paths=(),
         )
     )
 
@@ -262,9 +266,9 @@ def _readonly_feedback_kwargs(
         "mcp_config_path": workspace_dir / ".mcp.json",
         "project_settings_path": workspace_dir / ".claude" / "settings.json",
         "langfuse_observation_name": observation,
-        "readable_paths": readable_paths or (),
+        "readable_paths": readable_paths if readable_paths is not None else (),
         "writable_paths": (),
-        "denied_paths": denied_paths or (business_agents_root(settings.data_dir),),
+        "denied_paths": denied_paths if denied_paths is not None else (business_agents_root(settings.data_dir),),
         "max_turns": max_turns,
         "max_runtime_seconds": max_runtime_seconds,
     }

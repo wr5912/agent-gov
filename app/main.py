@@ -32,7 +32,7 @@ from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
-from app.runtime.agent_config_grounding import build_business_agent_config_grounding
+from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
@@ -110,8 +110,8 @@ improvement_governor_service = ImprovementGovernorService(
     improvement_store=improvement_store,
     content_store=improvement_content_store,
     run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
-    config_grounding=lambda agent_id: build_business_agent_config_grounding(
-        settings=settings, agent_registry_store=agent_registry_store, agent_id=agent_id
+    format_normalized_feedback=lambda raw_text: runtime._format_agent_text(
+        job_type=str(AgentJobType.NORMALIZED_FEEDBACK), raw_text=raw_text, job_input={"raw_feedback": raw_text}
     ),
 )
 automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)

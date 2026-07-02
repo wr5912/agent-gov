@@ -54,6 +54,9 @@ export function upsertNormalizedFeedback(config: RuntimeClientConfig, id: string
 export function confirmNormalizedFeedback(config: RuntimeClientConfig, id: string) {
   return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback/confirm`, { method: "POST", headers: jsonHeaders });
 }
+export function generateNormalizedFeedback(config: RuntimeClientConfig, id: string) {
+  return requestJson<NormalizedFeedback>(config, `/api/improvements/${encodeURIComponent(id)}/normalized-feedback/generate`, { method: "POST", headers: jsonHeaders, timeoutMs: GOVERNANCE_AGENT_TIMEOUT_MS });
+}
 export function getAttribution(config: RuntimeClientConfig, id: string) {
   return requestJson<Attribution>(config, `/api/improvements/${encodeURIComponent(id)}/attribution`);
 }

@@ -245,7 +245,7 @@ class AppSettings(BaseSettings):
     langfuse_secret_key: Optional[str] = Field(default=None, alias="LANGFUSE_SECRET_KEY")
     langfuse_base_url: str = Field(default="http://langfuse-web:3000", alias="LANGFUSE_BASE_URL")
     langfuse_otel_endpoint: Optional[str] = Field(default=None, alias="LANGFUSE_OTEL_ENDPOINT")
-    langfuse_otel_signals_raw: str = Field(default="traces,metrics,logs", alias="LANGFUSE_OTEL_SIGNALS")
+    langfuse_otel_signals_raw: str = Field(default="traces,metrics", alias="LANGFUSE_OTEL_SIGNALS")
     langfuse_service_name: str = Field(default="agent-gov-api", alias="LANGFUSE_SERVICE_NAME")
     langfuse_deployment_environment: str = Field(default="local", alias="LANGFUSE_DEPLOYMENT_ENVIRONMENT")
     langfuse_resource_attributes_raw: Optional[str] = Field(default=None, alias="LANGFUSE_RESOURCE_ATTRIBUTES")

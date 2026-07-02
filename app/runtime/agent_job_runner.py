@@ -10,9 +10,10 @@ from .agent_job_errors import AgentAuthenticationRequiredError, provider_api_key
 from .agent_job_types import AgentJobType, FormatterOutputModel
 from .agent_profiles import AgentRuntimeProfile
 from .json_types import JsonObject
-from .message_utils import extract_text
+from .message_utils import extract_text, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
+from .runtime_activity import RuntimeActivityExtractor
 from .settings import AppSettings
 
 logger = logging.getLogger(__name__)
@@ -86,10 +87,12 @@ class AgentJobRunner:
         self.provider_router.ensure_agent_runtime_ready()
         answer_parts: list[str] = []
         errors: list[str] = []
+        plain_messages: list[JsonObject] = []
         options = self.build_options(profile)
 
         async def collect() -> FormatterOutputModel:
             async for msg in query(prompt=self.single_prompt_stream(prompt, session_id=f"governor-job-{uuid.uuid4()}"), options=options):
+                plain_messages.append(to_plain(msg))
                 text = extract_text(msg)
                 if text:
                     logger.debug(
@@ -104,6 +107,8 @@ class AgentJobRunner:
                         raise RuntimeError(f"Agent output exceeded {profile.max_output_bytes} bytes")
                 if isinstance(msg, ResultMessage):
                     errors.extend(self.result_errors(msg))
+            # 治理 job 无 claude_sdk_query generation；把逐工具/逐轮 I/O 子观测挂到 ambient governor root span
+            self._emit_sdk_child_observations(plain_messages)
             answer = self.dedupe_answer_parts(answer_parts)
             if errors and not answer:
                 raise ClaudeCodeResultError("; ".join(errors))
@@ -114,6 +119,17 @@ class AgentJobRunner:
             )
 
         return await asyncio.wait_for(collect(), timeout=profile.max_runtime_seconds)
+
+    def _emit_sdk_child_observations(self, plain_messages: list[JsonObject]) -> None:
+        """治理 job：把 SDK message 投影成逐工具/逐轮 I/O 子观测，挂到 ambient governor root span。"""
+        langfuse = getattr(self.output_formatter, "langfuse", None)
+        if langfuse is None or not plain_messages:
+            return
+        try:
+            children = RuntimeActivityExtractor(self.settings).sdk_child_observations(plain_messages)
+            langfuse.emit_sdk_child_observations(None, children)
+        except Exception as exc:  # noqa: BLE001 — 观测失败绝不影响治理 job 主流程
+            logger.warning("failed to emit governor sdk child observations: %s", exc)
 
     async def format_agent_text(
         self,

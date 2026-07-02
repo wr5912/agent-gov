@@ -30,7 +30,11 @@
             "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
             "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
             "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied"
+            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
+            "tests/test_langfuse_tool_projection.py::test_projects_tool_and_generation_children",
+            "tests/test_langfuse_tool_projection.py::test_governor_runner_glue_projects_children",
+            "tests/test_upstream_contracts.py::test_real_sdk_messages_project_to_child_observations",
+            "tests/test_upstream_contracts.py::test_langfuse_start_observation_signature_contract"
           ]
         },
         {

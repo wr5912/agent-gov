@@ -592,6 +592,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.langfuse.set_trace_attributes(root_span, **trace_attributes)
         self.langfuse.set_trace_attributes(generation, **trace_attributes)
         self.langfuse.set_trace_io(root_span, input=context.telemetry_input, output=output)
+        # 从 SDK message 流投影逐工具/逐轮 I/O 子观测（补 claude_code.* span 的空 Input/Output）
+        self.langfuse.emit_sdk_child_observations(generation, self.activity_extractor.sdk_child_observations(state.messages))
 
     def _sync_langfuse_trace(self, context: RuntimeRequestContext, trace_attributes: JsonObject, output: JsonObject) -> None:
         self.langfuse.upsert_trace(

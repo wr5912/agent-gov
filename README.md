@@ -231,21 +231,23 @@ LANGFUSE_SECRET_KEY=sk-lf-local-dev
 LANGFUSE_BASE_URL=http://langfuse-web:3000
 LANGFUSE_NEXTAUTH_URL=http://localhost:53000
 FRONTEND_LANGFUSE_URL=http://localhost:53000
-LANGFUSE_OTEL_SIGNALS=traces,metrics,logs
+LANGFUSE_OTEL_SIGNALS=traces,metrics
 ```
 
 ### Runtime enrich 与 input/output
 
-仅依赖 Claude Code OTEL 时，Langfuse 中可能可以看到 `claude_code.interaction`、`claude_code.llm_request`、tool span、metrics 和 logs，但标准 observation 的 `input` / `output` 不一定完整。原因是 Claude Code OTEL 主要导出 Claude Code 自身的链路结构和事件，trace 顶层 `input` / `output` 需要由 Runtime 在 API 调用结束后补齐。
+Claude Code 原生 OTEL 会导出 `claude_code.interaction`、`claude_code.llm_request`、`claude_code.tool` 等 span，但它们只携带链路结构、`tool_name`、token 和 `user_prompt` 等属性，**标准 observation 的 `input` / `output` 为空**——因为 Claude Code 把工具入参/结果、raw API body 走 OTLP `logs` 信号导出，而当前 Langfuse（v3）没有 `/v1/logs` 接收端（返回 404），这些内容不会进入 Langfuse。所以 `claude_code.*` span 的 `input` / `output` 列为空属预期，不是缺陷。
 
-为补齐 API 层可读的请求和响应，Runtime 会在启用 Langfuse 且配置了 public/secret key 时额外创建两类 observation：
+为让请求/响应、逐工具入参/结果和逐轮报文在 Langfuse 里真正可读，Runtime 在启用 Langfuse 且配置了 public/secret key 时，从 **claude-agent-sdk 原生 message 流**投影出自建 observation（不解析 CLI transcript、不重写 agent loop）：
 
-- `runtime.main_agent`：API 层根 span，记录请求输入、最终回答、SDK 消息、usage、cost、stop_reason 和 errors，并写入 trace-level `input` / `output`。
-- `runtime.main_agent.claude_sdk_query`：Claude SDK 调用 generation，记录实际 prompt/model，并在调用结束后写入输出、token usage、成本和错误状态。
+- `runtime.main_agent` / `runtime.governor.{job_type}`：API 层 / 治理 job 根 span，记录请求输入、最终回答、SDK 消息、usage、cost、stop_reason 和 errors，并写入 trace-level `input` / `output`。
+- `runtime.main_agent.claude_sdk_query`：业务聊天的 Claude SDK 调用 generation，记录实际 prompt/model、输出、token usage、成本和错误状态。
+- `sdk.tool.{tool_name}`：**每个工具一条 span**，`input` = `ToolUseBlock.input`（工具入参）、`output` = `ToolResultBlock.content`（工具结果），工具报错映射为 ERROR level。
+- `sdk.llm.{turn}`：**每个 LLM 轮次一条 generation**，`input` = 该轮增量 messages（报文）、`output` = 该轮 assistant 内容、`model` + 逐轮 token usage。
 
 Runtime 会把 Langfuse trace 的 Session 设为 Playground/API 层 `session_id`，并在 metadata 中同时保留 `api_session_id`、`run_id` 和运行上下文；Claude SDK 返回的 `sdk_session_id` 仍保存到 SQLite，用于后续会话 resume。
 
-本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`，并把 Runtime enrich 的请求/响应原样写入 Langfuse，便于在同一条 trace 中查看 prompt、工具参数、工具结果、raw API body 和最终输出。Runtime 输出中的 `agent_activity` 字段会额外汇总 requested skills、实际 Skill 调用、tool calls 和 tool results。
+本项目把 Langfuse 定位为本地调测工具。`LANGFUSE_ENABLED=true` 时，Runtime 默认向 Claude Code 子进程开启 `OTEL_LOG_USER_PROMPTS`、`OTEL_LOG_TOOL_DETAILS`、`OTEL_LOG_TOOL_CONTENT` 和 `OTEL_LOG_RAW_API_BODIES`（`user_prompt` 经 traces 落为 span 属性）；逐工具入参/结果/报文以上述 `sdk.*` 观测在同一条 trace 中查看。`LANGFUSE_OTEL_SIGNALS` 默认 `traces,metrics`（不含被 Langfuse 丢弃的 `logs`）。Runtime 输出中的 `agent_activity` 字段会额外汇总 requested skills、实际 Skill 调用、tool calls 和 tool results。
 
 ### 本地 Langfuse Docker profile
 

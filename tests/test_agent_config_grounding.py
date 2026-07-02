@@ -153,6 +153,25 @@ def test_governor_input_agent_config_empty_without_wiring(tmp_path):
     assert svc._build_attribution_input(item, None, [])["agent_config"] == {}
 
 
+def test_grounding_skips_symlink_and_oversized_skills(tmp_path):
+    import os
+
+    ws = _seed_workspace(tmp_path)
+    outside = tmp_path / "OUTSIDE.md"
+    outside.write_text("---\nname: LEAKED\ndescription: workspace 外内容\n---\nx", encoding="utf-8")
+    (ws / ".claude" / "skills" / "evil").mkdir()
+    os.symlink(outside, ws / ".claude" / "skills" / "evil" / "SKILL.md")
+    (ws / ".claude" / "skills" / "huge").mkdir()
+    (ws / ".claude" / "skills" / "huge" / "SKILL.md").write_text(
+        "---\nname: huge\ndescription: 巨大\n---\n" + "x" * 2_000_000, encoding="utf-8"
+    )
+    g = _build(tmp_path, "x", {"x": ws})
+    names = {s["name"] for s in g["skills"]}
+    assert "LEAKED" not in names  # symlink 外泄被拦
+    assert "huge" not in names  # 超大被拦
+    assert "alert-triage" in names  # 正常 skill 仍在
+
+
 def test_attribution_prompt_context_surfaces_compacted_agent_config(tmp_path):
     from app.runtime.prompts.feedback_prompt_contexts import build_attribution_prompt_context
 

@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
-from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
 from app.routers.automation import create_automation_router
@@ -35,6 +36,7 @@ from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.session_store import LocalSessionStore
@@ -48,7 +50,6 @@ from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
-from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.services.agent_governance import AgentGovernanceService
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -110,6 +111,7 @@ improvement_governor_service = ImprovementGovernorService(
     improvement_store=improvement_store,
     content_store=improvement_content_store,
     run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
+    data_dir=settings.data_dir,
     format_normalized_feedback=lambda raw_text: runtime._format_agent_text(
         job_type=str(AgentJobType.NORMALIZED_FEEDBACK), raw_text=raw_text, job_input={"raw_feedback": raw_text}
     ),

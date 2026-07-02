@@ -12,9 +12,11 @@ formatter 输出（rationale / responsibility_boundary / tasks 等）为 agent-o
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any, TypedDict
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import (
     AttributionRecord,
@@ -45,6 +47,31 @@ def _text(value: Any) -> str:
     return str(value).strip() if value not in (None, "") else ""
 
 
+def _json_dict(value: object) -> JsonObject:
+    return value if isinstance(value, dict) else {}
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _contains_any_root(text: str, roots: list[str]) -> bool:
+    return any(root and root in text for root in roots)
+
+
+def _requires_target_config_evidence(data: JsonObject) -> bool:
+    problem_type = _text(data.get("problem_type"))
+    optimization_object_type = _text(data.get("optimization_object_type"))
+    actionability = _text(data.get("actionability"))
+    return (
+        problem_type in {"tool_misuse", "tool_unavailable", "instruction_gap", "skill_gap", "mcp_description_gap"}
+        or optimization_object_type in {"main_agent_claude_md", "skill", "subagent", "mcp_config", "mcp_description"}
+        or actionability in {"direct_workspace_change", "workspace_config_change"}
+    )
+
+
 class ImprovementGovernorService:
     """以 governor LLM 生成改进事项归因/方案；失败回退确定性启发式。"""
 
@@ -54,11 +81,13 @@ class ImprovementGovernorService:
         improvement_store: ImprovementStore,
         content_store: ImprovementContentStore,
         run_profile_json: RunProfileJson | None,
+        data_dir: Path,
         format_normalized_feedback: FormatNormalizedFeedback | None = None,
     ) -> None:
         self._improvements = improvement_store
         self._content = content_store
         self._run_profile_json = run_profile_json
+        self._data_dir = data_dir
         self._format_normalized_feedback = format_normalized_feedback
 
     # ---- 系统理解 NormalizedFeedback（只整理反馈：一次 DSPy formatter，无 governor）----
@@ -123,14 +152,16 @@ class ImprovementGovernorService:
         feedbacks = self._content.list_feedbacks(improvement_id)
         summary, boundary, evidence, counter, uncertainty, verification, generated_by = self._heuristic_attribution(item, nf)
         trace_ref: dict[str, str] = {}
+        job_input = self._build_attribution_input(item, nf, feedbacks)
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
                     AgentJobType.ATTRIBUTION,
-                    self._build_attribution_input(item, nf, feedbacks),
+                    job_input,
                     improvement_id,
                     trace_ref=trace_ref,
                 )
+                self._guard_attribution_output(output, job_input)
                 summary, boundary, evidence, counter, uncertainty, verification = self._map_attribution(
                     output,
                     summary,
@@ -163,14 +194,16 @@ class ImprovementGovernorService:
         attr = self._content.get_attribution(improvement_id)
         summary, changes, risk_level, generated_by = self._heuristic_plan(item, nf, attr)
         trace_ref: dict[str, str] = {}
+        job_input = self._build_plan_input(item, nf, attr)
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
                     AgentJobType.OPTIMIZATION_PLAN,
-                    self._build_plan_input(item, nf, attr),
+                    job_input,
                     improvement_id,
                     trace_ref=trace_ref,
                 )
+                self._guard_plan_output(output, job_input)
                 summary, changes, risk_level = self._map_plan(output, summary, changes, risk_level)
                 generated_by = "governor"
             except Exception:  # noqa: BLE001
@@ -314,6 +347,7 @@ class ImprovementGovernorService:
             },
             "task": getattr(item, "title", ""),
             "main_agent_version_id": agent_id,
+            "target_agent_context": self._target_agent_context(agent_id),
         }
 
     def _build_plan_input(self, item: Any, nf: Any, attr: Any) -> JsonObject:
@@ -340,9 +374,72 @@ class ImprovementGovernorService:
             },
             "task": getattr(item, "title", ""),
             "main_agent_version_id": agent_id,
+            "target_agent_context": self._target_agent_context(agent_id),
+        }
+
+    def _target_agent_context(self, agent_id: str) -> JsonObject:
+        """后端权威定位信封：只给路径边界，不内联业务 Agent 配置正文。"""
+        try:
+            layout = business_agent_layout(self._data_dir, agent_id)
+        except InvalidAgentId:
+            return {}
+        workspace = layout.workspace.as_posix()
+        return {
+            "agent_id": agent_id,
+            "workspace_dir": workspace,
+            "claude_path": (layout.workspace / "CLAUDE.md").as_posix(),
+            "settings_path": (layout.workspace / ".claude" / "settings.json").as_posix(),
+            "mcp_path": (layout.workspace / ".mcp.json").as_posix(),
+            "skills_glob": f"{workspace}/.claude/skills/*/SKILL.md",
+            "agents_glob": f"{workspace}/.claude/agents/*.md",
+            "allowed_evidence_roots": [workspace],
+            "forbidden_evidence_roots": ["/governor-workspace"],
         }
 
     # ---- formatter 输出映射（agent-owned）----
+    @staticmethod
+    def _guard_attribution_output(output: FormatterOutputModel, job_input: JsonObject) -> None:
+        data = output.model_dump(mode="json") if hasattr(output, "model_dump") else dict(output)
+        target_context = _json_dict(job_input.get("target_agent_context"))
+        allowed_roots = _string_list(target_context.get("allowed_evidence_roots"))
+        forbidden_roots = _string_list(target_context.get("forbidden_evidence_roots"))
+        if not allowed_roots and not forbidden_roots:
+            return
+
+        evidence_refs = [ref for ref in data.get("evidence_refs") or [] if isinstance(ref, dict)]
+        ref_texts = [f"{_text(ref.get('id'))}\n{_text(ref.get('reason'))}" for ref in evidence_refs]
+        if any(_contains_any_root(text, forbidden_roots) for text in ref_texts):
+            raise ValueError("governor attribution cited forbidden governor workspace evidence for a business Agent")
+
+        if not _requires_target_config_evidence(data):
+            return
+        if not any(_contains_any_root(text, allowed_roots) for text in ref_texts):
+            raise ValueError("governor attribution lacked target business Agent configuration evidence")
+
+    @staticmethod
+    def _guard_plan_output(output: FormatterOutputModel, job_input: JsonObject) -> None:
+        data = output.model_dump(mode="json") if hasattr(output, "model_dump") else dict(output)
+        target_context = _json_dict(job_input.get("target_agent_context"))
+        allowed_roots = _string_list(target_context.get("allowed_evidence_roots"))
+        forbidden_roots = _string_list(target_context.get("forbidden_evidence_roots"))
+        if not allowed_roots and not forbidden_roots:
+            return
+
+        tasks = data.get("tasks") or data.get("changes") or []
+        for task in tasks:
+            if not isinstance(task, dict):
+                continue
+            target_text = "\n".join(
+                _text(task.get(key))
+                for key in ("target", "target_type", "target_path", "change", "recommendation", "summary", "description")
+                if _text(task.get(key))
+            )
+            if _contains_any_root(target_text, forbidden_roots):
+                raise ValueError("governor optimization plan targeted governor workspace for a business Agent")
+            absolute_targets = [part for part in target_text.split() if part.startswith("/")]
+            if absolute_targets and not any(_contains_any_root(part, allowed_roots) for part in absolute_targets):
+                raise ValueError("governor optimization plan targeted a path outside target business Agent workspace")
+
     @staticmethod
     def _map_attribution(
         output: FormatterOutputModel,

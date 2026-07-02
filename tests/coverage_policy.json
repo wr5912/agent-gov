@@ -24,9 +24,13 @@
           "pytest": [
             "tests/test_improvement_governor_service.py::test_attribution_governor_path_maps_agent_owned_fields",
             "tests/test_improvement_governor_service.py::test_attribution_governor_persists_generation_trace",
+            "tests/test_improvement_governor_service.py::test_attribution_job_input_contains_target_agent_locator",
+            "tests/test_improvement_governor_service.py::test_attribution_rejects_governor_workspace_as_business_agent_evidence",
+            "tests/test_improvement_governor_service.py::test_attribution_accepts_target_business_agent_config_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_falls_back_to_heuristic_on_governor_failure",
             "tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute",
             "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
+            "tests/test_improvement_governor_service.py::test_optimization_plan_rejects_governor_workspace_target",
             "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
             "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
             "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",

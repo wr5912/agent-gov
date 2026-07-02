@@ -63,9 +63,12 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
         ),
         (
             "业务 Agent 配置",
-            "归因到执行资产问题（instruction_gap/skill_gap/mcp_description_gap）或工具/权限问题前，"
-            "必须用 Read 读取目标业务 Agent 的 workspace 原始配置（CLAUDE.md、.claude/settings.json、.mcp.json、.claude/skills）"
-            "确认当前配置是否缺失、冲突或描述不当，不要脱离实际配置臆断。",
+            "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。归因到执行资产问题"
+            "（instruction_gap/skill_gap/mcp_description_gap）或工具/权限问题前，必须用 Read/Glob/Grep 按需读取"
+            "target_agent_context.workspace_dir 下的原始配置（CLAUDE.md、.claude/settings.json、.mcp.json、.claude/skills）"
+            "确认当前配置是否缺失、冲突或描述不当，不要脱离实际配置臆断。"
+            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
+            "/governor-workspace 下的文件作为目标业务 Agent 配置证据。",
         ),
         ("约束", NATURAL_LANGUAGE_CHINESE_RULE),
         ("输入上下文", _prompt_context_section("attribution_prompt_context", prompt_context)),
@@ -109,9 +112,13 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
         ),
         (
             "业务 Agent 配置",
-            "提方案前用 Read 读取目标业务 Agent 的 workspace 原始配置（CLAUDE.md/.claude/settings.json/.mcp.json/.claude/skills）。"
+            "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。"
+            "提方案前用 Read/Glob/Grep 按需读取 target_agent_context.workspace_dir 下的原始配置"
+            "（CLAUDE.md/.claude/settings.json/.mcp.json/.claude/skills）。"
             "changes[].target 与 change 必须针对真实存在的配置资产提出具体改动"
-            "（例如改 CLAUDE.md 某段、补/改某个 skill、调整 settings 权限或 MCP），不要提出与当前配置无关或已存在的改动。",
+            "（例如改 CLAUDE.md 某段、补/改某个 skill、调整 settings 权限或 MCP），不要提出与当前配置无关或已存在的改动。"
+            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
+            "/governor-workspace 下的文件作为目标业务 Agent 配置或优化对象。",
         ),
         ("输入上下文", _prompt_context_section("improvement_optimization_plan_prompt_context", prompt_context)),
     )

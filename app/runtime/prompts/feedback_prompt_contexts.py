@@ -20,6 +20,7 @@ def build_attribution_prompt_context(input_json: JsonObject) -> JsonObject:
             "evidence_files": _compact_json_object(evidence_files, MAX_PROMPT_FILE_TEXT_CHARS),
             "langfuse_trace_details": _compact_json_object(input_json.get("langfuse_trace_details"), MAX_PROMPT_FILE_TEXT_CHARS),
             "main_agent_version_id": _text(input_json.get("main_agent_version_id"), 300),
+            "target_agent_context": _target_agent_context_summary(_json_dict(input_json.get("target_agent_context"))),
             "task": _text(input_json.get("task"), 200),
         }
     )
@@ -63,6 +64,7 @@ def build_improvement_optimization_prompt_context(input_json: JsonObject) -> Jso
                 "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、eval_case 等治理资产。",
                 "提方案前用 Read 读取目标业务 Agent 的 workspace 原始配置，changes 只针对真实存在的配置资产、不提与当前配置无关的改动。",
             ],
+            "target_agent_context": _target_agent_context_summary(_json_dict(input_json.get("target_agent_context"))),
         }
     )
 
@@ -119,6 +121,22 @@ def _evidence_ref_summary(source: JsonObject) -> JsonObject:
             "type": _text(source.get("type"), 100),
             "id": _text(source.get("id"), 300),
             "reason": _text(source.get("reason"), MAX_PROMPT_NESTED_TEXT_CHARS),
+        }
+    )
+
+
+def _target_agent_context_summary(source: JsonObject) -> JsonObject:
+    return _json_object(
+        {
+            "agent_id": _text(source.get("agent_id"), 200),
+            "workspace_dir": _text(source.get("workspace_dir"), 500),
+            "claude_path": _text(source.get("claude_path"), 500),
+            "settings_path": _text(source.get("settings_path"), 500),
+            "mcp_path": _text(source.get("mcp_path"), 500),
+            "skills_glob": _text(source.get("skills_glob"), 500),
+            "agents_glob": _text(source.get("agents_glob"), 500),
+            "allowed_evidence_roots": _limited_text_list(source.get("allowed_evidence_roots"), MAX_PROMPT_LIST_ITEMS),
+            "forbidden_evidence_roots": _limited_text_list(source.get("forbidden_evidence_roots"), MAX_PROMPT_LIST_ITEMS),
         }
     )
 

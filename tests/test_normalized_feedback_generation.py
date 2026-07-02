@@ -32,7 +32,11 @@ def _svc(tmp_path, *, title=AUTO_TITLE, fmt=None):
     content = ImprovementContentStore(make_session_factory(tmp_path / "runtime.sqlite3"))
     item = SimpleNamespace(improvement_id="imp-1", title=title, agent_id="a", summary="")
     svc = ImprovementGovernorService(
-        improvement_store=_FakeImprovements(item), content_store=content, run_profile_json=None, format_normalized_feedback=fmt
+        improvement_store=_FakeImprovements(item),
+        content_store=content,
+        run_profile_json=None,
+        data_dir=tmp_path / "data",
+        format_normalized_feedback=fmt,
     )
     content.create_feedback("imp-1", agent_id="a", summary="转换数据不符合 OCSF 规范", raw_text=RAW)
     return svc, content

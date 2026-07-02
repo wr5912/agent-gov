@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
+
+# 写入结构化配置文件的安全护栏回调：(target_path, new_bytes, original_bytes) -> None，违规抛错。
+ContentGuard = Callable[..., None]
 
 
 class WorkspaceExecutionApplyError(FeedbackStoreError):
@@ -29,6 +33,7 @@ class WorkspaceExecutionApplier:
         *,
         workspace_dir: Path,
         target_policy: WorkspaceExecutionTargetPolicy | None = None,
+        content_guard: ContentGuard | None = None,
     ) -> None:
         if not operations:
             raise WorkspaceExecutionApplyError("Execution plan has no operations")
@@ -49,6 +54,9 @@ class WorkspaceExecutionApplier:
             data = self._operation_bytes(item, op=op, target_path=target_path, original=originals[dest])
             if len(data) > self.max_write_bytes:
                 raise WorkspaceExecutionApplyError(f"Execution write exceeds {self.max_write_bytes} bytes: {target_path}")
+            if content_guard is not None:
+                # 结构化配置合法性 + 权限升级防护；违规抛错 → 上层 abandon change set + 回退（尚未落盘）。
+                content_guard(target_path=target_path, new_bytes=data, original_bytes=originals[dest])
             writes.append((dest, data))
         if not writes:
             raise WorkspaceExecutionApplyError("Execution plan has no writable operations")

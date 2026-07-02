@@ -67,7 +67,7 @@ class _FakeExecApp:
         self.raises = raises
         self.applied: list[list] = []
 
-    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None):
+    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None, content_guard=None):
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)

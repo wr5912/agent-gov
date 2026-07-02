@@ -361,7 +361,7 @@ expand_remote_value() {
 }
 
 runtime_root=$(expand_remote_value "$(read_env HOST_RUNTIME_VOLUME_ROOT '$HOME/volume-agent-gov')")
-container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov-hitl)
+container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov)
 echo "Using runtime root=$runtime_root"
 echo "Using container name prefix=$container_name_prefix"
 mkdir -p \

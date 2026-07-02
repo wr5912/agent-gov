@@ -62,7 +62,7 @@ services:
       context: ..
       dockerfile: docker/litellm-sidecar.Dockerfile
     image: agent-gov-litellm-sidecar:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-litellm-sidecar
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-litellm-sidecar
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -79,7 +79,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: agent-gov-api:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-api
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-api
     ports:
       - "${HOST_PORT:-58080}:${API_PORT:-8080}"
     extra_hosts:
@@ -137,7 +137,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     image: agent-gov-api:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-worker
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-worker
     command: ["python", "-m", "app.worker.agent_jobs"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -191,7 +191,7 @@ services:
       context: ..
       dockerfile: docker/frontend.Dockerfile
     image: agent-gov-ui:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-ui
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-ui
     ports:
       - "${FRONTEND_BIND_IP:-0.0.0.0}:${FRONTEND_HOST_PORT:-55173}:${FRONTEND_PORT:-5173}"
     env_file:
@@ -213,7 +213,7 @@ services:
   langfuse-worker:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WORKER_IMAGE:-docker.io/langfuse/langfuse-worker:3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-worker
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-worker
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -231,7 +231,7 @@ services:
   langfuse-web:
     profiles: ["langfuse"]
     image: ${LANGFUSE_WEB_IMAGE:-docker.io/langfuse/langfuse:3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-web
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-web
     restart: unless-stopped
     logging: *default-logging
     depends_on:
@@ -263,7 +263,7 @@ services:
   langfuse-clickhouse:
     profiles: ["langfuse"]
     image: ${LANGFUSE_CLICKHOUSE_IMAGE:-docker.io/clickhouse/clickhouse-server:24.3}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-clickhouse
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-clickhouse
     restart: unless-stopped
     logging: *default-logging
     user: "101:101"
@@ -284,7 +284,7 @@ services:
   langfuse-minio:
     profiles: ["langfuse"]
     image: ${LANGFUSE_MINIO_IMAGE:-cgr.dev/chainguard/minio}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-minio
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-minio
     restart: unless-stopped
     logging: *default-logging
     entrypoint: sh
@@ -308,7 +308,7 @@ services:
   langfuse-redis:
     profiles: ["langfuse"]
     image: ${LANGFUSE_REDIS_IMAGE:-docker.io/redis:7}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-redis
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-redis
     restart: unless-stopped
     logging: *default-logging
     command:
@@ -330,7 +330,7 @@ services:
   langfuse-postgres:
     profiles: ["langfuse"]
     image: ${LANGFUSE_POSTGRES_IMAGE:-docker.io/postgres:17}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov-hitl}-langfuse-postgres
+    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-langfuse-postgres
     restart: unless-stopped
     logging: *default-logging
     environment:

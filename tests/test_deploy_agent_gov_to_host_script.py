@@ -84,7 +84,7 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     assert "working tree must be clean" not in text
     assert "--profile langfuse down --remove-orphans" in text
     assert "--profile langfuse up -d --force-recreate --no-build --pull never" in text
-    assert "container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov-hitl)" in text
+    assert "container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov)" in text
     assert 'docker ps -aq --filter "name=${container_name_prefix}-"' in text
     assert 'docker ps -aq --filter "name=agent-gov"' not in text
     assert "runtime_root=$(expand_remote_value" in text

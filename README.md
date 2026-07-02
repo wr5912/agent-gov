@@ -112,7 +112,7 @@ scripts/deploy_agent_gov_to_host localhost
 和目标 `${HOME}/volume-agent-gov` 运行态目录，先 `down --remove-orphans` 删除 Compose
 管理的容器，再按目标 `docker/.env` 的 `CONTAINER_NAME_PREFIX` 清理残留容器，最后用
 `--force-recreate --no-build --pull never` 启动包含 Langfuse profile 的全量服务。当前
-Compose 默认容器名前缀是 `agent-gov-hitl`，它只是默认值；脚本以目标 `docker/.env` 为准。
+Compose 默认容器名前缀是 `agent-gov`，它只是默认值；脚本以目标 `docker/.env` 为准。
 
 只重启已有部署，不同步代码、不构建镜像：
 

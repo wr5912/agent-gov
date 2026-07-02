@@ -40,7 +40,7 @@
 ### 阶段 0：分支与环境隔离
 
 - 当前整改分支使用 4XXXX 端口族，避免干扰 master 的 5XXXX 真实服务。
-- 私有 `docker/.env` 选择独立运行卷，例如 `/home/luopeng/volume-agent-gov-hitl`。
+- 私有 `docker/.env` 选择独立运行卷，例如 `/home/luopeng/volume-agent-gov-web-confirmation-smoke`。
 - `ENABLE_CLAUDE_WEB_HITL` 默认保持 `false`；真实 HITL 验收时在私有 env 中开启。
 
 ### 阶段 1：后端入口语义收口
@@ -95,7 +95,7 @@
 | 主流程硬门 | `make main-flow-test` | coverage policy 已绑定 HITL 主流程。 |
 | 治理硬门 | `git diff --check`、docs governance、codex governance、`make test` | 无新增治理债务。 |
 | 真实容器 E2E | 4XXXX 端口族启动 API/UI，选择业务 Agent，在 Playground 触发工具 ask 和 AskUserQuestion | UI 出现等待卡片；允许一次后工具继续；拒绝后 Claude 收到 deny；自由文本回答传回 Claude。 |
-| 运行卷验证 | 检查 `${HOME}/volume-agent-gov-hitl/data/business-agents` | 新 seed 已渲染，`response-disposal` 等预制业务 Agent 可在 topbar agent select 中选择并生效。 |
+| 运行卷验证 | 检查 `${HOME}/volume-agent-gov-web-confirmation-smoke/data/business-agents` | 新 seed 已渲染，`response-disposal` 等预制业务 Agent 可在 topbar agent select 中选择并生效。 |
 
 ## 5. 不做项
 

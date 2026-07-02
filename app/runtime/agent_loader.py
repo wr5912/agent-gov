@@ -68,7 +68,7 @@ def _safe_search_root(root: Path, boundary: Optional[Path]) -> bool:
 def discover_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[JsonObject]:
     roots: list[tuple[Path, Optional[Path]]] = [(workspace_dir / ".claude" / "agents", workspace_dir)]
     if claude_home:
-        roots.append((claude_home / "agents", None))
+        roots.append((claude_home / "agents", claude_home))
 
     seen: set[str] = set()
     agents: list[JsonObject] = []
@@ -102,7 +102,7 @@ def discover_agents(workspace_dir: Path, claude_home: Optional[Path] = None) -> 
 def discover_skills(workspace_dir: Path, claude_home: Optional[Path] = None) -> list[JsonObject]:
     roots: list[tuple[Path, Optional[Path]]] = [(workspace_dir / ".claude" / "skills", workspace_dir)]
     if claude_home:
-        roots.append((claude_home / "skills", None))
+        roots.append((claude_home / "skills", claude_home))
 
     seen: set[str] = set()
     skills: list[JsonObject] = []

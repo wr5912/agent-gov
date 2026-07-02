@@ -40,7 +40,13 @@
             "tests/test_agent_config_grounding.py::test_does_not_read_secret_or_local_files",
             "tests/test_execution_content_guards.py::test_adding_dangerous_allow_rejected",
             "tests/test_execution_content_guards.py::test_removing_deny_rejected",
-            "tests/test_execution_content_guards.py::test_applier_rejects_settings_escalation_without_writing"
+            "tests/test_execution_content_guards.py::test_applier_rejects_settings_escalation_without_writing",
+            "tests/test_execution_content_guards.py::test_allowlist_rejects_offlist_targets",
+            "tests/test_execution_content_guards.py::test_settings_hooks_injection_rejected",
+            "tests/test_execution_content_guards.py::test_mcp_command_and_stdio_server_rejected",
+            "tests/test_agent_config_grounding.py::test_grounding_rejects_symlinked_core_files_leaking_env",
+            "tests/test_improvement_execution_service.py::test_real_guard_blocks_settings_escalation_and_falls_back",
+            "tests/test_improvement_execution_service.py::test_real_allowlist_blocks_settings_local_and_falls_back"
           ]
         },
         {

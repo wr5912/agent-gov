@@ -34,9 +34,12 @@ class WorkspaceExecutionApplier:
         workspace_dir: Path,
         target_policy: WorkspaceExecutionTargetPolicy | None = None,
         content_guard: ContentGuard | None = None,
+        allowed_targets: set[str] | None = None,
     ) -> None:
         if not operations:
             raise WorkspaceExecutionApplyError("Execution plan has no operations")
+        # allowlist 强制：受治理 apply 只允许写显式可编辑目标集（防写 settings.local.json / hooks / .env / agents 绕过护栏）。
+        allow_norm = {Path(t).as_posix() for t in allowed_targets} if allowed_targets is not None else None
         originals: dict[Path, bytes | None] = {}
         writes: list[tuple[Path, bytes]] = []
         for item in operations:
@@ -44,6 +47,8 @@ class WorkspaceExecutionApplier:
                 raise WorkspaceExecutionApplyError("Execution operation must be an object")
             op = str(item.get("operation") or "")
             target_path = str(item.get("path") or "")
+            if allow_norm is not None and Path(target_path).as_posix() not in allow_norm:
+                raise WorkspaceExecutionApplyError(f"Target path is not in the editable allowlist: {target_path}")
             dest = self.safe_workspace_target(target_path, workspace_dir=workspace_dir)
             if target_policy is not None and not target_policy.target_allowed(target_path):
                 raise WorkspaceExecutionApplyError(f"Target path is not allowed: {target_path}")

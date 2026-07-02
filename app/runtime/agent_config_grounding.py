@@ -4,9 +4,11 @@
 它设计上只消费后端注入的 context。因此"让 governor 看到业务 Agent 配置"必须由后端**确定性读取**
 配置资产并作为 grounding 注入 prompt，而不是给 governor 开读文件 skill。
 
-只读**已提交、非敏感**的配置资产：CLAUDE.md（系统 prompt/角色）、.claude/settings.json 的权限、
-.mcp.json 的 server 清单、以及 skills/agents 清单。绝不读 .env / *.local.* / secrets（本模块只显式请求
-上述安全路径；file_context 另有 workspace 排除名单）。agent 不存在 / 文件缺失 / 超大均安全降级。
+只读**固定 allowlist 上的已提交、非敏感**配置资产：CLAUDE.md（系统 prompt/角色）、.claude/settings.json
+的权限、.mcp.json 的 server 清单、以及 skills/agents 清单。安全保障来自「只请求这几个固定路径」+「读取前
+lstat 拒绝 symlink（防 CLAUDE.md→.env 之类软链泄密——file_context 的 symlink 检查在 resolve 之后是死代码）」；
+注意 file_context 的排除名单只针对缓存/构建产物、不含 .env/secrets，故绝不能用它承载可变路径读取。
+agent 不存在 / 文件缺失 / 超大 / symlink 均安全降级。
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ from .settings import AppSettings
 _CLAUDE_MD = "CLAUDE.md"
 _SETTINGS_JSON = ".claude/settings.json"
 _MCP_JSON = ".mcp.json"
+# grounding 清单条目上限，防无界枚举（大量 skill/agent 文件）放大后台读取/内存。
+_MAX_GROUNDING_ASSETS = 50
 
 
 def build_business_agent_config_grounding(
@@ -45,20 +49,20 @@ def build_business_agent_config_grounding(
     grounding["workspace_present"] = True
     policy = WorkspaceExecutionTargetPolicy(workspace)
 
-    claude_md = _read_text(policy, _CLAUDE_MD)
+    claude_md = _read_text(workspace, policy, _CLAUDE_MD)
     if claude_md is not None:
         grounding["claude_md"] = claude_md
 
-    settings_permissions = _read_settings_permissions(policy)
+    settings_permissions = _read_settings_permissions(workspace, policy)
     if settings_permissions:
         grounding["settings_permissions"] = settings_permissions
 
-    mcp_servers = _read_mcp_servers(policy)
+    mcp_servers = _read_mcp_servers(workspace, policy)
     if mcp_servers is not None:
         grounding["mcp_servers"] = mcp_servers
 
-    grounding["skills"] = [_asset_entry(item) for item in discover_skills(workspace)]
-    grounding["agents"] = [_asset_entry(item) for item in discover_agents(workspace)]
+    grounding["skills"] = [_asset_entry(item) for item in discover_skills(workspace)[:_MAX_GROUNDING_ASSETS]]
+    grounding["agents"] = [_asset_entry(item) for item in discover_agents(workspace)[:_MAX_GROUNDING_ASSETS]]
     return grounding
 
 
@@ -78,14 +82,29 @@ def _resolve_workspace(settings: AppSettings, agent_registry_store: Any, safe_id
         return None
 
 
-def _read_text(policy: WorkspaceExecutionTargetPolicy, rel_path: str) -> Optional[str]:
+def _is_symlinked(workspace: Path, rel_path: str) -> bool:
+    """rel_path 沿途任一组件是 symlink 即判为不安全（防 CLAUDE.md→.env / .claude→外部 之类软链读取）。"""
+    current = workspace
+    for part in Path(rel_path).parts:
+        current = current / part
+        try:
+            if current.is_symlink():
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _read_text(workspace: Path, policy: WorkspaceExecutionTargetPolicy, rel_path: str) -> Optional[str]:
+    if _is_symlinked(workspace, rel_path):
+        return None
     context = policy.file_context(rel_path)
     text = context.get("content_text")
     return text if isinstance(text, str) and text.strip() else None
 
 
-def _read_settings_permissions(policy: WorkspaceExecutionTargetPolicy) -> JsonObject:
-    data = _read_json(policy, _SETTINGS_JSON)
+def _read_settings_permissions(workspace: Path, policy: WorkspaceExecutionTargetPolicy) -> JsonObject:
+    data = _read_json(workspace, policy, _SETTINGS_JSON)
     permissions = data.get("permissions") if isinstance(data, dict) else None
     if not isinstance(permissions, dict):
         return {}
@@ -97,8 +116,8 @@ def _read_settings_permissions(policy: WorkspaceExecutionTargetPolicy) -> JsonOb
     return result
 
 
-def _read_mcp_servers(policy: WorkspaceExecutionTargetPolicy) -> Optional[list[str]]:
-    text = _read_text(policy, _MCP_JSON)
+def _read_mcp_servers(workspace: Path, policy: WorkspaceExecutionTargetPolicy) -> Optional[list[str]]:
+    text = _read_text(workspace, policy, _MCP_JSON)
     if text is None:
         return None
     try:
@@ -111,8 +130,8 @@ def _read_mcp_servers(policy: WorkspaceExecutionTargetPolicy) -> Optional[list[s
     return sorted(str(name) for name in servers)
 
 
-def _read_json(policy: WorkspaceExecutionTargetPolicy, rel_path: str) -> Any:
-    text = _read_text(policy, rel_path)
+def _read_json(workspace: Path, policy: WorkspaceExecutionTargetPolicy, rel_path: str) -> Any:
+    text = _read_text(workspace, policy, rel_path)
     if text is None:
         return None
     try:

@@ -153,6 +153,26 @@ def test_governor_input_agent_config_empty_without_wiring(tmp_path):
     assert svc._build_attribution_input(item, None, [])["agent_config"] == {}
 
 
+def test_grounding_rejects_symlinked_core_files_leaking_env(tmp_path):
+    import os
+
+    ws = _seed_workspace(tmp_path)
+    # 外部密钥文件 + workspace 内 .env
+    external = tmp_path / "external-secret"
+    external.write_text("MODEL_PROVIDER_API_KEY=sk-external-leak", encoding="utf-8")
+    (ws / ".env").write_text("MODEL_PROVIDER_API_KEY=sk-inworkspace-leak", encoding="utf-8")
+    # CLAUDE.md 变成指向外部密钥的 symlink；.mcp.json 变成指向 workspace 内 .env 的 symlink
+    (ws / "CLAUDE.md").unlink()
+    os.symlink(external, ws / "CLAUDE.md")
+    (ws / ".mcp.json").unlink()
+    os.symlink(ws / ".env", ws / ".mcp.json")
+    g = _build(tmp_path, "x", {"x": ws})
+    blob = json.dumps(g, ensure_ascii=False)
+    assert "sk-external-leak" not in blob  # symlink CLAUDE.md→外部 不读
+    assert "sk-inworkspace-leak" not in blob  # symlink .mcp.json→workspace 内 .env 也不读
+    assert not g.get("claude_md")
+
+
 def test_grounding_skips_symlink_and_oversized_skills(tmp_path):
     import os
 

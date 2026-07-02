@@ -91,13 +91,16 @@ class ImprovementExecutionService:
             store = self._gov._store_for(agent_id)
             pre_version = store.version_summary(str(change_set["base_commit_sha"]), reason="improvement_execution_base", note=None)
             policy = WorkspaceExecutionTargetPolicy(worktree)
-            output = await self._run_execution_governor(plan, policy, trace_ref=trace_ref)
+            targets = _editable_config_targets(worktree)
+            output = await self._run_execution_governor(plan, policy, targets, trace_ref=trace_ref)
             data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
             operations = data.get("operations") or []
             if data.get("status") != "ready" or not operations:
                 self._gov.abandon_change_set(change_set_id, note="governor 未产出可应用执行操作")
                 return self._heuristic(plan, improvement_id, reason=str(data.get("no_action_reason") or ""))
-            self._execution_app.apply_execution_operations(operations, workspace_dir=worktree, target_policy=policy, content_guard=guard_execution_write)
+            self._execution_app.apply_execution_operations(
+                operations, workspace_dir=worktree, target_policy=policy, content_guard=guard_execution_write, allowed_targets=set(targets)
+            )
             applied_version, applied_diff = self._commit_candidate(store, worktree, pre_version, change_set_id, improvement_id)
         except Exception:
             try:
@@ -127,6 +130,7 @@ class ImprovementExecutionService:
         self,
         plan: Any,
         policy: WorkspaceExecutionTargetPolicy,
+        targets: list[str],
         *,
         trace_ref: dict[str, str] | None = None,
     ) -> FormatterOutputModel:
@@ -135,7 +139,6 @@ class ImprovementExecutionService:
         recommendations = [str(c.get("change", "")).strip() for c in changes if c.get("change")]
         plan_summary = getattr(plan, "summary", "") or "优化方案"
         target_type = str((changes[0].get("target") if changes else "prompt") or "prompt")
-        targets = _editable_config_targets(policy.workspace_dir)
         primary = targets[0]
         job_input: JsonObject = {
             "proposal": {

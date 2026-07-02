@@ -33,6 +33,7 @@ def test_deploy_script_defaults_and_preserves_private_remote_env() -> None:
     assert 'DEFAULT_REMOTE_DIR="~/work/agent-gov"' in text
     assert 'DEPLOY_USER="${DEPLOY_USER:-root}"' in text
     assert 'REMOTE_DIR="${REMOTE_DIR:-$DEFAULT_REMOTE_DIR}"' in text
+    assert 'EXPECTED_GIT_REMOTE_PROJECT="agent-gov"' in text
     assert "cp -n docker/.env.example docker/.env" in text
 
     for excluded in (
@@ -75,15 +76,32 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     text = _script_text()
 
     assert "git fetch origin master" in text
+    assert 'git -C "$ROOT_DIR" remote get-url origin' in text
+    assert "git origin project must be" in text
     assert "origin/master" in text
     assert "git show origin/master:VERSION" in text
     assert "git archive origin/master" in text
     assert "working tree must be clean" not in text
     assert "--profile langfuse down --remove-orphans" in text
-    assert "--profile langfuse up -d --no-build --pull never" in text
-    assert 'docker ps -aq --filter "name=agent-gov"' in text
+    assert "--profile langfuse up -d --force-recreate --no-build --pull never" in text
+    assert "container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov-hitl)" in text
+    assert 'docker ps -aq --filter "name=${container_name_prefix}-"' in text
+    assert 'docker ps -aq --filter "name=agent-gov"' not in text
     assert "runtime_root=$(expand_remote_value" in text
     assert "rm -rf '${HOME}'" in text
+
+
+def test_deploy_script_supports_localhost_without_ssh_transport() -> None:
+    text = _script_text()
+
+    assert "Pass localhost, 127.0.0.1, or ::1 to deploy on this machine without SSH." in text
+    assert "localhost|127.0.0.1|::1)" in text
+    assert "LOCAL_TARGET=1" in text
+    assert 'bash -c "$1"' in text
+    assert "REQUIRED_COMMANDS+=(ssh)" in text
+    assert '"$TMP_DIR"/ "$REMOTE_PATH/"' in text
+    assert '"$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"' in text
+    assert "local target dir must not be the current repository" in text
 
 
 def test_deploy_script_uses_python_health_checks_without_remote_curl_dependency() -> None:

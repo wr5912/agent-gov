@@ -92,21 +92,42 @@ make logs
 make smoke
 ```
 
-远端部署到 Docker Compose 主机：
+部署到 Docker Compose 主机：
 
 ```bash
 scripts/deploy_agent_gov_to_host
 # 或指定目标主机，默认用户 root、默认目录 ~/work/agent-gov
 scripts/deploy_agent_gov_to_host 172.16.112.232
+# 本机部署不走 SSH，默认目录按当前用户解析
+scripts/deploy_agent_gov_to_host localhost
 ```
 
-该脚本会把 `origin/master` 的跟踪代码同步到 `root@<host>:~/work/agent-gov`，
+该脚本会先校验本地 git `origin` 远端项目名必须是 `agent-gov`，然后把
+`origin/master` 的跟踪代码同步到目标目录。远端目标使用 `root@<host>:~/work/agent-gov`，
+`localhost`、`127.0.0.1` 和 `::1` 目标直接在本机执行，不经过 SSH。
 在本机构建 `VERSION` 对应的 `agent-gov-api`、`agent-gov-ui` 和
-`agent-gov-litellm-sidecar` 镜像，并把项目镜像包和 Langfuse 依赖镜像包写入远端
-`root@<host>:~/work/agent-gov/images/`。远端私有 `docker/.env` 会被保留；如果远端尚未
-创建该文件，脚本才会从 `docker/.env.example` 初始化。启动时使用远端 `docker/.env`
-和远端 `${HOME}/volume-agent-gov` 运行态目录，先停止删除已有 agent-gov 容器，再用已
-导入镜像启动包含 Langfuse profile 的全量服务。
+`agent-gov-litellm-sidecar` 镜像，并把项目镜像包和 Langfuse 依赖镜像包写入目标
+`images/` 目录。目标私有 `docker/.env` 会被保留；如果目标尚未
+创建该文件，脚本才会从 `docker/.env.example` 初始化。启动时使用目标 `docker/.env`
+和目标 `${HOME}/volume-agent-gov` 运行态目录，先 `down --remove-orphans` 删除 Compose
+管理的容器，再按目标 `docker/.env` 的 `CONTAINER_NAME_PREFIX` 清理残留容器，最后用
+`--force-recreate --no-build --pull never` 启动包含 Langfuse profile 的全量服务。当前
+Compose 默认容器名前缀是 `agent-gov-hitl`，它只是默认值；脚本以目标 `docker/.env` 为准。
+
+只重启已有部署，不同步代码、不构建镜像：
+
+```bash
+scripts/restart_agent_gov_on_host
+# 或指定目标主机，默认用户 root、默认目录 ~/work/agent-gov
+scripts/restart_agent_gov_on_host 172.16.112.232
+# 本机重启不走 SSH，默认目录按当前用户解析
+scripts/restart_agent_gov_on_host localhost
+```
+
+重启脚本同样会先校验本地 git `origin` 远端项目名必须是 `agent-gov`。目标目录必须已有
+`docker/.env` 和已加载镜像；脚本会 `down --remove-orphans`，按 `CONTAINER_NAME_PREFIX`
+清理残留容器，再用 `--force-recreate --no-build --pull never` 重新创建包含 Langfuse
+profile 的全量服务，然后检查 API、UI 和 Langfuse 是否可访问。
 
 ## 前端 UI
 

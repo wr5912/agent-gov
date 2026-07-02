@@ -21,6 +21,7 @@ def build_attribution_prompt_context(input_json: JsonObject) -> JsonObject:
             "langfuse_trace_details": _compact_json_object(input_json.get("langfuse_trace_details"), MAX_PROMPT_FILE_TEXT_CHARS),
             "main_agent_version_id": _text(input_json.get("main_agent_version_id"), 300),
             "task": _text(input_json.get("task"), 200),
+            "agent_config": _compact_agent_config(input_json.get("agent_config")),
         }
     )
 
@@ -58,9 +59,11 @@ def build_improvement_optimization_prompt_context(input_json: JsonObject) -> Jso
                     "evidence": _limited_text_list(attribution.get("evidence"), MAX_PROMPT_LIST_ITEMS),
                 }
             ),
+            "agent_config": _compact_agent_config(input_json.get("agent_config")),
             "target_guidance": [
                 "只输出事项级优化方案，不输出批次、任务队列、外部 webhook 或执行 job。",
                 "changes[].target 应指向 prompt、skill、subagent、mcp_config、runtime_config、eval_case 等治理资产。",
+                "changes 必须针对 agent_config 中真实存在的配置资产提出具体改动，不要提出与当前配置无关的改动。",
             ],
         }
     )
@@ -87,6 +90,7 @@ def build_eval_case_generation_prompt_context(input_json: JsonObject) -> JsonObj
             "source_refs": _limited_objects(_json_list(input_json.get("source_refs")), _source_ref_summary),
             "feedback_cases": _limited_objects(feedback_cases, _eval_case_generation_case_summary),
             "existing_eval_case_summaries": _limited_objects(existing_eval_cases, _eval_case_summary),
+            "agent_config": _compact_agent_config(input_json.get("agent_config")),
         }
     )
 
@@ -310,6 +314,33 @@ def _text(value: object, limit: int) -> str | None:
     if len(text) <= limit:
         return text
     return f"{text[:limit]}\n...[truncated {len(text) - limit} chars]"
+
+
+def _compact_agent_config(value: object) -> JsonObject:
+    """业务 Agent 配置 grounding 压缩：CLAUDE.md 截断、权限/MCP 摘要、skills/agents 清单（name+description）。"""
+    data = _json_dict(value)
+    if not data:
+        return {}
+    return _json_object(
+        {
+            "agent_id": _text(data.get("agent_id"), 200),
+            "workspace_present": data.get("workspace_present"),
+            "claude_md": _text(data.get("claude_md"), MAX_PROMPT_FILE_TEXT_CHARS),
+            "settings_permissions": _compact_json_object(data.get("settings_permissions"), MAX_PROMPT_NESTED_TEXT_CHARS),
+            "mcp_servers": _limited_text_list(data.get("mcp_servers"), MAX_PROMPT_LIST_ITEMS),
+            "skills": _limited_objects(_json_list(data.get("skills")), _agent_config_asset_summary),
+            "agents": _limited_objects(_json_list(data.get("agents")), _agent_config_asset_summary),
+        }
+    )
+
+
+def _agent_config_asset_summary(item: JsonObject) -> JsonObject:
+    return _json_object(
+        {
+            "name": _text(item.get("name"), 200),
+            "description": _text(item.get("description"), 500),
+        }
+    )
 
 
 def _json_object(value: dict[str, object]) -> JsonObject:

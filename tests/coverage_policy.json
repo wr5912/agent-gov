@@ -34,7 +34,10 @@
             "tests/test_langfuse_tool_projection.py::test_projects_tool_and_generation_children",
             "tests/test_langfuse_tool_projection.py::test_governor_runner_glue_projects_children",
             "tests/test_upstream_contracts.py::test_real_sdk_messages_project_to_child_observations",
-            "tests/test_upstream_contracts.py::test_langfuse_start_observation_signature_contract"
+            "tests/test_upstream_contracts.py::test_langfuse_start_observation_signature_contract",
+            "tests/test_agent_config_grounding.py::test_reads_full_config_grounding",
+            "tests/test_agent_config_grounding.py::test_governor_input_includes_agent_config_when_wired",
+            "tests/test_agent_config_grounding.py::test_does_not_read_secret_or_local_files"
           ]
         },
         {

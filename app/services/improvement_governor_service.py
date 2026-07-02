@@ -25,6 +25,8 @@ from app.runtime.stores.improvement_content_store import (
 from app.runtime.stores.improvement_store import ImprovementStore
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
+# 业务 Agent 配置 grounding：agent_id -> backend-owned 配置快照（CLAUDE.md/权限/MCP/skills/agents）。
+ConfigGrounding = Callable[[str], JsonObject]
 
 
 class OptimizationChangeItem(TypedDict):
@@ -51,10 +53,21 @@ class ImprovementGovernorService:
         improvement_store: ImprovementStore,
         content_store: ImprovementContentStore,
         run_profile_json: RunProfileJson | None,
+        config_grounding: ConfigGrounding | None = None,
     ) -> None:
         self._improvements = improvement_store
         self._content = content_store
         self._run_profile_json = run_profile_json
+        self._config_grounding = config_grounding
+
+    def _agent_config(self, agent_id: str) -> JsonObject:
+        """业务 Agent 当前配置 grounding（backend-owned 输入）；未接线或读取失败均返回空。"""
+        if not self._config_grounding or not agent_id:
+            return {}
+        try:
+            return self._config_grounding(agent_id)
+        except Exception:  # noqa: BLE001 — grounding 读取失败不阻断 governor 生成
+            return {}
 
     # ---- 归因 ----
     async def generate_attribution(self, improvement_id: str) -> AttributionRecord:
@@ -154,8 +167,7 @@ class ImprovementGovernorService:
             generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
         )
 
-    @staticmethod
-    def _build_regression_input(item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
+    def _build_regression_input(self, item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
         problem = getattr(nf, "problem", "") if nf else getattr(item, "title", "")
         return {
             "feedback_cases": [
@@ -169,6 +181,7 @@ class ImprovementGovernorService:
             ],
             "source_refs": [{"kind": "improvement", "id": getattr(item, "improvement_id", "")}],
             "existing_eval_cases": [],
+            "agent_config": self._agent_config(getattr(item, "agent_id", "")),
         }
 
     @staticmethod
@@ -238,13 +251,13 @@ class ImprovementGovernorService:
         )
 
     # ---- prompt 输入（backend-owned grounding）----
-    @staticmethod
-    def _build_attribution_input(item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
+    def _build_attribution_input(self, item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
+        agent_id = getattr(item, "agent_id", "")
         return {
             "feedback_case": {
                 "improvement_id": getattr(item, "improvement_id", ""),
                 "title": getattr(item, "title", ""),
-                "agent_id": getattr(item, "agent_id", ""),
+                "agent_id": agent_id,
                 "problem": getattr(nf, "problem", "") if nf else "",
                 "possible_reason": getattr(nf, "possible_reason", "") if nf else "",
                 "possible_object": getattr(nf, "possible_object", "") if nf else "",
@@ -254,16 +267,17 @@ class ImprovementGovernorService:
                 ],
             },
             "task": getattr(item, "title", ""),
-            "main_agent_version_id": getattr(item, "agent_id", ""),
+            "main_agent_version_id": agent_id,
+            "agent_config": self._agent_config(agent_id),
         }
 
-    @staticmethod
-    def _build_plan_input(item: Any, nf: Any, attr: Any) -> JsonObject:
+    def _build_plan_input(self, item: Any, nf: Any, attr: Any) -> JsonObject:
+        agent_id = getattr(item, "agent_id", "")
         return {
             "improvement": {
                 "improvement_id": getattr(item, "improvement_id", ""),
                 "title": getattr(item, "title", ""),
-                "agent_id": getattr(item, "agent_id", ""),
+                "agent_id": agent_id,
                 "summary": getattr(item, "summary", ""),
             },
             "normalized_feedback": {
@@ -280,7 +294,8 @@ class ImprovementGovernorService:
                 "evidence": list(getattr(attr, "evidence", []) or []) if attr else [],
             },
             "task": getattr(item, "title", ""),
-            "main_agent_version_id": getattr(item, "agent_id", ""),
+            "main_agent_version_id": agent_id,
+            "agent_config": self._agent_config(agent_id),
         }
 
     # ---- formatter 输出映射（agent-owned）----

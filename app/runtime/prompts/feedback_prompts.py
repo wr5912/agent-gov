@@ -60,6 +60,13 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "只有在 MCP 配置已实例化且无占位符、MCP 仍连接失败或服务返回异常时，才优先判定 external_mcp_service。\n"
             "MAX_TURNS 达上限若伴随 MCP failed 或 MCP 配置未解析占位符，应视为放大器，不要把 turns 默认值当作唯一根因。",
         ),
+        (
+            "业务 Agent 配置",
+            "input 上下文的 agent_config 提供该业务 Agent 当前配置：claude_md（系统 prompt/角色边界）、"
+            "settings_permissions（工具权限 allow/ask/deny）、mcp_servers、skills 与 agents 清单。\n"
+            "归因到执行资产问题（instruction_gap/skill_gap/mcp_description_gap）或工具/权限问题时，"
+            "必须结合 agent_config 判断当前配置是否缺失、冲突或描述不当，不要脱离实际配置臆断。",
+        ),
         ("约束", NATURAL_LANGUAGE_CHINESE_RULE),
         ("输入上下文", _prompt_context_section("attribution_prompt_context", prompt_context)),
     )
@@ -99,6 +106,12 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
             "不要输出后端系统 ID、路由名、队列名、工具调用参数或后端版本字段。"
             "不要输出 JSON 代码块；用自然语言小节或列表表达即可，formatter 会转换为结构化模型。",
+        ),
+        (
+            "业务 Agent 配置",
+            "input 上下文的 agent_config 提供该业务 Agent 当前配置（claude_md/settings_permissions/mcp_servers/skills/agents）。"
+            "changes[].target 与 change 必须针对 agent_config 中真实存在的配置资产提出具体改动"
+            "（例如改 CLAUDE.md 某段、补/改某个 skill、调整 settings 权限或 MCP），不要提出与当前配置无关或已存在的改动。",
         ),
         ("输入上下文", _prompt_context_section("improvement_optimization_plan_prompt_context", prompt_context)),
     )

@@ -51,7 +51,10 @@
             "tests/test_normalized_feedback_generation.py::test_hostile_formatter_missing_problem_falls_back",
             "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
             "tests/test_agent_profiles_category.py::test_governor_has_full_read_of_business_agents_and_no_write",
-            "tests/test_agent_profiles_category.py::test_governor_build_options_wires_hooks_and_setting_sources"
+            "tests/test_agent_profiles_category.py::test_governor_build_options_wires_hooks_and_setting_sources",
+            "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
+            "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
+            "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent"
           ]
         },
         {

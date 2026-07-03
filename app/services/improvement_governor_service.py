@@ -11,6 +11,7 @@ formatter 输出（rationale / responsibility_boundary / tasks 等）为 agent-o
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any, TypedDict
@@ -26,6 +27,8 @@ from app.runtime.stores.improvement_content_store import (
     RegressionAssessmentRecord,
 )
 from app.runtime.stores.improvement_store import ImprovementStore
+
+logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 # 反馈整理不需要 governor（无工具/无多轮）：直接一次 DSPy formatter 把原始反馈归纳成 title+problem。
@@ -72,6 +75,57 @@ def _requires_target_config_evidence(data: JsonObject) -> bool:
     )
 
 
+class _GuardRejection(Exception):
+    """governor 输出违反目标业务 Agent 证据/target 边界，被后端采纳前拒绝（回退启发式，与 governor 失败区分记录）。"""
+
+
+_WORKSPACE_FILE_EXTS = (".md", ".json", ".jsonl", ".yaml", ".yml", ".txt", ".sh", ".py", ".toml")
+
+
+def _clean_token(token: str) -> str:
+    cleaned = token.strip().strip("`'\"[]【】()（），,。;；:：")
+    return cleaned[len("file:") :].strip() if cleaned.startswith("file:") else cleaned
+
+
+def _looks_like_workspace_file(token: str) -> bool:
+    return "/" in token or token.lower().endswith(_WORKSPACE_FILE_EXTS)
+
+
+def _has_traversal(token: str) -> bool:
+    return ".." in token.replace("\\", "/").split("/")
+
+
+def _classify_evidence_path(token: str, allowed_roots: list[str], forbidden_roots: list[str]) -> str:
+    """把单个证据 token 归为 target（目标业务 workspace 内文件）/ forbidden（越界·governor·穿越）/ neutral（trace/log 等非文件证据）。
+
+    相对路径（CLAUDE.md、.claude/skills/x/SKILL.md、mcp_servers/x/sample.json）按约定属于目标业务 Agent workspace → target；
+    绝对路径必须落在 allowed_evidence_roots 内，否则越界 forbidden；forbidden_evidence_roots（/governor-workspace）与 `..` 穿越 forbidden。
+    """
+    token = _clean_token(token)
+    if not token:
+        return "neutral"
+    if _contains_any_root(token, forbidden_roots):
+        return "forbidden"
+    if token.startswith("/"):
+        if not allowed_roots:
+            return "neutral"
+        return "target" if _contains_any_root(token, allowed_roots) else "forbidden"
+    if _has_traversal(token):
+        return "forbidden"
+    return "target" if _looks_like_workspace_file(token) else "neutral"
+
+
+def _classify_evidence_ref(ref: JsonObject, allowed_roots: list[str], forbidden_roots: list[str]) -> str:
+    """以 id（权威证据指针）判定；neutral 时用 reason 里的文件 token 宽松升为 target（降低对相对路径引用的误拒），不据 reason 判 forbidden。"""
+    status = _classify_evidence_path(_text(ref.get("id")), allowed_roots, forbidden_roots)
+    if status != "neutral":
+        return status
+    for token in _text(ref.get("reason")).split():
+        if _classify_evidence_path(token, allowed_roots, forbidden_roots) == "target":
+            return "target"
+    return "neutral"
+
+
 class ImprovementGovernorService:
     """以 governor LLM 生成改进事项归因/方案；失败回退确定性启发式。"""
 
@@ -104,8 +158,12 @@ class ImprovementGovernorService:
                 problem = _text(data.get("problem")) or problem
                 title = _text(data.get("title")) or title
                 generated_by = "llm"
-            except Exception:  # noqa: BLE001 — formatter 不可用/校验失败回退启发式，保证可用
-                pass
+            except Exception as exc:  # noqa: BLE001 — formatter 不可用/校验失败回退启发式；记录以便区分
+                logger.info(
+                    "normalized-feedback formatter unavailable; fallback=heuristic improvement_id=%s error=%s",
+                    improvement_id,
+                    exc.__class__.__name__,
+                )
         user_quote = (getattr(feedbacks[0], "raw_text", "") if feedbacks else "") or (getattr(existing, "user_quote", "") if existing else "")
         record = self._content.upsert_normalized_feedback(
             improvement_id,
@@ -172,8 +230,20 @@ class ImprovementGovernorService:
                     verification,
                 )
                 generated_by = "governor"
-            except Exception:  # noqa: BLE001 — 任何 governor 失败都回退确定性，保证可用
-                pass
+            except _GuardRejection as exc:
+                logger.warning(
+                    "governor attribution rejected by guard; fallback=heuristic improvement_id=%s trace_id=%s reason=%s",
+                    improvement_id,
+                    trace_ref.get("trace_id", ""),
+                    exc,
+                )
+            except Exception as exc:  # noqa: BLE001 — governor 失败回退确定性，保证可用；记录以便区分
+                logger.warning(
+                    "governor attribution failed; fallback=heuristic improvement_id=%s trace_id=%s error=%s",
+                    improvement_id,
+                    trace_ref.get("trace_id", ""),
+                    exc.__class__.__name__,
+                )
         return self._content.upsert_attribution(
             improvement_id,
             summary=summary,
@@ -206,8 +276,20 @@ class ImprovementGovernorService:
                 self._guard_plan_output(output, job_input)
                 summary, changes, risk_level = self._map_plan(output, summary, changes, risk_level)
                 generated_by = "governor"
-            except Exception:  # noqa: BLE001
-                pass
+            except _GuardRejection as exc:
+                logger.warning(
+                    "governor optimization plan rejected by guard; fallback=heuristic improvement_id=%s trace_id=%s reason=%s",
+                    improvement_id,
+                    trace_ref.get("trace_id", ""),
+                    exc,
+                )
+            except Exception as exc:  # noqa: BLE001 — governor 失败回退确定性；记录以便区分
+                logger.warning(
+                    "governor optimization plan failed; fallback=heuristic improvement_id=%s trace_id=%s error=%s",
+                    improvement_id,
+                    trace_ref.get("trace_id", ""),
+                    exc.__class__.__name__,
+                )
         return self._content.upsert_optimization_plan(
             improvement_id,
             summary=summary,
@@ -235,8 +317,13 @@ class ImprovementGovernorService:
                 )
                 summary, cases, thresholds = self._map_regression(output, summary, cases, thresholds)
                 generated_by = "governor"
-            except Exception:  # noqa: BLE001
-                pass
+            except Exception as exc:  # noqa: BLE001 — governor 失败回退确定性；记录以便区分
+                logger.warning(
+                    "governor regression assessment failed; fallback=heuristic improvement_id=%s trace_id=%s error=%s",
+                    improvement_id,
+                    trace_ref.get("trace_id", ""),
+                    exc.__class__.__name__,
+                )
         return self._content.upsert_regression_assessment(
             improvement_id,
             summary=summary,
@@ -407,14 +494,11 @@ class ImprovementGovernorService:
             return
 
         evidence_refs = [ref for ref in data.get("evidence_refs") or [] if isinstance(ref, dict)]
-        ref_texts = [f"{_text(ref.get('id'))}\n{_text(ref.get('reason'))}" for ref in evidence_refs]
-        if any(_contains_any_root(text, forbidden_roots) for text in ref_texts):
-            raise ValueError("governor attribution cited forbidden governor workspace evidence for a business Agent")
-
-        if not _requires_target_config_evidence(data):
-            return
-        if not any(_contains_any_root(text, allowed_roots) for text in ref_texts):
-            raise ValueError("governor attribution lacked target business Agent configuration evidence")
+        statuses = [_classify_evidence_ref(ref, allowed_roots, forbidden_roots) for ref in evidence_refs]
+        if "forbidden" in statuses:
+            raise _GuardRejection("attribution 引用了越界/governor-workspace/路径穿越证据（非目标业务 Agent workspace）")
+        if _requires_target_config_evidence(data) and "target" not in statuses:
+            raise _GuardRejection("config 类归因缺少目标业务 Agent workspace 配置证据（需引用其 CLAUDE.md/.claude/skills/settings/.mcp.json，相对路径亦可）")
 
     @staticmethod
     def _guard_plan_output(output: FormatterOutputModel, job_input: JsonObject) -> None:
@@ -435,10 +519,10 @@ class ImprovementGovernorService:
                 if _text(task.get(key))
             )
             if _contains_any_root(target_text, forbidden_roots):
-                raise ValueError("governor optimization plan targeted governor workspace for a business Agent")
-            absolute_targets = [part for part in target_text.split() if part.startswith("/")]
+                raise _GuardRejection("optimization plan 把 governor-workspace 当作业务 Agent 优化目标")
+            absolute_targets = [_clean_token(part) for part in target_text.split() if _clean_token(part).startswith("/")]
             if absolute_targets and not any(_contains_any_root(part, allowed_roots) for part in absolute_targets):
-                raise ValueError("governor optimization plan targeted a path outside target business Agent workspace")
+                raise _GuardRejection("optimization plan 的绝对路径 target 越出目标业务 Agent workspace")
 
     @staticmethod
     def _map_attribution(

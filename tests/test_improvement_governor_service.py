@@ -345,3 +345,77 @@ def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
     assert got.risk_level == "中"
     assert got.rollback_strategy == "回滚到执行前基线 Agent 版本"
     assert got.rollback_instructions == ["放弃 change_set", "恢复版本"]
+
+
+def _config_attribution(evidence_refs: list[dict], *, problem_type: str = "instruction_gap") -> dict:
+    return {
+        "problem_type": problem_type,
+        "optimization_object_type": "main_agent_claude_md",
+        "actionability": "workspace_config_change",
+        "confidence": "high",
+        "human_review_required": False,
+        "rationale": "目标业务 Agent 配置缺陷。",
+        "responsibility_boundary": {"owner": "soc-ops", "reason": "业务 Agent 配置需修正。"},
+        "evidence_refs": evidence_refs,
+    }
+
+
+def test_attribution_accepts_relative_claude_md_evidence(tmp_path: Path) -> None:
+    """整改：governor 用相对路径 CLAUDE.md 引用目标 workspace 配置，应被采纳为 governor（不再误拒）。"""
+    async def grounded(**_kwargs):
+        return _config_attribution([{"type": "file", "id": "CLAUDE.md", "reason": "目标业务 Agent 系统 prompt 缺时间校验。"}])
+    svc, _ = _service(tmp_path, grounded)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "governor"
+
+
+def test_attribution_accepts_relative_skill_md_evidence(tmp_path: Path) -> None:
+    async def grounded(**_kwargs):
+        return _config_attribution(
+            [{"type": "file", "id": ".claude/skills/ocsf-stix-analysis/SKILL.md", "reason": "skill 描述不当。"}],
+            problem_type="skill_gap",
+        )
+    svc, _ = _service(tmp_path, grounded)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "governor"
+
+
+def test_attribution_rejects_path_traversal_evidence(tmp_path: Path) -> None:
+    async def evil(**_kwargs):
+        return _config_attribution([{"type": "file", "id": "../other-agent/CLAUDE.md", "reason": "越界。"}])
+    svc, _ = _service(tmp_path, evil)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+
+
+def test_attribution_rejects_other_agent_absolute_evidence(tmp_path: Path) -> None:
+    async def cross(**_kwargs):
+        return _config_attribution(
+            [{"type": "file", "id": "file:/data/business-agents/attacker/workspace/CLAUDE.md", "reason": "他 Agent。"}]
+        )
+    svc, _ = _service(tmp_path, cross)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+
+
+def test_attribution_config_type_with_only_trace_evidence_rejected(tmp_path: Path) -> None:
+    """config 类归因只给 trace/log 非文件证据、未引用目标 workspace 配置 → 拒（缺配置证据）。"""
+    async def ungrounded(**_kwargs):
+        return _config_attribution([{"type": "trace", "id": "run-9", "reason": "运行轨迹。"}], problem_type="skill_gap")
+    svc, _ = _service(tmp_path, ungrounded)
+    rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+
+
+def test_guard_rejection_is_logged_not_silent(tmp_path: Path, caplog) -> None:
+    """整改：guard 拒绝不再静默——回退时 WARNING 记录 reason + trace_id，区别于 governor 失败。"""
+    async def forbidden(**_kwargs):
+        kwargs_trace = _config_attribution(
+            [{"type": "file", "id": "file:/governor-workspace/.claude/settings.json", "reason": "治理自身配置。"}]
+        )
+        return kwargs_trace
+    svc, _ = _service(tmp_path, forbidden)
+    with caplog.at_level("WARNING"):
+        rec = asyncio.run(svc.generate_attribution("imp-1"))
+    assert rec.generated_by == "heuristic"
+    assert any("rejected by guard" in record.getMessage() for record in caplog.records)

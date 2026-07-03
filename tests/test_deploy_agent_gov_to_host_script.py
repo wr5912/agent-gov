@@ -101,6 +101,7 @@ def test_deploy_script_supports_localhost_without_ssh_transport() -> None:
     assert "REQUIRED_COMMANDS+=(ssh)" in text
     assert '"$TMP_DIR"/ "$REMOTE_PATH/"' in text
     assert '"$TMP_DIR"/ "${REMOTE}:${REMOTE_PATH}/"' in text
+    assert text.count("--chown=0:0") == 1
     assert "local target dir must not be the current repository" in text
 
 

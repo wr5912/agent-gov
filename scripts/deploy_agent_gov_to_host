@@ -189,6 +189,7 @@ sync_origin_master_code() {
   else
     rsync -az --delete \
       -e "$(rsync_ssh_command)" \
+      --chown=0:0 \
       --exclude='/.git/' \
       --exclude='/images/' \
       --exclude='/docker/.env' \

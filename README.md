@@ -105,6 +105,7 @@ scripts/deploy_agent_gov_to_host localhost
 该脚本会先校验本地 git `origin` 远端项目名必须是 `agent-gov`，然后把
 `origin/master` 的跟踪代码同步到目标目录。远端目标使用 `root@<host>:~/work/agent-gov`，
 `localhost`、`127.0.0.1` 和 `::1` 目标直接在本机执行，不经过 SSH。
+远端同步代码时会强制归属为 `root:root`，避免保留本地开发用户的数值 UID/GID。
 在本机构建 `VERSION` 对应的 `agent-gov-api`、`agent-gov-ui` 和
 `agent-gov-litellm-sidecar` 镜像，并把项目镜像包和 Langfuse 依赖镜像包写入目标
 `images/` 目录。目标私有 `docker/.env` 会被保留；如果目标尚未

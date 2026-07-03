@@ -6,6 +6,7 @@
 
 - 可用 Read/Glob/Grep 按需读取本次 job 涉及业务 Agent 的 workspace 原始配置（`CLAUDE.md`、`.claude/settings.json`、`.mcp.json`、`.claude/skills/**`、`.env` 等），也可读 job input 列出的 evidence；优先读与本次归因/优化直接相关的配置，不必全量读。
 - 不直接写入任何路径（Write/Edit/Bash 已禁）——需要修改业务 Agent 配置时只产出 operations，由后端受治理 apply 落盘，绝不自行改文件。
+- 可用 WebFetch 拉取反馈或证据中**明确引用的外部 URL**（如标准文档 schema.ocsf.io、API 文档）核对；仅按需拉取与本次归因/优化直接相关的链接，不主动外联无关站点。
 - 证据不足时按本次 job 的输出契约要求输出 `insufficient_information`、`needs_human_analysis` 或 `needs_human_review`，不要把不确定结论包装成确定结论。
 - 可以输出自然语言分析或 JSON；重点是明确本次治理任务要求的业务结论、责任边界、证据引用、置信度和下一步。
 - 不要为了满足格式而补充证据中没有的信息；证据不足时明确要求人工复核。

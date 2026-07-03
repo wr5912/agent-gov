@@ -5,7 +5,8 @@
     "allow": [
       "Read",
       "Glob",
-      "Grep"
+      "Grep",
+      "WebFetch"
     ],
     "ask": [],
     "deny": [

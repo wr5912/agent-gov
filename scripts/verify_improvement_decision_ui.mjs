@@ -226,6 +226,19 @@ async function main() {
     await item.waitFor({ timeout: 10_000 });
     await item.click();
     await assertVisible(page, "improvement-detail");
+    const targetId = target.id || target.improvement_id;
+    const detailMeta = await assertVisible(page, "improvement-detail-meta");
+    await page.waitForFunction(
+      () => document.querySelector('[data-testid="improvement-detail-meta"]')?.textContent?.includes("反馈 1 条 / Run 1 个"),
+      null,
+      { timeout: 10_000 },
+    );
+    const detailMetaText = await detailMeta.innerText();
+    if (!detailMetaText.includes("业务 Agent：")) throw new Error(`missing business agent label in detail meta: ${detailMetaText}`);
+    if (!detailMetaText.includes("反馈 1 条 / Run 1 个")) throw new Error(`unexpected feedback/run meta: ${detailMetaText}`);
+    const renderedImprovementId = await page.getByTestId("improvement-id-value").innerText();
+    if (renderedImprovementId !== targetId) throw new Error(`rendered improvement id mismatch: ${renderedImprovementId} !== ${targetId}`);
+    await assertVisible(page, "copy-improvement-id");
 
     await assertVisible(page, "improvement-list-decision");
     await assertVisible(page, "current-decision-card");

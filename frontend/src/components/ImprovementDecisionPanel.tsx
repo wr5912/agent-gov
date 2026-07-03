@@ -34,6 +34,7 @@ export function ImprovementDecisionPanel({
   const runIds = [...new Set(feedbacks.map((f) => f.run_id).filter(Boolean))];
   const versionCount = new Set(feedbacks.map((f) => f.agent_version_id).filter(Boolean)).size;
   const sourceCount = feedbacks.length || refs.length;
+  const agentLabel = agentName && agentName !== item.agent_id ? `${agentName}（${item.agent_id}）` : item.agent_id;
   const signal = primaryDecision ?? decisionSignal(stageView.visibleKey);
   const primaryDisabled = busy || !!primaryDecision?.disabledReason;
   const question = pendingOperation
@@ -47,8 +48,21 @@ export function ImprovementDecisionPanel({
   return (
     <>
       <h2 className="iw-detail-title" data-testid="improvement-title">{item.title}</h2>
-      <div className="iw-detail-owner">
-        {item.agent_id} · {agentName} · {sourceCount || "未记录"} 条反馈 / {runIds.length || "-"} 个 Run
+      <div className="iw-detail-owner" data-testid="improvement-detail-meta">
+        <span data-testid="improvement-agent-label">业务 Agent：{agentLabel}</span>
+        <span>{sourceCount ? `反馈 ${sourceCount} 条` : "反馈未记录"} / {runIds.length ? `Run ${runIds.length} 个` : "Run -"}</span>
+        <span className="iw-meta-id">
+          事项 ID：<code data-testid="improvement-id-value">{item.improvement_id}</code>
+          <button
+            className="iw-meta-copy"
+            type="button"
+            data-testid="copy-improvement-id"
+            aria-label="复制改进事项 ID"
+            onClick={() => { void navigator.clipboard?.writeText(item.improvement_id).catch(() => undefined); }}
+          >
+            复制
+          </button>
+        </span>
       </div>
       <div className="iw-decision-meta" data-testid="improvement-decision-meta">
         <span>当前阶段：{stageView.label}</span>

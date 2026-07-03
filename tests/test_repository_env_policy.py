@@ -73,6 +73,7 @@ CONTAINER_ONLY_ENV_KEYS = {
     "LANGFUSE_TELEMETRY_ENABLED",
     "LANGFUSE_WEB_IMAGE",
     "LANGFUSE_WORKER_IMAGE",
+    "RUNTIME_VOLUME_SEEDS_HOST_DIR",
 }
 
 
@@ -263,3 +264,16 @@ def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
     assert "MODEL_PROVIDER_API_KEY" in sidecar
     assert "LANGFUSE_SECRET_KEY" not in sidecar
     assert "\n      API_KEY:" not in sidecar
+
+
+def test_runtime_volume_seeds_are_bound_read_only_for_api_and_worker() -> None:
+    compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
+    api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-worker:", 1)[0]
+    worker = compose.split("  claude-agent-worker:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
+
+    assert "source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}" in compose
+    assert "target: /app/docker/runtime-volume-seeds" in compose
+    assert "read_only: true" in compose
+    assert "create_host_path: false" in compose
+    assert "- *runtime-volume-seeds" in api
+    assert "- *runtime-volume-seeds" in worker

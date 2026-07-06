@@ -60,7 +60,7 @@
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
 - [Claude 原生业务Agent人类确认机制整改实现方案](./engineering/Claude原生业务Agent人类确认机制整改实现方案.md)：`docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md`
 - [Claude 原生业务Agent人类确认机制对抗审查整改计划](./engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md)：`docs/engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md`
-- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，`/v1/chat/completions` 能否替代并删除 `/api/chat`、`/api/chat/stream` 的决策评估（HITL 协议阻断、能力矩阵、迁移选项）
+- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，评估 `/v1/chat/completions` 能否替代 `/api/chat`、`/api/chat/stream`，并给出基于 AgentGov 私有扩展模式的完全替代方案与迁移计划
 
 ## 评审与复盘
 

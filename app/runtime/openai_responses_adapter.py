@@ -148,7 +148,7 @@ def map_usage(raw: object) -> Optional[JsonObject]:
     return mapped or dict(raw)
 
 
-def _iso_to_epoch(value: object) -> Optional[int]:
+def iso_to_epoch(value: object) -> Optional[int]:
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -218,7 +218,7 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
     cost = run.get("total_cost_usd")
     return ResponseObject(
         id=response_id_from_run(run_id) or run_id,
-        created_at=_iso_to_epoch(run.get("created_at")),
+        created_at=iso_to_epoch(run.get("created_at")),
         status=derive_status(errors, run.get("stop_reason")),
         model=_str_or_none(run.get("model")),
         output=_output_from_text(answer or None),

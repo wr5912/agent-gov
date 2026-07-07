@@ -101,6 +101,9 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/v1/chat/completions",
         "/v1/responses",
         "/v1/responses/{response_id}",
+        "/v1/conversations",
+        "/v1/conversations/{conversation_id}",
+        "/v1/conversations/{conversation_id}/items",
     }
     assert current_paths <= set(schema["paths"])
 

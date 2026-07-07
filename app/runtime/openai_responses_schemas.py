@@ -136,3 +136,48 @@ class ResponseObject(BaseModel):
     usage: Optional[JsonObject] = None
     metadata: JsonObject = Field(default_factory=dict)
     agentgov: AgentGovResponseExtension
+
+
+# ---- Conversations（会话对象，投影自 SDK session / transcript，不另建副本）----
+
+
+class ConversationCreateRequest(BaseModel):
+    metadata: JsonObject = Field(default_factory=dict, description="Flat observability tags (backend does not route on these).")
+
+
+class Conversation(BaseModel):
+    id: str
+    object: Literal["conversation"] = "conversation"
+    created_at: Optional[int] = None
+    title: Optional[str] = None
+    metadata: JsonObject = Field(default_factory=dict)
+
+
+class ConversationList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[Conversation] = Field(default_factory=list)
+
+
+class ConversationDeleted(BaseModel):
+    id: str
+    object: Literal["conversation.deleted"] = "conversation.deleted"
+    deleted: bool
+
+
+class ConversationItem(BaseModel):
+    """会话 item：投影自 SDK transcript 的一条 message（blocks 原样透传：thinking/text/tool_use/tool_result）。"""
+
+    id: str
+    object: Literal["conversation.item"] = "conversation.item"
+    type: Literal["message"] = "message"
+    role: Optional[str] = None
+    content: list[JsonObject] = Field(default_factory=list)
+    parent_tool_use_id: Optional[str] = None
+
+
+class ConversationItemList(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[ConversationItem] = Field(default_factory=list)
+    first_id: Optional[str] = None
+    last_id: Optional[str] = None
+    has_more: bool = False

@@ -18,6 +18,7 @@ from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.routers.config import create_config_router
+from app.routers.conversations import create_conversations_router
 from app.routers.core import create_core_router
 from app.routers.error_handlers import register_error_handlers
 from app.routers.eval import create_eval_router
@@ -174,6 +175,7 @@ app = FastAPI(
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
         {"name": "openai-responses", "description": "Canonical OpenAI Responses-first surface (POST /v1/responses, retrieve)."},
+        {"name": "openai-conversations", "description": "OpenAI Conversations surface (create/list/get/delete + items, projected from SDK transcript)."},
     ],
     lifespan=lifespan,
     swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
@@ -231,6 +233,7 @@ app.include_router(
 )
 app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_responses_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, feedback_store=feedback_store, require_api_key=require_api_key))
+app.include_router(create_conversations_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(

@@ -148,6 +148,19 @@
             "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
             "tests/test_responses_stream.py::test_endpoint_stream_control"
           ]
+        },
+        {
+          "id": "conversations_surface",
+          "description": "/v1/conversations：create/list/get/delete（会话对象投影自 SDK session，conv_<sid>）+ items（投影自 SDK transcript blocks、owning-agent 解析无静默 fallback、cursor after->offset、not-found 404、保留 metadata 剥离）。",
+          "pytest": [
+            "tests/test_conversations_api.py::test_create_get_list_delete",
+            "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
+            "tests/test_conversations_api.py::test_get_unknown_conversation_404",
+            "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
+            "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
+            "tests/test_conversations_api.py::test_items_cursor_maps_to_offset",
+            "tests/test_conversations_api.py::test_items_missing_owning_agent_404"
+          ]
         }
       ]
     }

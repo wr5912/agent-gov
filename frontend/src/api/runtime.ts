@@ -48,16 +48,38 @@ export function getHealth(config: RuntimeClientConfig) {
   return requestJson<RuntimeHealth>(config, "/health");
 }
 
-export function getSessions(config: RuntimeClientConfig) {
-  return requestJson<SessionInfo[]>(config, "/api/sessions");
+// 会话侧栏走 canonical /v1/conversations（投影自同一 session_store）；映射回 SessionInfo 使侧栏无需改动。
+export async function getSessions(config: RuntimeClientConfig): Promise<SessionInfo[]> {
+  const list = await requestJson<{ data?: unknown[] }>(config, "/v1/conversations");
+  const data = Array.isArray(list.data) ? list.data : [];
+  return data.map(conversationToSessionInfo).filter((session): session is SessionInfo => session !== null);
 }
 
 export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
-  return requestJson<{ deleted: boolean; session_id: string }>(
+  return requestJson<{ deleted: boolean; id: string }>(
     config,
-    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    `/v1/conversations/${encodeURIComponent(`conv_${sessionId}`)}`,
     { method: "DELETE" },
   );
+}
+
+function conversationToSessionInfo(value: unknown): SessionInfo | null {
+  if (!isRecord(value) || typeof value.id !== "string") return null;
+  const sessionId = value.id.startsWith("conv_") ? value.id.slice("conv_".length) : value.id;
+  const ag = isRecord(value.agentgov) ? value.agentgov : {};
+  const epochToIso = (epoch: unknown): string | undefined =>
+    typeof epoch === "number" ? new Date(epoch * 1000).toISOString() : undefined;
+  const createdAt = epochToIso(value.created_at) || new Date().toISOString();
+  return {
+    session_id: sessionId,
+    sdk_session_id: typeof ag.sdk_session_id === "string" ? ag.sdk_session_id : null,
+    agent_id: typeof ag.agent_id === "string" ? ag.agent_id : null,
+    created_at: createdAt,
+    updated_at: epochToIso(ag.updated_at) || createdAt,
+    title: typeof value.title === "string" ? value.title : undefined,
+    turns: typeof ag.turns === "number" ? ag.turns : 0,
+    metadata: isRecord(value.metadata) ? value.metadata : {},
+  } as SessionInfo;
 }
 
 export function getAgents(config: RuntimeClientConfig, agentId?: string) {

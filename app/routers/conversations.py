@@ -16,6 +16,7 @@ from app.runtime.openai_responses_adapter import (
     session_id_from_conversation,
 )
 from app.runtime.openai_responses_schemas import (
+    AgentGovConversationExtension,
     Conversation,
     ConversationCreateRequest,
     ConversationDeleted,
@@ -35,6 +36,12 @@ def _conversation(session: LocalSession) -> Conversation:
         created_at=iso_to_epoch(session.created_at),
         title=session.title,
         metadata=public_metadata(session.metadata),
+        agentgov=AgentGovConversationExtension(
+            agent_id=session.agent_id,
+            sdk_session_id=session.sdk_session_id,
+            updated_at=iso_to_epoch(session.updated_at),
+            turns=session.turns,
+        ),
     )
 
 

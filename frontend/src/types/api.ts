@@ -2363,6 +2363,22 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /**
+         * AgentGovConversationExtension
+         * @description 会话对象上的 AgentGov 扩展（session 专属、非 OpenAI 标准字段；OpenAI 客户端忽略）。
+         */
+        AgentGovConversationExtension: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Turns */
+            turns?: number | null;
+            /** Updated At */
+            updated_at?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         /** AgentGovDebug */
         AgentGovDebug: {
             /**
@@ -3263,6 +3279,7 @@ export interface components {
         };
         /** Conversation */
         Conversation: {
+            agentgov?: components["schemas"]["AgentGovConversationExtension"];
             /** Created At */
             created_at?: number | null;
             /** Id */

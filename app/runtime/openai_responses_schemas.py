@@ -145,12 +145,24 @@ class ConversationCreateRequest(BaseModel):
     metadata: JsonObject = Field(default_factory=dict, description="Flat observability tags (backend does not route on these).")
 
 
+class AgentGovConversationExtension(BaseModel):
+    """会话对象上的 AgentGov 扩展（session 专属、非 OpenAI 标准字段；OpenAI 客户端忽略）。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    agent_id: Optional[str] = None
+    sdk_session_id: Optional[str] = None
+    updated_at: Optional[int] = None
+    turns: Optional[int] = None
+
+
 class Conversation(BaseModel):
     id: str
     object: Literal["conversation"] = "conversation"
     created_at: Optional[int] = None
     title: Optional[str] = None
     metadata: JsonObject = Field(default_factory=dict)
+    agentgov: AgentGovConversationExtension = Field(default_factory=AgentGovConversationExtension)
 
 
 class ConversationList(BaseModel):

@@ -4,11 +4,14 @@ import subprocess
 import sys
 from pathlib import Path
 
+from app.openapi_contract import expected_error_statuses, operation_items
+from scripts.audit_openapi_contract import audit_schema
 from scripts.export_openapi import (
     CONTAINER_RUNTIME_VOLUME_ROOT,
     LOCAL_DEBUG_RUNTIME_VOLUME_ROOT,
     _apply_local_defaults,
     _local_default_volume_root,
+    build_openapi_schema,
 )
 
 
@@ -137,3 +140,53 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     assert {"get", "put"} <= set(agent_config_file)
     agent_config_update = schema["components"]["schemas"]["AgentConfigFileUpdateResponse"]
     assert "sdk_session_invalidated" in agent_config_update["properties"]
+
+
+def test_openapi_contract_audit_passes_current_schema():
+    schema = dict(build_openapi_schema())
+    expected_version = Path("VERSION").read_text(encoding="utf-8").strip()
+
+    assert audit_schema(schema, expected_version=expected_version) == []
+
+
+def test_openapi_documents_auth_error_for_secured_operations():
+    schema = build_openapi_schema()
+    secured_operations = [(path, method, operation) for path, method, operation in operation_items(schema) if operation.get("security")]
+
+    assert secured_operations
+    for path, method, operation in secured_operations:
+        response = operation["responses"].get("401")
+        assert response, f"{method.upper()} {path} missing 401 response"
+        assert response["content"]["application/json"]["schema"] == {"$ref": "#/components/schemas/HttpErrorResponse"}
+
+
+def test_openapi_documents_streaming_media_types():
+    schema = build_openapi_schema()
+
+    chat_stream = schema["paths"]["/api/chat/stream"]["post"]["responses"]["200"]["content"]
+    assert set(chat_stream) == {"text/event-stream"}
+
+    responses_content = schema["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]
+    assert {"application/json", "text/event-stream"} <= set(responses_content)
+    assert responses_content["application/json"]["schema"] == {"$ref": "#/components/schemas/ResponseObject"}
+
+
+def test_openapi_documents_expected_domain_error_statuses():
+    schema = build_openapi_schema()
+
+    for path, method, operation in operation_items(schema):
+        responses = operation["responses"]
+        for status_code in expected_error_statuses(path, method, operation):
+            assert str(status_code) in responses, f"{method.upper()} {path} missing {status_code}"
+
+
+def test_openapi_success_responses_do_not_have_empty_json_schema():
+    schema = build_openapi_schema()
+
+    for path, method, operation in operation_items(schema):
+        for status_code, response in operation["responses"].items():
+            if not status_code.startswith("2"):
+                continue
+            content = response.get("content", {})
+            json_media = content.get("application/json") if isinstance(content, dict) else None
+            assert not (isinstance(json_media, dict) and json_media.get("schema") == {}), f"{method.upper()} {path} {status_code} has empty JSON schema"

@@ -30,7 +30,7 @@ export function ImprovementPlanExecution({
           ) : null}
           {!archived && !readOnly ? (
             <div className="iw-action-row">
-              <button className="iw-secondary-button" type="button" data-testid="regenerate-optimization-plan" disabled={busy} onClick={onGenerateOpt}>重新整理</button>
+              <button className="iw-secondary-button" type="button" data-testid="regenerate-optimization-plan" disabled={busy} onClick={onGenerateOpt}>重新生成优化方案</button>
             </div>
           ) : null}
         </div>
@@ -60,7 +60,7 @@ export function ImprovementPlanExecution({
       ) : !archived && !readOnly && optPlan ? (
         <div className="iw-detail-section" data-testid="execution-empty">
           <h4>执行记录</h4>
-          <div className="iw-next-step">请使用上方主按钮自动执行优化；需要人工补录时可记录执行结果。</div>
+          <div className="iw-next-step">请使用上方主按钮执行优化；需要人工补录时可记录执行结果。</div>
           <div className="iw-action-row">
             <button className="iw-secondary-button" type="button" data-testid="record-execution" disabled={busy} onClick={onRecordExec}>人工记录执行</button>
           </div>

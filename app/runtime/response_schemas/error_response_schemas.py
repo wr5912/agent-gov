@@ -3,8 +3,22 @@ from __future__ import annotations
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
+
+
+class HttpErrorResponse(BaseModel):
+    """Runtime HTTPException envelope returned by app-level error handlers."""
+
+    detail: JsonValue
+    error_code: str
+
+
+class DomainErrorResponse(HttpErrorResponse):
+    """Domain errors may add route-specific top-level diagnostic fields."""
+
+    model_config = ConfigDict(extra="allow")
 
 
 class FeedbackValidationErrorResponse(BaseModel):

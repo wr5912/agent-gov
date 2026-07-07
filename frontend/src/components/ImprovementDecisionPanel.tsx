@@ -15,6 +15,7 @@ interface ImprovementDecisionPanelProps {
   onPrimaryAction: () => void;
   onBackAction: (stage: string) => void;
   onManageSources: () => void;
+  onRegenerateOptimizationPlan?: () => void;
 }
 
 export function ImprovementDecisionPanel({
@@ -29,6 +30,7 @@ export function ImprovementDecisionPanel({
   onPrimaryAction,
   onBackAction,
   onManageSources,
+  onRegenerateOptimizationPlan,
 }: ImprovementDecisionPanelProps) {
   const refs = item.source_feedback_refs ?? [];
   const runIds = [...new Set(feedbacks.map((f) => f.run_id).filter(Boolean))];
@@ -44,6 +46,10 @@ export function ImprovementDecisionPanel({
     ? operationStatusText(pendingOperation)
     : primaryDecision?.summary ?? decisionSummary(stageView.visibleKey);
   const evidence = pendingOperation ? "治理 Agent 正在处理" : signal.evidence;
+  const showRegenerateOptimizationPlan = item.improvement_status !== "archived"
+    && stageView.visibleKey === "optimization_execution"
+    && primaryDecision?.kind === "apply_execution"
+    && !!onRegenerateOptimizationPlan;
 
   return (
     <>
@@ -100,6 +106,11 @@ export function ImprovementDecisionPanel({
             ) : (
               <span className="iw-done-note" data-testid="improvement-terminal">测试发布已完成，等待发布门禁或资产复用。</span>
             )}
+            {showRegenerateOptimizationPlan ? (
+              <button className="iw-secondary-button" type="button" data-testid="decision-regenerate-optimization-plan" disabled={busy} onClick={onRegenerateOptimizationPlan}>
+                重新生成优化方案
+              </button>
+            ) : null}
             {stageView.backAction ? (
               <button className="iw-secondary-button" type="button" data-testid="decision-back-action" data-action={stageView.backAction.stage} disabled={busy} onClick={() => onBackAction(stageView.backAction!.stage)}>
                 {stageView.backAction.label}

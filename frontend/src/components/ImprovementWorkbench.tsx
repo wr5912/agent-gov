@@ -589,6 +589,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onPrimaryAction={() => handlePrimaryDecision(selected, primaryDecision)}
               onBackAction={(stage) => handleAdvance(selected, stage)}
               onManageSources={() => setSourceDrawerOpen(true)}
+              onRegenerateOptimizationPlan={() => handleGenerateOptPlan(selected)}
             />
 
             <ImprovementStagePanels

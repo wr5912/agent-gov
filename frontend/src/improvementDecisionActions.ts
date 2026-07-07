@@ -56,7 +56,7 @@ export function deriveImprovementListDecisionLabel(item: ImprovementItem): strin
     case "attribution_analysis":
       return "生成优化方案";
     case "optimization_execution":
-      return item.improvement_stage === "execution" ? "执行回归测试" : "自动执行优化";
+      return item.improvement_stage === "execution" ? "执行回归测试" : "执行优化";
     case "test_release":
       return item.improvement_stage === "release" ? "查看发布状态" : "执行回归测试";
   }
@@ -127,9 +127,9 @@ export function deriveImprovementPrimaryDecision({
     }
     if (!execution) {
       return decision("apply_execution", {
-        label: "自动执行优化",
-        question: "确认当前优化方案并自动执行？",
-        summary: "点击后会确认方案，并让治理 Agent 在隔离变更集中应用优化。",
+        label: "执行优化",
+        question: "确认当前优化方案并执行优化？",
+        summary: "点击后会确认方案，并让治理 Agent 在隔离变更集中执行优化。",
         evidence: optimizationPlan.status === "confirmed" ? "方案已确认" : "将隐式确认方案",
         score: 90,
         scoreLabel: "执行准备度",

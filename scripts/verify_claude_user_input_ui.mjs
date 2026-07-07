@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Playground Claude native user-input UI contract:
-// mock SSE -> render HITL cards -> submit decisions -> keep decision token out of visible/local persisted trace.
+// mock /v1/responses SSE -> render HITL cards -> submit decisions -> keep decision token out of visible/local persisted trace.
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -74,7 +74,7 @@ function sse(route, events) {
 
 function routeData(path) {
   if (path === "/health") return { status: "ok", model: "hitl-ui-mock", provider_key_configured: true, claude_web_hitl_enabled: true };
-  if (path === "/api/sessions") return [];
+  if (path === "/v1/conversations") return { data: [] };
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-registry") {
@@ -88,12 +88,18 @@ function routeData(path) {
   return {};
 }
 
-function requestEvent(kind) {
+function sessionIdFromResponsesBody(body) {
+  return typeof body.conversation === "string" && body.conversation.startsWith("conv_")
+    ? body.conversation.slice("conv_".length)
+    : "hitl-ui-session";
+}
+
+function requestEvent(kind, sessionId) {
   const common = {
     business_agent_id: "response-disposal",
     run_id: `run-${kind}`,
-    session_id: "hitl-ui-session",
-    api_session_id: "hitl-ui-session",
+    session_id: sessionId,
+    api_session_id: sessionId,
     sdk_session_id: "sdk-hitl-ui-session",
     status: "waiting",
     context: { tool_use_id: `toolu-${kind}` },
@@ -144,18 +150,19 @@ async function installMockRoutes(page, streamRequests, decisionRequests) {
     if (url.origin === uiBase) return route.continue();
     if (url.hostname !== "runtime.test") return route.continue();
     const path = url.pathname;
-    if (path === "/api/chat/stream" && request.method() === "POST") {
+    if (path === "/v1/responses" && request.method() === "POST") {
       const body = request.postDataJSON();
+      const sessionId = sessionIdFromResponsesBody(body);
       streamRequests.push(body);
       streamIndex += 1;
       const kind = streamIndex === 1 ? "tool" : "question";
       return sse(route, [
-        { event: "session", data: { session_id: body.session_id, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
-        { event: "claude_user_input_required", data: requestEvent(kind) },
-        { event: "done", data: "[DONE]" },
+        { event: "agentgov.session", data: { session_id: sessionId, sdk_session_id: "sdk-hitl-ui-session", run_id: `run-${kind}` } },
+        { event: "agentgov.confirmation.requested", data: requestEvent(kind, sessionId) },
+        { event: "agentgov.done", data: "[DONE]" },
       ]);
     }
-    const decisionMatch = path.match(/^\/api\/claude-user-input-requests\/([^/]+)\/decision$/);
+    const decisionMatch = path.match(/^\/v1\/agentgov\/confirmation-requests\/([^/]+)\/decision$/);
     if (decisionMatch && request.method() === "POST") {
       const body = request.postDataJSON();
       decisionRequests.push({ requestId: decodeURIComponent(decisionMatch[1]), body });
@@ -231,7 +238,7 @@ async function main() {
       throw new Error("AskUserQuestion decision token leaked into visible UI or localStorage");
     }
     if (streamRequests.length !== 2) throw new Error(`expected 2 stream requests, got ${streamRequests.length}`);
-    if (streamRequests.some((item) => item.agent_id !== "response-disposal")) {
+    if (streamRequests.some((item) => item.agentgov?.agent_id !== "response-disposal")) {
       throw new Error(`topbar agent selection did not flow into chat requests: ${JSON.stringify(streamRequests)}`);
     }
     if (decisionRequests.length !== 2) throw new Error(`expected 2 decision requests, got ${decisionRequests.length}`);
@@ -239,7 +246,7 @@ async function main() {
     if (toolDecision.requestId !== "cur-tool" || toolDecision.body.action !== "allow_for_run" || toolDecision.body.decision_token !== "secret-tool-token") {
       throw new Error(`invalid tool decision body: ${JSON.stringify(toolDecision)}`);
     }
-    if (questionDecision.requestId !== "cur-question" || questionDecision.body.action !== "answer_question" || questionDecision.body.response !== "Only the current alert asset.") {
+    if (questionDecision.requestId !== "cur-question" || questionDecision.body.action !== "answer_question" || questionDecision.body.answer?.response !== "Only the current alert asset.") {
       throw new Error(`invalid AskUserQuestion decision body: ${JSON.stringify(questionDecision)}`);
     }
     if (decisionRequests.some((item) => "updated_input" in item.body || item.body.action === "allow_modified")) {

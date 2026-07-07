@@ -7,6 +7,7 @@ COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 # 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
+	app/openapi_contract.py \
 	app/runtime/agent_job_types.py \
 	app/runtime/output_formatter.py \
 	app/runtime/agent_job_runner.py \
@@ -26,6 +27,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/check_docs_governance.py \
 	scripts/check_orphan_tests.py \
 	scripts/check_stage_language.py \
+	scripts/audit_openapi_contract.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
 	scripts/runtime_template_renderer.py \
@@ -36,7 +38,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-hitl-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-repair-managed-config local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-hitl-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -163,6 +165,16 @@ codex-guard:
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
 	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
+	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+
+openapi-contract-check:
+	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+
+container-openapi-check:
+	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
+	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
+	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
 
 sync-version:
 	@v=$$(cat VERSION); sed -i '0,/"version":/s/"version": *"[^"]*"/"version": "'$$v'"/' frontend/package.json; echo "synced frontend/package.json -> $$v"

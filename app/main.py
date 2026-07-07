@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.openapi_contract import install_openapi_contract
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
@@ -309,3 +310,5 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
+
+install_openapi_contract(app)

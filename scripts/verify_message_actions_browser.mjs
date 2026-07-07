@@ -142,15 +142,32 @@ function mockPayload(urlOrPath) {
   const url = typeof urlOrPath === "string" ? null : urlOrPath;
   const path = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
   if (path === "/health") return { status: "ok", model: "parity-mock", provider_key_configured: true };
-  if (path === "/api/sessions") return [{
-    session_id: "mock-session",
-    sdk_session_id: "mock-session",
-    created_at: ts,
-    updated_at: "2026-06-18T00:00:30Z",
-    title: "用一句话说明你的角色。",
-    turns: 14,
-    metadata: { client: "agent-gov-ui" },
-  }];
+  if (path === "/v1/conversations" || path === "/api/sessions") {
+    return path === "/v1/conversations"
+      ? {
+          data: [{
+            id: "conv_mock-session",
+            created_at: Date.parse(ts) / 1000,
+            title: "用一句话说明你的角色。",
+            metadata: { client: "agent-gov-ui" },
+            agentgov: {
+              sdk_session_id: "mock-session",
+              agent_id: "main-agent",
+              updated_at: Date.parse("2026-06-18T00:00:30Z") / 1000,
+              turns: 14,
+            },
+          }],
+        }
+      : [{
+          session_id: "mock-session",
+          sdk_session_id: "mock-session",
+          created_at: ts,
+          updated_at: "2026-06-18T00:00:30Z",
+          title: "用一句话说明你的角色。",
+          turns: 14,
+          metadata: { client: "agent-gov-ui" },
+        }];
+  }
   if (path === "/api/agent-runs") {
     const includeMessages = url?.searchParams.get("include_messages") === "true";
     return mockAgentRuns(includeMessages);
@@ -161,6 +178,12 @@ function mockPayload(urlOrPath) {
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v-mock", commit_sha: "mock", created_at: ts, reason: "current" };
   return {};
+}
+
+function sessionIdFromResponsesBody(body) {
+  return typeof body.conversation === "string" && body.conversation.startsWith("conv_")
+    ? body.conversation.slice("conv_".length)
+    : "mock-session";
 }
 
 async function scrollDistance(page) {
@@ -223,12 +246,14 @@ async function main() {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
-        if (url.pathname === "/api/chat/stream") {
+        if (url.pathname === "/v1/responses") {
+          const body = route.request().postDataJSON();
+          const sessionId = sessionIdFromResponsesBody(body);
           return sse(route, [
-            { event: "session", data: { session_id: "mock-session" } },
-            { event: "message", data: { text: "我是 AgentGov 测试助手。" } },
-            { event: "result", data: { run_id: "mock-run", session_id: "mock-session", agent_version_id: "v-mock" } },
-            { event: "done", data: { ok: true } },
+            { event: "agentgov.session", data: { session_id: sessionId } },
+            { event: "response.output_text.delta", data: { delta: "我是 AgentGov 测试助手。" } },
+            { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
+            { event: "agentgov.done", data: { ok: true } },
           ]);
         }
         return json(route, mockPayload(url));

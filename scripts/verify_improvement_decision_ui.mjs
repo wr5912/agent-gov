@@ -144,6 +144,9 @@ function mockState() {
     },
     feedbackSeq: 1,
     attribution: null,
+    optimizationPlan: null,
+    optimizationGenerateCount: 0,
+    execution: null,
   };
 }
 
@@ -177,11 +180,46 @@ async function installMockRoutes(page, state) {
       state.attribution = { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
       return json(route, state.attribution);
     }
+    if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) {
+      state.attribution = {
+        ...(state.attribution || { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], generated_by: "governor", created_at: ts }),
+        status: "confirmed",
+        updated_at: ts,
+      };
+      return json(route, state.attribution);
+    }
     if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) {
       return state.attribution ? json(route, state.attribution) : json(route, { detail: "not found" }, 404);
     }
-    if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return json(route, { optimization_plan_id: "opt-1", improvement_id: state.target.improvement_id, summary: "补充时间窗口核验", changes: [], status: "draft", created_at: ts, updated_at: ts });
-    if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return json(route, { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "尚未执行", changes_applied: [], agent_version: "", status: "draft", created_at: ts, updated_at: ts });
+    if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) {
+      await delay(300);
+      state.optimizationGenerateCount += 1;
+      state.optimizationPlan = {
+        optimization_plan_id: "opt-1",
+        improvement_id: state.target.improvement_id,
+        summary: `补充时间窗口核验（第 ${state.optimizationGenerateCount} 版）`,
+        changes: [{ target: "prompt", change: `补充事件时间与告警时间一致性校验（第 ${state.optimizationGenerateCount} 版）` }],
+        status: "draft",
+        generated_by: "governor",
+        created_at: ts,
+        updated_at: ts,
+      };
+      return json(route, state.optimizationPlan);
+    }
+    if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) {
+      state.optimizationPlan = {
+        ...(state.optimizationPlan || { optimization_plan_id: "opt-1", improvement_id: state.target.improvement_id, summary: "补充时间窗口核验", changes: [], generated_by: "governor", created_at: ts }),
+        status: "confirmed",
+        updated_at: ts,
+      };
+      return json(route, state.optimizationPlan);
+    }
+    if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return state.optimizationPlan ? json(route, state.optimizationPlan) : json(route, { detail: "not found" }, 404);
+    if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) {
+      state.execution = { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "已在隔离变更集执行优化", changes_applied: ["补充时间窗口校验"], agent_version: "ver-cand", status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+      return json(route, state.execution);
+    }
+    if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return state.execution ? json(route, state.execution) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
     if (/^\/api\/automation-policy/.test(path)) return json(route, { agent_id: "soc-ops", mode: "off" });
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
@@ -207,8 +245,8 @@ async function assertVisible(page, testId) {
 }
 
 async function main() {
-  const target = REAL ? await seedRealData() : mockState().target;
   const state = REAL ? null : mockState();
+  const target = REAL ? await seedRealData() : state.target;
   const server = REAL ? null : startVite();
   try {
     if (!REAL) await waitForVite();
@@ -295,6 +333,37 @@ async function main() {
       const recordState = await page.getByTestId("stage-local-record-node").filter({ hasText: "生成归因分析" }).first().getAttribute("data-state");
       if (recordState !== "current") throw new Error(`expected generating record state current, got ${recordState}`);
       await page.getByTestId("attribution-source").waitFor({ timeout: 10_000 });
+
+      const firstPlanResponse = page.waitForResponse((response) => response.url().includes("/optimization-plan/generate") && response.request().method() === "POST");
+      await page.getByTestId("primary-action").click();
+      const firstPlan = await firstPlanResponse;
+      if (!firstPlan.ok()) throw new Error(`first optimization plan generation failed: ${firstPlan.status()}`);
+      await page.getByTestId("optimization-plan-source").waitFor({ timeout: 10_000 });
+      const primaryAction = page.getByTestId("current-decision-card").getByTestId("primary-action").first();
+      await primaryAction.waitFor({ timeout: 10_000 });
+      const executeLabel = (await primaryAction.innerText()).trim();
+      const executeAction = await primaryAction.getAttribute("data-action");
+      if (executeLabel !== "执行优化") throw new Error(`unexpected execute optimization label: ${executeLabel}`);
+      if (executeAction !== "apply-execution") throw new Error(`unexpected execute action: ${executeAction}`);
+      const decisionText = await page.getByTestId("current-decision-card").innerText();
+      if (decisionText.includes("自动执行优化")) throw new Error(`decision card still contains old execute copy: ${decisionText}`);
+      const decisionRegenerate = await assertVisible(page, "decision-regenerate-optimization-plan");
+      const decisionRegenerateLabel = (await decisionRegenerate.innerText()).trim();
+      if (decisionRegenerateLabel !== "重新生成优化方案") throw new Error(`unexpected decision regenerate label: ${decisionRegenerateLabel}`);
+      const detailRegenerate = await assertVisible(page, "regenerate-optimization-plan");
+      const detailRegenerateLabel = (await detailRegenerate.innerText()).trim();
+      if (detailRegenerateLabel !== "重新生成优化方案") throw new Error(`unexpected detail regenerate label: ${detailRegenerateLabel}`);
+
+      const secondPlanResponse = page.waitForResponse((response) => response.url().includes("/optimization-plan/generate") && response.request().method() === "POST");
+      await decisionRegenerate.click();
+      const secondPlan = await secondPlanResponse;
+      if (!secondPlan.ok()) throw new Error(`regenerate optimization plan failed: ${secondPlan.status()}`);
+      await page.waitForFunction(
+        () => document.querySelector('[data-testid="optimization-plan"]')?.textContent?.includes("第 2 版"),
+        null,
+        { timeout: 10_000 },
+      );
+      if (state.optimizationGenerateCount < 2) throw new Error(`expected regeneration endpoint to be called twice, got ${state.optimizationGenerateCount}`);
     }
 
     await browser.close();

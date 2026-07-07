@@ -29,6 +29,7 @@ from app.routers.improvements import create_improvement_relations_router, create
 from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.routers.openai import create_openai_router
 from app.routers.regression_assets import create_regression_assets_router
+from app.routers.responses import create_responses_router
 from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
@@ -172,6 +173,7 @@ app = FastAPI(
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
+        {"name": "openai-responses", "description": "Canonical OpenAI Responses-first surface (POST /v1/responses, retrieve)."},
     ],
     lifespan=lifespan,
     swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
@@ -228,6 +230,7 @@ app.include_router(
     )
 )
 app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
+app.include_router(create_responses_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(

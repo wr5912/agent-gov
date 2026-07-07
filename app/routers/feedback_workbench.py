@@ -1,15 +1,14 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
 
 from app.routers.error_helpers import ensure_found, require_request
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.json_types import JsonObject
-from app.runtime.message_utils import extract_text
+from app.runtime.message_utils import extract_answer_from_messages
 from app.runtime.response_schemas.agent_job_response_schemas import AgentJobResponse
-from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.schemas import (
     AgentRunResponse,
     AssetProvenanceImprovement,
@@ -20,12 +19,13 @@ from app.runtime.schemas import (
     FeedbackSignalResponse,
     FeedbackSourceResponse,
     FeedbackSourceUpdateRequest,
-    PendingCorrelationResponse,
     PendingCorrelationResolveRequest,
+    PendingCorrelationResponse,
     SocEventIngestRequest,
     SocEventIngestResponse,
     SocEventResponse,
 )
+from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 
 
@@ -66,9 +66,7 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
             description="Return full SDK messages and reconstructed assistant answer for Playground session restore.",
         ),
     ) -> list[JsonObject]:
-        runs = feedback_store.list_runs(
-            run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit
-        )
+        runs = feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit)
         return [_agent_run_response_payload(run, include_messages=include_messages) for run in runs]
 
 
@@ -82,28 +80,10 @@ def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> J
         return payload
     payload["messages"] = [message for message in messages if isinstance(message, dict)]
     if not isinstance(payload.get("answer"), str) or not str(payload.get("answer")).strip():
-        answer = _extract_agent_run_answer(payload["messages"])
+        answer = extract_answer_from_messages(payload["messages"])
         if answer:
             payload["answer"] = answer
     return payload
-
-
-def _extract_agent_run_answer(messages: list[JsonObject]) -> str | None:
-    assistant_parts: list[str] = []
-    fallback_parts: list[str] = []
-    for message in messages:
-        text = extract_text(message)
-        if not text:
-            continue
-        event = str(message.get("event") or message.get("type") or message.get("role") or "")
-        if event.startswith("AssistantMessage") or event == "assistant":
-            assistant_parts.append(text)
-        elif event.startswith("ResultMessage"):
-            fallback_parts.append(text)
-        else:
-            fallback_parts.append(text)
-    answer = "\n\n".join(assistant_parts or fallback_parts).strip()
-    return answer or None
 
 
 def _register_feedback_signal_routes(
@@ -160,9 +140,7 @@ def _register_feedback_signal_routes(
     )
     async def reassign_feedback_signal_agent(signal_id: str, req: FeedbackSignalReassignRequest) -> FeedbackSignalResponse:
         # 管理员修正反馈归属；改写 agent_id 并保留 from/to/operator/reason 审计记录（AGV-025）。
-        return feedback_store.reassign_signal_agent(
-            signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason
-        ).to_payload()
+        return feedback_store.reassign_signal_agent(signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason).to_payload()
 
     @router.get(
         "/asset-registry/feedback/{feedback_case_id}",
@@ -190,14 +168,14 @@ def _asset_provenance_improvement(
     improvement_store: ImprovementStore,
     item: object,
 ) -> AssetProvenanceImprovement:
-    links = improvement_store.list_links(getattr(item, "improvement_id"))
+    links = improvement_store.list_links(item.improvement_id)
     return AssetProvenanceImprovement(
-        improvement_id=getattr(item, "improvement_id"),
-        agent_id=getattr(item, "agent_id"),
-        title=getattr(item, "title"),
-        improvement_stage=getattr(item, "improvement_stage"),
-        improvement_status=getattr(item, "improvement_status"),
-        source_feedback_refs=list(getattr(item, "source_feedback_refs")),
+        improvement_id=item.improvement_id,
+        agent_id=item.agent_id,
+        title=item.title,
+        improvement_stage=item.improvement_stage,
+        improvement_status=item.improvement_status,
+        source_feedback_refs=list(item.source_feedback_refs),
         change_set_ids=[link.ref_id for link in links if link.kind == "change_set"],
     )
 

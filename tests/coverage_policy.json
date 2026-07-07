@@ -103,6 +103,40 @@
           ]
         }
       ]
+    },
+    {
+      "id": "openai_responses_first_surface",
+      "description": "OpenAI Responses-first canonical 接口：POST /v1/responses（strict/control 双模式、agent_id 必填、instructions strict 处置、previous_response_id 归属）与 GET /v1/responses/{id} retrieve（从 run 重建、status 派生、store=false 404）。",
+      "scenarios": [
+        {
+          "id": "responses_create_strict_and_control",
+          "description": "非流式 /v1/responses：control 映射 agentgov 字段并要求 agent_id（缺失 422、未知 404）、strict 用运营者出口 Agent 并拒绝 instructions（append-only 非 replace）、失效 503、previous_response_id 409/404、agentgov extra=forbid、保留 metadata key 剥离。",
+          "pytest": [
+            "tests/test_responses_api.py::test_control_runs_business_agent_and_maps_fields",
+            "tests/test_responses_api.py::test_control_response_projection_shape",
+            "tests/test_responses_api.py::test_control_missing_agent_id_422",
+            "tests/test_responses_api.py::test_control_unknown_agent_404",
+            "tests/test_responses_api.py::test_strict_uses_operator_agent",
+            "tests/test_responses_api.py::test_strict_rejects_instructions_422",
+            "tests/test_responses_api.py::test_strict_fail_loud_503_when_operator_agent_deleted",
+            "tests/test_responses_api.py::test_previous_response_id_conflict_409",
+            "tests/test_responses_api.py::test_previous_response_id_not_found_404",
+            "tests/test_responses_api.py::test_agentgov_unknown_field_rejected_422",
+            "tests/test_responses_api.py::test_client_cannot_inject_reserved_store_marker"
+          ]
+        },
+        {
+          "id": "responses_retrieve_reconstruction",
+          "description": "GET /v1/responses/{id}：从持久化 run 重建 output（来自 messages 非截断 answer_summary）、status 由 errors 派生、store=false 公开 404、not-found 404、保留 metadata key 回显剥离。",
+          "pytest": [
+            "tests/test_responses_retrieve.py::test_retrieve_reconstructs_output_from_messages",
+            "tests/test_responses_retrieve.py::test_retrieve_status_failed_from_errors",
+            "tests/test_responses_retrieve.py::test_retrieve_store_false_public_404",
+            "tests/test_responses_retrieve.py::test_retrieve_not_found_404",
+            "tests/test_responses_retrieve.py::test_retrieve_strips_reserved_metadata_on_echo"
+          ]
+        }
+      ]
     }
   ]
 }

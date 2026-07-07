@@ -99,6 +99,8 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-releases/{release_id}/restore",
         "/api/claude-user-input-requests/{request_id}/decision",
         "/v1/chat/completions",
+        "/v1/responses",
+        "/v1/responses/{response_id}",
     }
     assert current_paths <= set(schema["paths"])
 
@@ -107,7 +109,6 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
         "/api/optimization-proposals",
         "/api/optimization-tasks/{task_id}/execution-jobs",
-        "/v1/responses",
     }
     assert set(schema["paths"]).isdisjoint(legacy_paths)
 

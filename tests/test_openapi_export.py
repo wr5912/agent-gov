@@ -98,6 +98,7 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         "/api/agent-change-sets/{change_set_id}/publish",
         "/api/agent-releases/{release_id}/restore",
         "/api/claude-user-input-requests/{request_id}/decision",
+        "/v1/agentgov/confirmation-requests/{request_id}/decision",
         "/v1/chat/completions",
         "/v1/responses",
         "/v1/responses/{response_id}",

@@ -178,19 +178,15 @@ class ClaudeUserInputService:
         decision: ClaudeUserInputDecisionRequest,
         decided_by: str,
     ) -> ClaudeUserInputRequestRecord:
+        # 校验顺序：record 存在性 -> decision_token(constant-time) -> status/pending。
+        # request_id(URL) 定位 + decision_token 为唯一授权因子；不再校验冗余的 run/session/agent 三元组。
         record = self._store.get(request_id)
         if record is None:
             raise ClaudeUserInputNotFound(f"Claude user input request not found: {request_id}")
-        if record.status != "waiting":
-            raise ClaudeUserInputConflict(f"Claude user input request is already {record.status}")
-        if (
-            decision.run_id != record.run_id
-            or decision.session_id != record.api_session_id
-            or decision.business_agent_id != record.business_agent_id
-        ):
-            raise ClaudeUserInputConflict("Claude user input decision context does not match the waiting request")
         if not hmac.compare_digest(record.decision_token_hash, _token_hash(decision.decision_token)):
             raise ClaudeUserInputConflict("Claude user input decision token is invalid")
+        if record.status != "waiting":
+            raise ClaudeUserInputConflict(f"Claude user input request is already {record.status}")
         pending = self._pending.get(request_id)
         if pending is None:
             raise ClaudeUserInputConflict("Claude execution is no longer waiting for this request")
@@ -266,19 +262,12 @@ class ClaudeUserInputService:
 
         if decision.action != "answer_question":
             raise ClaudeUserInputInvalid("ask_user_question requests require answer_question")
-        if not decision.answers and not (decision.response and decision.response.strip()):
-            raise ClaudeUserInputInvalid("answer_question requires answers or response")
+        if not decision.answer:
+            raise ClaudeUserInputInvalid("answer_question requires answer")
+        # 单一 answer 对象的键并入 SDK AskUserQuestion 的 updated_input（镜像其答案 schema）。
         updated_input = dict(pending.raw_input)
-        if decision.answers:
-            updated_input["answers"] = decision.answers
-        if decision.response and decision.response.strip():
-            updated_input["response"] = decision.response.strip()
-        decision_data: JsonObject = {}
-        if decision.answers:
-            decision_data["answers"] = decision.answers
-        if decision.response and decision.response.strip():
-            decision_data["response"] = decision.response.strip()
-        return SdkUserInputDecision(action="answer_question", ask_user_question_input=updated_input), decision_data, "answer_question"
+        updated_input.update(decision.answer)
+        return SdkUserInputDecision(action="answer_question", ask_user_question_input=updated_input), dict(decision.answer), "answer_question"
 
     @staticmethod
     def _risk_payload(

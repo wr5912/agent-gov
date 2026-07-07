@@ -16,9 +16,11 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
+from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 from app.runtime.json_types import JsonObject
 from app.runtime.stores.improvement_content_store import ExecutionRecord, ImprovementContentStore
@@ -29,7 +31,19 @@ from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 logger = logging.getLogger(__name__)
 
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
-_DEFAULT_TARGETS = ["CLAUDE.md"]
+# 受治理 apply 的可写配置目标：CLAUDE.md（prompt/角色）+ .claude/settings.json（权限）+ .mcp.json（工具）+ 现存 skills。
+# 全部仍经隔离 worktree + 结构化护栏（guard_execution_write）+ change set 审批；不给 governor 直写。
+_BASE_CONFIG_TARGETS = ["CLAUDE.md", ".claude/settings.json", ".mcp.json"]
+_MAX_SKILL_TARGETS = 12
+
+
+def _editable_config_targets(worktree: Path) -> list[str]:
+    targets = list(_BASE_CONFIG_TARGETS)
+    skills_dir = worktree / ".claude" / "skills"
+    if skills_dir.is_dir():
+        for skill_md in sorted(skills_dir.glob("*/SKILL.md"))[:_MAX_SKILL_TARGETS]:
+            targets.append(skill_md.relative_to(worktree).as_posix())
+    return targets
 
 
 class ImprovementExecutionService:
@@ -77,13 +91,16 @@ class ImprovementExecutionService:
             store = self._gov._store_for(agent_id)
             pre_version = store.version_summary(str(change_set["base_commit_sha"]), reason="improvement_execution_base", note=None)
             policy = WorkspaceExecutionTargetPolicy(worktree)
-            output = await self._run_execution_governor(plan, policy, trace_ref=trace_ref)
+            targets = _editable_config_targets(worktree)
+            output = await self._run_execution_governor(plan, policy, targets, trace_ref=trace_ref)
             data = output.model_dump() if hasattr(output, "model_dump") else dict(output)
             operations = data.get("operations") or []
             if data.get("status") != "ready" or not operations:
                 self._gov.abandon_change_set(change_set_id, note="governor 未产出可应用执行操作")
                 return self._heuristic(plan, improvement_id, reason=str(data.get("no_action_reason") or ""))
-            self._execution_app.apply_execution_operations(operations, workspace_dir=worktree, target_policy=policy)
+            self._execution_app.apply_execution_operations(
+                operations, workspace_dir=worktree, target_policy=policy, content_guard=guard_execution_write, allowed_targets=set(targets)
+            )
             applied_version, applied_diff = self._commit_candidate(store, worktree, pre_version, change_set_id, improvement_id)
         except Exception:
             try:
@@ -113,6 +130,7 @@ class ImprovementExecutionService:
         self,
         plan: Any,
         policy: WorkspaceExecutionTargetPolicy,
+        targets: list[str],
         *,
         trace_ref: dict[str, str] | None = None,
     ) -> FormatterOutputModel:
@@ -121,6 +139,7 @@ class ImprovementExecutionService:
         recommendations = [str(c.get("change", "")).strip() for c in changes if c.get("change")]
         plan_summary = getattr(plan, "summary", "") or "优化方案"
         target_type = str((changes[0].get("target") if changes else "prompt") or "prompt")
+        primary = targets[0]
         job_input: JsonObject = {
             "proposal": {
                 "title": plan_summary[:200],
@@ -129,12 +148,12 @@ class ImprovementExecutionService:
                 "recommendation": "；".join(recommendations) or plan_summary,
                 "recommended_actions": recommendations or [plan_summary],
                 "target_type": target_type,
-                "target_path": _DEFAULT_TARGETS[0],
-                "target_summary": f"在 {_DEFAULT_TARGETS[0]} 落实：{plan_summary}",
+                "target_path": primary,
+                "target_summary": f"在 {primary} 等可写配置资产落实：{plan_summary}",
             },
-            "target_paths": list(_DEFAULT_TARGETS),
+            "target_paths": targets,
             "target_policy": policy.policy_json(),
-            "target_file_contexts": policy.file_contexts(list(_DEFAULT_TARGETS)),
+            "target_file_contexts": policy.file_contexts(targets),
         }
         prompt = spec.prompt_builder(job_input)
         assert self._run_profile_json is not None

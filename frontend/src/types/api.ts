@@ -1270,6 +1270,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/improvements/{improvement_id}/normalized-feedback/generate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Organize feedback into title/problem via DSPy formatter (heuristic fallback) */
+        post: operations["generate_nf_api_improvements__improvement_id__normalized_feedback_generate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/improvements/{improvement_id}/optimization-plan": {
         parameters: {
             query?: never;
@@ -1871,6 +1888,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/agentgov/confirmation-requests/{request_id}/decision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resolve one active HITL confirmation (canonical; authz = request_id + decision_token) */
+        post: operations["decide_v1_agentgov_confirmation_requests__request_id__decision_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/chat/completions": {
         parameters: {
             query?: never;
@@ -1885,6 +1919,99 @@ export interface paths {
          * @description Maps OpenAI-style messages into one Claude Agent prompt. OpenAI requests carry no agent_id; the target agent is operator-configured via /api/settings/openai-compat-agent (defaults to the main agent).
          */
         post: operations["openai_chat_completions_v1_chat_completions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List conversations (AgentGov extension for the session sidebar) */
+        get: operations["list_conversations_v1_conversations_get"];
+        put?: never;
+        /** Create a conversation */
+        post: operations["create_conversation_v1_conversations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Retrieve a conversation */
+        get: operations["get_conversation_v1_conversations__conversation_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete a conversation mapping */
+        delete: operations["delete_conversation_v1_conversations__conversation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/conversations/{conversation_id}/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List conversation items (projected from the SDK transcript; cursor-style after/limit/order/include) */
+        get: operations["list_conversation_items_v1_conversations__conversation_id__items_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/responses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run an AgentGov business agent (OpenAI Responses-compatible)
+         * @description Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control envelope in control mode).
+         */
+        post: operations["create_response_v1_responses_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/responses/{response_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Retrieve a stored response (reconstructed from the agent run)
+         * @description Rebuilds the response from the persisted agent run (resp_<run_id>). Minimal retrieve: completed runs only; status derived from errors/stop_reason; output_text from the message timeline. store=false -> 404 (internal audit stays).
+         */
+        get: operations["retrieve_response_v1_responses__response_id__get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -2233,6 +2360,112 @@ export interface components {
             parent_version_id?: string | null;
             /** Reason */
             reason: string;
+        } & {
+            [key: string]: unknown;
+        };
+        /**
+         * AgentGovConversationExtension
+         * @description 会话对象上的 AgentGov 扩展（session 专属、非 OpenAI 标准字段；OpenAI 客户端忽略）。
+         */
+        AgentGovConversationExtension: {
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Turns */
+            turns?: number | null;
+            /** Updated At */
+            updated_at?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
+        /** AgentGovDebug */
+        AgentGovDebug: {
+            /**
+             * Sdk Raw
+             * @default false
+             */
+            sdk_raw: boolean;
+        };
+        /** AgentGovHitl */
+        AgentGovHitl: {
+            /**
+             * Allow For Run
+             * @default false
+             */
+            allow_for_run: boolean;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+        };
+        /**
+         * AgentGovRequestExtension
+         * @description control 模式的 AgentGov 控制面扩展。存在即选中 control 模式。
+         */
+        AgentGovRequestExtension: {
+            /**
+             * Agent Id
+             * @description Business agent to run. Required in control mode; missing -> 422 (no silent main).
+             */
+            agent_id?: string | null;
+            /**
+             * Alert Id
+             * @description Feedback-loop routing input (backend-owned).
+             */
+            alert_id?: string | null;
+            /**
+             * Case Id
+             * @description Feedback-loop routing input (backend-owned).
+             */
+            case_id?: string | null;
+            debug?: components["schemas"]["AgentGovDebug"] | null;
+            hitl?: components["schemas"]["AgentGovHitl"] | null;
+            /**
+             * Max Turns
+             * @description Claude Code turn cap.
+             */
+            max_turns?: number | null;
+        };
+        /**
+         * AgentGovResponseExtension
+         * @description 响应侧 AgentGov 扩展（对称于请求侧顶层 agentgov）。
+         */
+        AgentGovResponseExtension: {
+            /** Agent Activity */
+            agent_activity?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Version Id */
+            agent_version_id?: string | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Errors */
+            errors?: string[];
+            /**
+             * Output Text
+             * @description Convenience aggregate of output[] text; AgentGov projection, not an OpenAI wire-standard field.
+             */
+            output_text?: string | null;
+            /** Run Id */
+            run_id?: string | null;
+            /** Sdk Session Id */
+            sdk_session_id?: string | null;
+            /** Session Id */
+            session_id?: string | null;
+            /** Stop Reason */
+            stop_reason?: string | null;
+            /** Total Cost Usd */
+            total_cost_usd?: number | null;
+            /** Trace Id */
+            trace_id?: string | null;
+            /** Usage */
+            usage?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
         } & {
             [key: string]: unknown;
         };
@@ -2886,29 +3119,29 @@ export interface components {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
         };
-        /** ClaudeUserInputDecisionRequest */
+        /**
+         * ClaudeUserInputDecisionRequest
+         * @description HITL 决策请求（目标契约）。
+         *
+         *     授权仅凭 ``request_id``(URL) 定位 + ``decision_token``(per-request、hmac constant-time)；不再回传
+         *     ``run_id``/``session_id``/``business_agent_id`` 三元组（冗余、GET list 公开可读、不构成第二因子）。
+         *     ``answer_question`` 应答收敛为单一 ``answer``（对象，其键并入 SDK AskUserQuestion 的 updated_input）。
+         *     ``extra="forbid"`` 堵未设计字段（如 ``updated_input``/``allow_modified``）。
+         */
         ClaudeUserInputDecisionRequest: {
             /**
              * Action
              * @enum {string}
              */
             action: "allow_once" | "allow_for_run" | "deny" | "answer_question";
-            /** Answers */
-            answers?: {
+            /** Answer */
+            answer?: {
                 [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Business Agent Id */
-            business_agent_id: string;
+            } | null;
             /** Decision Token */
             decision_token: string;
             /** Message */
             message?: string | null;
-            /** Response */
-            response?: string | null;
-            /** Run Id */
-            run_id: string;
-            /** Session Id */
-            session_id: string;
         };
         /** ClaudeUserInputDecisionResponse */
         ClaudeUserInputDecisionResponse: {
@@ -3043,6 +3276,108 @@ export interface components {
             mappings: components["schemas"]["ConfigMappingItem"][];
             /** Setting Sources Effective */
             setting_sources_effective?: string[] | null;
+        };
+        /** Conversation */
+        Conversation: {
+            agentgov?: components["schemas"]["AgentGovConversationExtension"];
+            /** Created At */
+            created_at?: number | null;
+            /** Id */
+            id: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Object
+             * @default conversation
+             * @constant
+             */
+            object: "conversation";
+            /** Title */
+            title?: string | null;
+        };
+        /** ConversationCreateRequest */
+        ConversationCreateRequest: {
+            /**
+             * Metadata
+             * @description Flat observability tags (backend does not route on these).
+             */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /** ConversationDeleted */
+        ConversationDeleted: {
+            /** Deleted */
+            deleted: boolean;
+            /** Id */
+            id: string;
+            /**
+             * Object
+             * @default conversation.deleted
+             * @constant
+             */
+            object: "conversation.deleted";
+        };
+        /**
+         * ConversationItem
+         * @description 会话 item：投影自 SDK transcript 的一条 message（blocks 原样透传：thinking/text/tool_use/tool_result）。
+         */
+        ConversationItem: {
+            /** Content */
+            content?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /** Id */
+            id: string;
+            /**
+             * Object
+             * @default conversation.item
+             * @constant
+             */
+            object: "conversation.item";
+            /** Parent Tool Use Id */
+            parent_tool_use_id?: string | null;
+            /** Role */
+            role?: string | null;
+            /**
+             * Type
+             * @default message
+             * @constant
+             */
+            type: "message";
+        };
+        /** ConversationItemList */
+        ConversationItemList: {
+            /** Data */
+            data?: components["schemas"]["ConversationItem"][];
+            /** First Id */
+            first_id?: string | null;
+            /**
+             * Has More
+             * @default false
+             */
+            has_more: boolean;
+            /** Last Id */
+            last_id?: string | null;
+            /**
+             * Object
+             * @default list
+             * @constant
+             */
+            object: "list";
+        };
+        /** ConversationList */
+        ConversationList: {
+            /** Data */
+            data?: components["schemas"]["Conversation"][];
+            /**
+             * Object
+             * @default list
+             * @constant
+             */
+            object: "list";
         };
         /**
          * DuplicateScenarioPackGroupResponse
@@ -4133,6 +4468,21 @@ export interface components {
         NormalizedFeedbackResponse: {
             /** Created At */
             created_at: string;
+            /**
+             * Generated By
+             * @default heuristic
+             */
+            generated_by: string;
+            /**
+             * Generation Trace Id
+             * @default
+             */
+            generation_trace_id: string;
+            /**
+             * Generation Trace Url
+             * @default
+             */
+            generation_trace_url: string;
             /** Impact */
             impact: string;
             /** Improvement Id */
@@ -4501,6 +4851,124 @@ export interface components {
              * @description 回归用例输入（发给 Agent 的 prompt）。
              */
             prompt: string;
+        };
+        /**
+         * ResponseObject
+         * @description OpenAI Responses ``response`` 对象 + 顶层 ``agentgov`` 扩展。
+         *
+         *     权威输出在 ``output[]``（``message`` -> ``content[].output_text.text``）；便利聚合在
+         *     ``agentgov.output_text``（不在顶层放 output_text 冒充 OpenAI 标准字段）。
+         */
+        ResponseObject: {
+            agentgov: components["schemas"]["AgentGovResponseExtension"];
+            /** Created At */
+            created_at?: number | null;
+            /** Id */
+            id: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Model */
+            model?: string | null;
+            /**
+             * Object
+             * @default response
+             * @constant
+             */
+            object: "response";
+            /** Output */
+            output?: components["schemas"]["ResponseOutputMessage"][];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "completed" | "failed" | "incomplete";
+            /** Usage */
+            usage?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+        };
+        /** ResponseOutputMessage */
+        ResponseOutputMessage: {
+            /** Content */
+            content?: components["schemas"]["ResponseOutputText"][];
+            /**
+             * Role
+             * @default assistant
+             * @constant
+             */
+            role: "assistant";
+            /**
+             * Type
+             * @default message
+             * @constant
+             */
+            type: "message";
+        };
+        /** ResponseOutputText */
+        ResponseOutputText: {
+            /** Text */
+            text: string;
+            /**
+             * Type
+             * @default output_text
+             * @constant
+             */
+            type: "output_text";
+        };
+        /**
+         * ResponsesRequest
+         * @description ``POST /v1/responses`` 请求。无 ``agentgov`` = strict 模式；有 = control 模式。
+         */
+        ResponsesRequest: {
+            /** @description Presence selects control mode; carries the non-standard control plane. */
+            agentgov?: components["schemas"]["AgentGovRequestExtension"] | null;
+            /**
+             * Conversation
+             * @description conv_<session_id>; maps to the server session.
+             */
+            conversation?: string | null;
+            /**
+             * Input
+             * @description Prompt string, or Responses input items.
+             */
+            input: string | {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            /**
+             * Instructions
+             * @description OpenAI standard field NAME. In AgentGov this is APPEND-ONLY (mapped to system_append, appended to the Claude Code preset + workspace CLAUDE.md), which differs from OpenAI replace/swap semantics. Rejected (422) on the strict surface.
+             */
+            instructions?: string | null;
+            /**
+             * Metadata
+             * @description Flat observability tags only (source/client_run_label); backend does not route on these.
+             */
+            metadata?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Model
+             * @description Per-request LLM override only; never an agent handle.
+             */
+            model?: string | null;
+            /**
+             * Previous Response Id
+             * @description Derives owning conversation; 409 if inconsistent with an explicit conversation, 404 if not found.
+             */
+            previous_response_id?: string | null;
+            /**
+             * Store
+             * @description Default true; false only closes public GET /v1/responses/{id}, internal audit stays.
+             * @default true
+             */
+            store: boolean;
+            /**
+             * Stream
+             * @default false
+             */
+            stream: boolean;
         };
         /** RuntimeDependencyVersions */
         RuntimeDependencyVersions: {
@@ -7895,6 +8363,37 @@ export interface operations {
             };
         };
     };
+    generate_nf_api_improvements__improvement_id__normalized_feedback_generate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NormalizedFeedbackResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_opt_api_improvements__improvement_id__optimization_plan_get: {
         parameters: {
             query?: never;
@@ -9172,6 +9671,41 @@ export interface operations {
             };
         };
     };
+    decide_v1_agentgov_confirmation_requests__request_id__decision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClaudeUserInputDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClaudeUserInputDecisionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     openai_chat_completions_v1_chat_completions_post: {
         parameters: {
             query?: never;
@@ -9192,6 +9726,223 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OpenAIChatCompletionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_conversations_v1_conversations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationList"];
+                };
+            };
+        };
+    };
+    create_conversation_v1_conversations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ConversationCreateRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_conversation_v1_conversations__conversation_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Conversation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_conversation_v1_conversations__conversation_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationDeleted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_conversation_items_v1_conversations__conversation_id__items_get: {
+        parameters: {
+            query?: {
+                after?: string | null;
+                limit?: number;
+                /** @description Chronological asc supported; desc reserved. */
+                order?: string;
+                /** @description OpenAI-shape passthrough; currently a no-op. */
+                include?: string | null;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConversationItemList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_response_v1_responses_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ResponsesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseObject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    retrieve_response_v1_responses__response_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                response_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ResponseObject"];
                 };
             };
             /** @description Validation Error */

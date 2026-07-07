@@ -42,15 +42,7 @@ def _service(tmp_path) -> tuple[ClaudeUserInputService, ClaudeUserInputStore]:
 
 
 def _decision_from_request(request: dict[str, object], *, action: str = "allow_once") -> ClaudeUserInputDecisionRequest:
-    return ClaudeUserInputDecisionRequest.model_validate(
-        {
-            "action": action,
-            "decision_token": request["decision_token"],
-            "run_id": request["run_id"],
-            "session_id": request["session_id"],
-            "business_agent_id": request["business_agent_id"],
-        }
-    )
+    return ClaudeUserInputDecisionRequest.model_validate({"action": action, "decision_token": request["decision_token"]})
 
 
 def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monkeypatch):

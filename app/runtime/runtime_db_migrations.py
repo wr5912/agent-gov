@@ -391,6 +391,19 @@ def migrate_0021_improvement_generation_trace_refs(connection: Connection) -> No
             connection.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN generation_trace_url VARCHAR(2048) DEFAULT ''")
 
 
+def migrate_0026_normalized_feedback_generation_refs(connection: Connection) -> None:
+    """NormalizedFeedback 保存 generated_by + Langfuse trace ref（反馈整理生成 provenance），旧卷幂等补列。"""
+    existing_columns = _table_columns(connection, "normalized_feedbacks")
+    if not existing_columns:
+        return
+    if "generated_by" not in existing_columns:
+        connection.exec_driver_sql("ALTER TABLE normalized_feedbacks ADD COLUMN generated_by VARCHAR(32) DEFAULT 'heuristic'")
+    if "generation_trace_id" not in existing_columns:
+        connection.exec_driver_sql("ALTER TABLE normalized_feedbacks ADD COLUMN generation_trace_id VARCHAR(256) DEFAULT ''")
+    if "generation_trace_url" not in existing_columns:
+        connection.exec_driver_sql("ALTER TABLE normalized_feedbacks ADD COLUMN generation_trace_url VARCHAR(2048) DEFAULT ''")
+
+
 def migrate_0022_remove_legacy_batch_optimization_chain(connection: Connection) -> None:
     """Remove the replaced batch/task/proposal/external-governance optimization chain tables."""
     for table in (

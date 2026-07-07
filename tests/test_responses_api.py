@@ -1,0 +1,204 @@
+"""POST /v1/responses 非流式：strict/control 双模式、agent_id 必填、instructions strict 处置、
+previous_response_id 归属校验、请求映射与响应投影、hostile 输入。"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from app.runtime.schemas import ChatResponse
+from fastapi.testclient import TestClient
+
+from test_api_execution_optimizer import _load_app
+
+
+def _register_biz(client: TestClient, agent_id: str = "soc-ops", name: str = "客服助手") -> None:
+    assert client.post("/api/agent-registry", json={"name": name, "agent_id": agent_id}).status_code == 201
+
+
+def _fake_capturing_run(captured: dict):
+    async def fake_run(req, *, profile=None, **kwargs):
+        captured["req"] = req
+        captured["profile"] = profile
+        return ChatResponse(
+            run_id="run-123",
+            session_id="sess-abc",
+            sdk_session_id="sdk-1",
+            agent_version_id="ver-1",
+            answer="日报正文",
+            usage={"input_tokens": 3, "output_tokens": 5},
+            total_cost_usd=0.01,
+            stop_reason="end_turn",
+        )
+
+    return fake_run
+
+
+# ---------------------------------------------------------------- control 模式
+
+
+def test_control_runs_business_agent_and_maps_fields(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post(
+            "/v1/responses",
+            json={
+                "model": "claude-sonnet-5",
+                "input": "帮我生成一份日报",
+                "instructions": "只输出正文",
+                "metadata": {"source": "playground"},
+                "agentgov": {"agent_id": "soc-ops", "alert_id": "alert-1", "case_id": "case-1", "max_turns": 8},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+    req = captured["req"]
+    assert req.message == "帮我生成一份日报"
+    assert req.alert_id == "alert-1" and req.case_id == "case-1"  # backend-owned，来自 agentgov
+    assert req.max_turns == 8
+    assert req.system_append == "只输出正文"  # control 下 instructions -> append-only system_append
+    assert req.metadata.get("source") == "playground"
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
+
+
+def test_control_response_projection_shape(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        body = client.post(
+            "/v1/responses",
+            json={"input": "hi", "agentgov": {"agent_id": "soc-ops"}},
+        ).json()
+    assert body["id"] == "resp_run-123"
+    assert body["object"] == "response"
+    assert body["status"] == "completed"
+    # 权威输出在 output[]
+    assert body["output"][0]["content"][0]["text"] == "日报正文"
+    ag = body["agentgov"]
+    assert ag["agent_id"] == "soc-ops"
+    assert ag["run_id"] == "run-123"
+    assert ag["conversation_id"] == "conv_sess-abc"
+    assert ag["output_text"] == "日报正文"  # 便利聚合在 agentgov 命名空间
+    assert body["usage"] == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
+
+
+def test_control_missing_agent_id_422(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        # agentgov 存在但 agent_id 缺失 -> 硬 422，不静默跑 main
+        assert client.post("/v1/responses", json={"input": "hi", "agentgov": {}}).status_code == 422
+        assert client.post("/v1/responses", json={"input": "hi", "agentgov": {"agent_id": "  "}}).status_code == 422
+
+
+def test_control_unknown_agent_404(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        assert client.post("/v1/responses", json={"input": "hi", "agentgov": {"agent_id": "ghost"}}).status_code == 404
+
+
+# ---------------------------------------------------------------- strict 模式
+
+
+def test_strict_uses_operator_agent(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
+        assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
+
+
+def test_strict_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
+    assert captured["profile"] is None  # 未配置 -> main
+
+
+def test_strict_rejects_instructions_422(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        # strict 不静默按 append 生效 instructions（append-only 非官方 replace）
+        assert client.post("/v1/responses", json={"input": "hi", "instructions": "you are pirate"}).status_code == 422
+
+
+def test_strict_fail_loud_503_when_operator_agent_deleted(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
+        assert client.delete("/api/agent-registry/soc-ops").status_code == 200
+        assert client.post("/v1/responses", json={"input": "hi"}).status_code == 503
+
+
+# ---------------------------------------------------------------- 会话续接（流式见 test_responses_stream.py）
+
+
+def test_previous_response_id_not_found_404(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post(
+            "/v1/responses",
+            json={"input": "hi", "previous_response_id": "resp_ghost", "agentgov": {"agent_id": "soc-ops"}},
+        )
+        assert resp.status_code == 404
+
+
+def test_previous_response_id_conflict_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    module.feedback_store.record_run({"run_id": "prev1", "session_id": "sessA", "agent_id": "soc-ops"})
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post(
+            "/v1/responses",
+            json={
+                "input": "hi",
+                "previous_response_id": "resp_prev1",
+                "conversation": "conv_sessB",  # 与 prev1 的 sessA 不一致
+                "agentgov": {"agent_id": "soc-ops"},
+            },
+        )
+        assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------- hostile 输入
+
+
+def test_agentgov_unknown_field_rejected_422(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        # agentgov extra=forbid：未知字段被拒
+        resp = client.post(
+            "/v1/responses",
+            json={"input": "hi", "agentgov": {"agent_id": "soc-ops", "updated_input": {"x": 1}}},
+        )
+        assert resp.status_code == 422
+
+
+def test_client_cannot_inject_reserved_store_marker(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        # 客户端在 metadata 里塞保留 backend key（想伪造 store 标记）—— 应被剥离
+        client.post(
+            "/v1/responses",
+            json={"input": "hi", "metadata": {"__agentgov_store__": False}, "agentgov": {"agent_id": "soc-ops"}},
+        )
+    assert "__agentgov_store__" not in captured["req"].metadata

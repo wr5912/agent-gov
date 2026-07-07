@@ -29,6 +29,9 @@ class NormalizedFeedbackResponse(BaseModel):
     status: str
     created_at: str
     updated_at: str
+    generated_by: str = "heuristic"
+    generation_trace_id: str = ""
+    generation_trace_url: str = ""
 
 
 class AttributionUpsertRequest(BaseModel):

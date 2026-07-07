@@ -35,6 +35,7 @@ from .runtime_db_migrations import (
     migrate_0023_eval_case_targeted_regression_layer,
     migrate_0024_feedback_case_agent_id,
     migrate_0025_agent_governance_legacy_paths,
+    migrate_0026_normalized_feedback_generation_refs,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -470,6 +471,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0023_eval_case_targeted_regression_layer", migrate_0023_eval_case_targeted_regression_layer),
         ("0024_feedback_case_agent_id", migrate_0024_feedback_case_agent_id),
         ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
+        ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
     ):
         if version in applied:
             continue

@@ -60,6 +60,7 @@
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`
 - [Claude 原生业务Agent人类确认机制整改实现方案](./engineering/Claude原生业务Agent人类确认机制整改实现方案.md)：`docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md`
 - [Claude 原生业务Agent人类确认机制对抗审查整改计划](./engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md)：`docs/engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md`
+- [OpenAI 兼容接口能否替代原生 Chat 端点评估](./engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)：`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`，Responses-first 定位——`/v1/responses` + `/v1/conversations` 为 canonical，chat/completions 与 `/api/chat`·`/api/chat/stream` 为兼容面不删；含现状事实、目标契约（Responses/Conversations/HITL）与路线图
 
 ## 评审与复盘
 

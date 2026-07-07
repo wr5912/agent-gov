@@ -141,6 +141,41 @@ class RuntimeLangfuseClient:
         except Exception as exc:
             print(f"[WARN] failed to update Langfuse observation: {exc}", flush=True)
 
+    def emit_sdk_child_observations(self, parent: Any, children: list[dict[str, Any]]) -> None:
+        """把 SDK message 投影出的子观测（逐工具 span / 逐轮 generation）挂到 parent 之下。
+
+        parent 为观测对象时用 `parent.start_observation`（平级子、非 current）；parent 为 None 时
+        回退到 client 级 `start_observation`，自动挂到当前 OTEL ambient span（治理 job 的 root span）。
+        每条独立 try/except，绝不因观测失败中断主流程。
+        """
+        if not children:
+            return
+        factory = getattr(parent, "start_observation", None)
+        if factory is None:
+            client = self.get_client()
+            factory = getattr(client, "start_observation", None) if client is not None else None
+        if factory is None:
+            return
+        for child in children:
+            try:
+                kwargs = {
+                    "as_type": child.get("kind", "span"),
+                    "name": child.get("name"),
+                    "input": child.get("input"),
+                    "output": child.get("output"),
+                    "metadata": child.get("metadata") or None,
+                    "model": child.get("model"),
+                    "usage_details": child.get("usage_details"),
+                    "cost_details": child.get("cost_details"),
+                    "level": child.get("level"),
+                }
+                observation = factory(**{key: value for key, value in kwargs.items() if value is not None})
+                end = getattr(observation, "end", None)
+                if callable(end):
+                    end()
+            except Exception as exc:
+                print(f"[WARN] failed to emit Langfuse sdk child observation: {exc}", flush=True)
+
     @staticmethod
     def set_trace_attributes(
         observation: Any,

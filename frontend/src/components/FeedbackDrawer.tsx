@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { createImprovement, upsertNormalizedFeedback, addImprovementFeedback, type ImprovementItem } from "../api/improvements";
+import { createImprovement, generateNormalizedFeedback, addImprovementFeedback, type ImprovementItem } from "../api/improvements";
 import type { RuntimeClientConfig } from "../types/runtime";
 import { DrawerShell } from "./DrawerShell";
 
@@ -81,16 +81,8 @@ export function FeedbackDrawer({
     }).then(async (item) => {
       setCreated(item);
       setPhase("saved");
-      // P3：把「系统理解（初步）」持久化为 NormalizedFeedback 子资源（不再只存客户端）。
       try {
-        await upsertNormalizedFeedback(clientConfig, item.improvement_id, {
-          problem,
-          possible_reason: "待系统归因",
-          possible_object: "当前 Agent 运行 / MCP 数据",
-          impact: "待评估",
-          suggestion: "进入改进处理",
-          user_quote: wrong.trim(),
-        });
+        // 先落原始反馈，再由后端把它整理成 title+problem 的系统理解（DSPy；不可用则启发式兜底），并回填事项标题。
         await addImprovementFeedback(clientConfig, item.improvement_id, {
           summary: problem,
           source: "playground_run",
@@ -103,6 +95,7 @@ export function FeedbackDrawer({
           alert_id: context.alertId || "",
           case_id: context.caseId || "",
         });
+        await generateNormalizedFeedback(clientConfig, item.improvement_id);
       } catch { /* 非致命：改进事项已创建 */ }
     }).catch((e) => setError(e instanceof Error ? e.message : String(e))).finally(() => setBusy(false));
   };

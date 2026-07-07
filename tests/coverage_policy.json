@@ -24,13 +24,37 @@
           "pytest": [
             "tests/test_improvement_governor_service.py::test_attribution_governor_path_maps_agent_owned_fields",
             "tests/test_improvement_governor_service.py::test_attribution_governor_persists_generation_trace",
+            "tests/test_improvement_governor_service.py::test_attribution_job_input_contains_target_agent_locator",
+            "tests/test_improvement_governor_service.py::test_attribution_rejects_governor_workspace_as_business_agent_evidence",
+            "tests/test_improvement_governor_service.py::test_attribution_accepts_target_business_agent_config_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_falls_back_to_heuristic_on_governor_failure",
             "tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute",
             "tests/test_improvement_governor_service.py::test_optimization_plan_governor_maps_tasks_to_changes",
+            "tests/test_improvement_governor_service.py::test_optimization_plan_rejects_governor_workspace_target",
             "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
             "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
             "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied"
+            "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
+            "tests/test_langfuse_tool_projection.py::test_projects_tool_and_generation_children",
+            "tests/test_langfuse_tool_projection.py::test_governor_runner_glue_projects_children",
+            "tests/test_upstream_contracts.py::test_real_sdk_messages_project_to_child_observations",
+            "tests/test_upstream_contracts.py::test_langfuse_start_observation_signature_contract",
+            "tests/test_execution_content_guards.py::test_adding_dangerous_allow_rejected",
+            "tests/test_execution_content_guards.py::test_removing_deny_rejected",
+            "tests/test_execution_content_guards.py::test_applier_rejects_settings_escalation_without_writing",
+            "tests/test_execution_content_guards.py::test_allowlist_rejects_offlist_targets",
+            "tests/test_execution_content_guards.py::test_settings_hooks_injection_rejected",
+            "tests/test_execution_content_guards.py::test_mcp_command_and_stdio_server_rejected",
+            "tests/test_improvement_execution_service.py::test_real_guard_blocks_settings_escalation_and_falls_back",
+            "tests/test_improvement_execution_service.py::test_real_allowlist_blocks_settings_local_and_falls_back",
+            "tests/test_normalized_feedback_generation.py::test_llm_organizes_title_problem_and_backfills",
+            "tests/test_normalized_feedback_generation.py::test_hostile_formatter_missing_problem_falls_back",
+            "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
+            "tests/test_agent_profiles_category.py::test_governor_has_full_read_of_business_agents_and_no_write",
+            "tests/test_agent_profiles_category.py::test_governor_build_options_wires_hooks_and_setting_sources",
+            "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
+            "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
+            "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent"
           ]
         },
         {
@@ -39,6 +63,7 @@
           "pytest": [
             "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema",
             "tests/test_runtime_db.py::test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain",
+            "tests/test_runtime_db.py::test_runtime_db_migrates_normalized_feedback_provenance_columns",
             "tests/test_documentation_contracts.py::test_openapi_exposes_current_improvement_trace_routes_and_hides_legacy_optimization_chain"
           ]
         },
@@ -75,6 +100,66 @@
             "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
             "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
             "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "openai_responses_first_surface",
+      "description": "OpenAI Responses-first canonical 接口：POST /v1/responses（strict/control 双模式、agent_id 必填、instructions strict 处置、previous_response_id 归属）与 GET /v1/responses/{id} retrieve（从 run 重建、status 派生、store=false 404）。",
+      "scenarios": [
+        {
+          "id": "responses_create_strict_and_control",
+          "description": "非流式 /v1/responses：control 映射 agentgov 字段并要求 agent_id（缺失 422、未知 404）、strict 用运营者出口 Agent 并拒绝 instructions（append-only 非 replace）、失效 503、previous_response_id 409/404、agentgov extra=forbid、保留 metadata key 剥离。",
+          "pytest": [
+            "tests/test_responses_api.py::test_control_runs_business_agent_and_maps_fields",
+            "tests/test_responses_api.py::test_control_response_projection_shape",
+            "tests/test_responses_api.py::test_control_missing_agent_id_422",
+            "tests/test_responses_api.py::test_control_unknown_agent_404",
+            "tests/test_responses_api.py::test_strict_uses_operator_agent",
+            "tests/test_responses_api.py::test_strict_rejects_instructions_422",
+            "tests/test_responses_api.py::test_strict_fail_loud_503_when_operator_agent_deleted",
+            "tests/test_responses_api.py::test_previous_response_id_conflict_409",
+            "tests/test_responses_api.py::test_previous_response_id_not_found_404",
+            "tests/test_responses_api.py::test_agentgov_unknown_field_rejected_422",
+            "tests/test_responses_api.py::test_client_cannot_inject_reserved_store_marker"
+          ]
+        },
+        {
+          "id": "responses_retrieve_reconstruction",
+          "description": "GET /v1/responses/{id}：从持久化 run 重建 output（来自 messages 非截断 answer_summary）、status 由 errors 派生、store=false 公开 404、not-found 404、保留 metadata key 回显剥离。",
+          "pytest": [
+            "tests/test_responses_retrieve.py::test_retrieve_reconstructs_output_from_messages",
+            "tests/test_responses_retrieve.py::test_retrieve_status_failed_from_errors",
+            "tests/test_responses_retrieve.py::test_retrieve_store_false_public_404",
+            "tests/test_responses_retrieve.py::test_retrieve_not_found_404",
+            "tests/test_responses_retrieve.py::test_retrieve_strips_reserved_metadata_on_echo"
+          ]
+        },
+        {
+          "id": "responses_streaming_sse",
+          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、error->failed、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "pytest": [
+            "tests/test_responses_stream.py::test_control_stream_maps_core_events",
+            "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
+            "tests/test_responses_stream.py::test_heartbeat_becomes_sse_comment",
+            "tests/test_responses_stream.py::test_error_maps_to_failed",
+            "tests/test_responses_stream.py::test_tool_step_from_raw",
+            "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
+            "tests/test_responses_stream.py::test_endpoint_stream_control"
+          ]
+        },
+        {
+          "id": "conversations_surface",
+          "description": "/v1/conversations：create/list/get/delete（会话对象投影自 SDK session，conv_<sid>）+ items（投影自 SDK transcript blocks、owning-agent 解析无静默 fallback、cursor after->offset、not-found 404、保留 metadata 剥离）。",
+          "pytest": [
+            "tests/test_conversations_api.py::test_create_get_list_delete",
+            "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
+            "tests/test_conversations_api.py::test_get_unknown_conversation_404",
+            "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
+            "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
+            "tests/test_conversations_api.py::test_items_cursor_maps_to_offset",
+            "tests/test_conversations_api.py::test_items_missing_owning_agent_404"
           ]
         }
       ]

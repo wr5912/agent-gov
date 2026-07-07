@@ -37,15 +37,19 @@ class ClaudeUserInputRequestListResponse(BaseModel):
 
 
 class ClaudeUserInputDecisionRequest(BaseModel):
+    """HITL 决策请求（目标契约）。
+
+    授权仅凭 ``request_id``(URL) 定位 + ``decision_token``(per-request、hmac constant-time)；不再回传
+    ``run_id``/``session_id``/``business_agent_id`` 三元组（冗余、GET list 公开可读、不构成第二因子）。
+    ``answer_question`` 应答收敛为单一 ``answer``（对象，其键并入 SDK AskUserQuestion 的 updated_input）。
+    ``extra="forbid"`` 堵未设计字段（如 ``updated_input``/``allow_modified``）。
+    """
+
     model_config = ConfigDict(extra="forbid")
 
     action: Literal["allow_once", "allow_for_run", "deny", "answer_question"]
     decision_token: str
-    run_id: str
-    session_id: str
-    business_agent_id: str
-    answers: JsonObject = Field(default_factory=dict)
-    response: Optional[str] = None
+    answer: Optional[JsonObject] = None
     message: Optional[str] = None
 
 

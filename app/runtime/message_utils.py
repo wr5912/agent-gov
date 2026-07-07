@@ -49,3 +49,28 @@ def message_event_name(message: Any) -> str:
     if subtype:
         return f"{cls}:{subtype}"
     return cls
+
+
+def extract_answer_from_messages(messages: list[Any]) -> str | None:
+    """Reconstruct the assistant answer from a persisted SDK message timeline.
+
+    Prefers AssistantMessage text; falls back to ResultMessage / other text. Shared by
+    the feedback-workbench agent-run view and the OpenAI Responses projection so both
+    rebuild answers from the same single source of truth (the full ``messages`` list),
+    not the truncated ``answer_summary``.
+    """
+    assistant_parts: list[str] = []
+    fallback_parts: list[str] = []
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        text = extract_text(message)
+        if not text:
+            continue
+        event = str(message.get("event") or message.get("type") or message.get("role") or "")
+        if event.startswith("AssistantMessage") or event == "assistant":
+            assistant_parts.append(text)
+        else:
+            fallback_parts.append(text)
+    answer = "\n\n".join(assistant_parts or fallback_parts).strip()
+    return answer or None

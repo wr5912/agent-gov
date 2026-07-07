@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Security, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
-from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
 from app.routers.automation import create_automation_router
@@ -17,6 +18,7 @@ from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.routers.config import create_config_router
+from app.routers.conversations import create_conversations_router
 from app.routers.core import create_core_router
 from app.routers.error_handlers import register_error_handlers
 from app.routers.eval import create_eval_router
@@ -28,12 +30,15 @@ from app.routers.improvements import create_improvement_relations_router, create
 from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.routers.openai import create_openai_router
 from app.routers.regression_assets import create_regression_assets_router
+from app.routers.responses import create_responses_router
 from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_job_types import AgentJobType
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.session_store import LocalSessionStore
@@ -47,7 +52,6 @@ from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 from app.runtime.stores.scenario_pack_store import ScenarioPackStore
-from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.services.agent_governance import AgentGovernanceService
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -109,6 +113,10 @@ improvement_governor_service = ImprovementGovernorService(
     improvement_store=improvement_store,
     content_store=improvement_content_store,
     run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
+    data_dir=settings.data_dir,
+    format_normalized_feedback=lambda raw_text: runtime._format_agent_text(
+        job_type=str(AgentJobType.NORMALIZED_FEEDBACK), raw_text=raw_text, job_input={"raw_feedback": raw_text}
+    ),
 )
 automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)
 asset_store = AssetStore(runtime_db_session_factory)
@@ -166,6 +174,8 @@ app = FastAPI(
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
         {"name": "sessions", "description": "List and delete API session mappings."},
         {"name": "openai-compatible", "description": "Minimal non-streaming OpenAI-compatible shim."},
+        {"name": "openai-responses", "description": "Canonical OpenAI Responses-first surface (POST /v1/responses, retrieve)."},
+        {"name": "openai-conversations", "description": "OpenAI Conversations surface (create/list/get/delete + items, projected from SDK transcript)."},
     ],
     lifespan=lifespan,
     swagger_ui_parameters={"displayRequestDuration": True, "docExpansion": "none"},
@@ -222,6 +232,8 @@ app.include_router(
     )
 )
 app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
+app.include_router(create_responses_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, feedback_store=feedback_store, require_api_key=require_api_key))
+app.include_router(create_conversations_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
 app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
 app.include_router(

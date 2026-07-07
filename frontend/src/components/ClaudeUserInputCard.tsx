@@ -7,7 +7,7 @@ interface ClaudeUserInputCardProps {
   request: ClaudeUserInputRequest;
   submitting?: boolean;
   error?: string;
-  onSubmit: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">) => void;
+  onSubmit: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token">) => void;
 }
 
 type QuestionOption = { label: string; description?: string };
@@ -77,7 +77,7 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
             className="primary-button"
             data-testid="claude-user-input-submit-answer"
             disabled={!waiting || submitting || (!Object.keys(answers).length && !otherResponse.trim())}
-            onClick={() => onSubmit(request, { action: "answer_question", answers, response: otherResponse.trim() || undefined })}
+            onClick={() => onSubmit(request, { action: "answer_question", answer: buildAnswer(answers, otherResponse) })}
           >
             <Check size={15} /> 提交回答
           </button>
@@ -137,6 +137,15 @@ export function ClaudeUserInputCard({ request, submitting = false, error, onSubm
       {error ? <p className="claude-user-input-error">{error}</p> : null}
     </section>
   );
+}
+
+function buildAnswer(answers: Record<string, string | string[]>, otherResponse: string): Record<string, unknown> {
+  // 单一 answer 对象：其键并入 SDK AskUserQuestion 的 updated_input（保持原 answers/response 形状）。
+  const answer: Record<string, unknown> = {};
+  if (Object.keys(answers).length) answer.answers = answers;
+  const response = otherResponse.trim();
+  if (response) answer.response = response;
+  return answer;
 }
 
 function questionList(input: Record<string, unknown>): Question[] {

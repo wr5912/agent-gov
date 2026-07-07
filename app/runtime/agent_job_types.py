@@ -21,6 +21,8 @@ from .feedback_schemas import (
     FeedbackEvalCaseGenerationOutput,
     ImprovementOptimizationPlanFormatterOutput,
     ImprovementOptimizationPlanOutput,
+    NormalizedFeedbackFormatterOutput,
+    NormalizedFeedbackOutput,
 )
 from .json_types import JsonObject
 from .prompts.feedback_prompt_contexts import (
@@ -40,17 +42,28 @@ from .prompts.feedback_prompts import (
 PromptBuilder = Callable[[JsonObject], str]
 
 FormatterOutputModel: TypeAlias = (
-    AttributionFormatterOutput | ImprovementOptimizationPlanFormatterOutput | ExecutionPlanFormatterOutput | FeedbackEvalCaseGenerationFormatterOutput
+    AttributionFormatterOutput
+    | ImprovementOptimizationPlanFormatterOutput
+    | ExecutionPlanFormatterOutput
+    | FeedbackEvalCaseGenerationFormatterOutput
+    | NormalizedFeedbackFormatterOutput
 )
-ProjectedOutputModel: TypeAlias = AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput
+ProjectedOutputModel: TypeAlias = (
+    AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput | NormalizedFeedbackOutput
+)
 FormatterOutputModelClass: TypeAlias = (
     type[AttributionFormatterOutput]
     | type[ImprovementOptimizationPlanFormatterOutput]
     | type[ExecutionPlanFormatterOutput]
     | type[FeedbackEvalCaseGenerationFormatterOutput]
+    | type[NormalizedFeedbackFormatterOutput]
 )
 ProjectedOutputModelClass: TypeAlias = (
-    type[AttributionOutput] | type[ImprovementOptimizationPlanOutput] | type[ExecutionPlanOutput] | type[FeedbackEvalCaseGenerationOutput]
+    type[AttributionOutput]
+    | type[ImprovementOptimizationPlanOutput]
+    | type[ExecutionPlanOutput]
+    | type[FeedbackEvalCaseGenerationOutput]
+    | type[NormalizedFeedbackOutput]
 )
 
 
@@ -59,6 +72,7 @@ class AgentJobType(StrEnum):
     OPTIMIZATION_PLAN = "optimization_plan"
     EXECUTION = "execution"
     EVAL_CASE_GENERATION = "eval_case_generation"
+    NORMALIZED_FEEDBACK = "normalized_feedback"
 
 
 class AttributionFormattingSignature(dspy.Signature):
@@ -103,6 +117,13 @@ class EvalCaseGenerationFormattingSignature(dspy.Signature):
     formatted_output: FeedbackEvalCaseGenerationFormatterOutput = dspy.OutputField(desc="评估用例草案业务内容，不包含 job、scope、结果计数和生命周期字段。")
 
 
+class NormalizedFeedbackFormattingSignature(dspy.Signature):
+    """把用户原始反馈直接归纳成 title + problem，不补充原文没有的信息。"""
+
+    raw_agent_output: str = dspy.InputField(desc="用户原始反馈原文。")
+    formatted_output: NormalizedFeedbackFormatterOutput = dspy.OutputField(desc="系统理解业务内容：title、problem。")
+
+
 @dataclass(frozen=True)
 class AgentJobSpec:
     job_type: AgentJobType
@@ -127,6 +148,11 @@ def _execution_prompt_builder(job_input: JsonObject) -> str:
 
 def _eval_case_prompt_builder(job_input: JsonObject) -> str:
     return eval_case_generation_prompt(prompt_context=build_eval_case_generation_prompt_context(job_input))
+
+
+def _normalized_feedback_prompt_builder(job_input: JsonObject) -> str:
+    # NF 走 DSPy formatter 直调（signature 即指令，无 governor prompt/工具）；此 builder 仅为 spec 完整性、不经 run_profile_json。
+    return str(job_input.get("raw_feedback", ""))
 
 
 AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
@@ -161,6 +187,14 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         output_model=FeedbackEvalCaseGenerationOutput,
         formatter_output_model=FeedbackEvalCaseGenerationFormatterOutput,
         formatter_signature=EvalCaseGenerationFormattingSignature,
+    ),
+    AgentJobType.NORMALIZED_FEEDBACK: AgentJobSpec(
+        job_type=AgentJobType.NORMALIZED_FEEDBACK,
+        profile_name=GOVERNOR_PROFILE,
+        prompt_builder=_normalized_feedback_prompt_builder,
+        output_model=NormalizedFeedbackOutput,
+        formatter_output_model=NormalizedFeedbackFormatterOutput,
+        formatter_signature=NormalizedFeedbackFormattingSignature,
     ),
 }
 

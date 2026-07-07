@@ -9,6 +9,21 @@ from .json_types import JsonObject
 from .schemas import ChatRequest
 from .settings import AppSettings
 
+# 开发调试观测面保留完整 I/O（CLAUDE.project.md §25），此上限只作 Langfuse 摄取安全阀，从宽。
+_LANGFUSE_IO_MAX_CHARS = 200_000
+
+
+def _io_payload(value: Any) -> Any:
+    """把 SDK 值转成 JSON-safe 的 observation input/output，超大 payload 加截断标记（防摄取上限）。"""
+    plain = to_plain(value)
+    try:
+        serialized = json.dumps(plain, ensure_ascii=False, default=str)
+    except Exception:
+        return str(plain)[:_LANGFUSE_IO_MAX_CHARS]
+    if len(serialized) <= _LANGFUSE_IO_MAX_CHARS:
+        return plain
+    return {"_truncated": True, "original_chars": len(serialized), "preview": serialized[:_LANGFUSE_IO_MAX_CHARS]}
+
 
 class RuntimeActivityExtractor:
     """Extracts tool and skill activity from Claude SDK message payloads."""
@@ -54,6 +69,100 @@ class RuntimeActivityExtractor:
             "tool_results": tool_results,
             "skill_calls": skill_calls,
         }
+
+    def sdk_child_observations(self, messages: list[JsonObject]) -> list[dict[str, Any]]:
+        """把 SDK message 流投影成 Langfuse 子观测描述符：逐工具 span（入参/结果）+ 逐轮 generation（报文/token）。
+
+        数据源是 claude-agent-sdk 原生 message（ToolUseBlock.input / ToolResultBlock.content /
+        AssistantMessage 每轮 content+usage），复用既有 walk/tool 抽取。纯数据、无 Langfuse 依赖。
+        """
+        if not messages:
+            return []
+
+        results_by_id: dict[str, JsonObject] = {}
+        error_ids: set[str] = set()
+        for message in messages:
+            for record in self._walk_records(message):
+                result = self._tool_result_from_record(record)
+                if not result:
+                    continue
+                tid = self._string_value(result.get("tool_use_id"))
+                if tid and tid not in results_by_id:
+                    results_by_id[tid] = result
+                    if record.get("is_error") is True:
+                        error_ids.add(tid)
+
+        children: list[dict[str, Any]] = []
+        consumed: set[str] = set()
+        pending_input: list[JsonObject] = []
+        turn = 0
+        for message in messages:
+            if self._is_assistant_turn(message):
+                turn += 1
+                generation: dict[str, Any] = {
+                    "kind": "generation",
+                    "name": f"sdk.llm.{turn}",
+                    "input": _io_payload(list(pending_input)) if pending_input else None,
+                    "output": _io_payload(message.get("content")),
+                }
+                model = self._string_value(message.get("model"))
+                if model:
+                    generation["model"] = model
+                usage = self.usage_details(message.get("usage"))
+                if usage:
+                    generation["usage_details"] = usage
+                children.append(generation)
+                pending_input = []
+                for record in self._walk_records(message):
+                    call = self._tool_call_from_record(record)
+                    if not call:
+                        continue
+                    tid = self._string_value(call.get("tool_use_id"))
+                    name = self._string_value(call.get("name")) or "tool"
+                    result = results_by_id.get(tid) if tid else None
+                    children.append(
+                        {
+                            "kind": "tool",
+                            "name": f"sdk.tool.{name}",
+                            "input": _io_payload(call.get("input")),
+                            "output": _io_payload(result.get("content")) if result else None,
+                            "level": "ERROR" if tid in error_ids else "DEFAULT",
+                            "metadata": self._child_metadata(tid, call.get("agent_id")),
+                        }
+                    )
+                    if tid:
+                        consumed.add(tid)
+            elif isinstance(message, dict):
+                pending_input.append(message)
+
+        for tid, result in results_by_id.items():
+            if tid in consumed:
+                continue
+            name = self._string_value(result.get("name")) or "result"
+            children.append(
+                {
+                    "kind": "tool",
+                    "name": f"sdk.tool.{name}",
+                    "input": None,
+                    "output": _io_payload(result.get("content")),
+                    "level": "ERROR" if tid in error_ids else "DEFAULT",
+                    "metadata": self._child_metadata(tid, result.get("agent_id")),
+                }
+            )
+        return children
+
+    @staticmethod
+    def _is_assistant_turn(message: Any) -> bool:
+        return isinstance(message, dict) and isinstance(message.get("content"), list) and "model" in message
+
+    @staticmethod
+    def _child_metadata(tool_use_id: str | None, agent_id: Any) -> dict[str, str]:
+        meta: dict[str, str] = {}
+        if tool_use_id:
+            meta["tool_use_id"] = tool_use_id
+        if isinstance(agent_id, str) and agent_id:
+            meta["agent_id"] = agent_id
+        return meta
 
     @staticmethod
     def usage_details(usage: Any) -> Optional[dict[str, int]]:

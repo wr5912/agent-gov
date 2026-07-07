@@ -21,13 +21,7 @@ def _service(tmp_path, *, timeout_seconds: int = 5) -> ClaudeUserInputService:
 
 
 def _decision(token: str, **overrides: object) -> ClaudeUserInputDecisionRequest:
-    data: dict[str, object] = {
-        "action": "allow_once",
-        "decision_token": token,
-        "run_id": "run-1",
-        "session_id": "sess-1",
-        "business_agent_id": "main-agent",
-    }
+    data: dict[str, object] = {"action": "allow_once", "decision_token": token}
     data.update(overrides)
     return ClaudeUserInputDecisionRequest.model_validate(data)
 
@@ -102,21 +96,15 @@ def test_user_input_request_expiry_uses_configured_timeout(tmp_path):
     asyncio.run(scenario())
 
 
-def test_tool_permission_rejects_answer_question_and_context_mismatch(tmp_path):
+def test_tool_permission_rejects_answer_question(tmp_path):
     async def scenario():
         service = _service(tmp_path)
         _event_queue, task, request = await _start_wait(service)
 
-        with pytest.raises(ClaudeUserInputConflict):
-            service.submit_decision(
-                request["request_id"],
-                decision=_decision(request["decision_token"], run_id="wrong-run"),
-                decided_by="tester",
-            )
         with pytest.raises(ClaudeUserInputInvalid):
             service.submit_decision(
                 request["request_id"],
-                decision=_decision(request["decision_token"], action="answer_question", answers={"q1": "A"}),
+                decision=_decision(request["decision_token"], action="answer_question", answer={"q1": "A"}),
                 decided_by="tester",
             )
 
@@ -237,8 +225,7 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
             sdk_session_id="sdk-1",
             tool_name="Bash",
             input_data={
-                "command": "find /data/business-agents/main-agent/workspace -maxdepth 4 -type f "
-                "2>/dev/null | grep -v node_modules | grep -v .git | head -60"
+                "command": "find /data/business-agents/main-agent/workspace -maxdepth 4 -type f 2>/dev/null | grep -v node_modules | grep -v .git | head -60"
             },
             context={"tool_use_id": "toolu-2", "agent_id": "subagent-1"},
         )
@@ -300,7 +287,7 @@ def test_allow_for_run_does_not_cross_run_boundary(tmp_path):
         assert other_run_request["risk"]["run_allow_eligible"] is True
         service.submit_decision(
             other_run_request["request_id"],
-            decision=_decision(other_run_request["decision_token"], action="deny", run_id="run-2"),
+            decision=_decision(other_run_request["decision_token"], action="deny"),
             decided_by="tester",
         )
         assert (await other_run_task).action == "deny"
@@ -338,7 +325,7 @@ def test_ask_user_question_free_text_becomes_updated_input(tmp_path):
 
         record = service.submit_decision(
             request["request_id"],
-            decision=_decision(request["decision_token"], action="answer_question", response="只处理当前告警资产"),
+            decision=_decision(request["decision_token"], action="answer_question", answer={"response": "只处理当前告警资产"}),
             decided_by="tester",
         )
         sdk_decision = await task
@@ -371,7 +358,7 @@ def test_ask_user_question_rejects_allow_for_run(tmp_path):
             )
         service.submit_decision(
             request["request_id"],
-            decision=_decision(request["decision_token"], action="answer_question", response="继续"),
+            decision=_decision(request["decision_token"], action="answer_question", answer={"response": "继续"}),
             decided_by="tester",
         )
         assert (await task).action == "answer_question"
@@ -431,12 +418,7 @@ def test_decision_api_rejects_allow_modified_and_updated_input_extra(tmp_path):
         return request
 
     request = asyncio.run(create_request())
-    base = {
-        "decision_token": request["decision_token"],
-        "run_id": request["run_id"],
-        "session_id": request["session_id"],
-        "business_agent_id": request["business_agent_id"],
-    }
+    base = {"decision_token": request["decision_token"]}
 
     allow_modified = client.post(
         f"/api/claude-user-input-requests/{request['request_id']}/decision",
@@ -462,13 +444,7 @@ def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
         return request
 
     request = asyncio.run(create_request())
-    base = {
-        "action": "allow_once",
-        "decision_token": request["decision_token"],
-        "run_id": request["run_id"],
-        "session_id": request["session_id"],
-        "business_agent_id": request["business_agent_id"],
-    }
+    base = {"action": "allow_once", "decision_token": request["decision_token"]}
 
     missing = client.post("/api/claude-user-input-requests/cur-missing/decision", json=base)
     wrong_token = client.post(
@@ -477,6 +453,36 @@ def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
     )
 
     assert missing.status_code == 404
+    assert wrong_token.status_code == 409
+    assert "token is invalid" in wrong_token.json()["detail"]
+
+
+def test_v1_confirmation_path_wired_and_rejects_legacy_triple(tmp_path):
+    service = _service(tmp_path)
+    app = FastAPI()
+    app.include_router(create_claude_user_input_router(service=service, require_api_key=lambda: None))
+    client = TestClient(app)
+
+    async def create_request() -> dict[str, object]:
+        _event_queue, _task, request = await _start_wait(service)
+        return request
+
+    request = asyncio.run(create_request())
+    rid = request["request_id"]
+    token = request["decision_token"]
+
+    # 旧三元组不再是授权因子：extra=forbid 拒之
+    rejected_triple = client.post(
+        f"/v1/agentgov/confirmation-requests/{rid}/decision",
+        json={"action": "allow_once", "decision_token": token, "run_id": "x", "session_id": "y", "business_agent_id": "z"},
+    )
+    assert rejected_triple.status_code == 422
+
+    # canonical /v1 路径已接通并到达 service（token 校验生效）
+    wrong_token = client.post(
+        f"/v1/agentgov/confirmation-requests/{rid}/decision",
+        json={"action": "allow_once", "decision_token": "nope"},
+    )
     assert wrong_token.status_code == 409
     assert "token is invalid" in wrong_token.json()["detail"]
 

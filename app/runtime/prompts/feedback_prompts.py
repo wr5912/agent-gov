@@ -22,12 +22,13 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
         ),
         (
             "输入",
-            "输入上下文由后端从 SQLite、证据包和 Langfuse 观测数据构造；不需要读取 job 输入文件或临时目录。",
+            "输入上下文由后端从 SQLite、证据包和 Langfuse 观测数据构造；判断问题是否出在目标业务 Agent 配置上时，"
+            "可用 Read/Glob/Grep 按需读取其 workspace 原始配置（见 read-business-agent-config skill）。",
         ),
         (
             "工作方式",
-            "先阅读反馈、运行轨迹、工具调用、配置快照和证据内容，再判断问题类型、责任边界和下一步。"
-            "证据不足时明确说明需要人工复核，不要为了凑结论而补充证据中没有的信息。",
+            "先阅读反馈、运行轨迹、工具调用、配置快照和证据内容，必要时用 Read 读取目标业务 Agent 的 workspace 配置核对真相，"
+            "再判断问题类型、责任边界和下一步。证据不足时明确说明需要人工复核，不要为了凑结论而补充证据中没有的信息。",
         ),
         (
             "业务信息要点",
@@ -60,6 +61,15 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
             "只有在 MCP 配置已实例化且无占位符、MCP 仍连接失败或服务返回异常时，才优先判定 external_mcp_service。\n"
             "MAX_TURNS 达上限若伴随 MCP failed 或 MCP 配置未解析占位符，应视为放大器，不要把 turns 默认值当作唯一根因。",
         ),
+        (
+            "业务 Agent 配置",
+            "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。归因到执行资产问题"
+            "（instruction_gap/skill_gap/mcp_description_gap）或工具/权限问题前，必须用 Read/Glob/Grep 按需读取"
+            "target_agent_context.workspace_dir 下的原始配置（CLAUDE.md、.claude/settings.json、.mcp.json、.claude/skills）"
+            "确认当前配置是否缺失、冲突或描述不当，不要脱离实际配置臆断。"
+            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
+            "/governor-workspace 下的文件作为目标业务 Agent 配置证据。",
+        ),
         ("约束", NATURAL_LANGUAGE_CHINESE_RULE),
         ("输入上下文", _prompt_context_section("attribution_prompt_context", prompt_context)),
     )
@@ -68,7 +78,7 @@ def attribution_prompt(*, prompt_context: JsonObject | None = None) -> str:
 def _prompt_context_section(context_name: str, prompt_context: JsonObject | None) -> str:
     if prompt_context is None:
         return ""
-    return f"以下是后端构造的输入上下文，不需要调用工具读取 job 输入文件。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
+    return f"以下是后端构造的输入上下文；如需核对目标业务 Agent 的当前配置真相，可用 Read/Glob/Grep 按需读取其 workspace 原始配置（见 read-business-agent-config skill）。\n{context_name}:\n{json.dumps(prompt_context, ensure_ascii=False, indent=2)}\n"
 
 
 def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = None) -> str:
@@ -79,7 +89,7 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
         ),
         (
             "输入",
-            "输入上下文由后端从当前改进事项、NormalizedFeedback 和 Attribution 构造；不需要读取 job 输入文件或临时目录。",
+            "输入上下文由后端从当前改进事项、NormalizedFeedback 和 Attribution 构造；提方案前可用 Read 按需读取目标业务 Agent 的 workspace 原始配置，确保 changes 针对真实存在的配置资产。",
         ),
         (
             "工作方式",
@@ -99,6 +109,16 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
             "不要输出后端系统 ID、路由名、队列名、工具调用参数或后端版本字段。"
             "不要输出 JSON 代码块；用自然语言小节或列表表达即可，formatter 会转换为结构化模型。",
+        ),
+        (
+            "业务 Agent 配置",
+            "目标业务 Agent 的权威路径只以输入上下文 target_agent_context 为准。"
+            "提方案前用 Read/Glob/Grep 按需读取 target_agent_context.workspace_dir 下的原始配置"
+            "（CLAUDE.md/.claude/settings.json/.mcp.json/.claude/skills）。"
+            "changes[].target 与 change 必须针对真实存在的配置资产提出具体改动"
+            "（例如改 CLAUDE.md 某段、补/改某个 skill、调整 settings 权限或 MCP），不要提出与当前配置无关或已存在的改动。"
+            "/governor-workspace 只代表治理 Agent 自身配置；除非本次问题对象明确是 governor，否则不得把"
+            "/governor-workspace 下的文件作为目标业务 Agent 配置或优化对象。",
         ),
         ("输入上下文", _prompt_context_section("improvement_optimization_plan_prompt_context", prompt_context)),
     )

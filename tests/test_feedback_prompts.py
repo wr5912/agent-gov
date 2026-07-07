@@ -97,6 +97,36 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
     assert "truncated" in serialized
 
 
+def test_target_agent_context_is_preserved_as_locator_not_config_snapshot():
+    target_context = {
+        "agent_id": "main-agent",
+        "workspace_dir": "/data/business-agents/main-agent/workspace",
+        "claude_path": "/data/business-agents/main-agent/workspace/CLAUDE.md",
+        "settings_path": "/data/business-agents/main-agent/workspace/.claude/settings.json",
+        "mcp_path": "/data/business-agents/main-agent/workspace/.mcp.json",
+        "skills_glob": "/data/business-agents/main-agent/workspace/.claude/skills/*/SKILL.md",
+        "agents_glob": "/data/business-agents/main-agent/workspace/.claude/agents/*.md",
+        "allowed_evidence_roots": ["/data/business-agents/main-agent/workspace"],
+        "forbidden_evidence_roots": ["/governor-workspace"],
+        "CLAUDE.md": "SHOULD_NOT_INLINE_FULL_PROMPT",
+    }
+
+    attribution_context = build_attribution_prompt_context(
+        {"feedback_case": {"agent_id": "main-agent", "problem": "Bash 权限问题"}, "target_agent_context": target_context}
+    )
+    optimization_context = build_improvement_optimization_prompt_context(
+        {
+            "improvement": {"agent_id": "main-agent", "title": "Bash 权限问题"},
+            "target_agent_context": target_context,
+        }
+    )
+    serialized = json.dumps([attribution_context, optimization_context], ensure_ascii=False)
+
+    assert "/data/business-agents/main-agent/workspace/.claude/settings.json" in serialized
+    assert "/governor-workspace" in serialized
+    assert "SHOULD_NOT_INLINE_FULL_PROMPT" not in serialized
+
+
 def test_feedback_prompts_do_not_expose_formatter_implementation_details():
     prompts = [
         attribution_prompt(),
@@ -169,3 +199,13 @@ def test_attribution_and_optimization_prompts_require_chinese_user_facing_text()
     assert "证据引用原因" in attribution
     assert "责任边界" in attribution
     assert "所有面向人的说明文本必须使用简体中文" in optimization
+
+
+def test_attribution_and_optimization_prompts_forbid_governor_workspace_as_business_agent_evidence():
+    attribution = attribution_prompt()
+    optimization = improvement_optimization_plan_prompt()
+
+    assert "target_agent_context.workspace_dir" in attribution
+    assert "/governor-workspace 只代表治理 Agent 自身配置" in attribution
+    assert "target_agent_context.workspace_dir" in optimization
+    assert "/governor-workspace 只代表治理 Agent 自身配置" in optimization

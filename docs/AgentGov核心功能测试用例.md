@@ -44,6 +44,7 @@
 | 治理成熟度路径 | main agent 样板、多业务 Agent、场景包、跨 Agent 方法论沉淀 | AGV-043, AGV-044, AGV-045 |
 | 典型落地场景 | 安全运营只是典型场景之一，平台不绑定单一行业 | AGV-046 |
 | 产品边界 | AgentGov 负责治理能力，外部系统负责业务界面、权限、生产系统、高风险动作责任和通用协作流转 | AGV-047, AGV-048, AGV-049 |
+| OpenAI 兼容主路径 | Responses-first 接口可承载 Playground 主运行、会话恢复、外部 API 集成，并保留原生 Chat 兼容面 | AGV-050 |
 
 ## 核心功能测试套件
 
@@ -1236,6 +1237,33 @@
 证据要求：目标愿景使命、执行计划、README 或后续集成设计中的阶段说明。
 
 自动验收：`tests/test_agv_acceptance.py::test_agv_049_external_collaboration_integration_is_deferred_long_term_stage`（校验文档边界声明满足四条成功标准：①当前目标不含通用协作看板/issue 同步/squad 管理/Multica adapter；②外部协作平台负责任务流转、AgentGov 负责受治理业务 Agent 的运行/治理/版本化交付；③治理 Agent 默认不作为协作成员暴露；④Multica 等深度对接明确归入长期生态集成阶段（执行计划阶段 5，启动条件为至少完成三个产品大版本），不阻断前三个产品大版本核心治理）。本用例的成功标准是"边界纪律"——外部协作平台深度对接被显式 deferred、不提前拉起即为达成；实现该集成反而违反本用例。
+
+### AGV-050 OpenAI Responses-first 接口替代原生 Chat 主路径
+
+状态：`current`
+
+目标来源：核心目标 7、Runtime、外部 API 集成、`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`。
+
+前置条件：API、worker、UI 容器已用当前代码和 `docker/.env` 配置启动；存在至少一个 runnable 业务 Agent（默认 `main-agent`）。
+
+测试步骤：
+
+1. 通过 Playground 发起一次真实业务 Agent 运行。
+2. 确认前端主运行请求走 `POST /v1/responses` control 模式，而不是旧 `/api/chat/stream`。
+3. 通过 `/v1/conversations` 读取会话列表，并通过 `/v1/conversations/{conversation_id}/items` 验证会话 items 契约可用。
+4. 通过 `GET /v1/responses/{response_id}` 验证 `resp_<run_id>` 可从持久化 run 重建响应。
+5. 发起对抗式与边界请求：strict 模式 `instructions`、control 缺 `agentgov.agent_id`、`agentgov` 未知字段、非法 `max_turns`、保留 metadata 注入、旧 `/api/chat`/`/api/chat/stream` 缺 `agent_id`。
+
+成功标准：
+
+- `/v1/responses` + `/v1/conversations` 承载 Playground 主运行与会话恢复主路径，前端不再把旧 `/api/chat/stream` 作为主运行入口。
+- control 模式能把业务 Agent、conversation、run、response retrieve 串成同一条运行事实链；`response.output[]` 与 `agentgov.run_id/session_id/conversation_id` 可审计。
+- hostile 输入被 4xx 拒绝，保留 metadata 不回显，旧原生 Chat 入口仍按兼容契约拒绝缺失 `agent_id`，不静默跑 main。
+- `/v1/chat/completions` 保持兼容入口定位，不作为 HITL、会话治理或工具时间线主控制面。
+
+证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
+
+自动验收：核心 API 契约已绑定到 `tests/coverage_policy.json` 的 `openai_responses_first_surface` 主流程，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_retrieve.py`、`tests/test_conversations_api.py`；旧 Chat 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `pnpm --dir frontend run verify:openai-responses-container`：该脚本打开 Compose UI、真实调用 Compose API，验证 UI 请求 `/v1/responses`、会话走 `/v1/conversations`、retrieve 可用，并执行 hostile / boundary 请求。
 
 ## 开发推进规则
 

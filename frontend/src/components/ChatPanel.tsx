@@ -24,7 +24,7 @@ interface ChatPanelProps {
   onRerun: (message: ChatMessage) => void;
   userInputErrors: Record<string, string>;
   submittingUserInputRequests: Set<string>;
-  onSubmitUserInput: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">) => void;
+  onSubmitUserInput: (request: ClaudeUserInputRequest, input: Omit<ClaudeUserInputDecisionPayload, "decision_token">) => void;
 }
 
 export function ChatPanel({

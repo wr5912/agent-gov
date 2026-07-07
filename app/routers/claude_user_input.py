@@ -28,15 +28,15 @@ def create_claude_user_input_router(
     service: ClaudeUserInputService,
     require_api_key: Callable,
 ) -> APIRouter:
-    router = APIRouter(prefix="/api", tags=["claude-user-input"], dependencies=[Depends(require_api_key)])
+    router = APIRouter(tags=["claude-user-input"], dependencies=[Depends(require_api_key)])
 
     @router.get(
-        "/claude-user-input-requests",
+        "/api/claude-user-input-requests",
         response_model=ClaudeUserInputRequestListResponse,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
     )
     @router.get(
-        "/claude-hitl-requests",
+        "/api/claude-hitl-requests",
         response_model=ClaudeUserInputRequestListResponse,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
         include_in_schema=False,
@@ -62,12 +62,17 @@ def create_claude_user_input_router(
         )
 
     @router.post(
-        "/claude-user-input-requests/{request_id}/decision",
+        "/v1/agentgov/confirmation-requests/{request_id}/decision",
+        response_model=ClaudeUserInputDecisionResponse,
+        summary="Resolve one active HITL confirmation (canonical; authz = request_id + decision_token)",
+    )
+    @router.post(
+        "/api/claude-user-input-requests/{request_id}/decision",
         response_model=ClaudeUserInputDecisionResponse,
         summary="Resolve one active Claude SDK HITL request",
     )
     @router.post(
-        "/claude-hitl-requests/{request_id}/decision",
+        "/api/claude-hitl-requests/{request_id}/decision",
         response_model=ClaudeUserInputDecisionResponse,
         summary="Resolve one active Claude SDK HITL request",
         include_in_schema=False,

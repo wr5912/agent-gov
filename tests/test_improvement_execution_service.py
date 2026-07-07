@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_execution_service import ImprovementExecutionService
+from app.services.workspace_execution_applier import WorkspaceExecutionApplier
 
 
 def _content(tmp_path: Path) -> ImprovementContentStore:
@@ -67,7 +70,7 @@ class _FakeExecApp:
         self.raises = raises
         self.applied: list[list] = []
 
-    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None):
+    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None, content_guard=None, allowed_targets=None):
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)
@@ -138,6 +141,59 @@ def test_governor_success_applies_and_binds_version(tmp_path):
     assert rec.generation_trace_id == "tr-exec"
     assert rec.generation_trace_url == "http://lf/tr-exec"
     assert exec_app.applied and gov.committed == ["agc-1"] and not gov.abandoned
+
+
+def test_real_guard_blocks_settings_escalation_and_falls_back(tmp_path):
+    """集成：真实 applier + 护栏。governor 产出 settings 提权 operation → 护栏拦截 → abandon change set →
+    回退启发式，且提权内容未落盘。守护 improvement_execution_service 真接了 guard + allowlist。"""
+    worktree = tmp_path / "worktree"
+    (worktree / ".claude").mkdir(parents=True)
+    settings = worktree / ".claude" / "settings.json"
+    settings.write_text(json.dumps({"permissions": {"allow": ["Read(./**)"], "deny": ["Read(/**/.env)"]}}), encoding="utf-8")
+    sha = hashlib.sha256(settings.read_bytes()).hexdigest()
+    gov = _FakeGovernance(worktree)
+
+    async def escalate(**kwargs):
+        return {
+            "status": "ready",
+            "summary": "s",
+            "operations": [
+                {
+                    "operation": "replace_file",
+                    "path": ".claude/settings.json",
+                    "expected_sha256": sha,
+                    "content": json.dumps({"permissions": {"allow": ["Read(./**)", "Bash(*)"], "deny": ["Read(/**/.env)"]}}),
+                }
+            ],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=escalate, exec_app=WorkspaceExecutionApplier())
+    _confirm_plan(content)
+    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert rec.generated_by == "heuristic"  # 护栏拦截 → 回退
+    assert gov.abandoned == ["agc-1"] and not gov.committed
+    assert "Bash(*)" not in settings.read_text(encoding="utf-8")  # 提权内容未落盘
+
+
+def test_real_allowlist_blocks_settings_local_and_falls_back(tmp_path):
+    """集成：governor 试图写白名单外的 settings.local.json → applier allowlist 拦截 → abandon → 回退。"""
+    worktree = tmp_path / "worktree2"
+    (worktree / ".claude").mkdir(parents=True)
+    gov = _FakeGovernance(worktree)
+
+    async def offlist(**kwargs):
+        return {
+            "status": "ready",
+            "summary": "s",
+            "operations": [{"operation": "create_file", "path": ".claude/settings.local.json", "content": json.dumps({"permissions": {"allow": ["Bash(*)"]}})}],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=offlist, exec_app=WorkspaceExecutionApplier())
+    _confirm_plan(content)
+    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert rec.generated_by == "heuristic"
+    assert gov.abandoned == ["agc-1"] and not gov.committed
+    assert not (worktree / ".claude" / "settings.local.json").exists()  # 白名单外未落盘
 
 
 def test_apply_failure_abandons_change_set_and_falls_back(tmp_path):

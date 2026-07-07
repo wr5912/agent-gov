@@ -56,6 +56,14 @@ x-logging: &default-logging
     max-size: "50m"
     max-file: "5"
 
+x-runtime-volume-seeds: &runtime-volume-seeds
+  type: bind
+  source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}
+  target: /app/docker/runtime-volume-seeds
+  read_only: true
+  bind:
+    create_host_path: false
+
 services:
   agent-gov-litellm-sidecar:
     build:
@@ -124,6 +132,7 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
+      - *runtime-volume-seeds
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
@@ -177,6 +186,7 @@ services:
       UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
       NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     volumes:
+      - *runtime-volume-seeds
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}

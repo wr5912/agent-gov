@@ -62,6 +62,9 @@ class NormalizedFeedbackModel(Base):
     suggestion: Mapped[str] = mapped_column(String(1024), default="")
     user_quote: Mapped[str] = mapped_column(Text, default="")
     status: Mapped[str] = mapped_column(String(32), default="draft")
+    generated_by: Mapped[str] = mapped_column(String(32), default="heuristic")
+    generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
+    generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 

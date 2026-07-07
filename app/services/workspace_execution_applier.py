@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Callable
 from pathlib import Path
 
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
+
+# 写入结构化配置文件的安全护栏回调：(target_path, new_bytes, original_bytes) -> None，违规抛错。
+ContentGuard = Callable[..., None]
 
 
 class WorkspaceExecutionApplyError(FeedbackStoreError):
@@ -29,9 +33,13 @@ class WorkspaceExecutionApplier:
         *,
         workspace_dir: Path,
         target_policy: WorkspaceExecutionTargetPolicy | None = None,
+        content_guard: ContentGuard | None = None,
+        allowed_targets: set[str] | None = None,
     ) -> None:
         if not operations:
             raise WorkspaceExecutionApplyError("Execution plan has no operations")
+        # allowlist 强制：受治理 apply 只允许写显式可编辑目标集（防写 settings.local.json / hooks / .env / agents 绕过护栏）。
+        allow_norm = {Path(t).as_posix() for t in allowed_targets} if allowed_targets is not None else None
         originals: dict[Path, bytes | None] = {}
         writes: list[tuple[Path, bytes]] = []
         for item in operations:
@@ -39,6 +47,8 @@ class WorkspaceExecutionApplier:
                 raise WorkspaceExecutionApplyError("Execution operation must be an object")
             op = str(item.get("operation") or "")
             target_path = str(item.get("path") or "")
+            if allow_norm is not None and Path(target_path).as_posix() not in allow_norm:
+                raise WorkspaceExecutionApplyError(f"Target path is not in the editable allowlist: {target_path}")
             dest = self.safe_workspace_target(target_path, workspace_dir=workspace_dir)
             if target_policy is not None and not target_policy.target_allowed(target_path):
                 raise WorkspaceExecutionApplyError(f"Target path is not allowed: {target_path}")
@@ -49,6 +59,9 @@ class WorkspaceExecutionApplier:
             data = self._operation_bytes(item, op=op, target_path=target_path, original=originals[dest])
             if len(data) > self.max_write_bytes:
                 raise WorkspaceExecutionApplyError(f"Execution write exceeds {self.max_write_bytes} bytes: {target_path}")
+            if content_guard is not None:
+                # 结构化配置合法性 + 权限升级防护；违规抛错 → 上层 abandon change set + 回退（尚未落盘）。
+                content_guard(target_path=target_path, new_bytes=data, original_bytes=originals[dest])
             writes.append((dest, data))
         if not writes:
             raise WorkspaceExecutionApplyError("Execution plan has no writable operations")

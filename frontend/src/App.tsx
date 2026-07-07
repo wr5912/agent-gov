@@ -294,7 +294,7 @@ export default function App() {
 
   async function submitUserInputDecision(
     request: ClaudeUserInputRequest,
-    input: Omit<ClaudeUserInputDecisionPayload, "decision_token" | "run_id" | "session_id" | "business_agent_id">,
+    input: Omit<ClaudeUserInputDecisionPayload, "decision_token">,
   ) {
     const token = decisionTokensRef.current[request.request_id];
     if (!token) {
@@ -311,9 +311,6 @@ export default function App() {
       const result = await submitClaudeUserInputDecision(effectiveClientConfig, request.request_id, {
         ...input,
         decision_token: token,
-        run_id: request.run_id,
-        session_id: request.session_id,
-        business_agent_id: request.business_agent_id,
       });
       delete decisionTokensRef.current[request.request_id];
       updateUserInputRequest(request.request_id, {

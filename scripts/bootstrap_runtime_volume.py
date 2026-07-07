@@ -182,6 +182,11 @@ def _copy_missing(
     if len(parts) >= 2 and parts[0] == "data" and parts[1] == "business-agents":
         overwrite = False
         repair_managed_config = False
+    # governor-workspace 是平台治理配置（治理执行者的 prompt/权限/skill），不是用户在卷里积累的业务优化态，
+    # 应始终跟随 seed：每次 bootstrap 从 seed 强制覆盖，使「改 governor 配置→重建」即在现网生效
+    # （只覆盖 seed 中存在的文件，卷内私有/会话文件不动；业务 Agent 卷仍走上面的 fill-missing、绝不回灌）。
+    elif parts and parts[0] == "governor-workspace":
+        overwrite = True
     if src.is_dir():
         if not dry_run:
             dest.mkdir(parents=True, exist_ok=True)

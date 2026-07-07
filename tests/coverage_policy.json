@@ -135,6 +135,19 @@
             "tests/test_responses_retrieve.py::test_retrieve_not_found_404",
             "tests/test_responses_retrieve.py::test_retrieve_strips_reserved_metadata_on_echo"
           ]
+        },
+        {
+          "id": "responses_streaming_sse",
+          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、error->failed、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "pytest": [
+            "tests/test_responses_stream.py::test_control_stream_maps_core_events",
+            "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
+            "tests/test_responses_stream.py::test_heartbeat_becomes_sse_comment",
+            "tests/test_responses_stream.py::test_error_maps_to_failed",
+            "tests/test_responses_stream.py::test_tool_step_from_raw",
+            "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
+            "tests/test_responses_stream.py::test_endpoint_stream_control"
+          ]
         }
       ]
     }

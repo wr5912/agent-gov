@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 
 from app.runtime.agent_profile_resolver import resolve_business_profile
+from app.runtime.agent_profiles import AgentRuntimeProfile
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.json_types import JsonObject
@@ -19,12 +21,22 @@ from app.runtime.openai_responses_adapter import (
     store_disabled,
 )
 from app.runtime.openai_responses_schemas import ResponseObject, ResponsesRequest
+from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.schemas import ChatRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
 
 _MAIN_AGENT_DISPLAY = "main-agent"
+
+
+class _RunPlan(NamedTuple):
+    chat_req: ChatRequest
+    profile: Optional[AgentRuntimeProfile]
+    effective_agent_id: str
+    control: bool
+    sdk_raw: bool
 
 
 def _resolve_session_id(req: ResponsesRequest, *, feedback_store: FeedbackStore) -> Optional[str]:
@@ -91,20 +103,14 @@ def _resolve_run_target(
     return profile, configured_agent_id or _MAIN_AGENT_DISPLAY, None
 
 
-async def _create_response_impl(
+def _prepare_run(
     req: ResponsesRequest,
     *,
     settings: AppSettings,
-    runtime: ClaudeRuntime,
     agent_registry_store: AgentRegistryStore,
     runtime_settings_store: RuntimeSettingsStore,
     feedback_store: FeedbackStore,
-) -> ResponseObject:
-    if req.stream:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="stream=true is not yet available on /v1/responses in this build (non-streaming only); use /api/chat/stream meanwhile.",
-        )
+) -> _RunPlan:
     session_id = _resolve_session_id(req, feedback_store=feedback_store)
     control = req.agentgov is not None
     profile, effective_agent_id, system_append = _resolve_run_target(
@@ -119,11 +125,42 @@ async def _create_response_impl(
         system_append=system_append,
         session_id=session_id,
     )
-    result = await runtime.run(chat_req, profile=profile)
+    sdk_raw = bool(control and req.agentgov and req.agentgov.debug and req.agentgov.debug.sdk_raw)
+    return _RunPlan(chat_req, profile, effective_agent_id, control, sdk_raw)
+
+
+async def _create_response_impl(
+    req: ResponsesRequest,
+    *,
+    settings: AppSettings,
+    runtime: ClaudeRuntime,
+    agent_registry_store: AgentRegistryStore,
+    runtime_settings_store: RuntimeSettingsStore,
+    feedback_store: FeedbackStore,
+) -> ResponseObject | StreamingResponse:
+    plan = _prepare_run(
+        req,
+        settings=settings,
+        agent_registry_store=agent_registry_store,
+        runtime_settings_store=runtime_settings_store,
+        feedback_store=feedback_store,
+    )
+    if req.stream:
+        return StreamingResponse(
+            iter_responses_sse(
+                runtime.stream(plan.chat_req, profile=plan.profile),
+                model=req.model,
+                effective_agent_id=plan.effective_agent_id,
+                control=plan.control,
+                sdk_raw=plan.sdk_raw,
+            ),
+            media_type="text/event-stream",
+        )
+    result = await runtime.run(plan.chat_req, profile=plan.profile)
     return response_from_chat_response(
         result,
         model=req.model,
-        agent_id=effective_agent_id,
+        agent_id=plan.effective_agent_id,
         metadata=req.metadata,
         created_at=int(time.time()),
     )
@@ -157,11 +194,11 @@ def create_responses_router(
         summary="Run an AgentGov business agent (OpenAI Responses-compatible)",
         description=(
             "Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). "
-            "`agentgov` present = control (requires `agentgov.agent_id`). Streaming lands in a later increment; "
-            "`stream=true` is currently rejected."
+            "`agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE "
+            "(`response.*`; plus `agentgov.*` control envelope in control mode)."
         ),
     )
-    async def create_response(req: ResponsesRequest) -> ResponseObject:
+    async def create_response(req: ResponsesRequest) -> ResponseObject | StreamingResponse:
         return await _create_response_impl(
             req,
             settings=settings,

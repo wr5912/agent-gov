@@ -141,16 +141,7 @@ def test_strict_fail_loud_503_when_operator_agent_deleted(monkeypatch, tmp_path:
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 503
 
 
-# ---------------------------------------------------------------- 会话续接 & 流式占位
-
-
-def test_stream_not_yet_supported_400(monkeypatch, tmp_path: Path) -> None:
-    module = _load_app(monkeypatch, tmp_path)
-    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
-    with TestClient(module.app) as client:
-        _register_biz(client)
-        resp = client.post("/v1/responses", json={"input": "hi", "stream": True, "agentgov": {"agent_id": "soc-ops"}})
-        assert resp.status_code == 400
+# ---------------------------------------------------------------- 会话续接（流式见 test_responses_stream.py）
 
 
 def test_previous_response_id_not_found_404(monkeypatch, tmp_path: Path) -> None:

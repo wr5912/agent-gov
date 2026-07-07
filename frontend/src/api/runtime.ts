@@ -333,14 +333,14 @@ export async function streamChat(
   signal?.addEventListener("abort", abortFromCaller, { once: true });
 
   try {
-    const res = await fetch(makeUrl(config, "/api/chat/stream"), {
+    const res = await fetch(makeUrl(config, "/v1/responses"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Accept: "text/event-stream",
         ...authHeaders(config),
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(toResponsesRequest(payload)),
       signal: controller.signal,
     });
 
@@ -362,13 +362,15 @@ export async function streamChat(
         const events = buffer.split("\n\n");
         buffer = events.pop() || "";
         for (const rawEvent of events) {
-          const envelope = parseSse(rawEvent);
+          const parsed = parseSse(rawEvent);
+          const envelope = parsed ? translateResponsesEnvelope(parsed) : null;
           if (envelope) dispatchEnvelope(envelope, handlers);
         }
       }
 
       if (buffer.trim()) {
-        const envelope = parseSse(buffer);
+        const parsed = parseSse(buffer);
+        const envelope = parsed ? translateResponsesEnvelope(parsed) : null;
         if (envelope) dispatchEnvelope(envelope, handlers);
       }
     } finally {
@@ -385,6 +387,50 @@ export async function streamChat(
   } finally {
     window.clearTimeout(timeoutId);
     signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+// Playground 走 canonical /v1/responses（control 模式）；ChatRequest -> Responses 请求体。
+function toResponsesRequest(payload: ChatRequest): Record<string, unknown> {
+  const agentgov: Record<string, unknown> = { agent_id: payload.agent_id };
+  if (payload.alert_id) agentgov.alert_id = payload.alert_id;
+  if (payload.case_id) agentgov.case_id = payload.case_id;
+  if (payload.max_turns != null) agentgov.max_turns = payload.max_turns;
+  const body: Record<string, unknown> = { input: payload.message, stream: true, agentgov };
+  if (payload.session_id) body.conversation = `conv_${payload.session_id}`;
+  if (payload.metadata) body.metadata = payload.metadata;
+  return body;
+}
+
+// 把 /v1/responses 的 SSE（response.* 标准通道 + agentgov.* 控制信封）翻译回内部事件模型，
+// 使 App.tsx / claudeUserInputState / 确认卡无需改动（迁移桥接：Playground 已切到 canonical 入口）。
+function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null {
+  const data = env.data;
+  const payload = isRecord(data) && isRecord(data.payload) ? data.payload : data;
+  switch (env.event) {
+    case "agentgov.session":
+      return { event: "session", data: payload };
+    case "response.output_text.delta":
+      return { event: "message", data: { event: "AssistantMessage", text: isRecord(data) ? (data.delta ?? "") : "", raw: {} } };
+    case "agentgov.tool_step":
+      return { event: "message", data: { event: "AgentGovToolStep", text: "", raw: payload } };
+    case "agentgov.sdk_raw":
+      return { event: "message", data: { event: "AgentGovSdkRaw", text: "", raw: payload } };
+    case "agentgov.result":
+      return { event: "result", data: payload };
+    case "agentgov.error":
+      return { event: "error", data: payload };
+    case "response.failed":
+      return { event: "error", data: isRecord(data) && isRecord(data.error) ? data.error : data };
+    case "agentgov.confirmation.requested":
+      return { event: "claude_user_input_required", data: payload };
+    case "agentgov.confirmation.resolved":
+      return { event: "claude_user_input_resolved", data: payload };
+    case "agentgov.done":
+      return { event: "done", data: "[DONE]" };
+    default:
+      // response.created / response.completed / response.in_progress 等：内部数据经 agentgov.* 已下发，丢弃避免重复。
+      return null;
   }
 }
 

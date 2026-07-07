@@ -63,36 +63,28 @@ def _tool_step_from_raw(raw: object) -> Optional[JsonObject]:
 
 
 def _project_confirmation_requested(data: JsonObject) -> JsonObject:
-    """HITL 请求事件投影：对外字段名 + 保留 decision_token。"""
+    """HITL 请求事件投影：保原 public_payload 全字段集（fidelity，含 decision_token/risk/status/context）
+    并加对外重命名别名（agent_id/tool_input/risk_reason/conversation_id）。"""
     raw_input = data.get("input") if isinstance(data.get("input"), dict) else {}
     session = data.get("session_id") or data.get("api_session_id")
     return {
-        "request_id": data.get("request_id"),
-        "decision_token": data.get("decision_token"),
-        "request_type": data.get("request_type"),
-        "run_id": data.get("run_id"),
-        "conversation_id": conversation_id_from_session(_str(session)),
+        **data,
         "agent_id": data.get("business_agent_id"),
-        "tool_name": data.get("tool_name"),
         "tool_input": data.get("input"),
         "risk_reason": data.get("risk"),
+        "conversation_id": conversation_id_from_session(_str(session)),
         "question": raw_input.get("question"),
         "options": raw_input.get("options"),
     }
 
 
 def _project_confirmation_resolved(data: JsonObject) -> JsonObject:
-    """HITL 结果事件投影：不带 decision_token。"""
+    """HITL 结果事件投影：保原字段集（无 decision_token，resolved public_payload 本就不含）+ 别名。"""
     session = data.get("session_id") or data.get("api_session_id")
     return {
-        "request_id": data.get("request_id"),
-        "request_type": data.get("request_type"),
-        "run_id": data.get("run_id"),
-        "conversation_id": conversation_id_from_session(_str(session)),
+        **data,
         "agent_id": data.get("business_agent_id"),
-        "status": data.get("status"),
-        "decision": data.get("decision"),
-        "decided_by": data.get("decided_by"),
+        "conversation_id": conversation_id_from_session(_str(session)),
     }
 
 

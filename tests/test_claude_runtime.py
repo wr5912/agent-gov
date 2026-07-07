@@ -335,7 +335,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
     assert exc_info.value.raw_output_json["missing"] == ["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"]
 
 
-def test_profile_path_hook_blocks_denied_read_path(tmp_path):
+def test_profile_path_hook_allows_governor_business_agent_read_path(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     profile = runtime.profiles["governor"]
@@ -352,12 +352,10 @@ def test_profile_path_hook_blocks_denied_read_path(tmp_path):
         )
     )
 
-    output = result["hookSpecificOutput"]
-    assert output["permissionDecision"] == "deny"
-    assert "denied for profile governor" in output["permissionDecisionReason"]
+    assert result == {}
 
 
-def test_profile_path_hook_blocks_internal_agent_data_read_path(tmp_path):
+def test_profile_path_hook_allows_governor_data_read_path(tmp_path):
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     profile = runtime.profiles["governor"]
@@ -374,9 +372,7 @@ def test_profile_path_hook_blocks_internal_agent_data_read_path(tmp_path):
         )
     )
 
-    output = result["hookSpecificOutput"]
-    assert output["permissionDecision"] == "deny"
-    assert "outside allowed paths for profile governor" in output["permissionDecisionReason"]
+    assert result == {}
 
 
 def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
@@ -398,7 +394,7 @@ def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
 
     output = result["hookSpecificOutput"]
     assert output["permissionDecision"] == "deny"
-    assert "Write target is denied for profile governor" in output["permissionDecisionReason"]
+    assert "Write target is outside allowed paths for profile governor" in output["permissionDecisionReason"]
 
 
 def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):

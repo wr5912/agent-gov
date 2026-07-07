@@ -1,7 +1,7 @@
 {
   "name": "agent-gov-ui",
   "private": true,
-  "version": "2.8.7",
+  "version": "2.8.8",
   "packageManager": "pnpm@10.30.3",
   "type": "module",
   "scripts": {
@@ -14,6 +14,7 @@
     "verify:asset-registry": "cd .. && node scripts/verify_asset_registry.mjs",
     "verify:claude-user-input": "cd .. && node scripts/verify_claude_user_input_ui.mjs",
     "verify:remote-api-base": "cd .. && node scripts/verify_remote_api_base.mjs",
+    "verify:openai-responses-container": "cd .. && node scripts/verify_openai_responses_container.mjs",
     "verify:message-actions-browser": "cd .. && node scripts/verify_message_actions_browser.mjs"
   },
   "dependencies": {

@@ -1,13 +1,14 @@
 """改进事项执行记录的治理 Agent 自动 apply + 版本生成服务（四阶段改进治理 §17.5 引擎波次第二阶段）。
 
-把已确认优化方案交给治理 Agent governor 生成执行操作（ExecutionPlanFormatterOutput.operations），
+把优化方案交给治理 Agent governor 生成执行操作（ExecutionPlanFormatterOutput.operations），
 复用既有安全原语在**隔离的 change set worktree** 上落盘 → 提交 → 生成候选 Agent 版本，
 并把 change_set_id / applied_agent_version_id / applied_diff 权威绑定到 ExecutionRecord。
 
 安全策略：
 - 隔离：所有写入发生在 change set 的独立 git worktree，不直接动 Agent 主工作区。
 - 原子+回滚：apply_execution_operations 自带写前快照与失败回滚。
-- 幂等：ExecutionRecord 已绑定 applied_agent_version_id 时直接返回，不重复 apply。
+- 幂等：ExecutionRecord 已绑定候选版本或 change set 时直接返回，不重复 apply。
+- 执行即确认：/execution/apply 是业务执行动作；draft 优化方案会先确认再执行，避免前端编排漂移。
 - 失败/governor 拒绝（status≠ready 或无 operations）→ 放弃 change set（abandon_change_set）+ 回退启发式（不 apply、generated_by=heuristic）。
 - 发布仍走既有 §12 发布门禁；本服务只生成候选版本，不自动发布到 Agent 当前版本。
 """
@@ -20,6 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
+from app.runtime.errors import BusinessRuleViolation
 from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 from app.runtime.json_types import JsonObject
@@ -66,11 +68,15 @@ class ImprovementExecutionService:
 
     async def generate_and_apply_execution(self, improvement_id: str) -> ExecutionRecord:
         existing = self._content.get_execution(improvement_id)
-        if existing and existing.applied_agent_version_id:
-            return existing  # 幂等：已应用并生成版本
-        item = self._improvements.get_improvement(improvement_id)
+        if existing and (existing.applied_agent_version_id or existing.change_set_id):
+            return existing  # 幂等：已绑定候选版本或变更集
         plan = self._content.get_optimization_plan(improvement_id)
-        if self._run_profile_json is not None and plan is not None and getattr(plan, "status", "") == "confirmed":
+        if plan is None:
+            raise BusinessRuleViolation(f"No optimization plan for improvement: {improvement_id}")
+        if getattr(plan, "status", "") != "confirmed":
+            plan = self._content.set_optimization_plan_status(improvement_id, status="confirmed")
+        item = self._improvements.get_improvement(improvement_id)
+        if self._run_profile_json is not None:
             try:
                 return await self._governor_apply(item, plan, improvement_id)
             except Exception:  # noqa: BLE001 — 任何失败都回退启发式，保证 /execute 可用且工作区已回滚

@@ -46,6 +46,7 @@ import {
 import { requestJson } from "../api/request";
 import { IMPROVEMENT_STAGE_ORDER, describeImprovementStage, stageLabel, type VisibleImprovementStageKey } from "../improvementStage";
 import { deriveImprovementListDecisionLabel, deriveImprovementPrimaryDecision, nextImprovementStagePath, type ImprovementPrimaryDecision } from "../improvementDecisionActions";
+import { hasAppliedExecution } from "../improvementExecutionState";
 import { buildContext, type ContextType } from "../contextPackage";
 import { listAssets, type Asset } from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL, autoAdvanceNote } from "./improvementWorkbench.helpers";
@@ -338,7 +339,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void run(async () => {
       const changes = (optPlan?.changes || []).map((c) => `${c.target}：${c.change}`);
       const e = await upsertExecution(clientConfig, item.improvement_id, {
-        summary: "已按优化方案应用变更并生成新版本（初步记录，待执行引擎对接）。",
+        summary: "人工记录：已记录优化方案执行结果；未生成候选变更集，文件级 Diff 需通过「执行优化」生成。",
         changes_applied: changes.length ? changes : ["按方案应用变更"],
         agent_version: "",
       });
@@ -398,7 +399,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       }
       if (decision.kind === "generate_regression") {
         let currentExecution = execution;
-        if (!currentExecution && optPlan) {
+        if (!hasAppliedExecution(currentExecution) && optPlan) {
           let currentPlan = optPlan;
           if (currentPlan.status !== "confirmed") currentPlan = await confirmOptimizationPlan(clientConfig, item.improvement_id);
           setOptPlan(currentPlan);

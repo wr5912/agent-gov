@@ -1,5 +1,6 @@
 // 四阶段改进治理 §106 优化方案正文 + §107 执行记录 内容子资源（从 ImprovementWorkbench 拆出以控制单文件体量）。
 import type { ImprovementItem, OptimizationPlan, ExecutionRecord, Attribution } from "../api/improvements";
+import { hasAppliedExecution } from "../improvementExecutionState";
 
 export function ImprovementPlanExecution({
   item,
@@ -27,6 +28,7 @@ export function ImprovementPlanExecution({
   showPlanRegenerate?: boolean;
 }) {
   const archived = item.improvement_status === "archived";
+  const executionApplied = hasAppliedExecution(execution);
   return (
     <>
       {showPlan && optPlan ? (
@@ -62,6 +64,9 @@ export function ImprovementPlanExecution({
           ) : null}
           {execution.applied_agent_version_id ? (
             <div className="iw-list-item-meta" data-testid="execution-version-binding">候选 Agent 版本：{execution.applied_agent_version_id}{execution.change_set_id ? ` · 变更集 ${execution.change_set_id}` : ""}</div>
+          ) : null}
+          {!executionApplied ? (
+            <div className="iw-list-item-meta" data-testid="execution-unbound-note">未绑定候选 Agent 版本/变更集；文件级 Diff 需执行优化后生成。</div>
           ) : null}
         </div>
       ) : showExecution && !archived && !readOnly && optPlan ? (

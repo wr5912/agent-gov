@@ -16,6 +16,7 @@ import {
   type ImprovementOperationError,
   type ImprovementPendingOperation,
 } from "../improvementOperationState";
+import { hasAppliedExecution } from "../improvementExecutionState";
 import { DiffPreviewDetail, type AppliedDiff } from "./ImprovementDiffPreviewDetail";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
@@ -467,7 +468,8 @@ function OptimizationPanels({
   const appliedDiff: AppliedDiff | null = execution?.applied_diff && Object.keys(execution.applied_diff).length ? execution.applied_diff : null;
   const planPending = isPendingOperation(pendingOperation, "generate_optimization_plan");
   const executionPending = isPendingOperation(pendingOperation, "apply_execution");
-  const planExecutionStatus = executionPending ? "执行中" : execution ? "已执行" : "待执行";
+  const executionApplied = hasAppliedExecution(execution);
+  const planExecutionStatus = executionPending ? "执行中" : executionApplied ? "已执行" : "待执行";
   const planError = operationError?.kind === "generate_optimization_plan" ? operationError.message : "";
   const executionError = operationError?.kind === "apply_execution" ? operationError.message : "";
   return (
@@ -542,7 +544,11 @@ function OptimizationPanels({
           key: "execution-record", title: "执行记录详情", size: "medium",
           content: <>
             <div className="iw-detail-summary">{execution?.summary || "尚未执行。"}</div>
-            <Dl rows={[["风险级别", execution?.risk_level || "待评估"], ["候选版本", execution?.applied_agent_version_id || "-"]]} />
+            <Dl rows={[
+              ["风险级别", execution?.risk_level || "待评估"],
+              ["候选版本", execution?.applied_agent_version_id || "-"],
+              ["绑定状态", executionApplied ? "已绑定候选变更集" : "待执行生成候选变更集"],
+            ]} />
             <h4>已应用变更</h4><Lines items={execution?.changes_applied ?? []} empty="暂无已应用变更。" />
           </>,
         })}>

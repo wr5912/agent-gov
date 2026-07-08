@@ -146,7 +146,20 @@ function mockState() {
     attribution: null,
     optimizationPlan: null,
     optimizationGenerateCount: 0,
-    execution: null,
+    execution: {
+      execution_id: "exec-legacy",
+      improvement_id: target.improvement_id,
+      summary: "人工记录：已记录优化方案执行结果；未生成候选变更集。",
+      changes_applied: ["prompt：补充时间窗口校验"],
+      agent_version: "",
+      status: "draft",
+      generated_by: "heuristic",
+      change_set_id: "",
+      applied_agent_version_id: "",
+      applied_diff: {},
+      created_at: ts,
+      updated_at: ts,
+    },
     regressionAssessment: null,
   };
 }
@@ -420,7 +433,11 @@ async function main() {
       if (duplicateRegenerate !== 0) throw new Error(`optimization plan card duplicate regenerate button count=${duplicateRegenerate}`);
       const cardExecutionEmpty = await optimizationCard.getByTestId("execution-empty").count();
       if (cardExecutionEmpty !== 0) throw new Error(`optimization plan card should not render execution empty state, got ${cardExecutionEmpty}`);
-      await assertVisible(page, "execution-empty");
+      const unboundExecutionNote = await assertVisible(page, "execution-unbound-note");
+      const unboundExecutionText = await unboundExecutionNote.innerText();
+      if (!unboundExecutionText.includes("未绑定候选 Agent 版本/变更集")) throw new Error(`legacy execution record is not marked unbound: ${unboundExecutionText}`);
+      const executionNodeState = await page.getByTestId("stage-local-record-node").filter({ hasText: "执行优化" }).first().getAttribute("data-state");
+      if (executionNodeState !== "pending") throw new Error(`legacy execution record should not mark execute step done, got ${executionNodeState}`);
       await optimizationCard.getByRole("button", { name: "查看详情" }).click();
       const optimizationDetail = page.locator('[data-testid="stage-detail-content"][data-detail-key="optimization-plan"]');
       await optimizationDetail.waitFor({ timeout: 8000 });
@@ -449,10 +466,13 @@ async function main() {
       await page.getByTestId("current-decision-card").getByTestId("primary-action").click();
       const executionResult = await executionResponse;
       if (!executionResult.ok()) throw new Error(`execute optimization failed: ${executionResult.status()}`);
-      await page.getByTestId("execution-source").waitFor({ timeout: 10_000 });
+      await page.getByTestId("execution-version-binding").waitFor({ timeout: 10_000 });
       const executionCardText = await page.getByTestId("execution-record").first().innerText();
       if (executionCardText.includes("（待确认）") || executionCardText.includes("（已确认）")) {
         throw new Error(`execution record still exposes confirmation state: ${executionCardText}`);
+      }
+      if (await page.getByTestId("execution-unbound-note").count()) {
+        throw new Error("execution record still shows unbound note after governor apply");
       }
       await page.getByTestId("optimization-plan").first().getByRole("button", { name: "查看详情" }).click();
       await optimizationDetail.waitFor({ timeout: 8000 });

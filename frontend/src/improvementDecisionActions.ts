@@ -7,6 +7,7 @@ import type {
   OptimizationPlan,
   RegressionAssessment,
 } from "./api/improvements";
+import { hasAppliedExecution, hasUnboundExecutionRecord } from "./improvementExecutionState";
 import { describeImprovementStage } from "./improvementStage";
 
 export type ImprovementPrimaryDecisionKind =
@@ -125,12 +126,15 @@ export function deriveImprovementPrimaryDecision({
         icon: "↗",
       });
     }
-    if (!execution) {
+    if (!hasAppliedExecution(execution)) {
+      const staleExecution = hasUnboundExecutionRecord(execution);
       return decision("apply_execution", {
         label: "执行优化",
-        question: "确认当前优化方案并执行优化？",
-        summary: "点击后会确认方案，并让治理 Agent 在隔离变更集中执行优化。",
-        evidence: optimizationPlan.status === "confirmed" ? "方案已确认" : "将隐式确认方案",
+        question: staleExecution ? "当前执行记录未绑定变更集，是否重新执行优化？" : "确认当前优化方案并执行优化？",
+        summary: staleExecution
+          ? "点击后会确认方案，并让治理 Agent 在隔离变更集中重新执行，生成候选版本与可追溯 Diff。"
+          : "点击后会确认方案，并让治理 Agent 在隔离变更集中执行优化。",
+        evidence: staleExecution ? "旧执行记录缺少 change_set_id / applied_diff" : optimizationPlan.status === "confirmed" ? "方案已确认" : "将隐式确认方案",
         score: 90,
         scoreLabel: "执行准备度",
         level: "可执行",
@@ -141,7 +145,7 @@ export function deriveImprovementPrimaryDecision({
       label: "执行回归测试",
       question: "基于执行结果生成回归测试？",
       summary: "点击后会确认执行结果，并生成回归测试候选。",
-      evidence: execution.status === "confirmed" ? "执行已确认" : "将隐式确认执行",
+      evidence: execution?.status === "confirmed" ? "执行已确认" : "将隐式确认执行",
       score: 88,
       scoreLabel: "回归准备度",
       level: "可测试",

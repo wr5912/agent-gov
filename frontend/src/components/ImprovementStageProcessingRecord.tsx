@@ -4,6 +4,7 @@ import type {
   OptimizationPlan,
   RegressionAssessment,
 } from "../api/improvements";
+import { hasAppliedExecution } from "../improvementExecutionState";
 import type { ImprovementPendingOperation } from "../improvementOperationState";
 import type { ImprovementStageView } from "../improvementStage";
 
@@ -88,6 +89,7 @@ function localRecords(
     pendingOperation?: ImprovementPendingOperation | null;
   },
 ) {
+  const executionApplied = hasAppliedExecution(execution);
   switch (stage) {
     case "feedback_sorting":
       return [
@@ -110,7 +112,7 @@ function localRecords(
         rec("进入优化执行", "done"),
         rec("生成优化方案", pendingOperation?.kind === "generate_optimization_plan" ? "current" : optimizationPlan ? "done" : "pending"),
         rec("风险评估", optimizationPlan ? "done" : "pending"),
-        rec("执行优化", pendingOperation?.kind === "apply_execution" ? "current" : execution ? "done" : "pending"),
+        rec("执行优化", pendingOperation?.kind === "apply_execution" ? "current" : executionApplied ? "done" : "pending", execution && !executionApplied ? "未绑定变更集" : undefined),
         rec("生成回归测试", pendingOperation?.kind === "generate_regression" ? "current" : regressionAssessment ? "done" : "pending"),
       ];
     case "test_release":

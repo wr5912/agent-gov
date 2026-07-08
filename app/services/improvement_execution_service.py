@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
-from app.runtime.errors import BusinessRuleViolation
+from app.runtime.errors import BusinessRuleViolation, ConflictError, RuntimeUnavailableError
 from app.runtime.execution_content_guards import guard_execution_write
 from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 from app.runtime.json_types import JsonObject
@@ -37,6 +37,8 @@ RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 # 全部仍经隔离 worktree + 结构化护栏（guard_execution_write）+ change set 审批；不给 governor 直写。
 _BASE_CONFIG_TARGETS = ["CLAUDE.md", ".claude/settings.json", ".mcp.json"]
 _MAX_SKILL_TARGETS = 12
+# change_set 失效态：绑定这些状态的 change_set 不再作为幂等短路依据，允许重跑执行（对齐 TERMINAL_CHANGE_SET_STATES 的作废子集）。
+_INVALID_CHANGE_SET_STATES = {"rejected", "abandoned", "failed"}
 
 
 def _editable_config_targets(worktree: Path) -> list[str]:
@@ -68,8 +70,10 @@ class ImprovementExecutionService:
 
     async def generate_and_apply_execution(self, improvement_id: str) -> ExecutionRecord:
         existing = self._content.get_execution(improvement_id)
-        if existing and (existing.applied_agent_version_id or existing.change_set_id):
-            return existing  # 幂等：已绑定候选版本或变更集
+        if existing and existing.applied_agent_version_id:
+            return existing  # 幂等：已生成候选版本（终态）
+        if existing and existing.change_set_id and self._change_set_still_valid(existing.change_set_id):
+            return existing  # 幂等：已绑定仍有效的候选变更集；若变更集被 reject/abandon/failed 则允许重跑
         plan = self._content.get_optimization_plan(improvement_id)
         if plan is None:
             raise BusinessRuleViolation(f"No optimization plan for improvement: {improvement_id}")
@@ -79,7 +83,9 @@ class ImprovementExecutionService:
         if self._run_profile_json is not None:
             try:
                 return await self._governor_apply(item, plan, improvement_id)
-            except Exception:  # noqa: BLE001 — 任何失败都回退启发式，保证 /execute 可用且工作区已回滚
+            except (RuntimeUnavailableError, ConflictError):
+                raise  # 基础设施/冲突域错误上抛（路由返回 503/409），不掩成 heuristic 200
+            except Exception:  # noqa: BLE001 — 其它失败回退启发式，保证 /execute 可用且工作区已回滚
                 logger.exception("improvement governor execution apply failed: %s", improvement_id)
         return self._heuristic(plan, improvement_id)
 
@@ -192,13 +198,17 @@ class ImprovementExecutionService:
             return f"{op.get('operation', 'edit')}: {op.get('path', '')}".strip()
         return str(op)
 
+    def _change_set_still_valid(self, change_set_id: str) -> bool:
+        """change_set 是否仍可作为幂等短路依据（未被 reject/abandon/failed）。失效则允许重跑。"""
+        change_set = self._gov.get_change_set(change_set_id)
+        return bool(change_set) and str(change_set.get("status")) not in _INVALID_CHANGE_SET_STATES
+
     def _heuristic(self, plan: Any, improvement_id: str, reason: str = "") -> ExecutionRecord:
-        changes = [f"{c.get('target', '')}：{c.get('change', '')}" for c in (getattr(plan, "changes", []) or []) if isinstance(c, dict)]
         detail = reason or "governor 不可用或未产出可应用变更，需人工执行优化方案"
         return self._content.upsert_execution(
             improvement_id,
             summary=f"未自动应用：{detail}。",
-            changes_applied=changes,
+            changes_applied=[],  # heuristic 未落盘：不把提案变更当"已应用"（提案仍在优化方案里可见，避免误导）
             agent_version="",
             risk_level="",
             rollback_strategy="未应用变更，无需回滚",

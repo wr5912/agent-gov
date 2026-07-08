@@ -56,7 +56,7 @@ export function ImprovementPlanExecution({
             <span className="iw-source-badge" data-testid="execution-source" data-source={execution.generated_by}>{execution.generated_by === "governor" ? "治理 Agent 应用" : "启发式/人工"}</span>
           </h4>
           <div className="iw-detail-summary">{execution.summary}</div>
-          {execution.changes_applied.length ? (
+          {executionApplied && execution.changes_applied.length ? (
             <>
               <div className="iw-content-subhead">已应用变更</div>
               <ul className="iw-content-list" data-testid="execution-changes">{execution.changes_applied.map((c, i) => <li key={i}>{c}</li>)}</ul>

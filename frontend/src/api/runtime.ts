@@ -336,16 +336,17 @@ export async function streamChat(
 ): Promise<void> {
   const controller = new AbortController();
   let timedOut = false;
+  let idleMs = STREAM_IDLE_TIMEOUT_MS;  // 默认 180s；agentgov.session 到达后据后端下发 heartbeat_interval_s 派生
   let timeoutId = window.setTimeout(() => {
     timedOut = true;
     controller.abort("timeout");
-  }, STREAM_IDLE_TIMEOUT_MS);
+  }, idleMs);
   const resetIdleTimeout = () => {
     window.clearTimeout(timeoutId);
     timeoutId = window.setTimeout(() => {
       timedOut = true;
       controller.abort("timeout");
-    }, STREAM_IDLE_TIMEOUT_MS);
+    }, idleMs);
   };
   const abortFromCaller = () => controller.abort(signal?.reason || "aborted");
   if (signal?.aborted) {
@@ -385,7 +386,9 @@ export async function streamChat(
         buffer = events.pop() || "";
         for (const rawEvent of events) {
           const parsed = parseSse(rawEvent);
-          const envelope = parsed ? translateResponsesEnvelope(parsed) : null;
+          if (!parsed) continue;
+          idleMs = idleFromSessionFrame(parsed, idleMs);
+          const envelope = translateResponsesEnvelope(parsed);
           if (envelope) dispatchEnvelope(envelope, handlers);
         }
       }
@@ -400,7 +403,7 @@ export async function streamChat(
     }
   } catch (error) {
     if (timedOut) {
-      throw new Error(`Stream request timed out after ${STREAM_IDLE_TIMEOUT_MS / 1000}s without data`);
+      throw new Error(`Stream request timed out after ${idleMs / 1000}s without data`);
     }
     if (signal?.aborted) {
       throw new Error("Stream request was aborted");
@@ -442,8 +445,6 @@ function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null 
       return { event: "result", data: payload };
     case "agentgov.error":
       return { event: "error", data: payload };
-    case "response.failed":
-      return { event: "error", data: isRecord(data) && isRecord(data.error) ? data.error : data };
     case "agentgov.confirmation.requested":
       return { event: "claude_user_input_required", data: payload };
     case "agentgov.confirmation.resolved":
@@ -451,9 +452,19 @@ function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null 
     case "agentgov.done":
       return { event: "done", data: "[DONE]" };
     default:
-      // response.created / response.completed / response.in_progress 等：内部数据经 agentgov.* 已下发，丢弃避免重复。
+      // response.created/completed/failed/in_progress 等标准通道事件：内部数据经 agentgov.* 已下发，
+      // 丢弃避免重复（error 统一由 agentgov.error 承载，避免 onError 双投递）。
       return null;
   }
+}
+
+// 据 agentgov.session 下发的 heartbeat_interval_s 派生 idle 超时（不硬编码；心跳*12 安全系数，floor 180s）。
+function idleFromSessionFrame(env: StreamEnvelope, current: number): number {
+  if (env.event !== "agentgov.session" || !isRecord(env.data)) return current;
+  const payload = isRecord(env.data.payload) ? env.data.payload : env.data;
+  const interval = payload.heartbeat_interval_s;
+  if (typeof interval !== "number" || interval <= 0) return current;
+  return Math.max(STREAM_IDLE_TIMEOUT_MS, interval * 1000 * 12);
 }
 
 function parseSse(rawEvent: string): StreamEnvelope | null {

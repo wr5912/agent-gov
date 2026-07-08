@@ -14,6 +14,7 @@ from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.json_types import JsonObject
 from app.runtime.openai_responses_adapter import (
     build_chat_request,
+    public_metadata,
     response_from_chat_response,
     response_from_run_payload,
     run_id_from_response,
@@ -161,7 +162,7 @@ async def _create_response_impl(
         result,
         model=req.model,
         agent_id=plan.effective_agent_id,
-        metadata=req.metadata,
+        metadata=public_metadata(req.metadata),
         created_at=int(time.time()),
     )
 

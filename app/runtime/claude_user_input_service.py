@@ -264,9 +264,12 @@ class ClaudeUserInputService:
             raise ClaudeUserInputInvalid("ask_user_question requests require answer_question")
         if not decision.answer:
             raise ClaudeUserInputInvalid("answer_question requires answer")
-        # 单一 answer 对象的键并入 SDK AskUserQuestion 的 updated_input（镜像其答案 schema）。
+        # 单一 answer 对象的键并入 SDK AskUserQuestion 的 updated_input，但**不覆盖** raw_input 已有键
+        # （防客户端 answer 篡改 questions/options 等工具原始输入；只能新增 answers/response 等答案键）。
         updated_input = dict(pending.raw_input)
-        updated_input.update(decision.answer)
+        for key, value in decision.answer.items():
+            if key not in pending.raw_input:
+                updated_input[key] = value
         return SdkUserInputDecision(action="answer_question", ask_user_question_input=updated_input), dict(decision.answer), "answer_question"
 
     @staticmethod

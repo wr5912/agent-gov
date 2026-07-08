@@ -95,6 +95,22 @@ def test_items_project_transcript_via_owning_agent(monkeypatch, tmp_path: Path) 
     assert body["first_id"] == "msg_0" and body["last_id"] == "msg_1"
 
 
+def test_items_has_more_when_page_full(monkeypatch, tmp_path: Path) -> None:
+    # 后端请求 limit+1 判定 has_more；mock 回满（received limit = client_limit+1 条）-> has_more=True、只返回 client_limit 项
+    module = _load_app(monkeypatch, tmp_path)
+
+    def fake(*, sdk_session_id, workspace_dir, claude_config_dir, scrub, limit, offset):
+        msgs = [{"role": "user", "blocks": [{"text": f"m{i}"}]} for i in range(limit)]
+        return {"sdk_session_id": sdk_session_id, "title": "T", "messages": msgs, "subagents": []}
+
+    monkeypatch.setattr(conv_module, "read_session_history", fake)
+    module.session_store.save(LocalSession(session_id="sess-p", agent_id="soc-ops", sdk_session_id="sdk-p"))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        body = client.get("/v1/conversations/conv_sess-p/items?limit=2").json()
+    assert len(body["data"]) == 2 and body["has_more"] is True and body["last_id"] == "msg_1"
+
+
 def test_items_cursor_maps_to_offset(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
@@ -103,7 +119,8 @@ def test_items_cursor_maps_to_offset(monkeypatch, tmp_path: Path) -> None:
     with TestClient(module.app) as client:
         _register_biz(client)
         client.get("/v1/conversations/conv_sess-y/items?after=msg_4&limit=10")
-    assert captured["offset"] == 5 and captured["limit"] == 10  # cursor msg_4 -> 下一页 offset 5
+    # cursor msg_4 -> 下一页 offset 5；后端向 read_session_history 多取一条（limit+1=11）判定 has_more
+    assert captured["offset"] == 5 and captured["limit"] == 11
 
 
 def test_items_missing_owning_agent_404(monkeypatch, tmp_path: Path) -> None:

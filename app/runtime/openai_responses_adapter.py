@@ -77,6 +77,9 @@ def extract_input_text(value: object) -> str:
         for item in value:
             if not isinstance(item, dict):
                 continue
+            role = item.get("role")
+            if isinstance(role, str) and role not in ("user", "input"):
+                continue  # 跳过 assistant/system/developer 历史项，不把非用户文本注入本轮 user prompt
             content = item.get("content")
             if isinstance(content, str):
                 parts.append(content)

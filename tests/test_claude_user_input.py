@@ -457,6 +457,41 @@ def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
     assert "token is invalid" in wrong_token.json()["detail"]
 
 
+def test_requested_carries_token_resolved_does_not(tmp_path):
+    async def scenario():
+        service = _service(tmp_path)
+        _event_queue, task, request = await _start_wait(service)
+        assert request.get("decision_token")  # requested 事件 public_payload 带 decision_token
+        record = service.submit_decision(
+            request["request_id"],
+            decision=_decision(request["decision_token"], action="deny"),
+            decided_by="tester",
+        )
+        await task
+        resolved = record.public_payload()  # resolved 投影不带 token/hash（安全不变量）
+        assert "decision_token" not in resolved and "decision_token_hash" not in resolved
+
+    asyncio.run(scenario())
+
+
+def test_answer_cannot_overwrite_raw_input_structural_keys(tmp_path):
+    # hostile：answer 含 questions 结构键不得覆盖工具原始 input（只能新增 response）
+    async def scenario():
+        service = _service(tmp_path)
+        input_data = {"questions": [{"question": "Q", "options": [{"label": "A"}]}]}
+        _event_queue, task, request = await _start_wait(service, tool_name="AskUserQuestion", input_data=input_data)
+        service.submit_decision(
+            request["request_id"],
+            decision=_decision(request["decision_token"], action="answer_question", answer={"questions": "HIJACK", "response": "ok"}),
+            decided_by="tester",
+        )
+        sdk_decision = await task
+        assert sdk_decision.ask_user_question_input["questions"] == input_data["questions"]
+        assert sdk_decision.ask_user_question_input["response"] == "ok"
+
+    asyncio.run(scenario())
+
+
 def test_v1_confirmation_path_wired_and_rejects_legacy_triple(tmp_path):
     service = _service(tmp_path)
     app = FastAPI()

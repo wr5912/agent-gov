@@ -123,6 +123,32 @@ def test_tool_step_from_raw() -> None:
     assert step["kind"] == "tool_use" and step["tool_name"] == "Bash" and step["tool_use_id"] == "tu-1"
 
 
+def test_delta_and_created_carry_openai_conformant_fields() -> None:
+    by = dict(_parse(_collect([_SESSION, _ASSISTANT, _DONE], model="m", effective_agent_id="x", control=True)))
+    delta = by["response.output_text.delta"]
+    assert delta["item_id"] == "msg_run-9" and delta["output_index"] == 0 and delta["content_index"] == 0
+    assert isinstance(delta["sequence_number"], int) and delta["type"] == "response.output_text.delta"
+    created = by["response.created"]
+    assert created["type"] == "response.created" and isinstance(created["sequence_number"], int)
+    assert isinstance(created["response"]["created_at"], int)
+
+
+def test_tool_step_from_raw_tool_result() -> None:
+    tool_result = {"event": "message", "data": {"event": "UserMessage", "text": "", "raw": {"content": [{"tool_use_id": "tu-1", "content": "OK"}]}}}
+    by = dict(_parse(_collect([_SESSION, tool_result, _DONE], model="m", effective_agent_id="x", control=True)))
+    step = by["agentgov.tool_step"]["payload"]
+    assert step["kind"] == "tool_result" and step["tool_use_id"] == "tu-1" and step["result"] == "OK"
+
+
+def test_sdk_raw_envelope_only_when_debug_enabled() -> None:
+    raw_msg = {"event": "message", "data": {"event": "SystemMessage", "text": "", "raw": {"foo": "bar"}}}
+    frames = [_SESSION, raw_msg, _DONE]
+    with_raw = dict(_parse(_collect(frames, model="m", effective_agent_id="x", control=True, sdk_raw=True)))
+    assert with_raw["agentgov.sdk_raw"]["payload"]["raw"] == {"foo": "bar"}
+    without = _collect(frames, model="m", effective_agent_id="x", control=True, sdk_raw=False)
+    assert "event: agentgov.sdk_raw" not in without  # 默认关，不下发
+
+
 def test_confirmation_projection_keeps_token_and_renames() -> None:
     required = {
         "event": "claude_user_input_required",

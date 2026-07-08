@@ -54,7 +54,10 @@
             "tests/test_agent_profiles_category.py::test_governor_build_options_wires_hooks_and_setting_sources",
             "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
-            "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent"
+            "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent",
+            "tests/test_improvement_execution_service.py::test_idempotent_when_change_set_still_valid",
+            "tests/test_improvement_execution_service.py::test_reapply_when_change_set_invalidated",
+            "tests/test_improvement_execution_service.py::test_runtime_unavailable_surfaces_not_heuristic"
           ]
         },
         {
@@ -80,7 +83,9 @@
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow",
             "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
             "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions",
-            "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token"
+            "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
+            "tests/test_claude_user_input.py::test_requested_carries_token_resolved_does_not",
+            "tests/test_claude_user_input.py::test_answer_cannot_overwrite_raw_input_structural_keys"
           ],
           "ui_scripts": [
             "verify:design-parity",
@@ -142,7 +147,10 @@
             "tests/test_responses_api.py::test_previous_response_id_conflict_409",
             "tests/test_responses_api.py::test_previous_response_id_not_found_404",
             "tests/test_responses_api.py::test_agentgov_unknown_field_rejected_422",
-            "tests/test_responses_api.py::test_client_cannot_inject_reserved_store_marker"
+            "tests/test_responses_api.py::test_client_cannot_inject_reserved_store_marker",
+            "tests/test_responses_api.py::test_strict_unconfigured_runs_main",
+            "tests/test_responses_api.py::test_previous_response_id_continues_session",
+            "tests/test_responses_api.py::test_conversation_continues_session"
           ]
         },
         {
@@ -166,7 +174,10 @@
             "tests/test_responses_stream.py::test_error_maps_to_failed",
             "tests/test_responses_stream.py::test_tool_step_from_raw",
             "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
-            "tests/test_responses_stream.py::test_endpoint_stream_control"
+            "tests/test_responses_stream.py::test_endpoint_stream_control",
+            "tests/test_responses_stream.py::test_delta_and_created_carry_openai_conformant_fields",
+            "tests/test_responses_stream.py::test_tool_step_from_raw_tool_result",
+            "tests/test_responses_stream.py::test_sdk_raw_envelope_only_when_debug_enabled"
           ]
         },
         {
@@ -179,7 +190,8 @@
             "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_conversations_api.py::test_items_cursor_maps_to_offset",
-            "tests/test_conversations_api.py::test_items_missing_owning_agent_404"
+            "tests/test_conversations_api.py::test_items_missing_owning_agent_404",
+            "tests/test_conversations_api.py::test_items_has_more_when_page_full"
           ]
         }
       ]

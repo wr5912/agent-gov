@@ -190,15 +190,39 @@ def test_agentgov_unknown_field_rejected_422(monkeypatch, tmp_path: Path) -> Non
         assert resp.status_code == 422
 
 
+def test_previous_response_id_continues_session(monkeypatch, tmp_path: Path) -> None:
+    # 正向续接：previous_response_id -> 解析原 run 的 session -> 透传 ChatRequest.session_id
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.feedback_store.record_run({"run_id": "prevA", "session_id": "sessA", "agent_id": "soc-ops"})
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        assert client.post("/v1/responses", json={"input": "hi", "previous_response_id": "resp_prevA", "agentgov": {"agent_id": "soc-ops"}}).status_code == 200
+    assert captured["req"].session_id == "sessA"
+
+
+def test_conversation_continues_session(monkeypatch, tmp_path: Path) -> None:
+    # 正向续接：conversation=conv_<sid> -> session_id 透传
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        assert client.post("/v1/responses", json={"input": "hi", "conversation": "conv_sessB", "agentgov": {"agent_id": "soc-ops"}}).status_code == 200
+    assert captured["req"].session_id == "sessB"
+
+
 def test_client_cannot_inject_reserved_store_marker(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     with TestClient(module.app) as client:
         _register_biz(client)
-        # 客户端在 metadata 里塞保留 backend key（想伪造 store 标记）—— 应被剥离
-        client.post(
+        # 客户端在 metadata 里塞保留 backend key（想伪造 store 标记）—— 请求侧与响应回显都应剥离
+        body = client.post(
             "/v1/responses",
             json={"input": "hi", "metadata": {"__agentgov_store__": False}, "agentgov": {"agent_id": "soc-ops"}},
-        )
+        ).json()
+    assert "__agentgov_store__" not in body["metadata"]  # A1：create 回显也过 public_metadata
     assert "__agentgov_store__" not in captured["req"].metadata

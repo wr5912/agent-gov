@@ -88,7 +88,21 @@ def _project_confirmation_resolved(data: JsonObject) -> JsonObject:
     }
 
 
-def _completed_response(data: JsonObject, *, model: Optional[str], effective_agent_id: Optional[str], answer_parts: list[str], control: bool) -> JsonObject:
+def _created_response(run_id: Optional[str], model: Optional[str], session_id: Optional[str], created_at: int) -> JsonObject:
+    """response.created 事件的 response 对象（OpenAI 形状：id/object/created_at/status/model/conversation）。"""
+    return {
+        "id": response_id_from_run(run_id),
+        "object": "response",
+        "created_at": created_at,
+        "status": "in_progress",
+        "model": model,
+        "conversation": conversation_id_from_session(session_id),
+    }
+
+
+def _completed_response(
+    data: JsonObject, *, model: Optional[str], effective_agent_id: Optional[str], answer_parts: list[str], control: bool, created_at: Optional[int]
+) -> JsonObject:
     """由 result 帧 + 累计文本增量重建 response 对象（复用非流式投影，单一来源）。"""
     chat = ChatResponse(
         run_id=str(data.get("run_id") or ""),
@@ -102,7 +116,7 @@ def _completed_response(data: JsonObject, *, model: Optional[str], effective_age
         stop_reason=_str(data.get("stop_reason")),
         errors=list(data.get("errors")) if isinstance(data.get("errors"), list) else [],
     )
-    response = response_from_chat_response(chat, model=model, agent_id=effective_agent_id, metadata={}).model_dump(exclude_none=True)
+    response = response_from_chat_response(chat, model=model, agent_id=effective_agent_id, metadata={}, created_at=created_at).model_dump(exclude_none=True)
     if not control:
         response.pop("agentgov", None)  # strict：纯 OpenAI 响应对象，不泄露 agentgov
     return response
@@ -119,13 +133,23 @@ async def iter_responses_sse(
     """消费 ``runtime.stream`` 帧，产出 Responses-style SSE 字符串。"""
     seq = 0
     run_id: Optional[str] = None
+    item_id: Optional[str] = None
+    created_at: Optional[int] = None
     answer_parts: list[str] = []
 
-    def envelope(type_: str, content: JsonObject) -> str:
+    def _next() -> int:
         nonlocal seq
         seq += 1
-        body = {"v": _ENVELOPE_VERSION, "type": type_, "run_id": run_id, "ts": time.time(), "seq": seq, "payload": content}
-        return _sse(type_, body, event_id=seq)
+        return seq
+
+    def std(event_name: str, data: JsonObject) -> str:
+        # 标准 OpenAI Responses 事件：补 type + 全局 sequence_number（规范必填），使纯 OpenAI SDK 可解析。
+        return _sse(event_name, {"type": event_name, "sequence_number": _next(), **data})
+
+    def envelope(type_: str, content: JsonObject) -> str:
+        seq_no = _next()
+        body = {"v": _ENVELOPE_VERSION, "type": type_, "run_id": run_id, "ts": time.time(), "seq": seq_no, "payload": content}
+        return _sse(type_, body, event_id=seq_no)
 
     async for frame in source:
         event = frame.get("event")
@@ -134,18 +158,9 @@ async def iter_responses_sse(
 
         if event == "session":
             run_id = _str(data.get("run_id"))
-            yield _sse(
-                "response.created",
-                {
-                    "response": {
-                        "id": response_id_from_run(run_id),
-                        "object": "response",
-                        "status": "in_progress",
-                        "model": model,
-                        "conversation": conversation_id_from_session(_str(data.get("session_id"))),
-                    }
-                },
-            )
+            item_id = f"msg_{run_id}" if run_id else None
+            created_at = int(time.time())
+            yield std("response.created", {"response": _created_response(run_id, model, _str(data.get("session_id")), created_at)})
             if control:
                 yield envelope("agentgov.session", {**data, "heartbeat_interval_s": HEARTBEAT_INTERVAL_S})
         elif event == "message":
@@ -153,7 +168,7 @@ async def iter_responses_sse(
             text = data.get("text") or ""
             if ev.startswith("AssistantMessage") and text:
                 answer_parts.append(text)
-                yield _sse("response.output_text.delta", {"delta": text})
+                yield std("response.output_text.delta", {"item_id": item_id, "output_index": 0, "content_index": 0, "delta": text})
             elif control:
                 step = _tool_step_from_raw(data.get("raw"))
                 if step:
@@ -161,14 +176,14 @@ async def iter_responses_sse(
                 if sdk_raw:
                     yield envelope("agentgov.sdk_raw", {"raw": data.get("raw")})
         elif event == "result":
-            yield _sse(
-                "response.completed",
-                {"response": _completed_response(data, model=model, effective_agent_id=effective_agent_id, answer_parts=answer_parts, control=control)},
+            response = _completed_response(
+                data, model=model, effective_agent_id=effective_agent_id, answer_parts=answer_parts, control=control, created_at=created_at
             )
+            yield std("response.completed", {"response": response})
             if control:
                 yield envelope("agentgov.result", data)
         elif event == "error":
-            yield _sse("response.failed", {"error": {"errors": data.get("errors")}})
+            yield std("response.failed", {"error": {"errors": data.get("errors")}})
             if control:
                 yield envelope("agentgov.error", data)
         elif event == "heartbeat":

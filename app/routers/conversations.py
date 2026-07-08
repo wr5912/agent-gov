@@ -90,16 +90,17 @@ async def _list_items_impl(
         workspace_dir=workspace_dir,
         claude_config_dir=claude_config_dir,
         scrub=settings.session_history_scrub,
-        limit=limit,
+        limit=limit + 1,  # 多取一条判定 has_more，避免「恰好 limit 条 -> 误 True -> 下一页空」off-by-one
         offset=offset,
     )
-    messages = history.get("messages") or []
-    items = [_item(message, offset + i) for i, message in enumerate(messages) if isinstance(message, dict)]
+    messages = [m for m in (history.get("messages") or []) if isinstance(m, dict)]
+    has_more = len(messages) > limit
+    items = [_item(message, offset + i) for i, message in enumerate(messages[:limit])]
     return ConversationItemList(
         data=items,
         first_id=items[0].id if items else None,
         last_id=items[-1].id if items else None,
-        has_more=len(items) == limit,
+        has_more=has_more,
     )
 
 

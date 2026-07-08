@@ -9,8 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
-from app.runtime.errors import BusinessRuleViolation
+from app.runtime.errors import BusinessRuleViolation, RuntimeUnavailableError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_execution_service import ImprovementExecutionService
@@ -49,9 +48,13 @@ class _FakeGovernance:
         self._worktree = worktree
         self.abandoned: list[str] = []
         self.committed: list[str] = []
+        self.change_set_status = "draft"  # get_change_set 返回态；测试可改为 abandoned/rejected 模拟失效
 
     def create_change_set(self, *, agent_id, title, note):
         return {"change_set_id": "agc-1", "agent_id": agent_id, "base_commit_sha": "base-sha"}
+
+    def get_change_set(self, change_set_id):
+        return {"change_set_id": change_set_id, "status": self.change_set_status}
 
     def change_set_worktree_path(self, change_set):
         return self._worktree
@@ -99,16 +102,23 @@ def _confirm_plan(content, improvement_id="imp-1"):
 def test_heuristic_when_no_runner(tmp_path):
     content = _content(tmp_path)
     _confirm_plan(content)
-    svc = ImprovementExecutionService(improvement_store=_FakeImprovements(), content_store=content,
-                                      agent_governance=_FakeGovernance(tmp_path), execution_app=_FakeExecApp(), run_profile_json=None)
+    svc = ImprovementExecutionService(
+        improvement_store=_FakeImprovements(),
+        content_store=content,
+        agent_governance=_FakeGovernance(tmp_path),
+        execution_app=_FakeExecApp(),
+        run_profile_json=None,
+    )
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert rec.generated_by == "heuristic" and not rec.applied_agent_version_id and rec.changes_applied
+    assert rec.generated_by == "heuristic" and not rec.applied_agent_version_id and not rec.changes_applied  # C1：heuristic 不填 changes_applied
 
 
 def test_missing_plan_rejected_without_creating_execution(tmp_path):
     gov = _FakeGovernance(tmp_path)
+
     async def fake(**_k):
         raise AssertionError("governor should not run without a plan")
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=fake)
     with pytest.raises(BusinessRuleViolation):
         asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -118,9 +128,15 @@ def test_missing_plan_rejected_without_creating_execution(tmp_path):
 def test_draft_plan_is_confirmed_before_governor_apply(tmp_path):
     gov = _FakeGovernance(tmp_path)
     calls = {"n": 0}
+
     async def fake(**_k):
         calls["n"] += 1
-        return {"status": "ready", "summary": "已执行 draft 方案", "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
+        return {
+            "status": "ready",
+            "summary": "已执行 draft 方案",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=fake)
     content.upsert_optimization_plan("imp-1", summary="draft 方案", changes=[{"target": "prompt", "change": "x"}])  # 仍 draft
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -132,8 +148,10 @@ def test_draft_plan_is_confirmed_before_governor_apply(tmp_path):
 
 def test_governor_decline_abandons_and_falls_back(tmp_path):
     gov = _FakeGovernance(tmp_path)
+
     async def declines(**_k):
         return {"status": "needs_human_review", "summary": "", "operations": [], "no_action_reason": "目标文件不存在，需人工"}
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=declines)
     _confirm_plan(content)
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -145,10 +163,15 @@ def test_governor_decline_abandons_and_falls_back(tmp_path):
 def test_governor_success_applies_and_binds_version(tmp_path):
     gov = _FakeGovernance(tmp_path)
     exec_app = _FakeExecApp()
+
     async def ready(**kwargs):
         kwargs["trace_callback"]({"trace_id": "tr-exec", "trace_url": "http://lf/tr-exec"})
-        return {"status": "ready", "summary": "已在 CLAUDE.md 补充时间校验指令",
-                "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
+        return {
+            "status": "ready",
+            "summary": "已在 CLAUDE.md 补充时间校验指令",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready, exec_app=exec_app)
     _confirm_plan(content)
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -217,8 +240,14 @@ def test_real_allowlist_blocks_settings_local_and_falls_back(tmp_path):
 def test_apply_failure_abandons_change_set_and_falls_back(tmp_path):
     gov = _FakeGovernance(tmp_path)
     exec_app = _FakeExecApp(raises=True)
+
     async def ready(**_k):
-        return {"status": "ready", "summary": "s", "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
+        return {
+            "status": "ready",
+            "summary": "s",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready, exec_app=exec_app)
     _confirm_plan(content)
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -229,9 +258,15 @@ def test_apply_failure_abandons_change_set_and_falls_back(tmp_path):
 def test_idempotent_when_already_applied(tmp_path):
     gov = _FakeGovernance(tmp_path)
     calls = {"n": 0}
+
     async def ready(**_k):
         calls["n"] += 1
-        return {"status": "ready", "summary": "s", "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
+        return {
+            "status": "ready",
+            "summary": "s",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
     _confirm_plan(content)
     first = asyncio.run(svc.generate_and_apply_execution("imp-1"))
@@ -244,9 +279,15 @@ def test_idempotent_when_already_applied(tmp_path):
 def test_unbound_heuristic_execution_does_not_block_reapply(tmp_path):
     gov = _FakeGovernance(tmp_path)
     calls = {"n": 0}
+
     async def ready(**_k):
         calls["n"] += 1
-        return {"status": "ready", "summary": "旧记录已被真实执行覆盖", "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}]}
+        return {
+            "status": "ready",
+            "summary": "旧记录已被真实执行覆盖",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
     _confirm_plan(content)
     content.upsert_execution(
@@ -264,3 +305,59 @@ def test_unbound_heuristic_execution_does_not_block_reapply(tmp_path):
     assert rec.change_set_id == "agc-1"
     assert rec.applied_agent_version_id == "ver-cand-sha"
     assert rec.summary == "旧记录已被真实执行覆盖"
+
+
+def test_idempotent_when_change_set_still_valid(tmp_path):
+    # C3：只绑定 change_set_id（无候选版本）且 change_set 仍有效 -> 幂等短路，不重跑 governor
+    gov = _FakeGovernance(tmp_path)
+    calls = {"n": 0}
+
+    async def ready(**_k):
+        calls["n"] += 1
+        return {
+            "status": "ready",
+            "summary": "s",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
+    _confirm_plan(content)
+    content.upsert_execution("imp-1", summary="已绑定候选变更集", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-1")
+    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert calls["n"] == 0 and rec.change_set_id == "agc-1"
+
+
+def test_reapply_when_change_set_invalidated(tmp_path):
+    # C3：绑定的 change_set 已被 abandon/reject -> 不再幂等短路，允许重跑
+    gov = _FakeGovernance(tmp_path)
+    gov.change_set_status = "abandoned"
+    calls = {"n": 0}
+
+    async def ready(**_k):
+        calls["n"] += 1
+        return {
+            "status": "ready",
+            "summary": "重跑生成新候选",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
+    _confirm_plan(content)
+    content.upsert_execution("imp-1", summary="旧绑定已作废", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-old")
+    rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert calls["n"] == 1 and rec.generated_by == "governor"
+
+
+def test_runtime_unavailable_surfaces_not_heuristic(tmp_path):
+    # C2：governor 基础设施不可用（RuntimeUnavailableError/503）上抛，不掩成 heuristic 200
+    gov = _FakeGovernance(tmp_path)
+
+    async def unavailable(**_k):
+        raise RuntimeUnavailableError("model down")
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=unavailable)
+    _confirm_plan(content)
+    with pytest.raises(RuntimeUnavailableError):
+        asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert content.get_execution("imp-1") is None  # 未写误导执行记录
+    assert gov.abandoned == ["agc-1"]  # 失败仍放弃隔离 change set

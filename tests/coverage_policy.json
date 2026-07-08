@@ -123,6 +123,7 @@
           "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表，Playground 依赖的 /api/agent-registry 可见。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground",
+            "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_routes_through_openai_responses",
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
             "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
           ]
@@ -139,9 +140,11 @@
           "pytest": [
             "tests/test_responses_api.py::test_control_runs_business_agent_and_maps_fields",
             "tests/test_responses_api.py::test_control_response_projection_shape",
+            "tests/test_responses_api.py::test_control_input_items_store_false_and_reserved_metadata",
             "tests/test_responses_api.py::test_control_missing_agent_id_422",
             "tests/test_responses_api.py::test_control_unknown_agent_404",
             "tests/test_responses_api.py::test_strict_uses_operator_agent",
+            "tests/test_responses_api.py::test_strict_explicit_main_is_configured_but_runs_main",
             "tests/test_responses_api.py::test_strict_rejects_instructions_422",
             "tests/test_responses_api.py::test_strict_fail_loud_503_when_operator_agent_deleted",
             "tests/test_responses_api.py::test_previous_response_id_conflict_409",
@@ -177,7 +180,11 @@
             "tests/test_responses_stream.py::test_endpoint_stream_control",
             "tests/test_responses_stream.py::test_delta_and_created_carry_openai_conformant_fields",
             "tests/test_responses_stream.py::test_tool_step_from_raw_tool_result",
-            "tests/test_responses_stream.py::test_sdk_raw_envelope_only_when_debug_enabled"
+            "tests/test_responses_stream.py::test_sdk_raw_envelope_only_when_debug_enabled",
+            "tests/test_responses_stream.py::test_endpoint_stream_control_maps_request_fields",
+            "tests/test_responses_stream.py::test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events",
+            "tests/test_responses_stream.py::test_endpoint_stream_projects_hitl_confirmation",
+            "tests/test_responses_stream.py::test_endpoint_stream_retries_stale_previous_response_session"
           ]
         },
         {

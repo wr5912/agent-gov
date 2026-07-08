@@ -183,7 +183,7 @@ def response_from_chat_response(
         model=model,
         output=_output_from_text(answer),
         usage=map_usage(chat.usage),
-        metadata=dict(metadata or {}),
+        metadata=public_metadata(metadata),
         agentgov=AgentGovResponseExtension(
             run_id=chat.run_id,
             conversation_id=conversation_id_from_session(chat.session_id),

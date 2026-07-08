@@ -84,6 +84,32 @@ def test_control_response_projection_shape(monkeypatch, tmp_path: Path) -> None:
     assert body["usage"] == {"input_tokens": 3, "output_tokens": 5, "total_tokens": 8}
 
 
+def test_control_input_items_store_false_and_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post(
+            "/v1/responses",
+            json={
+                "input": [
+                    {"role": "user", "content": [{"type": "input_text", "text": "第一段"}, {"text": "第二段"}]},
+                    {"text": "第三段"},
+                ],
+                "store": False,
+                "metadata": {"source": "playground", "__agentgov_store__": True},
+                "agentgov": {"agent_id": "soc-ops"},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+
+    assert captured["req"].message == "第一段\n第二段\n第三段"
+    assert captured["req"].metadata == {"source": "playground", "__agentgov_store__": False}
+    assert body["metadata"] == {"source": "playground"}
+
+
 def test_control_missing_agent_id_422(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
@@ -121,6 +147,16 @@ def test_strict_unconfigured_runs_main(monkeypatch, tmp_path: Path) -> None:
     with TestClient(module.app) as client:
         assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
     assert captured["profile"] is None  # 未配置 -> main
+
+
+def test_strict_explicit_main_is_configured_but_runs_main(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    with TestClient(module.app) as client:
+        assert client.put("/api/settings/openai-compat-agent", json={"agent_id": "main-agent"}).json()["configured"] is True
+        assert client.post("/v1/responses", json={"input": "hi"}).status_code == 200
+    assert captured["profile"] is None  # 显式 main 与未配置状态不同，但运行目标仍是 main
 
 
 def test_strict_rejects_instructions_422(monkeypatch, tmp_path: Path) -> None:
@@ -224,5 +260,5 @@ def test_client_cannot_inject_reserved_store_marker(monkeypatch, tmp_path: Path)
             "/v1/responses",
             json={"input": "hi", "metadata": {"__agentgov_store__": False}, "agentgov": {"agent_id": "soc-ops"}},
         ).json()
-    assert "__agentgov_store__" not in body["metadata"]  # A1：create 回显也过 public_metadata
     assert "__agentgov_store__" not in captured["req"].metadata
+    assert "__agentgov_store__" not in body["metadata"]

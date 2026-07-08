@@ -7,9 +7,13 @@ from pathlib import Path
 
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.runtime_db import make_session_factory
+from app.runtime.schemas import ChatResponse
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from fastapi.testclient import TestClient
 from scripts.bootstrap_runtime_volume import bootstrap_runtime_volume
+
+from test_api_execution_optimizer import _load_app
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEED_ROOT = REPO_ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
@@ -130,3 +134,34 @@ def test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground(monkey
     assert registered.origin == "seed"
     assert registered.status == "active"
     assert registered.workspace_dir.endswith(f"/data/business-agents/{AI_SOC_GAP_AGENT_ID}/workspace")
+
+
+def test_ai_soc_gap_analyzer_seed_routes_through_openai_responses(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "docker" / "volume"
+    bootstrap_runtime_volume(
+        runtime_root=runtime_root,
+        template_dir=REPO_ROOT / "docker" / "runtime-volume-seeds",
+    )
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+
+    async def fake_run(req, *, profile=None, **kwargs):
+        captured["req"] = req
+        captured["profile"] = profile
+        return ChatResponse(run_id="r", session_id="s", answer="ok")
+
+    monkeypatch.setattr(module.runtime, "run", fake_run)
+
+    with TestClient(module.app) as client:
+        listed = {agent["agent_id"]: agent for agent in client.get("/api/agent-registry").json()}
+        assert AI_SOC_GAP_AGENT_ID in listed
+        resp = client.post(
+            "/v1/responses",
+            json={"input": "评估 AI SOC 差距", "agentgov": {"agent_id": AI_SOC_GAP_AGENT_ID}},
+        )
+        assert resp.status_code == 200, resp.text
+
+    assert captured["req"].agent_id == AI_SOC_GAP_AGENT_ID
+    assert captured["profile"].name == AI_SOC_GAP_AGENT_ID
+    assert captured["profile"].category == "business"
+    assert captured["profile"].workspace_dir.as_posix().endswith(f"/data/business-agents/{AI_SOC_GAP_AGENT_ID}/workspace")

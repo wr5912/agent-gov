@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Verify that a UI opened through a non-loopback host does not keep using localhost as the browser API base.
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import { networkInterfaces } from "node:os";
 import { createRequire } from "node:module";
 import process from "node:process";
@@ -10,12 +11,13 @@ const require = createRequire(new URL("../frontend/package.json", import.meta.ur
 const { chromium } = require("playwright");
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
-const port = Number(process.env.REMOTE_API_BASE_UI_PORT || 55222);
+const requestedPort = Number(process.env.REMOTE_API_BASE_UI_PORT || 55222);
 const host = process.env.REMOTE_API_BASE_HOST || firstRoutableIPv4();
 if (!host) {
   throw new Error("No non-loopback IPv4 address found for remote API base verification");
 }
-const uiBase = `http://${host}:${port}`;
+let port = requestedPort;
+let uiBase = `http://${host}:${port}`;
 const expectedApiBase = `http://${host}:58080`;
 const forbiddenApiBases = new Set(["http://localhost:58080", "http://127.0.0.1:58080"]);
 
@@ -26,6 +28,27 @@ function firstRoutableIPv4() {
     }
   }
   return "";
+}
+
+function reservePort(candidate) {
+  return new Promise((resolve, reject) => {
+    const server = createServer();
+    server.once("error", reject);
+    server.listen(candidate, "0.0.0.0", () => {
+      const address = server.address();
+      const selected = typeof address === "object" && address ? address.port : candidate;
+      server.close(() => resolve(selected));
+    });
+  });
+}
+
+async function choosePort() {
+  try {
+    return await reservePort(requestedPort);
+  } catch (error) {
+    if (process.env.REMOTE_API_BASE_UI_PORT) throw error;
+    return await reservePort(0);
+  }
 }
 
 function startVite() {
@@ -39,9 +62,22 @@ function startVite() {
       VITE_RUNTIME_API_KEY: "",
     },
   });
-  child.stdout.on("data", () => {});
-  child.stderr.on("data", () => {});
+  child.output = { stdout: [], stderr: [] };
+  child.stdout.on("data", (chunk) => {
+    child.output.stdout.push(String(chunk));
+    child.output.stdout = child.output.stdout.slice(-20);
+  });
+  child.stderr.on("data", (chunk) => {
+    child.output.stderr.push(String(chunk));
+    child.output.stderr = child.output.stderr.slice(-20);
+  });
   return child;
+}
+
+function childLogs(child) {
+  const stdout = child?.output?.stdout?.join("").trim() || "";
+  const stderr = child?.output?.stderr?.join("").trim() || "";
+  return [stdout && `stdout:\n${stdout}`, stderr && `stderr:\n${stderr}`].filter(Boolean).join("\n");
 }
 
 function killTree(child, signal) {
@@ -57,9 +93,12 @@ async function stopChild(child) {
   });
 }
 
-async function waitForUi() {
+async function waitForUi(server) {
   const deadline = Date.now() + 30000;
   while (Date.now() < deadline) {
+    if (server.exitCode !== null) {
+      throw new Error(`Vite exited before becoming ready at ${uiBase}\n${childLogs(server)}`);
+    }
     try {
       const response = await fetch(uiBase);
       if (response.ok) return;
@@ -100,11 +139,13 @@ async function waitForCondition(check, message, timeoutMs = 10000) {
 }
 
 async function main() {
+  port = await choosePort();
+  uiBase = `http://${host}:${port}`;
   const server = startVite();
   const seenPaths = new Set();
   const forbiddenRequests = [];
   try {
-    await waitForUi();
+    await waitForUi(server);
     const browser = await chromium.launch({ headless: process.env.PLAYWRIGHT_HEADLESS !== "0" });
     const page = await browser.newPage({ viewport: { width: 1280, height: 820 } });
     await page.addInitScript(() => {

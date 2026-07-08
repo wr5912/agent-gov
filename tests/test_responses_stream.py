@@ -199,6 +199,16 @@ def _fake_stream(frames):
     return stream
 
 
+def _fake_capturing_stream(captured: dict, frames):
+    async def stream(req, *, profile=None, **kwargs):
+        captured["req"] = req
+        captured["profile"] = profile
+        for frame in frames:
+            yield frame
+
+    return stream
+
+
 def _register_biz(client: TestClient, agent_id: str = "soc-ops") -> None:
     assert client.post("/api/agent-registry", json={"name": "客服", "agent_id": agent_id}).status_code == 201
 
@@ -213,3 +223,142 @@ def test_endpoint_stream_control(monkeypatch, tmp_path: Path) -> None:
         assert resp.headers["content-type"].startswith("text/event-stream")
         names = [n for n, _ in _parse(resp.text)]
         assert "response.created" in names and "response.output_text.delta" in names and "agentgov.session" in names
+
+
+def test_endpoint_stream_control_maps_request_fields(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "stream", _fake_capturing_stream(captured, [_SESSION, _DONE]))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post(
+            "/v1/responses",
+            json={
+                "model": "claude-sonnet-5",
+                "input": [{"role": "user", "content": [{"type": "input_text", "text": "流式输入"}]}],
+                "instructions": "只输出正文",
+                "stream": True,
+                "store": False,
+                "metadata": {"source": "playground", "__agentgov_store__": True},
+                "agentgov": {"agent_id": "soc-ops", "alert_id": "alert-1", "case_id": "case-1", "max_turns": 7},
+            },
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.headers["content-type"].startswith("text/event-stream")
+
+    req = captured["req"]
+    assert req.message == "流式输入"
+    assert req.model == "claude-sonnet-5"
+    assert req.agent_id == "soc-ops"
+    assert req.alert_id == "alert-1"
+    assert req.case_id == "case-1"
+    assert req.max_turns == 7
+    assert req.system_append == "只输出正文"
+    assert req.metadata == {"source": "playground", "__agentgov_store__": False}
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
+
+
+def test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "stream", _fake_capturing_stream(captured, [_SESSION, _ASSISTANT, _RESULT, _DONE]))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        client.put("/api/settings/openai-compat-agent", json={"agent_id": "soc-ops"})
+        resp = client.post("/v1/responses", json={"input": "hi", "stream": True})
+        assert resp.status_code == 200, resp.text
+
+    assert str(captured["profile"].workspace_dir).endswith("/business-agents/soc-ops/workspace")
+    names = [name for name, _ in _parse(resp.text)]
+    assert "response.completed" in names
+    assert all(not name.startswith("agentgov.") for name in names)
+
+
+def test_endpoint_stream_projects_hitl_confirmation(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    required = {
+        "event": "claude_user_input_required",
+        "data": {
+            "request_id": "cur-1",
+            "decision_token": "tok-secret",
+            "request_type": "tool_permission",
+            "run_id": "run-9",
+            "session_id": "sess-9",
+            "business_agent_id": "soc-ops",
+            "tool_name": "Bash",
+            "input": {"command": "echo hi"},
+            "risk": {"level": "medium"},
+        },
+    }
+    resolved = {
+        "event": "claude_user_input_resolved",
+        "data": {
+            "request_id": "cur-1",
+            "run_id": "run-9",
+            "session_id": "sess-9",
+            "business_agent_id": "soc-ops",
+            "status": "resolved",
+            "decision": "allow_once",
+            "decided_by": "tester",
+        },
+    }
+    monkeypatch.setattr(module.runtime, "stream", _fake_stream([_SESSION, required, resolved, _DONE]))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        resp = client.post("/v1/responses", json={"input": "hi", "stream": True, "agentgov": {"agent_id": "soc-ops"}})
+        assert resp.status_code == 200, resp.text
+
+    by = dict(_parse(resp.text))
+    assert by["agentgov.confirmation.requested"]["payload"]["decision_token"] == "tok-secret"
+    assert by["agentgov.confirmation.requested"]["payload"]["tool_input"] == {"command": "echo hi"}
+    assert by["agentgov.confirmation.resolved"]["payload"]["decision"] == "allow_once"
+    assert "decision_token" not in by["agentgov.confirmation.resolved"]["payload"]
+
+
+def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tmp_path: Path) -> None:
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    calls: list[str | None] = []
+
+    async def fake_query(*, prompt, options, transport=None):
+        calls.append(getattr(options, "resume", None))
+        async for _ in prompt:
+            pass
+        if len(calls) == 1:
+            raise RuntimeError("No conversation found with session ID: stale-sdk")
+        yield AssistantMessage(content=[TextBlock(text="responses stream after retry")], model="<synthetic>", session_id="new-sdk")
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id="new-sdk",
+            result="responses stream after retry",
+        )
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    module = _load_app(monkeypatch, tmp_path)
+    module.feedback_store.record_run({"run_id": "prev-stale", "session_id": "sess-stale", "agent_id": "main-agent"})
+    session = module.session_store.get_or_create("sess-stale")
+    session.sdk_session_id = "stale-sdk"
+    module.session_store.save(session)
+
+    with TestClient(module.app) as client:
+        resp = client.post(
+            "/v1/responses",
+            json={"input": "continue", "stream": True, "previous_response_id": "resp_prev-stale"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    names = [name for name, _ in _parse(resp.text)]
+    assert calls == ["stale-sdk", None]
+    assert "response.failed" not in names
+    assert "response.completed" in names
+    assert "responses stream after retry" in resp.text
+    saved = module.session_store.get("sess-stale")
+    assert saved is not None
+    assert saved.sdk_session_id == "new-sdk"

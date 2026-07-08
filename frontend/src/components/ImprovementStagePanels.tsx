@@ -471,6 +471,7 @@ function OptimizationPanels({
   const appliedDiff = execution?.applied_diff && Object.keys(execution.applied_diff).length ? execution.applied_diff : null;
   const planPending = isPendingOperation(pendingOperation, "generate_optimization_plan");
   const executionPending = isPendingOperation(pendingOperation, "apply_execution");
+  const planExecutionStatus = executionPending ? "执行中" : execution ? "已执行" : "待执行";
   const planError = operationError?.kind === "generate_optimization_plan" ? operationError.message : "";
   const executionError = operationError?.kind === "apply_execution" ? operationError.message : "";
   return (
@@ -480,7 +481,7 @@ function OptimizationPanels({
           key: "optimization-plan", title: "优化方案详情", size: "medium",
           content: <>
             <div className="iw-detail-summary">{optimizationPlan?.summary || "尚未生成优化方案。"}</div>
-            <Dl rows={[["风险级别", optimizationPlan?.risk_level || "待评估"], ["状态", optimizationPlan?.status === "confirmed" ? "已确认" : "待确认"]]} />
+            <Dl rows={[["风险级别", optimizationPlan?.risk_level || "待评估"], ["状态", planExecutionStatus]]} />
             <h4>变更项</h4>
             <div className="iw-diff-summary">{changes.map((c, i) => <div key={`${c.target}-${i}`}><strong>{c.target}</strong><span>{c.change}</span></div>)}</div>
           </>,
@@ -489,6 +490,7 @@ function OptimizationPanels({
         {planError ? <GenerationError message={planError} testId="optimization-generation-error" /> : null}
         <ImprovementPlanExecution
           item={item} busy={busy} optPlan={optimizationPlan} execution={null} attribution={attribution} readOnly={readOnly}
+          showExecution={false} showPlanRegenerate={false}
           onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
         <TraceButton source={optimizationPlan} label="优化方案" onOpenTrace={onOpenTrace} />
@@ -513,7 +515,7 @@ function OptimizationPanels({
             <Dl rows={[
               ["修改对象", optimizationPlan?.changes[0]?.target || "Prompt / SOP"],
               ["风险级别", optimizationPlan?.risk_level || "待评估"],
-              ["审批状态", optimizationPlan?.status === "confirmed" ? "已通过" : "待确认"],
+              ["执行状态", planExecutionStatus],
             ]} />
             <div className="iw-mini-flow"><span>备份配置</span><span>灰度发布</span><span>观测验证</span><span>扩大发布</span></div>
           </>,
@@ -521,7 +523,7 @@ function OptimizationPanels({
         <dl className="iw-compact-dl">
           <div><dt>修改对象</dt><dd>{optimizationPlan?.changes[0]?.target || "Prompt / SOP"}</dd></div>
           <div><dt>风险级别</dt><dd data-testid="execution-plan-risk">{optimizationPlan?.risk_level || "待评估"}</dd></div>
-          <div><dt>审批状态</dt><dd>{optimizationPlan?.status === "confirmed" ? "已通过" : "待确认"}</dd></div>
+          <div><dt>执行状态</dt><dd>{planExecutionStatus}</dd></div>
         </dl>
         <div className="iw-mini-flow"><span>备份配置</span><span>灰度发布</span><span>观测验证</span><span>扩大发布</span></div>
       </StageCard>
@@ -555,7 +557,8 @@ function OptimizationPanels({
         {executionPending ? <GenerationStatus operation={pendingOperation!} testId="execution-generation-status" /> : null}
         {executionError ? <GenerationError message={executionError} testId="execution-generation-error" /> : null}
         <ImprovementPlanExecution
-          item={item} busy={busy} optPlan={null} execution={execution} attribution={attribution} readOnly={readOnly}
+          item={item} busy={busy} optPlan={optimizationPlan} execution={execution} attribution={attribution} readOnly={readOnly}
+          showPlan={false}
           onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
         />
         <TraceButton source={execution} label="执行记录" onOpenTrace={onOpenTrace} />

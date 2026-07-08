@@ -350,9 +350,25 @@ async function main() {
       const decisionRegenerate = await assertVisible(page, "decision-regenerate-optimization-plan");
       const decisionRegenerateLabel = (await decisionRegenerate.innerText()).trim();
       if (decisionRegenerateLabel !== "重新生成优化方案") throw new Error(`unexpected decision regenerate label: ${decisionRegenerateLabel}`);
-      const detailRegenerate = await assertVisible(page, "regenerate-optimization-plan");
-      const detailRegenerateLabel = (await detailRegenerate.innerText()).trim();
-      if (detailRegenerateLabel !== "重新生成优化方案") throw new Error(`unexpected detail regenerate label: ${detailRegenerateLabel}`);
+      const optimizationCard = page.getByTestId("optimization-plan").first();
+      const optimizationCardText = await optimizationCard.innerText();
+      if (optimizationCardText.includes("（待确认）") || optimizationCardText.includes("（已确认）")) {
+        throw new Error(`optimization card title still exposes confirmation state: ${optimizationCardText}`);
+      }
+      const duplicateRegenerate = await page.getByTestId("regenerate-optimization-plan").count();
+      if (duplicateRegenerate !== 0) throw new Error(`optimization plan card duplicate regenerate button count=${duplicateRegenerate}`);
+      const cardExecutionEmpty = await optimizationCard.getByTestId("execution-empty").count();
+      if (cardExecutionEmpty !== 0) throw new Error(`optimization plan card should not render execution empty state, got ${cardExecutionEmpty}`);
+      await assertVisible(page, "execution-empty");
+      await optimizationCard.getByRole("button", { name: "查看详情" }).click();
+      const optimizationDetail = page.locator('[data-testid="stage-detail-content"][data-detail-key="optimization-plan"]');
+      await optimizationDetail.waitFor({ timeout: 8000 });
+      const pendingDetailText = await optimizationDetail.innerText();
+      if (!pendingDetailText.includes("待执行") || pendingDetailText.includes("待确认") || pendingDetailText.includes("已确认")) {
+        throw new Error(`unexpected optimization detail pending status: ${pendingDetailText}`);
+      }
+      await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
+      await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
 
       const secondPlanResponse = page.waitForResponse((response) => response.url().includes("/optimization-plan/generate") && response.request().method() === "POST");
       await decisionRegenerate.click();
@@ -364,6 +380,20 @@ async function main() {
         { timeout: 10_000 },
       );
       if (state.optimizationGenerateCount < 2) throw new Error(`expected regeneration endpoint to be called twice, got ${state.optimizationGenerateCount}`);
+
+      const executionResponse = page.waitForResponse((response) => response.url().includes("/execution/apply") && response.request().method() === "POST");
+      await page.getByTestId("current-decision-card").getByTestId("primary-action").click();
+      const executionResult = await executionResponse;
+      if (!executionResult.ok()) throw new Error(`execute optimization failed: ${executionResult.status()}`);
+      await page.getByTestId("execution-source").waitFor({ timeout: 10_000 });
+      await page.getByTestId("optimization-plan").first().getByRole("button", { name: "查看详情" }).click();
+      await optimizationDetail.waitFor({ timeout: 8000 });
+      const executedDetailText = await optimizationDetail.innerText();
+      if (!executedDetailText.includes("已执行") || executedDetailText.includes("待确认") || executedDetailText.includes("已确认")) {
+        throw new Error(`unexpected optimization detail executed status: ${executedDetailText}`);
+      }
+      await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
+      await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
     }
 
     await browser.close();

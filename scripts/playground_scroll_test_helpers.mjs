@@ -32,7 +32,18 @@ export async function seedPlaygroundMessages(page, turnCount) {
       const answer = `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证刻度密度。`.repeat(repeatCount);
       return [
         { id: `density-user-${count}-${n}`, role: "user", content: `请用一句话说明你的治理职责，序号 ${n}。`, createdAt },
-        { id: `density-assistant-${count}-${n}`, role: "assistant", content: answer, createdAt: completedAt, runId: `density-run-${count}-${n}`, sessionId, agentVersionId: "v-density-check", events: [] },
+        {
+          id: `density-assistant-${count}-${n}`,
+          role: "assistant",
+          content: answer,
+          createdAt: completedAt,
+          runId: `density-run-${count}-${n}`,
+          sessionId,
+          agentVersionId: "v-density-check",
+          langfuseTraceId: `density-trace-${count}-${n}`,
+          langfuseTraceUrl: `http://langfuse-web:3000/project/agent-gov/traces/density-trace-${count}-${n}`,
+          events: [],
+        },
       ];
     }).flat();
     window.sessionStorage.setItem("parity-preserve-playground-session", "1");

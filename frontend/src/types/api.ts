@@ -2716,6 +2716,10 @@ export interface components {
             completed_at?: string | null;
             /** Created At */
             created_at?: string | null;
+            /** Langfuse Trace Id */
+            langfuse_trace_id?: string | null;
+            /** Langfuse Trace Url */
+            langfuse_trace_url?: string | null;
             /** Message */
             message?: string | null;
             /**
@@ -3097,6 +3101,10 @@ export interface components {
             answer: string;
             /** Errors */
             errors?: string[];
+            /** Langfuse Trace Id */
+            langfuse_trace_id?: string | null;
+            /** Langfuse Trace Url */
+            langfuse_trace_url?: string | null;
             /** Messages */
             messages?: {
                 [key: string]: components["schemas"]["JsonValue"];

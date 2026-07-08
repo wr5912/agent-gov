@@ -1,6 +1,7 @@
 import { ExternalLink, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { DrawerShell, type DrawerSize } from "./DrawerShell";
+import { concreteLangfuseTraceUrl } from "../langfuseTraceUrl";
 import type { AgentActivity, ChatMessage, StreamLogEvent } from "../types/runtime";
 import { isRecord } from "../utils/records";
 
@@ -21,6 +22,11 @@ export function TraceDrawer({
     const toolCount = activity.tool_calls.length + activity.tool_results.length;
     return events.length > 8 || toolCount > 0 || jsonSize > 10000 ? "wide" : "medium";
   }, [activity.tool_calls.length, activity.tool_results.length, events]);
+  const traceHref = concreteLangfuseTraceUrl({
+    langfuseBaseUrl: langfuseUrl || "",
+    traceId: message.langfuseTraceId,
+    traceUrl: message.langfuseTraceUrl,
+  });
 
   return (
     <DrawerShell
@@ -32,9 +38,9 @@ export function TraceDrawer({
       bodyClassName="trace-drawer-body"
       onClose={onClose}
       headerMeta={<TraceContextChips message={message} activity={activity} />}
-      headerActions={langfuseUrl ? (
-        <a className="secondary-button drawer-header-link" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">
-          <ExternalLink size={14} /> Langfuse
+      headerActions={traceHref ? (
+        <a className="secondary-button drawer-header-link" data-testid="trace-open-langfuse" href={traceHref} target="_blank" rel="noreferrer">
+          <ExternalLink size={14} /> Langfuse 完整 Trace
         </a>
       ) : null}
     >

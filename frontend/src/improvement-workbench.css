@@ -669,6 +669,51 @@
 }
 .iw-regression-empty strong { color: var(--text-primary); font-size: 13px; }
 .iw-regression-empty span { font-size: 13px; line-height: 1.5; }
+.iw-regression-case-summary {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface-muted);
+}
+.iw-regression-case-summary ol {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.iw-regression-case-summary li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  min-width: 0;
+  font-size: 13px;
+}
+.iw-regression-case-summary li span { color: var(--text-muted); }
+.iw-regression-case-summary li strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.iw-regression-case-details { display: grid; gap: 14px; }
+.iw-regression-case-detail {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--bg-surface);
+}
+.iw-regression-case-detail h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.35;
+}
 .iw-gate-pass {
   margin-top: 10px;
   padding: 10px;

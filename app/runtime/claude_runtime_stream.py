@@ -176,6 +176,8 @@ async def _publish_result_event(
                 "sdk_session_id": state.sdk_session_id,
                 "run_id": context.run_id,
                 "agent_version_id": context.agent_version_id,
+                "langfuse_trace_id": context.langfuse_trace_id,
+                "langfuse_trace_url": context.langfuse_trace_url,
                 "alert_id": stream_run.req.alert_id,
                 "case_id": stream_run.req.case_id,
                 "agent_activity": agent_activity,

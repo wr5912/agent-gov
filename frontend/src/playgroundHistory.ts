@@ -79,6 +79,7 @@ function eventsFromAgentRun(run: AgentRunRecord): StreamLogEvent[] {
 export function messagesFromAgentRuns(runs: AgentRunRecord[]): ChatMessage[] {
   const ordered = [...runs].sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
   return ordered.flatMap((run) => {
+    const rawRun = run as AgentRunRecord & { langfuse_trace_id?: unknown; langfuse_trace_url?: unknown };
     const createdAt = run.created_at || new Date().toISOString();
     const completedAt = run.completed_at || createdAt;
     const messages: ChatMessage[] = [];
@@ -102,6 +103,8 @@ export function messagesFromAgentRuns(runs: AgentRunRecord[]): ChatMessage[] {
         sessionId: run.session_id || undefined,
         sdkSessionId: run.sdk_session_id || undefined,
         agentVersionId: run.agent_version_id || undefined,
+        langfuseTraceId: typeof rawRun.langfuse_trace_id === "string" ? rawRun.langfuse_trace_id : undefined,
+        langfuseTraceUrl: typeof rawRun.langfuse_trace_url === "string" ? rawRun.langfuse_trace_url : undefined,
         alertId: run.alert_id || undefined,
         caseId: run.case_id || undefined,
         agentActivity,

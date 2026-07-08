@@ -58,6 +58,12 @@ const IMPROVEMENTS = [
   { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
 ];
+const internalTraceUrl = (traceId) => `http://langfuse-web:3000/project/agent-gov/traces/${traceId}`;
+const REGRESSION_CASES = [
+  { prompt: "复现场景：当告警时间与事件时间不一致时，请处理。", expected_behavior: "先核验时间一致性，不直接升级。", checkpoints: ["是否核验时间", "是否避免误升级"] },
+  { prompt: "复现场景：当 sec-ops-data 返回疑似模拟数据时，请处理。", expected_behavior: "提示核验数据源，避免把模拟数据当成真实证据。", checkpoints: ["是否标记数据源风险", "是否要求补充证据"] },
+  { prompt: "复现场景：当证据不足但用户要求结论时，请处理。", expected_behavior: "说明证据不足并给出下一步核验动作。", checkpoints: ["是否拒绝编造结论", "是否给出核验路径"] },
+];
 function defaultPayload(path, request = {}) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
   if (path === "/api/agent-registry") return AGENTS;
@@ -201,17 +207,17 @@ function defaultPayload(path, request = {}) {
   }
   if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "confirmed", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "confirmed", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 1 条回归用例候选。", cases: [{ prompt: "当事件时间与告警时间不一致时如何处置？", expected_behavior: "先核验时间一致性，不直接升级", checkpoints: ["是否核验时间", "是否避免误升级"] }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/confirm$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 1 条回归用例候选。", cases: [{ prompt: "当事件时间与告警时间不一致时如何处置？", expected_behavior: "先核验时间一致性，不直接升级", checkpoints: ["是否核验时间", "是否避免误升级"] }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 1 条回归用例候选。", cases: [{ prompt: "当事件时间与告警时间不一致时如何处置？", expected_behavior: "先核验时间一致性，不直接升级", checkpoints: ["是否核验时间", "是否避免误升级"] }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/confirm$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "confirmed", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   if (/^\/api\/automation-policy/.test(path)) return { agent_id: "soc-ops", mode: "off" };
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);
@@ -794,9 +800,11 @@ const RULES = [
     const legacy = await page.locator(".detail-modal-card").isVisible().catch(() => false);
     const traceDrawer = await page.getByTestId("trace-drawer").count();
     const langfuse = await has(page, "trace-open-langfuse");
+    const langfuseHref = await page.getByTestId("trace-open-langfuse").first().getAttribute("href").catch(() => "");
+    const concreteTrace = (langfuseHref || "").includes("/project/agent-gov/traces/") && !(langfuseHref || "").includes("langfuse-web:3000");
     await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
     await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && langfuse, detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} langfuse=${langfuse}` };
+    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && langfuse && concreteTrace, detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} langfuse=${langfuse} href=${langfuseHref}` };
   } },
   { id: "panel-size-policy", phase: "P0", desc: "侧栏、tab 面板与抽屉按职责分档且打开后稳定", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -887,7 +895,7 @@ const RULES = [
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
     return { ok: !releaseNav && stage === "test_release" && gate && primary.includes("执行回归测试"), detail: `nav-release=${releaseNav} stage=${stage} gate=${gate} primary=${primary}` };
   } },
-  { id: "test-release-stage-panels", phase: "P1", desc: "测试发布阶段含测试数据集、回归执行、覆盖场景、执行环境和门禁预览五个面板", async fn(page) {
+  { id: "test-release-stage-panels", phase: "P1", desc: "测试发布阶段含测试数据集、回归执行、测试用例详情、执行环境和门禁预览五个面板", async fn(page) {
     const opened = await openImprovementById(page, stageTarget("testRelease", "imp-demo04"));
     if (!opened) return { ok: false, detail: "无法打开测试发布阶段改进事项" };
     const panels = ["test-dataset-asset", "regression-guarantee", "stage-panel-coverage", "stage-panel-execution-baseline", "stage-panel-release-gate"];
@@ -897,9 +905,18 @@ const RULES = [
     const runRef = await page.getByTestId("regression-run-dataset-ref").innerText().catch(() => "");
     const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
     const coverage = await has(page, "regression-case-coverage");
+    const summaryItems = await page.getByTestId("regression-case-summary-item").count();
+    await page.getByTestId("stage-panel-coverage").getByRole("button", { name: "查看详情" }).click();
+    await page.getByTestId("stage-detail-drawer").waitFor({ timeout: 6000 }).catch(() => {});
+    const detailItems = await page.getByTestId("regression-case-detail-item").count();
+    const inputs = await page.getByTestId("regression-case-input").count();
+    const expected = await page.getByTestId("regression-case-expected").count();
+    const checkpoints = await page.getByTestId("regression-case-checkpoint").count();
+    await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
     return {
-      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage,
-      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage}`,
+      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage && summaryItems >= 3 && detailItems >= 3 && inputs >= 3 && expected >= 3 && checkpoints >= 3,
+      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage} summary=${summaryItems} detail=${detailItems} inputs=${inputs} expected=${expected} checkpoints=${checkpoints}`,
     };
   } },
   { id: "improvement-default-detail", phase: "P1", desc: "改进列表有数据时默认展示首个详情，不留空白首屏", async fn(page) {
@@ -1008,7 +1025,9 @@ const RULES = [
     await page.getByTestId("trace-summary").waitFor({ state: "attached", timeout: 6000 }).catch(() => {});
     const ts = await has(page, "trace-summary");
     const lf = await has(page, "trace-open-langfuse");
-    return { ok: ts && lf, detail: `Trace摘要=${ts} 打开Langfuse=${lf}` };
+    const href = await page.getByTestId("trace-open-langfuse").first().getAttribute("href").catch(() => "");
+    const concreteTrace = (href || "").includes("/project/agent-gov/traces/") && !(href || "").includes("langfuse-web:3000");
+    return { ok: ts && lf && concreteTrace, detail: `Trace摘要=${ts} 打开Langfuse=${lf} href=${href}` };
   } },
   { id: "merge-basis", phase: "P3", desc: "相似归并 §8.5：置信度 + 合并依据 + 标记合并不准", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
@@ -1101,7 +1120,7 @@ const RULES = [
       detail: `方案=${opt} A混入变更=${optMisplacedChanges} B变更预览=${diffPreview} 文件diff=${fileDiffs}/${unifiedDiffOk} legacyPlanChanges=${legacyPlanChanges} 执行记录=${exec}`,
     };
   } },
-  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重跑入口由决策卡承载，候选用例归属覆盖场景卡", async fn(page) {
+  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重跑入口由决策卡承载，候选用例归属测试用例详情卡", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
@@ -1259,6 +1278,8 @@ async function main() {
             runId: `${runId}-${n}`,
             sessionId,
             agentVersionId,
+            langfuseTraceId: `${runId}-trace-${n}`,
+            langfuseTraceUrl: `http://langfuse-web:3000/project/agent-gov/traces/${runId}-trace-${n}`,
             events: [
               { id: `evt-${n}-1`, event: "message", text: "开始治理分析。", data: { text: "开始治理分析。" }, createdAt },
               { id: `evt-${n}-2`, event: "tool", data: { type: "tool_use", name: "Read", id: `tool-${n}`, input: { file_path: "CLAUDE.md" } }, createdAt: completedAt },

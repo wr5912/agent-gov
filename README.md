@@ -203,7 +203,7 @@ Runtime 的反馈优化闭环以多 Agent 架构为准。每次 `/api/chat` 或 
 pnpm --dir frontend generate:api-types
 ```
 
-- 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。
+- 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。`AgentRunResponse` 会返回 `langfuse_trace_id` / `langfuse_trace_url`，用于运行证据面板定位具体 Langfuse Trace。
 - Agent job 队列：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}`。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。
 - 改进事项四阶段内容：`POST/GET /api/improvements`、`GET /api/improvements/{improvement_id}`、`POST /api/improvements/{improvement_id}/lifecycle`、`POST /api/improvements/{improvement_id}/archive`、`GET/PUT /api/improvements/{improvement_id}/normalized-feedback`、`POST /api/improvements/{improvement_id}/normalized-feedback/confirm`、`GET/PUT /api/improvements/{improvement_id}/attribution`、`POST /api/improvements/{improvement_id}/attribution/generate`、`POST /api/improvements/{improvement_id}/attribution/confirm`、`GET/PUT /api/improvements/{improvement_id}/optimization-plan`、`POST /api/improvements/{improvement_id}/optimization-plan/generate`、`POST /api/improvements/{improvement_id}/optimization-plan/confirm`、`GET/PUT /api/improvements/{improvement_id}/execution`、`POST /api/improvements/{improvement_id}/execution/apply`、`POST /api/improvements/{improvement_id}/execution/confirm`、`GET /api/improvements/{improvement_id}/regression-assessment`、`POST /api/improvements/{improvement_id}/regression-assessment/generate`、`POST /api/improvements/{improvement_id}/regression-assessment/confirm`、`GET /api/langfuse/traces/{trace_id}`。
@@ -275,7 +275,7 @@ make langfuse-smoke
 
 Langfuse Web 与 MinIO 端口默认绑定 `0.0.0.0`，远端用户可通过 `http://<宿主机地址>:53000` 访问 Langfuse 界面。仅限本机访问时在 `docker/.env` 设 `LANGFUSE_BIND_IP=127.0.0.1`。
 
-前端 topbar 的 Langfuse 按钮在地址为本机/缺省（`http://localhost:53000`）时，会按当前浏览器访问的 host 自动派生跳转地址（端口沿用配置值），因此远端用户点击会跳到 `http://<当前访问host>:53000` 而非 `localhost`，无需为每个部署硬编码 IP。若把 `FRONTEND_LANGFUSE_URL` 显式设为非本机的可达地址，则按该配置跳转。
+前端 topbar 的 Langfuse 按钮在地址为本机/缺省（`http://localhost:53000`）时，会按当前浏览器访问的 host 自动派生跳转地址（端口沿用配置值），因此远端用户点击会跳到 `http://<当前访问host>:53000` 而非 `localhost`，无需为每个部署硬编码 IP。若把 `FRONTEND_LANGFUSE_URL` 显式设为非本机的可达地址，则按该配置跳转。运行证据和改进事项 Trace 按钮会保留具体 `/project/.../traces/{trace_id}` 路径，只把容器内 `LANGFUSE_BASE_URL` 的 origin 替换为浏览器可达的前端 Langfuse 地址。
 
 要让 Langfuse 自身的登录与媒体上传在远端完全可用，需在私有 `docker/.env` 把以下地址指向宿主机外部地址：`LANGFUSE_NEXTAUTH_URL`、`LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT`、`LANGFUSE_S3_BATCH_EXPORT_EXTERNAL_ENDPOINT`。暴露到网络时务必同时替换 `LANGFUSE_SALT`、`LANGFUSE_NEXTAUTH_SECRET`、`LANGFUSE_ENCRYPTION_KEY`、数据库/Redis/MinIO 密码和初始化账号密码。
 

@@ -507,6 +507,8 @@ export default function App() {
             const runId = typeof result.run_id === "string" ? result.run_id : undefined;
             const resultSdkSessionId = typeof result.sdk_session_id === "string" ? result.sdk_session_id : undefined;
             const resultAgentVersionId = typeof result.agent_version_id === "string" ? result.agent_version_id : undefined;
+            const resultLangfuseTraceId = typeof result.langfuse_trace_id === "string" ? result.langfuse_trace_id : undefined;
+            const resultLangfuseTraceUrl = typeof result.langfuse_trace_url === "string" ? result.langfuse_trace_url : undefined;
             const resultSessionId = typeof result.session_id === "string" ? result.session_id : sessionId;
             const resultAlertId = typeof result.alert_id === "string" ? result.alert_id : alertId.trim() || undefined;
             const resultCaseId = typeof result.case_id === "string" ? result.case_id : caseId.trim() || undefined;
@@ -520,6 +522,8 @@ export default function App() {
                   runId,
                   sdkSessionId: resultSdkSessionId,
                   agentVersionId: resultAgentVersionId,
+                  langfuseTraceId: resultLangfuseTraceId,
+                  langfuseTraceUrl: resultLangfuseTraceUrl,
                   sessionId: resultSessionId,
                   alertId: resultAlertId,
                   caseId: resultCaseId,

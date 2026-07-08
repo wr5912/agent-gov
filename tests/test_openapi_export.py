@@ -136,6 +136,10 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
         assert "generation_trace_id" in component["properties"]
         assert "generation_trace_url" in component["properties"]
 
+    agent_run = schema["components"]["schemas"]["AgentRunResponse"]
+    assert "langfuse_trace_id" in agent_run["properties"]
+    assert "langfuse_trace_url" in agent_run["properties"]
+
     agent_config_file = schema["paths"]["/api/agent-config-file"]
     assert {"get", "put"} <= set(agent_config_file)
     agent_config_update = schema["components"]["schemas"]["AgentConfigFileUpdateResponse"]

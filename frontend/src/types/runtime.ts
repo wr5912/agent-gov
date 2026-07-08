@@ -117,6 +117,8 @@ export interface ChatMessage {
   sessionId?: string;
   sdkSessionId?: string;
   agentVersionId?: string;
+  langfuseTraceId?: string;
+  langfuseTraceUrl?: string;
   alertId?: string;
   caseId?: string;
   agentActivity?: AgentActivity;

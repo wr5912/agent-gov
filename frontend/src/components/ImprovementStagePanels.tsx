@@ -20,9 +20,11 @@ import { hasAppliedExecution } from "../improvementExecutionState";
 import { DiffPreviewDetail, type AppliedDiff } from "./ImprovementDiffPreviewDetail";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
+import { RegressionCaseDetails, RegressionCaseSummaryList } from "./RegressionCaseDetails";
 import type { StageDetail } from "./StageDetailDrawer";
 import type { RuntimeClientConfig } from "../types/runtime";
 import { TraceButton, TraceDetail } from "./ImprovementGenerationTrace";
+import { concreteLangfuseTraceUrl } from "../langfuseTraceUrl";
 
 interface AttrDraft {
   summary: string;
@@ -120,13 +122,14 @@ export function ImprovementStagePanels({
   onOpenDetail: (detail: StageDetail) => void;
 }) {
   const openGenerationTrace = (traceId: string, traceUrl: string, title: string) => {
+    const normalizedTraceUrl = concreteLangfuseTraceUrl({ langfuseBaseUrl: langfuseUrl, traceId, traceUrl });
     onOpenDetail({
       key: `generation-trace-${traceId}`,
       title: `${title} Trace`,
       size: "wide",
       description: traceId,
-      headerActions: traceUrl
-        ? <a className="iw-link-button" data-testid="generation-trace-langfuse" href={traceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a>
+      headerActions: normalizedTraceUrl
+        ? <a className="iw-link-button" data-testid="generation-trace-langfuse" href={normalizedTraceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a>
         : undefined,
       content: <TraceDetail clientConfig={clientConfig} traceId={traceId} />,
     });
@@ -335,6 +338,11 @@ function AttributionPanels({
 }) {
   const evidence = attribution?.evidence?.length ? attribution.evidence : ["来源反馈一致", "关联 Run 可复现", "Trace 定位到问题节点"];
   const traceRunId = feedbacks.find((f) => f.run_id)?.run_id || "";
+  const attributionTraceUrl = concreteLangfuseTraceUrl({
+    langfuseBaseUrl: langfuseUrl,
+    traceId: attribution?.generation_trace_id,
+    traceUrl: attribution?.generation_trace_url,
+  });
   const generating = isPendingOperation(pendingOperation, "generate_attribution");
   const generationError = operationError?.kind === "generate_attribution" ? operationError.message : "";
   return (
@@ -407,14 +415,14 @@ function AttributionPanels({
         onAction={traceRunId ? () => onOpenDetail({
           key: "trace-summary", title: "Trace 摘要详情", size: "medium",
           description: `Run: ${traceRunId}`,
-          headerActions: langfuseUrl ? <a className="iw-link-button" data-testid="trace-detail-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a> : undefined,
+          headerActions: attributionTraceUrl ? <a className="iw-link-button" data-testid="trace-detail-langfuse" href={attributionTraceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a> : undefined,
           content: <ol className="iw-trace-list">{feedbacks.map((feedback) => <li key={feedback.feedback_id}>{feedback.run_id || "run 待补充"} · {feedback.summary}</li>)}</ol>,
         }) : undefined}>
         <ol className="iw-trace-list">
           {feedbacks.slice(0, 4).map((feedback) => <li key={feedback.feedback_id}>{feedback.run_id || "run 待补充"} · {feedback.summary}</li>)}
           {!feedbacks.length ? <li>来源反馈暂无 run_id，ContextPackage 会输出 missing_reasons。</li> : null}
         </ol>
-        {langfuseUrl ? <a className="iw-link-button" data-testid="trace-open-langfuse" href={langfuseUrl} target="_blank" rel="noreferrer">打开 Langfuse</a> : null}
+        {attributionTraceUrl ? <a className="iw-link-button" data-testid="trace-open-langfuse" href={attributionTraceUrl} target="_blank" rel="noreferrer">打开 Langfuse 完整 Trace</a> : null}
       </StageCard>
       <StageCard letter="E" title="反证与不确定性" actionLabel={VIEW} testId="stage-panel-uncertainty"
         onAction={() => onOpenDetail({
@@ -651,22 +659,18 @@ function TestReleasePanels({
             <span>{datasetAsset ? `回归运行将引用 ${datasetAsset.asset_id}；执行后展示通过率/耗时/失败数` : "请先将候选用例纳入测试数据集。"}</span>
           </div>
         </StageCard>
-        <StageCard letter="C" title="用例候选 / 覆盖场景" actionLabel={VIEW} testId="stage-panel-coverage"
+        <StageCard letter="C" title="测试用例详情" actionLabel={VIEW} testId="stage-panel-coverage"
           onAction={() => onOpenDetail({
-            key: "coverage", title: "用例候选 / 覆盖场景详情", size: "medium",
-            content: cases.length
-              ? cases.map((c, i) => (
-                <div className="iw-list-item" key={i}>
-                  <span className="iw-list-item-title">{c.prompt}</span>
-                  <span className="iw-list-item-meta">期望：{c.expected_behavior || "-"}</span>
-                  {c.checkpoints?.length ? <div className="iw-list-item-meta">检查点：{c.checkpoints.join(" / ")}</div> : null}
-                </div>
-              ))
-              : <div className="iw-empty">覆盖场景由纳入回归集的 {caseCount} 条用例与 {sourceRefs.length} 个反馈来源派生，执行回归后展示实际命中。</div>,
+            key: "regression-case-details", title: "测试用例详情", size: "medium",
+            content: <RegressionCaseDetails
+              cases={cases}
+              datasetId={datasetId}
+              sourceCount={sourceRefs.length}
+              baselineVersion={baselineVersion}
+              candidateVersion={candidateVersion}
+            />,
           })}>
-          <div className="iw-regression-empty" data-testid="regression-case-coverage">
-            <span>覆盖场景由纳入回归集的 {caseCount} 条用例与 {sourceRefs.length} 个反馈来源派生，执行回归后展示实际命中。</span>
-          </div>
+          <RegressionCaseSummaryList cases={cases} />
         </StageCard>
         <StageCard letter="D" title="执行环境 / 基线" actionLabel={VIEW} testId="stage-panel-execution-baseline"
           onAction={() => onOpenDetail({

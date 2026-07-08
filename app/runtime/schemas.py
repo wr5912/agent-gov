@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
@@ -48,6 +48,8 @@ class ChatResponse(BaseModel):
         description="Internal Claude SDK resume id. May differ from session_id (history sess_*, SDK rebuild, resume failure); it is not the product conversation id — use session_id.",
     )
     agent_version_id: Optional[str] = None
+    langfuse_trace_id: Optional[str] = None
+    langfuse_trace_url: Optional[str] = None
     answer: str
     messages: list[JsonObject] = Field(default_factory=list)
     agent_activity: JsonObject = Field(default_factory=dict)
@@ -350,6 +352,8 @@ class AgentRunResponse(BaseModel):
     session_id: Optional[str] = None
     sdk_session_id: Optional[str] = None
     agent_version_id: Optional[str] = None
+    langfuse_trace_id: Optional[str] = None
+    langfuse_trace_url: Optional[str] = None
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
     message: Optional[str] = None

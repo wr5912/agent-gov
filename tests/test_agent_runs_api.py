@@ -50,6 +50,8 @@ def test_agent_runs_can_include_messages_for_playground_session_restore(monkeypa
             "session_id": "sess-history",
             "sdk_session_id": "sdk-history",
             "agent_version_id": "v-history",
+            "langfuse_trace_id": "trace-history",
+            "langfuse_trace_url": "http://langfuse-web:3000/project/agent-gov/traces/trace-history",
             "message": "请说明当前 workspace 中有哪些 subagents 和 skills。",
             "answer_summary": "当前 Workspace 配置概览",
             "messages": [
@@ -68,6 +70,8 @@ def test_agent_runs_can_include_messages_for_playground_session_restore(monkeypa
         default_payload = default_response.json()[0]
         assert default_payload.get("messages") in (None, [])
         assert default_payload.get("answer") in (None, "")
+        assert default_payload["langfuse_trace_id"] == "trace-history"
+        assert default_payload["langfuse_trace_url"].endswith("/project/agent-gov/traces/trace-history")
 
         restore_response = client.get(
             "/api/agent-runs",
@@ -77,3 +81,4 @@ def test_agent_runs_can_include_messages_for_playground_session_restore(monkeypa
         restore_payload = restore_response.json()[0]
         assert restore_payload["messages"][0]["event"] == "AssistantMessage"
         assert restore_payload["answer"].startswith("## 当前 Workspace 配置概览")
+        assert restore_payload["langfuse_trace_id"] == "trace-history"

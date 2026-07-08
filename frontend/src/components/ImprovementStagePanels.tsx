@@ -16,6 +16,7 @@ import {
   type ImprovementOperationError,
   type ImprovementPendingOperation,
 } from "../improvementOperationState";
+import { DiffPreviewDetail, type AppliedDiff } from "./ImprovementDiffPreviewDetail";
 import { ImprovementPlanExecution } from "./ImprovementPlanExecution";
 import { ImprovementStageProcessingRecord } from "./ImprovementStageProcessingRecord";
 import type { StageDetail } from "./StageDetailDrawer";
@@ -82,7 +83,6 @@ export function ImprovementStagePanels({
   onAttrDraftChange,
   onGenerateOpt,
   onRecordExec,
-  onGenerateRegression,
   onAdoptTestDataset,
   onOpenContext,
   onOpenDetail,
@@ -114,7 +114,6 @@ export function ImprovementStagePanels({
   onAttrDraftChange: (value: AttrDraft) => void;
   onGenerateOpt: () => void;
   onRecordExec: () => void;
-  onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
   onOpenContext: () => void;
   onOpenDetail: (detail: StageDetail) => void;
@@ -180,6 +179,7 @@ export function ImprovementStagePanels({
       {stageView.visibleKey === "optimization_execution" ? (
         <OptimizationPanels
           item={item}
+          clientConfig={clientConfig}
           attribution={attribution}
           optimizationPlan={optimizationPlan}
           execution={execution}
@@ -205,7 +205,6 @@ export function ImprovementStagePanels({
           operationError={operationError}
           readOnly={readOnly}
           onOpenTrace={openGenerationTrace}
-          onGenerateRegression={onGenerateRegression}
           onAdoptTestDataset={onAdoptTestDataset}
           onOpenDetail={onOpenDetail}
         />
@@ -245,7 +244,6 @@ function FeedbackSortingPanels({
     `来源反馈完整：${feedbacks.length || refs.length}/${feedbacks.length || refs.length || 1}`,
     `关联 Run 可用：${runCount || "-"}`,
     `Trace 可查看：${feedbacks.some((f) => f.run_id) ? "1/1" : "待补充"}`,
-    "版本影响：待后续确认",
   ];
   return (
     <>
@@ -258,15 +256,14 @@ function FeedbackSortingPanels({
               ["系统理解", normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，可生成归因分析。"],
               ["可能对象", normalizedFeedback?.possible_object || item.agent_id],
               ["影响", normalizedFeedback?.impact || "待确认"],
-              ["建议下一步", normalizedFeedback?.suggestion || "生成归因分析。"],
               ["用户原话", normalizedFeedback?.user_quote || "-"],
             ]} />,
           })}>
           <dl className="iw-compact-dl" data-testid="normalized-feedback">
             <div><dt>问题模式</dt><dd>{normalizedFeedback?.problem || item.summary || item.title}</dd></div>
             <div><dt>系统理解</dt><dd>{normalizedFeedback?.possible_reason || "来源反馈共同指向同类问题，可生成归因分析。"}</dd></div>
-            <div><dt>影响范围</dt><dd>{normalizedFeedback?.possible_object || item.agent_id}</dd></div>
-            <div><dt>建议下一步</dt><dd>{normalizedFeedback?.suggestion || "生成归因分析。"}</dd></div>
+            <div><dt>可能对象</dt><dd>{normalizedFeedback?.possible_object || item.agent_id}</dd></div>
+            <div><dt>影响</dt><dd>{normalizedFeedback?.impact || "待确认"}</dd></div>
           </dl>
         </StageCard>
         <StageCard letter="B" title="证据确认" actionLabel={VIEW} testId="stage-panel-evidence"
@@ -281,7 +278,6 @@ function FeedbackSortingPanels({
             <li className="ok">来源反馈完整 <strong>{feedbacks.length || refs.length}/{feedbacks.length || refs.length || 1}</strong></li>
             <li className="ok">关联 Run 可用 <strong>{runCount || "-"}</strong></li>
             <li className="ok">Trace 可查看 <strong>{feedbacks.some((f) => f.run_id) ? "1/1" : "待补充"}</strong></li>
-            <li className="pending">版本影响待后续确认</li>
           </ul>
           <div className="iw-evidence-state">证据状态：足够生成归因分析</div>
         </StageCard>
@@ -348,7 +344,6 @@ function AttributionPanels({
           content: <>
             <div className="iw-detail-summary">{attribution.summary}</div>
             <h4>责任边界</h4><Lines items={attribution.responsibility_boundary} empty="待确认。" />
-            <h4>证据</h4><Lines items={attribution.evidence} empty="暂无证据。" />
             <span className="iw-source-badge" data-source={attribution.generated_by}>{attribution.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
           </>,
         }) : undefined}>
@@ -357,7 +352,6 @@ function AttributionPanels({
             <div>
               <textarea className="iw-input iw-textarea" data-testid="attr-edit-summary" value={attrDraft.summary} onChange={(e) => onAttrDraftChange({ ...attrDraft, summary: e.target.value })} placeholder="归因正文" />
               <textarea className="iw-input iw-textarea" data-testid="attr-edit-boundary" value={attrDraft.boundary} onChange={(e) => onAttrDraftChange({ ...attrDraft, boundary: e.target.value })} placeholder="责任边界（每行一条）" />
-              <textarea className="iw-input iw-textarea" data-testid="attr-edit-evidence" value={attrDraft.evidence} onChange={(e) => onAttrDraftChange({ ...attrDraft, evidence: e.target.value })} placeholder="证据（每行一条）" />
               <div className="iw-action-row">
                 <button className="iw-primary-button" type="button" data-testid="attr-save" disabled={busy} onClick={onSaveAttribution}>保存</button>
                 <button className="iw-secondary-button" type="button" data-testid="attr-cancel" onClick={onCancelAttribution}>取消</button>
@@ -442,6 +436,7 @@ function AttributionPanels({
 
 function OptimizationPanels({
   item,
+  clientConfig,
   attribution,
   optimizationPlan,
   execution,
@@ -455,6 +450,7 @@ function OptimizationPanels({
   onOpenDetail,
 }: {
   item: ImprovementItem;
+  clientConfig: RuntimeClientConfig;
   attribution: Attribution | null;
   optimizationPlan: OptimizationPlan | null;
   execution: ExecutionRecord | null;
@@ -468,7 +464,7 @@ function OptimizationPanels({
   onOpenDetail: (detail: StageDetail) => void;
 }) {
   const changes = optimizationPlan?.changes || [{ target: "Prompt / 规则", change: "新增时间窗口核验约束" }];
-  const appliedDiff = execution?.applied_diff && Object.keys(execution.applied_diff).length ? execution.applied_diff : null;
+  const appliedDiff: AppliedDiff | null = execution?.applied_diff && Object.keys(execution.applied_diff).length ? execution.applied_diff : null;
   const planPending = isPendingOperation(pendingOperation, "generate_optimization_plan");
   const executionPending = isPendingOperation(pendingOperation, "apply_execution");
   const planExecutionStatus = executionPending ? "执行中" : execution ? "已执行" : "待执行";
@@ -482,8 +478,6 @@ function OptimizationPanels({
           content: <>
             <div className="iw-detail-summary">{optimizationPlan?.summary || "尚未生成优化方案。"}</div>
             <Dl rows={[["风险级别", optimizationPlan?.risk_level || "待评估"], ["状态", planExecutionStatus]]} />
-            <h4>变更项</h4>
-            <div className="iw-diff-summary">{changes.map((c, i) => <div key={`${c.target}-${i}`}><strong>{c.target}</strong><span>{c.change}</span></div>)}</div>
           </>,
         })}>
         {planPending ? <GenerationStatus operation={pendingOperation!} testId="optimization-generation-status" /> : null}
@@ -498,11 +492,9 @@ function OptimizationPanels({
       <StageCard letter="B" title="Diff / 变更预览" actionLabel={VIEW} testId="stage-panel-diff-preview"
         onAction={() => onOpenDetail({
           key: "diff-preview", title: "完整 Diff / 变更预览", size: "wide",
-          content: appliedDiff
-            ? <pre className="iw-pre">{JSON.stringify(appliedDiff, null, 2)}</pre>
-            : <div className="iw-diff-summary">{changes.map((c, i) => <div key={`${c.target}-${i}`}><strong>{c.target}</strong><span>{c.change}</span></div>)}</div>,
+          content: <DiffPreviewDetail clientConfig={clientConfig} execution={execution} appliedDiff={appliedDiff} changes={changes} />,
         })}>
-        <div className="iw-diff-summary">
+        <div className="iw-diff-summary" data-testid="diff-preview-changes">
           {changes.map((change, index) => (
             <div key={`${change.target}-${index}`}><strong>{change.target}</strong><span>{change.change}</span></div>
           ))}
@@ -513,7 +505,7 @@ function OptimizationPanels({
           key: "execution-plan", title: "执行计划详情", size: "narrow",
           content: <>
             <Dl rows={[
-              ["修改对象", optimizationPlan?.changes[0]?.target || "Prompt / SOP"],
+              ["执行对象", item.agent_id],
               ["风险级别", optimizationPlan?.risk_level || "待评估"],
               ["执行状态", planExecutionStatus],
             ]} />
@@ -521,7 +513,7 @@ function OptimizationPanels({
           </>,
         })}>
         <dl className="iw-compact-dl">
-          <div><dt>修改对象</dt><dd>{optimizationPlan?.changes[0]?.target || "Prompt / SOP"}</dd></div>
+          <div><dt>执行对象</dt><dd>{item.agent_id}</dd></div>
           <div><dt>风险级别</dt><dd data-testid="execution-plan-risk">{optimizationPlan?.risk_level || "待评估"}</dd></div>
           <div><dt>执行状态</dt><dd>{planExecutionStatus}</dd></div>
         </dl>
@@ -578,7 +570,6 @@ function TestReleasePanels({
   operationError,
   readOnly,
   onOpenTrace,
-  onGenerateRegression,
   onAdoptTestDataset,
   onOpenDetail,
 }: {
@@ -592,7 +583,6 @@ function TestReleasePanels({
   operationError?: ImprovementOperationError | null;
   readOnly: boolean;
   onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
-  onGenerateRegression: () => void;
   onAdoptTestDataset: () => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
@@ -613,20 +603,10 @@ function TestReleasePanels({
   return (
     <>
       <div className="iw-stage-panel-grid test-release">
-        <StageCard letter="A" title="测试资产与计划" actionLabel={MANAGE} testId="test-dataset-asset" className="is-stage-wide"
+        <StageCard letter="A" title="测试资产" actionLabel={MANAGE} testId="test-dataset-asset" className="is-stage-wide"
           onAction={() => onOpenDetail({
-            key: "test-dataset", title: "管理测试用例", size: "wide",
-            content: <>
-              <Dl rows={[["test_dataset_id", datasetId], ["生命周期", datasetAsset ? "candidate" : "draft"], ["基线 / 候选", `${baselineVersion} → ${candidateVersion}`]]} />
-              <h4>回归用例（{cases.length}）</h4>
-              {cases.length ? cases.map((c, i) => (
-                <div className="iw-list-item" key={i}>
-                  <span className="iw-list-item-title">{c.prompt}</span>
-                  <span className="iw-list-item-meta">期望：{c.expected_behavior || "-"}</span>
-                  {c.checkpoints?.length ? <div className="iw-list-item-meta">检查点：{c.checkpoints.join(" / ")}</div> : null}
-                </div>
-              )) : <div className="iw-empty">尚未生成回归用例候选。</div>}
-            </>,
+            key: "test-dataset", title: "测试资产详情", size: "medium",
+            content: <Dl rows={[["test_dataset_id", datasetId], ["生命周期", datasetAsset ? "candidate" : "draft"], ["基线 / 候选", `${baselineVersion} → ${candidateVersion}`]]} />,
           })}>
           <div className="iw-test-plan-card-body">
             <dl className="iw-compact-dl">
@@ -642,7 +622,6 @@ function TestReleasePanels({
                 <span>反馈来源数 <strong>{sourceRefs.length}</strong></span>
               </div>
               {!readOnly ? <div className="iw-action-row iw-test-plan-actions">
-                <button className="iw-secondary-button" type="button" data-testid="generate-regression" disabled={busy} onClick={onGenerateRegression}>重新生成</button>
                 <button className="iw-primary-button" type="button" data-testid="adopt-regression" disabled={busy || !!datasetAsset} onClick={onAdoptTestDataset}>{datasetAsset ? "已纳入测试集" : "纳入测试集"}</button>
                 <TraceButton source={regressionAssessment} label="测试发布" onOpenTrace={onOpenTrace} />
               </div> : null}
@@ -666,14 +645,20 @@ function TestReleasePanels({
             <span>{datasetAsset ? `回归运行将引用 ${datasetAsset.asset_id}；执行后展示通过率/耗时/失败数` : "请先将候选用例纳入测试数据集。"}</span>
           </div>
         </StageCard>
-        <StageCard letter="C" title="覆盖场景" actionLabel={VIEW} testId="stage-panel-coverage"
+        <StageCard letter="C" title="用例候选 / 覆盖场景" actionLabel={VIEW} testId="stage-panel-coverage"
           onAction={() => onOpenDetail({
-            key: "coverage", title: "覆盖场景详情", size: "medium",
+            key: "coverage", title: "用例候选 / 覆盖场景详情", size: "medium",
             content: cases.length
-              ? <Lines items={cases.map((c) => c.prompt)} empty="暂无覆盖场景。" />
+              ? cases.map((c, i) => (
+                <div className="iw-list-item" key={i}>
+                  <span className="iw-list-item-title">{c.prompt}</span>
+                  <span className="iw-list-item-meta">期望：{c.expected_behavior || "-"}</span>
+                  {c.checkpoints?.length ? <div className="iw-list-item-meta">检查点：{c.checkpoints.join(" / ")}</div> : null}
+                </div>
+              ))
               : <div className="iw-empty">覆盖场景由纳入回归集的 {caseCount} 条用例与 {sourceRefs.length} 个反馈来源派生，执行回归后展示实际命中。</div>,
           })}>
-          <div className="iw-regression-empty">
+          <div className="iw-regression-empty" data-testid="regression-case-coverage">
             <span>覆盖场景由纳入回归集的 {caseCount} 条用例与 {sourceRefs.length} 个反馈来源派生，执行回归后展示实际命中。</span>
           </div>
         </StageCard>

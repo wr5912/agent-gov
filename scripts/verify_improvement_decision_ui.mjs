@@ -147,6 +147,7 @@ function mockState() {
     optimizationPlan: null,
     optimizationGenerateCount: 0,
     execution: null,
+    regressionAssessment: null,
   };
 }
 
@@ -216,10 +217,62 @@ async function installMockRoutes(page, state) {
     }
     if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return state.optimizationPlan ? json(route, state.optimizationPlan) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) {
-      state.execution = { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "已在隔离变更集执行优化", changes_applied: ["补充时间窗口校验"], agent_version: "ver-cand", status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+      state.execution = {
+        execution_id: "exec-1",
+        improvement_id: state.target.improvement_id,
+        summary: "已在隔离变更集执行优化",
+        changes_applied: ["补充时间窗口校验"],
+        agent_version: "ver-cand",
+        status: "draft",
+        generated_by: "governor",
+        change_set_id: "agc-1",
+        applied_agent_version_id: "ver-cand",
+        applied_diff: { modified: [{ path: "CLAUDE.md" }] },
+        created_at: ts,
+        updated_at: ts,
+      };
+      return json(route, state.execution);
+    }
+    if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) {
+      state.execution = {
+        ...(state.execution || { execution_id: "exec-1", improvement_id: state.target.improvement_id, summary: "已在隔离变更集执行优化", changes_applied: ["补充时间窗口校验"], agent_version: "ver-cand", generated_by: "governor", created_at: ts }),
+        status: "confirmed",
+        updated_at: ts,
+      };
       return json(route, state.execution);
     }
     if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return state.execution ? json(route, state.execution) : json(route, { detail: "not found" }, 404);
+    if (/^\/api\/agent-change-sets\/[^/]+\/file-diff$/.test(path)) {
+      const filePath = url.searchParams.get("path") || "CLAUDE.md";
+      return json(route, {
+        from_version_id: "base-sha",
+        to_version_id: "ver-cand",
+        path: filePath,
+        archive_path: `workspace/${filePath}`,
+        status: "modified",
+        before: { path: filePath, sha256: "before", size: 20, type: "file" },
+        after: { path: filePath, sha256: "after", size: 45, type: "file" },
+        unified_diff: `--- base-sha:workspace/${filePath}\n+++ ver-cand:workspace/${filePath}\n@@ -1 +1,2 @@\n 原有时间校验\n+补充事件时间与告警时间一致性校验\n`,
+        is_text: true,
+        truncated: false,
+        reason: null,
+      });
+    }
+    if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) {
+      state.regressionAssessment = {
+        regression_assessment_id: "reg-1",
+        improvement_id: state.target.improvement_id,
+        summary: "生成覆盖时间窗口误判的回归用例候选。",
+        cases: [{ prompt: "校验事件时间与告警窗口不一致时不应误报", expected_behavior: "解释时间窗口差异并避免错误告警", checkpoints: ["核对事件时间", "核对告警窗口"] }],
+        suggested_gate_thresholds: { "通过率": "≥95%", "新增严重问题": "0" },
+        status: "draft",
+        generated_by: "governor",
+        created_at: ts,
+        updated_at: ts,
+      };
+      return json(route, state.regressionAssessment);
+    }
+    if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return state.regressionAssessment ? json(route, state.regressionAssessment) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
     if (/^\/api\/automation-policy/.test(path)) return json(route, { agent_id: "soc-ops", mode: "off" });
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
@@ -355,6 +408,14 @@ async function main() {
       if (optimizationCardText.includes("（待确认）") || optimizationCardText.includes("（已确认）")) {
         throw new Error(`optimization card title still exposes confirmation state: ${optimizationCardText}`);
       }
+      if (optimizationCardText.includes("变更项")) {
+        throw new Error(`optimization plan card still mixes change preview content: ${optimizationCardText}`);
+      }
+      const misplacedDiffPreview = await optimizationCard.getByTestId("diff-preview-changes").count();
+      if (misplacedDiffPreview !== 0) throw new Error(`optimization plan card contains diff preview list count=${misplacedDiffPreview}`);
+      const diffPreview = await assertVisible(page, "diff-preview-changes");
+      const diffPreviewText = await diffPreview.innerText();
+      if (!diffPreviewText.includes("补充事件时间")) throw new Error(`diff preview does not contain expected change item: ${diffPreviewText}`);
       const duplicateRegenerate = await page.getByTestId("regenerate-optimization-plan").count();
       if (duplicateRegenerate !== 0) throw new Error(`optimization plan card duplicate regenerate button count=${duplicateRegenerate}`);
       const cardExecutionEmpty = await optimizationCard.getByTestId("execution-empty").count();
@@ -366,6 +427,9 @@ async function main() {
       const pendingDetailText = await optimizationDetail.innerText();
       if (!pendingDetailText.includes("待执行") || pendingDetailText.includes("待确认") || pendingDetailText.includes("已确认")) {
         throw new Error(`unexpected optimization detail pending status: ${pendingDetailText}`);
+      }
+      if (pendingDetailText.includes("变更项")) {
+        throw new Error(`optimization detail still mixes change preview content: ${pendingDetailText}`);
       }
       await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
       await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
@@ -386,14 +450,43 @@ async function main() {
       const executionResult = await executionResponse;
       if (!executionResult.ok()) throw new Error(`execute optimization failed: ${executionResult.status()}`);
       await page.getByTestId("execution-source").waitFor({ timeout: 10_000 });
+      const executionCardText = await page.getByTestId("execution-record").first().innerText();
+      if (executionCardText.includes("（待确认）") || executionCardText.includes("（已确认）")) {
+        throw new Error(`execution record still exposes confirmation state: ${executionCardText}`);
+      }
       await page.getByTestId("optimization-plan").first().getByRole("button", { name: "查看详情" }).click();
       await optimizationDetail.waitFor({ timeout: 8000 });
       const executedDetailText = await optimizationDetail.innerText();
       if (!executedDetailText.includes("已执行") || executedDetailText.includes("待确认") || executedDetailText.includes("已确认")) {
         throw new Error(`unexpected optimization detail executed status: ${executedDetailText}`);
       }
+      if (executedDetailText.includes("变更项")) {
+        throw new Error(`optimization detail still mixes change preview content after execution: ${executedDetailText}`);
+      }
       await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
       await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
+
+      await page.getByTestId("stage-panel-diff-preview").getByRole("button", { name: "查看详情" }).click();
+      const diffDetail = page.locator('[data-testid="stage-detail-content"][data-detail-key="diff-preview"]');
+      await diffDetail.waitFor({ timeout: 8000 });
+      await assertVisible(page, "diff-preview-file-diffs");
+      const unifiedDiff = await assertVisible(page, "diff-preview-file-unified-diff");
+      const unifiedDiffText = await unifiedDiff.innerText();
+      if (!unifiedDiffText.includes("+补充事件时间与告警时间一致性校验")) {
+        throw new Error(`diff preview drawer does not show file unified diff: ${unifiedDiffText}`);
+      }
+      await page.getByTestId("stage-detail-drawer").getByLabel("关闭").click();
+      await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 8000 });
+
+      const regressionResponse = page.waitForResponse((response) => response.url().includes("/regression-assessment/generate") && response.request().method() === "POST");
+      await page.getByTestId("current-decision-card").getByTestId("primary-action").click();
+      const regressionResult = await regressionResponse;
+      if (!regressionResult.ok()) throw new Error(`generate regression failed: ${regressionResult.status()}`);
+      await page.getByTestId("test-dataset-asset").waitFor({ timeout: 10_000 });
+      const testAssetCard = page.getByTestId("test-dataset-asset").first();
+      const assetGenerateButtons = await testAssetCard.getByTestId("generate-regression").count();
+      if (assetGenerateButtons !== 0) throw new Error(`test asset card still contains duplicate regression generate button count=${assetGenerateButtons}`);
+      await assertVisible(page, "regression-case-coverage");
     }
 
     await browser.close();

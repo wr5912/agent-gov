@@ -87,6 +87,22 @@ function defaultPayload(path, request = {}) {
     diff_summary: { modified: 2 },
     publication_blocker: "回归验证存在失败用例",
   }];
+  if (/^\/api\/agent-change-sets\/[^/]+\/file-diff$/.test(path)) {
+    const filePath = request.queryPath || "CLAUDE.md";
+    return {
+      from_version_id: "base-demo",
+      to_version_id: "candidate-demo",
+      path: filePath,
+      archive_path: `workspace/${filePath}`,
+      status: "modified",
+      before: { path: filePath, sha256: "before", size: 18, type: "file" },
+      after: { path: filePath, sha256: "after", size: 42, type: "file" },
+      unified_diff: `--- base-demo:workspace/${filePath}\n+++ candidate-demo:workspace/${filePath}\n@@ -1 +1,2 @@\n 原有治理提示\n+新增事件时间与告警时间一致性校验\n`,
+      is_text: true,
+      truncated: false,
+      reason: null,
+    };
+  }
   if (/^\/api\/agent-change-sets\/[^/]+\/regression-runs$/.test(path)) return { eval_run_id: "evr-demo", result_status: "passed", items: [], summary: { total: 0, passed: 0, failed: 0 } };
   if (/^\/api\/agent-change-sets\/[^/]+\/publish$/.test(path)) return { release_id: "agr-demo", agent_id: "soc-ops", status: "published", tag_name: "agent-release-demo", commit_sha: "candidate-demo", created_at: ts, updated_at: ts };
   if (path === "/api/assets") return [{
@@ -879,7 +895,12 @@ const RULES = [
     for (const panel of panels) if (await has(page, panel)) found.push(panel);
     const datasetId = await page.getByTestId("test-dataset-id").innerText().catch(() => "");
     const runRef = await page.getByTestId("regression-run-dataset-ref").innerText().catch(() => "");
-    return { ok: found.length === panels.length && datasetId && runRef === datasetId, detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef}` };
+    const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
+    const coverage = await has(page, "regression-case-coverage");
+    return {
+      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage,
+      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage}`,
+    };
   } },
   { id: "improvement-default-detail", phase: "P1", desc: "改进列表有数据时默认展示首个详情，不留空白首屏", async fn(page) {
     await page.getByTestId("nav-improvement").click();
@@ -947,12 +968,27 @@ const RULES = [
       detail: `spine=${spine} steps=${steps} futureDisabled=${futureDisabled} reviewed=${reviewedStage} decision=${currentBefore}->${decisionAfterReview} factActions=${factActions} returned=${returnedStage}`,
     };
   } },
-  { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解(NormalizedFeedback) + 归因(Attribution 正文/责任边界/证据)", async fn(page) {
+  { id: "improvement-content", phase: "P3", desc: "改进详情含系统理解、归因结论和证据链，阶段卡内容归属不交叉", async fn(page) {
+    if (!(await openImprovementById(page, stageTarget("feedback", "imp-demo01")))) return { ok: false, detail: "无反馈整理事项" };
+    const sortingText = await page.getByTestId("stage-panel-sorting-result").innerText().catch(() => "");
+    const evidenceText = await page.getByTestId("stage-panel-evidence").innerText().catch(() => "");
+    const feedbackOwnershipOk = !sortingText.includes("建议下一步") && !evidenceText.includes("版本影响");
+
     if (!(await openImprovementById(page, stageTarget("attribution", "imp-demo02")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("attribution").waitFor({ timeout: 6000 }).catch(() => {});
     const attr = await has(page, "attribution");
     const ev = await has(page, "attribution-evidence");
-    return { ok: attr && ev, detail: `归因=${attr} 证据=${ev}` };
+    await page.getByTestId("attribution").getByRole("button", { name: "查看详情" }).click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ timeout: 6000 }).catch(() => {});
+    const attrDetailText = await page.getByTestId("stage-detail-content").innerText().catch(() => "");
+    const attrDetailKey = await page.getByTestId("stage-detail-content").getAttribute("data-detail-key").catch(() => "");
+    const attributionOwnershipOk = attrDetailKey === "attribution" && !attrDetailText.includes("证据");
+    await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
+    return {
+      ok: feedbackOwnershipOk && attr && ev && attributionOwnershipOk,
+      detail: `整理归属=${feedbackOwnershipOk} 归因=${attr} 证据链=${ev} 归因详情归属=${attributionOwnershipOk}`,
+    };
   } },
   { id: "stage-detail-drawers", phase: "P1", desc: "四阶段面板头部「查看详情/管理」统一打开对应详情抽屉（无死按钮，内容与卡片对应）", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("attribution", "imp-demo02")))) return { ok: false, detail: "无改进事项" };
@@ -1042,23 +1078,41 @@ const RULES = [
       detail: `inlineHidden=${!hiddenInline} drawer=${drawer} basis=${basis} 表=${tbl} 行=${rows} 详情=${detailButtons}/2 detailOk=${detailsOk} refOnly=${refOnly}`,
     };
   } },
-  { id: "optimization-execution", phase: "P3", desc: "优化方案(§106 方案正文+变更项) + 执行记录(§107) 内容子资源", async fn(page) {
+  { id: "optimization-execution", phase: "P3", desc: "优化执行阶段 A=方案正文、B=Diff/变更预览、E=执行记录，内容归属不交叉", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("optimization", "imp-demo03")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("optimization-plan").waitFor({ timeout: 6000 }).catch(() => {});
+    const optCard = page.getByTestId("optimization-plan").first();
     const opt = await has(page, "optimization-plan");
-    const optChanges = await has(page, "optimization-plan-changes");
+    const optText = await optCard.innerText().catch(() => "");
+    const optMisplacedChanges = optText.includes("变更项") || await optCard.getByTestId("diff-preview-changes").count() > 0;
+    const diffPreview = await has(page, "diff-preview-changes");
+    const legacyPlanChanges = await has(page, "optimization-plan-changes");
     const exec = await has(page, "execution-record");
-    return { ok: opt && optChanges && exec, detail: `方案=${opt} 变更项=${optChanges} 执行记录=${exec}` };
+    await page.getByTestId("stage-panel-diff-preview").getByRole("button", { name: "查看详情" }).click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ timeout: 6000 }).catch(() => {});
+    const fileDiffs = await has(page, "diff-preview-file-diffs");
+    await page.getByTestId("diff-preview-file-unified-diff").waitFor({ timeout: 6000 }).catch(() => {});
+    const unifiedDiffText = await page.getByTestId("diff-preview-file-unified-diff").innerText().catch(() => "");
+    const unifiedDiffOk = unifiedDiffText.includes("+新增事件时间与告警时间一致性校验");
+    await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
+    await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
+    return {
+      ok: opt && !optMisplacedChanges && diffPreview && fileDiffs && unifiedDiffOk && !legacyPlanChanges && exec,
+      detail: `方案=${opt} A混入变更=${optMisplacedChanges} B变更预览=${diffPreview} 文件diff=${fileDiffs}/${unifiedDiffOk} legacyPlanChanges=${legacyPlanChanges} 执行记录=${exec}`,
+    };
   } },
-  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：治理 Agent 生成回归用例候选（来源徽标 + 生成入口）", async fn(page) {
+  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重跑入口由决策卡承载，候选用例归属覆盖场景卡", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
-    const gen = await has(page, "generate-regression");
+    const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
+    const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
     const sediment = await has(page, "sediment-assets");
-    const src = await has(page, "regression-source");
-    const srcVal = await page.getByTestId("regression-source").first().getAttribute("data-source").catch(() => "");
-    const srcOk = !src || srcVal === "governor" || srcVal === "heuristic";
-    return { ok: (gen || sediment) && srcOk, detail: `生成入口=${gen} 来源徽标=${src}(${srcVal}) 沉淀=${sediment}` };
+    const coverage = await has(page, "regression-case-coverage");
+    const primaryOk = primary.includes("执行回归测试");
+    return {
+      ok: primaryOk && duplicateGenerate === 0 && (coverage || sediment),
+      detail: `决策卡=${primary} duplicate_generate=${duplicateGenerate} 覆盖场景=${coverage} 沉淀=${sediment}`,
+    };
   } },
   { id: "execution-version-binding", phase: "P3", desc: "§17.5 执行记录标治理 Agent 应用来源；governor 成功时绑定候选 Agent 版本/变更集", async fn(page) {
     // 执行来源徽标始终在；版本绑定仅在 governor 成功 apply 时出现（取决于 governor 判断/环境），不强制。
@@ -1229,6 +1283,7 @@ async function main() {
           body: JSON.stringify(defaultPayload(url.pathname, {
             method: route.request().method(),
             postData: route.request().postData() || "",
+            queryPath: url.searchParams.get("path") || "",
           })),
         });
       });

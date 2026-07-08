@@ -620,7 +620,6 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onAttrDraftChange={setAttrDraft}
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
               onRecordExec={() => handleRecordExecution(selected)}
-              onGenerateRegression={() => handleGenerateRegression(selected)}
               onAdoptTestDataset={() => handleAdoptRegression(selected)}
               onOpenContext={() => setContextOpen(true)}
               onOpenDetail={setDetail}

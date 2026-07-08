@@ -621,6 +621,12 @@
 .iw-diff-summary div { display: flex; justify-content: space-between; gap: 10px; padding: 8px; border: 1px solid var(--border-subtle); border-radius: 8px; }
 .iw-diff-summary strong { color: var(--text-primary); }
 .iw-diff-summary span { color: var(--text-secondary); text-align: right; }
+.iw-file-diff-list { display: grid; gap: 10px; min-width: 0; }
+.iw-file-diff-row { min-width: 0; border: 1px solid var(--border-subtle); border-radius: 8px; background: #fff; overflow: hidden; }
+.iw-file-diff-title { display: flex; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border-subtle); font-size: 12px; }
+.iw-file-diff-title strong { min-width: 0; overflow-wrap: anywhere; color: var(--text-primary); }
+.iw-file-diff-title span { color: var(--text-muted); white-space: nowrap; }
+.iw-file-diff-pre { min-width: 0; max-height: 58vh; margin: 0; overflow: auto; padding: 12px; background: #0f172a; color: #e5e7eb; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
 .iw-mini-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; margin-top: 10px; }
 .iw-mini-flow span {
   display: grid;

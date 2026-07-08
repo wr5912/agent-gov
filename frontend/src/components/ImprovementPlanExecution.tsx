@@ -1,4 +1,4 @@
-// 四阶段改进治理 §106 优化方案 + §107 执行记录 内容子资源（从 ImprovementWorkbench 拆出以控制单文件体量）。
+// 四阶段改进治理 §106 优化方案正文 + §107 执行记录 内容子资源（从 ImprovementWorkbench 拆出以控制单文件体量）。
 import type { ImprovementItem, OptimizationPlan, ExecutionRecord, Attribution } from "../api/improvements";
 
 export function ImprovementPlanExecution({
@@ -35,12 +35,6 @@ export function ImprovementPlanExecution({
             <span className="iw-source-badge" data-testid="optimization-plan-source" data-source={optPlan.generated_by}>{optPlan.generated_by === "governor" ? "治理 Agent 生成" : "启发式初步"}</span>
           </h4>
           <div className="iw-detail-summary">{optPlan.summary}</div>
-          {optPlan.changes.length ? (
-            <>
-              <div className="iw-content-subhead">变更项</div>
-              <ul className="iw-content-list" data-testid="optimization-plan-changes">{optPlan.changes.map((c, i) => <li key={i}><strong>{c.target}</strong>：{c.change}</li>)}</ul>
-            </>
-          ) : null}
           {showPlanRegenerate && !archived && !readOnly ? (
             <div className="iw-action-row">
               <button className="iw-secondary-button" type="button" data-testid="regenerate-optimization-plan" disabled={busy} onClick={onGenerateOpt}>重新生成优化方案</button>
@@ -56,7 +50,7 @@ export function ImprovementPlanExecution({
 
       {showExecution && execution ? (
         <div className="iw-detail-section" data-testid="execution-record">
-          <h4>执行记录{execution.status === "confirmed" ? "（已确认）" : "（待确认）"}
+          <h4>执行记录
             <span className="iw-source-badge" data-testid="execution-source" data-source={execution.generated_by}>{execution.generated_by === "governor" ? "治理 Agent 应用" : "启发式/人工"}</span>
           </h4>
           <div className="iw-detail-summary">{execution.summary}</div>

@@ -70,6 +70,7 @@
   - [Agent版本治理与Diff对比重构方案评审报告v2](./design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md)：`docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 - Codex/Claude 配置治理复盘：`docs/codex_setting_review_reports/`
   - [智能体治理反思与改进方案第二轮](./codex_setting_review_reports/智能体治理反思与改进方案第二轮.md)：`docs/codex_setting_review_reports/智能体治理反思与改进方案第二轮.md`
+  - [四阶段改进治理工作台反复整改复盘](./codex_setting_review_reports/四阶段改进治理工作台反复整改复盘.md)：`docs/codex_setting_review_reports/四阶段改进治理工作台反复整改复盘.md`
 
 ## 归档入口
 

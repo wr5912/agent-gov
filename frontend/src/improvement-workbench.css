@@ -714,6 +714,19 @@
   font-size: 13px;
   line-height: 1.35;
 }
+.iw-regression-case-input {
+  display: grid;
+  gap: 8px;
+}
+.iw-regression-case-input pre {
+  margin: 0;
+  max-height: 52vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+.iw-regression-case-input .iw-link-button { justify-self: start; }
 .iw-gate-pass {
   margin-top: 10px;
   padding: 10px;

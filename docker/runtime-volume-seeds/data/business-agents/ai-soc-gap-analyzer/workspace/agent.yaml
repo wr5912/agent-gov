@@ -1,0 +1,72 @@
+agent:
+  id: ai-soc-gap-analyzer
+  name: AI SOC 差距评估智能体
+  english_name: AI SOC Gap Analyzer Agent
+  version: 0.1.0
+  language: zh-CN
+  runtime: claude-code
+  profile: ai-soc-gap-analyzer
+
+capabilities:
+  - ai_soc_capability_modeling
+  - evidence_snapshot_review
+  - maturity_scoring
+  - gap_prioritization
+  - evidence_gap_detection
+  - risk_assessment
+  - recommended_action_planning
+  - scoring_json_generation
+
+paths:
+  workspace: /data/business-agents/ai-soc-gap-analyzer/workspace
+  claude_home: /data/business-agents/ai-soc-gap-analyzer/claude-root/.claude
+  data_root: /data
+  uploads: /data/uploads
+  outputs: /data/outputs
+  transcripts: /data/transcripts
+
+mcp:
+  default_transport: http
+  servers: {}
+
+assessment_model:
+  maturity_scale: 0-5
+  default_domains:
+    data_ingestion: 数据接入
+    threat_analysis: 威胁分析
+    response_disposition: 响应处置
+  evidence_first: true
+  require_traceable_evidence: true
+  do_not_update_formal_score_on_failed_input: true
+  output_dir: /data/outputs/ai-soc-gap-analyzer
+
+field_ownership:
+  backend_owned:
+    - project_id
+    - collection_run_id
+    - scoring_run_id
+    - evidence_id
+    - capability_config
+    - timestamp
+    - agentgov_response_id
+    - agentgov_run_id
+    - trace_id
+  agent_owned:
+    - analysis_conclusion
+    - maturity_score
+    - scoring_reason
+    - risk_statement
+    - evidence_reference_explanation
+    - missing_evidence
+    - recommended_action
+    - ui_summary
+
+observability:
+  assessment_output_dir: /data/outputs/ai-soc-gap-analyzer
+
+extension_points:
+  add_mcp_server: .mcp.json
+  add_skill: .claude/skills/<skill-name>/SKILL.md
+  add_subagent: .claude/agents/<agent-name>.md
+  add_command: .claude/commands/<command-name>.md
+  add_rule: .claude/rules/<rule-name>.md

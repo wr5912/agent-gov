@@ -74,7 +74,7 @@
         },
         {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground、Trace、HITL、四阶段改进事项工作台、来源反馈管理、决策卡、ContextPackage 和 Asset Registry provenance 的浏览器验收。",
+          "description": "Playground、Trace、HITL、四阶段改进事项工作台、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
           "pytest": [
             "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow",
@@ -105,6 +105,21 @@
             "tests/test_model_provider_router.py::test_vllm_capability_gate_checks_sidecar_and_models",
             "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
             "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "business_agent_registry_and_playground_routing",
+      "description": "预置和动态业务 Agent 经 runtime-volume seed/bootstrap、registry sync 与 chat/Playground agent_id 路由形成可用闭环。",
+      "scenarios": [
+        {
+          "id": "seeded_business_agent_bootstrap_registry",
+          "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表，Playground 依赖的 /api/agent-registry 可见。",
+          "pytest": [
+            "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground",
+            "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
+            "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
           ]
         }
       ]

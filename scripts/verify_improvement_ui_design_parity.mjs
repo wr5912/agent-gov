@@ -43,6 +43,7 @@ let auditTargets = {
   optimization: "imp-demo03",
   testRelease: "imp-demo04",
   duplicate: "imp-demo05",
+  optimizationPending: "imp-demo06",
 };
 const observedApiRequests = [];
 
@@ -57,12 +58,25 @@ const IMPROVEMENTS = [
   { improvement_id: "imp-demo03", agent_id: "soc-ops", title: "时间窗口误判治理 · 优化", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo06", agent_id: "soc-ops", title: "时间窗口误判治理 · 待执行", summary: "已有优化方案，等待执行优化", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
 ];
 const internalTraceUrl = (traceId) => `http://langfuse-web:3000/project/agent-gov/traces/${traceId}`;
 const REGRESSION_CASES = [
-  { prompt: "复现场景：当告警时间与事件时间不一致时，请处理。", expected_behavior: "先核验时间一致性，不直接升级。", checkpoints: ["是否核验时间", "是否避免误升级"] },
-  { prompt: "复现场景：当 sec-ops-data 返回疑似模拟数据时，请处理。", expected_behavior: "提示核验数据源，避免把模拟数据当成真实证据。", checkpoints: ["是否标记数据源风险", "是否要求补充证据"] },
-  { prompt: "复现场景：当证据不足但用户要求结论时，请处理。", expected_behavior: "说明证据不足并给出下一步核验动作。", checkpoints: ["是否拒绝编造结论", "是否给出核验路径"] },
+  {
+    prompt: "数据转换前原始数据:\n{\"danger_tid\":\"14516\",\"event_time\":\"2026-06-18T00:00:00Z\"}\n\n转换后 OCSF 数据:\n{\"class_uid\":1007,\"api\":\"CreateRemoteThread\"}\n\n请审查转换后数据是否符合 OCSF 标准定义。".repeat(10),
+    expected_behavior: "先核验时间一致性，不直接升级。",
+    checkpoints: ["是否核验时间", "是否避免误升级"],
+  },
+  {
+    prompt: "sec-ops-data 返回疑似模拟数据，请判断当前告警是否可以作为真实攻击升级处置。",
+    expected_behavior: "提示核验数据源，避免把模拟数据当成真实证据。",
+    checkpoints: ["是否标记数据源风险", "是否要求补充证据"],
+  },
+  {
+    prompt: "证据不足但用户要求给出确定结论，请处理当前告警调查任务。",
+    expected_behavior: "说明证据不足并给出下一步核验动作。",
+    checkpoints: ["是否拒绝编造结论", "是否给出核验路径"],
+  },
 ];
 function defaultPayload(path, request = {}) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
@@ -218,7 +232,12 @@ function defaultPayload(path, request = {}) {
   if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/regression-assessment\/confirm$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "confirmed", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+  const executionRecord = path.match(/^\/api\/improvements\/([^/]+)\/execution$/);
+  if (executionRecord) {
+    const improvementId = decodeURIComponent(executionRecord[1] || "");
+    if (improvementId === "imp-demo06") return { __status: 404, detail: "not found" };
+    return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+  }
   if (/^\/api\/automation-policy/.test(path)) return { agent_id: "soc-ops", mode: "off" };
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);
   if (lifecycle) {
@@ -243,7 +262,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是全量基线规则全绿。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-merged-into-test-stage,test-release-stage-panels,theme-governance-light,improvement-default-detail,decision-card-slim,four-stage-panels,closed-loop-spine,improvement-content,stage-detail-drawers,improvement-assets,asset-browse-first,attribution-actions,decision-card-product-action,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-merged-into-test-stage,test-release-stage-panels,theme-governance-light,improvement-default-detail,decision-card-slim,four-stage-panels,closed-loop-spine,improvement-content,stage-detail-drawers,improvement-assets,asset-browse-first,attribution-actions,decision-card-product-action,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,optimization-action-semantics,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -360,7 +379,7 @@ async function advanceImprovement(improvementId, stages) {
   }
 }
 
-async function seedImprovementStage({ agentId, stamp, key, title, stagePath }) {
+async function seedImprovementStage({ agentId, stamp, key, title, stagePath, withExecution = true }) {
   const prefix = `${stamp}-${key}`;
   const item = await postJson("/api/improvements", {
     agent_id: agentId,
@@ -410,11 +429,13 @@ async function seedImprovementStage({ agentId, stamp, key, title, stagePath }) {
     summary: "补充 sec-ops-data 时间窗口核验 SOP，并在 prompt 中要求先核验事件时间。",
     changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }],
   });
-  await putJson(`/api/improvements/${item.improvement_id}/execution`, {
-    summary: "已按优化方案形成候选执行记录，关联审计版本。",
-    changes_applied: ["prompt：新增时间窗口一致性校验", "SOP：补充 MCP 数据时间核验步骤"],
-    agent_version: `${prefix}-candidate`,
-  });
+  if (withExecution) {
+    await putJson(`/api/improvements/${item.improvement_id}/execution`, {
+      summary: "已按优化方案形成候选执行记录，关联审计版本。",
+      changes_applied: ["prompt：新增时间窗口一致性校验", "SOP：补充 MCP 数据时间核验步骤"],
+      agent_version: `${prefix}-candidate`,
+    });
+  }
   await postJson("/api/assets", {
     agent_id: agentId,
     asset_type: "regression",
@@ -476,6 +497,14 @@ async function seedRealAuditData() {
     title: `${stamp} 优化执行 · sec-ops-data 时间窗口误判治理`,
     stagePath: ["triage", "attribution", "optimization"],
   });
+  const optimizationPendingId = await seedImprovementStage({
+    agentId,
+    stamp,
+    key: "optimization-pending",
+    title: `${stamp} 优化执行待执行 · sec-ops-data 时间窗口误判治理`,
+    stagePath: ["triage", "attribution", "optimization"],
+    withExecution: false,
+  });
   const testReleaseId = await seedImprovementStage({
     agentId,
     stamp,
@@ -527,6 +556,7 @@ async function seedRealAuditData() {
       feedback: feedbackId,
       attribution: attributionId,
       optimization: optimizationId,
+      optimizationPending: optimizationPendingId,
       testRelease: testReleaseId,
       duplicate: duplicate.improvement_id,
     },
@@ -912,11 +942,14 @@ const RULES = [
     const inputs = await page.getByTestId("regression-case-input").count();
     const expected = await page.getByTestId("regression-case-expected").count();
     const checkpoints = await page.getByTestId("regression-case-checkpoint").count();
+    const inputText = await page.getByTestId("regression-case-input").first().innerText().catch(() => ""), toggleButtons = await page.getByTestId("regression-case-input-toggle").count(), previewText = await page.getByTestId("regression-case-input-text").first().innerText().catch(() => "");
+    if (toggleButtons > 0) await page.getByTestId("regression-case-input-toggle").first().click();
+    const expandedText = await page.getByTestId("regression-case-input-text").first().innerText().catch(() => ""), inputSemantics = inputText.includes("数据转换前原始数据") && !inputText.includes("复现场景：") && toggleButtons > 0 && expandedText.length > previewText.length;
     await page.locator(".drawer-shell-actions").getByRole("button", { name: "关闭" }).first().click().catch(() => {});
     await page.getByTestId("stage-detail-drawer").waitFor({ state: "detached", timeout: 4000 }).catch(() => {});
     return {
-      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage && summaryItems >= 3 && detailItems >= 3 && inputs >= 3 && expected >= 3 && checkpoints >= 3,
-      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage} summary=${summaryItems} detail=${detailItems} inputs=${inputs} expected=${expected} checkpoints=${checkpoints}`,
+      ok: found.length === panels.length && datasetId && runRef === datasetId && duplicateGenerate === 0 && coverage && summaryItems >= 3 && detailItems >= 3 && inputs >= 3 && expected >= 3 && checkpoints >= 3 && inputSemantics,
+      detail: `panels=${found.length}/${panels.length} dataset=${datasetId} regression_ref=${runRef} duplicate_generate=${duplicateGenerate} coverage=${coverage} summary=${summaryItems} detail=${detailItems} inputs=${inputs} expected=${expected} checkpoints=${checkpoints} inputSemantics=${inputSemantics}`,
     };
   } },
   { id: "improvement-default-detail", phase: "P1", desc: "改进列表有数据时默认展示首个详情，不留空白首屏", async fn(page) {
@@ -1120,6 +1153,32 @@ const RULES = [
       detail: `方案=${opt} A混入变更=${optMisplacedChanges} B变更预览=${diffPreview} 文件diff=${fileDiffs}/${unifiedDiffOk} legacyPlanChanges=${legacyPlanChanges} 执行记录=${exec}`,
     };
   } },
+  { id: "optimization-action-semantics", phase: "P3", desc: "优化执行主动作=执行优化；重新生成优化方案只在决策卡出现，旧自动执行文案不回归", async fn(page) {
+    if (!(await openImprovementById(page, stageTarget("optimizationPending", "imp-demo06")))) return { ok: false, detail: "无待执行优化事项" };
+    await page.getByTestId("primary-action").waitFor({ timeout: 6000 }).catch(() => {});
+    await page.waitForFunction(() => {
+      const action = document.querySelector('[data-testid="primary-action"]');
+      return !!action && action.textContent?.includes("执行优化");
+    }, null, { timeout: 6000 }).catch(() => {});
+    const primaryLabel = await page.getByTestId("primary-action").innerText().catch(() => "");
+    const primaryAction = await page.getByTestId("primary-action").getAttribute("data-action").catch(() => "");
+    const decisionText = await page.getByTestId("current-decision-card").innerText().catch(() => "");
+    const stageText = await page.getByTestId("stage-work-area").innerText().catch(() => "");
+    const decisionRegen = await page.getByTestId("decision-regenerate-optimization-plan").count();
+    const stageRegen = await page.getByTestId("stage-work-area").getByTestId("regenerate-optimization-plan").count();
+    const legacyAutoExecute = `${decisionText}\n${stageText}`.includes("自动执行优化");
+    observedApiRequests.length = 0;
+    await page.getByTestId("primary-action").click();
+    const sawApply = await waitForObservedRequest((r) => r.path.endsWith("/execution/apply"));
+    const reqs = observedApiRequests.map((r) => `${r.method} ${r.path}`);
+    const confirmedPlan = reqs.some((r) => r.includes("/optimization-plan/confirm"));
+    const planAlreadyConfirmed = decisionText.includes("方案已确认");
+    const lifecycle = reqs.some((r) => r.includes("/lifecycle"));
+    return {
+      ok: primaryLabel.includes("执行优化") && primaryAction === "apply-execution" && decisionRegen === 1 && stageRegen === 0 && !legacyAutoExecute && sawApply && (confirmedPlan || planAlreadyConfirmed) && lifecycle,
+      detail: `primary=${primaryLabel}/${primaryAction} decisionRegen=${decisionRegen} stageRegen=${stageRegen} legacyAuto=${legacyAutoExecute} apply=${sawApply} confirmPlan=${confirmedPlan} planAlreadyConfirmed=${planAlreadyConfirmed} lifecycle=${lifecycle}`,
+    };
+  } },
   { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重跑入口由决策卡承载，候选用例归属测试用例详情卡", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
@@ -1297,15 +1356,20 @@ async function main() {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
+        const payload = defaultPayload(url.pathname, {
+          method: route.request().method(),
+          postData: route.request().postData() || "",
+          queryPath: url.searchParams.get("path") || "",
+        });
+        const status = payload && typeof payload === "object" && "__status" in payload ? Number(payload.__status) || 200 : 200;
+        const body = payload && typeof payload === "object" && "__status" in payload
+          ? JSON.stringify(Object.fromEntries(Object.entries(payload).filter(([key]) => key !== "__status")))
+          : JSON.stringify(payload);
         return route.fulfill({
-          status: 200,
+          status,
           contentType: "application/json",
           headers: { "access-control-allow-origin": "*" },
-          body: JSON.stringify(defaultPayload(url.pathname, {
-            method: route.request().method(),
-            postData: route.request().postData() || "",
-            queryPath: url.searchParams.get("path") || "",
-          })),
+          body,
         });
       });
     }

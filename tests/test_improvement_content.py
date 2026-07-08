@@ -5,12 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.runtime.errors import BusinessRuleViolation
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
+from fastapi.testclient import TestClient
+
 from test_api_execution_optimizer import _load_app
 
 
@@ -192,6 +192,10 @@ def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path)
     with TestClient(module.app) as client:
         iid = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "误报治理"}).json()["improvement_id"]
         client.put(f"/api/improvements/{iid}/normalized-feedback", json={"problem": "告警误报"})
+        client.post(
+            f"/api/improvements/{iid}/feedbacks",
+            json={"summary": "告警误报", "raw_text": "原始用户输入：请判断这条告警是否应升级处置。"},
+        )
         gen = client.post(f"/api/improvements/{iid}/regression-assessment/generate")
         assert gen.status_code == 200 and gen.json()["generated_by"] in {"governor", "heuristic"} and gen.json()["cases"]
         assert client.get(f"/api/improvements/{iid}/regression-assessment").json()["status"] == "draft"

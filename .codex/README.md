@@ -20,6 +20,7 @@
 - `skills/agentgov-closeout-sync/SKILL.md`：阶段收尾、里程碑交接或发版前后，同步 README、docs、项目规则、skill 镜像和记忆边界；触发范围窄于普通文档治理，不替代各专项 skill。
 - `skills/business-agent-workspace-optimizer/SKILL.md`：离线开发、配置和优化单个业务 Agent workspace 配置资产；不代表产品内置自优化能力。
 - `skills/test-sync-governance/SKILL.md`：迭代功能时治理测试增删改，识别陈测与脆测；配合 `scripts/check_orphan_tests.py` 孤儿检测，覆盖率门只防欠测。
+- `skills/improvement-workbench-contract-preflight/SKILL.md`：整改四阶段改进治理工作台、反馈闭环 UI、Diff、执行优化、测试用例或 Trace/Langfuse 前，固定业务产物归属、字段所有权、动作副作用和负向验收。
 
 ## 通用入口配置
 

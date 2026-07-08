@@ -1,0 +1,5 @@
+# Claude Code worktree copy rules.
+# Include only local non-secret files that are needed by candidate worktrees.
+
+CLAUDE.local.md
+.claude/settings.local.json

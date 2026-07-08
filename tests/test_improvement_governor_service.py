@@ -27,14 +27,21 @@ def _item() -> SimpleNamespace:
     return SimpleNamespace(improvement_id="imp-1", title="告警误报治理", agent_id="soc-ops")
 
 
-def _service(tmp_path: Path, run_profile_json) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
+def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[ImprovementGovernorService, ImprovementContentStore]:
     content = _content(tmp_path)
     content.upsert_normalized_feedback("imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报")
+    content.create_feedback(
+        "imp-1",
+        summary="告警时间窗口与事件时间不一致",
+        raw_text="原始用户输入：请判断这条告警是否应升级处置。",
+        run_id="run-1",
+    )
     svc = ImprovementGovernorService(
         improvement_store=_FakeImprovements(_item()),
         content_store=content,
         run_profile_json=run_profile_json,
         data_dir=Path("/data"),
+        find_run_by_id=find_run_by_id,
     )
     return svc, content
 
@@ -230,18 +237,27 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
 
 
 def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
-    """governor EVAL_CASE_GENERATION → 回归用例候选（prompt/期望/检查点），generated_by=governor。"""
+    """governor EVAL_CASE_GENERATION → 回归用例候选；prompt 由后端原始输入覆盖。"""
+    seen: dict[str, object] = {}
+
     async def fake_run(**kwargs):
+        seen.update(kwargs["job_input"])
         kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
         return {"eval_cases": [
-            {"prompt": "当事件时间与告警时间不一致时如何处置？", "expected_behavior": "先核验时间一致性，不直接升级", "checks_json": {"c1": "是否核验时间", "c2": "是否避免误升级"}},
+            {"prompt": "Agent 不应决定输入字段", "expected_behavior": "先核验时间一致性，不直接升级", "checks_json": {"c1": "是否核验时间", "c2": "是否避免误升级"}},
         ]}
-    svc, content = _service(tmp_path, fake_run)
+    svc, content = _service(
+        tmp_path,
+        fake_run,
+        find_run_by_id=lambda run_id: {"run_id": run_id, "message": "数据转换前原始数据:\n{\"danger_tid\":\"14516\"}", "answer_summary": "误报分析"},
+    )
     rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
     assert rec.generated_by == "governor"
     assert rec.generation_trace_id == "tr-regression"
-    assert rec.cases and rec.cases[0]["prompt"].startswith("当事件时间")
+    assert rec.cases and rec.cases[0]["prompt"].startswith("数据转换前原始数据")
+    assert "Agent 不应决定输入字段" not in rec.cases[0]["prompt"]
     assert rec.cases[0]["checkpoints"] == ["是否核验时间", "是否避免误升级"]
+    assert seen["feedback_cases"][0]["source_run"]["message"].startswith("数据转换前原始数据")  # type: ignore[index]
     assert content.get_regression_assessment("imp-1").status == "draft"
 
 
@@ -251,6 +267,40 @@ def test_regression_heuristic_fallback(tmp_path: Path) -> None:
     svc, _ = _service(tmp_path, boom)
     rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
     assert rec.generated_by == "heuristic" and rec.cases and rec.cases[0]["checkpoints"]
+    assert rec.cases[0]["prompt"].startswith("原始用户输入")
+    assert "复现场景" not in rec.cases[0]["prompt"]
+
+
+def test_regression_governor_no_action_keeps_heuristic_source_prompt(tmp_path: Path) -> None:
+    async def no_action(**kwargs):
+        kwargs["trace_callback"]({"trace_id": "tr-no-action", "trace_url": "http://lf/tr-no-action"})
+        return {"eval_cases": [], "no_action_reason": "证据不足，不编造用例。"}
+
+    svc, _ = _service(tmp_path, no_action)
+    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+
+    assert rec.generated_by == "heuristic"
+    assert rec.generation_trace_id == ""
+    assert rec.cases and rec.cases[0]["prompt"].startswith("原始用户输入")
+    assert "复现场景" not in rec.cases[0]["prompt"]
+
+
+def test_regression_without_original_input_does_not_fabricate_prompt(tmp_path: Path) -> None:
+    async def boom(**_kwargs):
+        raise RuntimeError("no governor")
+
+    content = _content(tmp_path)
+    svc = ImprovementGovernorService(
+        improvement_store=_FakeImprovements(_item()),
+        content_store=content,
+        run_profile_json=boom,
+        data_dir=Path("/data"),
+    )
+    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+
+    assert rec.generated_by == "heuristic"
+    assert rec.cases == []
+    assert "缺少原始输入" in rec.summary
 
 
 def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:

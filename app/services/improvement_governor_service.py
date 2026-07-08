@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 RunProfileJson = Callable[..., Awaitable[FormatterOutputModel]]
 # 反馈整理不需要 governor（无工具/无多轮）：直接一次 DSPy formatter 把原始反馈归纳成 title+problem。
 FormatNormalizedFeedback = Callable[[str], Awaitable[FormatterOutputModel]]
+FindRunById = Callable[[str], JsonObject | None]
 
 
 class OptimizationChangeItem(TypedDict):
@@ -44,6 +45,16 @@ class RegressionCaseItem(TypedDict):
     prompt: str
     expected_behavior: str
     checkpoints: list[str]
+
+
+class RegressionSourceCase(TypedDict):
+    feedback_id: str
+    title: str
+    source: str
+    raw_text: str
+    run_id: str
+    original_input: str
+    answer_summary: str
 
 
 def _text(value: Any) -> str:
@@ -137,12 +148,14 @@ class ImprovementGovernorService:
         run_profile_json: RunProfileJson | None,
         data_dir: Path,
         format_normalized_feedback: FormatNormalizedFeedback | None = None,
+        find_run_by_id: FindRunById | None = None,
     ) -> None:
         self._improvements = improvement_store
         self._content = content_store
         self._run_profile_json = run_profile_json
         self._data_dir = data_dir
         self._format_normalized_feedback = format_normalized_feedback
+        self._find_run_by_id = find_run_by_id
 
     # ---- 系统理解 NormalizedFeedback（只整理反馈：一次 DSPy formatter，无 governor）----
     async def generate_normalized_feedback(self, improvement_id: str) -> NormalizedFeedbackRecord:
@@ -305,18 +318,31 @@ class ImprovementGovernorService:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
-        summary, cases, thresholds, generated_by = self._heuristic_regression(item, nf)
+        attr = self._content.get_attribution(improvement_id)
+        plan = self._content.get_optimization_plan(improvement_id)
+        source_cases = self._regression_source_cases(feedbacks)
+        summary, cases, thresholds, generated_by = self._heuristic_regression(nf, source_cases)
         trace_ref: dict[str, str] = {}
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
                     AgentJobType.EVAL_CASE_GENERATION,
-                    self._build_regression_input(item, nf, feedbacks),
+                    self._build_regression_input(item, source_cases, attr, plan),
                     improvement_id,
                     trace_ref=trace_ref,
                 )
-                summary, cases, thresholds = self._map_regression(output, summary, cases, thresholds)
-                generated_by = "governor"
+                governor_summary, governor_cases, thresholds = self._map_regression(
+                    output,
+                    summary,
+                    thresholds,
+                    [case["original_input"] for case in source_cases if case["original_input"]],
+                )
+                if governor_cases:
+                    summary, cases, generated_by = governor_summary, governor_cases, "governor"
+                elif cases:
+                    summary = f"回归保障候选（启发式）：{len(cases)} 条基于原始输入生成；治理 Agent 未生成可采纳用例。"
+                else:
+                    summary = governor_summary
             except Exception as exc:  # noqa: BLE001 — governor 失败回退确定性；记录以便区分
                 logger.warning(
                     "governor regression assessment failed; fallback=heuristic improvement_id=%s trace_id=%s error=%s",
@@ -334,33 +360,109 @@ class ImprovementGovernorService:
             generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
         )
 
-    def _build_regression_input(self, item: Any, nf: Any, feedbacks: list[Any]) -> JsonObject:
-        problem = getattr(nf, "problem", "") if nf else getattr(item, "title", "")
+    def _regression_source_cases(self, feedbacks: list[Any]) -> list[RegressionSourceCase]:
+        cases: list[RegressionSourceCase] = []
+        for feedback in feedbacks:
+            run_id = _text(getattr(feedback, "run_id", ""))
+            run = self._find_run(run_id) if run_id else {}
+            run_message = _text(run.get("message")) if run else ""
+            raw_text = _text(getattr(feedback, "raw_text", ""))
+            cases.append(
+                RegressionSourceCase(
+                    feedback_id=_text(getattr(feedback, "feedback_id", "")),
+                    title=_text(getattr(feedback, "summary", "")),
+                    source=_text(getattr(feedback, "source", "")),
+                    raw_text=raw_text,
+                    run_id=run_id,
+                    original_input=run_message or raw_text,
+                    answer_summary=_text(run.get("answer_summary")) if run else "",
+                )
+            )
+        return cases
+
+    def _find_run(self, run_id: str) -> JsonObject:
+        if self._find_run_by_id is None:
+            return {}
+        try:
+            return self._find_run_by_id(run_id) or {}
+        except Exception as exc:  # noqa: BLE001 — run 证据缺失不应阻断启发式回归候选生成
+            logger.warning("failed to resolve regression source run run_id=%s error=%s", run_id, exc.__class__.__name__)
+            return {}
+
+    def _build_regression_input(
+        self,
+        item: Any,
+        source_cases: list[RegressionSourceCase],
+        attr: AttributionRecord | None,
+        plan: OptimizationPlanRecord | None,
+    ) -> JsonObject:
+        attribution_output = self._regression_attribution_context(attr)
+        optimization_plan = self._regression_plan_context(plan)
         return {
             "feedback_cases": [
-                {
-                    "title": getattr(item, "title", ""),
-                    "problem": problem,
-                    "possible_object": getattr(nf, "possible_object", "") if nf else "",
-                    "user_quote": getattr(nf, "user_quote", "") if nf else "",
-                    "feedbacks": [{"summary": getattr(f, "summary", ""), "raw_text": getattr(f, "raw_text", "")} for f in feedbacks],
-                }
+                self._regression_feedback_case_context(case, attribution_output, optimization_plan)
+                for case in source_cases
             ],
-            "source_refs": [{"kind": "improvement", "id": getattr(item, "improvement_id", "")}],
+            "source_refs": [{"source_kind": "improvement", "source_id": getattr(item, "improvement_id", "")}],
             "existing_eval_cases": [],
         }
 
     @staticmethod
+    def _regression_feedback_case_context(
+        case: RegressionSourceCase, attribution_output: JsonObject, optimization_plan: JsonObject
+    ) -> JsonObject:
+        refs = [{"source_kind": "improvement_feedback", "source_id": case["feedback_id"]}]
+        if case["run_id"]:
+            refs.append({"source_kind": "agent_run", "source_id": case["run_id"]})
+        return {
+            "feedback_case": {"feedback_case_id": case["feedback_id"], "title": case["title"], "priority": ""},
+            "source_refs": refs,
+            "source_run": {
+                "run_id": case["run_id"],
+                "message": case["original_input"],
+                "answer_summary": case["answer_summary"],
+            },
+            "source_records": [
+                {
+                    "source_kind": case["source"],
+                    "title": case["title"],
+                    "comment": case["raw_text"],
+                    "message": case["original_input"],
+                    "answer_summary": case["answer_summary"],
+                }
+            ],
+            "attribution_output": attribution_output,
+            "optimization_plan": optimization_plan,
+        }
+
+    @staticmethod
+    def _regression_attribution_context(attr: AttributionRecord | None) -> JsonObject:
+        if attr is None:
+            return {}
+        return {
+            "status": attr.status,
+            "rationale": attr.summary,
+            "responsibility_boundary": {"owner": "", "reason": "；".join(attr.responsibility_boundary)},
+            "evidence_refs": [{"type": "text", "id": item, "reason": item} for item in attr.evidence],
+        }
+
+    @staticmethod
+    def _regression_plan_context(plan: OptimizationPlanRecord | None) -> JsonObject:
+        if plan is None:
+            return {}
+        return {"summary": plan.summary, "changes": list(plan.changes), "risk_level": plan.risk_level}
+
+    @staticmethod
     def _map_regression(
-        output: FormatterOutputModel, summary: str, cases: list[RegressionCaseItem], thresholds: dict[str, str]
+        output: FormatterOutputModel, summary: str, thresholds: dict[str, str], source_prompts: list[str]
     ) -> tuple[str, list[RegressionCaseItem], dict[str, str]]:
         d = output.model_dump() if hasattr(output, "model_dump") else dict(output)
         eval_cases = d.get("eval_cases") or []
         mapped: list[RegressionCaseItem] = []
-        for c in eval_cases:
+        for index, c in enumerate(eval_cases):
             if not isinstance(c, dict):
                 continue
-            prompt = _text(c.get("prompt"))
+            prompt = source_prompts[min(index, len(source_prompts) - 1)] if source_prompts else ""
             if not prompt:
                 continue
             checks = c.get("checks_json") or {}
@@ -375,20 +477,27 @@ class ImprovementGovernorService:
         gt = d.get("suggested_gate_thresholds")
         new_thresholds = {str(k): _text(v) for k, v in gt.items() if _text(v)} if isinstance(gt, dict) and gt else thresholds
         new_summary = (_text(d.get("no_action_reason")) or summary) if not mapped else f"治理 Agent 生成 {len(mapped)} 条回归用例候选。"
-        return new_summary, (mapped or cases), new_thresholds
+        return new_summary, mapped, new_thresholds
 
     @staticmethod
-    def _heuristic_regression(item: Any, nf: Any) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
-        title = getattr(item, "title", "") if item else ""
-        problem = getattr(nf, "problem", "") if nf else title
-        case = RegressionCaseItem(
-            prompt=f"复现场景：当出现「{title}」类情况时，请处理。",
-            expected_behavior=f"正确识别并避免重演：{problem}。",
-            checkpoints=["是否识别问题条件", "是否提示需核验数据源", "是否避免直接升级处置"],
-        )
+    def _heuristic_regression(
+        nf: Any, source_cases: list[RegressionSourceCase]
+    ) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
+        problem = getattr(nf, "problem", "") if nf else "反馈问题"
+        cases = [
+            RegressionCaseItem(
+                prompt=source["original_input"],
+                expected_behavior=f"复测原始输入，回答应正确识别并避免重演：{problem}。",
+                checkpoints=["是否覆盖原始输入中的关键条件", "是否提示需核验数据源", "是否避免重复错误处置"],
+            )
+            for source in source_cases
+            if source["original_input"]
+        ]
         # 发布门禁阈值：标准 SLA 默认（治理 Agent 可细化），非 mock。
         thresholds = {"通过率": "≥95%", "新增严重问题": "0", "关键指标": "不劣于基线"}
-        return "回归保障候选（启发式）：1 条复现用例。", [case], thresholds, "heuristic"
+        if not cases:
+            return "回归保障候选缺少原始输入：未找到可复测的 run message 或反馈原文。", [], thresholds, "heuristic"
+        return f"回归保障候选（启发式）：{len(cases)} 条基于原始输入生成。", cases, thresholds, "heuristic"
 
     # ---- governor 调用 ----
     async def _run_governor(

@@ -1,6 +1,9 @@
+import { useState } from "react";
 import type { RegressionAssessment } from "../api/improvements";
 
 type RegressionCase = RegressionAssessment["cases"][number];
+const INPUT_PREVIEW_PARAGRAPHS = 3;
+const INPUT_PREVIEW_CHARS = 1200;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
@@ -8,6 +11,15 @@ function text(value: unknown): string {
 
 function clipped(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 1)}...` : value;
+}
+
+function inputPreview(value: string): { preview: string; hasMore: boolean } {
+  const full = text(value);
+  const paragraphs = full.split(/\n\s*\n/).filter((item) => item.trim());
+  const byParagraph = (paragraphs.length ? paragraphs.slice(0, INPUT_PREVIEW_PARAGRAPHS).join("\n\n") : full).trim();
+  const truncatedByChars = byParagraph.length > INPUT_PREVIEW_CHARS;
+  const preview = truncatedByChars ? `${byParagraph.slice(0, INPUT_PREVIEW_CHARS).trimEnd()}...` : byParagraph;
+  return { preview, hasMore: truncatedByChars || byParagraph.length < full.length };
 }
 
 export function regressionCaseTitle(item: RegressionCase, index: number): string {
@@ -19,6 +31,23 @@ export function regressionCaseTitle(item: RegressionCase, index: number): string
     .replace(/[。！？.!?].*$/, "")
     .trim();
   return normalized ? clipped(normalized, 36) : `用例 ${index + 1}`;
+}
+
+function RegressionCaseInput({ value }: { value: string }) {
+  const full = text(value);
+  const [expanded, setExpanded] = useState(false);
+  if (!full) return <dd data-testid="regression-case-input">-</dd>;
+  const { preview, hasMore } = inputPreview(full);
+  return (
+    <dd className="iw-regression-case-input" data-testid="regression-case-input">
+      <pre data-testid="regression-case-input-text">{expanded || !hasMore ? full : preview}</pre>
+      {hasMore ? (
+        <button className="iw-link-button" type="button" data-testid="regression-case-input-toggle" onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "收起" : "展开完整输入"}
+        </button>
+      ) : null}
+    </dd>
+  );
 }
 
 export function RegressionCaseSummaryList({ cases }: { cases: RegressionCase[] }) {
@@ -79,7 +108,7 @@ export function RegressionCaseDetails({
             </div>
             <div>
               <dt>输入</dt>
-              <dd data-testid="regression-case-input">{item.prompt || "-"}</dd>
+              <RegressionCaseInput value={item.prompt || ""} />
             </div>
             <div>
               <dt>期望输出</dt>

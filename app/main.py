@@ -118,6 +118,7 @@ improvement_governor_service = ImprovementGovernorService(
     format_normalized_feedback=lambda raw_text: runtime._format_agent_text(
         job_type=str(AgentJobType.NORMALIZED_FEEDBACK), raw_text=raw_text, job_input={"raw_feedback": raw_text}
     ),
+    find_run_by_id=lambda run_id: feedback_store.find_run(run_id=run_id),
 )
 automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)
 asset_store = AssetStore(runtime_db_session_factory)

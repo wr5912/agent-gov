@@ -17,6 +17,7 @@
 - `main-agent`：默认安全运营样板业务 Agent。
 - `response-disposal`：响应处置业务 Agent。
 - `security-data-standardization-review`：安全数据标准化审查业务 Agent，审查原始安全数据到 OCSF、OCSF 到 STIX 的映射质量，并输出修正建议与回归用例。
+- `ai-soc-gap-analyzer`：AI SOC 差距评估业务 Agent，基于能力模型和证据快照输出成熟度评分、差距、风险和下一步行动。
 
 ## 占位符
 

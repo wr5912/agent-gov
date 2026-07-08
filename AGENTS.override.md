@@ -138,6 +138,8 @@ make codex-guard
 
 涉及 AgentGov 产品定位、目标愿景使命、反馈闭环治理方案、多业务 Agent 创建与治理、prompt/skill/SOP/eval 资产沉淀类任务时，Analyze 阶段先按 `.codex/skills/agentgov-governance-preflight/SKILL.md` 做治理对象预检：区分业务 Agent 与治理 Agent、资产类型、反馈归属、生命周期、当前实现边界和目标能力边界，先给治理对象矩阵和闭环链路，再写文档或方案正文。普通代码实现、bug 修复、单文件改动不触发。
 
+涉及四阶段改进治理工作台、反馈闭环 UI、tab/card/drawer、Diff、执行优化、测试用例或 Trace/Langfuse 的反复整改时，Analyze 阶段先按 `.codex/skills/improvement-workbench-contract-preflight/SKILL.md` 固定业务产物归属、字段所有权、动作副作用和负向验收；避免继续只按单个可见症状补丁式修改。
+
 ## 本仓库专属边界
 
 - 不要把 `agent-gov` 的脚本名、CI workflow 或 hook 命令硬编码回 `AGENTS.md`、通用 `.codex/rules/` 或通用 skill 文本。

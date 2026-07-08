@@ -149,7 +149,7 @@ class ExecutionUpsertRequest(BaseModel):
 
 
 class RegressionCase(BaseModel):
-    prompt: str = Field(description="回归用例输入（发给 Agent 的 prompt）。")
+    prompt: str = Field(description="回归用例输入：原始用户输入文本，实际发给业务 Agent 的 prompt。")
     expected_behavior: str = Field(default="", description="期望行为。")
     checkpoints: list[str] = Field(default_factory=list, description="检查点。")
 

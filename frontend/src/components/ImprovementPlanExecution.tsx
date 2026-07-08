@@ -13,7 +13,7 @@ export function ImprovementPlanExecution({
   onRecordExec,
   showPlan = true,
   showExecution = true,
-  showPlanRegenerate = true,
+  showPlanRegenerate = false,
 }: {
   item: ImprovementItem;
   busy: boolean;

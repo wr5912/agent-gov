@@ -4887,7 +4887,7 @@ export interface components {
             expected_behavior: string;
             /**
              * Prompt
-             * @description 回归用例输入（发给 Agent 的 prompt）。
+             * @description 回归用例输入：原始用户输入文本，实际发给业务 Agent 的 prompt。
              */
             prompt: string;
         };

@@ -102,8 +102,8 @@
   },
   "sandbox": {
     "enabled": true,
-    "failIfUnavailable": true,
-    "autoAllowBashIfSandboxed": false,
+    "failIfUnavailable": false,
+    "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "allowWrite": [
         "/data/outputs/security-operations-expert",

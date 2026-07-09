@@ -8,9 +8,36 @@ import json
 from pathlib import Path
 
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.schemas import ChatRequest
 from fastapi.testclient import TestClient
 
 from test_api_execution_optimizer import _load_app
+
+
+def _fake_sdk_query_success(sdk_session: str = "sdk-race"):
+    """真实 stream 全链用的 fake SDK query：yield AssistantMessage + ResultMessage（走持久化）。"""
+    from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield AssistantMessage(content=[TextBlock(text="收到")], model="<synthetic>", session_id=sdk_session)
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sdk_session, result="收到")
+
+    return fake_query
+
+
+def _drive_stream(module, req: ChatRequest, on_event=None) -> list:
+    events: list = []
+
+    async def go():
+        async for ev in module.runtime.stream(req):
+            events.append(ev)
+            if on_event is not None:
+                on_event(ev)
+
+    asyncio.run(go())
+    return events
 
 
 async def _aiter(frames):
@@ -362,3 +389,76 @@ def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tm
     saved = module.session_store.get("sess-stale")
     assert saved is not None
     assert saved.sdk_session_id == "new-sdk"
+
+
+def test_stream_persists_session_and_run_before_response_completed(monkeypatch, tmp_path: Path) -> None:
+    # race 回归：在 result 事件（-> response.completed）时刻，session（sdk_session_id+agent_id）与 run 必须已落库，
+    # 使 /v1/conversations/items 与 /v1/responses/{id} retrieve 在完成信号时刻即可查（修复前此处未落库、会失败）。
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", _fake_sdk_query_success("sdk-race"))
+    module = _load_app(monkeypatch, tmp_path)
+
+    at_result: dict = {}
+    run_id: dict = {}
+
+    def check(ev):
+        data = ev.get("data") if isinstance(ev.get("data"), dict) else {}
+        if data.get("run_id"):
+            run_id["v"] = data["run_id"]
+        if ev.get("event") == "result":
+            s = module.session_store.get("sess-race")
+            at_result["sdk_session_id"] = s.sdk_session_id if s else None
+            at_result["agent_id"] = s.agent_id if s else None
+            at_result["run_found"] = bool(run_id.get("v")) and module.feedback_store.find_run(run_id=run_id["v"]) is not None
+
+    _drive_stream(module, ChatRequest(message="hi", session_id="sess-race"), on_event=check)
+
+    assert at_result.get("sdk_session_id") == "sdk-race"  # session 已落库
+    assert at_result.get("agent_id")  # agent_id 非空（否则 items 会从空列表退化为 500）
+    assert at_result.get("run_found") is True  # run 已记录（retrieve 完成即可查）
+
+
+def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
+    # 幂等：is_result 处落库 + finally 兜底，不得双落库。
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", _fake_sdk_query_success("sdk-once"))
+    module = _load_app(monkeypatch, tmp_path)
+    calls = {"n": 0}
+    original = module.runtime._complete_runtime_request
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return original(*a, **k)
+
+    monkeypatch.setattr(module.runtime, "_complete_runtime_request", counting)
+    _drive_stream(module, ChatRequest(message="hi", session_id="sess-once"))
+    assert calls["n"] == 1  # 恰好落库一次
+
+
+def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path) -> None:
+    # error/无 ResultMessage 路径：finally 兜底落库一次，仍发 error+done。
+    import claude_agent_sdk
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        raise RuntimeError("boom before result")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    module = _load_app(monkeypatch, tmp_path)
+    calls = {"n": 0}
+    original = module.runtime._complete_runtime_request
+
+    def counting(*a, **k):
+        calls["n"] += 1
+        return original(*a, **k)
+
+    monkeypatch.setattr(module.runtime, "_complete_runtime_request", counting)
+    events = _drive_stream(module, ChatRequest(message="hi", session_id="sess-err"))
+    names = [e.get("event") for e in events]
+    assert calls["n"] == 1  # 兜底落库一次
+    assert "error" in names and "done" in names
+    assert module.session_store.get("sess-err") is not None  # session 已落库

@@ -29,6 +29,7 @@ class StreamRun:
     root_metadata: JsonObject
     propagation: JsonObject
     final_output: JsonObject | None = None
+    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，finally 兜底，保证恰好一次
 
 
 def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
@@ -173,6 +174,8 @@ async def _emit_query_events(
             if is_result:
                 if input_done is not None:
                     input_done.set()
+                # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
+                _persist_stream_run(stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
     finally:
         if input_done is not None:
@@ -250,11 +253,16 @@ async def _run_sdk_query(
         await event_queue.put(None)
 
 
-async def _complete_stream_run(
-    stream_run: StreamRun,
-    root_span: Any,
-    generation: Any,
-) -> None:
+def _persist_stream_run(stream_run: StreamRun) -> None:
+    """幂等落库：抽取 output + session save + record_run。
+
+    在 ResultMessage 处（response.completed 之前）先调，使 items/retrieve 在完成信号时刻即可查；
+    ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）。
+    ``stream_run.persisted`` 保证一次流式请求恰好落库一次（session save 同时置 sdk_session_id+agent_id，
+    满足 items 的 owning-agent 强校验，不会出现 sdk_session_id 已置而 agent_id 为空的 500 中间态）。
+    """
+    if stream_run.persisted:
+        return
     runtime = stream_run.runtime
     answer, agent_activity, output = runtime._runtime_output_from_state(
         stream_run.req,
@@ -263,12 +271,22 @@ async def _complete_stream_run(
     )
     stream_run.final_output = output
     runtime._complete_runtime_request(stream_run.req, stream_run.request_context, stream_run.query_state, answer, agent_activity)
+    stream_run.persisted = True
+
+
+async def _complete_stream_run(
+    stream_run: StreamRun,
+    root_span: Any,
+    generation: Any,
+) -> None:
+    runtime = stream_run.runtime
+    _persist_stream_run(stream_run)  # 幂等：is_result 已落则跳过；error/无 result 路径在此兜底
     runtime._update_runtime_observations(
         root_span,
         generation,
         stream_run.request_context,
         stream_run.query_state,
-        output,
+        stream_run.final_output or {},
         stream_run.propagation,
     )
     if runtime.user_input_service is not None:

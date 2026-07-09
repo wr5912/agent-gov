@@ -189,7 +189,10 @@
             "tests/test_responses_stream.py::test_endpoint_stream_control_maps_request_fields",
             "tests/test_responses_stream.py::test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events",
             "tests/test_responses_stream.py::test_endpoint_stream_projects_hitl_confirmation",
-            "tests/test_responses_stream.py::test_endpoint_stream_retries_stale_previous_response_session"
+            "tests/test_responses_stream.py::test_endpoint_stream_retries_stale_previous_response_session",
+            "tests/test_responses_stream.py::test_stream_persists_session_and_run_before_response_completed",
+            "tests/test_responses_stream.py::test_stream_persists_exactly_once",
+            "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally"
           ]
         },
         {

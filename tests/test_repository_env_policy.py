@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 import textwrap
 from pathlib import Path
+
+import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUNTIME_ENV_KEYS = (
@@ -85,6 +88,64 @@ def _env_keys(path: Path) -> set[str]:
             continue
         keys.add(stripped.split("=", 1)[0].strip())
     return keys
+
+
+def _dockerfile_apt_packages(path: Path) -> set[str]:
+    text = path.read_text(encoding="utf-8")
+    pattern = (
+        r"apt-get update && apt-get install -y --no-install-recommends\s+(.+?)\s+"
+        r"&& rm -rf /var/lib/apt/lists/\*"
+    )
+    match = re.search(
+        pattern,
+        text,
+        re.S,
+    )
+    assert match is not None, "Dockerfile must keep apt package installation in the expected layer."
+
+    packages: set[str] = set()
+    for line in match.group(1).splitlines():
+        package = line.strip().rstrip("\\").strip()
+        if package:
+            packages.add(package)
+    return packages
+
+
+def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_enabled() -> None:
+    business_agents_dir = REPO_ROOT / "docker/runtime-volume-seeds/data/business-agents"
+    settings_files = sorted(
+        business_agents_dir.glob("*/workspace/.claude/settings.json")
+    )
+    sandbox_enabled = False
+    for path in settings_files:
+        text = path.read_text(encoding="utf-8")
+        sandbox_enabled = sandbox_enabled or ('"sandbox"' in text and '"enabled": true' in text)
+
+    assert sandbox_enabled, "The runtime workspace seeds are expected to keep Claude Code sandbox enabled."
+
+    packages = _dockerfile_apt_packages(REPO_ROOT / "docker/Dockerfile")
+
+    assert "bubblewrap" in packages
+    assert "socat" in packages
+
+
+def test_compose_grants_bubblewrap_namespace_permissions_only_to_claude_code_services() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+
+    for service_name in ("claude-agent-api", "claude-agent-worker"):
+        service = services[service_name]
+        assert "SYS_ADMIN" in service.get("cap_add", [])
+        assert "NET_ADMIN" in service.get("cap_add", [])
+        assert "seccomp=unconfined" in service.get("security_opt", [])
+        assert "apparmor=unconfined" in service.get("security_opt", [])
+
+    for service_name in ("agent-gov-litellm-sidecar", "claude-agent-ui"):
+        service = services[service_name]
+        assert "SYS_ADMIN" not in service.get("cap_add", [])
+        assert "NET_ADMIN" not in service.get("cap_add", [])
+        assert "seccomp=unconfined" not in service.get("security_opt", [])
+        assert "apparmor=unconfined" not in service.get("security_opt", [])
 
 
 def test_project_root_env_file_is_forbidden() -> None:

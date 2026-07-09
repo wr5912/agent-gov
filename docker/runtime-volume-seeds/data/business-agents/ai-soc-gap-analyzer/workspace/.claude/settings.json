@@ -24,8 +24,6 @@
       "Read(./secrets/**)",
       "Read(/data/business-agents/ai-soc-gap-analyzer/claude-root/.claude.json)",
       "Read(/data/business-agents/ai-soc-gap-analyzer/claude-root/.claude/projects/**)",
-      "Edit(./**)",
-      "Write(./**)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf /)",
       "Bash(:(){ :|:& };:*)",
@@ -45,7 +43,7 @@
   },
   "sandbox": {
     "enabled": true,
-    "failIfUnavailable": false,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "filesystem": {
       "allowWrite": [
@@ -60,7 +58,8 @@
     "network": {
       "allowedDomains": [],
       "deniedDomains": []
-    }
+    },
+    "allowUnsandboxedCommands": false
   },
   "skillOverrides": {
     "ai-soc-gap-analysis": "user-invocable-only"

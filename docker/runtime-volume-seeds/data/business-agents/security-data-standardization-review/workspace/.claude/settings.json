@@ -25,8 +25,6 @@
       "Read(./secrets/**)",
       "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude.json)",
       "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude/projects/**)",
-      "Edit(./**)",
-      "Write(./**)",
       "Bash(rm -rf /*)",
       "Bash(rm -rf /)",
       "Bash(:(){ :|:& };:*)",
@@ -88,7 +86,7 @@
   },
   "sandbox": {
     "enabled": true,
-    "failIfUnavailable": false,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "filesystem": {
       "allowWrite": [
@@ -107,7 +105,8 @@
         "${INTERNAL_DOMAIN}"
       ],
       "deniedDomains": []
-    }
+    },
+    "allowUnsandboxedCommands": false
   },
   "skillOverrides": {
     "security-data-standardization-review": "user-invocable-only"

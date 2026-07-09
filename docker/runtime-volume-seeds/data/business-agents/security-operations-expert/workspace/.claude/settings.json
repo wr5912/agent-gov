@@ -85,7 +85,7 @@
   },
   "sandbox": {
     "enabled": true,
-    "failIfUnavailable": false,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "filesystem": {
       "allowWrite": [
@@ -104,7 +104,8 @@
         "${INTERNAL_DOMAIN}"
       ],
       "deniedDomains": []
-    }
+    },
+    "allowUnsandboxedCommands": false
   },
   "spinnerTipsOverride": {
     "excludeDefault": false,

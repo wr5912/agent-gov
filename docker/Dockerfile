@@ -36,10 +36,12 @@ RUN set -eux; \
     fi; \
     apt-get update && apt-get install -y --no-install-recommends \
     bash \
+    bubblewrap \
     ca-certificates \
     curl \
     git \
     ripgrep \
+    socat \
     nodejs \
     npm \
     && rm -rf /var/lib/apt/lists/*

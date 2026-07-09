@@ -22,6 +22,9 @@
       "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
+      "mcp__sec-ops__*_post",
+      "mcp__sec-ops__*_put",
+      "mcp__sec-ops__*_patch",
       "mcp__sec-ops__*execute*",
       "mcp__sec-ops__*manual*",
       "mcp__sec-ops__*create*",
@@ -34,8 +37,7 @@
       "mcp__sec-ops__*isolate*",
       "mcp__sec-ops__*disable*",
       "mcp__sec-ops__*kill*",
-      "mcp__sec-ops__*quarantine*",
-      "mcp__sec-ops__response_disposition__*"
+      "mcp__sec-ops__*quarantine*"
     ],
     "deny": [
       "Read(./.env)",

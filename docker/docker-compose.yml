@@ -64,6 +64,14 @@ x-runtime-volume-seeds: &runtime-volume-seeds
   bind:
     create_host_path: false
 
+x-claude-code-sandbox-runtime: &claude-code-sandbox-runtime
+  cap_add:
+    - SYS_ADMIN
+    - NET_ADMIN
+  security_opt:
+    - seccomp=unconfined
+    - apparmor=unconfined
+
 services:
   agent-gov-litellm-sidecar:
     build:
@@ -83,6 +91,7 @@ services:
     logging: *default-logging
 
   claude-agent-api:
+    <<: *claude-code-sandbox-runtime
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -142,6 +151,7 @@ services:
     logging: *default-logging
 
   claude-agent-worker:
+    <<: *claude-code-sandbox-runtime
     build:
       context: ..
       dockerfile: docker/Dockerfile

@@ -21,6 +21,7 @@ from .agent_profiles import (
     candidate_profile,
 )
 from .claude_user_input_service import ClaudeUserInputService
+from .claude_trust import ensure_claude_workspace_trusted
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
@@ -341,6 +342,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = f"secops-runtime/{profile.name}"
         profile.claude_root.mkdir(parents=True, exist_ok=True)
         profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
+        ensure_claude_workspace_trusted(profile)
         return env
 
     def _build_options(
@@ -353,6 +355,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         can_use_tool: Any = None,
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
+
+        from app.runtime.policy import build_default_hooks
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         env = self._profile_env(profile)
@@ -384,6 +388,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "enable_file_checkpointing": self.settings.enable_file_checkpointing,
             "session_store_flush": self.settings.session_store_flush,
             "load_timeout_ms": self.settings.load_timeout_ms,
+            "hooks": build_default_hooks(profile),
         }
         if execution_mode == "non_stream_bypass":
             kwargs["permission_mode"] = "bypassPermissions"

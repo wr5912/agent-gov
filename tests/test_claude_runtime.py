@@ -156,6 +156,9 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert getattr(options, "permission_mode", None) == "bypassPermissions"
     assert getattr(options, "can_use_tool", None) is None
     assert getattr(options, "permission_prompt_tool_name", None) is None
+    pre_tool_hooks = getattr(options, "hooks", {}).get("PreToolUse", [])
+    pre_tool_matchers = {getattr(matcher, "matcher", None) for matcher in pre_tool_hooks}
+    assert {"Bash", "Write", "Edit"}.issubset(pre_tool_matchers)
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
@@ -163,6 +166,31 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert options.env["CLAUDE_HOOK_AUDIT_LOG"] == str(settings.data_dir / "transcripts" / "claude-hook-audit.jsonl")
     assert options.env["AGENT_PROFILE"] == "main-agent"
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
+
+
+def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    profile = runtime.profiles["main-agent"]
+    state_path = profile.claude_config_dir / ".claude.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {
+                "cachedGrowthBookFeatures": {"keep": True},
+                "projects": {"/other/workspace": {"hasTrustDialogAccepted": False}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    env = runtime._profile_env(profile)
+
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert env["CLAUDE_CONFIG_DIR"] == str(profile.claude_config_dir)
+    assert state["cachedGrowthBookFeatures"] == {"keep": True}
+    assert state["projects"]["/other/workspace"]["hasTrustDialogAccepted"] is False
+    assert state["projects"][profile.workspace_dir.as_posix()]["hasTrustDialogAccepted"] is True
 
 
 def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch):

@@ -48,10 +48,10 @@ def test_security_data_standardization_review_seed_permissions_are_review_only()
         "mcp__*__*delete*",
         "mcp__*__*execute*",
         "mcp__*__*submit*",
-        "Edit(./**)",
-        "Write(./**)",
     ):
         assert forbidden in permissions["deny"]
+    assert "Edit(./**)" not in permissions["deny"]
+    assert "Write(./**)" not in permissions["deny"]
 
 
 def test_security_data_standardization_review_seed_config_matches_agent_id() -> None:
@@ -84,8 +84,6 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
     assert "Read(/data/uploads/**)" in permissions["allow"]
     assert "Write(/data/outputs/ai-soc-gap-analyzer/**)" in permissions["allow"]
     for forbidden in (
-        "Edit(./**)",
-        "Write(./**)",
         "mcp__*__*write*",
         "mcp__*__*update*",
         "mcp__*__*delete*",
@@ -93,6 +91,22 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
         "mcp__*__*submit*",
     ):
         assert forbidden in permissions["deny"]
+    assert "Edit(./**)" not in permissions["deny"]
+    assert "Write(./**)" not in permissions["deny"]
+
+
+def test_seeded_sandbox_settings_fail_closed_without_workspace_write_deny() -> None:
+    for settings_path in sorted(SEED_ROOT.glob("*/workspace/.claude/settings.json")):
+        settings = json.loads(settings_path.read_text(encoding="utf-8"))
+        sandbox = settings.get("sandbox")
+        if not isinstance(sandbox, dict) or sandbox.get("enabled") is not True:
+            continue
+
+        permissions = settings["permissions"]
+        assert sandbox["failIfUnavailable"] is True, settings_path
+        assert sandbox["allowUnsandboxedCommands"] is False, settings_path
+        assert "Edit(./**)" not in permissions.get("deny", []), settings_path
+        assert "Write(./**)" not in permissions.get("deny", []), settings_path
 
 
 def test_ai_soc_gap_analyzer_seed_config_matches_agent_id_and_contract() -> None:

@@ -48,6 +48,10 @@ def _decision_from_request(request: dict[str, object], *, action: str = "allow_o
     return ClaudeUserInputDecisionRequest.model_validate({"action": action, "decision_token": request["decision_token"]})
 
 
+def _pre_tool_hook_matchers(options: object) -> set[str]:
+    return {getattr(matcher, "matcher", "") for matcher in getattr(options, "hooks", {}).get("PreToolUse", [])}
+
+
 def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monkeypatch):
     seen = {}
 
@@ -95,7 +99,7 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
     ]
     assert getattr(seen["options"], "permission_mode", None) == "default"
     assert getattr(seen["options"], "can_use_tool", None) is not None
-    assert getattr(seen["options"], "hooks", None) is None
+    assert {"Bash", "Write", "Edit"}.issubset(_pre_tool_hook_matchers(seen["options"]))
     assert getattr(seen["options"], "permission_prompt_tool_name", None) is None
     assert seen["prompt_item"]["message"]["content"] == "needs tool approval"
     assert seen["permission_result"].__class__.__name__ == "PermissionResultAllow"
@@ -128,7 +132,7 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
 
     assert [event["event"] for event in events] == ["session", "done"]
     assert getattr(seen["options"], "can_use_tool", None) is None
-    assert getattr(seen["options"], "hooks", None) is None
+    assert {"Bash", "Write", "Edit"}.issubset(_pre_tool_hook_matchers(seen["options"]))
     assert getattr(seen["options"], "permission_mode", None) is None
     assert seen["prompt_item"]["message"]["content"] == "no hitl"
     assert store.list(limit=10) == []

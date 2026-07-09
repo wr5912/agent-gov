@@ -141,7 +141,7 @@ def test_attribution_accepts_target_business_agent_config_evidence(tmp_path: Pat
             "actionability": "workspace_config_change",
             "confidence": "high",
             "human_review_required": False,
-            "rationale": "目标业务 Agent settings 中 Bash(*) 位于 ask，需要接入人类确认。",
+            "rationale": "目标业务 Agent settings 中 MCP 写工具位于 ask，需要接入人类确认。",
             "responsibility_boundary": {"owner": "soc-ops", "reason": "业务 Agent 权限配置需配合 HITL。"},
             "evidence_refs": [
                 {

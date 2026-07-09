@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: hard-deny unsafe or mutating operations."""
+"""Claude Code PreToolUse hook: hard-deny unsafe Bash and mutating MCP operations."""
 
 import json
 import re

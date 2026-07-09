@@ -95,6 +95,13 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
     assert "Write(./**)" not in permissions["deny"]
 
 
+def test_seeded_business_agents_allow_bash_without_hitl() -> None:
+    for settings_path in sorted(SEED_ROOT.glob("*/workspace/.claude/settings.json")):
+        permissions = json.loads(settings_path.read_text(encoding="utf-8"))["permissions"]
+        assert "Bash(*)" in permissions.get("allow", []), settings_path
+        assert "Bash(*)" not in permissions.get("ask", []), settings_path
+
+
 def test_seeded_sandbox_settings_fail_closed_without_workspace_write_deny() -> None:
     for settings_path in sorted(SEED_ROOT.glob("*/workspace/.claude/settings.json")):
         settings = json.loads(settings_path.read_text(encoding="utf-8"))
@@ -200,16 +207,16 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     settings = json.loads((SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))
     permissions = settings["permissions"]
 
-    assert "mcp__sec-ops-data__*" in permissions["allow"]
-    assert "mcp__soc-ops-query__*" in permissions["allow"]
-    assert "mcp__soc-playbook-query__*" in permissions["allow"]
-    assert "mcp__soc-playbook-execution-result-query__*" in permissions["allow"]
+    assert "mcp__sec-ops__*" in permissions["allow"]
     assert "Write(/data/outputs/security-operations-expert/**)" in permissions["allow"]
     assert "Write(/data/outputs/**)" not in permissions["allow"]
 
-    assert "mcp__soc-playbook-execution__*" in permissions["ask"]
-    assert "mcp__soc-playbook-registry__*" in permissions["ask"]
-    assert "Bash(*)" in permissions["ask"]
+    assert "mcp__sec-ops__*execute*" in permissions["ask"]
+    assert "mcp__sec-ops__*manual*" in permissions["ask"]
+    assert "mcp__sec-ops__*create*" in permissions["ask"]
+    assert "mcp__sec-ops__*delete*" in permissions["ask"]
+    assert "Bash(*)" in permissions["allow"]
+    assert "Bash(*)" not in permissions["ask"]
     assert "Edit(./**)" in permissions["ask"]
 
     serialized = json.dumps(settings, ensure_ascii=False)
@@ -222,7 +229,6 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     agent_yaml = (SECOPS_EXPERT_WORKSPACE / "agent.yaml").read_text(encoding="utf-8")
     claude_md = (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").read_text(encoding="utf-8")
     mcp = json.loads((SECOPS_EXPERT_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
-    response_mcp = json.loads((RESPONSE_DISPOSAL_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
     analysis_skill = (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md").read_text(encoding="utf-8")
     response_skill = (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md").read_text(encoding="utf-8")
 
@@ -232,9 +238,11 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     assert "alert_triage" in agent_yaml
     assert "response_case_intake" in agent_yaml
     assert "response-playbook-planning" in agent_yaml
-    assert mcp == response_mcp
+    assert list(mcp["mcpServers"]) == ["sec-ops"]
+    assert mcp["mcpServers"]["sec-ops"]["url"] == "${SEC_OPS_MCP_URL}"
 
     assert "响应处置部分直接继承并融合" in claude_md
+    assert "单 server" in claude_md
     assert "threat-response-disposition" in claude_md
     assert "response-playbook-builder" in claude_md
     assert "告警分流" in analysis_skill

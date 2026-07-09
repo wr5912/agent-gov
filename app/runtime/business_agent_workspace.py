@@ -24,16 +24,16 @@ _STARTER_CLAUDE_MD = """# {name}
 其运行、反馈归因、评估和版本治理。高风险动作须经外部系统或授权用户确认。
 """
 
-# 业务 Agent 是被治理对象：起始权限保守，默认只读自身工作区，写/执行需确认，
-# 并拒绝读取本地 env、密钥目录，避免配置容器成为凭据泄露面。运行时治理根隔离由
+# 业务 Agent 是被治理对象：起始权限保守，默认只读自身工作区；Bash 由 sandbox、hook
+# 与 deny 兜底直接执行，不走后端 HITL；写入工作区仍需确认。运行时治理根隔离由
 # build_business_agent_profile 在 profile 层另行拒绝。
 _STARTER_SETTINGS: dict = {
     "$schema": "https://json.schemastore.org/claude-code-settings.json",
     "permissions": {
         "defaultMode": "default",
         "disableBypassPermissionsMode": "disable",
-        "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-        "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
+        "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Bash(*)"],
+        "ask": ["Edit(./**)", "Write(./**)"],
         "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"],
     },
 }

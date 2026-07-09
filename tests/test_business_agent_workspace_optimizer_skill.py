@@ -1,7 +1,7 @@
 """business-agent-workspace-optimizer skill 的回归：存在性、frontmatter、镜像一致、纠偏后的安全边界内容。
 
 该 skill 是开发者离线工具，用于优化业务 Agent 自身 workspace 配置资产；本测试锁定评审纠偏点
-（per-agent 版本库不可改、不新增无效 ask、复用现成脱敏扫描、业务 Agent 在 data/ 下、governor 单一）。
+（per-agent 版本库不可改、Bash 直行且普通优化不新增 ask、复用现成脱敏扫描、业务 Agent 在 data/ 下、governor 单一）。
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from check_docs_governance import collect_mirrored_skill_pairs, _normalized_skill_text  # noqa: E402
+from check_docs_governance import _normalized_skill_text, collect_mirrored_skill_pairs  # noqa: E402
 
 SKILL_NAME = "business-agent-workspace-optimizer"
 CODEX_PATH = ROOT / ".codex" / "skills" / SKILL_NAME / "SKILL.md"
@@ -59,7 +59,7 @@ def test_skill_pair_is_mirror_consistent():
 
 
 def test_skill_encodes_review_corrected_boundaries():
-    """锁定评审纠偏：per-agent 版本库/运行态不可改、不新增 ask、复用现成脱敏扫描、业务 Agent 在 data/ 下、governor 单一。"""
+    """锁定评审纠偏：per-agent 版本库/运行态不可改、Bash 不走 HITL、复用现成脱敏扫描、业务 Agent 在 data/ 下、governor 单一。"""
     text = CODEX_PATH.read_text(encoding="utf-8")
     # B3 版本库与运行态状态默认拒绝。
     assert "version/" in text and "per-agent" in text
@@ -71,8 +71,11 @@ def test_skill_encodes_review_corrected_boundaries():
     assert "不能整目录拒绝 `data/`" in text
     assert "不得把 `${RUNTIME_ROOT}/data`" in text
     assert "`data/` 和 `data/business-agents/` 父目录本身也不是优化目标" in text
-    # 权限模型对齐 #1 整改：不新增 ask、allow/deny + 对话级人审。
-    assert "不要新增 `ask` 条目" in text
+    # 权限模型对齐：Bash 直行，普通优化不新增 ask，MCP 写/处置可保留 ask。
+    assert "允许 `Bash(*)` 直行" in text
+    assert "不走 HITL" in text
+    assert "不要在普通优化中新增 `ask` 条目" in text
+    assert "MCP 写/处置工具如需人审，保留在 ask" in text
     # 复用现成模板脱敏扫描，不重复造轮子。
     assert "runtime-volume-seeds-scan" in text
     assert "scan_path" in text

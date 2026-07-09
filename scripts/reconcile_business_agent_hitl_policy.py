@@ -8,7 +8,7 @@ import os
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import NotRequired, TypedDict
+from typing import TypedDict
 
 try:
     from scripts.bootstrap_runtime_volume import DEFAULT_ENV_FILE, DEFAULT_TEMPLATE_DIR, resolve_runtime_root
@@ -33,6 +33,7 @@ AGENT_MCP_MUTATION_RULES = {
         "mcp__soc-playbook-registry__*",
     )
 }
+BASH_ALLOW_RULE = "Bash(*)"
 OLD_HOOK_MARKERS = (
     "MCP 写入/处置动作放行",
     "permissionDecision\": \"allow\"",
@@ -40,31 +41,40 @@ OLD_HOOK_MARKERS = (
 )
 
 
-class ReconcileChange(TypedDict):
+class _ReconcileChangeRequired(TypedDict):
     agent_id: str
     kind: str
     path: str
     before_sha256: str
     after_sha256: str
     after: str
-    backup: NotRequired[str]
 
 
-class ReconcileChangeSummary(TypedDict):
+class ReconcileChange(_ReconcileChangeRequired, total=False):
+    backup: str
+
+
+class _ReconcileChangeSummaryRequired(TypedDict):
     agent_id: str
     kind: str
     path: str
     before_sha256: str
     after_sha256: str
-    backup: NotRequired[str]
 
 
-class ReconcileResult(TypedDict):
+class ReconcileChangeSummary(_ReconcileChangeSummaryRequired, total=False):
+    backup: str
+
+
+class _ReconcileResultRequired(TypedDict):
     ok: bool
     dry_run: bool
     runtime_root: str
-    backup_root: NotRequired[str]
     changes: list[ReconcileChangeSummary]
+
+
+class ReconcileResult(_ReconcileResultRequired, total=False):
+    backup_root: str
 
 
 def reconcile_business_agent_hitl_policy(
@@ -167,6 +177,9 @@ def _reconciled_settings(text: str, *, agent_id: str) -> str:
     allow = [str(item) for item in permissions.get("allow") or []]
     ask = [str(item) for item in permissions.get("ask") or []]
     mutation_rules = AGENT_MCP_MUTATION_RULES.get(agent_id, GENERIC_MCP_MUTATION_RULES)
+    ask = [rule for rule in ask if rule != BASH_ALLOW_RULE]
+    if BASH_ALLOW_RULE not in allow:
+        allow.append(BASH_ALLOW_RULE)
     allow = [rule for rule in allow if rule not in mutation_rules]
     for rule in mutation_rules:
         if rule not in ask:

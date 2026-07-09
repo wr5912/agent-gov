@@ -16,5 +16,5 @@
 ## 边界（与 runtime-template-safety 同口径）
 
 模板里**不得**含真实 api_key / MCP header / 数据库凭据 / 本机私有路径；起始权限保守
-（只读自身 workspace，写/执行需确认，拒读 `.env`/`secrets`）。新增模板按 `general`
+（只读自身 workspace，Bash 由 sandbox/hook/deny 兜底直接执行，写入 workspace 需确认，拒读 `.env`/`secrets`）。新增模板按 `general`
 的结构组织：`CLAUDE.md`、`.claude/settings.json`、`.mcp.json`，按需加 `.claude/{skills,agents,rules}` 等。

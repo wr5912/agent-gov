@@ -496,13 +496,13 @@ agent: soc-analyst
 
 `SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界仍以 Claude Code 官方配置为准：`.claude/settings.json`、subagent/skill frontmatter 和 Claude Code 自身发现规则共同生效，后端不通过 Options 注入 allow/deny 列表、permission mode 或 hooks。
 
-默认 `docker/runtime-volume-seeds/main-workspace/.claude/settings.json` 中设置：
+默认 `docker/runtime-volume-seeds/data/business-agents/<agent_id>/workspace/.claude/settings.json` 中设置：
 
 ```json
 {
   "permissions": {
-    "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Write(/data/outputs/**)", "mcp__sec-ops-data__*"],
-    "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
+    "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Bash(*)", "Write(/data/outputs/**)", "mcp__sec-ops-data__*"],
+    "ask": ["Edit(./**)", "Write(./**)"],
     "deny": ["Read(./.env)", "Read(./.env.*)", "Read(/claude-roots/main/.claude.json)"]
   }
 }
@@ -510,9 +510,10 @@ agent: soc-analyst
 
 这意味着：
 
-- 默认允许读文件、搜索文件、调用 `sec-ops-data` MCP，以及把报告类产物写入运行态输出目录。
-- 默认不允许 Bash、WebFetch、WebSearch。
-- 任何未预先允许的工具不会弹交互式确认，而是拒绝。
+- 默认允许读文件、搜索文件、调用已配置的只读 MCP、执行 Bash，以及把报告类产物写入运行态输出目录。
+- Bash 不走 Web HITL；风险由 sandbox、PreToolUse hook、deny 规则和审计兜底。
+- 写/处置类 MCP 工具如放入 `ask`，才会在 `/api/chat/stream` + `ENABLE_CLAUDE_WEB_HITL=true` 下走 Web 确认卡片。
+- 任何未预先允许且未进入 `ask` 的工具不会弹交互式确认，而是拒绝。
 
 `app/runtime/policy.py` 还提供了 SDK 级 PreToolUse hook，用于阻断高危 Bash 命令，并把 main profile 的 `Write` 限制在 `/data/outputs`。日报类输出应写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
 

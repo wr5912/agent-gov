@@ -8,6 +8,7 @@
       "Glob",
       "Grep",
       "Skill",
+      "Bash(*)",
       "Bash(python mcp_servers/**)",
       "Bash(python -m pytest *)",
       "Bash(jq *)",
@@ -22,7 +23,6 @@
       "mcp__sec-ops-data__*"
     ],
     "ask": [
-      "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
       "mcp__*__*write*",

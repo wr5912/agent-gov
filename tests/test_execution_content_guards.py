@@ -2,7 +2,7 @@
 
 Phase 2 让优化能改的目标从仅 CLAUDE.md 拓宽到 .claude/settings.json 和 .mcp.json 后，写入必须过：
 1. JSON 合法性——settings.json / .mcp.json 写入结果必须能解析，避免损坏业务 Agent 配置；
-2. 权限升级防护——settings.json 的 permissions 不得新增危险 allow（Bash(*) 等无约束高危工具授权），
+2. 权限升级防护——governed apply 不得新增危险 allow（Bash(*) 等无约束高危工具授权），
    也不得删除既有 deny（deny 单调，只能加不能减）。
 护栏在 governed apply 内生效（worktree→change set），违规即抛错→abandon change set→回退启发式。
 """
@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 
 import pytest
-
 from app.runtime.execution_content_guards import ExecutionContentGuardError, guard_execution_write
 
 

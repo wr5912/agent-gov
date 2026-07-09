@@ -301,6 +301,7 @@ def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
             {
                 "mcpServers": {
                     "sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"},
+                    "sec-ops": {"type": "http", "url": "${SEC_OPS_MCP_URL}"},
                     "soc-playbook-query": {"type": "http", "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"},
                     "soc-playbook-execution": {"type": "http", "url": "${SOC_PLAYBOOK_EXECUTION_MCP_URL}"},
                 }
@@ -316,6 +317,7 @@ def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
         runtime_volume_mode="local-debug",
         env={
             "MCP_SERVER_URL": "http://localhost:58001/mcp",
+            "SEC_OPS_MCP_URL": "http://localhost:58003/mcp",
             "SOC_PLAYBOOK_QUERY_MCP_URL": "http://localhost:58002/mcp",
         },
     )
@@ -323,6 +325,7 @@ def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
     mcp = json.loads((runtime_root / "data" / "business-agents" / "response-disposal" / "workspace" / ".mcp.json").read_text(encoding="utf-8"))
     assert result["validation_errors"] == []
     assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
+    assert mcp["mcpServers"]["sec-ops"]["url"] == "http://localhost:58003/mcp"
     assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://localhost:58002/mcp"
     assert mcp["mcpServers"]["soc-playbook-execution"]["url"] == "http://localhost:58001/mcp"
 
@@ -347,7 +350,7 @@ def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
     )
     (template_hooks / "pre_tool_guard.py").write_text("# hard deny only\nsys.exit(0)\n", encoding="utf-8")
     (template_workspace / "CLAUDE.md").write_text(
-        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- 工具执行的最终授权由 Claude 原生 Web 确认卡片处理。\n- 触发 Web 确认后，等待用户在确认卡片中允许一次或拒绝，不要重复输出处置计划/确认表格。\n\n## 5. 输出规范\n",
+        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- Bash 已由 settings 直接放行，风险由 sandbox、PreToolUse hook 和 deny 规则拦截，不走 Web HITL。\n- ask 型 MCP 写入/处置工具的最终授权由 Claude 原生 Web 确认卡片处理。\n- 触发 MCP Web 确认后，等待用户在确认卡片中允许一次或拒绝，不要重复输出处置计划/确认表格。\n\n## 5. 输出规范\n",
         encoding="utf-8",
     )
     runtime_root = tmp_path / "runtime"
@@ -359,7 +362,7 @@ def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
     old_settings = {
         "permissions": {
             "allow": ["mcp__sec-ops-data__*", "mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"],
-            "ask": [],
+            "ask": ["Bash(*)"],
         }
     }
     (settings_dir / "settings.json").write_text(json.dumps(old_settings), encoding="utf-8")
@@ -398,9 +401,13 @@ def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
     mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
     assert "mcp__*__*write*" not in updated["allow"]
     assert "mcp__*__*write*" in updated["ask"]
+    assert "Bash(*)" in updated["allow"]
+    assert "Bash(*)" not in updated["ask"]
     assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://host.docker.internal:58001/mcp"
     assert (hooks_dir / "pre_tool_guard.py").read_text(encoding="utf-8") == "# hard deny only\nsys.exit(0)\n"
-    assert "Claude 原生 Web 确认卡片" in (workspace / "CLAUDE.md").read_text(encoding="utf-8")
+    claude_md = (workspace / "CLAUDE.md").read_text(encoding="utf-8")
+    assert "Bash 已由 settings 直接放行" in claude_md
+    assert "Claude 原生 Web 确认卡片" in claude_md
     assert applied["changes"][0].get("backup")
     event_log = runtime_root / "data" / "transcripts" / "business-agent-hitl-reconcile.jsonl"
     assert event_log.exists()

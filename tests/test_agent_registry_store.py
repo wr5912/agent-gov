@@ -353,8 +353,10 @@ def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path
 
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
-    # 起始权限保守：默认只读自身工作区、写/执行需确认、拒读 env/密钥。
+    # 起始权限保守：默认只读自身工作区，Bash 直行但仍由 sandbox/hook/deny 拦截；写入工作区需确认。
     assert "Read(./.env)" in settings["permissions"]["deny"]
+    assert "Bash(*)" in settings["permissions"]["allow"]
+    assert "Bash(*)" not in settings["permissions"]["ask"]
     assert settings["permissions"]["defaultMode"] == "default"
     # 起始 MCP 为空，不预置任何 server/header/凭据。
     assert mcp == {"mcpServers": {}}

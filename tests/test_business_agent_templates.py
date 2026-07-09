@@ -5,10 +5,10 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
-
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     UnknownBusinessAgentTemplate,
@@ -32,6 +32,9 @@ def test_seed_renders_placeholders_and_is_idempotent(tmp_path: Path) -> None:
     assert "{{AGENT_ID}}" not in claude_md and "{{AGENT_NAME}}" not in claude_md
     assert (ws / ".claude" / "settings.json").exists()
     assert (ws / ".mcp.json").exists()
+    permissions = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]
+    assert "Bash(*)" in permissions["allow"]
+    assert "Bash(*)" not in permissions["ask"]
     # catalog 的 README 不应被播种进 workspace。
     assert not (ws / "README.md").exists()
 

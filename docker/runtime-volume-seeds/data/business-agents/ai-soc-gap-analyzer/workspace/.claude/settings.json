@@ -10,6 +10,7 @@
       "Glob",
       "Grep",
       "Skill",
+      "Bash(*)",
       "Bash(jq *)",
       "Bash(date *)",
       "Bash(date)",

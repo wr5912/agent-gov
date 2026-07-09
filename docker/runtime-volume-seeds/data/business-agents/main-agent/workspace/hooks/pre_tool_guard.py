@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code PreToolUse hook: hard-deny clearly unsafe operations.
 
-This hook does not replace Claude Code authorization. Web HITL is handled by
-Claude Agent SDK can_use_tool; this hook only returns deny for operations that
-must never reach human approval.
+This hook does not replace Claude Code authorization. Web HITL is reserved for
+ask-level MCP write/disposal tools; Bash is allowed by settings and this hook
+only returns deny for commands that must never run.
 """
 import json
 import re
@@ -43,8 +43,8 @@ for pattern in DENY_PATTERNS:
         }, ensure_ascii=False))
         sys.exit(0)
 
-# Deny risky production shell commands. Other mutating tools fall through to
-# Claude's native ask/can_use_tool path instead of being pseudo-approved here.
+# Deny risky production shell commands. Other mutating MCP tools fall through
+# to Claude's native ask/can_use_tool path instead of being pseudo-approved here.
 for pattern in ASK_PATTERNS:
     if command and re.search(pattern, command, flags=re.IGNORECASE):
         print(json.dumps({

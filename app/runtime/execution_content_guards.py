@@ -5,7 +5,7 @@
 本护栏是「被 grounding 注入/劫持的 governor」这一威胁的纵深防线，采用「默认危险、显式安全」的保守判定。
 
 - 覆盖：settings.json 与 settings.local.json（Claude Code 后者优先级更高）、.mcp.json 与 .mcp.local.json。
-- settings 护栏：JSON 合法；deny 单调（只加不减）；allow 不得新增危险项（高危执行工具的任意授权、
+- settings 护栏：JSON 合法；deny 单调（只加不减）；governed apply 不得新增危险 allow（高危执行工具的任意授权、
   mcp 通配、ask→allow 迁移）；不得变更 hooks / env、不得开启 enableAllProjectMcpServers、
   defaultMode 不得升为 bypassPermissions/acceptEdits、additionalDirectories 不得新增、
   不得移除 disableBypassPermissionsMode。
@@ -22,7 +22,7 @@ from typing import Any
 
 from app.runtime.errors import FeedbackStoreError
 
-# 不得经受治理 apply 自动进入 allow 的高危执行工具（种子基线把它们留在 ask）。
+# 不得经受治理 apply 自动新增到 allow 的高危执行工具；seed/operator 基线另行受模板审查约束。
 _HIGH_EXEC_TOOLS = {"Bash", "Write", "Edit", "MultiEdit", "NotebookEdit", "WebFetch", "Task"}
 # 非高危工具（Read/Glob/Grep 等）的显式全域通配参数视为危险；workspace 相对 ./** 与裸工具名（如 Grep）不算。
 _UNRESTRICTED_ARGS = {"*", "**", "/**"}

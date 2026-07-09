@@ -336,7 +336,8 @@ async def can_use_tool(tool_name: str, input_data: dict, context: ToolPermission
 
 - `deny`：密钥、Claude root、破坏性系统路径、明确不可执行命令。
 - `allow`：只读工具、明确安全的 MCP 查询、受控输出目录写入。
-- `ask`：`Bash(*)`、`Edit(./**)`、`Write(./**)`、MCP mutation / disposal 工具。
+- `allow`：业务 Agent 的 `Bash(*)` 由 sandbox、PreToolUse hook、deny 规则和审计兜底，不走 Web HITL。
+- `ask`：`Edit(./**)`、`Write(./**)`、MCP mutation / disposal 工具。
 - `permission_mode`：`/api/chat/stream` Playground 业务交互默认 `default`；规划类业务 Agent 可用 `plan`；不得用 `dontAsk` 或 `bypassPermissions` 承载需要人类确认的交互流。`/api/chat` 非流式入口固定 `bypassPermissions`，不参与 Web HITL。
 
 需要调整：
@@ -567,7 +568,7 @@ data: {
 - 用当前 `.venv` 和真实容器分别核查 `claude-agent-sdk` 版本、`can_use_tool` 签名、`PermissionResultAllow` / `PermissionResultDeny` 字段。
 - 新增并验证 `ENABLE_CLAUDE_WEB_HITL` 配置读取，默认 `false`，启动日志输出当前值和作用入口。
 - 处理 `permission_prompt_tool_name` 互斥：业务 Agent Web HITL options 不传该字段，误配时输出结构化诊断。
-- 收敛业务 Agent seed settings 和 `pre_tool_guard.py`：MCP mutation / Bash / Edit / Write 等需要人工确认的动作必须落到 ask，不得被宽泛 allow 或 hook 伪 allow 吃掉。
+- 收敛业务 Agent seed settings 和 `pre_tool_guard.py`：Bash 由业务 Agent 基线直接 allow，并用 sandbox / hook / deny / 审计兜底；MCP mutation、Edit、Write 等需要人工确认的动作必须落到 ask，不得被宽泛 allow 或 hook 伪 allow 吃掉。
 - 明确 `setting_sources` 策略，诊断 user/global settings 中的宽泛 allow、`dontAsk`、`bypassPermissions`。
 - 验证 `/api/chat` 固定 `bypassPermissions` 在当前 SDK、workspace settings 和容器环境中可用；不可用时定义结构化诊断。
 - 用类真实业务 Agent workspace 做 SDK 探针，确认目标工具确实进入 `can_use_tool`。

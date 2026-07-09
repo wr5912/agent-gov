@@ -3,8 +3,8 @@
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
-    "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
-    "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
+    "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Bash(*)"],
+    "ask": ["Edit(./**)", "Write(./**)"],
     "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"]
   }
 }

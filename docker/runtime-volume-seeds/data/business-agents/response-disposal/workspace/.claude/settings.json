@@ -8,6 +8,7 @@
       "Glob",
       "Grep",
       "Skill",
+      "Bash(*)",
       "Bash(jq *)",
       "Bash(cat templates/**)",
       "Write(/data/outputs/**)",
@@ -17,7 +18,6 @@
       "mcp__soc-playbook-execution-result-query__*"
     ],
     "ask": [
-      "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
       "mcp__soc-playbook-execution__*",

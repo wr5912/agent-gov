@@ -19,7 +19,15 @@ def _settings(tmp_path, *, enable_hitl: bool, requires_web_hitl: bool = False) -
     workspace.mkdir(parents=True, exist_ok=True)
     workspace.joinpath(".claude").mkdir(parents=True, exist_ok=True)
     workspace.joinpath(".claude", "settings.json").write_text(
-        json.dumps({"permissions": {"allow": [], "ask": ["Bash(*)"], "deny": []}}),
+        json.dumps(
+            {
+                "permissions": {
+                    "allow": ["Bash(*)"],
+                    "ask": ["mcp__soc-playbook-execution__*"],
+                    "deny": [],
+                }
+            }
+        ),
         encoding="utf-8",
     )
     if requires_web_hitl:
@@ -59,8 +67,8 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
         seen["options"] = options
         seen["prompt_item"] = await anext(prompt)
         seen["permission_result"] = await options.can_use_tool(
-            "Bash",
-            {"command": "echo hi"},
+            "mcp__soc-playbook-execution__submit",
+            {"playbook_id": "pb-1"},
             {"tool_use_id": "toolu-hitl", "agent_id": "sdk-subagent"},
         )
         if False:

@@ -10,6 +10,7 @@
       "Glob",
       "Grep",
       "Skill",
+      "Bash(*)",
       "Bash(jq *)",
       "Bash(date *)",
       "Bash(date)",
@@ -19,7 +20,6 @@
       "mcp__sec-ops__*"
     ],
     "ask": [
-      "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
       "mcp__sec-ops__*_post",
@@ -102,7 +102,7 @@
   },
   "sandbox": {
     "enabled": true,
-    "failIfUnavailable": false,
+    "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": true,
     "filesystem": {
       "allowWrite": [

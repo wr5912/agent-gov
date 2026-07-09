@@ -2,8 +2,7 @@
 description: 启动一次威胁响应处置闭环（响应决策 + 执行反馈），高危动作需审批、先 dry-run、带回滚。
 allowed-tools:
   - Skill
-  - mcp__soc-ops-query__*
-  - mcp__soc-playbook-query__*
+  - mcp__sec-ops__*
 ---
 
 针对 `$ARGUMENTS`（威胁研判结果 / response_case 标识），调用 `threat-response-disposition` 技能执行完整响应处置闭环。

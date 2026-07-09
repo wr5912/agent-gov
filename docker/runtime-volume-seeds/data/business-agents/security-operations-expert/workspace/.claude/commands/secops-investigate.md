@@ -2,9 +2,7 @@
 description: 启动一次网络安全运营研判，输出事实、推断、风险、证据缺口和处置建议。
 allowed-tools:
   - Skill
-  - mcp__sec-ops-data__*
-  - mcp__soc-ops-query__*
-  - mcp__soc-playbook-query__*
+  - mcp__sec-ops__*
 ---
 
 针对 `$ARGUMENTS`（告警、事件、资产、账号、日志摘要或调查目标），调用 `security-operations-analysis` 技能执行安全运营研判。

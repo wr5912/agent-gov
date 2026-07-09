@@ -16,17 +16,26 @@
       "Bash(pwd)",
       "Bash(mkdir -p /data/outputs/security-operations-expert/**)",
       "Write(/data/outputs/security-operations-expert/**)",
-      "mcp__sec-ops-data__*",
-      "mcp__soc-ops-query__*",
-      "mcp__soc-playbook-query__*",
-      "mcp__soc-playbook-execution-result-query__*"
+      "mcp__sec-ops__*"
     ],
     "ask": [
       "Bash(*)",
       "Edit(./**)",
       "Write(./**)",
-      "mcp__soc-playbook-execution__*",
-      "mcp__soc-playbook-registry__*"
+      "mcp__sec-ops__*execute*",
+      "mcp__sec-ops__*manual*",
+      "mcp__sec-ops__*create*",
+      "mcp__sec-ops__*update*",
+      "mcp__sec-ops__*delete*",
+      "mcp__sec-ops__*write*",
+      "mcp__sec-ops__*upload*",
+      "mcp__sec-ops__*cancel*",
+      "mcp__sec-ops__*block*",
+      "mcp__sec-ops__*isolate*",
+      "mcp__sec-ops__*disable*",
+      "mcp__sec-ops__*kill*",
+      "mcp__sec-ops__*quarantine*",
+      "mcp__sec-ops__response_disposition__*"
     ],
     "deny": [
       "Read(./.env)",

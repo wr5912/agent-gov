@@ -1,28 +1,8 @@
 {
   "mcpServers": {
-    "sec-ops-data": {
+    "sec-ops": {
       "type": "http",
-      "url": "${MCP_SERVER_URL}"
-    },
-    "soc-ops-query": {
-      "type": "http",
-      "url": "${SOC_OPS_QUERY_MCP_URL}"
-    },
-    "soc-playbook-query": {
-      "type": "http",
-      "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"
-    },
-    "soc-playbook-execution": {
-      "type": "http",
-      "url": "${SOC_PLAYBOOK_EXECUTION_MCP_URL}"
-    },
-    "soc-playbook-execution-result-query": {
-      "type": "http",
-      "url": "${SOC_PLAYBOOK_EXECUTION_RESULT_QUERY_MCP_URL}"
-    },
-    "soc-playbook-registry": {
-      "type": "http",
-      "url": "${SOC_PLAYBOOK_REGISTRY_MCP_URL}"
+      "url": "${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}"
     }
   }
 }

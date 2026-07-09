@@ -5,9 +5,7 @@ allowed-tools:
   - Read
   - Grep
   - Glob
-  - mcp__sec-ops-data__*
-  - mcp__soc-ops-query__*
-  - mcp__soc-playbook-query__*
+  - mcp__sec-ops__*
 context: fork
 ---
 
@@ -15,13 +13,13 @@ context: fork
 
 - 只做防御性安全运营研判，不提供攻击性执行步骤。
 - 每个结论必须区分事实、推断和建议动作。
-- 不调用 `soc-playbook-execution` 或 `soc-playbook-registry`；需要真实处置时输出进入 `threat-response-disposition` 的 response_case 摘要。
+- 不调用 `sec-ops` 的写工具（`mcp__sec-ops__soc_api__execute` / `manual` / `create*` / `update*` / `delete*` 等）；需要真实处置时输出进入 `threat-response-disposition` 的 response_case 摘要。
 - 不读取或输出密钥、token、私钥、cookie、session、数据库密码和完整敏感原始日志。
 
 ## 步骤
 
 1. **范围识别**：确认时间范围、告警/事件 ID、资产、账号、租户、业务影响和用户期望。
-2. **证据查询**：用 `mcp__sec-ops-data__*` 查询基础 SOC 数据；必要时用 `mcp__soc-ops-query__*`、`mcp__soc-playbook-query__*` 了解可用响应能力。
+2. **证据查询**：用 `sec-ops` 的研判数据只读工具（`mcp__sec-ops__threat_analysis__*`）查询基础 SOC 数据；必要时用 SOC 查询/推荐工具（`mcp__sec-ops__soc_api__*` 查询类）了解可用响应能力。
 3. **事实归纳**：只把工具返回或用户输入中明确存在的信息写入事实。
 4. **推断研判**：按攻击阶段、影响面、资产重要性、异常强度、证据完整性给出置信度。
 5. **风险排序**：标注 `low`、`medium`、`high` 或 `critical`，说明排序依据。

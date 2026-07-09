@@ -34,6 +34,30 @@ AGENT_MCP_MUTATION_RULES = {
     )
 }
 BASH_ALLOW_RULE = "Bash(*)"
+SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
+SECURITY_OPERATIONS_EXECUTE_RULE = "mcp__sec-ops__soc_api__execute"
+SECURITY_OPERATIONS_DIRECT_ALLOW_RULES = (
+    "Edit(./**)",
+    "Write(./**)",
+)
+SECURITY_OPERATIONS_OLD_ASK_RULES = (
+    "mcp__sec-ops__*_post",
+    "mcp__sec-ops__*_put",
+    "mcp__sec-ops__*_patch",
+    "mcp__sec-ops__*execute*",
+    "mcp__sec-ops__*manual*",
+    "mcp__sec-ops__*create*",
+    "mcp__sec-ops__*update*",
+    "mcp__sec-ops__*delete*",
+    "mcp__sec-ops__*write*",
+    "mcp__sec-ops__*upload*",
+    "mcp__sec-ops__*cancel*",
+    "mcp__sec-ops__*block*",
+    "mcp__sec-ops__*isolate*",
+    "mcp__sec-ops__*disable*",
+    "mcp__sec-ops__*kill*",
+    "mcp__sec-ops__*quarantine*",
+)
 OLD_HOOK_MARKERS = (
     "MCP 写入/处置动作放行",
     "permissionDecision\": \"allow\"",
@@ -176,16 +200,48 @@ def _reconciled_settings(text: str, *, agent_id: str) -> str:
     permissions = data.setdefault("permissions", {})
     allow = [str(item) for item in permissions.get("allow") or []]
     ask = [str(item) for item in permissions.get("ask") or []]
+    deny = [str(item) for item in permissions.get("deny") or []]
     mutation_rules = AGENT_MCP_MUTATION_RULES.get(agent_id, GENERIC_MCP_MUTATION_RULES)
     ask = [rule for rule in ask if rule != BASH_ALLOW_RULE]
     if BASH_ALLOW_RULE not in allow:
         allow.append(BASH_ALLOW_RULE)
+    if agent_id == SECURITY_OPERATIONS_EXPERT_AGENT_ID:
+        return _reconciled_security_operations_settings(data, permissions, allow, ask, deny)
     allow = [rule for rule in allow if rule not in mutation_rules]
     for rule in mutation_rules:
         if rule not in ask:
             ask.append(rule)
     permissions["allow"] = allow
     permissions["ask"] = ask
+    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+
+
+def _reconciled_security_operations_settings(
+    data: object,
+    permissions: dict,
+    allow: list[str],
+    ask: list[str],
+    deny: list[str],
+) -> str:
+    for rule in SECURITY_OPERATIONS_DIRECT_ALLOW_RULES:
+        if rule not in allow:
+            allow.append(rule)
+    if "mcp__sec-ops__*" not in allow:
+        allow.append("mcp__sec-ops__*")
+    ask = [
+        rule
+        for rule in ask
+        if rule == SECURITY_OPERATIONS_EXECUTE_RULE
+        and rule not in SECURITY_OPERATIONS_OLD_ASK_RULES
+        and rule not in SECURITY_OPERATIONS_DIRECT_ALLOW_RULES
+    ]
+    if SECURITY_OPERATIONS_EXECUTE_RULE not in ask:
+        ask.append(SECURITY_OPERATIONS_EXECUTE_RULE)
+    if "AskUserQuestion" not in deny:
+        deny.append("AskUserQuestion")
+    permissions["allow"] = allow
+    permissions["ask"] = ask
+    permissions["deny"] = deny
     return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
 
 

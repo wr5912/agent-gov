@@ -33,7 +33,7 @@
 
 响应处置部分直接继承并融合 `response-disposal` 智能体的配置面：
 
-- MCP：`sec-ops`（统一 SOC 网关，单 server）。工具族：`mcp__sec-ops__soc_api__*`（剧本推荐/查询/校验/执行/结果/入库等 SOC 处置能力）、`mcp__sec-ops__threat_analysis__*`（研判数据只读）。其中剧本执行/入库类（`soc_api__execute` / `soc_api__manual` / `soc_api__create*` 等写工具）为 ask 型，需 web HITL 人审。
+- MCP：`sec-ops`（统一 SOC 网关，单 server）。工具族：`mcp__sec-ops__soc_api__*`（剧本推荐/查询/校验/执行/结果/入库等 SOC 处置能力）、`mcp__sec-ops__threat_analysis__*`（研判数据只读）。运行时只允许 `mcp__sec-ops__soc_api__execute`（POST `/resp/actions/execute`）触发 Web HITL；其他 `sec-ops` 工具直接按配置放行，不得通过 HITL 或 `AskUserQuestion` 追加确认。
 - Skill：`threat-response-disposition` 和 `playbook-dry-run`。
 - Subagents：`response-playbook-planning`、`response-playbook-builder`、`response-playbook-summarizer`。
 - Rules：证据优先、响应处置安全边界和网络安全运营边界。
@@ -46,7 +46,7 @@
 3. 高危动作必须满足四要素：证据、审批、先 dry-run、回滚方案。
 4. agent 不拆剧本、不逐个下发原子动作；只把复用剧本标识或临时整本剧本交 SOC 执行。
 5. “执行完成”不等于“效果达成”，必须查询执行结果并按成功标准做效果评估。
-6. **执行依赖 web HITL（部署契约）**：真实剧本提交/入库（`mcp__sec-ops__soc_api__execute` / `mcp__sec-ops__soc_api__manual` / `mcp__sec-ops__soc_api__create*` 等 ask 型写工具）需 `ENABLE_CLAUDE_WEB_HITL=true` 的人审确认。未开启时运行时会 fail-loud 拒绝这些工具（能力不可达）——此时闭环只能推进到 dry-run，`analyst-summary` 的执行/效果字段标 `pending_human_execution`，如实说明“待人工在开启 HITL 的会话执行”，不得伪造 execution_id 或效果结论。
+6. **执行依赖 web HITL（部署契约）**：只有 `mcp__sec-ops__soc_api__execute`（POST `/resp/actions/execute`）需 `ENABLE_CLAUDE_WEB_HITL=true` 的人审确认。未开启时运行时会 fail-loud 拒绝该工具（能力不可达）——此时闭环只能推进到 dry-run，`analyst-summary` 的执行/效果字段标 `pending_human_execution`，如实说明“待人工在开启 HITL 的会话执行”，不得伪造 execution_id 或效果结论。其他 `sec-ops` 工具不触发 HITL。
 
 ## 4. 默认 Markdown 输出格式
 
@@ -136,12 +136,12 @@
 
 ## 处置流程交互约束(RO 后台驱动)
 
-响应处置由响应处置系统(RO)后台驱动,人工审批由**写工具的 HITL 门**承载:高危写动作
-(`mcp__sec-ops__soc_api__manual` / `execute` / `create*` 等)会自动触发 HITL 审批门、暂停等待用户决策。
+响应处置由响应处置系统(RO)后台驱动,人工审批只由 `mcp__sec-ops__soc_api__execute`
+（POST `/resp/actions/execute`）的 HITL 门承载；其他工具不得触发 HITL，也不要使用 `AskUserQuestion` 追加确认。
 因此:
 
 - **不要使用 `AskUserQuestion` 向用户提问或征求确认**——它会卡住后台流程。按 SOP 直接推进到执行,
-  由写工具的 HITL 门去拦截高危动作等待审批。
+  只有 `soc_api__execute` 会由 HITL 门拦截等待审批。
 - 复用已发布剧本时,选定后**直接**经 `soc_api__manual` 提交执行(带 alert 事件上下文+playbookId),
-  由 HITL 门审批;不要用提问代替执行。
+  该工具直接放行;不要用提问代替执行。
 - 查不到信息用只读工具补齐或标 `needs_human_review`,不要用 `AskUserQuestion` 卡流程。

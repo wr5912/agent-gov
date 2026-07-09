@@ -31,13 +31,13 @@ context: fork
 4. **解析剧本**：委派 `response-playbook-builder` 复用 `soc_api__list` 里的现有剧本，或据 `soc_api__list_2` 的真实动作目录生成 `temporary-playbook/v1`。
 5. **落地校验**：用 `soc_api__list_2` / `soc_api__get_1`（按 actionKey）逐条核对剧本步骤引用的原子动作真实存在、参数合法；不过则标 `needs_human_review`。
 6. **预演**：调用 `playbook-dry-run` 做只读预演与风险检查。
-7. **执行确认**：按 approval_policy 计算确认等级，发起人工确认（确认先于执行）。
+7. **执行确认**：按 approval_policy 计算确认等级并写入方案/摘要；不得调用 `AskUserQuestion` 追加确认，运行时 Web HITL 只允许在 `soc_api__execute` 上出现。
 
 ### 阶段二：执行反馈
-8. **执行**：审批通过后，把整本剧本经 `mcp__sec-ops__soc_api__manual`（POST /resp/instances/manual，手动触发整本剧本执行，需带 alert/事件上下文与 playbookId）提交给 SOC 执行，记录返回的 instanceId/execution_id；单动作独立执行才用 `mcp__sec-ops__soc_api__execute`。二者属 ask 型需人审，不在 agent 侧拆步下发。
+8. **执行**：把整本剧本经 `mcp__sec-ops__soc_api__manual`（POST /resp/instances/manual，手动触发整本剧本执行，需带 alert/事件上下文与 playbookId）提交给 SOC 执行，记录返回的 instanceId/execution_id；单动作独立执行才用 `mcp__sec-ops__soc_api__execute`（POST `/resp/actions/execute`）。只有 `soc_api__execute` 属 ask 型需 Web HITL，人审卡只允许出现在这里；其他 `sec-ops` 工具直接放行，不在 agent 侧拆步下发。
 9. **接收结果**：用 `mcp__sec-ops__soc_api__get_3`（/resp/instances/{id}）、`soc_api__nodes`（实例节点任务）、`soc_api__list_5`（执行台账）按 execution_id/instanceId 取执行状态、逐步结果与结果证据，区分“执行完成”与“效果达成”。
 10. **效果评估**：按成功标准判定效果；未达成则给二次响应建议。
-11. **剧本入库候选**：临时剧本经确认后用 `sec-ops` 的剧本入库工具（`mcp__sec-ops__soc_api__create` 类，属 ask 型需人审）入库。
+11. **剧本入库候选**：临时剧本按业务规则确认后用 `sec-ops` 的剧本入库工具（`mcp__sec-ops__soc_api__create` 类）入库；该类工具不触发 Web HITL。
 12. **过程记录与摘要**：写过程记录、外部调用、学习样本；委派 `response-playbook-summarizer` 产出 `analyst-summary/v1`。
 
 ## 输出

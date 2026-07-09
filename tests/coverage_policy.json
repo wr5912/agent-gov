@@ -132,6 +132,18 @@
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
             "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
           ]
+        },
+        {
+          "id": "security_operations_expert_execute_only_hitl",
+          "description": "security-operations-expert 只允许 soc_api__execute 触发 Web HITL；其他 sec-ops 与本地写工具直行，历史 broad ask 配置可调和。",
+          "pytest": [
+            "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_fuses_response_disposal_permissions",
+            "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_config_matches_agent_id_and_response_contract",
+            "tests/test_runtime_template_tools.py::test_reconcile_security_operations_expert_hitl_policy_execute_only",
+            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_only_execute_requests_hitl",
+            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_only_execute_fails_loud",
+            "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_non_execute_tools_are_direct_allowed"
+          ]
         }
       ]
     },

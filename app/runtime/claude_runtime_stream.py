@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
 from .claude_runtime import RuntimeQueryState
+from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
 from .json_types import JsonObject
 from .message_utils import to_plain
 from .runtime_db import utc_now
@@ -91,6 +92,10 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        if blocks_interactive_question(stream_run.profile.name, tool_name):
+            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
+        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
+            return PermissionResultAllow()
         service = stream_run.runtime.user_input_service
         if service is None:
             return PermissionResultDeny(message="Claude Web HITL is not available.")
@@ -116,13 +121,17 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
 def _hitl_required_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
     """HITL 关闭但 ``profile.requires_web_hitl`` 时的 fail-loud 回调。
 
-    命中 ask 型工具（如 mcp__soc-playbook-execution__*）时，明确 deny 并向流发一条 ``error`` 事件，
+    命中真正需要 HITL 的工具时，明确 deny 并向流发一条 ``error`` 事件，
     取代 SDK 的静默 deny，让调用方能区分"需开 HITL"与"工具坏"，也避免非流式 bypass 的静默放行语义漂移到流式。
-    allow 命中的只读/输出工具不经此回调，照常可用。
+    不需要 HITL 的工具直行。
     """
-    from claude_agent_sdk import PermissionResultDeny
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        if blocks_interactive_question(stream_run.profile.name, tool_name):
+            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
+        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
+            return PermissionResultAllow()
         message = (
             f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启："
             f"业务 Agent {stream_run.profile.name} 的响应处置执行依赖 web HITL，请开启后重试或改用 dry-run。"

@@ -198,9 +198,9 @@ fi
 docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse up -d --force-recreate --no-build --pull never
 docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
 
-host_port=$(expand_remote_value "$(read_env HOST_PORT 48080)")
-frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 45173)")
-langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 43000)")
+host_port=$(expand_remote_value "$(read_env HOST_PORT 58080)")
+frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 55173)")
+langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 53000)")
 
 python3 - <<PY
 from urllib.error import HTTPError

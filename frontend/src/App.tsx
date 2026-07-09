@@ -40,7 +40,7 @@ function isLoopbackHost(hostname: string): boolean {
 }
 
 function defaultLangfuseUrl(): string {
-  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:43000").trim();
+  const configured = (import.meta.env.VITE_LANGFUSE_URL || "http://localhost:53000").trim();
   let parsed: URL | null = null;
   try {
     parsed = new URL(configured);
@@ -52,7 +52,7 @@ function defaultLangfuseUrl(): string {
   // 配置仍是本机/缺省地址：按当前浏览器访问的 host 派生，使远端用户跳转到可达的 Langfuse 地址（端口沿用配置值）。
   if (typeof window !== "undefined" && window.location?.hostname) {
     const protocol = window.location.protocol === "https:" ? "https" : "http";
-    const port = parsed?.port || "43000";
+    const port = parsed?.port || "53000";
     return `${protocol}://${window.location.hostname}${port ? `:${port}` : ""}`;
   }
   return configured;

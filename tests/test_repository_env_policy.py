@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+_LOCAL_DEBUG_PORT_FAMILY_RE = re.compile(r"(?<![#A-Za-z0-9_])4\d{4}(?![A-Za-z0-9_])|" + "4" + r"[xX]{4}")
 RUNTIME_ENV_KEYS = (
     "CLAUDE_HOME",
     "DATA_DIR",
@@ -109,6 +110,29 @@ def _dockerfile_apt_packages(path: Path) -> set[str]:
         if package:
             packages.add(package)
     return packages
+
+
+def _tracked_text_files() -> list[tuple[str, str]]:
+    result = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, check=True, stdout=subprocess.PIPE)
+    files: list[tuple[str, str]] = []
+    for rel_path in result.stdout.decode("utf-8").split("\0"):
+        if not rel_path:
+            continue
+        raw = (REPO_ROOT / rel_path).read_bytes()
+        if b"\0" in raw:
+            continue
+        files.append((rel_path, raw.decode("utf-8", errors="ignore")))
+    return files
+
+
+def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
+    offenders: list[str] = []
+    for rel_path, text in _tracked_text_files():
+        for lineno, line in enumerate(text.splitlines(), start=1):
+            if _LOCAL_DEBUG_PORT_FAMILY_RE.search(line):
+                offenders.append(f"{rel_path}:{lineno}:{line.strip()}")
+
+    assert offenders == []
 
 
 def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_enabled() -> None:

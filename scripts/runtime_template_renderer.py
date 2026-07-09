@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-CONTAINER_DEFAULT_MCP_SERVER_URL = "http://host.docker.internal:48001/mcp"
-LOCAL_DEBUG_DEFAULT_MCP_SERVER_URL = "http://localhost:48001/mcp"
+CONTAINER_DEFAULT_MCP_SERVER_URL = "http://host.docker.internal:58001/mcp"
+LOCAL_DEBUG_DEFAULT_MCP_SERVER_URL = "http://localhost:58001/mcp"
 UNRESOLVED_TEMPLATE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}")
 MCP_URL_TEMPLATE_VARS = (
     "MCP_SERVER_URL",

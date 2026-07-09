@@ -1,14 +1,12 @@
 import type { RuntimeClientConfig } from "../types/runtime";
 
-const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:48080";
+const DEFAULT_API_BASE = import.meta.env.VITE_RUNTIME_API_BASE || "http://localhost:58080";
 const DEFAULT_API_KEY = import.meta.env.VITE_RUNTIME_API_KEY || "";
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const RETRYABLE_STATUS = new Set([408, 429, 502, 503, 504]);
 const LEGACY_DOCKER_API_BASES = new Set([
   "http://localhost:58080",
   "http://127.0.0.1:58080",
-  "http://localhost:48080",
-  "http://127.0.0.1:48080",
 ]);
 
 export type RuntimeRequestInit = RequestInit & {
@@ -23,7 +21,7 @@ export function defaultRuntimeConfig(): RuntimeClientConfig {
 }
 
 export function resolveRuntimeApiBase(configuredBase: string): string {
-  const normalized = normalizeBase(configuredBase || "http://localhost:48080");
+  const normalized = normalizeBase(configuredBase || "http://localhost:58080");
   if (typeof window === "undefined" || !window.location?.hostname) return normalized;
   if (isLoopbackHost(window.location.hostname)) return normalized;
   let parsed: URL;

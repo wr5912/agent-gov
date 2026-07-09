@@ -9,7 +9,7 @@ AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集
 
 ## 接入前提
 
-- Base URL 由 AgentGov 部署方提供。外部 / 同主机常见 `http://<host>:48080`（宿主暴露端口 `HOST_PORT`；当前实现分支使用 `4XXXX` 端口段），同 Docker 网络内服务用 `http://claude-agent-api:8080`。
+- Base URL 由 AgentGov 部署方提供。外部 / 同主机常见 `http://<host>:58080`（宿主暴露端口 `HOST_PORT`；默认遵循 `50000 + 容器端口`），同 Docker 网络内服务用 `http://claude-agent-api:8080`。
 - 所有 `/api/*`、`/v1/*` 带 `Authorization: Bearer <API_KEY>`；缺失或错误 token 返回 `401`。
 - 先 `GET /health` 探活，再拉取 `/openapi.json` 作为对接基线。
 - 原生 `/api/chat` 与 `/api/chat/stream` 都要求显式有效 `agent_id`（如 `main-agent` 或已注册业务 Agent）。

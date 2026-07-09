@@ -20,7 +20,7 @@ def test_main_mcp_resolution_uses_workspace_project_config(tmp_path: Path) -> No
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:48001/mcp")
+    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     resolution = resolve_main_mcp_config_path(workspace, None)
     servers = filtered_mcp_servers(resolution.path, ("sec-ops-data",), {})
@@ -54,7 +54,7 @@ def test_filtered_mcp_servers_expands_default_placeholder_in_config_path(tmp_pat
     runtime_root = tmp_path / "runtime-root"
     workspace = runtime_root / "main-workspace"
     workspace.mkdir(parents=True)
-    _write_mcp(workspace / ".mcp.json", "http://127.0.0.1:48001/mcp")
+    _write_mcp(workspace / ".mcp.json", "http://127.0.0.1:58001/mcp")
 
     servers = filtered_mcp_servers(
         Path(f"${{RUNTIME_ROOT:-{runtime_root}}}/main-workspace/.mcp.json"),
@@ -62,7 +62,7 @@ def test_filtered_mcp_servers_expands_default_placeholder_in_config_path(tmp_pat
         {},
     )
 
-    assert servers == {"sec-ops-data": {"type": "http", "url": "http://127.0.0.1:48001/mcp"}}
+    assert servers == {"sec-ops-data": {"type": "http", "url": "http://127.0.0.1:58001/mcp"}}
 
 
 def test_unresolved_mcp_config_path_fails_before_sdk_options(tmp_path: Path) -> None:
@@ -74,7 +74,7 @@ def test_explicit_mcp_config_path_is_ignored_by_project_resolution(tmp_path: Pat
     workspace = tmp_path / "main-workspace"
     workspace.mkdir()
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:48001/mcp")
+    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     resolution = resolve_main_mcp_config_path(
         workspace,
@@ -91,7 +91,7 @@ def test_main_profile_uses_project_mcp_without_polluting_feedback_profiles(tmp_p
     workspace = settings.main_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:48001/mcp")
+    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     profiles = build_profiles(settings)
 
@@ -104,7 +104,7 @@ def test_legacy_mcp_config_path_env_is_ignored(tmp_path: Path) -> None:
     workspace = settings.main_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     _write_mcp(workspace / ".mcp.json", "http://project.example/mcp")
-    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:48001/mcp")
+    _write_mcp(workspace / ".mcp.local.json", "http://127.0.0.1:58001/mcp")
 
     profiles = build_profiles(settings)
 

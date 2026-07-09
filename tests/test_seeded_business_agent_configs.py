@@ -177,12 +177,8 @@ def test_security_operations_expert_seed_is_declared() -> None:
     assert (SECOPS_EXPERT_WORKSPACE / "agent.yaml").is_file()
     assert (SECOPS_EXPERT_WORKSPACE / ".mcp.json").is_file()
     assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").is_file()
-    assert (
-        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md"
-    ).is_file()
-    assert (
-        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md"
-    ).is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md").is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md").is_file()
     assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "agents" / "response-playbook-planning.md").is_file()
 
 
@@ -213,12 +209,8 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     claude_md = (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").read_text(encoding="utf-8")
     mcp = json.loads((SECOPS_EXPERT_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
     response_mcp = json.loads((RESPONSE_DISPOSAL_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
-    analysis_skill = (
-        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md"
-    ).read_text(encoding="utf-8")
-    response_skill = (
-        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md"
-    ).read_text(encoding="utf-8")
+    analysis_skill = (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md").read_text(encoding="utf-8")
+    response_skill = (SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md").read_text(encoding="utf-8")
 
     assert f"id: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
     assert f"profile: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
@@ -234,6 +226,28 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     assert "告警分流" in analysis_skill
     assert "真实响应处置交给 threat-response-disposition" in analysis_skill
     assert "整本剧本交给 SOC" in response_skill
+
+
+def test_hitl_required_deployment_contract_and_low_fixes() -> None:
+    from app.runtime.agent_profiles import read_requires_web_hitl
+
+    for workspace in (SECOPS_EXPERT_WORKSPACE, RESPONSE_DISPOSAL_WORKSPACE):
+        # 部署契约：agent.yaml 声明 requires_web_hitl 且被 read_requires_web_hitl 识别为 True。
+        assert read_requires_web_hitl(workspace) is True
+        assert "requires_web_hitl: true" in (workspace / "agent.yaml").read_text(encoding="utf-8")
+        settings = json.loads((workspace / ".claude" / "settings.json").read_text(encoding="utf-8"))
+        assert "skillOverrides" not in settings  # #5：no-op 键已删（门控在 SKILL.md frontmatter）
+        assert [h["matcher"] for h in settings["hooks"]["PreToolUse"]] == ["Bash"]  # #6：matcher 收窄
+        session_start = (workspace / "hooks" / "session_start.py").read_text(encoding="utf-8")
+        assert "hookSpecificOutput" in session_start  # #17：SessionStart 规范包裹
+        assert "duration_ms" not in (workspace / "hooks" / "post_tool_audit.py").read_text(encoding="utf-8")  # #18
+        # #16：pre_tool_guard 对畸形 stdin fail-closed（try/except 包裹 json.load）
+        assert "except Exception:" in (workspace / "hooks" / "pre_tool_guard.py").read_text(encoding="utf-8")
+
+    # #4：secops 跨 Agent outputs 读收窄到本 Agent 子路径。
+    secops_allow = json.loads((SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]["allow"]
+    assert "Read(/data/outputs/**)" not in secops_allow
+    assert "Read(/data/outputs/security-operations-expert/**)" in secops_allow
 
 
 def test_security_operations_expert_seed_bootstraps_into_registry_for_playground(monkeypatch, tmp_path: Path) -> None:
@@ -291,6 +305,4 @@ def test_security_operations_expert_seed_routes_through_openai_responses(monkeyp
     assert captured["req"].agent_id == SECOPS_EXPERT_AGENT_ID
     assert captured["profile"].name == SECOPS_EXPERT_AGENT_ID
     assert captured["profile"].category == "business"
-    assert captured["profile"].workspace_dir.as_posix().endswith(
-        f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace"
-    )
+    assert captured["profile"].workspace_dir.as_posix().endswith(f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace")

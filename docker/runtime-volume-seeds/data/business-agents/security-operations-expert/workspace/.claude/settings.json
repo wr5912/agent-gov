@@ -6,7 +6,7 @@
     "allow": [
       "Read(./**)",
       "Read(/data/uploads/**)",
-      "Read(/data/outputs/**)",
+      "Read(/data/outputs/security-operations-expert/**)",
       "Glob",
       "Grep",
       "Skill",
@@ -44,7 +44,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -105,9 +105,6 @@
       ],
       "deniedDomains": []
     }
-  },
-  "skillOverrides": {
-    "threat-response-disposition": "user-invocable-only"
   },
   "spinnerTipsOverride": {
     "excludeDefault": false,

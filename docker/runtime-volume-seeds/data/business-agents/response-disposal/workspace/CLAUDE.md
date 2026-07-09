@@ -79,6 +79,7 @@
 - 触发 Web 确认后，等待用户在确认卡片中允许一次或拒绝，不要重复输出处置计划/确认表格。
 - 若工具调用被权限、hook 或运行环境阻断，直接说明被阻断原因、缺失前置条件和下一步，不要再次要求确认。
 - 仅当目标对象、动作内容或影响范围改变（变成另一个动作）时，才为新动作重新生成计划。
+- **部署契约（执行依赖 web HITL）**：剧本提交/入库（`mcp__soc-playbook-execution__*` / `mcp__soc-playbook-registry__*`）需 `ENABLE_CLAUDE_WEB_HITL=true` 的人审确认。未开启时运行时会 fail-loud 拒绝这些工具（能力不可达），闭环只能推进到 dry-run，分析师摘要的执行/效果字段标 `pending_human_execution`，如实说明“待人工在开启 HITL 的会话执行”，不伪造 execution_id 或效果结论。
 
 ## 5. 子智能体路由
 

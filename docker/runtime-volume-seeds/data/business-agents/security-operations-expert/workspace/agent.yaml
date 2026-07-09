@@ -6,6 +6,11 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
+  # 部署契约（被运行时读取+强制）：本 Agent 的响应处置执行/入库（settings ask 层的
+  # mcp__soc-playbook-execution__* / mcp__soc-playbook-registry__*）依赖 web HITL 人审。
+  # ENABLE_CLAUDE_WEB_HITL=false 时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），
+  # 且启动会告警。真正的执行处置须在开启 HITL 的交互式会话进行。
+  requires_web_hitl: true
 
 capabilities:
   - alert_triage
@@ -82,6 +87,9 @@ operational_model:
     - vulnerability
 
 approval_policy:
+  # 声明式说明（非运行时强制）：真实执行门在 .claude/settings.json(ask) + web HITL 人审 + pre_tool_guard(Bash) + skill 四要素。
+  # 下列高危动作是剧本内步骤，经整本剧本 submit_playbook_execution 一次提交、由 threat-response-disposition skill 枚举给人审确认；
+  # 不存在逐动作独立 gate（agent 不拆步下发）。
   require_confirmation:
     - isolate_host
     - disable_user
@@ -96,7 +104,6 @@ approval_policy:
   always_dry_run_first: true
   require_rollback_plan: true
   require_evidence: true
-  max_batch_size: 5
 
 observability:
   hook_audit_log: /data/transcripts/claude-hook-audit.jsonl

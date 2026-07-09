@@ -20,6 +20,8 @@
 - `ai-soc-gap-analyzer`：AI SOC 差距评估业务 Agent，基于能力模型和证据快照输出成熟度评分、差距、风险和下一步行动。
 - `security-operations-expert`：网络安全运营专家业务 Agent，面向告警分流、事件调查、威胁狩猎和响应处置闭环；响应处置部分融合 `response-disposal` 的 MCP、skill、subagent、权限和审计配置。
 
+> `response-disposal` 与 `security-operations-expert` 的 agent.yaml 声明 `requires_web_hitl: true`（部署契约，被运行时读取+强制）：其响应处置执行/入库（settings ask 层的 `mcp__soc-playbook-execution__*` / `mcp__soc-playbook-registry__*`）依赖 `ENABLE_CLAUDE_WEB_HITL=true` 的人审。关闭时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），启动日志告警，`GET /api/agent-registry` 的 `requires_web_hitl` 字段透出该要求。真实执行处置须在开启 HITL 的交互式会话进行。
+
 ## 占位符
 
 模板中的 `${...}` 是部署占位符，例如 `${MCP_SERVER_URL}`、`${SOC_API_URL}`、`${API_TOKEN}`、`${SERVICE_HOST}`、`${SERVICE_PORT}`。部署时按环境注入，不要把真实值提交回模板。

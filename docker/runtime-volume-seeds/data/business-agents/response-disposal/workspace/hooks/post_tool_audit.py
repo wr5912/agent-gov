@@ -18,7 +18,7 @@ record = {
     "event": payload.get("hook_event_name"),
     "tool_name": payload.get("tool_name"),
     "tool_input_keys": sorted(list((payload.get("tool_input") or {}).keys())) if isinstance(payload.get("tool_input"), dict) else [],
-    "duration_ms": payload.get("duration_ms"),
+    "has_tool_response": payload.get("tool_response") is not None,
 }
 with log_path.open("a", encoding="utf-8") as f:
     f.write(json.dumps(record, ensure_ascii=False) + "\n")

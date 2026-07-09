@@ -36,9 +36,7 @@ def migrate_0006_remove_agent_job_output_contract_column(connection: Connection)
     connection.exec_driver_sql("ALTER TABLE agent_jobs RENAME TO agent_jobs_with_output_schema_version")
     _create_agent_jobs_table(connection)
     columns = ", ".join(AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT)
-    connection.exec_driver_sql(
-        f"INSERT INTO agent_jobs ({columns}) SELECT {columns} FROM agent_jobs_with_output_schema_version"
-    )
+    connection.exec_driver_sql(f"INSERT INTO agent_jobs ({columns}) SELECT {columns} FROM agent_jobs_with_output_schema_version")
     connection.exec_driver_sql("DROP TABLE agent_jobs_with_output_schema_version")
     _create_agent_jobs_indexes(connection)
 
@@ -148,13 +146,8 @@ def migrate_0014_improvement_feedback_context(connection: Connection) -> None:
     }.items():
         if column_name not in columns:
             connection.exec_driver_sql(f"ALTER TABLE improvement_feedbacks ADD COLUMN {column_name} {ddl}")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_agent_version_id "
-        "ON improvement_feedbacks (agent_version_id)"
-    )
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_scenario ON improvement_feedbacks (scenario)"
-    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_agent_version_id ON improvement_feedbacks (agent_version_id)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_scenario ON improvement_feedbacks (scenario)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_improvement_feedbacks_task_id ON improvement_feedbacks (task_id)")
 
 
@@ -263,9 +256,7 @@ def migrate_0005_agent_governance(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_action ON agent_change_set_events (action)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_operator ON agent_change_set_events (operator)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_created_at ON agent_change_set_events (created_at)")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_change_created ON agent_change_set_events (change_set_id, created_at)"
-    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_change_set_events_change_created ON agent_change_set_events (change_set_id, created_at)")
     connection.exec_driver_sql(
         """
         CREATE TABLE IF NOT EXISTS agent_releases (
@@ -374,9 +365,7 @@ def migrate_0020_claude_user_input_requests(connection: Connection) -> None:
     connection.exec_driver_sql(
         "CREATE INDEX IF NOT EXISTS ix_claude_user_input_agent_status ON claude_user_input_requests (business_agent_id, status, created_at)"
     )
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_claude_user_input_run_status ON claude_user_input_requests (run_id, status, created_at)"
-    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_claude_user_input_run_status ON claude_user_input_requests (run_id, status, created_at)")
 
 
 def migrate_0021_improvement_generation_trace_refs(connection: Connection) -> None:
@@ -427,9 +416,7 @@ def migrate_0023_eval_case_targeted_regression_layer(connection: Connection) -> 
     columns = _table_columns(connection, "eval_cases")
     if "asset_layer" not in columns:
         return
-    connection.exec_driver_sql(
-        "UPDATE eval_cases SET asset_layer = 'targeted_regression' WHERE asset_layer = 'batch_specific'"
-    )
+    connection.exec_driver_sql("UPDATE eval_cases SET asset_layer = 'targeted_regression' WHERE asset_layer = 'batch_specific'")
 
 
 def migrate_0024_feedback_case_agent_id(connection: Connection) -> None:
@@ -484,6 +471,16 @@ def migrate_0025_agent_governance_legacy_paths(connection: Connection) -> None:
             f"UPDATE {table} SET {column} = REPLACE({column}, ?, ?) WHERE {column} LIKE ?",
             (old_root, new_root, f"{old_root}%"),
         )
+
+
+def migrate_0027_agent_registry_requires_web_hitl(connection: Connection) -> None:
+    """部署契约：业务 Agent 注册表加 requires_web_hitl（agent.yaml 声明其执行能力依赖 web HITL）。
+
+    已存在行默认 0；启动 sync 按 profile.requires_web_hitl（读 workspace/agent.yaml）幂等校正。
+    """
+    if "requires_web_hitl" not in _table_columns(connection, "agent_registry"):
+        connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN requires_web_hitl BOOLEAN DEFAULT 0")
+    connection.exec_driver_sql("UPDATE agent_registry SET requires_web_hitl = 0 WHERE requires_web_hitl IS NULL")
 
 
 def _json_string_list(value: object) -> list[str]:

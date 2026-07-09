@@ -11,7 +11,7 @@ from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
 
-def _settings(tmp_path, *, enable_hitl: bool) -> AppSettings:
+def _settings(tmp_path, *, enable_hitl: bool, requires_web_hitl: bool = False) -> AppSettings:
     workspace = tmp_path / "volume" / "data" / "business-agents" / "main-agent" / "workspace"
     data = tmp_path / "volume" / "data"
     claude_root = tmp_path / "volume" / "data" / "business-agents" / "main-agent" / "claude-root"
@@ -22,6 +22,9 @@ def _settings(tmp_path, *, enable_hitl: bool) -> AppSettings:
         json.dumps({"permissions": {"allow": [], "ask": ["Bash(*)"], "deny": []}}),
         encoding="utf-8",
     )
+    if requires_web_hitl:
+        # 部署契约声明：build_business_agent_profile 读此字段 -> profile.requires_web_hitl=True
+        workspace.joinpath("agent.yaml").write_text("agent:\n  id: main-agent\n  requires_web_hitl: true\n", encoding="utf-8")
     claude_home.mkdir(parents=True, exist_ok=True)
     return AppSettings(
         _env_file=None,
@@ -129,6 +132,61 @@ def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypat
     assert getattr(seen["options"], "permission_mode", None) is None
     assert seen["prompt_item"]["message"]["content"] == "no hitl"
     assert store.list(limit=10) == []
+
+
+def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch):
+    # requires_web_hitl 的 Agent + HITL 关：挂 fail-loud deny 回调（非静默 None），命中 ask 工具 deny + error 事件
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        await anext(prompt)
+        seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path, enable_hitl=False, requires_web_hitl=True)
+    service, store = _service(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+
+    async def collect():
+        return [event async for event in runtime.stream(ChatRequest(message="dispose"))]
+
+    events = asyncio.run(asyncio.wait_for(collect(), timeout=5))
+    names = [event["event"] for event in events]
+    assert getattr(seen["options"], "can_use_tool", None) is not None  # fail-loud 回调已挂
+    assert seen["permission_result"].__class__.__name__ == "PermissionResultDeny"
+    assert "ENABLE_CLAUDE_WEB_HITL" in seen["permission_result"].message
+    assert "error" in names  # 命中 ask 工具产明确 error 事件（非静默）
+    assert store.list(limit=10) == []  # 未创建 HITL 请求（HITL 关）
+
+
+def test_run_fail_loud_when_hitl_required(tmp_path, monkeypatch):
+    # 非流式 run() + requires_web_hitl：permission_mode=default（非 bypassPermissions）+ can_use_tool deny ask 型工具
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["options"] = options
+        seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
+        if False:
+            yield None
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+
+    settings = _settings(tmp_path, enable_hitl=False, requires_web_hitl=True)
+    service, _store = _service(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
+
+    asyncio.run(runtime.run(ChatRequest(message="dispose")))
+    assert getattr(seen["options"], "permission_mode", None) == "default"  # 非 bypassPermissions
+    assert getattr(seen["options"], "can_use_tool", None) is not None
+    assert seen["permission_result"].__class__.__name__ == "PermissionResultDeny"
 
 
 def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):

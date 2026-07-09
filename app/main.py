@@ -37,7 +37,7 @@ from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
-from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
+from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
@@ -154,6 +154,15 @@ async def lifespan(_: FastAPI):
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
     )
+    # 部署契约告警（不阻断）：requires_web_hitl 的 Agent 在 HITL 关闭时执行能力不可用（ask 型工具 fail-loud）。
+    if not settings.enable_claude_web_hitl:
+        requiring = agents_requiring_web_hitl(profiles)
+        if requiring:
+            logger.warning(
+                "业务 Agent %s 声明 requires_web_hitl 但 ENABLE_CLAUDE_WEB_HITL=false："
+                "其响应处置执行能力不可用（ask 型工具将被 fail-loud 拒绝），如需执行处置请开启 web HITL。",
+                requiring,
+            )
     yield
 
 
@@ -233,11 +242,36 @@ app.include_router(
         require_api_key=require_api_key,
     )
 )
-app.include_router(create_openai_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
-app.include_router(create_responses_router(settings=settings, runtime=runtime, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, feedback_store=feedback_store, require_api_key=require_api_key))
-app.include_router(create_conversations_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
-app.include_router(create_settings_router(settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key))
-app.include_router(create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key))
+app.include_router(
+    create_openai_router(
+        settings=settings,
+        runtime=runtime,
+        agent_registry_store=agent_registry_store,
+        runtime_settings_store=runtime_settings_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_responses_router(
+        settings=settings,
+        runtime=runtime,
+        agent_registry_store=agent_registry_store,
+        runtime_settings_store=runtime_settings_store,
+        feedback_store=feedback_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_conversations_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key)
+)
+app.include_router(
+    create_settings_router(
+        settings=settings, agent_registry_store=agent_registry_store, runtime_settings_store=runtime_settings_store, require_api_key=require_api_key
+    )
+)
+app.include_router(
+    create_sessions_router(session_store=session_store, settings=settings, agent_registry_store=agent_registry_store, require_api_key=require_api_key)
+)
 app.include_router(
     create_agent_governance_router(
         agent_governance=agent_governance,
@@ -294,11 +328,7 @@ app.include_router(
     )
 )
 app.include_router(create_assets_router(asset_store=asset_store, require_api_key=require_api_key))
-app.include_router(
-    create_scenario_packs_router(
-        scenario_pack_store=scenario_pack_store, feedback_store=feedback_store, require_api_key=require_api_key
-    )
-)
+app.include_router(create_scenario_packs_router(scenario_pack_store=scenario_pack_store, feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))

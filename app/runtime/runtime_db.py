@@ -36,6 +36,7 @@ from .runtime_db_migrations import (
     migrate_0024_feedback_case_agent_id,
     migrate_0025_agent_governance_legacy_paths,
     migrate_0026_normalized_feedback_generation_refs,
+    migrate_0027_agent_registry_requires_web_hitl,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -472,6 +473,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0024_feedback_case_agent_id", migrate_0024_feedback_case_agent_id),
         ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
         ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
+        ("0027_agent_registry_requires_web_hitl", migrate_0027_agent_registry_requires_web_hitl),
     ):
         if version in applied:
             continue
@@ -583,12 +585,8 @@ def _migrate_0003_agent_jobs(connection: Connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_status ON agent_jobs (status)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_profile_name ON agent_jobs (profile_name)")
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_created_at ON agent_jobs (created_at)")
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_agent_jobs_type_status_created ON agent_jobs (job_type, status, created_at)"
-    )
-    connection.exec_driver_sql(
-        "CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_type_created ON agent_jobs (scope_kind, scope_id, job_type, created_at)"
-    )
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_type_status_created ON agent_jobs (job_type, status, created_at)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_agent_jobs_scope_type_created ON agent_jobs (scope_kind, scope_id, job_type, created_at)")
 
 
 def _migrate_0004_unify_agent_jobs(connection: Connection) -> None:

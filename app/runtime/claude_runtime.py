@@ -20,11 +20,12 @@ from .agent_profiles import (
     build_profiles,
     candidate_profile,
 )
-from .claude_user_input_service import ClaudeUserInputService
 from .claude_trust import ensure_claude_workspace_trusted
+from .claude_user_input_service import ClaudeUserInputService
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
+from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .message_utils import extract_text, message_event_name, to_plain
@@ -42,14 +43,18 @@ _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
 def _non_stream_hitl_deny_callback(profile_name: str) -> Any:
-    """非流式 run() 下，requires_web_hitl 的 Agent 对到达 can_use_tool 的工具（ask 型/未静态 allow）明确 deny。
+    """非流式 run() 下，requires_web_hitl 的 Agent 对真正需要 HITL 的工具明确 deny。
 
-    非流式无 SSE/HITL 面，故不发事件、不等待人审；deny 让 ask 型高危工具（如剧本执行）在无审批的非交互路径
-    fail-loud（取代 bypassPermissions 的静默放行）。allow 静态命中的只读/输出工具不经此回调、照常可用。
+    非流式无 SSE/HITL 面，故不发事件、不等待人审；deny 让高危工具在无审批的非交互路径
+    fail-loud（取代 bypassPermissions 的静默放行）。不需要 HITL 的工具直行。
     """
-    from claude_agent_sdk import PermissionResultDeny
+    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        if blocks_interactive_question(profile_name, tool_name):
+            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
+        if not tool_requires_web_hitl(profile_name, tool_name):
+            return PermissionResultAllow()
         return PermissionResultDeny(
             message=(
                 f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启且非流式无人审面："

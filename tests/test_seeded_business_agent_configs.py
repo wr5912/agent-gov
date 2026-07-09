@@ -208,16 +208,21 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     permissions = settings["permissions"]
 
     assert "mcp__sec-ops__*" in permissions["allow"]
+    assert "Edit(./**)" in permissions["allow"]
+    assert "Write(./**)" in permissions["allow"]
     assert "Write(/data/outputs/security-operations-expert/**)" in permissions["allow"]
     assert "Write(/data/outputs/**)" not in permissions["allow"]
 
-    assert "mcp__sec-ops__*execute*" in permissions["ask"]
-    assert "mcp__sec-ops__*manual*" in permissions["ask"]
-    assert "mcp__sec-ops__*create*" in permissions["ask"]
-    assert "mcp__sec-ops__*delete*" in permissions["ask"]
+    assert permissions["ask"] == ["mcp__sec-ops__soc_api__execute"]
+    assert "mcp__sec-ops__soc_api__manual" not in permissions["ask"]
+    assert "mcp__sec-ops__*manual*" not in permissions["ask"]
+    assert "mcp__sec-ops__*create*" not in permissions["ask"]
+    assert "mcp__sec-ops__*delete*" not in permissions["ask"]
     assert "Bash(*)" in permissions["allow"]
     assert "Bash(*)" not in permissions["ask"]
-    assert "Edit(./**)" in permissions["ask"]
+    assert "Edit(./**)" not in permissions["ask"]
+    assert "Write(./**)" not in permissions["ask"]
+    assert "AskUserQuestion" in permissions["deny"]
 
     serialized = json.dumps(settings, ensure_ascii=False)
     assert "response-disposal/claude-root" not in serialized
@@ -245,9 +250,14 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     assert "单 server" in claude_md
     assert "threat-response-disposition" in claude_md
     assert "response-playbook-builder" in claude_md
+    assert "只允许 `mcp__sec-ops__soc_api__execute`" in claude_md
+    assert "`mcp__sec-ops__soc_api__manual` / `execute` / `create*` 等" not in claude_md
+    assert "settings.json 只让 soc_api__execute 走 web HITL" in agent_yaml
     assert "告警分流" in analysis_skill
     assert "真实响应处置交给 threat-response-disposition" in analysis_skill
     assert "整本剧本交给 SOC" in response_skill
+    assert "只有 `soc_api__execute` 属 ask 型需 Web HITL" in response_skill
+    assert "create` 类，属 ask 型需人审" not in response_skill
 
 
 def test_hitl_required_deployment_contract_and_low_fixes() -> None:

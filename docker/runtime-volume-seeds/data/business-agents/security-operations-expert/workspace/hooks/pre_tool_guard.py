@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Claude Code PreToolUse hook: hard-deny clearly unsafe operations.
 
-This hook does not replace Claude Code authorization. Web HITL is reserved for
-ask-level MCP write/disposal tools; Bash is allowed by settings and this hook
+This hook does not replace Claude Code authorization. Web HITL is reserved only
+for mcp__sec-ops__soc_api__execute; Bash is allowed by settings and this hook
 only returns deny for commands that must never run.
 """
 import json

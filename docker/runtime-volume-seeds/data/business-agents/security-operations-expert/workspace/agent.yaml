@@ -6,10 +6,9 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 的响应处置执行/入库（settings ask 层的
-  # mcp__sec-ops__soc_api__execute / manual / create* 等写工具）依赖 web HITL 人审。
-  # ENABLE_CLAUDE_WEB_HITL=false 时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），
-  # 且启动会告警。真正的执行处置须在开启 HITL 的交互式会话进行。
+  # 部署契约（被运行时读取+强制）：本 Agent 只有 mcp__sec-ops__soc_api__execute
+  # (POST /resp/actions/execute) 依赖 web HITL 人审。ENABLE_CLAUDE_WEB_HITL=false
+  # 时运行时只对该工具 fail-loud；其他 sec-ops 工具不得触发 HITL。
   requires_web_hitl: true
 
 capabilities:
@@ -42,14 +41,14 @@ paths:
 mcp:
   default_transport: http
   # 单一 SOC 网关（OpenAPI-MCP 管理器），由 .mcp.json 的 sec-ops server（url=${SEC_OPS_MCP_URL}）挂载。
-  # 工具经 mcp__sec-ops__<tool> 暴露；读工具默认放行，写工具在 settings.json(ask) 逐个走 web HITL 人审。
+  # 工具经 mcp__sec-ops__<tool> 暴露；settings.json 只让 soc_api__execute 走 web HITL，其余 sec-ops 工具直接放行。
   servers:
     sec-ops:
       purpose: 统一 SOC 网关，聚合 SOC 处置与研判数据能力
       risk: mixed
       tool_families:
         - name: mcp__sec-ops__soc_api__*
-          purpose: SOC 处置能力（剧本推荐/查询/校验/topology 为读；execute/manual/create*/update*/delete*/upload/cancel 为写，需人审）
+          purpose: SOC 处置能力（剧本推荐/查询/校验/topology/execute/manual/create*/update*/delete*/upload/cancel 等；只有 soc_api__execute 需 HITL）
           risk: mixed
         - name: mcp__sec-ops__threat_analysis__*
           purpose: 研判数据只读（告警/事件/资产/分析结果等）
@@ -81,8 +80,9 @@ operational_model:
     - vulnerability
 
 approval_policy:
-  # 声明式说明（非运行时强制）：真实执行门在 .claude/settings.json(ask) + web HITL 人审 + pre_tool_guard(Bash) + skill 四要素。
-  # 下列高危动作是剧本内步骤，经整本剧本 submit_playbook_execution 一次提交、由 threat-response-disposition skill 枚举给人审确认；
+  # 声明式说明（非运行时强制）：真实 HITL 门仅限 .claude/settings.json(ask) 中的 soc_api__execute；
+  # 其他处置工具直接按配置放行，Bash 风险由 pre_tool_guard 与 sandbox 兜底。
+  # 下列高危动作是剧本内步骤，经整本剧本 submit_playbook_execution 一次提交、由 threat-response-disposition skill 枚举进记录；
   # 不存在逐动作独立 gate（agent 不拆步下发）。
   require_confirmation:
     - isolate_host

@@ -416,6 +416,54 @@ def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
     assert event["change_count"] == 4
 
 
+def test_reconcile_security_operations_expert_hitl_policy_execute_only(tmp_path):
+    template = tmp_path / "template"
+    (template / "data" / "business-agents" / "security-operations-expert" / "workspace").mkdir(parents=True)
+    runtime_root = tmp_path / "runtime"
+    workspace = runtime_root / "data" / "business-agents" / "security-operations-expert" / "workspace"
+    settings_dir = workspace / ".claude"
+    settings_dir.mkdir(parents=True)
+    old_settings = {
+        "permissions": {
+            "allow": ["mcp__sec-ops__*", "mcp__sec-ops__*delete*"],
+            "ask": [
+                "Bash(*)",
+                "Edit(./**)",
+                "Write(./**)",
+                "mcp__sec-ops__*execute*",
+                "mcp__sec-ops__*manual*",
+                "mcp__sec-ops__*create*",
+                "mcp__sec-ops__*delete*",
+            ],
+            "deny": [],
+        }
+    }
+    (settings_dir / "settings.json").write_text(json.dumps(old_settings), encoding="utf-8")
+
+    reconcile_business_agent_hitl_policy(
+        runtime_root=runtime_root,
+        template_dir=template,
+        env_file=tmp_path / "missing.env",
+        runtime_volume_mode="container",
+        apply=True,
+        operator="pytest",
+    )
+
+    updated = json.loads((settings_dir / "settings.json").read_text(encoding="utf-8"))["permissions"]
+    assert "Bash(*)" in updated["allow"]
+    assert "Edit(./**)" in updated["allow"]
+    assert "Write(./**)" in updated["allow"]
+    assert "mcp__sec-ops__*" in updated["allow"]
+    assert updated["ask"] == ["mcp__sec-ops__soc_api__execute"]
+    assert "Bash(*)" not in updated["ask"]
+    assert "Edit(./**)" not in updated["ask"]
+    assert "Write(./**)" not in updated["ask"]
+    assert "mcp__sec-ops__*manual*" not in updated["ask"]
+    assert "mcp__sec-ops__*create*" not in updated["ask"]
+    assert "mcp__sec-ops__*delete*" not in updated["ask"]
+    assert "AskUserQuestion" in updated["deny"]
+
+
 def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_path):
     template = tmp_path / "template"
     workspace_template = template / "main-workspace"

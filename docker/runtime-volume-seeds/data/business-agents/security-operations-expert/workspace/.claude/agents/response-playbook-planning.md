@@ -13,7 +13,7 @@ model: inherit
 
 步骤：
 1. 读取研判结论、受影响资产/账号/实体、证据引用、置信度。
-2. 用 `sec-ops` 的 SOC 查询/推荐工具（`mcp__sec-ops__soc_api__*` 查询/推荐类）查原子动作与候选剧本，了解“能做什么”。
+2. 查 SOC 能力：候选剧本用 `mcp__sec-ops__soc_api__list`（全量剧本），原子动作目录用 `mcp__sec-ops__soc_api__list_2`（action-defs）；`soc_api__recommend` 常返回空,为空必须回落 `soc_api__list`,不得据 recommend 空判定“SOC 目录不可达”。
 3. 产出方案要素：
    - 处置目标（要达成什么）
    - 成功标准（如何判定达成，区别于“执行完成”）

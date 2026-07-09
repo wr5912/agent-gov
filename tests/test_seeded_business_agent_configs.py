@@ -21,6 +21,10 @@ REVIEW_AGENT_ID = "security-data-standardization-review"
 REVIEW_WORKSPACE = SEED_ROOT / REVIEW_AGENT_ID / "workspace"
 AI_SOC_GAP_AGENT_ID = "ai-soc-gap-analyzer"
 AI_SOC_GAP_WORKSPACE = SEED_ROOT / AI_SOC_GAP_AGENT_ID / "workspace"
+RESPONSE_DISPOSAL_AGENT_ID = "response-disposal"
+RESPONSE_DISPOSAL_WORKSPACE = SEED_ROOT / RESPONSE_DISPOSAL_AGENT_ID / "workspace"
+SECOPS_EXPERT_AGENT_ID = "security-operations-expert"
+SECOPS_EXPERT_WORKSPACE = SEED_ROOT / SECOPS_EXPERT_AGENT_ID / "workspace"
 
 
 def test_security_data_standardization_review_seed_is_declared() -> None:
@@ -165,3 +169,128 @@ def test_ai_soc_gap_analyzer_seed_routes_through_openai_responses(monkeypatch, t
     assert captured["profile"].name == AI_SOC_GAP_AGENT_ID
     assert captured["profile"].category == "business"
     assert captured["profile"].workspace_dir.as_posix().endswith(f"/data/business-agents/{AI_SOC_GAP_AGENT_ID}/workspace")
+
+
+def test_security_operations_expert_seed_is_declared() -> None:
+    assert SECOPS_EXPERT_AGENT_ID in seed_business_agent_ids()
+    assert (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / "agent.yaml").is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / ".mcp.json").is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").is_file()
+    assert (
+        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md"
+    ).is_file()
+    assert (
+        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md"
+    ).is_file()
+    assert (SECOPS_EXPERT_WORKSPACE / ".claude" / "agents" / "response-playbook-planning.md").is_file()
+
+
+def test_security_operations_expert_fuses_response_disposal_permissions() -> None:
+    settings = json.loads((SECOPS_EXPERT_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    permissions = settings["permissions"]
+
+    assert "mcp__sec-ops-data__*" in permissions["allow"]
+    assert "mcp__soc-ops-query__*" in permissions["allow"]
+    assert "mcp__soc-playbook-query__*" in permissions["allow"]
+    assert "mcp__soc-playbook-execution-result-query__*" in permissions["allow"]
+    assert "Write(/data/outputs/security-operations-expert/**)" in permissions["allow"]
+    assert "Write(/data/outputs/**)" not in permissions["allow"]
+
+    assert "mcp__soc-playbook-execution__*" in permissions["ask"]
+    assert "mcp__soc-playbook-registry__*" in permissions["ask"]
+    assert "Bash(*)" in permissions["ask"]
+    assert "Edit(./**)" in permissions["ask"]
+
+    serialized = json.dumps(settings, ensure_ascii=False)
+    assert "response-disposal/claude-root" not in serialized
+    assert "Read(/data/business-agents/security-operations-expert/claude-root/.claude.json)" in permissions["deny"]
+    assert "Bash(rm -rf /)" in permissions["deny"]
+
+
+def test_security_operations_expert_config_matches_agent_id_and_response_contract() -> None:
+    agent_yaml = (SECOPS_EXPERT_WORKSPACE / "agent.yaml").read_text(encoding="utf-8")
+    claude_md = (SECOPS_EXPERT_WORKSPACE / "CLAUDE.md").read_text(encoding="utf-8")
+    mcp = json.loads((SECOPS_EXPERT_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
+    response_mcp = json.loads((RESPONSE_DISPOSAL_WORKSPACE / ".mcp.json").read_text(encoding="utf-8"))
+    analysis_skill = (
+        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "security-operations-analysis" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+    response_skill = (
+        SECOPS_EXPERT_WORKSPACE / ".claude" / "skills" / "threat-response-disposition" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert f"id: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
+    assert f"profile: {SECOPS_EXPERT_AGENT_ID}" in agent_yaml
+    assert f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace" in agent_yaml
+    assert "alert_triage" in agent_yaml
+    assert "response_case_intake" in agent_yaml
+    assert "response-playbook-planning" in agent_yaml
+    assert mcp == response_mcp
+
+    assert "响应处置部分直接继承并融合" in claude_md
+    assert "threat-response-disposition" in claude_md
+    assert "response-playbook-builder" in claude_md
+    assert "告警分流" in analysis_skill
+    assert "真实响应处置交给 threat-response-disposition" in analysis_skill
+    assert "整本剧本交给 SOC" in response_skill
+
+
+def test_security_operations_expert_seed_bootstraps_into_registry_for_playground(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    result = bootstrap_runtime_volume(
+        runtime_root=runtime_root,
+        template_dir=REPO_ROOT / "docker" / "runtime-volume-seeds",
+    )
+    workspace = runtime_root / "data" / "business-agents" / SECOPS_EXPERT_AGENT_ID / "workspace"
+    assert workspace.is_dir()
+    assert any(f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace/CLAUDE.md" in path for path in result["copied"])
+
+    monkeypatch.setenv("DATA_DIR", str(runtime_root / "data"))
+    settings = AppSettings()
+    profiles = build_profiles(settings)
+    for profile in discover_seeded_business_agents(settings):
+        profiles.setdefault(profile.name, profile)
+
+    store = AgentRegistryStore(make_session_factory(runtime_root / "data" / "runtime.sqlite3"))
+    store.sync_business_agents(profiles, seed_agent_ids=seed_business_agent_ids())
+
+    registered = store.get_agent(SECOPS_EXPERT_AGENT_ID)
+    assert registered is not None
+    assert registered.category == "business"
+    assert registered.origin == "seed"
+    assert registered.status == "active"
+    assert registered.workspace_dir.endswith(f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace")
+
+
+def test_security_operations_expert_seed_routes_through_openai_responses(monkeypatch, tmp_path: Path) -> None:
+    runtime_root = tmp_path / "docker" / "volume"
+    bootstrap_runtime_volume(
+        runtime_root=runtime_root,
+        template_dir=REPO_ROOT / "docker" / "runtime-volume-seeds",
+    )
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+
+    async def fake_run(req, *, profile=None, **kwargs):
+        captured["req"] = req
+        captured["profile"] = profile
+        return ChatResponse(run_id="r", session_id="s", answer="ok")
+
+    monkeypatch.setattr(module.runtime, "run", fake_run)
+
+    with TestClient(module.app) as client:
+        listed = {agent["agent_id"]: agent for agent in client.get("/api/agent-registry").json()}
+        assert SECOPS_EXPERT_AGENT_ID in listed
+        resp = client.post(
+            "/v1/responses",
+            json={"input": "调查高危告警并给出响应处置建议", "agentgov": {"agent_id": SECOPS_EXPERT_AGENT_ID}},
+        )
+        assert resp.status_code == 200, resp.text
+
+    assert captured["req"].agent_id == SECOPS_EXPERT_AGENT_ID
+    assert captured["profile"].name == SECOPS_EXPERT_AGENT_ID
+    assert captured["profile"].category == "business"
+    assert captured["profile"].workspace_dir.as_posix().endswith(
+        f"/data/business-agents/{SECOPS_EXPERT_AGENT_ID}/workspace"
+    )

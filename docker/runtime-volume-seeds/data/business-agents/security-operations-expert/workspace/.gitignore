@@ -1,0 +1,25 @@
+# Local/private Claude Code state
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Runtime data
+../data/sessions/*
+../data/transcripts/*
+../data/uploads/*
+../data/outputs/*
+../data/agent-memory/*
+!../data/**/.gitkeep
+
+# Secrets
+.env
+.env.*
+secrets/
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Python
+__pycache__/
+*.pyc
+.venv/

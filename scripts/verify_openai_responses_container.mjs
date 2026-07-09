@@ -14,8 +14,8 @@ const { chromium } = require("playwright");
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const dockerEnv = readDockerEnv();
-const uiBase = normalizeBase(process.env.RUNTIME_UI_BASE || `http://localhost:${dockerEnv.FRONTEND_HOST_PORT || "45173"}`);
-const apiBase = normalizeBase(process.env.RUNTIME_API_BASE || `http://localhost:${dockerEnv.HOST_PORT || "48080"}`);
+const uiBase = normalizeBase(process.env.RUNTIME_UI_BASE || `http://localhost:${dockerEnv.FRONTEND_HOST_PORT || "55173"}`);
+const apiBase = normalizeBase(process.env.RUNTIME_API_BASE || `http://localhost:${dockerEnv.HOST_PORT || "58080"}`);
 const browserApiBase = normalizeBase(process.env.RUNTIME_BROWSER_API_BASE || dockerEnv.FRONTEND_RUNTIME_API_BASE || apiBase);
 const apiOrigins = new Set([new URL(apiBase).origin, new URL(browserApiBase).origin]);
 const apiKey = process.env.RUNTIME_API_KEY || dockerEnv.FRONTEND_RUNTIME_API_KEY || dockerEnv.API_KEY || "";

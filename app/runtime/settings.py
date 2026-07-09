@@ -158,7 +158,7 @@ class AppSettings(BaseSettings):
 
     api_host: str = Field(default="0.0.0.0", alias="API_HOST")
     api_port: int = Field(default=8080, alias="API_PORT")
-    host_port: int = Field(default=48080, alias="HOST_PORT")
+    host_port: int = Field(default=58080, alias="HOST_PORT")
     log_level: str = Field(default="info", alias="LOG_LEVEL")
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")

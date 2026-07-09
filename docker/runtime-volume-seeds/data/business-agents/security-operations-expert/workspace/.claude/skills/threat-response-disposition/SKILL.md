@@ -23,16 +23,19 @@ context: fork
 
 ### 阶段一：响应决策
 1. **接入归一化**：读取威胁研判结果，归一化处置上下文（资产、账号、实体、证据、置信度、trace 标识）。
-2. **查 SOC 能力**：用 `sec-ops` 的 SOC 查询/推荐工具（`mcp__sec-ops__soc_api__*` 中的剧本推荐/列表/查询类，按工具说明识别）查候选剧本与可用原子动作（剧本步骤的积木）。
+2. **查 SOC 能力（用明确工具，别只靠 recommend）**：
+   - 查**全部可复用剧本**用 `mcp__sec-ops__soc_api__list`（GET /resp/playbooks，返回全部剧本，含临时/草稿）；查某剧本详情用 `mcp__sec-ops__soc_api__get`。
+   - 查**可用原子动作目录**用 `mcp__sec-ops__soc_api__list_2`（GET /resp/action-defs）；动作元数据用 `mcp__sec-ops__soc_api__list_3`（/resp/plugins）。
+   - `mcp__sec-ops__soc_api__recommend` 只返回“已发布且匹配事件类型”的剧本，**常为空**；**为空不代表 SOC 不可用，必须回落到 `soc_api__list` 取全量剧本**，不要据 recommend 空判定“SOC 目录不可达/502”。
 3. **生成方案**：委派 `response-playbook-planning` 产出 `disposition-plan/v1`。
-4. **解析剧本**：委派 `response-playbook-builder` 复用已发布剧本或生成 `temporary-playbook/v1`。
-5. **落地校验**：用 `sec-ops` 的剧本/动作校验工具（`mcp__sec-ops__soc_api__*` 中的 validate 类）逐条核对剧本步骤引用的原子动作真实存在、参数合法；不过则标 `needs_human_review`。
+4. **解析剧本**：委派 `response-playbook-builder` 复用 `soc_api__list` 里的现有剧本，或据 `soc_api__list_2` 的真实动作目录生成 `temporary-playbook/v1`。
+5. **落地校验**：用 `soc_api__list_2` / `soc_api__get_1`（按 actionKey）逐条核对剧本步骤引用的原子动作真实存在、参数合法；不过则标 `needs_human_review`。
 6. **预演**：调用 `playbook-dry-run` 做只读预演与风险检查。
 7. **执行确认**：按 approval_policy 计算确认等级，发起人工确认（确认先于执行）。
 
 ### 阶段二：执行反馈
-8. **执行**：审批通过后，把整本剧本（复用剧本标识或临时剧本步骤）经 `sec-ops` 的剧本执行工具（`mcp__sec-ops__soc_api__execute` / `mcp__sec-ops__soc_api__manual`，属 ask 型需人审）提交给 SOC 执行，记录返回的 execution_id。不在 agent 侧拆步下发。
-9. **接收结果**：用 `sec-ops` 的执行状态/结果查询工具（`mcp__sec-ops__soc_api__*` 中的 running/结果查询类）按 execution_id 取执行状态、逐步结果与结果证据，区分“执行完成”与“效果达成”。
+8. **执行**：审批通过后，把整本剧本经 `mcp__sec-ops__soc_api__manual`（POST /resp/instances/manual，手动触发整本剧本执行，需带 alert/事件上下文与 playbookId）提交给 SOC 执行，记录返回的 instanceId/execution_id；单动作独立执行才用 `mcp__sec-ops__soc_api__execute`。二者属 ask 型需人审，不在 agent 侧拆步下发。
+9. **接收结果**：用 `mcp__sec-ops__soc_api__get_3`（/resp/instances/{id}）、`soc_api__nodes`（实例节点任务）、`soc_api__list_5`（执行台账）按 execution_id/instanceId 取执行状态、逐步结果与结果证据，区分“执行完成”与“效果达成”。
 10. **效果评估**：按成功标准判定效果；未达成则给二次响应建议。
 11. **剧本入库候选**：临时剧本经确认后用 `sec-ops` 的剧本入库工具（`mcp__sec-ops__soc_api__create` 类，属 ask 型需人审）入库。
 12. **过程记录与摘要**：写过程记录、外部调用、学习样本；委派 `response-playbook-summarizer` 产出 `analyst-summary/v1`。

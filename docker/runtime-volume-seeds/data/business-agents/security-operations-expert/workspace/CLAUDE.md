@@ -133,3 +133,15 @@
 ## 7. workspace 配置查询规则
 
 当用户询问 workspace 配置结构、配置项含义或配置对比时，先用 Read 工具读取当前 workspace 下的 `CLAUDE.md`、`agent.yaml`、`.mcp.json` 和 `.claude/settings.json`，基于实际文件内容回答，不得仅凭训练知识或泛化格式回答。
+
+## 处置流程交互约束(RO 后台驱动)
+
+响应处置由响应处置系统(RO)后台驱动,人工审批由**写工具的 HITL 门**承载:高危写动作
+(`mcp__sec-ops__soc_api__manual` / `execute` / `create*` 等)会自动触发 HITL 审批门、暂停等待用户决策。
+因此:
+
+- **不要使用 `AskUserQuestion` 向用户提问或征求确认**——它会卡住后台流程。按 SOP 直接推进到执行,
+  由写工具的 HITL 门去拦截高危动作等待审批。
+- 复用已发布剧本时,选定后**直接**经 `soc_api__manual` 提交执行(带 alert 事件上下文+playbookId),
+  由 HITL 门审批;不要用提问代替执行。
+- 查不到信息用只读工具补齐或标 `needs_human_review`,不要用 `AskUserQuestion` 卡流程。

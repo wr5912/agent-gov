@@ -9,7 +9,23 @@ import json
 import re
 import sys
 
-payload = json.load(sys.stdin)
+try:
+    payload = json.load(sys.stdin)
+except Exception:
+    # fail-closed：畸形/空 stdin 时明确 deny，守卫 hook 异常不放行（不 fail-open）。
+    print(
+        json.dumps(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": "deny",
+                    "permissionDecisionReason": "PreToolUse 守卫无法解析工具输入，安全起见已阻止。",
+                }
+            },
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
 tool_name = payload.get("tool_name", "")
 tool_input = payload.get("tool_input", {}) or {}
 command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""

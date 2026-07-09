@@ -82,6 +82,8 @@
             "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow",
             "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
+            "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
+            "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
             "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions",
             "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
             "tests/test_claude_user_input.py::test_requested_carries_token_resolved_does_not",
@@ -126,6 +128,7 @@
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_routes_through_openai_responses",
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_seed_bootstraps_into_registry_for_playground",
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_seed_routes_through_openai_responses",
+            "tests/test_seeded_business_agent_configs.py::test_hitl_required_deployment_contract_and_low_fixes",
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
             "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
           ]

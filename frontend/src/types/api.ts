@@ -2753,6 +2753,12 @@ export interface components {
              */
             origin: string;
             /**
+             * Requires Web Hitl
+             * @description 部署契约：为 true 时该 Agent 的响应处置执行（ask 型工具）依赖 ENABLE_CLAUDE_WEB_HITL；关闭时执行能力不可用（运行时 fail-loud）。
+             * @default false
+             */
+            requires_web_hitl: boolean;
+            /**
              * Status
              * @description 生命周期状态：draft/active/evaluating/deprecated/archived。
              * @default active

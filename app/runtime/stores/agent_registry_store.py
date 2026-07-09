@@ -22,6 +22,7 @@ class AgentRegistryRecord:
     created_at: str
     status: str = "active"
     origin: str = "user"  # #26：seed（声明式基线，禁删）vs user（用户创建，可 tombstone 删除）
+    requires_web_hitl: bool = False  # 部署契约：其执行能力依赖 ENABLE_CLAUDE_WEB_HITL（agent.yaml 声明）
 
 
 class AgentRegistryStore:
@@ -51,6 +52,7 @@ class AgentRegistryStore:
                     if existing.workspace_dir != str(profile.workspace_dir):
                         existing.workspace_dir = str(profile.workspace_dir)
                     existing.origin = origin
+                    existing.requires_web_hitl = profile.requires_web_hitl  # 部署契约随 agent.yaml 校正
                     continue
                 db.add(
                     AgentRegistryModel(
@@ -60,6 +62,7 @@ class AgentRegistryStore:
                         workspace_dir=str(profile.workspace_dir),
                         created_at=utc_now(),
                         origin=origin,
+                        requires_web_hitl=profile.requires_web_hitl,
                     )
                 )
 
@@ -150,8 +153,7 @@ class AgentRegistryStore:
                 raise NotFoundError(f"Business agent not found: {agent_id}")
             if (row.origin or "user") == "seed":
                 raise BusinessRuleViolation(
-                    f"Seed business agent '{agent_id}' is a declarative baseline and cannot be deleted;"
-                    " remove it from docker/runtime-volume-seeds instead"
+                    f"Seed business agent '{agent_id}' is a declarative baseline and cannot be deleted; remove it from docker/runtime-volume-seeds instead"
                 )
             record = _record(row)
             row.deleted_at = utc_now()  # #26：tombstone 逻辑删除，重启 discover 不复活
@@ -167,4 +169,5 @@ def _record(row: AgentRegistryModel) -> AgentRegistryRecord:
         created_at=row.created_at,
         status=row.status or "active",
         origin=row.origin or "user",
+        requires_web_hitl=bool(row.requires_web_hitl),
     )

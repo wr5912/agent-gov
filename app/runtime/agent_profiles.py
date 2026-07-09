@@ -4,8 +4,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
 from .settings import AppSettings
+
+
+def read_requires_web_hitl(workspace_dir: Path) -> bool:
+    """读 workspace/agent.yaml 的部署契约 ``requires_web_hitl``（顶层或 ``agent.`` 下），缺失/异常按 False。"""
+    path = workspace_dir / "agent.yaml"
+    if not path.exists():
+        return False
+    try:
+        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        return False
+    if not isinstance(loaded, dict):
+        return False
+    agent = loaded.get("agent")
+    value = agent.get("requires_web_hitl") if isinstance(agent, dict) else None
+    if value is None:
+        value = loaded.get("requires_web_hitl")
+    return value is True
+
 
 AgentRole = Literal[
     "main-agent",
@@ -26,6 +47,7 @@ GOVERNANCE_AGENT_ROLES: frozenset[AgentRole] = frozenset({"governor"})
 def agent_category(role: AgentRole) -> AgentCategory:
     """把 Agent 角色映射为业务/治理分类（AGV-005 结构化身份边界）。"""
     return "governance" if role in GOVERNANCE_AGENT_ROLES else "business"
+
 
 MAIN_AGENT_PROFILE = "main-agent"
 # 单一治理 Agent profile；归因/方案/执行/用例/回归影响按 job_type 复用同一执行者身份。
@@ -86,6 +108,9 @@ class AgentRuntimeProfile:
     max_turns: int | None = None
     max_runtime_seconds: int = 300
     max_output_bytes: int = 2_000_000
+    # 部署契约：agent.yaml 声明 requires_web_hitl:true 时，其 ask 型工具（如 soc-playbook-execution）
+    # 需 ENABLE_CLAUDE_WEB_HITL 人审；HITL 关闭时运行时对该 Agent 的 ask 工具 fail-loud（不静默 deny/放行）。
+    requires_web_hitl: bool = False
 
     @property
     def category(self) -> AgentCategory:
@@ -93,13 +118,16 @@ class AgentRuntimeProfile:
         return agent_category(self.role)
 
 
+def agents_requiring_web_hitl(profiles: dict[str, AgentRuntimeProfile]) -> list[str]:
+    """声明 ``requires_web_hitl`` 的 Agent id（排序）。启动契约告警据此点名：HITL 关时其执行能力不可用。"""
+    return sorted(name for name, profile in profiles.items() if profile.requires_web_hitl)
+
+
 def build_profiles(settings: AppSettings) -> dict[str, AgentRuntimeProfile]:
     return {
         # main 是预制的业务 Agent：与动态业务 Agent 同走 build_business_agent_profile，
         # workspace 落 data/business-agents/main-agent/workspace。governor 仍是特殊治理 Agent。
-        MAIN_AGENT_PROFILE: build_business_agent_profile(
-            settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=settings.main_workspace_dir
-        ),
+        MAIN_AGENT_PROFILE: build_business_agent_profile(settings, agent_id=MAIN_AGENT_PROFILE, workspace_dir=settings.main_workspace_dir),
         GOVERNOR_PROFILE: _governor_profile(settings),
     }
 
@@ -134,9 +162,7 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
         layout = business_agent_layout(settings.data_dir, agent_id)
         if not layout.workspace.is_dir():
             continue
-        discovered.append(
-            build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=layout.workspace)
-        )
+        discovered.append(build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=layout.workspace))
     return discovered
 
 
@@ -160,9 +186,7 @@ def seed_business_agent_ids() -> frozenset[str]:
     return frozenset(ids)
 
 
-def candidate_profile(
-    settings: AppSettings, *, agent_id: str, workspace_dir: Path, candidate_id: str
-) -> AgentRuntimeProfile:
+def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Path, candidate_id: str) -> AgentRuntimeProfile:
     """候选版本 profile：cwd=候选 worktree，claude-root 隔离到 candidate-claude-roots/<id>，
     其余边界与该 Agent 的业务 profile 同构（不再 main 专属）。"""
     base = build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=workspace_dir)
@@ -218,6 +242,7 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
             claude_root=claude_root,
             deny_version_base=True,
         ),
+        requires_web_hitl=read_requires_web_hitl(workspace_dir),
     )
 
 

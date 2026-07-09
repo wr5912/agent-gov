@@ -39,7 +39,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
@@ -101,9 +101,6 @@
       ],
       "deniedDomains": []
     }
-  },
-  "skillOverrides": {
-    "threat-response-disposition": "user-invocable-only"
   },
   "spinnerTipsOverride": {
     "excludeDefault": false,

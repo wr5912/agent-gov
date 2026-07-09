@@ -46,6 +46,7 @@
 3. 高危动作必须满足四要素：证据、审批、先 dry-run、回滚方案。
 4. agent 不拆剧本、不逐个下发原子动作；只把复用剧本标识或临时整本剧本交 SOC 执行。
 5. “执行完成”不等于“效果达成”，必须查询执行结果并按成功标准做效果评估。
+6. **执行依赖 web HITL（部署契约）**：真实剧本提交/入库（`mcp__soc-playbook-execution__*` / `mcp__soc-playbook-registry__*`）需 `ENABLE_CLAUDE_WEB_HITL=true` 的人审确认。未开启时运行时会 fail-loud 拒绝这些工具（能力不可达）——此时闭环只能推进到 dry-run，`analyst-summary` 的执行/效果字段标 `pending_human_execution`，如实说明“待人工在开启 HITL 的会话执行”，不得伪造 execution_id 或效果结论。
 
 ## 4. 默认 Markdown 输出格式
 
@@ -65,8 +66,8 @@
 | --- | --- | --- | --- |
 
 ## 处置建议
-| 动作 | 类型 | 前置条件 | 风险 | 是否需要审批/dry-run/回滚 |
-| --- | --- | --- | --- | --- |
+| 动作 | 类型 | 前置条件 | 影响范围 | 风险 | 是否需要审批/dry-run/回滚 |
+| --- | --- | --- | --- | --- | --- |
 
 ## 后续验证
 1.
@@ -108,7 +109,7 @@
       "requires_rollback_plan": false
     }
   ],
-  "response_case": {
+  "response_needed": {
     "required": false,
     "reason": ""
   }
@@ -117,9 +118,11 @@
 
 约束：
 - `risk_level` 和 action `risk` 只能是 `low`、`medium`、`high` 或 `critical`。
+- action `type` 只能是 `investigation`、`enrichment`、`containment`、`eradication`、`recovery` 或 `monitoring`。
 - `confidence` 只能是 `low`、`medium` 或 `high`。
 - 没有证据支撑的结论必须进入 `inferences` 或 `evidence_gaps`，不得写入 `facts`。
-- 需要真实处置时，`response_case.required` 必须为 `true`，并说明进入响应闭环的原因。
+- 需要真实处置时，`response_needed.required` 必须为 `true`，并说明原因；`response_needed` 只是"是否进入处置闭环"的轻量门控标志，
+  与处置闭环里承载资产/证据/执行结果的富对象 `response_case`（见响应处置融合配置）是**不同结构**，勿混用。
 
 ## 6. 反滥用与防御边界
 

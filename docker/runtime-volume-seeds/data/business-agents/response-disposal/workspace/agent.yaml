@@ -5,6 +5,11 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: response-disposal
+  # 部署契约（被运行时读取+强制）：剧本执行/入库（settings ask 层的
+  # mcp__soc-playbook-execution__* / mcp__soc-playbook-registry__*）依赖 web HITL 人审。
+  # ENABLE_CLAUDE_WEB_HITL=false 时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），
+  # 且启动会告警。真正的执行处置须在开启 HITL 的交互式会话进行。
+  requires_web_hitl: true
 
 capabilities:
   - response_case_intake

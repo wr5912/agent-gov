@@ -40,6 +40,25 @@ from .stores.feedback_store import FeedbackStore
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
 
 
+def _non_stream_hitl_deny_callback(profile_name: str) -> Any:
+    """非流式 run() 下，requires_web_hitl 的 Agent 对到达 can_use_tool 的工具（ask 型/未静态 allow）明确 deny。
+
+    非流式无 SSE/HITL 面，故不发事件、不等待人审；deny 让 ask 型高危工具（如剧本执行）在无审批的非交互路径
+    fail-loud（取代 bypassPermissions 的静默放行）。allow 静态命中的只读/输出工具不经此回调、照常可用。
+    """
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        return PermissionResultDeny(
+            message=(
+                f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启且非流式无人审面："
+                f"业务 Agent {profile_name} 的响应处置执行请改用流式 + 开启 HITL，或先做 dry-run。"
+            )
+        )
+
+    return deny
+
+
 def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
     if value is None:
         return None
@@ -368,13 +387,15 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         }
         if execution_mode == "non_stream_bypass":
             kwargs["permission_mode"] = "bypassPermissions"
-        elif execution_mode == "stream_hitl":
+        elif execution_mode in {"stream_hitl", "non_stream_hitl_required"}:
+            # non_stream_hitl_required：requires_web_hitl 的 Agent 在非流式(无 HITL 面)下用 default 权限，
+            # 配合 can_use_tool 对 ask 型工具 fail-loud deny，取代 bypassPermissions 的静默放行。
             kwargs["permission_mode"] = "default"
         if can_use_tool is not None:
             kwargs["can_use_tool"] = can_use_tool
         if self.settings.setting_sources is not None:
             kwargs["setting_sources"] = self.settings.setting_sources
-        if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl"}:
+        if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl", "non_stream_hitl_required"}:
             kwargs["permission_prompt_tool_name"] = self.settings.permission_prompt_tool_name
 
         # Resume the previous Claude Code session when possible. The API session id
@@ -694,7 +715,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override, agent_id=profile.name)
-        context.telemetry_input["permission_mode"] = "bypassPermissions"
+        # 非流式无 HITL 面：requires_web_hitl 的 Agent 不能 bypass 静默放行 ask 型高危工具，改 default + fail-loud deny。
+        hitl_required = profile.requires_web_hitl
+        context.telemetry_input["permission_mode"] = "default" if hitl_required else "bypassPermissions"
         context.telemetry_input["claude_web_hitl_enabled"] = False
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
@@ -720,7 +743,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
                         async def execute_query() -> None:
                             self.model_provider_router.ensure_agent_runtime_ready()
-                            options = self._build_options(req, context.session, profile=profile, execution_mode="non_stream_bypass")
+                            options = self._build_options(
+                                req,
+                                context.session,
+                                profile=profile,
+                                execution_mode="non_stream_hitl_required" if hitl_required else "non_stream_bypass",
+                                can_use_tool=_non_stream_hitl_deny_callback(profile.name) if hitl_required else None,
+                            )
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):
                                 self._track_query_message(msg, state, ResultMessage)

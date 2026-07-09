@@ -32,6 +32,10 @@ class AgentSummaryResponse(BaseModel):
     created_at: str
     status: str = Field(default="active", description="生命周期状态：draft/active/evaluating/deprecated/archived。")
     origin: str = Field(default="user", description="来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。")
+    requires_web_hitl: bool = Field(
+        default=False,
+        description="部署契约：为 true 时该 Agent 的响应处置执行（ask 型工具）依赖 ENABLE_CLAUDE_WEB_HITL；关闭时执行能力不可用（运行时 fail-loud）。",
+    )
 
 
 class AssetProvenanceImprovement(BaseModel):
@@ -138,6 +142,4 @@ class ScenarioPackReuseProvenanceResponse(BaseModel):
     scope_agent_ids: list[str] = Field(default_factory=list, description="复用范围：装配该场景包的业务 Agent。")
     methodology_asset_refs: list[str] = Field(default_factory=list, description="可复用方法论资产引用（prompt/skill/SOP/发布策略）。")
     methodology_eval_case_ids: list[str] = Field(default_factory=list, description="可复用评估用例（方法论资产）。")
-    validation: list[ScenarioPackAgentValidation] = Field(
-        default_factory=list, description="跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。"
-    )
+    validation: list[ScenarioPackAgentValidation] = Field(default_factory=list, description="跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。")

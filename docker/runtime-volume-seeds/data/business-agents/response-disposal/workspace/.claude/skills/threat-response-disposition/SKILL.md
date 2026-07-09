@@ -7,6 +7,7 @@ allowed-tools:
   - Grep
   - Glob
   - Skill
+  - Task
   - mcp__soc-ops-query__*
   - mcp__soc-playbook-query__*
   - mcp__soc-playbook-execution__*
@@ -43,4 +44,4 @@ context: fork
 ## 输出
 
 - 处置方案、剧本、执行结果、效果反馈、过程记录、分析师摘要。
-- 全链路贯穿 trace_id / actor / approval_ref。
+- trace_id / actor / approval_ref / execution_id 等确定性审计标识由后端/边界层与 MCP 结果提供并在投影时贯穿附加，Agent 不编造这些字段。

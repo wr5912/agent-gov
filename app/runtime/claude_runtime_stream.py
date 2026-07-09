@@ -78,9 +78,7 @@ async def stream_claude_runtime(
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
-                sdk_task = asyncio.create_task(
-                    _run_sdk_query(stream_run, event_queue, root_span, generation, query, ResultMessage)
-                )
+                sdk_task = asyncio.create_task(_run_sdk_query(stream_run, event_queue, root_span, generation, query, ResultMessage))
                 async for event in _drain_stream_queue(stream_run, event_queue, sdk_task):
                     yield event
     runtime._flush_langfuse()
@@ -114,6 +112,26 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     return sdk_can_use_tool
 
 
+def _hitl_required_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
+    """HITL 关闭但 ``profile.requires_web_hitl`` 时的 fail-loud 回调。
+
+    命中 ask 型工具（如 mcp__soc-playbook-execution__*）时，明确 deny 并向流发一条 ``error`` 事件，
+    取代 SDK 的静默 deny，让调用方能区分"需开 HITL"与"工具坏"，也避免非流式 bypass 的静默放行语义漂移到流式。
+    allow 命中的只读/输出工具不经此回调，照常可用。
+    """
+    from claude_agent_sdk import PermissionResultDeny
+
+    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        message = (
+            f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启："
+            f"业务 Agent {stream_run.profile.name} 的响应处置执行依赖 web HITL，请开启后重试或改用 dry-run。"
+        )
+        await event_queue.put({"event": "error", "data": {"errors": [message]}})
+        return PermissionResultDeny(message=message)
+
+    return deny
+
+
 async def _emit_query_events(
     stream_run: StreamRun,
     event_queue: asyncio.Queue[JsonObject | None],
@@ -122,7 +140,14 @@ async def _emit_query_events(
 ) -> None:
     runtime = stream_run.runtime
     runtime.model_provider_router.ensure_agent_runtime_ready()
-    can_use_tool = _sdk_tool_callback(stream_run, event_queue) if stream_run.web_hitl_enabled else None
+    # HITL 关闭但该 Agent 声明 requires_web_hitl 时，挂 fail-loud deny 回调（而非静默 deny），执行门 loud。
+    hitl_fail_loud = stream_run.profile.requires_web_hitl and not stream_run.web_hitl_enabled
+    if stream_run.web_hitl_enabled:
+        can_use_tool = _sdk_tool_callback(stream_run, event_queue)
+    elif hitl_fail_loud:
+        can_use_tool = _hitl_required_deny_callback(stream_run, event_queue)
+    else:
+        can_use_tool = None
     options = runtime._build_options(
         stream_run.req,
         stream_run.request_context.session,
@@ -130,7 +155,8 @@ async def _emit_query_events(
         execution_mode="stream_hitl" if stream_run.web_hitl_enabled else "stream",
         can_use_tool=can_use_tool,
     )
-    input_done = asyncio.Event() if stream_run.web_hitl_enabled else None
+    # can_use_tool 需要流式输入模式保持 prompt 流打开（HITL-on 与 fail-loud 都需要）。
+    input_done = asyncio.Event() if (stream_run.web_hitl_enabled or hitl_fail_loud) else None
     prompt_stream = (
         _single_prompt_stream_until_done(stream_run.request_context.prompt, input_done)
         if input_done is not None

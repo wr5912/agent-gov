@@ -59,6 +59,8 @@ const IMPROVEMENTS = [
   { improvement_id: "imp-demo04", agent_id: "soc-ops", title: "时间窗口误判治理 · 测试", summary: "事件时间不一致", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "regression", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo05", agent_id: "soc-ops", title: "时间窗口误判重复反馈", summary: "事件时间不一致的重复反馈", source_feedback_refs: ["fb-2", "fb-3"], improvement_stage: "triage", improvement_status: "active", created_at: ts, updated_at: ts },
   { improvement_id: "imp-demo06", agent_id: "soc-ops", title: "时间窗口误判治理 · 待执行", summary: "已有优化方案，等待执行优化", source_feedback_refs: ["fb-1", "fb-2"], improvement_stage: "optimization", improvement_status: "active", created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo07", agent_id: "soc-ops", title: "时间窗口误判治理 · 执行中", summary: "执行产物已生成", source_feedback_refs: ["fb-1"], improvement_stage: "execution", improvement_status: "active", created_at: ts, updated_at: ts },
+  { improvement_id: "imp-demo08", agent_id: "soc-ops", title: "时间窗口误判治理 · 已发布", summary: "发布门禁已完成", source_feedback_refs: ["fb-1"], improvement_stage: "release", improvement_status: "done", created_at: ts, updated_at: ts },
 ];
 const internalTraceUrl = (traceId) => `http://langfuse-web:3000/project/agent-gov/traces/${traceId}`;
 const REGRESSION_CASES = [
@@ -78,8 +80,61 @@ const REGRESSION_CASES = [
     checkpoints: ["是否拒绝编造结论", "是否给出核验路径"],
   },
 ];
+
+function mockConversationItems(sessionId) {
+  const densityMatch = sessionId.match(/^density-check-(\d+)$/);
+  const turnCount = densityMatch ? Number(densityMatch[1]) : 36;
+  const repeatCount = turnCount <= 4 ? 18 : 2;
+  return Array.from({ length: turnCount }, (_, index) => {
+    const n = index + 1;
+    return [
+      {
+        id: `msg_${index * 2}`,
+        object: "conversation.item",
+        type: "message",
+        role: "user",
+        content: [{ type: "text", text: `请用一句话说明你的治理职责，序号 ${n}。` }],
+        parent_tool_use_id: null,
+      },
+      {
+        id: `msg_${index * 2 + 1}`,
+        object: "conversation.item",
+        type: "message",
+        role: "assistant",
+        content: [
+          { type: "text", text: `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证刻度密度。`.repeat(repeatCount) },
+          { type: "tool_use", id: `tool-${n}`, name: "Read", input: { file_path: "CLAUDE.md" } },
+        ],
+        parent_tool_use_id: null,
+      },
+    ];
+  }).flat();
+}
+
+function advanceMockImprovement(path, stage) {
+  const improvementId = decodeURIComponent(path.split("/")[3] || "");
+  const item = IMPROVEMENTS.find((row) => row.improvement_id === improvementId);
+  if (item) item.improvement_stage = stage;
+}
+
 function defaultPayload(path, request = {}) {
   if (path === "/health") return { status: "ok", model: "parity-mock" };
+  if (path === "/v1/conversations") return {
+    object: "list",
+    data: ["mock-session", "density-check-4"].map((sessionId) => ({
+      id: `conv_${sessionId}`,
+      object: "conversation",
+      created_at: Date.parse(ts) / 1000,
+      title: "Playground 历史验证",
+      metadata: {},
+      agentgov: { agent_id: "main-agent", sdk_session_id: sessionId, updated_at: Date.parse(ts) / 1000, turns: sessionId === "mock-session" ? 36 : 4 },
+    })),
+  };
+  const conversationItems = path.match(/^\/v1\/conversations\/conv_(.+)\/items$/);
+  if (conversationItems) {
+    const items = mockConversationItems(decodeURIComponent(conversationItems[1]));
+    return { object: "list", data: items, first_id: items[0]?.id || null, last_id: items.at(-1)?.id || null, has_more: false };
+  }
   if (path === "/api/agent-registry") return AGENTS;
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/sessions" || path === "/api/agent-releases") return [];
   if (
@@ -219,17 +274,17 @@ function defaultPayload(path, request = {}) {
     }
     return [{ feedback_id: "fb-1", improvement_id: "imp-demo01", agent_id: "soc-ops", summary: "这个告警其实是误报", source: "playground_run", status: "merged", raw_text: "", run_id: "run-1", session_id: "s-1", agent_version_id: "v1.2.0", scenario: "alert-triage", task_id: "task-1", alert_id: "alert-001", case_id: "case-001", created_at: ts }];
   }
-  if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "confirmed", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) { advanceMockImprovement(path, "triage"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "confirmed", created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) { if (request.method !== "GET") advanceMockImprovement(path, "triage"); return { normalized_feedback_id: "nf-1", improvement_id: "imp-demo01", problem: "告警误报", possible_reason: "事件时间与告警时间不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "生成归因分析", user_quote: "这个告警其实是误报", status: "draft", created_at: ts, updated_at: ts }; }
+  if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) { advanceMockImprovement(path, "attribution"); return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "confirmed", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/attribution$/.test(path)) return { attribution_id: "attr-1", improvement_id: "imp-demo01", summary: "MCP 数据时间不一致导致误判", responsibility_boundary: ["不是主 Agent 推理错误", "主要是外部 MCP 数据源质量问题"], evidence: ["list_events 返回的数据时间与告警时间窗口不一致"], status: "draft", generated_by: "governor", generation_trace_id: "trace-attr-demo", generation_trace_url: internalTraceUrl("trace-attr-demo"), created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/optimization-plan\/generate$/.test(path)) { advanceMockImprovement(path, "optimization"); return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增时间校验指令" }], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/optimization-plan$/.test(path)) return { optimization_plan_id: "opt-1", improvement_id: "imp-demo01", summary: "针对告警误报：补充时间一致性校验", changes: [{ target: "prompt", change: "新增事件时间与告警时间一致性校验指令" }], status: "confirmed", generated_by: "governor", created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/execution\/apply$/.test(path)) { advanceMockImprovement(path, "execution"); return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) return { execution_id: "exec-1", improvement_id: "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "confirmed", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
-  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
+  if (/^\/api\/improvements\/[^/]+\/regression-assessment\/generate$/.test(path)) { advanceMockImprovement(path, "regression"); return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts }; }
   if (/^\/api\/improvements\/[^/]+\/regression-assessment\/confirm$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "confirmed", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
   if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return { regression_assessment_id: "reg-1", improvement_id: "imp-demo01", summary: "治理 Agent 生成 3 条回归用例候选。", cases: REGRESSION_CASES, status: "draft", generated_by: "governor", generation_trace_id: "trace-reg-demo", generation_trace_url: internalTraceUrl("trace-reg-demo"), created_at: ts, updated_at: ts };
   const executionRecord = path.match(/^\/api\/improvements\/([^/]+)\/execution$/);
@@ -238,7 +293,6 @@ function defaultPayload(path, request = {}) {
     if (improvementId === "imp-demo06") return { __status: 404, detail: "not found" };
     return { execution_id: "exec-1", improvement_id: improvementId || "imp-demo01", summary: "已在隔离变更集应用并生成候选版本", changes_applied: ["append_text: CLAUDE.md"], agent_version: "ver-cand", status: "draft", generated_by: "governor", change_set_id: "agc-demo", applied_agent_version_id: "ver-cand", applied_diff: { changed_files: ["CLAUDE.md"] }, created_at: ts, updated_at: ts };
   }
-  if (/^\/api\/automation-policy/.test(path)) return { agent_id: "soc-ops", mode: "off" };
   const lifecycle = path.match(/^\/api\/improvements\/([^/]+)\/lifecycle$/);
   if (lifecycle) {
     const body = JSON.parse(request.postData || "{}");
@@ -262,7 +316,7 @@ async function waitForVite() { const d = Date.now() + 30000; while (Date.now() <
 // 整改基线（BASELINE 模式）：已落地阶段的规则必须保持全绿（防回归）；尚未落地阶段的规则可红。
 // 随 P1..P4 推进，把对应规则 id 加入此基线；真实容器验收用 RUNTIME_UI_BASE，目标是全量基线规则全绿。
 const BASELINE_RULES = new Set(
-  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-merged-into-test-stage,test-release-stage-panels,theme-governance-light,improvement-default-detail,decision-card-slim,four-stage-panels,closed-loop-spine,improvement-content,stage-detail-drawers,improvement-assets,asset-browse-first,attribution-actions,decision-card-product-action,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,optimization-action-semantics,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
+  (process.env.PARITY_BASELINE || "nav-converged,settings-ia,playground-clean,playground-action-semantics,playground-session-sidebar,playground-runtime-settings-drawer,message-actions,playground-scroll-navigation,trace-evidence-panel,panel-size-policy,feedback-drawer-2phase,context-4types,release-workbench-target-binding,release-merged-into-test-stage,test-release-stage-panels,theme-governance-light,improvement-default-detail,decision-card-slim,invalid-back-actions-hidden,four-stage-panels,closed-loop-spine,improvement-content,stage-detail-drawers,improvement-assets,asset-browse-first,attribution-actions,decision-card-product-action,source-feedback-table,detail-collapsed,full-chain,status-filter,merge-basis,trace-summary,optimization-execution,optimization-action-semantics,governance-generation-source,execution-version-binding,regression-governor").split(",").map((s) => s.trim()).filter(Boolean),
 );
 
 const has = async (page, testid) => (await page.getByTestId(testid).count()) > 0;
@@ -334,6 +388,42 @@ async function waitForObservedRequest(predicate, timeout = 8000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   return false;
+}
+
+async function renderReleaseWorkbenchHarness(page, changeSets) {
+  await page.evaluate(async (items) => {
+    const [ReactDOMClientModule, ReactModule, { ReleaseWorkbench }] = await Promise.all([
+      import("/node_modules/.vite/deps/react-dom_client.js"),
+      import("/node_modules/.vite/deps/react.js"),
+      import("/src/components/ReleaseWorkbench.tsx"),
+    ]);
+    const { createRoot } = ReactDOMClientModule.default;
+    const React = ReactModule.default;
+    let host = document.getElementById("release-workbench-behavior-host");
+    if (!host) {
+      host = document.createElement("div");
+      host.id = "release-workbench-behavior-host";
+      Object.assign(host.style, { position: "fixed", inset: "0", zIndex: "10000", background: "white", overflow: "auto" });
+      document.body.append(host);
+    }
+    window.__releaseWorkbenchBehaviorRoot ||= createRoot(host);
+    window.__releaseWorkbenchBehaviorRoot.render(React.createElement(ReleaseWorkbench, {
+      clientConfig: { apiBase: "http://runtime.test", apiKey: "" },
+      scopeAgentId: "soc-ops",
+      releases: [],
+      changeSets: items,
+      onRefresh: async () => {},
+    }));
+  }, changeSets);
+  await page.getByTestId("release-workbench").waitFor({ timeout: 8000 });
+}
+
+async function removeReleaseWorkbenchHarness(page) {
+  await page.evaluate(() => {
+    window.__releaseWorkbenchBehaviorRoot?.unmount();
+    delete window.__releaseWorkbenchBehaviorRoot;
+    document.getElementById("release-workbench-behavior-host")?.remove();
+  });
 }
 
 function authHeaders(extra = {}) {
@@ -604,7 +694,7 @@ const RULES = [
     const feedbackTopNav = await page.getByRole("button", { name: "反馈优化", exact: true }).count();
     return { ok: nav === 3 && asset && !release && feedbackTopNav === 0, detail: `topbar-nav=${nav} nav-asset=${asset} nav-release=${release} 反馈优化顶级=${feedbackTopNav}（期望 3/true/false/0）` };
   } },
-  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含侧栏导航、内容区和 业务Agent/自动化策略/Developer 分组", async fn(page) {
+  { id: "settings-ia", phase: "P0", desc: "Settings 使用宽幅工作台弹窗，含业务 Agent 与 Developer 分组，旧自动推进策略入口不存在", async fn(page) {
     await (page.getByTestId("open-settings").click().catch(() => page.getByRole("button", { name: "设置" }).first().click()));
     await page.getByTestId("settings-panel").waitFor({ timeout: 8000 });
     const box = await page.getByTestId("settings-panel").boundingBox();
@@ -613,7 +703,7 @@ const RULES = [
     const navigation = await visible(page, "settings-navigation");
     const content = await visible(page, "settings-content");
     const oldHorizontalTabs = await page.locator(".settings-tabs").count();
-    const tabs = ["agents", "automation", "developer"];
+    const tabs = ["agents", "developer"];
     const found = [];
     for (const tab of tabs) {
       await page.getByTestId(`settings-tab-${tab}`).click();
@@ -623,15 +713,14 @@ const RULES = [
     }
     await page.getByTestId("settings-tab-agents").click();
     const agentTable = await visible(page, "settings-agent-table");
-    await page.getByTestId("settings-tab-automation").click();
-    const modeGroup = await visible(page, "settings-automation-mode");
+    const obsoleteAutomation = await page.getByTestId("settings-tab-automation").count();
     await page.getByTestId("settings-tab-developer").click();
     const runtimeInput = await visible(page, "settings-api-base");
     // 关闭设置弹窗，避免 modal-backdrop 拦截后续规则的点击。
     await page.locator(".settings-footer").getByRole("button", { name: "关闭" }).click().catch(() => {});
     await page.getByTestId("settings-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && modeGroup && runtimeInput;
-    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} mode=${modeGroup} runtime=${runtimeInput}` };
+    const ok = wide && tall && navigation && content && oldHorizontalTabs === 0 && found.length === tabs.length && agentTable && obsoleteAutomation === 0 && runtimeInput;
+    return { ok, detail: `size=${Math.round(box?.width || 0)}x${Math.round(box?.height || 0)} nav=${navigation} content=${content} oldTabs=${oldHorizontalTabs} sections=${found.length}/${tabs.length} table=${agentTable} obsoleteAutomation=${obsoleteAutomation} runtime=${runtimeInput}` };
   } },
   { id: "playground-clean", phase: "P1", desc: "Playground 主区无旧 Subagent/Sessions/Skills 侧栏、无 Inspector、无常显 control-strip", async fn(page) {
     await page.getByTestId("nav-playground").click(); await page.waitForTimeout(400);
@@ -819,7 +908,7 @@ const RULES = [
       && noPanelMix;
     return { ok, detail: `initial=${initialDistance} jump=${jump} large=${previewItems}/${markCount}/${largeMetrics.railHeight}px gap=${largeMetrics.minGap}-${largeMetrics.maxGap} userOnly=${anchorRolesOk} few=${fewPreviewItems}/${fewMarkCount}/${fewMetrics.railHeight}px avgGap=${fewMetrics.avgGap} fewUserOnly=${fewRolesOk} center=${largeMetrics.centerDelta}/${fewMetrics.centerDelta} nearTop=${nearTop} final=${finalDistance} noPanelMix=${noPanelMix}` };
   } },
-  { id: "trace-evidence-panel", phase: "P0", desc: "查看 Trace 打开右侧运行证据 tab 面板，旧中心 modal/Trace 抽屉不再出现", async fn(page) {
+  { id: "trace-evidence-panel", phase: "P0", desc: "SDK transcript 历史的查看 Trace 打开右侧 block 证据面板，不伪造 Langfuse run 元数据", async fn(page) {
     await page.getByTestId("nav-playground").click();
     if (!(await has(page, "message-action-view-trace"))) return { ok: false, detail: "无 Trace 入口" };
     await page.getByTestId("message-action-view-trace").first().click();
@@ -829,12 +918,14 @@ const RULES = [
     const tabCount = await page.locator(".evidence-tab").count();
     const legacy = await page.locator(".detail-modal-card").isVisible().catch(() => false);
     const traceDrawer = await page.getByTestId("trace-drawer").count();
+    const panelText = await page.getByTestId("playground-evidence-panel").innerText().catch(() => "");
     const langfuse = await has(page, "trace-open-langfuse");
     const langfuseHref = await page.getByTestId("trace-open-langfuse").first().getAttribute("href").catch(() => "");
     const concreteTrace = (langfuseHref || "").includes("/project/agent-gov/traces/") && !(langfuseHref || "").includes("langfuse-web:3000");
     await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
     await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
-    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && langfuse && concreteTrace, detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} langfuse=${langfuse} href=${langfuseHref}` };
+    const sdkBlockEvidence = panelText.includes("tool_use") || panelText.includes("Read");
+    return { ok: panel && traceTab && tabCount === 1 && !legacy && traceDrawer === 0 && sdkBlockEvidence && (!langfuse || concreteTrace), detail: `panel=${panel} traceTab=${traceTab} tabCount=${tabCount} legacyModal=${legacy} traceDrawer=${traceDrawer} sdkBlocks=${sdkBlockEvidence} langfuse=${langfuse} href=${langfuseHref}` };
   } },
   { id: "panel-size-policy", phase: "P0", desc: "侧栏、tab 面板与抽屉按职责分档且打开后稳定", async fn(page) {
     await page.getByTestId("nav-playground").click();
@@ -916,6 +1007,81 @@ const RULES = [
     await page.getByTestId("context-drawer").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
     return { ok: drawerSize === "medium" && found.length === 4 && download && rich, detail: `size=${drawerSize} 类型 ${found.length}/4，下载=${download}，证据链JSON=${rich}` };
   } },
+  { id: "release-workbench-target-binding", phase: "P2", desc: "发布工作台两候选选择、普通发布/回归/强制发布目标绑定、确认目标冻结、来源门禁与发布错误均按选中候选呈现", async fn(page) {
+    if (REAL) return { ok: true, detail: "行为场景使用隔离 mock，真实容器验收不执行发布副作用" };
+    const base = {
+      agent_id: "soc-ops", created_at: ts, updated_at: ts, base_commit_sha: "base-demo",
+      branch_name: "agent-change/test", worktree_path: "/tmp/test", diff_summary: {},
+    };
+    const ready = [
+      { ...base, change_set_id: "agc-target-a", title: "候选 A", status: "candidate_committed", candidate_commit_sha: "candidate-a" },
+      {
+        ...base, change_set_id: "agc-target-b", title: "候选 B", status: "candidate_committed", candidate_commit_sha: "candidate-b",
+        source_improvement_id: "imp-b", source_attribution_id: "attr-b", source_attribution_status: "confirmed",
+        publication_error: { detail: "release metadata pending reconciliation", updated_at: ts },
+      },
+    ];
+    try {
+      await renderReleaseWorkbenchHarness(page, ready);
+      const targetB = page.getByTestId("release-changeset-item").filter({ hasText: "候选 B" }).first();
+      await targetB.click();
+      const boundGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
+      const errorVisible = await page.getByText("release metadata pending reconciliation", { exact: false }).first().isVisible().catch(() => false);
+
+      observedApiRequests.length = 0;
+      await page.getByTestId("release-action-run-regression").click();
+      const regressionBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/regression-runs");
+
+      observedApiRequests.length = 0;
+      await page.getByTestId("release-action-publish").click();
+      const publishBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
+      const normalPublish = observedApiRequests.find((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
+      const normalBody = JSON.parse(normalPublish?.postData || "{}");
+
+      await renderReleaseWorkbenchHarness(page, ready.map((item) => ({ ...item, status: "regression_failed" })));
+      await page.getByTestId("release-action-force").click();
+      await page.getByTestId("release-force-confirm").waitFor({ timeout: 5000 });
+      const frozenLabel = await page.getByTestId("release-force-confirm").innerText();
+      await page.getByTestId("release-changeset-item").filter({ hasText: "候选 A" }).first().evaluate((element) => element.click());
+      await page.waitForFunction(() => document.querySelector('[data-testid="release-changeset-details"]')?.textContent?.includes("候选 A"));
+      const manualGate = await page.getByTestId("release-gate-attribution").getAttribute("data-state");
+
+      observedApiRequests.length = 0;
+      await page.getByTestId("release-force-confirm-submit").click();
+      const forceBound = await waitForObservedRequest((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
+      const forcePublish = observedApiRequests.find((r) => r.path === "/api/agent-change-sets/agc-target-b/publish");
+      const forceBody = JSON.parse(forcePublish?.postData || "{}");
+      await page.getByTestId("release-force-confirm").waitFor({ state: "detached", timeout: 5000 });
+      await renderReleaseWorkbenchHarness(page, [{
+        ...ready[1],
+        publication_provenance_blocker: "改进执行尚未确认或执行来源不完整，请先确认执行结果",
+        publication_blocker: "改进执行尚未确认或执行来源不完整，请先确认执行结果",
+      }]);
+      const provenancePublishDisabled = await page.getByTestId("release-action-publish").isDisabled();
+      const provenanceForceDisabled = await page.getByTestId("release-action-force").isDisabled();
+      const provenanceOptimizationGate = await page.getByTestId("release-gate-optimization").getAttribute("data-state");
+      await renderReleaseWorkbenchHarness(page, [
+        { ...ready[0], status: "regression_running" },
+        { ...ready[1], change_set_id: "agc-rejected", title: "已拒绝候选", status: "rejected" },
+        { ...ready[1], change_set_id: "agc-failed", title: "失败候选", status: "failed" },
+      ]);
+      const runningRegressionDisabled = await page.getByTestId("release-action-run-regression").isDisabled();
+      const runningRegressionTitle = await page.getByTestId("release-action-run-regression").getAttribute("title");
+      const terminalCandidatesHidden = await page.getByText("已拒绝候选", { exact: true }).count() === 0
+        && await page.getByText("失败候选", { exact: true }).count() === 0;
+      const ok = boundGate === "pass" && manualGate === "not_applicable" && errorVisible
+        && regressionBound && publishBound && normalBody.force === false
+        && frozenLabel.includes("agc-target-b") && forceBound && forceBody.force === true
+        && provenancePublishDisabled && provenanceForceDisabled && provenanceOptimizationGate === "pending"
+        && runningRegressionDisabled && runningRegressionTitle === "无可运行回归的候选变更" && terminalCandidatesHidden;
+      return {
+        ok,
+        detail: `attribution=${boundGate}/manual=${manualGate} error=${errorVisible} regressionB=${regressionBound} publishB=${publishBound}/${normalBody.force} frozenB=${frozenLabel.includes("agc-target-b")} forceB=${forceBound}/${forceBody.force} provenanceDisabled=${provenancePublishDisabled}/${provenanceForceDisabled}/${provenanceOptimizationGate} runningDisabled=${runningRegressionDisabled}/${runningRegressionTitle} terminalHidden=${terminalCandidatesHidden}`,
+      };
+    } finally {
+      await removeReleaseWorkbenchHarness(page);
+    }
+  } },
   { id: "release-merged-into-test-stage", phase: "P2", desc: "旧发布顶级入口消失，发布门禁预览合入测试发布阶段", async fn(page) {
     const releaseNav = await has(page, "nav-release");
     const opened = await openImprovementById(page, stageTarget("testRelease", "imp-demo04"));
@@ -923,7 +1089,8 @@ const RULES = [
     const stage = await page.getByTestId("stage-work-area").getAttribute("data-visible-stage").catch(() => "");
     const gate = await has(page, "stage-panel-release-gate");
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
-    return { ok: !releaseNav && stage === "test_release" && gate && primary.includes("执行回归测试"), detail: `nav-release=${releaseNav} stage=${stage} gate=${gate} primary=${primary}` };
+    const actionMatches = primary.includes("生成回归方案") && !primary.includes("执行回归测试");
+    return { ok: !releaseNav && stage === "test_release" && gate && actionMatches, detail: `nav-release=${releaseNav} stage=${stage} gate=${gate} primary=${primary}` };
   } },
   { id: "test-release-stage-panels", phase: "P1", desc: "测试发布阶段含测试数据集、回归执行、测试用例详情、执行环境和门禁预览五个面板", async fn(page) {
     const opened = await openImprovementById(page, stageTarget("testRelease", "imp-demo04"));
@@ -974,6 +1141,27 @@ const RULES = [
       ok: forbidden.length === 0 && primaryCount === 1 && contextOutside && kicker.includes("请确认") && compactHeight,
       detail: `forbidden=${forbidden.join(",") || "none"} primary=${primaryCount} contextOutside=${contextOutside} kicker=${kicker} height=${box?.height ?? "na"}`,
     };
+  } },
+  { id: "invalid-back-actions-hidden", phase: "P1", desc: "execution/release 不展示状态机拒绝的返回动作，regression 合法返工入口保留", async fn(page) {
+    if (!(await openImprovementById(page, "imp-demo07"))) return { ok: false, detail: "无法打开 execution 事项" };
+    const executionBack = await page.getByTestId("decision-back-action").count();
+    const executionText = await page.getByTestId("current-decision-card").innerText().catch(() => "");
+    if (!(await openImprovementById(page, "imp-demo08"))) return { ok: false, detail: "无法打开 release 事项" };
+    const releaseBack = await page.getByTestId("decision-back-action").count();
+    const releaseText = await page.getByTestId("current-decision-card").innerText().catch(() => "");
+    if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无法打开 regression 事项" };
+    const regressionBack = page.getByTestId("decision-back-action");
+    const regressionBackCount = await regressionBack.count();
+    const regressionAction = await regressionBack.getAttribute("data-action").catch(() => "");
+    const obsoleteAutoAdvance = await page.getByTestId("auto-advance").count();
+    const ok = executionBack === 0
+      && releaseBack === 0
+      && !executionText.includes("返回归因分析")
+      && !releaseText.includes("返回优化执行")
+      && regressionBackCount === 1
+      && regressionAction === "execution"
+      && obsoleteAutoAdvance === 0;
+    return { ok, detail: `execution=${executionBack} release=${releaseBack} regression=${regressionBackCount}:${regressionAction} autoAdvance=${obsoleteAutoAdvance}` };
   } },
   { id: "four-stage-panels", phase: "P1", desc: "四个内部阶段样例分别映射到四阶段工作面板", async fn(page) {
     const expectations = [
@@ -1084,12 +1272,13 @@ const RULES = [
     const steps = await page.getByTestId("full-chain-step").count();
     return { ok: fc && steps === 4, detail: `完整链路=${fc} 阶段数=${steps}` };
   } },
-  { id: "detail-collapsed", phase: "P2", desc: "改进详情收纳：自动化/相似/链接进「高级」折叠，默认不在主区可见", async fn(page) {
+  { id: "detail-collapsed", phase: "P2", desc: "改进详情收纳：相似归并/关联对象进「高级」折叠，旧自动化策略入口不存在", async fn(page) {
     if (!(await openAuditImprovement(page))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("improvement-advanced").waitFor({ timeout: 6000 }).catch(() => {});
     const advanced = await has(page, "improvement-advanced");
-    const autoVisible = await visible(page, "automation-mode");
-    return { ok: advanced && !autoVisible, detail: `高级折叠=${advanced} 自动化默认隐藏=${!autoVisible}` };
+    const obsoleteAutomation = await page.getByTestId("automation-mode").count();
+    const obsoleteCopy = await page.getByText("自动化策略", { exact: false }).count();
+    return { ok: advanced && obsoleteAutomation === 0 && obsoleteCopy === 0, detail: `高级折叠=${advanced} 旧控件=${obsoleteAutomation} 旧文案=${obsoleteCopy}` };
   } },
   { id: "source-feedback-table", phase: "P3", desc: "来源反馈表(§8.4 #/反馈摘要/来源/状态) 进入来源管理抽屉，支持行级详情与 ref-only 缺记录提示", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("duplicate", "imp-demo05")))) return { ok: false, detail: "无重复反馈事项" };
@@ -1175,18 +1364,18 @@ const RULES = [
     const planAlreadyConfirmed = decisionText.includes("方案已确认");
     const lifecycle = reqs.some((r) => r.includes("/lifecycle"));
     return {
-      ok: primaryLabel.includes("执行优化") && primaryAction === "apply-execution" && decisionRegen === 1 && stageRegen === 0 && !legacyAutoExecute && sawApply && (confirmedPlan || planAlreadyConfirmed) && lifecycle,
+      ok: primaryLabel.includes("执行优化") && primaryAction === "apply-execution" && decisionRegen === 1 && stageRegen === 0 && !legacyAutoExecute && sawApply && (confirmedPlan || planAlreadyConfirmed) && !lifecycle,
       detail: `primary=${primaryLabel}/${primaryAction} decisionRegen=${decisionRegen} stageRegen=${stageRegen} legacyAuto=${legacyAutoExecute} apply=${sawApply} confirmPlan=${confirmedPlan} planAlreadyConfirmed=${planAlreadyConfirmed} lifecycle=${lifecycle}`,
     };
   } },
-  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重跑入口由决策卡承载，候选用例归属测试用例详情卡", async fn(page) {
+  { id: "regression-governor", phase: "P3", desc: "§11/§17.5 回归保障：生成/重新生成方案入口由决策卡承载，候选用例归属测试用例详情卡", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("testRelease", "imp-demo04")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("regression-guarantee").waitFor({ timeout: 6000 }).catch(() => {});
     const primary = await page.getByTestId("primary-action").innerText().catch(() => "");
     const duplicateGenerate = await page.getByTestId("test-dataset-asset").getByTestId("generate-regression").count();
     const sediment = await has(page, "sediment-assets");
     const coverage = await has(page, "regression-case-coverage");
-    const primaryOk = primary.includes("执行回归测试");
+    const primaryOk = primary.includes("重新生成回归方案") && !primary.includes("执行回归测试");
     return {
       ok: primaryOk && duplicateGenerate === 0 && (coverage || sediment),
       detail: `决策卡=${primary} duplicate_generate=${duplicateGenerate} 覆盖场景=${coverage} 沉淀=${sediment}`,
@@ -1221,7 +1410,7 @@ const RULES = [
     const regen = await has(page, "regenerate-attribution");
     return { ok: edit && regen, detail: `修改=${edit} 重新整理=${regen}` };
   } },
-  { id: "decision-card-product-action", phase: "P1", desc: "决策卡主按钮必须调用业务产物 API，/lifecycle 只能作为副作用", async fn(page) {
+  { id: "decision-card-product-action", phase: "P1", desc: "决策卡主按钮调用业务产物 API，前端不得用 /lifecycle 前推", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("feedback", "imp-demo01")))) return { ok: false, detail: "无反馈整理事项" };
     await page.getByTestId("primary-action").waitFor({ timeout: 6000 }).catch(() => {});
     const feedbackLabel = await page.getByTestId("primary-action").innerText().catch(() => "");
@@ -1249,12 +1438,12 @@ const RULES = [
     const ok = feedbackLabel.includes("生成归因分析")
       && feedbackAction === "generate-attribution"
       && feedbackGenerate
-      && feedbackLifecycle
+      && !feedbackLifecycle
       && feedbackConfirm
       && attributionLabel.includes("生成优化方案")
       && attributionAction === "generate-optimization-plan"
       && attributionGenerate
-      && attributionLifecycle
+      && !attributionLifecycle
       && attributionConfirm;
     return {
       ok,
@@ -1318,39 +1507,8 @@ async function main() {
     await page.addInitScript(([base, key, real]) => {
       window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: base, apiKey: key }));
       if (window.sessionStorage.getItem("parity-preserve-playground-session") === "1") return;
-
-      const sessionId = real ? "real-container-parity-session" : "mock-session";
-      const runId = real ? "run-trace-real-container" : "run-trace-mock";
-      const agentVersionId = real ? "v-real-container-parity" : "v-mock";
-      const playgroundMessages = Array.from({ length: 36 }, (_, index) => {
-        const n = index + 1;
-        const createdAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000).toISOString();
-        const completedAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000 + 1000).toISOString();
-        const answer = `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证自动置底、一键置底和消息预览导航。`.repeat(2);
-        return [
-          { id: `msg-user-${n}`, role: "user", content: `请用一句话说明你的治理职责，序号 ${n}。`, createdAt },
-          {
-            id: `msg-assistant-${n}`,
-            role: "assistant",
-            content: answer,
-            createdAt: completedAt,
-            runId: `${runId}-${n}`,
-            sessionId,
-            agentVersionId,
-            langfuseTraceId: `${runId}-trace-${n}`,
-            langfuseTraceUrl: `http://langfuse-web:3000/project/agent-gov/traces/${runId}-trace-${n}`,
-            events: [
-              { id: `evt-${n}-1`, event: "message", text: "开始治理分析。", data: { text: "开始治理分析。" }, createdAt },
-              { id: `evt-${n}-2`, event: "tool", data: { type: "tool_use", name: "Read", id: `tool-${n}`, input: { file_path: "CLAUDE.md" } }, createdAt: completedAt },
-              { id: `evt-${n}-3`, event: "result", data: { run_id: `${runId}-${n}`, session_id: sessionId, agent_version_id: agentVersionId, agent_activity: { requested_skills: ["project-skill"], allowed_tools: ["Read"], disallowed_tools: [], tool_names: ["Read"], tool_calls: [{ name: "Read", tool_use_id: `tool-${n}` }], tool_results: [{ name: "Read", tool_use_id: `tool-${n}`, content: "ok" }], skill_calls: [] } }, createdAt: completedAt },
-            ],
-          },
-        ];
-      }).flat();
-      window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
-      window.localStorage.setItem("playground-session-messages", JSON.stringify({
-        [sessionId]: playgroundMessages,
-      }));
+      if (real) window.localStorage.removeItem("playground-active-session");
+      else window.localStorage.setItem("playground-active-session", JSON.stringify("mock-session"));
     }, [apiBase, apiKey, REAL]);
     if (!REAL) {
       await page.route("**/*", async (route) => {

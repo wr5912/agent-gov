@@ -12,10 +12,9 @@ from pathlib import Path
 
 import app.routers.sessions as sessions_mod
 import pytest
-from app.runtime.errors import NotFoundError
+from app.runtime.errors import NotFoundError, SessionConflictError
 from app.runtime.session_history import _scrub_message, normalize_message, read_session_history
 from app.runtime.session_store import LocalSession
-from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from test_api_execution_optimizer import _load_app
@@ -232,18 +231,16 @@ def test_resolve_owning_profile_unknown_business_agent_raises_404() -> None:
         sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({}), LocalSession(session_id="x", agent_id="ghost"))
 
 
-def test_resolve_owning_profile_missing_agent_id_is_integrity_500() -> None:
-    with pytest.raises(HTTPException) as exc:
+def test_resolve_owning_profile_missing_agent_id_is_session_conflict() -> None:
+    with pytest.raises(SessionConflictError):
         sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({}), LocalSession(session_id="x", agent_id=None))
-    assert exc.value.status_code == 500
 
 
 def test_resolve_owning_profile_ignores_client_metadata_agent_id() -> None:
     # backend-owned：session.agent_id 缺失即整改性报错；客户端 metadata.agent_id 不被采信、不能改写归属
     session = LocalSession(session_id="x", agent_id=None, metadata={"agent_id": "attacker"})
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(SessionConflictError):
         sessions_mod._resolve_owning_profile(_StubSettings(), _FakeRegistry({"attacker": "/x"}), session)
-    assert exc.value.status_code == 500  # 不会路由到 metadata 里的 attacker
 
 
 def test_endpoint_unknown_owning_agent_404(monkeypatch, tmp_path: Path) -> None:
@@ -253,12 +250,14 @@ def test_endpoint_unknown_owning_agent_404(monkeypatch, tmp_path: Path) -> None:
         assert client.get("/api/sessions/sg/messages").status_code == 404
 
 
-def test_endpoint_missing_owning_agent_is_integrity_500(monkeypatch, tmp_path: Path) -> None:
+def test_endpoint_missing_owning_agent_is_session_conflict_409(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     # transcript 存在（sdk_session_id 有值）但没记 owning agent —— 数据完整性异常，必须报错不静默兜底
     module.session_store.save(LocalSession(session_id="sx", sdk_session_id="sdk-x", agent_id=None))
-    with TestClient(module.app, raise_server_exceptions=False) as client:
-        assert client.get("/api/sessions/sx/messages").status_code == 500
+    with TestClient(module.app) as client:
+        response = client.get("/api/sessions/sx/messages")
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "SESSION_CONFLICT"
 
 
 def test_endpoint_routes_registered_business_agent(monkeypatch, tmp_path: Path) -> None:

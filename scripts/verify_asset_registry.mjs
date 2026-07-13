@@ -78,7 +78,6 @@ function defaultPayload(path) {
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
-  if (path.startsWith("/api/automation-policy")) return { agent_id: "soc-ops", mode: "off" };
   return {};
 }
 

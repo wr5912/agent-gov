@@ -1,15 +1,26 @@
 # .claude 分层说明
 
-本目录保存团队通用 Claude Code 项目配置。复制到其他项目时，通用层只承载团队统一工作方式、环境硬约束和可迁移治理规则；项目专属路径、脚本、CI、base-ref 策略、端口、运行态数据路径和产品不变量放在目标项目自己的 `CLAUDE.project.md`。
+本目录保存 Claude Code 项目配置。通用规则只承载团队统一工作方式、环境硬约束和可迁移治理规则；项目专属路径、脚本、CI、base-ref 策略、端口、运行态数据路径和产品不变量放在目标项目 `.claude/rules/<project>.md`，确保从仓库子目录启动时也会加载。
 
-## 默认模板内容
+## 项目共享内容
 
-- `settings.json`: 可提交的 Claude Code 项目级设置，默认只放安全共享限制。
+- `settings.json`: 可提交的 Claude Code 项目级设置；当前对内建 Read 工具限制私有 env 读取、
+  要求 env 写入确认，并在 SessionStart 注入语言约束、在 Stop 运行项目治理硬门。
+  Read deny 不约束 Bash/Python 子进程，不应表述为 OS 安全边界；严格隔离需另行启用
+  Claude sandbox 或组织级 managed policy。
 - `rules/project.md`: 通用工作流和执行顺序。
 - `rules/architecture.md`: 通用架构卫生阈值。
 - `rules/verify.md`: 通用验证要求。
+- `rules/agentgov-project.md`: AgentGov 项目专属红线、治理入口和运行边界。
 - `skills/project-skill/SKILL.md`: 团队开发通用技能。
 - `agents/project-worker.md`: 可选项目 worker 子代理。
+
+## 启动边界
+
+当前 Claude Code 2.1.206 从仓库子目录启动时不会向上加载根 `.claude/settings.json`，
+因此项目权限规则与 Stop hook 会缺失。需要项目硬门的开发会话统一通过
+`python3 scripts/run_claude.py` 启动；该 launcher 会先切到仓库根，再原样传递 CLI 参数。
+项目专属模型约束放在 `rules/agentgov-project.md`，根目录和子目录启动均能发现。
 
 ## 本仓库专项技能镜像
 
@@ -25,7 +36,7 @@
 
 ## 复用要求
 
-- 新项目应重新填写自己的 `CLAUDE.project.md`。
+- 新项目应删除 `rules/agentgov-project.md`，并创建自己的项目规则文件。
 - 默认模板不得硬编码项目私有脚本名、CI workflow、端口、volume 路径、API key 名称或产品不变量。
-- Hook 默认不配置；只有目标项目已经提供稳定、无交互、可重复运行的治理命令时，才在目标项目 `.claude/settings.json` 中启用。
+- 复制到新项目时必须删除本仓库 Stop hook，再由目标项目用自己的稳定、无交互、可重复命令重新配置。
 - 个人偏好、本机路径、私有 MCP server 和真实凭据不得进入本目录。

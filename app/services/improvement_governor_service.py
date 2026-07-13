@@ -158,7 +158,12 @@ class ImprovementGovernorService:
         self._find_run_by_id = find_run_by_id
 
     # ---- 系统理解 NormalizedFeedback（只整理反馈：一次 DSPy formatter，无 governor）----
-    async def generate_normalized_feedback(self, improvement_id: str) -> NormalizedFeedbackRecord:
+    async def generate_normalized_feedback(
+        self,
+        improvement_id: str,
+        *,
+        advance_to_stage: str | None = None,
+    ) -> NormalizedFeedbackRecord:
         item = self._improvements.get_improvement(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
         existing = self._content.get_normalized_feedback(improvement_id)
@@ -178,6 +183,7 @@ class ImprovementGovernorService:
                     exc.__class__.__name__,
                 )
         user_quote = (getattr(feedbacks[0], "raw_text", "") if feedbacks else "") or (getattr(existing, "user_quote", "") if existing else "")
+        item_title = self._generated_title_update(item, feedbacks, title)
         record = self._content.upsert_normalized_feedback(
             improvement_id,
             problem=problem,
@@ -188,8 +194,9 @@ class ImprovementGovernorService:
             suggestion=getattr(existing, "suggestion", "") if existing else "",
             user_quote=user_quote,
             generated_by=generated_by,
+            advance_to_stage=advance_to_stage,
+            item_title=item_title,
         )
-        self._backfill_title(item, feedbacks, title)
         return record
 
     @staticmethod
@@ -204,20 +211,24 @@ class ImprovementGovernorService:
         title = getattr(item, "title", "") or problem
         return title, problem, "heuristic"
 
-    def _backfill_title(self, item: Any, feedbacks: list[Any], title: str) -> None:
-        """把整理生成的简洁 title 回填到 improvement.title——仅当现 title 仍是自动截断态（空或原文前缀），不覆盖用户手改。"""
+    @staticmethod
+    def _generated_title_update(item: Any, feedbacks: list[Any], title: str) -> str | None:
+        """Return a generated title only when the current value is still an automatic prefix."""
         new_title = _text(title)
-        improvement_id = getattr(item, "improvement_id", "")
-        if not new_title or not improvement_id:
-            return
+        if not new_title or not getattr(item, "improvement_id", ""):
+            return None
         current = _text(getattr(item, "title", ""))
         raw = getattr(feedbacks[0], "raw_text", "") if feedbacks else ""
         is_auto = (not current) or (bool(raw) and raw.startswith(current))
-        if is_auto and new_title != current:
-            self._improvements.update_title(improvement_id, title=new_title)
+        return new_title if is_auto and new_title != current else None
 
     # ---- 归因 ----
-    async def generate_attribution(self, improvement_id: str) -> AttributionRecord:
+    async def generate_attribution(
+        self,
+        improvement_id: str,
+        *,
+        advance_to_stage: str | None = None,
+    ) -> AttributionRecord:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
@@ -268,10 +279,16 @@ class ImprovementGovernorService:
             generated_by=generated_by,
             generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
             generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
+            advance_to_stage=advance_to_stage,
         )
 
     # ---- 优化方案 ----
-    async def generate_optimization_plan(self, improvement_id: str) -> OptimizationPlanRecord:
+    async def generate_optimization_plan(
+        self,
+        improvement_id: str,
+        *,
+        advance_to_stage: str | None = None,
+    ) -> OptimizationPlanRecord:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         attr = self._content.get_attribution(improvement_id)
@@ -311,10 +328,16 @@ class ImprovementGovernorService:
             generated_by=generated_by,
             generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
             generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
+            advance_to_stage=advance_to_stage,
         )
 
     # ---- 回归保障评估（§11/§17.5）----
-    async def generate_regression_assessment(self, improvement_id: str) -> RegressionAssessmentRecord:
+    async def generate_regression_assessment(
+        self,
+        improvement_id: str,
+        *,
+        advance_to_stage: str | None = None,
+    ) -> RegressionAssessmentRecord:
         item = self._improvements.get_improvement(improvement_id)
         nf = self._content.get_normalized_feedback(improvement_id)
         feedbacks = self._content.list_feedbacks(improvement_id)
@@ -358,6 +381,7 @@ class ImprovementGovernorService:
             generated_by=generated_by,
             generation_trace_id=trace_ref.get("trace_id", "") if generated_by == "governor" else "",
             generation_trace_url=trace_ref.get("trace_url", "") if generated_by == "governor" else "",
+            advance_to_stage=advance_to_stage,
         )
 
     def _regression_source_cases(self, feedbacks: list[Any]) -> list[RegressionSourceCase]:
@@ -399,18 +423,13 @@ class ImprovementGovernorService:
         attribution_output = self._regression_attribution_context(attr)
         optimization_plan = self._regression_plan_context(plan)
         return {
-            "feedback_cases": [
-                self._regression_feedback_case_context(case, attribution_output, optimization_plan)
-                for case in source_cases
-            ],
+            "feedback_cases": [self._regression_feedback_case_context(case, attribution_output, optimization_plan) for case in source_cases],
             "source_refs": [{"source_kind": "improvement", "source_id": getattr(item, "improvement_id", "")}],
             "existing_eval_cases": [],
         }
 
     @staticmethod
-    def _regression_feedback_case_context(
-        case: RegressionSourceCase, attribution_output: JsonObject, optimization_plan: JsonObject
-    ) -> JsonObject:
+    def _regression_feedback_case_context(case: RegressionSourceCase, attribution_output: JsonObject, optimization_plan: JsonObject) -> JsonObject:
         refs = [{"source_kind": "improvement_feedback", "source_id": case["feedback_id"]}]
         if case["run_id"]:
             refs.append({"source_kind": "agent_run", "source_id": case["run_id"]})
@@ -480,9 +499,7 @@ class ImprovementGovernorService:
         return new_summary, mapped, new_thresholds
 
     @staticmethod
-    def _heuristic_regression(
-        nf: Any, source_cases: list[RegressionSourceCase]
-    ) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
+    def _heuristic_regression(nf: Any, source_cases: list[RegressionSourceCase]) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
         problem = getattr(nf, "problem", "") if nf else "反馈问题"
         cases = [
             RegressionCaseItem(

@@ -10,7 +10,6 @@ export function ImprovementPlanExecution({
   attribution,
   readOnly = false,
   onGenerateOpt,
-  onRecordExec,
   showPlan = true,
   showExecution = true,
   showPlanRegenerate = false,
@@ -22,7 +21,6 @@ export function ImprovementPlanExecution({
   attribution: Attribution | null;
   readOnly?: boolean;
   onGenerateOpt: () => void;
-  onRecordExec: () => void;
   showPlan?: boolean;
   showExecution?: boolean;
   showPlanRegenerate?: boolean;
@@ -72,10 +70,7 @@ export function ImprovementPlanExecution({
       ) : showExecution && !archived && !readOnly && optPlan ? (
         <div className="iw-detail-section" data-testid="execution-empty">
           <h4>执行记录</h4>
-          <div className="iw-next-step">请使用上方主按钮执行优化；需要人工补录时可记录执行结果。</div>
-          <div className="iw-action-row">
-            <button className="iw-secondary-button" type="button" data-testid="record-execution" disabled={busy} onClick={onRecordExec}>人工记录执行</button>
-          </div>
+          <div className="iw-next-step">请使用上方主按钮执行优化并生成可验证的候选版本。</div>
         </div>
       ) : null}
     </>

@@ -138,6 +138,30 @@ function mockAgentRuns(includeMessages) {
   });
 }
 
+function mockConversationItems() {
+  return mockAgentRuns(false).flatMap((run, index) => [
+    {
+      id: `msg_${index * 2}`,
+      object: "conversation.item",
+      type: "message",
+      role: "user",
+      content: [{ type: "text", text: run.message }],
+      parent_tool_use_id: null,
+    },
+    {
+      id: `msg_${index * 2 + 1}`,
+      object: "conversation.item",
+      type: "message",
+      role: "assistant",
+      content: [
+        { type: "text", text: run.answer_summary },
+        { type: "tool_use", id: `tool-${index + 1}`, name: "Read", input: { file_path: "CLAUDE.md" } },
+      ],
+      parent_tool_use_id: null,
+    },
+  ]);
+}
+
 function mockPayload(urlOrPath) {
   const url = typeof urlOrPath === "string" ? null : urlOrPath;
   const path = typeof urlOrPath === "string" ? urlOrPath : urlOrPath.pathname;
@@ -155,6 +179,8 @@ function mockPayload(urlOrPath) {
               agent_id: "main-agent",
               updated_at: Date.parse("2026-06-18T00:00:30Z") / 1000,
               turns: 14,
+              active_run_id: "mock-active-run",
+              active_run_expires_at: "2099-01-01T00:00:00Z",
             },
           }],
         }
@@ -171,6 +197,18 @@ function mockPayload(urlOrPath) {
   if (path === "/api/agent-runs") {
     const includeMessages = url?.searchParams.get("include_messages") === "true";
     return mockAgentRuns(includeMessages);
+  }
+  if (/^\/v1\/conversations\/[^/]+\/items$/.test(path)) {
+    const allItems = mockConversationItems();
+    const after = url?.searchParams.get("after");
+    const items = after ? allItems.slice(14) : allItems.slice(0, 14);
+    return {
+      object: "list",
+      data: items,
+      first_id: items[0]?.id || null,
+      last_id: items.at(-1)?.id || null,
+      has_more: !after,
+    };
   }
   if (path === "/api/agents" || path === "/api/skills" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
   if (path === "/api/config") return { mappings: [] };
@@ -205,8 +243,8 @@ async function waitPreviewOpen(page) {
 }
 
 async function mockMarkdownChecks(page) {
-  const userMarkdown = page.locator('[data-message-id="history_mock-run-1_user"]').getByTestId("message-markdown");
-  const assistantMarkdown = page.locator('[data-message-id="history_mock-run-1_assistant"]').getByTestId("message-markdown");
+  const userMarkdown = page.locator('[data-message-id="history_msg_0_user"]').getByTestId("message-markdown");
+  const assistantMarkdown = page.locator('[data-message-id="history_msg_0_assistant"]').getByTestId("message-markdown");
   const userLink = userMarkdown.locator("a").filter({ hasText: "OKF" });
   const assistantLink = assistantMarkdown.locator("a").filter({ hasText: "查看治理入口" });
   const userText = await userMarkdown.innerText();
@@ -233,6 +271,7 @@ async function main() {
   if (!REAL) await waitForVite();
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 980 } });
+  const requestedRuntimeUrls = [];
   await page.addInitScript(([a, k, real]) => {
     window.localStorage.setItem("runtime-client-config", JSON.stringify({ apiBase: a, apiKey: k }));
     if (!real) {
@@ -246,13 +285,22 @@ async function main() {
       await page.route("**/*", async (route) => {
         const url = new URL(route.request().url());
         if (url.hostname !== "runtime.test") return route.continue();
+        requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
         if (url.pathname === "/v1/responses") {
           const body = route.request().postDataJSON();
           const sessionId = sessionIdFromResponsesBody(body);
+          if (body?.input === "触发截断流负测") {
+            return sse(route, [
+              { event: "agentgov.session", data: { session_id: sessionId } },
+              { event: "response.output_text.delta", data: { delta: "半截响应" } },
+              { event: "agentgov.done", data: { ok: true } },
+            ]);
+          }
           return sse(route, [
             { event: "agentgov.session", data: { session_id: sessionId } },
             { event: "response.output_text.delta", data: { delta: "我是 AgentGov 测试助手。" } },
             { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
+            { event: "response.completed", data: { response: { status: "completed" } } },
             { event: "agentgov.done", data: { ok: true } },
           ]);
         }
@@ -347,6 +395,9 @@ async function main() {
         await page.getByTestId("playground-session-sidebar").waitFor({ timeout: 8000 });
         const sessionBox = await page.getByTestId("playground-session-sidebar").boundingBox();
         const sessionText = await page.getByTestId("playground-session-sidebar").innerText();
+        const activeSessionDeleteDisabled = REAL
+          ? true
+          : await page.getByTestId("session-sidebar-delete").first().isDisabled();
         await page.getByTestId("playground-session-trigger").click();
         await page.getByTestId("playground-session-sidebar").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
 
@@ -398,11 +449,18 @@ async function main() {
           settingsWidth: Math.round(settingsBox?.width || 0),
           legacyModalVisible,
           sessionNoRuntimeSettings: !sessionText.includes("Subagent") && !sessionText.includes("Skills Mode") && !sessionText.includes("Allowed Tools"),
+          activeSessionDeleteDisabled,
           settingsNoSessionHistory: !settingsText.includes("新会话") && !settingsText.includes("删除会话映射") && !settingsText.includes("Sessions"),
           debugClosed,
           markdownChecks,
           scrollChecks,
           autoPanelChecks,
+          historySourceChecks: {
+            conversationItemsRequested: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?")),
+            conversationItemsPaginated: requestedRuntimeUrls.some((value) => value.startsWith("/v1/conversations/conv_mock-session/items?") && value.includes("after=msg_13")),
+            sqliteMessageRestoreAbsent: !requestedRuntimeUrls.some((value) => value.startsWith("/api/agent-runs?") && value.includes("include_messages=true")),
+            localMessageCacheAbsent: await page.evaluate(() => window.localStorage.getItem("playground-session-messages") === null),
+          },
         };
         ok = Object.values(counts).every((c) => c > 0)
           && (traceBox?.width || 0) >= 520
@@ -420,9 +478,16 @@ async function main() {
           && settingsSize === "wide"
           && (settingsBox?.width || 0) >= 860
           && drawerChecks.sessionNoRuntimeSettings
+          && drawerChecks.activeSessionDeleteDisabled
           && drawerChecks.settingsNoSessionHistory
           && debugClosed
           && !legacyModalVisible
+          && (REAL || (
+            drawerChecks.historySourceChecks.conversationItemsRequested
+            && drawerChecks.historySourceChecks.conversationItemsPaginated
+            && drawerChecks.historySourceChecks.sqliteMessageRestoreAbsent
+            && drawerChecks.historySourceChecks.localMessageCacheAbsent
+          ))
           && (REAL || (
             !markdownChecks.skipped
             && markdownChecks.markdownContainerCount >= 28
@@ -463,6 +528,22 @@ async function main() {
           ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });
+        if (ok && !REAL) {
+          await page.locator(".composer textarea").fill("触发截断流负测");
+          await page.getByRole("button", { name: "发送" }).click();
+          await page.waitForFunction(() => {
+            const messages = document.querySelectorAll('[data-message-role="assistant"]');
+            return messages[messages.length - 1]?.textContent?.includes("Stream ended before terminal event");
+          }, undefined, { timeout: 8000 });
+          const terminalFailureText = await page.locator('[data-message-role="assistant"]').last().innerText();
+          const terminalFailureCheck = {
+            partialTextPreserved: terminalFailureText.includes("半截响应"),
+            interruptionVisible: terminalFailureText.includes("运行失败")
+              && terminalFailureText.includes("Stream ended before terminal event"),
+          };
+          ok = ok && terminalFailureCheck.partialTextPreserved && terminalFailureCheck.interruptionVisible;
+          detail = JSON.stringify({ counts, drawerChecks, terminalFailureCheck });
+        }
       } catch (e) {
         detail = `attempt ${attempt}: ${e instanceof Error ? e.message.slice(0, 80) : e}`;
         console.error("retry:", detail);

@@ -20,49 +20,28 @@ from .agent_profiles import (
     build_profiles,
     candidate_profile,
 )
+from .async_iterators import close_async_iterator
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
-from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
+from .records.source_records import AgentRunRecord
 from .runtime_activity import RuntimeActivityExtractor
 from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
 from .sdk_session_errors import is_missing_sdk_session_error
 from .session_store import LocalSession, LocalSessionStore
+from .session_turn_lease import SessionTurnLeaseHeartbeat
 from .settings import AppSettings
 from .stores.feedback_store import FeedbackStore
 
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
-
-
-def _non_stream_hitl_deny_callback(profile_name: str) -> Any:
-    """非流式 run() 下，requires_web_hitl 的 Agent 对真正需要 HITL 的工具明确 deny。
-
-    非流式无 SSE/HITL 面，故不发事件、不等待人审；deny 让高危工具在无审批的非交互路径
-    fail-loud（取代 bypassPermissions 的静默放行）。不需要 HITL 的工具直行。
-    """
-    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
-
-    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(profile_name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(profile_name, tool_name):
-            return PermissionResultAllow()
-        return PermissionResultDeny(
-            message=(
-                f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启且非流式无人审面："
-                f"业务 Agent {profile_name} 的响应处置执行请改用流式 + 开启 HITL，或先做 dry-run。"
-            )
-        )
-
-    return deny
 
 
 def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
@@ -185,8 +164,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         )
 
     def _clear_stale_sdk_session(self, context: RuntimeRequestContext) -> None:
-        context.session.sdk_session_id = None
-        self.session_store.save(context.session)
+        context.session = self.session_store.clear_sdk_session(
+            context.session,
+            agent_id=context.agent_id,
+            run_id=context.run_id,
+        )
 
     def _request_telemetry_input(
         self,
@@ -255,7 +237,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "errors": errors,
         }
 
-    def _record_feedback_run(
+    def _feedback_run_record(
         self,
         *,
         run_id: str,
@@ -275,11 +257,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         completed_at: str,
         langfuse_trace_id: Optional[str] = None,
         langfuse_trace_url: Optional[str] = None,
-    ) -> None:
+    ) -> AgentRunRecord | None:
         if self.feedback_store is None:
-            return
+            return None
         answer_summary = answer.strip().replace("\n", " ")[:500]
-        self.feedback_store.record_run(
+        return self.feedback_store.prepare_run_record(
             {
                 "run_id": run_id,
                 "agent_id": agent_id,
@@ -462,8 +444,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE
     ) -> RuntimeRequestContext:
         self._raise_if_version_maintenance()
-        session = self.session_store.get_or_create(req.session_id, metadata=req.metadata)
         run_id = str(uuid.uuid4())
+        session = self.session_store.get_or_create_owned(req.session_id, agent_id=agent_id, metadata=req.metadata)
+        session = self.session_store.claim_turn(session, run_id=run_id, agent_id=agent_id)
         agent_version_id = agent_version_id_override if agent_version_id_override is not None else self._current_agent_version_id(agent_id)
         created_at = utc_now()
         prompt = self._build_prompt(req)
@@ -657,13 +640,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         answer: str,
         agent_activity: JsonObject,
     ) -> None:
-        if state.sdk_session_id:
-            context.session.sdk_session_id = state.sdk_session_id
-        context.session.turns += 1
-        context.session.title = context.session.title or req.message[:80]
-        context.session.agent_id = context.agent_id  # 归属 Agent 随完成态落库，端点据此强校验/定位 transcript
-        self.session_store.save(context.session)
-        self._record_feedback_run(
+        run_record = self._feedback_run_record(
             run_id=context.run_id,
             agent_id=context.agent_id,
             agent_version_id=context.agent_version_id,
@@ -681,6 +658,14 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             completed_at=utc_now(),
             langfuse_trace_id=context.langfuse_trace_id,
             langfuse_trace_url=context.langfuse_trace_url,
+        )
+        context.session = self.session_store.complete_turn(
+            context.session,
+            run_id=context.run_id,
+            agent_id=context.agent_id,
+            sdk_session_id=state.sdk_session_id,
+            title=req.message[:80],
+            run_record=run_record,
         )
 
     def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: JsonObject) -> ChatResponse:
@@ -721,67 +706,33 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         profile: AgentRuntimeProfile | None = None,
         agent_version_id_override: Optional[str] = None,
     ) -> ChatResponse:
-        from claude_agent_sdk import ResultMessage, query
-
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
-        context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override, agent_id=profile.name)
-        # 非流式无 HITL 面：requires_web_hitl 的 Agent 不能 bypass 静默放行 ask 型高危工具，改 default + fail-loud deny。
-        hitl_required = profile.requires_web_hitl
-        context.telemetry_input["permission_mode"] = "default" if hitl_required else "bypassPermissions"
-        context.telemetry_input["claude_web_hitl_enabled"] = False
-        state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
-        root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
-        propagation = self._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)
-        with self.langfuse.propagate_attributes(**propagation):
-            with self.langfuse.start_observation(
-                as_type="span",
-                name=profile.langfuse_observation_name,
-                input=context.telemetry_input,
-                metadata=root_metadata,
-            ) as root_span:
-                context.langfuse_trace_id, context.langfuse_trace_url = self.langfuse.current_trace_ref()
-                self.langfuse.set_trace_attributes(root_span, **propagation)
-                with self.langfuse.start_observation(
-                    as_type="generation",
-                    name=f"{profile.langfuse_observation_name}.claude_sdk_query",
-                    input=self._generation_input(req, context),
-                    model=req.model or self.settings.agent_model,
-                    metadata=root_metadata,
-                ) as generation:
-                    self.langfuse.set_trace_attributes(generation, **propagation)
-                    try:
+        context = self._new_runtime_request_context(
+            req,
+            agent_version_id_override=agent_version_id_override,
+            agent_id=profile.name,
+        )
+        heartbeat = SessionTurnLeaseHeartbeat(
+            self.session_store,
+            session_id=context.session.session_id,
+            run_id=context.run_id,
+        )
+        try:
+            async with heartbeat:
+                return await self._run_claimed(req, context=context, profile=profile)
+        finally:
+            self.session_store.release_turn(context.session.session_id, run_id=context.run_id)
 
-                        async def execute_query() -> None:
-                            self.model_provider_router.ensure_agent_runtime_ready()
-                            options = self._build_options(
-                                req,
-                                context.session,
-                                profile=profile,
-                                execution_mode="non_stream_hitl_required" if hitl_required else "non_stream_bypass",
-                                can_use_tool=_non_stream_hitl_deny_callback(profile.name) if hitl_required else None,
-                            )
-                            prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                            async for msg in query(prompt=prompt_stream, options=options):
-                                self._track_query_message(msg, state, ResultMessage)
+    async def _run_claimed(
+        self,
+        req: ChatRequest,
+        *,
+        context: RuntimeRequestContext,
+        profile: AgentRuntimeProfile,
+    ) -> ChatResponse:
+        from .claude_runtime_non_stream import run_claimed_claude_runtime
 
-                        try:
-                            await execute_query()
-                        except Exception as exc:
-                            if not self._should_retry_without_sdk_resume(exc, context, state):
-                                raise
-                            self._clear_stale_sdk_session(context)
-                            state = RuntimeQueryState(sdk_session_id=None)
-                            await execute_query()
-                    except Exception as exc:
-                        if not self._should_suppress_exception(exc, state.errors):
-                            state.errors.append(f"{exc.__class__.__name__}: {exc}")
-
-                    answer, agent_activity, output = self._runtime_output_from_state(req, context, state)
-                    self._update_runtime_observations(root_span, generation, context, state, output, propagation)
-        self._flush_langfuse()
-        self._sync_langfuse_trace(context, propagation, output)
-        self._complete_runtime_request(req, context, state, answer, agent_activity)
-        return self._run_response(context, state, answer, agent_activity)
+        return await run_claimed_claude_runtime(self, req, context=context, profile=profile)
 
     async def run_candidate(
         self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE
@@ -793,5 +744,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:
         from .claude_runtime_stream import stream_claude_runtime
 
-        async for event in stream_claude_runtime(self, req, profile=profile):
-            yield event
+        source = stream_claude_runtime(self, req, profile=profile)
+        try:
+            async for event in source:
+                yield event
+        finally:
+            await close_async_iterator(source)

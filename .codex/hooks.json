@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".venv/bin/python .codex/hooks/codex_governance_stop.py"
+            "command": "repo_root=\"$(git rev-parse --show-toplevel)\" && python3 \"$repo_root/.codex/hooks/codex_governance_stop.py\""
           }
         ]
       }

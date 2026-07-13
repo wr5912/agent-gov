@@ -58,7 +58,6 @@ _MUTATING_METHODS = frozenset({"post", "put", "patch", "delete"})
 _DOMAIN_PREFIXES = (
     "/api/agent-registry",
     "/api/improvements",
-    "/api/automation-policy",
     "/api/assets",
     "/api/scenario-packs",
     "/api/langfuse/traces",
@@ -146,7 +145,7 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
     if path == "/v1/responses/{response_id}":
         return {404}
     if path == "/v1/conversations/{conversation_id}/items":
-        return {404, 500}
+        return {404, 409}
     if path == "/v1/conversations/{conversation_id}" and method != "delete":
         return {404}
     if path in {
@@ -161,7 +160,7 @@ def _special_error_statuses(path: str, method: str) -> set[int]:
     if path == "/api/settings/openai-compat-agent" and method == "put":
         return {400, 404, 422}
     if path == "/api/sessions/{session_id}/messages":
-        return {404, 500}
+        return {404, 409}
     return set()
 
 

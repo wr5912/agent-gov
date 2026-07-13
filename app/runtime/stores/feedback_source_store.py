@@ -8,22 +8,23 @@ from sqlalchemy.exc import IntegrityError
 
 from ..agent_profiles import MAIN_AGENT_PROFILE
 from ..errors import BusinessRuleViolation, NotFoundError
+from ..json_types import JsonObject
 from ..records.agent_job_records import AgentJobRecord
 from ..records.case_records import FeedbackCaseRecord
 from ..records.eval_case_records import EvalCaseRecord
 from ..records.source_records import (
     AgentRunRecord,
-    FeedbackSourceAnnotationRecord,
     FeedbackSignalRecord,
+    FeedbackSourceAnnotationRecord,
     PendingCorrelationRecord,
     SocEventRecord,
     apply_feedback_source_annotation_record,
     apply_pending_correlation_record,
+    upsert_agent_run_record,
 )
-from ..json_types import JsonObject
 from ..runtime_db import (
-    AgentRunModel,
     AgentJobModel,
+    AgentRunModel,
     EvalCaseModel,
     FeedbackSignalModel,
     FeedbackSourceAnnotationModel,
@@ -43,30 +44,16 @@ from .store_projection_maps import (
 class FeedbackSourceStoreMixin:
     """Store operations for runs, feedback sources, annotations, and source eval cases."""
 
-    def record_run(self, record: JsonObject) -> JsonObject:
+    def prepare_run_record(self, record: JsonObject) -> AgentRunRecord:
         payload = record if self.enable_debug_evidence else self._scrub_record(record)
         run_id = self._string(payload.get("run_id")) or f"run-{uuid.uuid4()}"
         payload = {**payload, "run_id": run_id, "created_at": payload.get("created_at") or utc_now()}
-        run_record = AgentRunRecord.from_payload(payload)
+        return AgentRunRecord.from_payload(payload)
+
+    def record_run(self, record: JsonObject) -> JsonObject:
+        run_record = self.prepare_run_record(record)
         with self.Session.begin() as db:
-            existing = db.get(AgentRunModel, run_id)
-            values = {
-                "session_id": run_record.session_id,
-                "sdk_session_id": run_record.sdk_session_id,
-                "agent_version_id": run_record.agent_version_id,
-                "alert_id": run_record.alert_id,
-                "case_id": run_record.case_id,
-                "created_at": run_record.created_at,
-                "completed_at": run_record.completed_at,
-                "langfuse_trace_id": run_record.langfuse_trace_id,
-                "langfuse_trace_url": run_record.langfuse_trace_url,
-                "payload_json": run_record.to_payload(),
-            }
-            if existing:
-                for key, value in values.items():
-                    setattr(existing, key, value)
-            else:
-                db.add(AgentRunModel(run_id=run_record.run_id, **values))
+            upsert_agent_run_record(db, run_record)
         return run_record.to_payload()
 
     def list_runs(

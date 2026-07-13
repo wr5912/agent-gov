@@ -50,13 +50,24 @@ class AgentJobWorker:
         try:
             job_output = await self._run_job(job)
             completed = self.feedback_store.complete_projected_agent_job(job, job_output)
-            log_agent_job_event(logger, logging.INFO, "agent_job.completed", completed or job, worker_instance=self.worker_instance)
+            completion_status = str((completed or {}).get("status") or "")
+            if completion_status in {"completed", "needs_human_review"}:
+                log_agent_job_event(logger, logging.INFO, "agent_job.completed", completed, worker_instance=self.worker_instance)
+            else:
+                log_agent_job_event(
+                    logger,
+                    logging.WARNING,
+                    "agent_job.completion_discarded",
+                    completed or job,
+                    worker_instance=self.worker_instance,
+                )
             return self._job_response(completed)
         except asyncio.TimeoutError as exc:
             failed = self.feedback_store.fail_projected_agent_job(
                 job,
                 error_code="AGENT_TIMEOUT",
                 message=agent_error_message(exc),
+                status="timeout",
             )
             log_agent_job_event(logger, logging.WARNING, "agent_job.timeout", failed or job, worker_instance=self.worker_instance, error_code="AGENT_TIMEOUT")
             return self._job_response(failed)
@@ -68,14 +79,16 @@ class AgentJobWorker:
                 message=agent_error_message(exc),
                 raw_output_json=exception_raw_output_json(exc),
             )
+            failure_status = str((failed or {}).get("status") or "")
+            event = "agent_job.failed" if failure_status == "failed" else "agent_job.failure_discarded"
             log_agent_job_event(
                 logger,
-                logging.ERROR,
-                "agent_job.failed",
+                logging.ERROR if failure_status == "failed" else logging.WARNING,
+                event,
                 failed or job,
                 worker_instance=self.worker_instance,
                 error_code=error_code,
-                exc_info=True,
+                exc_info=failure_status == "failed",
             )
             return self._job_response(failed)
 

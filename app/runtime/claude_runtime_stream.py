@@ -8,12 +8,14 @@ from typing import TYPE_CHECKING, Any
 
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState
 from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
 from .json_types import JsonObject
 from .message_utils import to_plain
 from .runtime_db import utc_now
 from .schemas import ChatRequest
+from .session_turn_lease import SessionTurnLeaseHeartbeat
 
 if TYPE_CHECKING:
     from .claude_runtime import ClaudeRuntime, RuntimeRequestContext
@@ -30,7 +32,9 @@ class StreamRun:
     root_metadata: JsonObject
     propagation: JsonObject
     final_output: JsonObject | None = None
-    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，finally 兜底，保证恰好一次
+    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，非取消终止时 finally 兜底
+    persistence_attempted: bool = False
+    turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
 
 
 def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
@@ -56,10 +60,33 @@ async def stream_claude_runtime(
     *,
     profile: AgentRuntimeProfile | None = None,
 ) -> AsyncIterator[JsonObject]:
-    from claude_agent_sdk import ResultMessage, query
-
     selected_profile = profile or runtime.profiles[MAIN_AGENT_PROFILE]
     stream_run = _new_stream_run(runtime, req, selected_profile)
+    context = stream_run.request_context
+    heartbeat = SessionTurnLeaseHeartbeat(
+        runtime.session_store,
+        session_id=context.session.session_id,
+        run_id=context.run_id,
+    )
+    stream_run.turn_heartbeat = heartbeat
+    try:
+        async with heartbeat:
+            source = _stream_claimed_run(stream_run)
+            try:
+                async for event in source:
+                    yield event
+            finally:
+                await close_async_iterator(source)
+    finally:
+        runtime.session_store.release_turn(context.session.session_id, run_id=context.run_id)
+
+
+async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject]:
+    from claude_agent_sdk import ResultMessage, query
+
+    runtime = stream_run.runtime
+    req = stream_run.req
+    selected_profile = stream_run.profile
     context = stream_run.request_context
     with runtime.langfuse.propagate_attributes(**stream_run.propagation):
         with runtime.langfuse.start_observation(
@@ -81,8 +108,12 @@ async def stream_claude_runtime(
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
                 sdk_task = asyncio.create_task(_run_sdk_query(stream_run, event_queue, root_span, generation, query, ResultMessage))
-                async for event in _drain_stream_queue(stream_run, event_queue, sdk_task):
-                    yield event
+                source = _drain_stream_queue(stream_run, event_queue, sdk_task)
+                try:
+                    async for event in source:
+                        yield event
+                finally:
+                    await close_async_iterator(source)
     runtime._flush_langfuse()
     if stream_run.final_output is not None:
         runtime._sync_langfuse_trace(context, stream_run.propagation, stream_run.final_output)
@@ -236,6 +267,7 @@ async def _run_sdk_query(
     query_func: Any,
     result_message_type: type,
 ) -> None:
+    cancelled = False
     try:
         try:
             await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
@@ -245,34 +277,44 @@ async def _run_sdk_query(
             stream_run.runtime._clear_stale_sdk_session(stream_run.request_context)
             stream_run.query_state = RuntimeQueryState(sdk_session_id=None)
             await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
+    except asyncio.CancelledError:
+        cancelled = True
+        raise
     except Exception as exc:
         if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
             stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
             await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
     finally:
-        try:
-            await _complete_stream_run(stream_run, root_span, generation)
-        except Exception as exc:
-            if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
-                stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+        if cancelled:
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
-        await event_queue.put({"event": "done", "data": "[DONE]"})
-        await event_queue.put(None)
+        else:
+            try:
+                await _complete_stream_run(stream_run, root_span, generation)
+            except Exception as exc:
+                if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
+                    stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                    await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+                if stream_run.runtime.user_input_service is not None:
+                    stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+            await event_queue.put({"event": "done", "data": "[DONE]"})
+            await event_queue.put(None)
 
 
 def _persist_stream_run(stream_run: StreamRun) -> None:
     """幂等落库：抽取 output + session save + record_run。
 
     在 ResultMessage 处（response.completed 之前）先调，使 items/retrieve 在完成信号时刻即可查；
-    ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）。
+    ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）；客户端取消不落库。
     ``stream_run.persisted`` 保证一次流式请求恰好落库一次（session save 同时置 sdk_session_id+agent_id，
     满足 items 的 owning-agent 强校验，不会出现 sdk_session_id 已置而 agent_id 为空的 500 中间态）。
     """
-    if stream_run.persisted:
+    if stream_run.persisted or stream_run.persistence_attempted:
         return
+    stream_run.persistence_attempted = True
     runtime = stream_run.runtime
+    if stream_run.turn_heartbeat is not None:
+        stream_run.turn_heartbeat.stop()
     answer, agent_activity, output = runtime._runtime_output_from_state(
         stream_run.req,
         stream_run.request_context,
@@ -331,8 +373,10 @@ async def _cancel_stream_task(stream_run: StreamRun, sdk_task: asyncio.Task[None
     if sdk_task.done():
         return
     service = stream_run.runtime.user_input_service
-    if service is not None:
-        await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
-    sdk_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await sdk_task
+    try:
+        if service is not None:
+            await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
+    finally:
+        sdk_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sdk_task

@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.runtime.schemas import ChatResponse
+from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
 from test_api_execution_optimizer import _load_app
@@ -210,6 +211,93 @@ def test_previous_response_id_conflict_409(monkeypatch, tmp_path: Path) -> None:
         assert resp.status_code == 409
 
 
+def test_previous_response_id_rejects_cross_agent_owner_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.feedback_store.record_run({"run_id": "prev-owned", "session_id": "sess-owned", "agent_id": "soc-ops"})
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        _register_biz(client, agent_id="other-agent", name="其他助手")
+        response = client.post(
+            "/v1/responses",
+            json={"input": "hi", "previous_response_id": "resp_prev-owned", "agentgov": {"agent_id": "other-agent"}},
+        )
+
+    assert response.status_code == 409
+    assert "different business agent" in response.json()["detail"]
+    assert captured == {}
+
+
+def test_previous_response_id_without_session_fails_closed_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.feedback_store.record_run({"run_id": "prev-no-session", "agent_id": "soc-ops"})
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        response = client.post(
+            "/v1/responses",
+            json={"input": "hi", "previous_response_id": "resp_prev-no-session", "agentgov": {"agent_id": "soc-ops"}},
+        )
+
+    assert response.status_code == 409
+    assert "no resumable conversation" in response.json()["detail"]
+    assert captured == {}
+
+
+def test_previous_response_id_with_deleted_session_mapping_fails_closed_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.feedback_store.record_run({"run_id": "prev-deleted", "session_id": "sess-deleted", "agent_id": "soc-ops"})
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        response = client.post(
+            "/v1/responses",
+            json={"input": "hi", "previous_response_id": "resp_prev-deleted", "agentgov": {"agent_id": "soc-ops"}},
+        )
+
+    assert response.status_code == 409
+    assert "mapping no longer exists" in response.json()["detail"]
+    assert captured == {}
+
+
+def test_conversation_rejects_cross_agent_session_owner_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.session_store.save(LocalSession(session_id="sess-owned", agent_id="soc-ops", sdk_session_id="sdk-owned"))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        _register_biz(client, agent_id="other-agent", name="其他助手")
+        response = client.post(
+            "/v1/responses",
+            json={"input": "hi", "conversation": "conv_sess-owned", "agentgov": {"agent_id": "other-agent"}},
+        )
+
+    assert response.status_code == 409
+    assert "different business agent" in response.json()["detail"]
+    assert captured == {}
+
+
+def test_conversation_rejects_historical_session_without_owner_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    module.session_store.save(LocalSession(session_id="sess-legacy", agent_id=None, sdk_session_id="sdk-legacy", turns=1))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        response = client.post(
+            "/v1/responses",
+            json={"input": "hi", "conversation": "conv_sess-legacy", "agentgov": {"agent_id": "soc-ops"}},
+        )
+
+    assert response.status_code == 409
+    assert "no unambiguous business agent owner" in response.json()["detail"]
+    assert captured == {}
+
+
 # ---------------------------------------------------------------- hostile 输入
 
 
@@ -232,6 +320,7 @@ def test_previous_response_id_continues_session(monkeypatch, tmp_path: Path) -> 
     captured: dict = {}
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
     module.feedback_store.record_run({"run_id": "prevA", "session_id": "sessA", "agent_id": "soc-ops"})
+    module.session_store.get_or_create_owned("sessA", agent_id="soc-ops")
     with TestClient(module.app) as client:
         _register_biz(client)
         assert client.post("/v1/responses", json={"input": "hi", "previous_response_id": "resp_prevA", "agentgov": {"agent_id": "soc-ops"}}).status_code == 200

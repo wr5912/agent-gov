@@ -7,7 +7,7 @@ import shutil
 import tarfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TypedDict
+from typing import NotRequired, TypedDict
 
 from bootstrap_runtime_volume import resolve_runtime_root
 from runtime_cleanup import cleanup_runtime_artifacts
@@ -99,17 +99,17 @@ class FindingResult(TypedDict):
     snippet: str
 
 
-class ExportResult(TypedDict, total=False):
+class ExportResult(TypedDict):
     ok: bool
-    runtime_root: str
-    template_dir: str
-    backup: str | None
-    staging_dir: str
-    copied: list[str]
-    canonicalized: list[str]
-    cleanup_removed: list[str]
-    sanitize: SanitizeResult
-    findings: list[FindingResult]
+    runtime_root: NotRequired[str]
+    template_dir: NotRequired[str]
+    backup: NotRequired[str | None]
+    staging_dir: NotRequired[str]
+    copied: NotRequired[list[str]]
+    canonicalized: NotRequired[list[str]]
+    cleanup_removed: NotRequired[list[str]]
+    sanitize: NotRequired[SanitizeResult]
+    findings: NotRequired[list[FindingResult]]
 
 
 def _repo_root() -> Path:

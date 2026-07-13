@@ -16,9 +16,11 @@ from ..feedback_schemas import (
 )
 from ..json_types import JsonObject
 from ..records.agent_job_records import AgentJobRecord
-from ..runtime_db import AgentJobModel, utc_now
+from ..runtime_db import AgentJobModel, EvalCaseModel, utc_now
+from ..state_machines import validate_transition
 
 _UNSET = object()
+_COMPLETION_CLAIMABLE_STATES = ("queued", "running", "failed", "needs_human_review")
 logger = logging.getLogger(__name__)
 
 
@@ -121,31 +123,39 @@ class AgentJobStoreMixin:
         now = utc_now()
         now_dt = datetime.now(timezone.utc)
         timed_out_ids: list[str] = []
-        with self.Session.begin() as db:
+        with self.Session() as db:
             stmt = (
                 select(AgentJobModel)
                 .where(AgentJobModel.status.in_(("running", "schema_validating")))
                 .order_by(AgentJobModel.started_at.asc(), AgentJobModel.created_at.asc())
                 .limit(limit)
             )
-            for row in db.scalars(stmt).all():
-                base = self._parse_datetime(row.started_at or row.created_at)
-                if not base:
+            candidates = [(row.job_id, row.status, row.started_at or row.created_at, row.timeout_seconds) for row in db.scalars(stmt).all()]
+        for job_id, observed_status, started_at, configured_timeout in candidates:
+            base = self._parse_datetime(started_at)
+            if not base:
+                continue
+            timeout_seconds = int(configured_timeout or getattr(self, "agent_job_timeout_seconds", 300))
+            if now_dt < base + timedelta(seconds=timeout_seconds):
+                continue
+            error_payload = {
+                "error_code": "AGENT_TIMEOUT",
+                "message": f"Agent job exceeded timeout_seconds={timeout_seconds}",
+                "created_at": now,
+                "job_id": job_id,
+            }
+            with self.Session.begin() as db:
+                row = self._compare_and_transition_agent_job_row(
+                    db,
+                    job_id,
+                    expected_statuses=(observed_status,),
+                    status="timeout",
+                    completed_at=now,
+                )
+                if not row:
                     continue
-                timeout_seconds = int(row.timeout_seconds or getattr(self, "agent_job_timeout_seconds", 300))
-                if now_dt < base + timedelta(seconds=timeout_seconds):
-                    continue
-                error_payload = {
-                    "error_code": "AGENT_TIMEOUT",
-                    "message": f"Agent job exceeded timeout_seconds={timeout_seconds}",
-                    "created_at": now,
-                    "job_id": row.job_id,
-                }
-                if not self._set_agent_job_json_row(db, row.job_id, error_json=error_payload):
-                    continue
-                if not self._append_agent_job_update_row(db, row.job_id, status="timeout", completed_at=now):
-                    continue
-                timed_out_ids.append(row.job_id)
+                self._apply_agent_job_json_fields(row, {"error_json": error_payload})
+                timed_out_ids.append(job_id)
         return [job for job in (self.get_agent_job(job_id) for job_id in timed_out_ids) if job]
 
     def complete_projected_agent_job(
@@ -172,12 +182,14 @@ class AgentJobStoreMixin:
         error_code: str,
         message: str,
         raw_output_json: Optional[JsonObject] = None,
+        status: str = "failed",
     ) -> Optional[JsonObject]:
         return self.fail_agent_job(
             str(job.get("job_id") or ""),
             error_code=error_code,
             message=message,
             raw_output_json=raw_output_json,
+            status=status,
         )
 
     def fail_agent_job(
@@ -187,18 +199,21 @@ class AgentJobStoreMixin:
         error_code: str,
         message: str,
         raw_output_json: Optional[JsonObject] = None,
+        status: str = "failed",
     ) -> Optional[JsonObject]:
+        if status not in {"failed", "timeout"}:
+            raise ValueError(f"Unsupported agent job failure status: {status}")
         error_payload = {"error_code": error_code, "message": message, "created_at": utc_now(), "job_id": job_id}
         with self.Session.begin() as db:
-            row = self._set_agent_job_json_row(
-                db,
-                job_id,
-                raw_output_json=raw_output_json if raw_output_json is not None else _UNSET,
-                error_json=error_payload,
-            )
-            if not row:
-                return None
-            self._append_agent_job_update_row(db, job_id, status="failed", completed_at=utc_now())
+            row = self._claim_agent_job_completion(db, job_id)
+            if row is None:
+                current = db.get(AgentJobModel, job_id)
+                return self._agent_job_to_dict(current) if current else None
+            fields: JsonObject = {"error_json": error_payload}
+            if raw_output_json is not None:
+                fields["raw_output_json"] = raw_output_json
+            self._apply_agent_job_json_fields(row, fields)
+            self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
         return self.get_agent_job(job_id)
 
     def _complete_eval_case_generation_agent_job(
@@ -221,14 +236,29 @@ class AgentJobStoreMixin:
                 status="needs_human_review",
             )
         validated = output_model_payload(output_model)
-        projected = self._project_eval_case_generation(job, validated)
-        return self._complete_agent_job(
-            str(job["job_id"]),
-            raw_output_json=raw_payload,
-            validated_output_json=projected,
-            error_json=None,
-            status="completed" if projected.get("status") == "completed" else "needs_human_review",
-        )
+        job_id = str(job["job_id"])
+        with self.Session.begin() as db:
+            row = self._claim_agent_job_completion(db, job_id)
+            if row is None:
+                current = db.get(AgentJobModel, job_id)
+                return self._agent_job_to_dict(current) if current else None
+            current_job = self._agent_job_to_dict(row)
+            projected = self._project_eval_case_generation(db, current_job, validated)
+            self._apply_agent_job_json_fields(
+                row,
+                {
+                    "raw_output_json": raw_payload,
+                    "validated_output_json": projected,
+                    "error_json": None,
+                },
+            )
+            self._append_agent_job_update_row(
+                db,
+                job_id,
+                status="completed" if projected.get("status") == "completed" else "needs_human_review",
+                completed_at=utc_now(),
+            )
+        return self.get_agent_job(job_id)
 
     def _complete_agent_job(
         self,
@@ -240,55 +270,61 @@ class AgentJobStoreMixin:
         status: str,
     ) -> Optional[JsonObject]:
         with self.Session.begin() as db:
-            row = self._set_agent_job_json_row(
-                db,
-                job_id,
-                raw_output_json=raw_output_json,
-                validated_output_json=validated_output_json,
-                error_json=error_json,
-            )
-            if not row:
-                return None
-            self._append_agent_job_update_row(db, job_id, status="schema_validating")
+            row = self._claim_agent_job_completion(db, job_id)
+            if row is None:
+                current = db.get(AgentJobModel, job_id)
+                return self._agent_job_to_dict(current) if current else None
+            fields: JsonObject = {}
+            if raw_output_json is not _UNSET:
+                fields["raw_output_json"] = raw_output_json
+            if validated_output_json is not _UNSET:
+                fields["validated_output_json"] = validated_output_json
+            if error_json is not _UNSET:
+                fields["error_json"] = error_json
+            self._apply_agent_job_json_fields(row, fields)
             self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
         return self.get_agent_job(job_id)
 
-    def _project_eval_case_generation(self, job: JsonObject, output: JsonObject) -> JsonObject:
+    def _project_eval_case_generation(self, db: Any, job: JsonObject, output: JsonObject) -> JsonObject:
         job_input = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
         force = bool(job_input.get("force"))
         created = reused = updated = skipped = 0
         eval_cases: list[JsonObject] = []
         results: list[JsonObject] = []
         now = utc_now()
-        with self.Session.begin() as db:
-            for item in output.get("eval_cases") or []:
-                if not isinstance(item, dict) or not self._string(item.get("prompt")):
-                    skipped += 1
-                    results.append({"status": "skipped", "reason": "missing prompt"})
-                    continue
-                payload = self._eval_case_payload_from_agent(item, job_input, now)
-                if payload is None:
-                    skipped += 1
-                    results.append({"status": "skipped", "reason": "source feedback case is not in job input"})
-                    continue
-                existing = self.find_eval_case(source_feedback_case_id=self._string(payload.get("source_feedback_case_id")))
-                if existing and not force:
-                    reused += 1
-                    eval_cases.append(existing)
-                    results.append(self._eval_case_generation_result(payload, existing, "reused"))
-                    continue
-                if existing:
-                    payload["eval_case_id"] = existing["eval_case_id"]
-                    payload["created_at"] = existing["created_at"]
-                    self._update_eval_case_row(db, payload)
-                    updated += 1
-                    eval_cases.append(payload)
-                    results.append(self._eval_case_generation_result(payload, payload, "updated"))
-                    continue
-                self._add_eval_case_row(db, payload)
-                created += 1
+        for item in output.get("eval_cases") or []:
+            if not isinstance(item, dict) or not self._string(item.get("prompt")):
+                skipped += 1
+                results.append({"status": "skipped", "reason": "missing prompt"})
+                continue
+            payload = self._eval_case_payload_from_agent(item, job_input, now)
+            if payload is None:
+                skipped += 1
+                results.append({"status": "skipped", "reason": "source feedback case is not in job input"})
+                continue
+            existing_row = db.scalars(
+                select(EvalCaseModel)
+                .where(EvalCaseModel.source_feedback_case_id == self._string(payload.get("source_feedback_case_id")))
+                .order_by(EvalCaseModel.updated_at.desc())
+            ).first()
+            existing = self._eval_case_to_dict(existing_row) if existing_row else None
+            if existing and not force:
+                reused += 1
+                eval_cases.append(existing)
+                results.append(self._eval_case_generation_result(payload, existing, "reused"))
+                continue
+            if existing:
+                payload["eval_case_id"] = existing["eval_case_id"]
+                payload["created_at"] = existing["created_at"]
+                self._update_eval_case_row(db, payload)
+                updated += 1
                 eval_cases.append(payload)
-                results.append(self._eval_case_generation_result(payload, payload, "created"))
+                results.append(self._eval_case_generation_result(payload, payload, "updated"))
+                continue
+            self._add_eval_case_row(db, payload)
+            created += 1
+            eval_cases.append(payload)
+            results.append(self._eval_case_generation_result(payload, payload, "created"))
         return {
             **output,
             "job_id": job["job_id"],
@@ -362,27 +398,6 @@ class AgentJobStoreMixin:
             "status": status,
         }
 
-    def _set_agent_job_json_row(
-        self,
-        db: Any,
-        job_id: str,
-        *,
-        raw_output_json: Any = _UNSET,
-        validated_output_json: Any = _UNSET,
-        error_json: Any = _UNSET,
-    ) -> Optional[AgentJobModel]:
-        row = db.get(AgentJobModel, job_id)
-        if not row:
-            return None
-        fields: JsonObject = {}
-        if raw_output_json is not _UNSET:
-            fields["raw_output_json"] = raw_output_json
-        if validated_output_json is not _UNSET:
-            fields["validated_output_json"] = validated_output_json
-        if error_json is not _UNSET:
-            fields["error_json"] = error_json
-        return self._apply_agent_job_json_fields(row, fields)
-
     def _apply_agent_job_json_fields(self, row: AgentJobModel, fields: JsonObject) -> AgentJobModel:
         payload = AgentJobRecord.from_row(row).to_payload()
         payload.update(fields)
@@ -412,6 +427,45 @@ class AgentJobStoreMixin:
         row.status = status
         row.started_at = updated.started_at
         row.completed_at = updated.completed_at
+        return row
+
+    def _claim_agent_job_completion(self, db: Any, job_id: str) -> Optional[AgentJobModel]:
+        return self._compare_and_transition_agent_job_row(
+            db,
+            job_id,
+            expected_statuses=_COMPLETION_CLAIMABLE_STATES,
+            status="schema_validating",
+        )
+
+    def _compare_and_transition_agent_job_row(
+        self,
+        db: Any,
+        job_id: str,
+        *,
+        expected_statuses: tuple[str, ...],
+        status: str,
+        started_at: Any = _UNSET,
+        completed_at: Any = _UNSET,
+    ) -> Optional[AgentJobModel]:
+        for expected_status in expected_statuses:
+            validate_transition("agent_job", expected_status, status)
+        values: dict[str, object] = {"status": status}
+        if started_at is not _UNSET:
+            values["started_at"] = started_at
+        if completed_at is not _UNSET:
+            values["completed_at"] = completed_at
+        result = db.execute(
+            update(AgentJobModel)
+            .where(AgentJobModel.job_id == job_id, AgentJobModel.status.in_(expected_statuses))
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            return None
+        db.expire_all()
+        row = db.get(AgentJobModel, job_id)
+        if row is not None:
+            AgentJobRecord.from_row(row)
         return row
 
     @staticmethod

@@ -5,9 +5,10 @@
 ## 可作为团队模板复用
 
 - `config.toml`：安全、通用的 Codex 项目配置模板。
-- `rules/project.rules`：规则入口和执行顺序。
-- `rules/architecture.rules`：通用架构卫生阈值。
-- `rules/verify.rules`：通用验证要求。
+- `guidance/project.md`：模型治理入口和执行顺序。
+- `guidance/architecture.md`：通用架构卫生阈值。
+- `guidance/verify.md`：通用验证要求。
+- `rules/*.rules`：仅用于 Codex `prefix_rule(...)` 命令执行策略；当前仓库没有项目级策略。
 - `skills/project-skill/SKILL.md`：团队开发通用技能。
 - `agents/worker.toml`：通用项目 worker 画像。
 
@@ -24,7 +25,7 @@
 
 ## 通用入口配置
 
-- `hooks.json`：本仓库已按 `AGENTS.override.md` 接入 Stop 治理硬门；复制为通用模板前应清空项目命令，各项目在自己的覆盖层重新声明并配置本地命令。
+- `hooks.json`：本仓库已按根 `AGENTS.md` 接入 Stop 治理硬门；复制为通用模板前应清空项目命令，各项目在自己的根指令中重新声明并配置本地命令。
 
 ## 通用质量优先策略
 
@@ -32,12 +33,12 @@
 
 涉及 Agent、DSPy、LLM 输出格式化或提示词输出要求时，通用层要求先区分 backend-owned、agent-owned 和 boundary-owned 字段；后端已知字段不得让 LLM 复述后作为权威输出。
 
-项目覆盖层可在 `AGENTS.override.md` 中继续收紧兼容边界、迁移策略和治理硬门。
+项目专属兼容边界、迁移策略和治理硬门应写入目标仓库唯一有效的根 `AGENTS.md`；不得在同一目录并列创建会遮蔽它的 `AGENTS.override.md`。
 
 `.codex` 不存放项目债务账本。治理通过 git base 对比执行：既有超限未增长输出 `BASELINE`，新增超限或旧债增长输出 `FAIL`。
 
 ## 复用要求
 
-- 新项目应在自己的 `AGENTS.override.md` 中声明治理命令、CI 的 base-ref 策略和产品不变量。
+- 新项目应在自己的有效根 `AGENTS.md` 中声明治理命令、CI 的 base-ref 策略和产品不变量。
 - 新项目必须保留团队统一环境硬约束：`.venv`、`uv`、`pnpm`、Python 3.10+、Node.js 20+、国内下载源和 Docker 目录规范。
 - 旧债清单如需记录，应放在普通 docs 或 issue，不得放入 `.codex` 作为机器豁免。

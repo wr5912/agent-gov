@@ -162,10 +162,13 @@ chat:
 		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON_RUN) -m json.tool
 
 codex-guard:
+	$(PYTHON_RUN) .codex/skills/codex-config-optimizer/scripts/audit_codex_config.py --fail
 	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
 	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
+	$(PYTHON_RUN) scripts/check_docs_governance.py
+	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --manifest-only --policy $(COVERAGE_POLICY)
 
 openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
@@ -198,6 +201,7 @@ test: codex-guard
 	$(PYTHON_RUN) -m compileall app
 	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
 	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/check_docs_governance.py --collect-pytest
 
 coverage:
 	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)

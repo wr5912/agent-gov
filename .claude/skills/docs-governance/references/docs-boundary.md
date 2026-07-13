@@ -80,7 +80,7 @@
 移动、归档或删除前，至少检查：
 
 ```bash
-rg -n "旧文件名|旧相对路径" README.md docs .planning AGENTS.md AGENTS.override.md .codex .claude
+rg -n "旧文件名|旧相对路径" README.md docs .planning AGENTS.md .codex .claude
 ```
 
 完成后确认：

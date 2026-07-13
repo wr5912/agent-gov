@@ -1,8 +1,10 @@
 # Claude 原生业务Agent人类确认机制对抗审查整改计划
 
+> 归档说明（2026-07-10）：本文记录 canonical Responses/HITL 落地前的对抗审查与执行计划，仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)，工程决策见 [Responses-first ADR](../../engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)。
+>
 > 文档状态：对抗审查后的整改执行计划。
 > 生成日期：2026-06-29。
-> 关联主方案：`docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md`。
+> 关联历史主方案：[Claude 原生业务Agent人类确认机制整改实现方案](./Claude原生业务Agent人类确认机制整改实现方案.md)。
 
 ## 1. 整改结论
 
@@ -40,7 +42,7 @@
 ### 阶段 0：分支与环境隔离
 
 - 当前整改分支使用私有 env 选择隔离端口，避免干扰 master 的默认 5XXXX 真实服务；本机私有端口不写入仓库。
-- 私有 `docker/.env` 选择独立运行卷，例如 `/home/luopeng/volume-agent-gov-web-confirmation-smoke`。
+- 私有 `docker/.env` 选择独立运行卷，例如 `${HOME}/volume-agent-gov-web-confirmation-smoke`。
 - `ENABLE_CLAUDE_WEB_HITL` 默认保持 `false`；真实 HITL 验收时在私有 env 中开启。
 
 ### 阶段 1：后端入口语义收口

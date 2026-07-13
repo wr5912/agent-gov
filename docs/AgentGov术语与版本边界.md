@@ -60,7 +60,6 @@
 | 回归资产 | `RegressionAsset` | `regression_asset` | `regression_asset_id` | 从高价值反馈沉淀出的长期防退化资产。 |
 | 回归运行 | `RegressionRun` | `regression_run` | `regression_run_id` | 对候选版本或发布前状态执行回归验证的记录。 |
 | 发布 | `Release` | `release` | `release_id` | 已通过门禁并固化到业务 Agent 版本链的结果。 |
-| 自动化策略 | `AutomationPolicy` | `automation_policy` | `automation_policy_id` | 决定哪些步骤可自动推进、哪些必须人工确认。 |
 | 资产 Registry | `AssetRegistry` | `asset` | `asset_id` | 数据资产、方法论资产、执行资产和审计资产的关联视图。 |
 | Trace 摘要 | `TraceSummary` | `trace_summary` | `trace_summary_id` | 面向用户和治理流程的运行证据摘要，不暴露完整底层日志为主体验。 |
 | 上下文包 | `ContextPackage` | `context_package` | `context_package_id` | 用于 AI 协作、Playwright 复现、问题转交和完整 JSON 导出的上下文。 |

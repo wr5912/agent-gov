@@ -10,6 +10,7 @@ from app.runtime.config_file_schemas import (
     AgentConfigFileUpdateRequest,
     AgentConfigFileUpdateResponse,
 )
+from app.runtime.errors import SessionConflictError
 from app.runtime.execution_targets import MAX_EXECUTION_TARGET_CONTEXT_BYTES, WorkspaceExecutionTargetPolicy
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -146,10 +147,12 @@ class AgentConfigFileService:
             return False
         if session.agent_id and session.agent_id != agent_id:
             raise AgentConfigFileError(409, "Session belongs to a different business agent")
+        if not session.agent_id:
+            raise AgentConfigFileError(409, "Session has no unambiguous business agent owner")
         if not session.sdk_session_id:
             return False
-        session.sdk_session_id = None
-        if not session.agent_id:
-            session.agent_id = agent_id
-        self._session_store.save(session)
+        try:
+            self._session_store.clear_sdk_session(session, agent_id=agent_id)
+        except SessionConflictError as exc:
+            raise AgentConfigFileError(409, str(exc)) from exc
         return True

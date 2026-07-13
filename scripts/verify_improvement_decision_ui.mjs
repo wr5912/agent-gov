@@ -190,8 +190,9 @@ async function installMockRoutes(page, state) {
     if (/^\/api\/improvements\/[^/]+\/normalized-feedback\/confirm$/.test(path)) return json(route, { normalized_feedback_id: "nf-1", improvement_id: state.target.improvement_id, problem: "告警误判", possible_reason: "事件时间与告警时间窗口不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入归因分析", user_quote: "这个告警其实是误报。", status: "confirmed", created_at: ts, updated_at: ts });
     if (/^\/api\/improvements\/[^/]+\/normalized-feedback$/.test(path)) return json(route, { normalized_feedback_id: "nf-1", improvement_id: state.target.improvement_id, problem: "告警误判", possible_reason: "事件时间与告警时间窗口不一致", possible_object: "sec-ops-data MCP 数据", impact: "中", suggestion: "进入归因分析", user_quote: "这个告警其实是误报。", status: "draft", created_at: ts, updated_at: ts });
     if (/^\/api\/improvements\/[^/]+\/attribution\/generate$/.test(path)) {
-      await delay(900);
+      await delay(1500);
       state.attribution = { attribution_id: "attr-1", improvement_id: state.target.improvement_id, summary: "sec-ops-data MCP 返回的数据时间与告警时间窗口不一致。", responsibility_boundary: ["主要是外部数据时间窗口问题"], evidence: ["来源反馈指向同一时间窗口误判问题"], status: "draft", generated_by: "governor", created_at: ts, updated_at: ts };
+      state.target.improvement_stage = "attribution";
       return json(route, state.attribution);
     }
     if (/^\/api\/improvements\/[^/]+\/attribution\/confirm$/.test(path)) {
@@ -218,6 +219,7 @@ async function installMockRoutes(page, state) {
         created_at: ts,
         updated_at: ts,
       };
+      state.target.improvement_stage = "optimization";
       return json(route, state.optimizationPlan);
     }
     if (/^\/api\/improvements\/[^/]+\/optimization-plan\/confirm$/.test(path)) {
@@ -244,6 +246,7 @@ async function installMockRoutes(page, state) {
         created_at: ts,
         updated_at: ts,
       };
+      state.target.improvement_stage = "execution";
       return json(route, state.execution);
     }
     if (/^\/api\/improvements\/[^/]+\/execution\/confirm$/.test(path)) {
@@ -283,11 +286,11 @@ async function installMockRoutes(page, state) {
         created_at: ts,
         updated_at: ts,
       };
+      state.target.improvement_stage = "regression";
       return json(route, state.regressionAssessment);
     }
     if (/^\/api\/improvements\/[^/]+\/regression-assessment$/.test(path)) return state.regressionAssessment ? json(route, state.regressionAssessment) : json(route, { detail: "not found" }, 404);
     if (/^\/api\/improvements\/[^/]+\/similar$/.test(path) || /^\/api\/improvements\/[^/]+\/links$/.test(path) || path === "/api/assets") return json(route, []);
-    if (/^\/api\/automation-policy/.test(path)) return json(route, { agent_id: "soc-ops", mode: "off" });
     if (/^\/api\/improvements\/[^/]+$/.test(path)) return json(route, state.target);
     if (/^\/api\/improvements\/[^/]+\/lifecycle$/.test(path)) {
       const body = req.postDataJSON();
@@ -392,9 +395,11 @@ async function main() {
       await page.getByLabel("关闭").click();
       await page.getByTestId("source-management-drawer").waitFor({ state: "detached", timeout: 8000 });
       await page.getByTestId("primary-action").click();
-      await assertVisible(page, "decision-operation-status");
-      await assertVisible(page, "attribution-generation-status");
-      const operationText = await page.getByTestId("decision-operation-status").innerText();
+      const [decisionOperationStatus] = await Promise.all([
+        assertVisible(page, "decision-operation-status"),
+        assertVisible(page, "attribution-generation-status"),
+      ]);
+      const operationText = await decisionOperationStatus.innerText();
       if (!operationText.includes("正在生成归因分析")) throw new Error(`unexpected operation status: ${operationText}`);
       const recordState = await page.getByTestId("stage-local-record-node").filter({ hasText: "生成归因分析" }).first().getAttribute("data-state");
       if (recordState !== "current") throw new Error(`expected generating record state current, got ${recordState}`);

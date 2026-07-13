@@ -112,6 +112,8 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     assert current_paths <= set(schema["paths"])
 
     legacy_paths = {
+        "/api/automation-policy",
+        "/api/improvements/{improvement_id}/auto-advance",
         "/api/feedback-optimization-batches",
         "/api/feedback-cases/{feedback_case_id}/proposal-jobs",
         "/api/optimization-proposals",
@@ -120,6 +122,9 @@ def test_export_openapi_script_writes_current_schema(tmp_path):
     assert set(schema["paths"]).isdisjoint(legacy_paths)
 
     for schema_name in (
+        "AutomationPolicyResponse",
+        "AutomationPolicyUpdateRequest",
+        "AutoAdvanceResponse",
         "FeedbackOptimizationBatchResponse",
         "OptimizationTaskResponse",
         "OptimizationProposalResponse",
@@ -173,6 +178,18 @@ def test_openapi_documents_streaming_media_types():
     responses_content = schema["paths"]["/v1/responses"]["post"]["responses"]["200"]["content"]
     assert {"application/json", "text/event-stream"} <= set(responses_content)
     assert responses_content["application/json"]["schema"] == {"$ref": "#/components/schemas/ResponseObject"}
+
+
+def test_openapi_documents_ownerless_session_conflicts() -> None:
+    schema = build_openapi_schema()
+
+    for path in (
+        "/v1/conversations/{conversation_id}/items",
+        "/api/sessions/{session_id}/messages",
+    ):
+        responses = schema["paths"][path]["get"]["responses"]
+        assert "409" in responses
+        assert "500" not in responses
 
 
 def test_openapi_documents_expected_domain_error_statuses():

@@ -8,37 +8,57 @@ import "../improvement-workbench.css";
 // 按当前业务 Agent 防御式过滤（响应含 agent_id 时按 Agent scoping，否则不过滤避免误隐藏）。
 type WithAgent = { agent_id?: string };
 
-const CHANGESET_TERMINAL = new Set(["published", "abandoned"]);
+const CHANGESET_TERMINAL = new Set(["published", "abandoned", "rejected", "failed"]);
 const CHANGESET_BLOCKED = new Set(["regression_failed", "rejected", "failed"]);
 const CHANGESET_READY = new Set(["regression_passed", "approved", "candidate_committed"]);
-const EXECUTED = new Set(["candidate_committed", "regression_passed", "regression_failed", "approved", "published"]);
+const CHANGESET_FORCEABLE = new Set(["regression_failed"]);
+const CHANGESET_REGRESSION_RUNNABLE = new Set(["candidate_committed", "pending_approval", "approved", "regression_failed"]);
+const EXECUTED = new Set(["candidate_committed", "regression_passed", "regression_failed", "approved", "publishing", "published"]);
 const REGRESSION_PASS = new Set(["regression_passed", "approved", "published"]);
 
-type GateState = "pass" | "fail" | "pending";
+type GateState = "pass" | "fail" | "pending" | "optional" | "unknown" | "not_applicable";
 
 function scopedBy<T extends WithAgent>(items: T[], agentId: string): T[] {
   if (!agentId) return items;
   return items.filter((item) => item.agent_id == null || item.agent_id === agentId);
 }
 
-function deriveGates(changeSets: AgentChangeSet[]): { id: string; label: string; state: GateState }[] {
-  const has = changeSets.length > 0;
-  const executed = changeSets.some((cs) => EXECUTED.has(String(cs.status)));
-  const regPass = changeSets.some((cs) => REGRESSION_PASS.has(String(cs.status)));
-  const regFail = changeSets.some((cs) => CHANGESET_BLOCKED.has(String(cs.status)));
+function deriveGates(changeSet: AgentChangeSet | null): { id: string; label: string; state: GateState }[] {
+  const has = Boolean(changeSet);
+  const executed = Boolean(changeSet && EXECUTED.has(String(changeSet.status)));
+  const provenanceBlocked = Boolean(changeSet?.publication_provenance_blocker);
+  const regPass = Boolean(changeSet && REGRESSION_PASS.has(String(changeSet.status)));
+  const regFail = Boolean(changeSet && CHANGESET_BLOCKED.has(String(changeSet.status)));
+  const attributionStatus = String(changeSet?.source_attribution_status || "");
+  const attributionState: GateState = !changeSet
+    ? "pending"
+    : !changeSet.source_improvement_id
+      ? "not_applicable"
+      : !changeSet.source_attribution_id || !attributionStatus
+        ? "unknown"
+        : attributionStatus === "confirmed"
+          ? "pass"
+          : "pending";
   return [
-    { id: "attribution", label: "归因已确认", state: has ? "pass" : "pending" },
-    { id: "optimization", label: "优化已执行", state: executed ? "pass" : "pending" },
-    { id: "regression", label: "回归测试", state: regFail ? "fail" : regPass ? "pass" : "pending" },
+    { id: "attribution", label: attributionStatus ? `归因（${attributionStatus}）` : "归因证据", state: attributionState },
+    { id: "optimization", label: "优化已执行", state: executed && !provenanceBlocked ? "pass" : "pending" },
+    { id: "regression", label: "回归测试", state: regFail ? "fail" : regPass ? "pass" : has ? "optional" : "pending" },
   ];
 }
 
-const GATE_TEXT: Record<GateState, string> = { pass: "通过", fail: "未通过", pending: "未完成" };
+const GATE_TEXT: Record<GateState, string> = {
+  pass: "通过",
+  fail: "未通过",
+  pending: "未完成",
+  optional: "可选",
+  unknown: "未知",
+  not_applicable: "不适用",
+};
 
 function overallGate(gates: { state: GateState }[], total: number): { label: string; tone: "success" | "danger" | "primary" | "muted"; reason: string } {
   if (total === 0) return { label: "无待发布变更", tone: "muted", reason: "当前范围还没有候选变更。先在「改进」里把事项推进到执行/回归。" };
   if (gates.some((g) => g.state === "fail")) return { label: "不可发布", tone: "danger", reason: "存在未通过的门禁，需先修复或重跑回归。" };
-  if (gates.every((g) => g.state === "pass")) return { label: "可发布", tone: "success", reason: "三门门禁均通过，可发布。" };
+  if (gates.every((g) => g.state === "pass" || g.state === "optional" || g.state === "not_applicable")) return { label: "可发布", tone: "success", reason: "必需门禁已通过；回归未运行时可选执行。" };
   return { label: "进行中", tone: "primary", reason: "门禁尚未全部通过。" };
 }
 
@@ -64,16 +84,19 @@ export function ReleaseWorkbench({
   const scopedChangeSets = scopedBy(changeSets as (AgentChangeSet & WithAgent)[], scopeAgentId);
   const scopedReleases = scopedBy(releases as (AgentRelease & WithAgent)[], scopeAgentId);
   const pendingChangeSets = scopedChangeSets.filter((cs) => !CHANGESET_TERMINAL.has(String(cs.status)));
-  const gates = deriveGates(scopedChangeSets);
-  const gate = overallGate(gates, scopedChangeSets.length);
-  const regressionPending = gates.find((g) => g.id === "regression")?.state !== "pass" && pendingChangeSets.length > 0;
-  const regressionTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && !REGRESSION_PASS.has(String(cs.status)));
-  const forceTarget = pendingChangeSets.find((cs) => cs.candidate_commit_sha && CHANGESET_BLOCKED.has(String(cs.status))) || pendingChangeSets.find((cs) => cs.candidate_commit_sha);
-  const canForce = Boolean(forceTarget);
   const selectedChangeSet = useMemo(
     () => pendingChangeSets.find((cs) => cs.change_set_id === selectedChangeSetId) || pendingChangeSets[0] || null,
     [pendingChangeSets, selectedChangeSetId],
   );
+  const gates = deriveGates(selectedChangeSet);
+  const gate = overallGate(gates, selectedChangeSet ? 1 : 0);
+  const regressionPending = gates.find((g) => g.id === "regression")?.state !== "pass" && Boolean(selectedChangeSet);
+  const regressionTarget = selectedChangeSet?.candidate_commit_sha && CHANGESET_REGRESSION_RUNNABLE.has(String(selectedChangeSet.status)) ? selectedChangeSet : null;
+  const readyTarget = selectedChangeSet?.candidate_commit_sha && CHANGESET_READY.has(String(selectedChangeSet.status)) && !selectedChangeSet.publication_blocker ? selectedChangeSet : null;
+  const retryTarget = selectedChangeSet?.candidate_commit_sha && selectedChangeSet.status === "publishing" ? selectedChangeSet : null;
+  const forceTarget = selectedChangeSet?.candidate_commit_sha && CHANGESET_FORCEABLE.has(String(selectedChangeSet.status)) && !selectedChangeSet.publication_provenance_blocker ? selectedChangeSet : null;
+  const confirmedForceTarget = pendingChangeSets.find((cs) => cs.change_set_id === confirmForceId && CHANGESET_FORCEABLE.has(String(cs.status))) || null;
+  const canForce = Boolean(forceTarget);
 
   useEffect(() => {
     if (!pendingChangeSets.length) {
@@ -93,6 +116,7 @@ export function ReleaseWorkbench({
       await action();
     } catch (error) {
       setActionError(error instanceof Error ? error.message : String(error));
+      try { await onRefresh(); } catch { /* keep the original action error visible */ }
     } finally {
       setBusyAction(undefined);
     }
@@ -117,10 +141,34 @@ export function ReleaseWorkbench({
     void confirmForcePublish();
   };
 
+  const handlePublish = () => {
+    if (!readyTarget) return;
+    void runAction("publish", async () => {
+      const release = await publishAgentChangeSet(clientConfig, readyTarget.change_set_id, {
+        operator: "ui",
+        force: false,
+      });
+      setActionMessage(`已发布：${release.release_id}`);
+      await onRefresh();
+    });
+  };
+
+  const handleRetryPublish = () => {
+    if (!retryTarget) return;
+    void runAction("retry-publish", async () => {
+      const release = await publishAgentChangeSet(clientConfig, retryTarget.change_set_id, {
+        operator: "ui",
+        force: false,
+      });
+      setActionMessage(`发布已完成：${release.release_id}`);
+      await onRefresh();
+    });
+  };
+
   const confirmForcePublish = async () => {
-    if (!forceTarget) return;
+    if (!confirmedForceTarget) return;
     void runAction("force-publish", async () => {
-      const release = await publishAgentChangeSet(clientConfig, forceTarget.change_set_id, {
+      const release = await publishAgentChangeSet(clientConfig, confirmedForceTarget.change_set_id, {
         operator: "ui",
         force: true,
         note: "UI 强制发布：人工确认发布门禁风险可接受。",
@@ -162,7 +210,7 @@ export function ReleaseWorkbench({
                   onClick={() => setSelectedChangeSetId(cs.change_set_id)}
                 >
                   <span className="iw-list-item-title">{cs.title || cs.change_set_id}</span>
-                  <span className="iw-list-item-meta">{cs.status} · {cs.change_set_id}{cs.publication_blocker ? ` · 阻塞：${cs.publication_blocker}` : ""}</span>
+                  <span className="iw-list-item-meta">{cs.status} · {cs.change_set_id}{cs.publication_blocker ? ` · 阻塞：${cs.publication_blocker}` : ""}{cs.publication_error?.detail ? ` · 发布错误：${cs.publication_error.detail}` : ""}</span>
                 </button>
               ))
             )}
@@ -211,6 +259,26 @@ export function ReleaseWorkbench({
                 {showChanges ? "收起变更" : "展开变更"}
               </button>
               <button
+                className="iw-secondary-button"
+                type="button"
+                data-testid="release-action-publish"
+                disabled={!readyTarget || Boolean(busyAction)}
+                title={readyTarget ? `发布 ${readyTarget.change_set_id}` : "无已就绪候选变更"}
+                onClick={handlePublish}
+              >
+                {busyAction === "publish" ? "发布中..." : "发布"}
+              </button>
+              <button
+                className="iw-secondary-button"
+                type="button"
+                data-testid="release-action-retry"
+                disabled={!retryTarget || Boolean(busyAction)}
+                title={retryTarget ? `重试 ${retryTarget.change_set_id} 的发布对账` : "无待对账发布"}
+                onClick={handleRetryPublish}
+              >
+                {busyAction === "retry-publish" ? "重试中..." : "重试发布"}
+              </button>
+              <button
                 className="iw-secondary-button release-force-button"
                 type="button"
                 data-testid="release-action-force"
@@ -232,6 +300,7 @@ export function ReleaseWorkbench({
                 <span>候选提交：{selectedChangeSet.candidate_commit_sha || "-"}</span>
                 <span>来源改进：{String(selectedChangeSet.source_improvement_id || "-")}</span>
                 <span>阻塞项：{String(selectedChangeSet.publication_blocker || "无")}</span>
+                <span>发布错误：{selectedChangeSet.publication_error?.detail || "无"}</span>
                 {showChanges ? (
                   <pre className="iw-context-body release-diff-summary" data-testid="release-diff-summary">{String(selectedChangeSet.diff_summary || "暂无 diff 摘要。")}</pre>
                 ) : null}
@@ -267,7 +336,7 @@ export function ReleaseWorkbench({
             </header>
             <div className="iw-detail-section">
               <div className="iw-next-step">目标变更：{confirmForceId}</div>
-              <div className="iw-next-step">绕过原因：{forceTarget?.publication_blocker || "人工确认门禁风险可接受"}</div>
+              <div className="iw-next-step">绕过原因：{confirmedForceTarget?.publication_blocker || "人工确认门禁风险可接受"}</div>
             </div>
             <div className="modal-actions">
               <button className="secondary-button" type="button" onClick={() => setConfirmForceId(undefined)}>取消</button>

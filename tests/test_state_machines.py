@@ -18,6 +18,8 @@ def test_agent_job_state_machine_allows_current_lifecycle():
     validate_transition("agent_job", "schema_validating", "completed")
     with pytest.raises(StateTransitionError, match="completed -> running"):
         validate_transition("agent_job", "completed", "running")
+    with pytest.raises(StateTransitionError, match="timeout -> failed"):
+        validate_transition("agent_job", "timeout", "failed")
 
 
 def test_job_in_progress_states_are_known_job_states():
@@ -64,7 +66,11 @@ def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
     validate_transition("agent_change_set", "draft", "candidate_committed")
     validate_transition("agent_change_set", "candidate_committed", "regression_running")
     validate_transition("agent_change_set", "regression_running", "regression_passed")
-    validate_transition("agent_change_set", "regression_passed", "published")
+    validate_transition("agent_change_set", "regression_passed", "publishing")
+    validate_transition("agent_change_set", "publishing", "published")
+    validate_transition("agent_change_set", "publishing", "candidate_committed")
+    with pytest.raises(StateTransitionError, match="regression_passed -> published"):
+        validate_transition("agent_change_set", "regression_passed", "published")
 
 
 def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():
@@ -75,6 +81,13 @@ def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_
     validate_transition("improvement_stage", "execution", "regression")
     validate_transition("improvement_stage", "regression", "release")
     validate_transition("improvement_stage", "regression", "optimization")
+
+
+def test_improvement_execution_claim_must_finish_before_confirmation():
+    validate_transition("improvement_execution", "draft", "applying")
+    validate_transition("improvement_execution", "applying", "draft")
+    with pytest.raises(StateTransitionError, match="applying -> confirmed"):
+        validate_transition("improvement_execution", "applying", "confirmed")
 
 
 def test_state_machine_rejects_unknown_status():

@@ -114,7 +114,6 @@ def test_agv_049_external_collaboration_integration_is_deferred_long_term_stage(
     """AGV-049 外部协作平台对接晚于核心治理稳定：当前不含通用协作/Multica adapter，治理 Agent 不作协作成员暴露，深度对接归长期生态阶段（三个产品大版本后）。"""
     vision = _read("docs/项目目标愿景使命.md")
     readme = _read("README.md")
-    plan = _read("docs/engineering/AgentGov目标达成分阶段执行计划.md")
 
     # 成功标准①：当前目标不含通用协作看板/issue 同步/squad 管理/Multica adapter。
     assert "不提供通用协作看板" in vision and "不替代 Multica" in vision
@@ -128,5 +127,5 @@ def test_agv_049_external_collaboration_integration_is_deferred_long_term_stage(
     # 成功标准④：Multica 等深度对接明确归入长期生态集成阶段，不阻断前三个产品大版本。
     assert "不作为前三个产品大版本的主目标" in vision
     assert "完成至少三个产品大版本后，再启动与 Multica" in vision
-    assert "阶段 5：外部协作生态集成" in plan
-    assert "至少完成三个产品大版本" in plan
+    assert "长期生态集成阶段" in vision
+    assert "完成至少三个产品大版本后" in vision

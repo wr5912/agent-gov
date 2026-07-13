@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import io
 import json
 import sys
+import tarfile
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -585,4 +589,52 @@ def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
     assert restored["pre_restore_backup"] is None
     assert restored["cleanup_removed"]
     assert not backup_dir.exists()
-    assert (template / "README.md").read_text(encoding="utf-8") != "changed"
+    assert (template / "README.md").read_text(encoding="utf-8") == "before"
+
+
+def test_restore_runtime_template_backup_rejects_symlink_member(tmp_path):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_dir = tmp_path / "backups"
+    backup_path = tmp_path / "symlink.tar.gz"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+
+    with tarfile.open(backup_path, "w:gz") as archive:
+        link = tarfile.TarInfo("template/escape")
+        link.type = tarfile.SYMTYPE
+        link.linkname = outside.as_posix()
+        archive.addfile(link)
+        payload = b"escaped"
+        file_member = tarfile.TarInfo("template/escape/payload.txt")
+        file_member.size = len(payload)
+        archive.addfile(file_member, io.BytesIO(payload))
+
+    with pytest.raises(ValueError, match="unsupported tar member type"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not (outside / "payload.txt").exists()
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+
+
+def test_restore_runtime_template_backup_rejects_hardlink_member(tmp_path):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_dir = tmp_path / "backups"
+    backup_path = tmp_path / "hardlink.tar.gz"
+    outside = tmp_path / "outside.txt"
+    outside.write_text("unchanged", encoding="utf-8")
+
+    with tarfile.open(backup_path, "w:gz") as archive:
+        link = tarfile.TarInfo("template/linked.txt")
+        link.type = tarfile.LNKTYPE
+        link.linkname = outside.as_posix()
+        archive.addfile(link)
+
+    with pytest.raises(ValueError, match="unsupported tar member type"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert outside.read_text(encoding="utf-8") == "unchanged"
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"

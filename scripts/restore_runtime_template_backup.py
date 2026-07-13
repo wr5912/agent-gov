@@ -6,7 +6,7 @@ import json
 import shutil
 import tarfile
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TypedDict
 
 from export_runtime_template import DEFAULT_BACKUP_DIR, DEFAULT_TEMPLATE_DIR, _create_backup
@@ -42,15 +42,33 @@ def _resolve_backup(value: str, backup_dir: Path) -> Path:
 
 
 def _safe_extract(archive: tarfile.TarFile, dest: Path) -> None:
-    dest_resolved = dest.resolve()
+    members: list[tuple[tarfile.TarInfo, Path]] = []
     for member in archive.getmembers():
-        member_path = dest / member.name
-        resolved = member_path.resolve()
-        try:
-            resolved.relative_to(dest_resolved)
-        except ValueError as exc:
-            raise ValueError(f"unsafe tar member path: {member.name}") from exc
-    archive.extractall(dest)
+        if not (member.isdir() or member.isreg()):
+            raise ValueError(f"unsupported tar member type: {member.name}")
+
+        member_path = PurePosixPath(member.name)
+        if not member_path.parts or member_path.is_absolute() or ".." in member_path.parts:
+            raise ValueError(f"unsafe tar member path: {member.name}")
+        members.append((member, dest.joinpath(*member_path.parts)))
+
+    directories: list[tuple[tarfile.TarInfo, Path]] = []
+    for member, target in members:
+        if member.isdir():
+            target.mkdir(parents=True, exist_ok=True)
+            directories.append((member, target))
+            continue
+
+        target.parent.mkdir(parents=True, exist_ok=True)
+        source = archive.extractfile(member)
+        if source is None:
+            raise ValueError(f"cannot read tar member: {member.name}")
+        with source, target.open("wb") as destination:
+            shutil.copyfileobj(source, destination)
+        target.chmod(member.mode & 0o777)
+
+    for member, target in reversed(directories):
+        target.chmod(member.mode & 0o777)
 
 
 def restore_backup(*, backup_path: Path, template_dir: Path, backup_dir: Path) -> RestoreResult:

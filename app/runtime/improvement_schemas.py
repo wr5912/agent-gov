@@ -26,11 +26,6 @@ class ImprovementSplitRequest(BaseModel):
     feedback_ref: str = Field(description="要从当前事项拆出为新事项的来源反馈 ID。")
 
 
-class ImprovementLinkRequest(BaseModel):
-    kind: str = Field(description="被引闭环对象类型：attribution/optimization_plan/eval_run/change_set/batch。")
-    ref_id: str = Field(description="被引对象 ID。")
-
-
 class ImprovementLinkResponse(BaseModel):
     link_id: str
     improvement_id: str

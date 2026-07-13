@@ -154,6 +154,8 @@ class AgentGovConversationExtension(BaseModel):
     sdk_session_id: Optional[str] = None
     updated_at: Optional[int] = None
     turns: Optional[int] = None
+    active_run_id: Optional[str] = None
+    active_run_expires_at: Optional[str] = None
 
 
 class Conversation(BaseModel):

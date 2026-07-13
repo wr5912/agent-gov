@@ -5,11 +5,13 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from .improvement_feedback_contract import FEEDBACK_CASE_ATTACH_ONLY_MESSAGE, has_feedback_case_semantics
 
 
 class NormalizedFeedbackUpsertRequest(BaseModel):
-    problem: str = Field(description="问题（一句话）。")
+    problem: str = Field(min_length=1, description="问题（一句话）。")
     possible_reason: str = Field(default="", description="可能原因。")
     possible_object: str = Field(default="", description="可能对象。")
     impact: str = Field(default="", description="影响（高/中/低或描述）。")
@@ -35,14 +37,14 @@ class NormalizedFeedbackResponse(BaseModel):
 
 
 class AttributionUpsertRequest(BaseModel):
-    summary: str = Field(description="归因正文。")
+    summary: str = Field(min_length=1, description="归因正文。")
     responsibility_boundary: list[str] = Field(default_factory=list, description="责任边界 bullets。")
     evidence: list[str] = Field(default_factory=list, description="证据要点。")
 
 
 class ImprovementFeedbackCreateRequest(BaseModel):
-    summary: str = Field(description="反馈摘要。")
-    source: str = Field(default="playground_run", description="来源：playground_run/feedback_inbox/trace 等。")
+    summary: str = Field(min_length=1, description="反馈摘要。")
+    source: str = Field(default="playground_run", description="通用反馈来源，例如 playground_run/trace；FeedbackCase 必须走专用挂接接口。")
     raw_text: str = Field(default="", description="反馈原文。")
     run_id: str = Field(default="", description="关联 Run。")
     session_id: str = Field(default="", description="关联 Session。")
@@ -50,7 +52,13 @@ class ImprovementFeedbackCreateRequest(BaseModel):
     scenario: str = Field(default="", description="反馈归属的业务场景。")
     task_id: str = Field(default="", description="反馈归属的任务 ID。")
     alert_id: str = Field(default="", description="反馈归属的告警 ID。")
-    case_id: str = Field(default="", description="反馈归属的 Case ID。")
+    case_id: str = Field(default="", description="反馈归属的业务 Case ID，不接受 FeedbackCase ID。")
+
+    @model_validator(mode="after")
+    def _reject_feedback_case_semantics(self) -> ImprovementFeedbackCreateRequest:
+        if has_feedback_case_semantics(source=self.source, case_id=self.case_id):
+            raise ValueError(FEEDBACK_CASE_ATTACH_ONLY_MESSAGE)
+        return self
 
 
 class ImprovementFeedbackResponse(BaseModel):
@@ -88,7 +96,9 @@ class AttachableFeedbackCase(BaseModel):
 
 class AttachableFeedbacksResponse(BaseModel):
     feedback_cases: list[AttachableFeedbackCase] = Field(default_factory=list, description="未归属于任何改进事项的一等反馈 Case 池。")
-    other_improvement_feedbacks: list[ImprovementFeedbackResponse] = Field(default_factory=list, description="其他改进事项中、同一业务 Agent 的反馈，可调整过来。")
+    other_improvement_feedbacks: list[ImprovementFeedbackResponse] = Field(
+        default_factory=list, description="其他改进事项中、同一业务 Agent 的反馈，可调整过来。"
+    )
 
 
 class ImprovementDeletionImpactResponse(BaseModel):
@@ -119,13 +129,13 @@ class AttributionResponse(BaseModel):
 
 
 class OptimizationChange(BaseModel):
-    target: str = Field(description="变更对象（prompt/skill/profile/config 等）。")
-    change: str = Field(description="变更描述。")
+    target: str = Field(min_length=1, description="变更对象（prompt/skill/profile/config 等）。")
+    change: str = Field(min_length=1, description="变更描述。")
 
 
 class OptimizationPlanUpsertRequest(BaseModel):
-    summary: str = Field(description="方案正文。")
-    changes: list[OptimizationChange] = Field(default_factory=list, description="变更项列表。")
+    summary: str = Field(min_length=1, description="方案正文。")
+    changes: list[OptimizationChange] = Field(min_length=1, description="变更项列表。")
 
 
 class OptimizationPlanResponse(BaseModel):
@@ -142,14 +152,8 @@ class OptimizationPlanResponse(BaseModel):
     updated_at: str
 
 
-class ExecutionUpsertRequest(BaseModel):
-    summary: str = Field(description="执行结果说明。")
-    changes_applied: list[str] = Field(default_factory=list, description="已应用变更要点。")
-    agent_version: str = Field(default="", description="生成的 Agent 版本标识。")
-
-
 class RegressionCase(BaseModel):
-    prompt: str = Field(description="回归用例输入：原始用户输入文本，实际发给业务 Agent 的 prompt。")
+    prompt: str = Field(min_length=1, description="回归用例输入：原始用户输入文本，实际发给业务 Agent 的 prompt。")
     expected_behavior: str = Field(default="", description="期望行为。")
     checkpoints: list[str] = Field(default_factory=list, description="检查点。")
 

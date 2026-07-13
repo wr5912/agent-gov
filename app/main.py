@@ -14,7 +14,6 @@ from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
 from app.routers.agents import create_agents_router
 from app.routers.assets import create_assets_router
-from app.routers.automation import create_automation_router
 from app.routers.catalog import create_catalog_router
 from app.routers.chat import create_chat_router
 from app.routers.claude_user_input import create_claude_user_input_router
@@ -26,6 +25,7 @@ from app.routers.eval import create_eval_router
 from app.routers.feedback_cases import create_feedback_cases_router
 from app.routers.feedback_workbench import create_feedback_workbench_router
 from app.routers.improvement_content import create_improvement_content_router
+from app.routers.improvement_execution import create_improvement_execution_router
 from app.routers.improvement_feedback_ops import create_improvement_feedback_ops_router
 from app.routers.improvements import create_improvement_relations_router, create_improvements_router
 from app.routers.langfuse_traces import create_langfuse_traces_router
@@ -46,7 +46,6 @@ from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message, validate_hitl_single_api_process
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.asset_store import AssetStore
-from app.runtime.stores.automation_policy_store import AutomationPolicyStore
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
@@ -120,7 +119,6 @@ improvement_governor_service = ImprovementGovernorService(
     ),
     find_run_by_id=lambda run_id: feedback_store.find_run(run_id=run_id),
 )
-automation_policy_store = AutomationPolicyStore(runtime_db_session_factory)
 asset_store = AssetStore(runtime_db_session_factory)
 runtime_settings_store = RuntimeSettingsStore(runtime_db_session_factory)
 execution_application = WorkspaceExecutionApplier()
@@ -179,7 +177,6 @@ app = FastAPI(
         {"name": "catalog", "description": "Discover configured subagents and skills."},
         {"name": "agents", "description": "List registered business agents (governance objects)."},
         {"name": "improvements", "description": "Improvement items: the event-level governance work unit (四阶段改进治理)."},
-        {"name": "automation", "description": "Automation policy and stage auto-advance orchestration (四阶段改进治理 W2)."},
         {"name": "assets", "description": "Governance asset registry and cross-agent inheritance (四阶段改进治理 W3)."},
         {"name": "config", "description": "Inspect Claude Code configuration mapping inside the container."},
         {"name": "feedback", "description": "Feedback loop, attribution, and optimization proposal endpoints."},
@@ -307,6 +304,14 @@ app.include_router(
         improvement_store=improvement_store,
         content_store=improvement_content_store,
         governor_service=improvement_governor_service,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_improvement_execution_router(
+        improvement_store=improvement_store,
+        content_store=improvement_content_store,
+        governor_service=improvement_governor_service,
         execution_service=improvement_execution_service,
         require_api_key=require_api_key,
     )
@@ -320,13 +325,6 @@ app.include_router(
     )
 )
 app.include_router(create_langfuse_traces_router(runtime=runtime, require_api_key=require_api_key))
-app.include_router(
-    create_automation_router(
-        improvement_store=improvement_store,
-        automation_policy_store=automation_policy_store,
-        require_api_key=require_api_key,
-    )
-)
 app.include_router(create_assets_router(asset_store=asset_store, require_api_key=require_api_key))
 app.include_router(create_scenario_packs_router(scenario_pack_store=scenario_pack_store, feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))

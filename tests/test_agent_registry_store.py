@@ -212,7 +212,12 @@ def test_feedback_asset_provenance_traces_agent_and_relationship(monkeypatch, tm
     improvement = module.improvement_store.create_improvement(
         agent_id="soc-ops",
         title="数据标准化映射治理",
-        source_feedback_refs=[case_id],
+    )
+    module.improvement_content_store.attach_feedback_case(
+        improvement.improvement_id,
+        agent_id="soc-ops",
+        feedback_case_id=case_id,
+        summary=case["title"],
     )
     module.improvement_store.add_link(improvement.improvement_id, kind="change_set", ref_id="agc-test")
 

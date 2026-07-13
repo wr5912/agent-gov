@@ -38,7 +38,8 @@ def create_feedback_workbench_router(
 ) -> APIRouter:
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
     _register_agent_run_routes(router, feedback_store)
-    _register_feedback_signal_routes(router, feedback_store, improvement_store)
+    _register_feedback_signal_routes(router, feedback_store)
+    _register_feedback_provenance_route(router, feedback_store, improvement_store)
     _register_soc_event_routes(router, feedback_store)
     _register_pending_correlation_routes(router, feedback_store)
     _register_feedback_source_routes(router, feedback_store, runtime)
@@ -63,7 +64,7 @@ def _register_agent_run_routes(router: APIRouter, feedback_store: FeedbackStore)
         limit: int = Query(default=100, ge=1, le=500),
         include_messages: bool = Query(
             default=False,
-            description="Return full SDK messages and reconstructed assistant answer for Playground session restore.",
+            description="Include full SDK messages and reconstructed answer for explicit debug or audit inspection.",
         ),
     ) -> list[JsonObject]:
         runs = feedback_store.list_runs(run_id=run_id, session_id=session_id, alert_id=alert_id, case_id=case_id, agent_id=agent_id, limit=limit)
@@ -89,7 +90,6 @@ def _agent_run_response_payload(run: JsonObject, *, include_messages: bool) -> J
 def _register_feedback_signal_routes(
     router: APIRouter,
     feedback_store: FeedbackStore,
-    improvement_store: ImprovementStore,
 ) -> None:
 
     @router.post(
@@ -142,28 +142,6 @@ def _register_feedback_signal_routes(
         # 管理员修正反馈归属；改写 agent_id 并保留 from/to/operator/reason 审计记录（AGV-025）。
         return feedback_store.reassign_signal_agent(signal_id, agent_id=req.agent_id, operator=req.operator, reason=req.reason).to_payload()
 
-    @router.get(
-        "/asset-registry/feedback/{feedback_case_id}",
-        response_model=AssetProvenanceResponse,
-        summary="Asset relationship provenance for one feedback case (agent, assets, version)",
-    )
-    async def feedback_asset_provenance(feedback_case_id: str) -> AssetProvenanceResponse:
-        # AGV-022：从某次反馈追溯资产关系——影响了哪个 Agent、改了哪些资产、进入哪个版本。
-        case = ensure_found(feedback_store.find_case(feedback_case_id), "Feedback case not found")
-        agent_ids: list[str] = []
-        for signal_id in case.get("signal_ids") or []:
-            signal = feedback_store.find_signal(signal_id)
-            agent_id = (signal or {}).get("agent_id")
-            if agent_id and agent_id not in agent_ids:
-                agent_ids.append(agent_id)
-        improvements = [
-            _asset_provenance_improvement(improvement_store, item)
-            for item in improvement_store.list_improvements()
-            if feedback_case_id in item.source_feedback_refs
-        ]
-        return AssetProvenanceResponse(feedback_case_id=feedback_case_id, agent_ids=agent_ids, improvements=improvements)
-
-
 def _asset_provenance_improvement(
     improvement_store: ImprovementStore,
     item: object,
@@ -178,6 +156,38 @@ def _asset_provenance_improvement(
         source_feedback_refs=list(item.source_feedback_refs),
         change_set_ids=[link.ref_id for link in links if link.kind == "change_set"],
     )
+
+
+def _register_feedback_provenance_route(
+    router: APIRouter,
+    feedback_store: FeedbackStore,
+    improvement_store: ImprovementStore,
+) -> None:
+    @router.get(
+        "/asset-registry/feedback/{feedback_case_id}",
+        response_model=AssetProvenanceResponse,
+        summary="Asset relationship provenance for one feedback case (agent, assets, version)",
+    )
+    async def feedback_asset_provenance(feedback_case_id: str) -> AssetProvenanceResponse:
+        case = ensure_found(feedback_store.find_case(feedback_case_id), "Feedback case not found")
+        agent_ids: list[str] = []
+        for signal_id in case.get("signal_ids") or []:
+            signal = feedback_store.find_signal(signal_id)
+            agent_id = (signal or {}).get("agent_id")
+            if agent_id and agent_id not in agent_ids:
+                agent_ids.append(agent_id)
+        assigned_id = improvement_store.improvement_id_for_feedback_case(feedback_case_id)
+        assigned_item = improvement_store.get_improvement(assigned_id) if assigned_id else None
+        improvements = (
+            [_asset_provenance_improvement(improvement_store, assigned_item)]
+            if assigned_item is not None
+            else []
+        )
+        return AssetProvenanceResponse(
+            feedback_case_id=feedback_case_id,
+            agent_ids=agent_ids,
+            improvements=improvements,
+        )
 
 
 def _register_soc_event_routes(router: APIRouter, feedback_store: FeedbackStore) -> None:

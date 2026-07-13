@@ -1,14 +1,16 @@
 # Agent 版本治理与 Diff 对比重构方案
 
+> 归档于 2026-07-10。阶段 1-5 已完成，正文后半的 main-only、旧优化批次和未来式迁移步骤仅作历史设计记录。当前版本治理事实以运行时 OpenAPI、`docs/反馈闭环当前实现基线.md` 与集成指南为准。
+
 > ⚠️ 部分实现细节已被「main 归一为预制业务 Agent」整改（v2.8.0，分支 `unify-business-agent-model`）取代，阅读下方旧描述时按此更正：
 > - main 配置已从 `/main-workspace` 迁到 `data/business-agents/main-agent/workspace`；`HOST_WORKSPACE_MOUNT`/`HOST_CLAUDE_ROOT_MOUNT` 主挂载已删（main 落 `/data` 下）。
 > - 版本治理改为**按 `agent_id` 的 per-agent 版本库**（repo 就地在各业务 Agent 的 `workspace/`，`claude-root/`、`version/` 去嵌套并列）；`repository_status`/`snapshot`/`current`/`diff` 及批次执行均按 agent_id 路由，不再恒走主库。
-> - 用户面契约以 [AgentGov集成指南](./AgentGov集成指南.md) §4.6（版本发布回滚）/§4.8（workspace 定制）为准。
+> - 用户面契约以 [AgentGov集成指南](../../AgentGov集成指南.md) 为准。
 >
 > 文档层级：当前实现基线（迁移前）上的版本治理重构方案。
-> 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等当前实现和代码事实；四阶段改进治理面向用户的发布、执行记录、业务 Agent 版本链和资产 Registry 术语见 [AgentGov术语与版本边界](./AgentGov术语与版本边界.md)。
-> 归档边界：本文仍解释当前版本治理迁移和落地状态，暂不移动。
-> 四阶段改进治理覆盖规则：本文描述版本治理和 Diff 能力的当前实现与迁移边界；改进治理工作台中的发布门禁、回归验证、Diff 查看入口和用户主动作，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](./AgentGov_四阶段改进治理工作台UI整改方案.md) 的“测试发布”阶段及四张效果图为准。
+> 术语口径：本文保留 `AgentVersionStore`、change set、release、main workspace、candidate worktree 等历史实现和设计事实；四阶段改进治理术语见 [AgentGov术语与版本边界](../../AgentGov术语与版本边界.md)。
+> 归档边界：本文只用于追溯版本治理迁移和落地过程。
+> 四阶段改进治理覆盖规则：改进治理工作台中的发布门禁、回归验证、Diff 查看入口和用户主动作，以 [AgentGov 四阶段改进治理工作台 UI 整改方案](../../AgentGov_四阶段改进治理工作台UI整改方案.md) 为准。
 
 ## 0. 评审采纳状态
 

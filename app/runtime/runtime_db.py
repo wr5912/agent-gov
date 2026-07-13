@@ -37,6 +37,14 @@ from .runtime_db_migrations import (
     migrate_0025_agent_governance_legacy_paths,
     migrate_0026_normalized_feedback_generation_refs,
     migrate_0027_agent_registry_requires_web_hitl,
+    migrate_0028_remove_improvement_automation_policy,
+    migrate_0029_agent_release_tag_claims,
+    migrate_0030_improvement_execution_intents,
+    migrate_0031_feedback_case_assignments,
+    migrate_0032_improvement_execution_source_revisions,
+    migrate_0033_repair_improvement_stages_from_artifacts,
+    migrate_0034_repair_feedback_case_assignments,
+    migrate_0035_session_active_run_lease,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -66,6 +74,8 @@ class SessionRecordModel(Base):
     title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     turns: Mapped[int] = mapped_column(default=0)
     metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    active_run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    active_run_expires_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
 
 class AgentRunModel(Base):
@@ -267,6 +277,20 @@ class AgentReleaseModel(Base):
 
 
 Index("ix_agent_releases_status_created", AgentReleaseModel.status, AgentReleaseModel.created_at)
+
+
+class AgentReleaseTagClaimModel(Base):
+    __tablename__ = "agent_release_tag_claims"
+
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tag_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(String(128), index=True)
+    release_id: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+Index("ux_agent_release_tag_claims_change_set", AgentReleaseTagClaimModel.change_set_id, unique=True)
+Index("ux_agent_release_tag_claims_release", AgentReleaseTagClaimModel.release_id, unique=True)
 
 
 class EvalCaseModel(Base):
@@ -474,6 +498,14 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
         ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
         ("0027_agent_registry_requires_web_hitl", migrate_0027_agent_registry_requires_web_hitl),
+        ("0028_remove_improvement_automation_policy", migrate_0028_remove_improvement_automation_policy),
+        ("0029_agent_release_tag_claims", migrate_0029_agent_release_tag_claims),
+        ("0030_improvement_execution_intents", migrate_0030_improvement_execution_intents),
+        ("0031_feedback_case_assignments", migrate_0031_feedback_case_assignments),
+        ("0032_improvement_execution_source_revisions", migrate_0032_improvement_execution_source_revisions),
+        ("0033_repair_improvement_stages_from_artifacts", migrate_0033_repair_improvement_stages_from_artifacts),
+        ("0034_repair_feedback_case_assignments", migrate_0034_repair_feedback_case_assignments),
+        ("0035_session_active_run_lease", migrate_0035_session_active_run_lease),
     ):
         if version in applied:
             continue

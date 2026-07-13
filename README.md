@@ -64,7 +64,7 @@ AGENT_MODEL=claude-sonnet-4-5
 
 `docker/.env.example` 已包含端口、模型提供商、Claude Agent SDK 运行参数、路径、权限、skills、MCP、hooks、session 等配置项的注释。默认端口遵循项目规则 `50000 + 容器端口`，例如 API 端口映射为 `58080:8080`。
 
-离线部署表示不依赖公网远程服务，不表示无模型运行；反馈闭环、执行优化和 DSPy 输出规范化应指向本地或内网模型网关。模型接入通过 `MODEL_PROVIDER_BACKEND` 显式选择 adapter，不通过 URL 字符串推断 provider；`MODEL_PROVIDER_API_URL` 是唯一真实模型服务 URL。vLLM 场景中 `ANTHROPIC_BASE_URL` 由 Runtime 派生为内部 LiteLLM sidecar 地址，不要求用户维护第二个 upstream URL。Agent 若没有输出精确匹配 `schema_version` 的完整 JSON，Runtime 会交给 DSPy formatter 规范化，formatter 不可用时 job 会失败并写入 `error_json`，不会生成 offline/raw 占位结果。
+离线部署表示不依赖公网远程服务，不表示无模型运行；反馈闭环、执行优化和 DSPy 输出规范化应指向本地或内网模型网关。模型接入通过 `MODEL_PROVIDER_BACKEND` 显式选择 adapter，不通过 URL 字符串推断 provider；`MODEL_PROVIDER_API_URL` 是唯一真实模型服务 URL。vLLM 场景中 `ANTHROPIC_BASE_URL` 由 Runtime 派生为内部 LiteLLM sidecar 地址，不要求用户维护第二个 upstream URL。治理 Agent 原始文本统一经 DSPy Signature 与 Pydantic OutputModel 规范化和校验。后台 `agent_jobs` 在 formatter 不可用或校验失败时标记 failed 并写入 `error_json`；改进事项的同步生成端点当前会在 governor/formatter 失败时写入 `generated_by=heuristic` 的确定性回退，调用方应结合 `generated_by` 与 `generation_trace_id` 判断来源。两条路径都不会生成 offline/raw 占位结果。
 
 Docker 构建阶段已在 Dockerfile 中固定使用国内镜像源：Debian apt 使用阿里源，uv/pip 使用阿里 PyPI 源，Node 包源使用 npmmirror；这些源不再通过 `docker/.env` 覆盖，避免不同机器构建时漂移。Compose 运行环境也会固定同名 pip/uv/pnpm 变量，避免已有本地 `docker/.env` 旧变量影响容器内后续安装命令。基础镜像固定使用 `python:3.11-slim` 和 `node:22-alpine`；基础镜像拉取没有统一、稳定的公共国内 registry 可直接写死，建议通过 Docker daemon registry mirror 或团队内网基础镜像仓库处理，如需切换应直接修改 Dockerfile 的 `FROM` 行。
 
@@ -206,7 +206,7 @@ pnpm --dir frontend generate:api-types
 - 反馈采集与处置单：`GET /api/agent-runs`、`POST/GET /api/feedback-signals`、`GET /api/feedback-signals/{signal_id}`、`POST/GET /api/soc-events`、`GET /api/soc-events/{event_id}`、`GET /api/pending-correlations`、`POST /api/pending-correlations/{pending_id}/resolve`、`POST/GET /api/feedback-cases`、`GET /api/feedback-cases/{feedback_case_id}`。`AgentRunResponse` 会返回 `langfuse_trace_id` / `langfuse_trace_url`，用于运行证据面板定位具体 Langfuse Trace。
 - Agent job 队列：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}`。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。
-- 改进事项四阶段内容：`POST/GET /api/improvements`、`GET /api/improvements/{improvement_id}`、`POST /api/improvements/{improvement_id}/lifecycle`、`POST /api/improvements/{improvement_id}/archive`、`GET/PUT /api/improvements/{improvement_id}/normalized-feedback`、`POST /api/improvements/{improvement_id}/normalized-feedback/confirm`、`GET/PUT /api/improvements/{improvement_id}/attribution`、`POST /api/improvements/{improvement_id}/attribution/generate`、`POST /api/improvements/{improvement_id}/attribution/confirm`、`GET/PUT /api/improvements/{improvement_id}/optimization-plan`、`POST /api/improvements/{improvement_id}/optimization-plan/generate`、`POST /api/improvements/{improvement_id}/optimization-plan/confirm`、`GET/PUT /api/improvements/{improvement_id}/execution`、`POST /api/improvements/{improvement_id}/execution/apply`、`POST /api/improvements/{improvement_id}/execution/confirm`、`GET /api/improvements/{improvement_id}/regression-assessment`、`POST /api/improvements/{improvement_id}/regression-assessment/generate`、`POST /api/improvements/{improvement_id}/regression-assessment/confirm`、`GET /api/langfuse/traces/{trace_id}`。
+- 改进事项四阶段内容：`POST/GET /api/improvements`、`GET /api/improvements/{improvement_id}`、`POST /api/improvements/{improvement_id}/lifecycle`、`POST /api/improvements/{improvement_id}/archive`、`GET/PUT /api/improvements/{improvement_id}/normalized-feedback`、`POST /api/improvements/{improvement_id}/normalized-feedback/confirm`、`GET/PUT /api/improvements/{improvement_id}/attribution`、`POST /api/improvements/{improvement_id}/attribution/generate`、`POST /api/improvements/{improvement_id}/attribution/confirm`、`GET/PUT /api/improvements/{improvement_id}/optimization-plan`、`POST /api/improvements/{improvement_id}/optimization-plan/generate`、`POST /api/improvements/{improvement_id}/optimization-plan/confirm`、`GET /api/improvements/{improvement_id}/execution`、`POST /api/improvements/{improvement_id}/execution/apply`、`POST /api/improvements/{improvement_id}/execution/confirm`、`GET /api/improvements/{improvement_id}/regression-assessment`、`POST /api/improvements/{improvement_id}/regression-assessment/generate`、`POST /api/improvements/{improvement_id}/regression-assessment/confirm`、`GET /api/langfuse/traces/{trace_id}`。内容写入或生成成功后由后端推进对应阶段；`/lifecycle` 只允许返回较早阶段返工，不提供通用前推。执行记录只能由隔离 worktree 的 `execution/apply` 业务动作生成，客户端不能手工伪造已执行证据。
 - 评估、回归资产和版本治理：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`POST/GET /api/eval-runs/{eval_run_id}/impact-analysis`、`GET /api/regression-assets`、`GET/PATCH /api/regression-assets/{eval_case_id}`、`POST /api/regression-assets/{eval_case_id}/promote`、`POST /api/regression-assets/{eval_case_id}/archive`、`POST /api/regression-assets/{eval_case_id}/mark-flaky`、`POST /api/regression-assets/{eval_case_id}/unmark-flaky`、`POST /api/regression-assets/{eval_case_id}/supersede`、`GET /api/regression-assets/{eval_case_id}/revisions`、`GET /api/regression-assets/{eval_case_id}/governance-events`、`GET /api/agent-repository`、`POST /api/agent-repository/discard-changes`、`POST /api/agent-repository/snapshot`、`GET /api/agent-repository/current`、`POST/GET /api/agent-change-sets`、`GET /api/agent-change-sets/{change_set_id}`、`GET /api/agent-change-sets/{change_set_id}/events`、`GET /api/agent-change-sets/{change_set_id}/diff`、`GET /api/agent-change-sets/{change_set_id}/file-diff`、`POST /api/agent-change-sets/{change_set_id}/publish`、`GET /api/agent-releases`、`GET /api/agent-releases/{release_id}`、`POST /api/agent-releases/{release_id}/restore`。
 
 运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `${HOME}/volume-agent-gov/data/`：
@@ -494,7 +494,7 @@ agent: soc-analyst
 
 ## 权限与安全
 
-`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。通过 Agent SDK 调用时，最终工具边界仍以 Claude Code 官方配置为准：`.claude/settings.json`、subagent/skill frontmatter 和 Claude Code 自身发现规则共同生效，后端不通过 Options 注入 allow/deny 列表、permission mode 或 hooks。
+`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。Agent、skill、MCP 与项目权限规则仍由 Claude Code project discovery 加载；Runtime 不注入 agents 或工具 allow/deny 列表，但会通过 `ClaudeAgentOptions` 设置 `setting_sources`、`permission_mode`、`PreToolUse` hooks，并在 HITL/fail-closed 场景注入 `can_use_tool` callback。
 
 默认 `docker/runtime-volume-seeds/data/business-agents/<agent_id>/workspace/.claude/settings.json` 中设置：
 
@@ -538,11 +538,13 @@ ${HOME}/volume-agent-gov/data/runtime.sqlite3
 
 - API 层 `session_id`
 - Claude SDK 返回的 `sdk_session_id`
+- 业务 Agent owner（首次 turn 原子认领后不可变）
 - 创建/更新时间
 - turns
 - title 和 metadata
+- 当前活动 `run_id` 及其过期时间租约
 
-`${HOME}/volume-agent-gov/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。
+`${HOME}/volume-agent-gov/data/sessions/` 是历史兼容路径，不再是权威存储。下一次请求传入同一个 `session_id` 时，运行时会尝试使用 SDK `resume` 继续 Claude Code 会话。一个 session 同时只允许一个活动 turn；活动租约期间 `/api/sessions/{session_id}` 与 `/v1/conversations/{conversation_id}` 的删除请求返回 `409`，租约过期后可重新认领。Playground 会同步禁用活动会话的删除按钮。
 
 ## 生产化建议
 

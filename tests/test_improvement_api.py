@@ -14,7 +14,7 @@ from test_api_execution_optimizer import _load_app
 
 
 def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -> None:
-    """主流程：改进事项作为事项级单一领域实体，创建后按 agent scoping 可列、可读、可推进阶段；非法转移被拒。"""
+    """业务产物负责前推阶段，公开 lifecycle 只允许返工。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         created = client.post(
@@ -39,10 +39,33 @@ def test_improvement_item_single_source_lifecycle(monkeypatch, tmp_path: Path) -
         detail = client.get(f"/api/improvements/{improvement_id}")
         assert detail.status_code == 200 and detail.json()["improvement_id"] == improvement_id
 
-        # 合法阶段推进 feedback_intake -> triage -> attribution。
-        assert client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"}).status_code == 200
-        advanced = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "attribution"})
-        assert advanced.status_code == 200 and advanced.json()["improvement_stage"] == "attribution"
+        # 通用 lifecycle 即使目标是相邻状态也不得前推。
+        forward = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"})
+        assert forward.status_code == 409
+        assert client.get(f"/api/improvements/{improvement_id}").json()["improvement_stage"] == "feedback_intake"
+
+        # 业务产物成功后由后端推进：系统理解 -> triage，归因 -> attribution。
+        assert (
+            client.put(
+                f"/api/improvements/{improvement_id}/normalized-feedback",
+                json={"problem": "告警误报"},
+            ).status_code
+            == 200
+        )
+        assert client.get(f"/api/improvements/{improvement_id}").json()["improvement_stage"] == "triage"
+        assert client.post(f"/api/improvements/{improvement_id}/normalized-feedback/confirm").status_code == 200
+        assert (
+            client.put(
+                f"/api/improvements/{improvement_id}/attribution",
+                json={"summary": "数据时间不一致", "responsibility_boundary": [], "evidence": []},
+            ).status_code
+            == 200
+        )
+        assert client.get(f"/api/improvements/{improvement_id}").json()["improvement_stage"] == "attribution"
+
+        # lifecycle 保留合法返工 attribution -> triage。
+        refined = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"})
+        assert refined.status_code == 200 and refined.json()["improvement_stage"] == "triage"
 
         # 非法跨段转移被状态机拒绝（409）。
         rejected = client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "release"})
@@ -66,20 +89,50 @@ def test_create_rejects_empty_and_unknown_is_404(monkeypatch, tmp_path: Path) ->
     with TestClient(module.app) as client:
         assert client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "  "}).status_code == 400
         assert client.post("/api/improvements", json={"agent_id": "  ", "title": "x"}).status_code == 400
+        assert client.post(
+            "/api/improvements",
+            json={"agent_id": "soc-ops", "title": "伪造归属", "source_feedback_refs": ["fbc-forged"]},
+        ).status_code == 400
         assert client.get("/api/improvements/imp-unknown").status_code == 404
         assert client.post("/api/improvements/imp-unknown/lifecycle", json={"stage": "triage"}).status_code == 404
 
 
 def test_archive_is_terminal_status_and_blocks_lifecycle(monkeypatch, tmp_path: Path) -> None:
-    """归档为终态状态：improvement_status=archived；归档后阶段转移 409；未知 id 归档 404。"""
+    """归档为终态：事项关系与内容都不可再写，且失败写入不留下部分副作用。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
-        created = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "待归档事项"})
+        created = client.post(
+            "/api/improvements",
+            json={"agent_id": "soc-ops", "title": "待归档事项", "source_feedback_refs": ["feedback-1"]},
+        )
         improvement_id = created.json()["improvement_id"]
+        assert client.put(
+            f"/api/improvements/{improvement_id}/normalized-feedback",
+            json={"problem": "归档前问题"},
+        ).status_code == 200
         archived = client.post(f"/api/improvements/{improvement_id}/archive")
         assert archived.status_code == 200 and archived.json()["improvement_status"] == "archived"
-        # 归档后阶段推进被拒。
-        assert client.post(f"/api/improvements/{improvement_id}/lifecycle", json={"stage": "triage"}).status_code == 409
+        assert client.post(
+            f"/api/improvements/{improvement_id}/lifecycle",
+            json={"stage": "feedback_intake"},
+        ).status_code == 409
+        assert client.put(
+            f"/api/improvements/{improvement_id}/normalized-feedback",
+            json={"problem": "归档后污染"},
+        ).status_code == 409
+        assert client.post(f"/api/improvements/{improvement_id}/normalized-feedback/confirm").status_code == 409
+        assert client.post(
+            f"/api/improvements/{improvement_id}/feedbacks",
+            json={"summary": "归档后反馈"},
+        ).status_code == 409
+        assert client.post(
+            f"/api/improvements/{improvement_id}/split",
+            json={"feedback_ref": "feedback-1"},
+        ).status_code == 409
+        normalized = client.get(f"/api/improvements/{improvement_id}/normalized-feedback").json()
+        unchanged = client.get(f"/api/improvements/{improvement_id}").json()
+        assert normalized["problem"] == "归档前问题" and normalized["status"] == "draft"
+        assert unchanged["source_feedback_refs"] == ["feedback-1"]
         # 归档项仍可列出（审计）。
         assert improvement_id in {i["improvement_id"] for i in client.get("/api/improvements").json()}
         # 未知 id 归档 404。
@@ -124,21 +177,20 @@ def test_auto_merge_on_create(monkeypatch, tmp_path: Path) -> None:
         assert len(client.get("/api/improvements", params={"agent_id": "soc-ops"}).json()) == 1
 
 
-def test_closed_loop_links_api(monkeypatch, tmp_path: Path) -> None:
-    """W2-c：改进事项关联既有闭环对象（attribution/plan/...）；未知 kind 400、未知事项 404。"""
+def test_closed_loop_links_api_is_read_only(monkeypatch, tmp_path: Path) -> None:
+    """闭环链接由权威业务动作写入；公开 API 只读，不能注入任意或跨 Agent 引用。"""
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         item = client.post("/api/improvements", json={"agent_id": "soc-ops", "title": "关联闭环"}).json()
         iid = item["improvement_id"]
-        created = client.post(f"/api/improvements/{iid}/links", json={"kind": "attribution", "ref_id": "attr-1"})
-        assert created.status_code == 201 and created.json()["kind"] == "attribution"
-        client.post(f"/api/improvements/{iid}/links", json={"kind": "change_set", "ref_id": "cs-9"})
+        module.improvement_store.add_link(iid, kind="attribution", ref_id="attr-authoritative")
+        injected = client.post(
+            f"/api/improvements/{iid}/links",
+            json={"kind": "change_set", "ref_id": "foreign-or-missing-change-set"},
+        )
         links = client.get(f"/api/improvements/{iid}/links").json()
-        assert {(l["kind"], l["ref_id"]) for l in links} == {("attribution", "attr-1"), ("change_set", "cs-9")}
-        # 未知 kind 400。
-        assert client.post(f"/api/improvements/{iid}/links", json={"kind": "bogus", "ref_id": "x"}).status_code == 400
-        # 未知改进事项 404。
-        assert client.post("/api/improvements/imp-nope/links", json={"kind": "attribution", "ref_id": "y"}).status_code == 404
+        assert injected.status_code == 405
+        assert {(link["kind"], link["ref_id"]) for link in links} == {("attribution", "attr-authoritative")}
         assert client.get("/api/improvements/imp-nope/links").status_code == 404
 
 

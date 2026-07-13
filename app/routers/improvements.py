@@ -8,7 +8,6 @@ from app.runtime.errors import NotFoundError
 from app.runtime.improvement_schemas import (
     ImprovementCreateRequest,
     ImprovementItemResponse,
-    ImprovementLinkRequest,
     ImprovementLinkResponse,
     ImprovementMergeRequest,
     ImprovementSimilarItem,
@@ -59,7 +58,9 @@ def create_improvements_router(
         response_model=list[ImprovementItemResponse],
         summary="List improvement items (governance work units), scoped by business agent",
     )
-    async def list_improvements(agent_id: str | None = Query(default=None, description="按业务 Agent 归属过滤；省略则返回全部 Agent。")) -> list[ImprovementItemResponse]:
+    async def list_improvements(
+        agent_id: str | None = Query(default=None, description="按业务 Agent 归属过滤；省略则返回全部 Agent。"),
+    ) -> list[ImprovementItemResponse]:
         return [_response(record) for record in improvement_store.list_improvements(agent_id=agent_id)]
 
     @router.post(
@@ -102,11 +103,10 @@ def create_improvements_router(
     @router.post(
         "/improvements/{improvement_id}/lifecycle",
         response_model=ImprovementItemResponse,
-        summary="Transition an improvement item's stage (rejects illegal transitions with 409)",
+        summary="Return an improvement item to an earlier refinement stage",
     )
     async def transition_improvement(improvement_id: str, req: ImprovementStageTransitionRequest) -> ImprovementItemResponse:
-        # 合法阶段转移由集中状态机 improvement_stage 判定；非法转移 / 已归档返回 409。
-        return _response(improvement_store.transition_stage(improvement_id, stage=req.stage))
+        return _response(improvement_store.refine_stage(improvement_id, stage=req.stage))
 
     @router.post(
         "/improvements/{improvement_id}/archive",
@@ -176,15 +176,5 @@ def create_improvement_relations_router(
         if improvement_store.get_improvement(improvement_id) is None:
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
         return [_link_response(record) for record in improvement_store.list_links(improvement_id)]
-
-    @router.post(
-        "/improvements/{improvement_id}/links",
-        response_model=ImprovementLinkResponse,
-        status_code=201,
-        summary="Link an improvement to a closed-loop object (attribution/plan/eval/change_set)",
-    )
-    async def add_link(improvement_id: str, req: ImprovementLinkRequest) -> ImprovementLinkResponse:
-        # 未知 kind / 空 ref_id 由 store 拒绝（400）；未知改进事项 404。
-        return _link_response(improvement_store.add_link(improvement_id, kind=req.kind, ref_id=req.ref_id))
 
     return router

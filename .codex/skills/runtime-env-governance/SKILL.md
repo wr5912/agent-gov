@@ -57,6 +57,6 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 
 ## 配置面选择
 
-- 常驻入口只放在 `AGENTS.override.md` 和 `.codex/rules/*.rules`。
+- 常驻入口只放在唯一根 `AGENTS.md`；展开说明放 `.codex/guidance/*.md`，命令执行策略才放 `.codex/rules/*.rules`。
 - 详细矩阵和 checklist 保留在本技能，避免常驻上下文膨胀。
 - 可机械检查的内容优先放入 pytest 或治理脚本；不要只写成人工自报规则。

@@ -296,7 +296,9 @@ class FeedbackEvalStoreMixin:
         if not prompt:
             return None
 
-        signals = [signal for signal in (self.find_signal(signal_id) for signal_id in feedback_case.get("signal_ids", [])) if signal]
+        raw_signal_ids = feedback_case.get("signal_ids")
+        signal_ids = raw_signal_ids if isinstance(raw_signal_ids, list) else []
+        signals = [signal for signal in (self.find_signal(str(signal_id)) for signal_id in signal_ids) if signal]
         labels = self._unique_strings(
             [
                 *[str(label) for signal in signals for label in (signal.get("labels") or [])],

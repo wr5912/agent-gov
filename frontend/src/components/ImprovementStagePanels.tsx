@@ -9,7 +9,7 @@ import type {
   OptimizationPlan,
   RegressionAssessment,
 } from "../api/improvements";
-import type { ImprovementStageView } from "../improvementStage";
+import type { ImprovementStageView, VisibleImprovementStageKey } from "../improvementStage";
 import {
   isPendingOperation,
   operationStatusText,
@@ -58,6 +58,29 @@ function GenerationError({ message, testId }: { message: string; testId: string 
   return <div className="iw-operation-error" data-testid={testId}><strong>生成失败：</strong>{message}</div>;
 }
 
+const OPERATION_TARGET_STAGE: Record<
+  ImprovementPendingOperation["kind"],
+  { stage: VisibleImprovementStageKey; testId: string }
+> = {
+  generate_attribution: { stage: "attribution_analysis", testId: "attribution-generation-status" },
+  generate_optimization_plan: { stage: "optimization_execution", testId: "optimization-generation-status" },
+  apply_execution: { stage: "optimization_execution", testId: "execution-generation-status" },
+  generate_regression: { stage: "test_release", testId: "regression-generation-status" },
+};
+
+function CrossStageGenerationStatus({
+  operation,
+  visibleStage,
+}: {
+  operation: ImprovementPendingOperation | null | undefined;
+  visibleStage: VisibleImprovementStageKey;
+}) {
+  if (!operation) return null;
+  const target = OPERATION_TARGET_STAGE[operation.kind];
+  if (target.stage === visibleStage) return null;
+  return <GenerationStatus operation={operation} testId={target.testId} />;
+}
+
 export function ImprovementStagePanels({
   item,
   clientConfig,
@@ -85,7 +108,6 @@ export function ImprovementStagePanels({
   onCancelAttribution,
   onAttrDraftChange,
   onGenerateOpt,
-  onRecordExec,
   onAdoptTestDataset,
   onOpenContext,
   onOpenDetail,
@@ -116,7 +138,6 @@ export function ImprovementStagePanels({
   onCancelAttribution: () => void;
   onAttrDraftChange: (value: AttrDraft) => void;
   onGenerateOpt: () => void;
-  onRecordExec: () => void;
   onAdoptTestDataset: () => void;
   onOpenContext: () => void;
   onOpenDetail: (detail: StageDetail) => void;
@@ -147,6 +168,7 @@ export function ImprovementStagePanels({
         <span>阶段工作面板 · {stageView.label}</span>
         <button className="iw-secondary-button" type="button" data-testid="open-context-drawer" onClick={onOpenContext}>获取上下文</button>
       </div>
+      {!readOnly ? <CrossStageGenerationStatus operation={pendingOperation} visibleStage={stageView.visibleKey} /> : null}
       {stageView.visibleKey === "feedback_sorting" ? (
         <FeedbackSortingPanels
           item={item}
@@ -193,7 +215,6 @@ export function ImprovementStagePanels({
           readOnly={readOnly}
           onOpenTrace={openGenerationTrace}
           onGenerateOpt={onGenerateOpt}
-          onRecordExec={onRecordExec}
           onOpenDetail={onOpenDetail}
         />
       ) : null}
@@ -455,7 +476,6 @@ function OptimizationPanels({
   readOnly,
   onOpenTrace,
   onGenerateOpt,
-  onRecordExec,
   onOpenDetail,
 }: {
   item: ImprovementItem;
@@ -469,7 +489,6 @@ function OptimizationPanels({
   readOnly: boolean;
   onOpenTrace: (traceId: string, traceUrl: string, title: string) => void;
   onGenerateOpt: () => void;
-  onRecordExec: () => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
   const changes = optimizationPlan?.changes || [{ target: "Prompt / 规则", change: "新增时间窗口核验约束" }];
@@ -495,7 +514,7 @@ function OptimizationPanels({
         <ImprovementPlanExecution
           item={item} busy={busy} optPlan={optimizationPlan} execution={null} attribution={attribution} readOnly={readOnly}
           showExecution={false} showPlanRegenerate={false}
-          onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
+          onGenerateOpt={onGenerateOpt}
         />
         <TraceButton source={optimizationPlan} label="优化方案" onOpenTrace={onOpenTrace} />
       </StageCard>
@@ -565,7 +584,7 @@ function OptimizationPanels({
         <ImprovementPlanExecution
           item={item} busy={busy} optPlan={optimizationPlan} execution={execution} attribution={attribution} readOnly={readOnly}
           showPlan={false}
-          onGenerateOpt={onGenerateOpt} onRecordExec={onRecordExec}
+          onGenerateOpt={onGenerateOpt}
         />
         <TraceButton source={execution} label="执行记录" onOpenTrace={onOpenTrace} />
       </StageCard>

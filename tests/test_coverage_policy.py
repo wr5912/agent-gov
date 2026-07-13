@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from scripts.check_test_coverage_policy import evaluate_policy, main_flow_test_bindings
+from scripts.check_test_coverage_policy import collect_pytest_nodeids, evaluate_policy, main_flow_test_bindings
 
 
 def _write_json(path: Path, value: object) -> None:
@@ -107,3 +107,21 @@ def test_coverage_policy_accepts_pytest_and_frontend_bindings(tmp_path):
     assert errors == []
     assert pytest_nodes == ["tests/test_policy.py::test_main_flow"]
     assert ui_scripts == ["verify:feedback-ui-states"]
+
+
+def test_collect_pytest_nodeids_rejects_unknown_parametrized_case(tmp_path):
+    test_file = tmp_path / "tests" / "test_policy.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "import pytest\n\n@pytest.mark.parametrize('value', [1], ids=['known'])\ndef test_case(value):\n    assert value\n",
+        encoding="utf-8",
+    )
+
+    errors = collect_pytest_nodeids(
+        ["tests/test_policy.py::test_case[missing]"],
+        repo_root=tmp_path,
+    )
+
+    assert len(errors) == 1
+    assert "pytest could not collect" in errors[0]
+    assert "not found" in errors[0]

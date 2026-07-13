@@ -1,5 +1,7 @@
 # 治理 Agent 合并为单一 Governor 设计（Issue #3 第3点）
 
+> 归档于 2026-07-10。合并已完成，正文的落地前 current、迁移清单和旧 profile 名称只作历史设计证据。当前 governor 配置和 job 契约以代码、OpenAPI 与 `docs/反馈闭环当前实现基线.md` 为准。
+
 把 attribution-analyzer、proposal-generator、execution-optimizer、eval-case-governor、
 regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，workspace 合并为
 `governor-workspace`，降低开发/管理/配置成本。本文是落地前的治理对象预检 + 可执行迁移设计；
@@ -56,7 +58,7 @@ regression-impact-analyzer 五个治理 Agent 合并为单一 `governor`，works
 ## 验证
 
 - `make test` 全绿（含 codex 治理硬门、coverage policy）；
-- bootstrap/local-debug 渲染出 main + governor 两套 workspace，settings/mcp 占位渲染正确；
+- bootstrap/local-debug 渲染出 main + governor 两套 workspace，settings/mcp 模板变量渲染正确；
 - 反馈闭环主流程（`make main-flow-test`）四类 job（归因/方案/执行/用例/回归影响）均走 governor profile 成功；
 - 旧 `${HOME}/volume-agent-gov` 历史 job 记录列表/详情不 500（旧 profile_name 可读）。
 

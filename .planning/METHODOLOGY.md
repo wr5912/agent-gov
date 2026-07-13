@@ -30,7 +30,7 @@
 
 **Diagnoses:** 问题只写进总结或口头规则，下一阶段仍可能重复。
 
-**Recommends:** 阶段结束时分类沉淀：静态可识别的进治理脚本，行为可验证的进测试或 smoke，只能人工判断的进 `.planning/METHODOLOGY.md`、`.codex/rules` 或工程 checklist。
+**Recommends:** 阶段结束时分类沉淀：静态可识别的进治理脚本，行为可验证的进测试或 smoke，只能人工判断的进 `.planning/METHODOLOGY.md`、`.codex/guidance` 或工程 checklist。
 
 **Apply when:** 同一类问题出现第二次，或发现治理硬门未覆盖但风险可复发。
 

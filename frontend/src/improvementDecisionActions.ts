@@ -40,15 +40,6 @@ export interface ImprovementDecisionInputs {
   feedbacks: ImprovementFeedback[];
 }
 
-const STAGE_ORDER = ["feedback_intake", "triage", "attribution", "optimization", "execution", "regression", "release"];
-
-export function nextImprovementStagePath(currentStage: string, targetStage: string): string[] {
-  const current = STAGE_ORDER.indexOf(currentStage);
-  const target = STAGE_ORDER.indexOf(targetStage);
-  if (current < 0 || target < 0 || current >= target) return [];
-  return STAGE_ORDER.slice(current + 1, target + 1);
-}
-
 export function deriveImprovementListDecisionLabel(item: ImprovementItem): string {
   if (item.improvement_status === "archived") return "查看归档记录";
   switch (describeImprovementStage(item.improvement_stage).visibleKey) {
@@ -57,9 +48,9 @@ export function deriveImprovementListDecisionLabel(item: ImprovementItem): strin
     case "attribution_analysis":
       return "生成优化方案";
     case "optimization_execution":
-      return item.improvement_stage === "execution" ? "执行回归测试" : "执行优化";
+      return item.improvement_stage === "execution" ? "生成回归方案" : "执行优化";
     case "test_release":
-      return item.improvement_stage === "release" ? "查看发布状态" : "执行回归测试";
+      return item.improvement_stage === "release" ? "查看发布状态" : "生成回归方案";
   }
 }
 
@@ -142,26 +133,26 @@ export function deriveImprovementPrimaryDecision({
       });
     }
     return decision("generate_regression", {
-      label: "执行回归测试",
-      question: "基于执行结果生成回归测试？",
-      summary: "点击后会确认执行结果，并生成回归测试候选。",
+      label: "生成回归方案",
+      question: "基于执行结果生成回归方案？",
+      summary: "点击后会确认执行结果，并生成回归评估与候选用例；不会执行测试。",
       evidence: execution?.status === "confirmed" ? "执行已确认" : "将隐式确认执行",
       score: 88,
-      scoreLabel: "回归准备度",
-      level: "可测试",
+      scoreLabel: "方案准备度",
+      level: "可生成",
       icon: "✓",
     });
   }
 
   if (visibleKey === "test_release") {
     return decision("generate_regression", {
-      label: regressionAssessment ? "重新执行回归测试" : "执行回归测试",
-      question: "生成并执行当前改进事项的回归测试？",
-      summary: "点击后会生成回归用例候选，用于验证改进效果和风险。",
-      evidence: regressionAssessment ? "已有回归候选，可重新执行" : "回归结果缺失",
+      label: regressionAssessment ? "重新生成回归方案" : "生成回归方案",
+      question: regressionAssessment ? "根据当前执行结果重新生成回归方案？" : "根据当前执行结果生成回归方案？",
+      summary: "点击后会生成回归评估与候选用例，供后续测试执行；不会直接运行测试。",
+      evidence: regressionAssessment ? "已有回归方案，可重新生成" : "回归方案缺失",
       score: 84,
-      scoreLabel: "测试准备度",
-      level: regressionAssessment ? "可重跑" : "待执行",
+      scoreLabel: "方案准备度",
+      level: regressionAssessment ? "可重新生成" : "待生成",
       icon: "✓",
     });
   }

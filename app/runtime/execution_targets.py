@@ -5,8 +5,7 @@ import hashlib
 from pathlib import Path
 from typing import Optional
 
-from .agent_version_store import SNAPSHOT_POLICY_VERSION, WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
-
+from .workspace_policy import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
 
 MAX_EXECUTION_TARGET_CONTEXT_BYTES = 200_000
 
@@ -33,7 +32,6 @@ class WorkspaceExecutionTargetPolicy:
     def policy_json(self) -> dict[str, object]:
         return {
             "type": "main_workspace_managed_full_with_excludes",
-            "snapshot_policy_version": SNAPSHOT_POLICY_VERSION,
             "workspace_root": str(self.workspace_dir),
             "excluded_names": sorted(WORKSPACE_EXCLUDED_NAMES),
             "excluded_patterns": list(WORKSPACE_EXCLUDED_PATTERNS),

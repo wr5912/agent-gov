@@ -161,7 +161,7 @@ export function FeedbackDrawer({
             <strong>{created?.title}</strong>
             <span className="muted">归属：{context.agentName} · 当前阶段：{created?.improvement_stage}</span>
           </div>
-          <p className="muted">系统将按自动化策略判断是否归因 / 生成方案 / 生成回归保障。</p>
+          <p className="muted">归因、优化方案和回归保障将在对应业务动作成功后推进。</p>
           <div className="feedback-drawer-actions">
             <button className="secondary-button" onClick={onClose}>关闭</button>
             <button className="primary-button" data-testid="feedback-view-improvement" onClick={() => { if (created) onCreated(created); onClose(); }}>查看改进事项</button>

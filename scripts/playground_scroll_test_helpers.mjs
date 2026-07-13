@@ -24,31 +24,8 @@ export async function scrollNavigationMetrics(page) {
 export async function seedPlaygroundMessages(page, turnCount) {
   await page.evaluate((count) => {
     const sessionId = `density-check-${count}`;
-    const repeatCount = count <= 4 ? 18 : 2;
-    const messages = Array.from({ length: count }, (_, index) => {
-      const n = index + 1;
-      const createdAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000).toISOString();
-      const completedAt = new Date(Date.parse("2026-06-18T00:00:00Z") + index * 2000 + 1000).toISOString();
-      const answer = `我是 AgentGov 治理测试助手。第 ${n} 段回复用于构造可滚动的 Playground 长会话，验证刻度密度。`.repeat(repeatCount);
-      return [
-        { id: `density-user-${count}-${n}`, role: "user", content: `请用一句话说明你的治理职责，序号 ${n}。`, createdAt },
-        {
-          id: `density-assistant-${count}-${n}`,
-          role: "assistant",
-          content: answer,
-          createdAt: completedAt,
-          runId: `density-run-${count}-${n}`,
-          sessionId,
-          agentVersionId: "v-density-check",
-          langfuseTraceId: `density-trace-${count}-${n}`,
-          langfuseTraceUrl: `http://langfuse-web:3000/project/agent-gov/traces/density-trace-${count}-${n}`,
-          events: [],
-        },
-      ];
-    }).flat();
     window.sessionStorage.setItem("parity-preserve-playground-session", "1");
     window.localStorage.setItem("playground-active-session", JSON.stringify(sessionId));
-    window.localStorage.setItem("playground-session-messages", JSON.stringify({ [sessionId]: messages }));
   }, turnCount);
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.getByTestId("playground-scroll-navigator").waitFor({ timeout: 8000 });

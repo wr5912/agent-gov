@@ -329,7 +329,7 @@
 .iw-feedback-table th, .iw-feedback-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
 .iw-feedback-table th { color: var(--text-secondary); font-weight: 600; }
 .iw-feedback-table td:first-child, .iw-feedback-table th:first-child { width: 28px; color: var(--text-muted); }
-/* 四阶段改进治理 改进详情收纳：高级（自动化/相似/链接）默认折叠 */
+/* 四阶段改进治理 改进详情收纳：高级（相似归并/关联对象）默认折叠 */
 .iw-advanced { margin-top: 12px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
 .iw-advanced > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); list-style: revert; padding: 4px 0; }
 .iw-advanced > summary:hover { color: var(--text-primary); }

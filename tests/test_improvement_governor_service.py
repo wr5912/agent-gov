@@ -6,6 +6,9 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from app.runtime.errors import BusinessRuleViolation
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
@@ -296,11 +299,10 @@ def test_regression_without_original_input_does_not_fabricate_prompt(tmp_path: P
         run_profile_json=boom,
         data_dir=Path("/data"),
     )
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+    with pytest.raises(BusinessRuleViolation, match="requires at least one case"):
+        asyncio.run(svc.generate_regression_assessment("imp-1"))
 
-    assert rec.generated_by == "heuristic"
-    assert rec.cases == []
-    assert "缺少原始输入" in rec.summary
+    assert content.get_regression_assessment("imp-1") is None
 
 
 def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:

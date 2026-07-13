@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends
 
-from app.runtime.errors import BusinessRuleViolation, ConflictError, NotFoundError
+from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.improvement_content_schemas import (
     AttachableFeedbackCase,
     AttachableFeedbacksResponse,
@@ -45,13 +45,13 @@ def create_improvement_feedback_ops_router(
         item = improvement_store.get_improvement(improvement_id)
         if item is None:
             raise NotFoundError(f"ImprovementItem not found: {improvement_id}")
-        assigned = improvement_store.all_source_feedback_refs()
+        assigned = improvement_store.assigned_feedback_case_ids()
         cases = [
             AttachableFeedbackCase(
                 feedback_case_id=str(c.get("feedback_case_id") or ""), title=str(c.get("title") or ""),
                 status=str(c.get("status") or ""), run_ids=[str(r) for r in (c.get("run_ids") or [])],
             )
-            for c in feedback_store.list_cases()
+            for c in feedback_store.list_cases(agent_id=item.agent_id)
             if str(c.get("feedback_case_id") or "") and c.get("feedback_case_id") not in assigned
         ]
         others = [_fb_response(r) for r in content_store.list_attachable_feedbacks(agent_id=item.agent_id, exclude_improvement_id=improvement_id)]
@@ -65,26 +65,27 @@ def create_improvement_feedback_ops_router(
         case = feedback_store.find_case(req.feedback_case_id)
         if case is None:
             raise NotFoundError(f"FeedbackCase not found: {req.feedback_case_id}")
+        if str(case.get("agent_id") or "") != item.agent_id:
+            raise BusinessRuleViolation("Cannot attach feedback case across different business agents")
         run_ids = [str(r) for r in (case.get("run_ids") or [])]
-        fb = content_store.create_feedback(
-            improvement_id, agent_id=item.agent_id, summary=str(case.get("title") or req.feedback_case_id),
-            source="feedback_inbox", run_id=run_ids[0] if run_ids else "", case_id=req.feedback_case_id,
+        fb = content_store.attach_feedback_case(
+            improvement_id,
+            agent_id=item.agent_id,
+            feedback_case_id=req.feedback_case_id,
+            summary=str(case.get("title") or req.feedback_case_id),
+            run_id=run_ids[0] if run_ids else "",
         )
-        # 真关联：把一等反馈 Case 引用登记到事项 source_feedback_refs，使其离开未归属池、可解析。
-        improvement_store.add_source_refs(improvement_id, [req.feedback_case_id])
         return _fb_response(fb)
 
     @router.post("/improvements/{improvement_id}/feedbacks/{feedback_id}/reassign", response_model=ImprovementFeedbackResponse, summary="Move a feedback to another improvement (cross-item adjust)")
     async def reassign_feedback(improvement_id: str, feedback_id: str, req: ImprovementFeedbackReassignRequest) -> ImprovementFeedbackResponse:
-        src = improvement_store.get_improvement(improvement_id)
-        tgt = improvement_store.get_improvement(req.target_improvement_id)
-        if src is None or tgt is None:
-            raise NotFoundError("ImprovementItem not found")
-        if src.agent_id != tgt.agent_id:
-            raise BusinessRuleViolation("Cannot reassign feedback across different business agents")
-        if tgt.improvement_status == "archived":
-            raise ConflictError("Cannot reassign feedback into an archived improvement")
-        return _fb_response(content_store.reassign_feedback(feedback_id, target_improvement_id=req.target_improvement_id))
+        return _fb_response(
+            content_store.reassign_feedback(
+                feedback_id,
+                source_improvement_id=improvement_id,
+                target_improvement_id=req.target_improvement_id,
+            )
+        )
 
     @router.get("/improvements/{improvement_id}/deletion-impact", response_model=ImprovementDeletionImpactResponse, summary="Preview impact of deleting an improvement (dry-run; FeedbackCases return to the unassigned pool)")
     async def deletion_impact(improvement_id: str) -> ImprovementDeletionImpactResponse:

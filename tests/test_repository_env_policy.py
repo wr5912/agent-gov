@@ -112,17 +112,31 @@ def _dockerfile_apt_packages(path: Path) -> set[str]:
     return packages
 
 
-def _tracked_text_files() -> list[tuple[str, str]]:
-    result = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, check=True, stdout=subprocess.PIPE)
+def _tracked_text_files(repo_root: Path = REPO_ROOT) -> list[tuple[str, str]]:
+    result = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, check=True, stdout=subprocess.PIPE)
     files: list[tuple[str, str]] = []
     for rel_path in result.stdout.decode("utf-8").split("\0"):
         if not rel_path:
             continue
-        raw = (REPO_ROOT / rel_path).read_bytes()
+        path = repo_root / rel_path
+        if not path.is_file():
+            continue
+        raw = path.read_bytes()
         if b"\0" in raw:
             continue
         files.append((rel_path, raw.decode("utf-8", errors="ignore")))
     return files
+
+
+def test_tracked_text_files_skip_paths_deleted_from_worktree(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "present.txt").write_text("present\n", encoding="utf-8")
+    deleted = tmp_path / "deleted.txt"
+    deleted.write_text("deleted\n", encoding="utf-8")
+    subprocess.run(["git", "add", "present.txt", "deleted.txt"], cwd=tmp_path, check=True)
+    deleted.unlink()
+
+    assert _tracked_text_files(tmp_path) == [("present.txt", "present\n")]
 
 
 def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:

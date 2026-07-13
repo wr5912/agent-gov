@@ -28,6 +28,12 @@ class ConflictError(FeedbackStoreError):
     error_code = "CONFLICT"
 
 
+class SessionConflictError(ConflictError):
+    """Raised when a session owner or optimistic mapping version conflicts."""
+
+    error_code = "SESSION_CONFLICT"
+
+
 class MainWorkspaceDirtyError(ConflictError):
     """Raised when main Agent workspace has uncommitted changes."""
 
@@ -62,12 +68,6 @@ class DataIntegrityError(FeedbackStoreError):
 
     status_code = 409
     error_code = "DATA_INTEGRITY_ERROR"
-
-
-class AgentVersionIntegrityError(DataIntegrityError):
-    """Raised when an Agent version bundle or archive path fails integrity checks."""
-
-    error_code = "AGENT_VERSION_INTEGRITY_ERROR"
 
 
 class AgentOutputParseError(FeedbackStoreError):

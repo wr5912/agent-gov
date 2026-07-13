@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import threading
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
@@ -12,9 +13,28 @@ from sqlalchemy import text
 from feedback_store_test_utils import (
     FeedbackSignalCreateRequest,
     _complete_eval_case_generation_job,
+    _eval_case_generation_output,
     _record_run,
     _store,
 )
+
+
+def _claimed_eval_case_generation_job(store):
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全")
+    store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
+    claimed = store.claim_next_agent_job()
+    assert claimed is not None
+    return claimed, feedback_case
+
+
+def _expire_claimed_job(store, job_id: str) -> None:
+    with store.Session.begin() as db:
+        row = db.get(AgentJobModel, job_id)
+        assert row is not None
+        row.started_at = "2026-01-01T00:00:00+00:00"
+        row.timeout_seconds = 1
 
 
 def test_unified_agent_job_schema_drops_legacy_job_tables(tmp_path):
@@ -184,6 +204,38 @@ def test_agent_job_worker_maps_auth_required_failure(tmp_path, caplog):
     assert "MODEL_PROVIDER_API_KEY" not in messages
 
 
+def test_agent_job_worker_timeout_is_terminal_timeout(tmp_path, caplog):
+    store, _ = _store(tmp_path)
+    spec = agent_job_spec("eval_case_generation")
+    store.create_agent_job(
+        job_id="evg-worker-timeout",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"schema_version": "feedback-eval-case-generation-input/v1", "task": "generate_feedback_eval_cases"},
+    )
+
+    async def timeout_runtime(**_kwargs):
+        raise asyncio.TimeoutError("runner timed out")
+
+    caplog.set_level(logging.INFO, logger="app.services.agent_job_worker")
+    worker = AgentJobWorker(
+        feedback_store=store,
+        run_profile_json=timeout_runtime,
+        poll_interval_seconds=0,
+        worker_instance="test-worker",
+    )
+
+    result = asyncio.run(worker.run_once())
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert result is not None and result.status == "timeout"
+    assert result.error_json is not None and result.error_json.error_code == "AGENT_TIMEOUT"
+    assert "event=agent_job.timeout" in messages
+    assert "status=timeout" in messages
+
+
 def test_agent_job_worker_logs_stale_timeout(tmp_path, caplog):
     store, _ = _store(tmp_path)
     spec = agent_job_spec("eval_case_generation")
@@ -225,6 +277,37 @@ def test_agent_job_worker_logs_stale_timeout(tmp_path, caplog):
     assert "worker_instance=test-worker" in messages
     assert "input_json" not in messages
     assert "raw_output" not in messages
+
+
+def test_agent_job_worker_logs_discarded_late_completion_after_timeout(tmp_path, caplog):
+    store, _ = _store(tmp_path)
+    _record_run(store)
+    signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["tool_data_incomplete"], comment="数据不全"))
+    feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="数据不全")
+    queued = store.sync_feedback_eval_cases(feedback_case_id=feedback_case["feedback_case_id"])
+
+    async def timeout_then_return_output(**_kwargs):
+        _expire_claimed_job(store, queued["job_id"])
+        assert [item["job_id"] for item in store._timeout_stale_agent_jobs()] == [queued["job_id"]]
+        return _eval_case_generation_output(queued, feedback_case)
+
+    caplog.set_level(logging.INFO, logger="app.services.agent_job_worker")
+    worker = AgentJobWorker(
+        feedback_store=store,
+        run_profile_json=timeout_then_return_output,
+        poll_interval_seconds=0,
+        worker_instance="test-worker",
+    )
+
+    result = asyncio.run(worker.run_once())
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert result is not None and result.status == "timeout"
+    assert "event=agent_job.completion_discarded" in messages
+    assert "event=agent_job.completed" not in messages
+    assert "status=timeout" in messages
+    assert "error_code=AGENT_TIMEOUT" in messages
+    assert store.list_eval_cases() == []
 
 
 def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path):
@@ -320,3 +403,102 @@ def test_eval_case_generation_uses_backend_source_and_lifecycle_fields(tmp_path)
     assert eval_case["source"] == "eval_case_governor"
     assert eval_case["source_feedback_case_id"] == feedback_case["feedback_case_id"]
     assert eval_case["source_run_id"] == "run-1"
+
+
+def test_timeout_winner_discards_late_eval_case_projection(tmp_path):
+    store, _ = _store(tmp_path)
+    job, feedback_case = _claimed_eval_case_generation_job(store)
+    _expire_claimed_job(store, job["job_id"])
+
+    timed_out = store._timeout_stale_agent_jobs()
+    late_result = store.complete_projected_agent_job(job, _eval_case_generation_output(job, feedback_case))
+
+    assert [item["job_id"] for item in timed_out] == [job["job_id"]]
+    assert late_result["status"] == "timeout"
+    assert late_result["error_json"]["error_code"] == "AGENT_TIMEOUT"
+    assert late_result["raw_output_json"] is None
+    assert late_result["validated_output_json"] is None
+    assert store.list_eval_cases() == []
+
+
+def test_timeout_winner_discards_late_agent_failure(tmp_path):
+    store, _ = _store(tmp_path)
+    job, _feedback_case = _claimed_eval_case_generation_job(store)
+    _expire_claimed_job(store, job["job_id"])
+
+    timed_out = store._timeout_stale_agent_jobs()
+    late_failure = store.fail_projected_agent_job(
+        job,
+        error_code="AGENT_RUNTIME_ERROR",
+        message="late worker failure",
+        raw_output_json={"late": True},
+    )
+
+    assert [item["job_id"] for item in timed_out] == [job["job_id"]]
+    assert late_failure["status"] == "timeout"
+    assert late_failure["error_json"]["error_code"] == "AGENT_TIMEOUT"
+    assert late_failure["raw_output_json"] is None
+    assert store.list_eval_cases() == []
+
+
+def test_completion_winner_is_not_overwritten_by_stale_timeout_snapshot(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    job, feedback_case = _claimed_eval_case_generation_job(store)
+    _expire_claimed_job(store, job["job_id"])
+    timeout_ready = threading.Event()
+    allow_timeout_cas = threading.Event()
+    original_transition = store._compare_and_transition_agent_job_row
+
+    def gated_transition(db, job_id, **kwargs):
+        if kwargs.get("status") == "timeout":
+            timeout_ready.set()
+            assert allow_timeout_cas.wait(timeout=5)
+        return original_transition(db, job_id, **kwargs)
+
+    monkeypatch.setattr(store, "_compare_and_transition_agent_job_row", gated_transition)
+    timeout_results: list[list[dict]] = []
+    timeout_errors: list[BaseException] = []
+
+    def timeout_stale_job() -> None:
+        try:
+            timeout_results.append(store._timeout_stale_agent_jobs())
+        except BaseException as exc:  # noqa: BLE001 - thread errors must be asserted in the parent test
+            timeout_errors.append(exc)
+
+    thread = threading.Thread(target=timeout_stale_job)
+    thread.start()
+    try:
+        assert timeout_ready.wait(timeout=5)
+        completed = store.complete_projected_agent_job(job, _eval_case_generation_output(job, feedback_case))
+    finally:
+        allow_timeout_cas.set()
+        thread.join(timeout=5)
+
+    assert not thread.is_alive()
+    assert timeout_errors == []
+    assert timeout_results == [[]]
+    assert completed["status"] == "completed"
+    assert completed["error_json"] is None
+    assert len(store.list_eval_cases()) == 1
+
+
+def test_eval_case_projection_and_job_completion_roll_back_together(tmp_path, monkeypatch):
+    store, _ = _store(tmp_path)
+    job, feedback_case = _claimed_eval_case_generation_job(store)
+    original_apply_fields = store._apply_agent_job_json_fields
+
+    def fail_after_projection(row, fields):
+        if "validated_output_json" in fields:
+            raise RuntimeError("job completion write failed")
+        return original_apply_fields(row, fields)
+
+    monkeypatch.setattr(store, "_apply_agent_job_json_fields", fail_after_projection)
+
+    with pytest.raises(RuntimeError, match="job completion write failed"):
+        store.complete_projected_agent_job(job, _eval_case_generation_output(job, feedback_case))
+
+    persisted = store.get_agent_job(job["job_id"])
+    assert persisted["status"] == "running"
+    assert persisted["raw_output_json"] is None
+    assert persisted["validated_output_json"] is None
+    assert store.list_eval_cases() == []

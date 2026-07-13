@@ -38,6 +38,8 @@ type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiRuntimeHealth = components["schemas"]["RuntimeHealthResponse"];
 type OpenApiSessionInfo = components["schemas"]["SessionInfo"];
 type OpenApiSkillInfo = components["schemas"]["SkillInfo"];
+type OpenApiConversationItem = components["schemas"]["ConversationItem"];
+type OpenApiConversationItemList = components["schemas"]["ConversationItemList"];
 
 export type RuntimeHealth = OpenApiRuntimeHealth;
 export type AgentInfo = OpenApiAgentInfo;
@@ -50,6 +52,8 @@ export type AgentLifecycleTransitionRequest = OpenApiAgentLifecycleTransitionReq
 export type AgentDeleteResponse = OpenApiAgentDeleteResponse;
 export type SkillInfo = OpenApiSkillInfo;
 export type SessionInfo = OpenApiSessionInfo;
+export type ConversationItem = OpenApiConversationItem;
+export type ConversationItemList = OpenApiConversationItemList;
 export type ConfigMappingItem = OpenApiConfigMappingItem;
 export type ConfigMappingResponse = OpenApiConfigMappingResponse;
 export type EvalRunResponse = OpenApiEvalRunResponse;

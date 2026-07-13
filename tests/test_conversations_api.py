@@ -55,6 +55,27 @@ def test_create_get_list_delete(monkeypatch, tmp_path: Path) -> None:
         assert client.get(f"/v1/conversations/{cid}").status_code == 404
 
 
+def test_active_turn_blocks_both_session_delete_surfaces(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    session = module.session_store.get_or_create_owned("sess-active-delete", agent_id="main-agent")
+    module.session_store.claim_turn(session, run_id="run-active-delete", agent_id="main-agent")
+
+    with TestClient(module.app) as client:
+        active = next(
+            item
+            for item in client.get("/v1/conversations").json()["data"]
+            if item["id"] == "conv_sess-active-delete"
+        )
+        assert active["agentgov"]["active_run_id"] == "run-active-delete"
+        assert client.delete("/api/sessions/sess-active-delete").status_code == 409
+        assert client.delete("/v1/conversations/conv_sess-active-delete").status_code == 409
+        assert module.session_store.release_turn("sess-active-delete", run_id="run-active-delete")
+        deleted = client.delete("/v1/conversations/conv_sess-active-delete")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+
 def test_create_strips_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
@@ -78,6 +99,16 @@ def test_items_empty_when_no_transcript(monkeypatch, tmp_path: Path) -> None:
         cid = client.post("/v1/conversations", json={}).json()["id"]  # 无 sdk_session_id
         body = client.get(f"/v1/conversations/{cid}/items").json()
     assert body["object"] == "list" and body["data"] == [] and body["has_more"] is False
+
+
+def test_items_ownerless_transcript_is_session_conflict_409(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    module.session_store.save(LocalSession(session_id="sess-ownerless", sdk_session_id="sdk-ownerless", turns=1))
+    with TestClient(module.app) as client:
+        response = client.get("/v1/conversations/conv_sess-ownerless/items")
+
+    assert response.status_code == 409
+    assert response.json()["error_code"] == "SESSION_CONFLICT"
 
 
 def test_items_project_transcript_via_owning_agent(monkeypatch, tmp_path: Path) -> None:
@@ -121,6 +152,18 @@ def test_items_cursor_maps_to_offset(monkeypatch, tmp_path: Path) -> None:
         client.get("/v1/conversations/conv_sess-y/items?after=msg_4&limit=10")
     # cursor msg_4 -> 下一页 offset 5；后端向 read_session_history 多取一条（limit+1=11）判定 has_more
     assert captured["offset"] == 5 and captured["limit"] == 11
+
+
+def test_items_reject_invalid_cursor_and_unsupported_order(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+    module.session_store.save(LocalSession(session_id="sess-invalid-page", agent_id="soc-ops", sdk_session_id="sdk-page"))
+    with TestClient(module.app) as client:
+        _register_biz(client)
+        invalid_cursor = client.get("/v1/conversations/conv_sess-invalid-page/items?after=not-a-cursor")
+        unsupported_order = client.get("/v1/conversations/conv_sess-invalid-page/items?order=desc")
+
+    assert invalid_cursor.status_code == 422
+    assert unsupported_order.status_code == 422
 
 
 def test_items_missing_owning_agent_404(monkeypatch, tmp_path: Path) -> None:

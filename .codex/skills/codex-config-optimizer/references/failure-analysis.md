@@ -34,5 +34,5 @@
 | 失败 | 类型 | 动作 |
 | --- | --- | --- |
 | Agent 输出缺少后端可确定字段 | surface-mismatch + execution-gap | backend-owned 不进 LLM 输出；配置中要求字段所有权矩阵 |
-| `.codex/rules` 和 skill 重复写同一长清单 | context-bloat | 常驻层保留入口，细节迁入 skill reference |
+| `.codex/guidance` 和 skill 重复写同一长清单 | context-bloat | 根指令保留入口，细节迁入 skill reference |
 | 本机调试 env 配置看似存在但运行时不生效 | env-drift + surface-mismatch + execution-gap | 先列 Consumer x Mode x Boundary 矩阵；把详细流程移入 runtime-env-governance skill，并用 env policy 测试固定 |

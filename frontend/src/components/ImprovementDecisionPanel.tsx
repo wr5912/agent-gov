@@ -104,7 +104,7 @@ export function ImprovementDecisionPanel({
                 {pendingOperation ? `正在${pendingOperation.label}...` : primaryDecision.label}
               </button>
             ) : (
-              <span className="iw-done-note" data-testid="improvement-terminal">测试发布已完成，等待发布门禁或资产复用。</span>
+              <span className="iw-done-note" data-testid="improvement-terminal">事项已完成治理流程；发布结果以版本治理记录为准。</span>
             )}
             {showRegenerateOptimizationPlan ? (
               <button className="iw-secondary-button" type="button" data-testid="decision-regenerate-optimization-plan" disabled={busy} onClick={onRegenerateOptimizationPlan}>
@@ -142,7 +142,7 @@ function decisionQuestion(stage: ImprovementStageView["visibleKey"], sourceCount
     case "optimization_execution":
       return "优化方案已生成，是否确认执行该优化方案？";
     case "test_release":
-      return "准备开始回归测试";
+      return "回归方案已生成";
   }
 }
 
@@ -155,7 +155,7 @@ function decisionSummary(stage: ImprovementStageView["visibleKey"]) {
     case "optimization_execution":
       return "优化方案基于归因结论生成，执行前需要确认变更范围与回滚策略。";
     case "test_release":
-      return "测试计划已就绪，请执行回归测试，验证改进效果与风险。";
+      return "回归评估与候选用例已就绪，等待独立的测试执行流程验证改进效果与风险。";
   }
 }
 

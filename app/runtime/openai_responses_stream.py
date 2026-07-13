@@ -17,8 +17,10 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import Optional
 
+from app.runtime.async_iterators import close_async_iterator
 from app.runtime.json_types import JsonObject
 from app.runtime.openai_responses_adapter import (
     conversation_id_from_session,
@@ -100,7 +102,7 @@ def _created_response(run_id: Optional[str], model: Optional[str], session_id: O
     }
 
 
-def _completed_response(
+def _response_from_result(
     data: JsonObject, *, model: Optional[str], effective_agent_id: Optional[str], answer_parts: list[str], control: bool, created_at: Optional[int]
 ) -> JsonObject:
     """由 result 帧 + 累计文本增量重建 response 对象（复用非流式投影，单一来源）。"""
@@ -122,6 +124,148 @@ def _completed_response(
     return response
 
 
+@dataclass
+class _ResponsesSseProjector:
+    model: Optional[str]
+    effective_agent_id: Optional[str]
+    control: bool
+    sdk_raw: bool
+    seq: int = 0
+    run_id: Optional[str] = None
+    item_id: Optional[str] = None
+    created_at: Optional[int] = None
+    answer_parts: list[str] = field(default_factory=list)
+    terminal_status: Optional[str] = None
+    pending_completed_response: JsonObject | None = None
+    done_emitted: bool = False
+
+    def _next(self) -> int:
+        self.seq += 1
+        return self.seq
+
+    def _std(self, event_name: str, data: JsonObject) -> str:
+        # 标准 OpenAI Responses 事件：补 type + 全局 sequence_number（规范必填），使纯 OpenAI SDK 可解析。
+        return _sse(event_name, {"type": event_name, "sequence_number": self._next(), **data})
+
+    def _envelope(self, type_: str, content: JsonObject) -> str:
+        seq_no = self._next()
+        body = {"v": _ENVELOPE_VERSION, "type": type_, "run_id": self.run_id, "ts": time.time(), "seq": seq_no, "payload": content}
+        return _sse(type_, body, event_id=seq_no)
+
+    def project(self, frame: JsonObject) -> list[str]:
+        event = frame.get("event")
+        if event != "done" and (self.done_emitted or self.terminal_status is not None or self.pending_completed_response is not None):
+            return []
+        data = frame.get("data")
+        data = data if isinstance(data, dict) else {}
+        if event == "session":
+            return self._project_session(data)
+        if event == "message":
+            return self._project_message(data)
+        if event == "result":
+            return self._project_result(data)
+        if event == "error":
+            return self._project_error(data)
+        if event == "heartbeat":
+            return [": keepalive\n\n"]
+        if event == "claude_user_input_required" and self.control:
+            return [self._envelope("agentgov.confirmation.requested", _project_confirmation_requested(data))]
+        if event == "claude_user_input_resolved" and self.control:
+            return [self._envelope("agentgov.confirmation.resolved", _project_confirmation_resolved(data))]
+        if event == "done":
+            return self._project_done()
+        return []
+
+    def _project_session(self, data: JsonObject) -> list[str]:
+        self.run_id = _str(data.get("run_id"))
+        self.item_id = f"msg_{self.run_id}" if self.run_id else None
+        self.created_at = int(time.time())
+        chunks = [
+            self._std(
+                "response.created",
+                {"response": _created_response(self.run_id, self.model, _str(data.get("session_id")), self.created_at)},
+            )
+        ]
+        if self.control:
+            chunks.append(self._envelope("agentgov.session", {**data, "heartbeat_interval_s": HEARTBEAT_INTERVAL_S}))
+        return chunks
+
+    def _project_message(self, data: JsonObject) -> list[str]:
+        event_name = str(data.get("event") or "")
+        text = data.get("text") or ""
+        if event_name.startswith("AssistantMessage") and text:
+            self.answer_parts.append(text)
+            return [
+                self._std(
+                    "response.output_text.delta",
+                    {"item_id": self.item_id, "output_index": 0, "content_index": 0, "delta": text},
+                )
+            ]
+        if not self.control:
+            return []
+        chunks: list[str] = []
+        step = _tool_step_from_raw(data.get("raw"))
+        if step:
+            chunks.append(self._envelope("agentgov.tool_step", step))
+        if self.sdk_raw:
+            chunks.append(self._envelope("agentgov.sdk_raw", {"raw": data.get("raw")}))
+        return chunks
+
+    def _project_result(self, data: JsonObject) -> list[str]:
+        response = _response_from_result(
+            data,
+            model=self.model,
+            effective_agent_id=self.effective_agent_id,
+            answer_parts=self.answer_parts,
+            control=self.control,
+            created_at=self.created_at,
+        )
+        raw_errors = data.get("errors")
+        errors = [str(error) for error in raw_errors] if isinstance(raw_errors, list) else []
+        failed_now = bool(errors) and self.terminal_status is None
+        chunks: list[str] = []
+        if failed_now:
+            self.terminal_status = "failed"
+            self.pending_completed_response = None
+            chunks.append(self._std("response.failed", {"response": response, "error": {"errors": errors}}))
+        elif not errors and self.terminal_status is None:
+            self.pending_completed_response = response
+        if self.control:
+            chunks.append(self._envelope("agentgov.result", data))
+            if failed_now:
+                chunks.append(self._envelope("agentgov.error", {**data, "errors": errors}))
+        return chunks
+
+    def _project_error(self, data: JsonObject) -> list[str]:
+        if self.terminal_status is not None:
+            return []
+        self.terminal_status = "failed"
+        self.pending_completed_response = None
+        chunks = [self._std("response.failed", {"error": data})]
+        if self.control:
+            chunks.append(self._envelope("agentgov.error", data))
+        return chunks
+
+    def _project_done(self) -> list[str]:
+        if self.done_emitted:
+            return []
+        self.done_emitted = True
+        chunks: list[str] = []
+        if self.terminal_status is None and self.pending_completed_response is not None:
+            self.terminal_status = "completed"
+            chunks.append(self._std("response.completed", {"response": self.pending_completed_response}))
+        elif self.terminal_status is None:
+            self.terminal_status = "failed"
+            detail = "Agent stream ended without a ResultMessage"
+            error = {"error_code": "STREAM_TERMINATED_WITHOUT_RESULT", "errors": [detail]}
+            chunks.append(self._std("response.failed", {"error": error}))
+            if self.control:
+                chunks.append(self._envelope("agentgov.error", error))
+        if self.control:
+            chunks.append(self._envelope("agentgov.done", {}))
+        return chunks
+
+
 async def iter_responses_sse(
     source: AsyncIterator[JsonObject],
     *,
@@ -131,66 +275,20 @@ async def iter_responses_sse(
     sdk_raw: bool = False,
 ) -> AsyncIterator[str]:
     """消费 ``runtime.stream`` 帧，产出 Responses-style SSE 字符串。"""
-    seq = 0
-    run_id: Optional[str] = None
-    item_id: Optional[str] = None
-    created_at: Optional[int] = None
-    answer_parts: list[str] = []
-
-    def _next() -> int:
-        nonlocal seq
-        seq += 1
-        return seq
-
-    def std(event_name: str, data: JsonObject) -> str:
-        # 标准 OpenAI Responses 事件：补 type + 全局 sequence_number（规范必填），使纯 OpenAI SDK 可解析。
-        return _sse(event_name, {"type": event_name, "sequence_number": _next(), **data})
-
-    def envelope(type_: str, content: JsonObject) -> str:
-        seq_no = _next()
-        body = {"v": _ENVELOPE_VERSION, "type": type_, "run_id": run_id, "ts": time.time(), "seq": seq_no, "payload": content}
-        return _sse(type_, body, event_id=seq_no)
-
-    async for frame in source:
-        event = frame.get("event")
-        data = frame.get("data")
-        data = data if isinstance(data, dict) else {}
-
-        if event == "session":
-            run_id = _str(data.get("run_id"))
-            item_id = f"msg_{run_id}" if run_id else None
-            created_at = int(time.time())
-            yield std("response.created", {"response": _created_response(run_id, model, _str(data.get("session_id")), created_at)})
-            if control:
-                yield envelope("agentgov.session", {**data, "heartbeat_interval_s": HEARTBEAT_INTERVAL_S})
-        elif event == "message":
-            ev = str(data.get("event") or "")
-            text = data.get("text") or ""
-            if ev.startswith("AssistantMessage") and text:
-                answer_parts.append(text)
-                yield std("response.output_text.delta", {"item_id": item_id, "output_index": 0, "content_index": 0, "delta": text})
-            elif control:
-                step = _tool_step_from_raw(data.get("raw"))
-                if step:
-                    yield envelope("agentgov.tool_step", step)
-                if sdk_raw:
-                    yield envelope("agentgov.sdk_raw", {"raw": data.get("raw")})
-        elif event == "result":
-            response = _completed_response(
-                data, model=model, effective_agent_id=effective_agent_id, answer_parts=answer_parts, control=control, created_at=created_at
-            )
-            yield std("response.completed", {"response": response})
-            if control:
-                yield envelope("agentgov.result", data)
-        elif event == "error":
-            yield std("response.failed", {"error": {"errors": data.get("errors")}})
-            if control:
-                yield envelope("agentgov.error", data)
-        elif event == "heartbeat":
-            yield ": keepalive\n\n"
-        elif event == "claude_user_input_required" and control:
-            yield envelope("agentgov.confirmation.requested", _project_confirmation_requested(data))
-        elif event == "claude_user_input_resolved" and control:
-            yield envelope("agentgov.confirmation.resolved", _project_confirmation_resolved(data))
-        elif event == "done" and control:
-            yield envelope("agentgov.done", {})
+    projector = _ResponsesSseProjector(model=model, effective_agent_id=effective_agent_id, control=control, sdk_raw=sdk_raw)
+    try:
+        try:
+            async for frame in source:
+                for chunk in projector.project(frame):
+                    yield chunk
+        except Exception as exc:
+            if projector.created_at is None:
+                for chunk in projector._project_session({}):
+                    yield chunk
+            detail = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            for chunk in projector._project_error({"error_code": "STREAM_SOURCE_ERROR", "errors": [detail]}):
+                yield chunk
+    finally:
+        await close_async_iterator(source)
+    for chunk in projector._project_done():
+        yield chunk

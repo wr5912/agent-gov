@@ -9,7 +9,7 @@ from .json_types import JsonObject
 from .schemas import ChatRequest
 from .settings import AppSettings
 
-# 开发调试观测面保留完整 I/O（CLAUDE.project.md §25），此上限只作 Langfuse 摄取安全阀，从宽。
+# 开发调试观测面保留完整 I/O（.claude/rules/agentgov-project.md），此上限只作 Langfuse 摄取安全阀，从宽。
 _LANGFUSE_IO_MAX_CHARS = 200_000
 
 

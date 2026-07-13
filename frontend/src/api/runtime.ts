@@ -30,6 +30,8 @@ import type {
   ClaudeUserInputDecisionPayload,
   ClaudeUserInputDecisionResponse,
   ConfigMappingResponse,
+  ConversationItem,
+  ConversationItemList,
   EvalRunResponse,
   OpenAICompatAgentConfig,
   RuntimeClientConfig,
@@ -63,6 +65,39 @@ export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
   );
 }
 
+export async function getConversationItems(
+  config: RuntimeClientConfig,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ConversationItem[]> {
+  // Callers hold the internal session id. Always add the public prefix once,
+  // including when a legacy client chose a session id that starts with "conv_".
+  const conversationId = `conv_${sessionId}`;
+  const items: ConversationItem[] = [];
+  const seenCursors = new Set<string>();
+  let after: string | undefined;
+
+  while (true) {
+    const query = new URLSearchParams({ limit: "100", order: "asc" });
+    if (after) query.set("after", after);
+    const page = await requestJson<ConversationItemList>(
+      config,
+      `/v1/conversations/${encodeURIComponent(conversationId)}/items?${query.toString()}`,
+      { signal },
+    );
+    const pageItems = Array.isArray(page.data) ? page.data : [];
+    items.push(...pageItems);
+    if (!page.has_more) return items;
+
+    const cursor = page.last_id || pageItems.at(-1)?.id;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error("Conversation items pagination returned an invalid cursor");
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  }
+}
+
 function conversationToSessionInfo(value: unknown): SessionInfo | null {
   if (!isRecord(value) || typeof value.id !== "string") return null;
   const sessionId = value.id.startsWith("conv_") ? value.id.slice("conv_".length) : value.id;
@@ -79,6 +114,8 @@ function conversationToSessionInfo(value: unknown): SessionInfo | null {
     title: typeof value.title === "string" ? value.title : undefined,
     turns: typeof ag.turns === "number" ? ag.turns : 0,
     metadata: isRecord(value.metadata) ? value.metadata : {},
+    active_run_id: typeof ag.active_run_id === "string" ? ag.active_run_id : null,
+    active_run_expires_at: typeof ag.active_run_expires_at === "string" ? ag.active_run_expires_at : null,
   } as SessionInfo;
 }
 
@@ -375,6 +412,27 @@ export async function streamChat(
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
+    let terminalReceived = false;
+    let doneEnvelope: StreamEnvelope | null = null;
+    let controlFailureReceived = false;
+    let standardFailure: unknown;
+    const consumeEvent = (parsed: StreamEnvelope) => {
+      if (parsed.event === "response.completed" || parsed.event === "response.failed") {
+        terminalReceived = true;
+      }
+      if (parsed.event === "response.failed") {
+        standardFailure = isRecord(parsed.data) && "error" in parsed.data ? parsed.data.error : parsed.data;
+      }
+      if (parsed.event === "agentgov.error") controlFailureReceived = true;
+      idleMs = idleFromSessionFrame(parsed, idleMs);
+      const envelope = translateResponsesEnvelope(parsed);
+      if (!envelope) return;
+      if (envelope.event === "done") {
+        doneEnvelope = envelope;
+        return;
+      }
+      dispatchEnvelope(envelope, handlers);
+    };
 
     try {
       while (true) {
@@ -387,17 +445,20 @@ export async function streamChat(
         for (const rawEvent of events) {
           const parsed = parseSse(rawEvent);
           if (!parsed) continue;
-          idleMs = idleFromSessionFrame(parsed, idleMs);
-          const envelope = translateResponsesEnvelope(parsed);
-          if (envelope) dispatchEnvelope(envelope, handlers);
+          consumeEvent(parsed);
         }
       }
 
       if (buffer.trim()) {
         const parsed = parseSse(buffer);
-        const envelope = parsed ? translateResponsesEnvelope(parsed) : null;
-        if (envelope) dispatchEnvelope(envelope, handlers);
+        if (parsed) consumeEvent(parsed);
       }
+      if (standardFailure !== undefined && !controlFailureReceived) {
+        dispatchEnvelope({ event: "error", data: standardFailure }, handlers);
+      }
+      if (!terminalReceived) throw new Error("Stream ended before terminal event");
+      if (!doneEnvelope) throw new Error("Stream ended before agentgov.done");
+      dispatchEnvelope(doneEnvelope, handlers);
     } finally {
       reader.releaseLock();
     }

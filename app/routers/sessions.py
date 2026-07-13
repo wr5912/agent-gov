@@ -1,15 +1,15 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
 
 from app.runtime.agent_paths import business_agent_layout
-from app.runtime.errors import NotFoundError
-from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, SessionMessagesResponse
+from app.runtime.errors import NotFoundError, SessionConflictError
 from app.runtime.session_history import read_session_history
+from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, SessionMessagesResponse
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -23,8 +23,7 @@ def _resolve_owning_profile(
     The owning agent is the backend-owned ``session.agent_id`` persisted by the runtime at chat
     time (never client-supplied metadata). It is a hard invariant — there is no silent fallback:
 
-    - missing / empty while a transcript exists -> 500 (data integrity: a persisted transcript must
-      carry its owning agent);
+    - missing / empty while a transcript exists -> 409 (the server cannot prove which Agent owns it);
     - any agent (含预制 main-agent) -> validated against the agent registry; cwd taken from its
       registered ``workspace_dir`` (consistent with /api/chat); an unknown / stale id -> 404.
 
@@ -33,10 +32,7 @@ def _resolve_owning_profile(
     """
     agent_id = (session.agent_id or "").strip()
     if not agent_id:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"session {session.session_id} has a transcript but no recorded owning agent",
-        )
+        raise SessionConflictError(f"Session {session.session_id} has no unambiguous business agent owner")
     record = agent_registry_store.get_agent(agent_id)
     if record is None:
         raise NotFoundError(f"owning agent '{agent_id}' of session {session.session_id} not found")

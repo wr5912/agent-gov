@@ -4,13 +4,14 @@ import json
 import os
 import re
 import uuid
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Any, Iterable, Mapping, Optional
+from typing import Any, Optional
 
 from ..feedback_privacy import SENSITIVE_KEY_PARTS
+from ..json_types import JsonObject
 from ..mcp_config import build_mcp_config_summary, resolve_main_mcp_config_path
 from ..records.evidence_records import EvidenceIncludedFileRecord, EvidencePackageFileRecord, EvidencePackageRecord
-from ..json_types import JsonObject
 from ..runtime_db import EvidenceFileModel, EvidencePackageModel, utc_now
 
 _MAIN_MCP_SERVERS = ("sec-ops-data", "security-kb")
@@ -42,7 +43,10 @@ class FeedbackEvidenceStoreMixin:
 
         evidence_id = f"evp-{uuid.uuid4()}"
         context = self._collect_evidence_context(feedback_case)
-        main_agent_version: JsonObject = {"main_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)), "captured_at": utc_now()}
+        main_agent_version: JsonObject = {
+            "main_agent_version_id": self._current_agent_version_id(self._resolve_task_agent_id(feedback_case_id=feedback_case_id)),
+            "captured_at": utc_now(),
+        }
         redaction_report: JsonObject = {
             "enabled": not self.enable_debug_evidence,
             "policy": "debug-evidence-raw-v1" if self.enable_debug_evidence else "security-redaction-v1",
@@ -75,29 +79,28 @@ class FeedbackEvidenceStoreMixin:
         return manifest
 
     def _collect_evidence_context(self, feedback_case: JsonObject) -> JsonObject:
-        signals_clean = [item for item in (self.find_signal(source_id) for source_id in feedback_case.get("signal_ids", [])) if item]
-        events_clean = [item for item in (self.find_event(source_id) for source_id in feedback_case.get("event_ids", [])) if item]
-        runs_clean = [item for item in (self.find_run(run_id=run_id) for run_id in feedback_case.get("run_ids", [])) if item]
+        raw_signal_ids = feedback_case.get("signal_ids")
+        raw_event_ids = feedback_case.get("event_ids")
+        raw_run_ids = feedback_case.get("run_ids")
+        raw_session_ids = feedback_case.get("session_ids")
+        signal_ids = raw_signal_ids if isinstance(raw_signal_ids, list) else []
+        event_ids = raw_event_ids if isinstance(raw_event_ids, list) else []
+        run_ids = raw_run_ids if isinstance(raw_run_ids, list) else []
+        session_ids = raw_session_ids if isinstance(raw_session_ids, list) else []
+        signals_clean = [item for item in (self.find_signal(str(source_id)) for source_id in signal_ids) if item]
+        events_clean = [item for item in (self.find_event(str(source_id)) for source_id in event_ids) if item]
+        runs_clean = [item for item in (self.find_run(run_id=str(run_id)) for run_id in run_ids) if item]
         sessions = [
             {
                 "session_id": session_id,
                 "run_ids": [run.get("run_id") for run in runs_clean if run.get("session_id") == session_id],
             }
-            for session_id in feedback_case.get("session_ids", [])
+            for session_id in session_ids
         ]
-        tool_calls = [
-            call
-            for run in runs_clean
-            for call in (run.get("agent_activity") or {}).get("tool_calls", [])
-            if isinstance(call, dict)
-        ]
-        messages = [
-            {"run_id": run.get("run_id"), "session_id": run.get("session_id"), "messages": run.get("messages") or []}
-            for run in runs_clean
-        ]
+        tool_calls = [call for run in runs_clean for call in (run.get("agent_activity") or {}).get("tool_calls", []) if isinstance(call, dict)]
+        messages = [{"run_id": run.get("run_id"), "session_id": run.get("session_id"), "messages": run.get("messages") or []} for run in runs_clean]
         agent_activity = [
-            {"run_id": run.get("run_id"), "session_id": run.get("session_id"), "agent_activity": run.get("agent_activity") or {}}
-            for run in runs_clean
+            {"run_id": run.get("run_id"), "session_id": run.get("session_id"), "agent_activity": run.get("agent_activity") or {}} for run in runs_clean
         ]
         langfuse_trace_refs = self._langfuse_trace_refs(runs_clean)
         langfuse_trace_details = self._fetch_langfuse_trace_details(langfuse_trace_refs)
@@ -186,7 +189,9 @@ class FeedbackEvidenceStoreMixin:
         redaction_report: JsonObject,
         included_files: list[JsonObject],
     ) -> JsonObject:
-        trace_ids = self._unique_strings([item.get("trace_id") for item in context["langfuse_trace_refs"]])
+        raw_trace_refs = context.get("langfuse_trace_refs")
+        trace_refs = raw_trace_refs if isinstance(raw_trace_refs, list) else []
+        trace_ids = self._unique_strings([item.get("trace_id") for item in trace_refs if isinstance(item, dict)])
         record = EvidencePackageRecord.model_validate(
             {
                 "schema_version": "evidence-package/v1",

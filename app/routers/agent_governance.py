@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, Query
@@ -40,7 +41,8 @@ def create_agent_governance_router(
     router = APIRouter(prefix="/api", tags=["feedback"], dependencies=[Depends(require_api_key)])
     _register_repository_routes(router, agent_governance)
     _register_change_set_read_routes(router, agent_governance)
-    _register_change_set_action_routes(router, agent_governance, feedback_store, runtime)
+    _register_change_set_action_routes(router, agent_governance)
+    _register_change_set_regression_route(router, agent_governance, feedback_store, runtime)
     _register_release_routes(router, agent_governance)
     return router
 
@@ -69,9 +71,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentGitRefResponse,
         summary="Save a business Agent workspace as an Agent version (default main-agent)",
     )
-    async def snapshot_agent_repository(
-        req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)
-    ) -> AgentGitRefResponse:
+    async def snapshot_agent_repository(req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
         return agent_governance.snapshot_repository(operator=req.operator, note=req.note, agent_id=agent_id)
 
     @router.get(
@@ -150,8 +150,6 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
 def _register_change_set_action_routes(
     router: APIRouter,
     agent_governance: AgentGovernanceService,
-    feedback_store: FeedbackStore,
-    runtime: ClaudeRuntime,
 ) -> None:
     @router.post(
         "/agent-change-sets/{change_set_id}/approve",
@@ -178,30 +176,6 @@ def _register_change_set_action_routes(
         return agent_governance.abandon_change_set(change_set_id, operator=req.operator, note=req.note)
 
     @router.post(
-        "/agent-change-sets/{change_set_id}/regression-runs",
-        response_model=EvalRunResponse,
-        summary="Run regression against an Agent change set candidate worktree",
-    )
-    async def run_agent_change_set_regression(change_set_id: str, req: AgentChangeSetRegressionRunRequest) -> EvalRunResponse:
-        change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
-        candidate = _require_candidate_commit(change_set)
-        eval_case_ids = _change_set_eval_case_ids(feedback_store, change_set, req.eval_case_ids)
-        if not eval_case_ids:
-            raise_conflict("No active eval cases found for this Agent change set")
-        agent_governance.mark_regression_running(change_set_id, eval_run_id="pending")
-        result = await runtime.run_feedback_eval(
-            eval_case_ids=eval_case_ids,
-            source="agent_change_set_regression",
-            change_set_id=change_set_id,
-            candidate_commit_sha=candidate,
-            candidate_worktree_path=str(change_set["worktree_path"]),
-        )
-        if not result:
-            raise_conflict("Regression run could not be started")
-        agent_governance.complete_regression(change_set_id, eval_run=result.model_dump(mode="json"))
-        return result
-
-    @router.post(
         "/agent-change-sets/{change_set_id}/publish",
         response_model=AgentReleaseResponse,
         summary="Publish an approved Agent change set",
@@ -214,6 +188,55 @@ def _register_change_set_action_routes(
             note=req.note,
             force=req.force,
         )
+
+
+def _register_change_set_regression_route(
+    router: APIRouter,
+    agent_governance: AgentGovernanceService,
+    feedback_store: FeedbackStore,
+    runtime: ClaudeRuntime,
+) -> None:
+    @router.post(
+        "/agent-change-sets/{change_set_id}/regression-runs",
+        response_model=EvalRunResponse,
+        summary="Run regression against an Agent change set candidate worktree",
+    )
+    async def run_agent_change_set_regression(change_set_id: str, req: AgentChangeSetRegressionRunRequest) -> EvalRunResponse:
+        change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
+        candidate = _require_candidate_commit(change_set)
+        eval_case_ids = _change_set_eval_case_ids(feedback_store, change_set, req.eval_case_ids)
+        if not eval_case_ids:
+            raise_conflict("No active eval cases found for this Agent change set")
+        intent_id = f"evr-intent-{uuid.uuid4()}"
+        agent_governance.mark_regression_running(change_set_id, eval_run_id=intent_id)
+        try:
+            result = await runtime.run_feedback_eval(
+                eval_case_ids=eval_case_ids,
+                source="agent_change_set_regression",
+                change_set_id=change_set_id,
+                candidate_commit_sha=candidate,
+                candidate_worktree_path=str(change_set["worktree_path"]),
+            )
+        except BaseException as exc:
+            agent_governance.fail_regression(
+                change_set_id,
+                expected_eval_run_id=intent_id,
+                error_type=type(exc).__name__,
+            )
+            raise
+        if not result:
+            agent_governance.fail_regression(
+                change_set_id,
+                expected_eval_run_id=intent_id,
+                error_type="RuntimeUnavailable",
+            )
+            raise_conflict("Regression run could not be started")
+        agent_governance.complete_regression(
+            change_set_id,
+            eval_run=result.model_dump(mode="json"),
+            expected_eval_run_id=intent_id,
+        )
+        return result
 
 
 def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanceService) -> None:

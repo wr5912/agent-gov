@@ -1,6 +1,5 @@
 // ImprovementWorkbench 纯展示/派生辅助（从组件拆出以控制单文件体量）。
-import { stageLabel } from "../improvementStage";
-import type { ImprovementItem, AutoAdvanceResult } from "../api/improvements";
+import type { ImprovementItem } from "../api/improvements";
 
 // §5 改进列表状态过滤分类（由 stage/status 派生）。
 export const STATUS_CATEGORIES: { label: string; key: string }[] = [
@@ -30,17 +29,3 @@ export const LINK_KIND_LABEL: Record<string, string> = {
   eval_run: "评估",
   change_set: "变更集",
 };
-
-const STOP_REASON_LABEL: Record<string, string> = {
-  policy_off: "策略为关闭，未自动推进",
-  gate_confirmation: "已停在关键判断点，待人工确认",
-  release_gate: "已停在发布门禁，待人工发布",
-  archived: "已归档，未推进",
-  terminal: "已到终态",
-};
-
-export function autoAdvanceNote(result: AutoAdvanceResult): string {
-  const applied = (result.applied_stages ?? []).map(stageLabel).join(" → ");
-  const reason = STOP_REASON_LABEL[result.stopped_reason] ?? result.stopped_reason;
-  return applied ? `自动推进：${applied} ｜ ${reason}` : `自动推进：${reason}`;
-}

@@ -19,7 +19,7 @@
 - 用户自然语言触发词是否写进 description 或入口说明。
 - 命令是否使用本仓库约定，例如 `.venv/bin/python`、`pnpm`、项目治理硬门。
 - 私有路径、账号、token 和本机偏好是否被误写进团队文件。
-- 规则是否和 `AGENTS.override.md`、`.codex/rules`、hooks 冲突。
+- 指引或执行策略是否和唯一根 `AGENTS.md`、`.codex/guidance`、`.codex/rules`、hooks 冲突。
 
 ## Generalize：泛化前清理
 

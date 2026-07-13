@@ -1,5 +1,7 @@
 # Claude 原生业务Agent人类确认机制整改实现方案
 
+> 归档说明（2026-07-10）：本文记录 canonical Responses/HITL 落地前的整改设计，仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)，工程决策见 [Responses-first ADR](../../engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)。
+>
 > 文档状态：审批用工程整改方案，不代表当前代码已经全部实现。
 > 适用范围：所有注册业务Agent（含 `main-agent`）的 Playground / Agent Runtime 交互运行。
 > 不适用范围：治理智能体 `governor`、归因/优化/执行/测试数据集治理/回归影响分析/发布治理等后台治理 job。

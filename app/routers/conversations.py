@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.concurrency import run_in_threadpool
@@ -41,6 +42,8 @@ def _conversation(session: LocalSession) -> Conversation:
             sdk_session_id=session.sdk_session_id,
             updated_at=iso_to_epoch(session.updated_at),
             turns=session.turns,
+            active_run_id=session.active_run_id,
+            active_run_expires_at=session.active_run_expires_at,
         ),
     )
 
@@ -59,12 +62,12 @@ def _item(message: JsonObject, index: int) -> ConversationItem:
 
 def _offset_from_cursor(after: Optional[str]) -> int:
     """cursor ``msg_<n>`` -> 下一页 offset ``n+1``（不暴露旧 offset 契约）。"""
-    if isinstance(after, str) and after.startswith("msg_"):
-        try:
-            return int(after[len("msg_") :]) + 1
-        except ValueError:
-            return 0
-    return 0
+    if after is None:
+        return 0
+    match = re.fullmatch(r"msg_(0|[1-9]\d*)", after)
+    if match is None:
+        raise ValueError("Invalid conversation cursor")
+    return int(match.group(1)) + 1
 
 
 async def _list_items_impl(
@@ -145,9 +148,9 @@ def create_conversations_router(
     )
     async def list_conversation_items(
         conversation_id: str,
-        after: str | None = Query(default=None),
+        after: str | None = Query(default=None, pattern=r"^msg_(0|[1-9]\d*)$"),
         limit: int = Query(default=20, ge=1, le=100),
-        order: str = Query(default="asc", description="Chronological asc supported; desc reserved."),
+        order: Literal["asc"] = Query(default="asc", description="Chronological order."),
         include: str | None = Query(default=None, description="OpenAI-shape passthrough; currently a no-op."),
     ) -> ConversationItemList:
         return await _list_items_impl(

@@ -15,7 +15,7 @@ const OPERATION_LABELS: Record<ImprovementPrimaryDecisionKind, string> = {
   generate_attribution: "生成归因分析",
   generate_optimization_plan: "生成优化方案",
   apply_execution: "执行优化",
-  generate_regression: "执行回归测试",
+  generate_regression: "生成回归方案",
 };
 
 export function operationLabel(kind: ImprovementPrimaryDecisionKind): string {

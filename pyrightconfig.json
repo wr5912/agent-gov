@@ -1,22 +1,7 @@
 {
   "typeCheckingMode": "basic",
   "pythonVersion": "3.11",
-  "include": [
-    "app/runtime/agent_job_types.py",
-    "app/runtime/output_formatter.py",
-    "app/runtime/agent_job_runner.py",
-    "app/runtime/claude_runtime.py",
-    "app/services/agent_job_worker.py",
-    "app/services/feedback_job_orchestrator.py",
-    "app/runtime/stores/agent_job_store.py",
-    "app/runtime/stores/feedback_job_store.py",
-    "app/runtime/stores/feedback_batch_plan_store.py",
-    "app/runtime/stores/feedback_execution_store.py",
-    "scripts/check_codex_governance.py",
-    "scripts/codex_governance_typed_output.py",
-    "scripts/check_test_coverage_policy.py",
-    "scripts/run_main_flow_tests.py"
-  ],
+  "include": ["app", "scripts"],
   "exclude": [
     ".venv",
     ".mypy_cache",
@@ -27,6 +12,7 @@
   ],
   "reportMissingTypeStubs": false,
   "reportMissingImports": false,
+  "reportMissingModuleSource": false,
   "reportAttributeAccessIssue": false,
   "reportArgumentType": false,
   "reportAssignmentType": false,

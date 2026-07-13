@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.json_types import JsonObject
 from app.runtime.schemas import ExtensibleResponse
@@ -83,6 +83,24 @@ class AgentChangeSetEventResponse(ExtensibleResponse):
     before: JsonObject = Field(default_factory=dict)
     after: JsonObject = Field(default_factory=dict)
 
+    @model_validator(mode="before")
+    @classmethod
+    def hide_internal_publication_intent(cls, value: object) -> object:
+        if not isinstance(value, dict):
+            return value
+        public_value = dict(value)
+        for field in ("before", "after"):
+            if isinstance(public_value.get(field), dict):
+                snapshot = dict(public_value[field])
+                snapshot.pop("publication_intent", None)
+                public_value[field] = snapshot
+        return public_value
+
+
+class AgentPublicationErrorResponse(BaseModel):
+    detail: str
+    updated_at: str
+
 
 class AgentChangeSetResponse(ExtensibleResponse):
     schema_version: str = "agent-change-set/v1"
@@ -102,7 +120,21 @@ class AgentChangeSetResponse(ExtensibleResponse):
     latest_eval_run_id: Optional[str] = None
     latest_eval_run: Optional[JsonObject] = None
     latest_release_id: Optional[str] = None
+    source_improvement_id: Optional[str] = None
+    source_attribution_id: Optional[str] = None
+    source_attribution_status: Optional[str] = None
+    publication_provenance_blocker: Optional[str] = None
     publication_blocker: Optional[str] = None
+    publication_error: Optional[AgentPublicationErrorResponse] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def hide_internal_publication_intent(cls, value: object) -> object:
+        if isinstance(value, dict) and "publication_intent" in value:
+            public_value = dict(value)
+            public_value.pop("publication_intent", None)
+            return public_value
+        return value
 
 
 class AgentReleaseResponse(ExtensibleResponse):
@@ -114,6 +146,8 @@ class AgentReleaseResponse(ExtensibleResponse):
     status: str
     tag_name: str
     commit_sha: str
+    previous_commit_sha: Optional[str] = None
+    source_improvement_id: Optional[str] = None
     change_set_id: Optional[str] = None
     rollback_of_release_id: Optional[str] = None
     archive_path: Optional[str] = None
@@ -122,6 +156,8 @@ class AgentReleaseResponse(ExtensibleResponse):
 
 
 class AgentChangeSetCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     base_commit_sha: Optional[str] = None
     title: Optional[str] = None
     note: Optional[str] = None

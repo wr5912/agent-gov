@@ -31,7 +31,7 @@
 用户指出“举一反三”“触类旁通”“还有许多问题”“最近反复整改”，或任务同时跨实现、docs、skill、runtime/env、测试、UI 设计一致性、部署生效中的两个及以上配置面时，Analyze 阶段先做短矩阵：
 
 - 治理对象矩阵：业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、开发者离线工具。
-- 配置面矩阵：当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、Codex/Claude rules、skill、script、hook、docs、memory。
+- 配置面矩阵：当前 prompt、唯一根 `AGENTS.md` / `.claude/rules/agentgov-project.md`、Codex/Claude guidance/rules、skill、script、hook、docs、memory。
 - 验收路径矩阵：docs/skill 治理、专项测试、主流程测试、真实容器验收、发版完整硬门；不得用 local-debug 结果声明容器验收通过。
 - UI 语义矩阵：涉及四阶段改进治理方案或用户可见交互时，确认按钮名称、业务产物、API 副作用、状态推进、抽屉/modal 容器、Trace/反馈/上下文/运行设置/会话管理的信息归属，并验证“不该混入的内容不存在”；决策卡主按钮不得只推进状态，状态推进只能作为业务动作的副作用。
 
@@ -39,7 +39,7 @@
 
 - 局部开发验证：`.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。
 - 主流程验证：`make main-flow-test`（改动反馈优化主流程、Agent job、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/coverage_policy.json` 已绑定对应 nodeid 或 UI verification script）。
-- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Codex 治理、阶段语言和版本一致性检查，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
+- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
 - 覆盖清单或测试 manifest：`tests/coverage_policy.json`（主流程覆盖清单与全局覆盖率基线的单一入口）。
 
 `warn`、dry-run 或只读审计类命令只能用于 Analyze 阶段观察；Verify 阶段必须运行正式 `--mode fail`，不得以 `warn` 作为通过标准。
@@ -76,12 +76,15 @@
 - Docker/Compose 入口：`docker/`，`docker/docker-compose.yml`。
 - 持久化数据路径：容器默认 `${HOME}/volume-agent-gov`，本机调试默认 `/tmp/local-debug-volume-agent-gov`；`docker/volume/` 仅迁移来源。
 - 密钥边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或后台 Agent job 模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
+- `.claude/settings.json` 的 Read deny 只约束内建文件工具；未启用 sandbox 时不能把它当作 Bash/Python 子进程的 OS 级密钥隔离。
 
 ## Claude Code 专项
 
 - 必须按需使用的项目 skill：`.claude/skills/runtime-env-governance/SKILL.md`（runtime/env 治理）、`.claude/skills/agentgov-governance-preflight/SKILL.md`（AgentGov 产品/治理方案预检；产品定位、愿景使命、反馈闭环治理、多 Agent 创建治理、prompt/skill/SOP/eval 沉淀类任务先做治理对象建模）、`.claude/skills/docs-governance/SKILL.md`（`docs/` 文档容器治理）、`.claude/skills/test-sync-governance/SKILL.md`（迭代功能时测试增删改判断；删功能同步删测，配合 `scripts/check_orphan_tests.py` 孤儿检测）、`.claude/skills/business-agent-workspace-optimizer/SKILL.md`（开发者离线开发/优化业务 Agent 自身 workspace 配置资产：CLAUDE.md/MCP/settings/skills/agents/rules/hooks/evals/templates）、`.claude/skills/improvement-workbench-contract-preflight/SKILL.md`（四阶段改进治理工作台、反馈闭环 UI、Diff、执行优化、测试用例或 Trace/Langfuse 反复整改前，固定业务产物归属、字段所有权、动作副作用和负向验收）。这些 skill 与 `.codex/skills/` 同名 skill 同源镜像，修改需两侧同步。
 - 推荐子代理：`.claude/agents/project-worker.md`。
 - 项目 MCP：未配置（无 `.mcp.json`）。
+- 项目 Stop hook：`.claude/settings.json` 复用 `.codex/hooks/codex_governance_stop.py`，失败时最多自动续跑一次，避免重入循环。
+- Claude Code 2.1.206 从子目录直接启动时不会加载根项目 settings/hooks；需要这些硬门的开发会话使用 `python3 scripts/run_claude.py` 从仓库根启动。
 - 本地私有说明：个人偏好放 `CLAUDE.local.md`，模型等本机设置放 `.claude/settings.local.json`，二者已被 git ignore。
 
 ## 专属边界

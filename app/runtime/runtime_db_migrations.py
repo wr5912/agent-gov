@@ -5,6 +5,9 @@ import json
 from sqlalchemy.engine import Connection
 
 from .runtime_db_base import utc_now
+from .runtime_db_migrations_0036 import (
+    migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
+)
 
 AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT = (
     "job_id",
@@ -476,9 +479,9 @@ def migrate_0025_agent_governance_legacy_paths(connection: Connection) -> None:
 
 
 def migrate_0027_agent_registry_requires_web_hitl(connection: Connection) -> None:
-    """部署契约：业务 Agent 注册表加 requires_web_hitl（agent.yaml 声明其执行能力依赖 web HITL）。
+    """历史迁移：业务 Agent 注册表曾缓存 Web HITL 观测字段。
 
-    已存在行默认 0；启动 sync 按 profile.requires_web_hitl（读 workspace/agent.yaml）幂等校正。
+    0038 会删除该列；保留本步骤仅保证旧迁移序列可重复重放。
     """
     if "requires_web_hitl" not in _table_columns(connection, "agent_registry"):
         connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN requires_web_hitl BOOLEAN DEFAULT 0")
@@ -740,7 +743,6 @@ def migrate_0035_session_active_run_lease(connection: Connection) -> None:
         connection.exec_driver_sql(
             "CREATE INDEX IF NOT EXISTS ix_sessions_active_run_id ON sessions (active_run_id)"
         )
-
 
 def migrate_0029_agent_release_tag_claims(connection: Connection) -> None:
     """Persist one release-tag owner per Agent while preserving conflicting legacy rows for audit."""

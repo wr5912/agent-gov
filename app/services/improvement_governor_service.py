@@ -349,7 +349,7 @@ class ImprovementGovernorService:
         if self._run_profile_json is not None:
             try:
                 output = await self._run_governor(
-                    AgentJobType.EVAL_CASE_GENERATION,
+                    AgentJobType.REGRESSION_ASSESSMENT,
                     self._build_regression_input(item, source_cases, attr, plan),
                     improvement_id,
                     trace_ref=trace_ref,
@@ -425,7 +425,6 @@ class ImprovementGovernorService:
         return {
             "feedback_cases": [self._regression_feedback_case_context(case, attribution_output, optimization_plan) for case in source_cases],
             "source_refs": [{"source_kind": "improvement", "source_id": getattr(item, "improvement_id", "")}],
-            "existing_eval_cases": [],
         }
 
     @staticmethod

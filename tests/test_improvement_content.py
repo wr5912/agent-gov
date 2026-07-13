@@ -21,10 +21,20 @@ def _store(tmp_path: Path) -> ImprovementContentStore:
 
 
 def _create_feedback_case(module, *, agent_id: str) -> dict:
+    if module.agent_registry_store.get_agent(agent_id) is None:
+        workspace_dir = module.settings.data_dir / "business-agents" / agent_id / "workspace"
+        module.agent_registry_store.create_business_agent(
+            name=agent_id,
+            agent_id=agent_id,
+            workspace_dir=str(workspace_dir),
+        )
     run_id = f"run-{agent_id}"
     module.feedback_store.record_run({"run_id": run_id, "agent_id": agent_id, "created_at": "2026-07-10T00:00:00Z"})
     signal = module.feedback_store.create_signal(FeedbackSignalCreateRequest(run_id=run_id, labels=["tool_data_incomplete"]))
-    feedback_case = module.feedback_store.create_case(source_ids=[signal["signal_id"]], title=f"{agent_id} feedback")
+    feedback_case = module.feedback_store.create_case(
+        source_refs=[("signal", signal["signal_id"])],
+        title=f"{agent_id} feedback",
+    )
     assert feedback_case is not None
     return feedback_case
 

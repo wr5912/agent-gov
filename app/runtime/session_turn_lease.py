@@ -25,12 +25,14 @@ class SessionTurnLeaseHeartbeat:
         *,
         session_id: str,
         run_id: str,
+        run_generation: int | None = None,
         heartbeat_interval_seconds: float | None = None,
         lease_seconds: float | None = None,
     ) -> None:
         self._store = store
         self._session_id = session_id
         self._run_id = run_id
+        self._run_generation = run_generation
         self._heartbeat_interval_seconds = DEFAULT_SESSION_TURN_HEARTBEAT_INTERVAL_SECONDS if heartbeat_interval_seconds is None else heartbeat_interval_seconds
         self._lease_seconds = DEFAULT_SESSION_TURN_LEASE_SECONDS if lease_seconds is None else lease_seconds
         if self._heartbeat_interval_seconds <= 0:
@@ -80,11 +82,13 @@ class SessionTurnLeaseHeartbeat:
             except TimeoutError:
                 pass
             try:
-                self._store.renew_turn(
-                    self._session_id,
-                    run_id=self._run_id,
-                    lease_seconds=self._lease_seconds,
-                )
+                kwargs = {
+                    "run_id": self._run_id,
+                    "lease_seconds": self._lease_seconds,
+                }
+                if self._run_generation is not None:
+                    kwargs["run_generation"] = self._run_generation
+                self._store.renew_turn(self._session_id, **kwargs)
             except Exception as exc:
                 self._failure = exc
                 owner_task = self._owner_task

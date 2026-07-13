@@ -1,14 +1,23 @@
 from __future__ import annotations
 
+import hashlib
+import stat
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
 
+import pytest
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.catalog import create_catalog_router
 from app.runtime.agent_paths import business_agent_layout
+from app.runtime.config_file_schemas import AgentConfigFileUpdateRequest
+from app.runtime.errors import SessionConflictError
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
+from app.services import agent_config_files as agent_config_files_module
+from app.services.agent_config_files import AgentConfigFileError, AgentConfigFileService
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -44,6 +53,7 @@ def test_agent_config_file_updates_mcp_json_and_invalidates_sdk_resume(tmp_path:
     workspace = _register_agent(settings, registry, "main-agent")
     target = workspace / ".mcp.json"
     target.write_text('{"mcpServers": {}}\n', encoding="utf-8")
+    target.chmod(0o640)
     session = session_store.create()
     session.agent_id = "main-agent"
     session.sdk_session_id = "sdk-session-old"
@@ -70,6 +80,7 @@ def test_agent_config_file_updates_mcp_json_and_invalidates_sdk_resume(tmp_path:
     assert updated["content"] == updated_content
     assert updated["sdk_session_invalidated"] is True
     assert target.read_text(encoding="utf-8") == updated_content
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
     assert session_store.get(session.session_id).sdk_session_id is None
 
 
@@ -112,6 +123,134 @@ def test_agent_config_file_rejects_uneditable_paths_and_unknown_agents(tmp_path:
 
     missing_agent = client.get("/api/agent-config-file", params={"agent_id": "missing-agent", "path": ".mcp.json"})
     assert missing_agent.status_code == 404
+
+
+def test_agent_config_file_rejects_workspace_and_target_symlinks(tmp_path: Path) -> None:
+    client, settings, registry, _ = _test_app(tmp_path)
+    workspace = _register_agent(settings, registry, "main-agent")
+    outside = tmp_path / "outside.json"
+    outside.write_text('{"outside": true}\n', encoding="utf-8")
+    (workspace / ".mcp.json").symlink_to(outside)
+
+    target_symlink = client.put(
+        "/api/agent-config-file",
+        params={"agent_id": "main-agent", "path": ".mcp.json"},
+        json={"content": '{"mcpServers": {}}\n'},
+    )
+
+    real_workspace = tmp_path / "real-workspace"
+    real_workspace.mkdir()
+    workspace_symlink = tmp_path / "workspace-link"
+    workspace_symlink.symlink_to(real_workspace, target_is_directory=True)
+    registry.create_business_agent(name="linked-agent", agent_id="linked-agent", workspace_dir=str(workspace_symlink))
+    directory_symlink = client.get(
+        "/api/agent-config-file",
+        params={"agent_id": "linked-agent", "path": ".mcp.json"},
+    )
+
+    assert target_symlink.status_code == 409
+    assert directory_symlink.status_code == 409
+    assert outside.read_text(encoding="utf-8") == '{"outside": true}\n'
+
+
+def test_agent_config_file_handles_directory_permission_and_cleans_failed_temp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    client, settings, registry, _ = _test_app(tmp_path)
+    workspace = _register_agent(settings, registry, "main-agent")
+    target = workspace / ".mcp.json"
+    original = '{"mcpServers": {}}\n'
+    target.write_text(original, encoding="utf-8")
+
+    workspace.chmod(0o500)
+    try:
+        denied = client.put(
+            "/api/agent-config-file",
+            params={"agent_id": "main-agent", "path": ".mcp.json"},
+            json={"content": '{"mcpServers": {"denied": {}}}\n'},
+        )
+    finally:
+        workspace.chmod(0o700)
+
+    assert denied.status_code == 409
+    assert target.read_text(encoding="utf-8") == original
+    assert list(workspace.glob(".mcp.json.tmp-*")) == []
+
+    def fail_replace(*args: object, **kwargs: object) -> None:
+        raise PermissionError("replace denied")
+
+    monkeypatch.setattr(agent_config_files_module.os, "replace", fail_replace)
+    replace_denied = client.put(
+        "/api/agent-config-file",
+        params={"agent_id": "main-agent", "path": ".mcp.json"},
+        json={"content": '{"mcpServers": {"denied": {}}}\n'},
+    )
+    assert replace_denied.status_code == 409
+    assert target.read_text(encoding="utf-8") == original
+    assert list(workspace.glob(".mcp.json.tmp-*")) == []
+
+
+def test_agent_config_file_rolls_back_failed_invalidation_and_serializes_expected_sha(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, settings, registry, session_store = _test_app(tmp_path)
+    workspace = _register_agent(settings, registry, "main-agent")
+    target = workspace / ".mcp.json"
+    original = '{"mcpServers": {}}\n'
+    intermediate = '{"mcpServers": {"intermediate": {}}}\n'
+    final = '{"mcpServers": {"final": {}}}\n'
+    target.write_text(original, encoding="utf-8")
+    session = session_store.create()
+    session.agent_id = "main-agent"
+    session.sdk_session_id = "sdk-session-old"
+    session_store.save(session)
+    invalidation_entered = Event()
+    allow_invalidation_failure = Event()
+    second_started = Event()
+
+    def fail_invalidation(*args: object, **kwargs: object) -> None:
+        invalidation_entered.set()
+        assert allow_invalidation_failure.wait(timeout=3)
+        raise SessionConflictError("forced invalidation conflict")
+
+    monkeypatch.setattr(session_store, "clear_sdk_session", fail_invalidation)
+    service = AgentConfigFileService(settings=settings, agent_registry_store=registry, session_store=session_store)
+
+    def first_update() -> object:
+        return service.update_file(
+            agent_id="main-agent",
+            path=".mcp.json",
+            request=AgentConfigFileUpdateRequest(
+                content=intermediate,
+                expected_sha256=hashlib.sha256(original.encode()).hexdigest(),
+                session_id=session.session_id,
+            ),
+        )
+
+    def second_update() -> object:
+        second_started.set()
+        return service.update_file(
+            agent_id="main-agent",
+            path=".mcp.json",
+            request=AgentConfigFileUpdateRequest(
+                content=final,
+                expected_sha256=hashlib.sha256(intermediate.encode()).hexdigest(),
+            ),
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(first_update)
+        assert invalidation_entered.wait(timeout=3)
+        second = executor.submit(second_update)
+        assert second_started.wait(timeout=3)
+        assert not second.done()
+        allow_invalidation_failure.set()
+        with pytest.raises(AgentConfigFileError, match="forced invalidation conflict"):
+            first.result(timeout=3)
+        with pytest.raises(AgentConfigFileError, match="reload before applying edits"):
+            second.result(timeout=3)
+
+    assert target.read_text(encoding="utf-8") == original
+    assert list(workspace.glob(".mcp.json.tmp-*")) == []
 
 
 def test_catalog_router_discovers_agent_scoped_project_assets(tmp_path: Path) -> None:

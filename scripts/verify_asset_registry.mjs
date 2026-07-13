@@ -74,7 +74,7 @@ const agents = [{ agent_id: "soc-ops", name: "SOC 运营", category: "", workspa
 function defaultPayload(path) {
   if (path === "/health") return { status: "ok", model: "governance-mock" };
   if (path === "/api/agent-registry") return agents;
-  if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases") return [];
+  if (path === "/api/sessions" || path === "/api/agents" || path === "/api/skills" || path === "/api/improvements" || path === "/api/agent-change-sets" || path === "/api/agent-releases" || path === "/api/test-datasets") return [];
   if (path === "/api/config") return { mappings: [] };
   if (path === "/api/agent-repository") return { status: "active", dirty: false, changed_files: [], file_diffs: [] };
   if (path === "/api/agent-repository/current") return { agent_version_id: "v0", commit_sha: "v0", created_at: ts, reason: "current" };
@@ -140,6 +140,12 @@ async function main() {
       await page.getByTestId("asset-create-open").click();
       await page.getByTestId("asset-create-drawer").waitFor({ timeout: 15000 });
       if (REAL) await page.getByTestId("asset-create-agent").selectOption("main-agent");
+      if (await page.getByTestId("asset-create-type").locator('option[value="test_dataset"]').count()) {
+        throw new Error("typed TestDataset must not be creatable through the generic asset form");
+      }
+      if (await page.getByTestId("asset-create-type").locator('option[value="regression"]').count()) {
+        throw new Error("legacy regression assets must not be creatable through the generic asset form");
+      }
       await page.getByTestId("asset-create-type").selectOption("methodology");
       await page.getByTestId("asset-create-title").fill(assetTitle);
       await page.getByTestId("asset-create-submit").click();

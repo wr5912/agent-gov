@@ -6,10 +6,6 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 只有 mcp__sec-ops__soc_api__execute
-  # (POST /resp/actions/execute) 依赖 web HITL 人审。ENABLE_CLAUDE_WEB_HITL=false
-  # 时运行时只对该工具 fail-loud；其他 sec-ops 工具不得触发 HITL。
-  requires_web_hitl: true
 
 capabilities:
   - alert_triage

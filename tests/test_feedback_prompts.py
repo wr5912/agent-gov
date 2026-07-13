@@ -2,15 +2,15 @@ import json
 
 from app.runtime.prompts.feedback_prompt_contexts import (
     build_attribution_prompt_context,
-    build_eval_case_generation_prompt_context,
     build_execution_prompt_context,
     build_improvement_optimization_prompt_context,
+    build_regression_assessment_prompt_context,
 )
 from app.runtime.prompts.feedback_prompts import (
     attribution_prompt,
-    eval_case_generation_prompt,
     execution_plan_prompt,
     improvement_optimization_plan_prompt,
+    regression_assessment_prompt,
 )
 
 
@@ -68,9 +68,8 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
             "target_file_contexts": [{"path": "CLAUDE.md", "exists": True, "content_text": "A" * 30_000}],
         }
     )
-    eval_context = build_eval_case_generation_prompt_context(
+    regression_context = build_regression_assessment_prompt_context(
         {
-            "schema_version": "feedback-eval-case-generation-input/v1",
             "job_id": "job-hidden",
             "scope_kind": "improvement",
             "scope_id": "imp-hidden",
@@ -85,7 +84,10 @@ def test_prompt_context_builders_prune_backend_and_boundary_fields():
         }
     )
 
-    serialized = json.dumps([attribution_context, optimization_context, execution_context, eval_context], ensure_ascii=False)
+    serialized = json.dumps(
+        [attribution_context, optimization_context, execution_context, regression_context],
+        ensure_ascii=False,
+    )
     assert "schema_version" not in serialized
     assert "job_id" not in serialized
     assert "execution_job_id" not in serialized
@@ -132,7 +134,7 @@ def test_feedback_prompts_do_not_expose_formatter_implementation_details():
         attribution_prompt(),
         improvement_optimization_plan_prompt(),
         execution_plan_prompt(),
-        eval_case_generation_prompt(),
+        regression_assessment_prompt(),
     ]
 
     forbidden = (
@@ -150,12 +152,20 @@ def test_feedback_prompts_do_not_expose_formatter_implementation_details():
             assert text not in prompt
 
 
+def test_execution_prompt_requires_exact_backend_allowed_target_path():
+    prompt = execution_plan_prompt()
+
+    assert "path 必须逐字符复制 input.target_paths 中的某一项" in prompt
+    assert "禁止补前缀、改写路径或根据 proposal 猜测新路径" in prompt
+    assert "target_paths 之外的目标" in prompt
+
+
 def test_feedback_prompts_are_structured():
     for prompt in (
         attribution_prompt(),
         improvement_optimization_plan_prompt(),
         execution_plan_prompt(),
-        eval_case_generation_prompt(),
+        regression_assessment_prompt(),
     ):
         assert prompt.startswith("## 角色\n")
         assert "\n\n## 输入\n" in prompt
@@ -177,18 +187,20 @@ def test_feedback_prompts_spell_out_current_business_information_points():
         ),
         "optimization_plan": ("summary", "changes", "risk_level"),
         "execution": ("operations[].operation", "expected_sha256", "content 或 append_text", "no_action_reason"),
-        "eval_case_generation": ("eval_cases", "prompt", "expected_behavior", "checks_json", "labels", "no_action_reason"),
+        "regression_assessment": ("eval_cases", "expected_behavior", "checks_json", "labels", "no_action_reason"),
     }
     prompts = {
         "attribution": attribution_prompt(),
         "optimization_plan": improvement_optimization_plan_prompt(),
         "execution": execution_plan_prompt(),
-        "eval_case_generation": eval_case_generation_prompt(),
+        "regression_assessment": regression_assessment_prompt(),
     }
     for prompt_name, required_texts in expected.items():
         prompt = prompts[prompt_name]
         for text in required_texts:
             assert text in prompt
+
+    assert "Agent 不得复述 prompt" in prompts["regression_assessment"]
 
 
 def test_attribution_and_optimization_prompts_require_chinese_user_facing_text():

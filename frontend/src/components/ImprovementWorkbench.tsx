@@ -43,9 +43,15 @@ import { IMPROVEMENT_STAGE_ORDER, describeImprovementStage, stageLabel, type Vis
 import { deriveImprovementListDecisionLabel, deriveImprovementPrimaryDecision, type ImprovementPrimaryDecision } from "../improvementDecisionActions";
 import { hasAppliedExecution } from "../improvementExecutionState";
 import { buildContext, type ContextType } from "../contextPackage";
-import { listAssets, type Asset } from "../api/assets";
+import {
+  adoptTestDataset,
+  listAssets,
+  listTestDatasets,
+  transitionTestDataset,
+  type Asset,
+  type TestDataset,
+} from "../api/assets";
 import { STATUS_CATEGORIES, deriveCategory, LINK_KIND_LABEL } from "./improvementWorkbench.helpers";
-import { adoptRegressionArtifacts } from "../improvementRegressionAssets";
 import { operationLabel, type ImprovementOperationError, type ImprovementPendingOperation } from "../improvementOperationState";
 import { ImprovementClosedLoopSpine } from "./ImprovementClosedLoopSpine";
 import { ImprovementContextDrawer } from "./ImprovementContextDrawer";
@@ -53,12 +59,29 @@ import { ImprovementDecisionPanel } from "./ImprovementDecisionPanel";
 import { ImprovementStagePanels } from "./ImprovementStagePanels";
 import { StageDetailDrawer, type StageDetail } from "./StageDetailDrawer";
 import { ImprovementSourceManagementDrawer } from "./ImprovementSourceManagementDrawer";
+import { ReleaseWorkbench } from "./ReleaseWorkbench";
+import { isCurrentTestDataset, useTestDatasetRevisions } from "./useImprovementTestDataset";
 import type { components } from "../types/api";
-import type { RuntimeClientConfig } from "../types/runtime";
+import type { AgentChangeSet, AgentRelease, RuntimeClientConfig } from "../types/runtime";
 import "../improvement-workbench.css";
 
 type BusinessAgent = components["schemas"]["AgentSummaryResponse"];
-export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }: { clientConfig: RuntimeClientConfig; scopeAgentId: string; langfuseUrl: string }) {
+
+export function ImprovementWorkbench({
+  clientConfig,
+  scopeAgentId,
+  langfuseUrl,
+  releases,
+  changeSets,
+  onGovernanceRefresh,
+}: {
+  clientConfig: RuntimeClientConfig;
+  scopeAgentId: string;
+  langfuseUrl: string;
+  releases: AgentRelease[];
+  changeSets: AgentChangeSet[];
+  onGovernanceRefresh: () => void | Promise<void>;
+}) {
   const [businessAgents, setBusinessAgents] = useState<BusinessAgent[]>([]);
   const [items, setItems] = useState<ImprovementItem[]>([]);
   const [selectedId, setSelectedId] = useState<string | undefined>();
@@ -82,6 +105,9 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   const [optPlan, setOptPlan] = useState<OptimizationPlan | null>(null);
   const [execution, setExecution] = useState<ExecutionRecord | null>(null);
   const [sedimentAssets, setSedimentAssets] = useState<Asset[]>([]);
+  const [testDatasets, setTestDatasets] = useState<TestDataset[]>([]);
+  const [testDatasetError, setTestDatasetError] = useState<string | undefined>();
+  const [testDatasetReloadToken, setTestDatasetReloadToken] = useState(0);
   const [regressionAssessment, setRegressionAssessment] = useState<RegressionAssessment | null>(null);
   const [editingAttribution, setEditingAttribution] = useState(false);
   const [attrDraft, setAttrDraft] = useState({ summary: "", boundary: "", evidence: "" });
@@ -121,6 +147,25 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     () => items.find((item) => item.improvement_id === selectedId) || null,
     [items, selectedId],
   );
+  const testDataset = useMemo(
+    () => {
+      if (!selected) return null;
+      return testDatasets.find((dataset) => isCurrentTestDataset(dataset, {
+        improvementId: selected.improvement_id,
+        agentId: selected.agent_id,
+        normalizedFeedback,
+        attribution,
+        optimizationPlan: optPlan,
+        execution,
+        regressionAssessment,
+      })) ?? null;
+    },
+    [attribution, execution, normalizedFeedback, optPlan, regressionAssessment, selected, testDatasets],
+  );
+  const {
+    revisions: testDatasetRevisions,
+    error: testDatasetRevisionError,
+  } = useTestDatasetRevisions(clientConfig, testDataset, testDatasetReloadToken);
 
   useEffect(() => {
     if (!visibleItems.length) {
@@ -141,6 +186,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       setNormalizedFeedback(null);
       setAttribution(null);
       setSedimentAssets([]);
+      setTestDatasets([]);
+      setTestDatasetError(undefined);
       setFeedbacks([]);
       setOptPlan(null);
       setExecution(null);
@@ -155,6 +202,8 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     setSourceDrawerOpen(false);
     setReviewStageKey(null);
     setDismissedSimilar(new Set());
+    setTestDatasets([]);
+    setTestDatasetError(undefined);
     void getNormalizedFeedback(clientConfig, itemId)
       .then((nf) => { if (!cancelled) setNormalizedFeedback(nf); })
       .catch(() => { if (!cancelled) setNormalizedFeedback(null); });
@@ -164,6 +213,16 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void listAssets(clientConfig, { sourceImprovementId: itemId })
       .then((a) => { if (!cancelled) setSedimentAssets(a); })
       .catch(() => { if (!cancelled) setSedimentAssets([]); });
+    void listTestDatasets(clientConfig, { agentId, sourceImprovementId: itemId })
+      .then((datasets) => {
+        if (cancelled) return;
+        setTestDatasets(datasets);
+      })
+      .catch((loadError) => {
+        if (cancelled) return;
+        setTestDatasets([]);
+        setTestDatasetError(`测试数据集加载失败：${loadError instanceof Error ? loadError.message : String(loadError)}`);
+      });
     void listImprovementFeedbacks(clientConfig, itemId)
       .then((f) => { if (!cancelled) setFeedbacks(f); })
       .catch(() => { if (!cancelled) setFeedbacks([]); });
@@ -183,7 +242,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
       .then((l) => { if (!cancelled) setLinks(l); })
       .catch(() => { if (!cancelled) setLinks([]); });
     return () => { cancelled = true; };
-  }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id]);
+  }, [clientConfig, selectedId, selected?.agent_id, selected?.improvement_id, testDatasetReloadToken]);
 
   const run = async (action: () => Promise<void>, operation?: ImprovementPendingOperation) => {
     setBusy(true);
@@ -310,23 +369,43 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
     void run(async () => {
       setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id));
       await refresh();
+      await onGovernanceRefresh();
     }, { kind: "generate_regression", label: operationLabel("generate_regression") });
   };
 
   const handleAdoptRegression = (item: ImprovementItem) => {
     void run(async () => {
-      const assets = await adoptRegressionArtifacts({
-        clientConfig,
-        item,
-        regressionAssessment,
-        feedbacks,
-        execution,
-        normalizedFeedback,
-        attribution,
-        optimizationPlan: optPlan,
-      });
-      if (regressionAssessment) await confirmRegressionAssessment(clientConfig, item.improvement_id).catch(() => undefined);
-      setSedimentAssets(assets);
+      if (!regressionAssessment) throw new Error("请先生成回归评估，再纳入测试数据集。");
+      let confirmedAssessment = regressionAssessment;
+      if (confirmedAssessment.status !== "confirmed") {
+        confirmedAssessment = await confirmRegressionAssessment(clientConfig, item.improvement_id);
+        setRegressionAssessment(confirmedAssessment);
+      }
+      const dataset = await adoptTestDataset(clientConfig, item.improvement_id);
+      setTestDatasets((datasets) => [dataset, ...datasets.filter((existing) => existing.dataset_id !== dataset.dataset_id)]);
+      setTestDatasetError(undefined);
+      await onGovernanceRefresh();
+      setTestDatasetReloadToken((value) => value + 1);
+    });
+  };
+
+  const handleTestDatasetLifecycle = (targetState: TestDataset["lifecycle_state"], reason: string) => {
+    if (!testDataset) return;
+    void run(async () => {
+      try {
+        const updated = await transitionTestDataset(clientConfig, testDataset.dataset_id, testDataset.agent_id, {
+          target_state: targetState,
+          expected_revision: testDataset.revision,
+          operator: "ui",
+          reason,
+        });
+        setTestDatasets((datasets) => datasets.map((dataset) => (
+          dataset.dataset_id === updated.dataset_id ? updated : dataset
+        )));
+        await onGovernanceRefresh();
+      } finally {
+        setTestDatasetReloadToken((value) => value + 1);
+      }
     });
   };
 
@@ -361,6 +440,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
         setOptPlan(currentPlan);
         setExecution(await applyExecution(clientConfig, item.improvement_id));
         await refresh();
+        await onGovernanceRefresh();
         return;
       }
       if (decision.kind === "generate_regression") {
@@ -377,6 +457,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
         }
         setRegressionAssessment(await generateRegressionAssessment(clientConfig, item.improvement_id));
         await refresh();
+        await onGovernanceRefresh();
         return;
       }
     }, { kind: decision.kind, label: operationLabel(decision.kind) });
@@ -408,6 +489,14 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
   };
 
   const agentName = (agentId: string) => businessAgents.find((agent) => agent.agent_id === agentId)?.name || agentId;
+  const selectedChangeSet = selected
+    ? changeSets.find((changeSet) => changeSet.change_set_id === execution?.change_set_id)
+      || [...changeSets]
+        .filter((changeSet) => changeSet.source_improvement_id === selected.improvement_id && changeSet.agent_id === selected.agent_id)
+        .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))[0]
+      || null
+    : null;
+  const latestEvalRun = selectedChangeSet?.latest_eval_run ?? null;
   const stageView = selected ? describeImprovementStage(selected.improvement_stage) : null;
   const primaryDecision = selected ? deriveImprovementPrimaryDecision({
     item: selected,
@@ -558,6 +647,11 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               optimizationPlan={optPlan}
               execution={execution}
               regressionAssessment={regressionAssessment}
+              testDataset={testDataset}
+              testDatasetError={testDatasetError}
+              testDatasetRevisions={testDatasetRevisions}
+              testDatasetRevisionError={testDatasetRevisionError}
+              latestEvalRun={latestEvalRun}
               assets={sedimentAssets}
               editingAttribution={editingAttribution}
               attrDraft={attrDraft}
@@ -576,6 +670,24 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
               onAttrDraftChange={setAttrDraft}
               onGenerateOpt={() => handleGenerateOptPlan(selected)}
               onAdoptTestDataset={() => handleAdoptRegression(selected)}
+              onRetryTestDatasetLoad={() => setTestDatasetReloadToken((value) => value + 1)}
+              onTransitionTestDataset={handleTestDatasetLifecycle}
+              testReleaseWorkbench={(
+                <ReleaseWorkbench
+                  clientConfig={clientConfig}
+                  scopeAgentId={selected.agent_id}
+                  sourceImprovementId={selected.improvement_id}
+                  preferredChangeSetId={execution?.change_set_id || undefined}
+                  sourceTestDataset={testDataset}
+                  releases={releases}
+                  changeSets={changeSets}
+                  readOnly={reviewingPastStage}
+                  onRefresh={async () => {
+                    await onGovernanceRefresh();
+                    setTestDatasetReloadToken((value) => value + 1);
+                  }}
+                />
+              )}
               onOpenContext={() => setContextOpen(true)}
               onOpenDetail={setDetail}
             />
@@ -663,6 +775,7 @@ export function ImprovementWorkbench({ clientConfig, scopeAgentId, langfuseUrl }
                 feedbacks,
                 optimizationPlan: optPlan,
                 execution,
+                testDataset,
                 assets: sedimentAssets,
                 langfuseUrl,
               };

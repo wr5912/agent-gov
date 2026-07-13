@@ -101,7 +101,7 @@ def improvement_optimization_plan_prompt(*, prompt_context: JsonObject | None = 
             "输出中必须能直接读出：summary、changes 和 risk_level。\n"
             "summary 用一段话说明优化策略、目标和收益。\n"
             "changes 是变更项列表，每项必须包含 target 和 change；target 应是 prompt、skill、subagent、mcp_config、"
-            "runtime_config、eval_case 或其他明确治理资产，change 写清要改什么以及为什么。\n"
+            "runtime_config、test_dataset 或其他明确治理资产，change 写清要改什么以及为什么。\n"
             "risk_level 说明低/中/高风险或等价中文描述。",
         ),
         (
@@ -147,7 +147,8 @@ def execution_plan_prompt(*, prompt_context: JsonObject | None = None) -> str:
         (
             "操作约束",
             "只允许 operations[].operation 使用 append_text、replace_file、create_file 或 noop。\n"
-            "path 必须是相对 main-workspace 的路径，并且必须来自 input 中的 target_paths。\n"
+            "path 必须逐字符复制 input.target_paths 中的某一项；禁止补前缀、改写路径或根据 proposal 猜测新路径。\n"
+            "proposal 若提到 target_paths 之外的目标，必须忽略该目标；没有安全可执行目标时返回 needs_human_review。\n"
             "若目标存在 skipped_reason，或目标不是 UTF-8 文本文件，不能输出 ready。\n"
             "append_text 只用于追加文本；replace_file/create_file 必须给出完整 content。\n"
             "append_text/replace_file 应填写 expected_sha256，使用 target_file_contexts 中的 sha256。\n"
@@ -161,32 +162,32 @@ def execution_plan_prompt(*, prompt_context: JsonObject | None = None) -> str:
     )
 
 
-def eval_case_generation_prompt(*, prompt_context: JsonObject | None = None) -> str:
+def regression_assessment_prompt(*, prompt_context: JsonObject | None = None) -> str:
     return _structured_prompt(
         (
             "角色",
-            "你是反馈闭环中的评估用例治理智能体 eval-case-governor。你的职责是基于反馈来源、已校验归因和优化建议，生成可复测原问题的评估用例草案。",
+            "你是四阶段改进治理中的回归保障治理智能体。你的职责是基于原始反馈、已校验归因和优化方案，形成回归评估候选。",
         ),
-        ("输入", "输入上下文由后端从 SQLite 中的反馈、归因、优化方案和历史评估用例构造；不需要读取 job 输入文件或临时目录。"),
+        ("输入", "输入上下文由后端从 SQLite 中的反馈、归因和优化方案构造；不需要读取 job 输入文件或临时目录。"),
         (
             "工作方式",
-            "先定位反馈原始场景、应复测的问题、修复后应满足的行为，再生成可放入回归资产候选层的 eval cases。",
+            "先定位反馈原始场景、应复测的问题、修复后应满足的行为，再生成四阶段回归评估中的 eval_cases。",
         ),
         (
             "业务信息要点",
             "输出中必须能直接读出：eval_cases 和 no_action_reason。\n"
-            "生成任务标识、作用范围、处理结果、计数、评估用例标识、时间戳和生命周期状态由后端保存时补齐；"
-            "Agent 不需要复述任何系统 ID 或时间戳。\n"
-            "每个 eval case 必须覆盖 prompt、expected_behavior、checks_json 和 labels；"
-            "prompt 应复现用户原始输入或最接近的反馈场景，expected_behavior 应描述修复后应满足的行为。"
+            "原始复测输入、生成任务标识、作用范围、处理结果、计数、标识、时间戳和生命周期状态由后端绑定；"
+            "Agent 不得复述 prompt、系统 ID 或时间戳。\n"
+            "每个 eval_cases item 必须覆盖 expected_behavior、checks_json 和 labels；"
+            "expected_behavior 应描述修复后应满足的行为。"
             "checks_json 应表达可检查的行为点，labels 应标识问题类型、目标对象或风险域。"
-            "多反馈输入中需要能定位来源时，在 source_summary、attribution_summary 或 optimization_plan_summary 中转述业务来源和证据依据。",
+            "证据不足时只输出 no_action_reason，不编造回归输入或结论。",
         ),
         (
             "约束",
             f"{NATURAL_LANGUAGE_CHINESE_RULE}"
-            "prompt、expected_behavior、checks_json 中面向人的说明、labels 的中文含义必须清晰。"
+            "expected_behavior、checks_json 中面向人的说明、labels 的中文含义必须清晰。"
             "不要凭空编造证据中不存在的业务事实；证据不足时输出 no_action_reason 并说明需要人工补充。",
         ),
-        ("输入上下文", _prompt_context_section("eval_case_generation_prompt_context", prompt_context)),
+        ("输入上下文", _prompt_context_section("regression_assessment_prompt_context", prompt_context)),
     )

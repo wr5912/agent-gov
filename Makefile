@@ -38,7 +38,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-hitl-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-workspace-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -86,6 +86,14 @@ ui-smoke:
 	echo "Frontend failed: $$frontend_url" >&2; \
 	exit 1
 
+ui-design-parity:
+	pnpm --dir frontend run verify:design-parity
+
+ui-feedback-smoke:
+	@if [ -z "$$RUNTIME_UI_BASE" ]; then echo "RUNTIME_UI_BASE=<real-container-ui> is required" >&2; exit 1; fi
+	@if [ -z "$$RUNTIME_API_BASE" ]; then echo "RUNTIME_API_BASE=<real-container-api> is required" >&2; exit 1; fi
+	@VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" pnpm --dir frontend run verify:real-container
+
 langfuse-dirs:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --quiet
 	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
@@ -105,12 +113,13 @@ langfuse-smoke:
 
 runtime-bootstrap:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py
+	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --apply
 
 runtime-repair-managed-config:
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --repair-managed-config
 
-runtime-reconcile-business-agent-hitl-policy:
-	$(PYTHON_RUN) scripts/reconcile_business_agent_hitl_policy.py --apply
+runtime-reconcile-business-agent-workspace-policy:
+	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --apply
 
 runtime-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --runtime-artifacts
@@ -120,6 +129,7 @@ local-debug-env:
 
 local-debug-bootstrap: local-debug-env
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug
+	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --apply
 
 local-debug-repair-managed-config: local-debug-env
 	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --repair-managed-config
@@ -159,7 +169,7 @@ chat:
 	curl -s -X POST "$$api_base/api/chat" \
 		-H 'Content-Type: application/json' \
 		-H "Authorization: Bearer $${api_key:-change-me}" \
-		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","skills_mode":"all"}' | $(PYTHON_RUN) -m json.tool
+		-d '{"message":"你好，请说明你当前可用的 agents 和 skills。","agent_id":"main-agent"}' | $(PYTHON_RUN) -m json.tool
 
 codex-guard:
 	$(PYTHON_RUN) .codex/skills/codex-config-optimizer/scripts/audit_codex_config.py --fail
@@ -211,4 +221,4 @@ main-flow-test:
 	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)
 
 container-live-test:
-	$(COMPOSE) run --rm -v "$(CURDIR):/app" -w /app claude-agent-api sh -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+	$(COMPOSE) run --rm -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api sh -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

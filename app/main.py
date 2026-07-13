@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Security, status
@@ -9,6 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.openapi_contract import install_openapi_contract
+from app.routers.agent_change_set_regression import create_agent_change_set_regression_router
 from app.routers.agent_config_files import create_agent_config_files_router
 from app.routers.agent_governance import create_agent_governance_router
 from app.routers.agent_jobs import create_agent_jobs_router
@@ -30,9 +32,7 @@ from app.routers.improvement_feedback_ops import create_improvement_feedback_ops
 from app.routers.improvements import create_improvement_relations_router, create_improvements_router
 from app.routers.langfuse_traces import create_langfuse_traces_router
 from app.routers.openai import create_openai_router
-from app.routers.regression_assets import create_regression_assets_router
 from app.routers.responses import create_responses_router
-from app.routers.scenario_packs import create_scenario_packs_router
 from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
@@ -42,6 +42,8 @@ from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_service import ClaudeUserInputService
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
+from app.runtime.runtime_recovery import RUNTIME_RECOVERY_INTERVAL_SECONDS
+from app.runtime.sdk_session_migration import ensure_sdk_store_ready
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import get_settings, runtime_settings_log_message, validate_hitl_single_api_process
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -51,8 +53,8 @@ from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.runtime.stores.runtime_settings_store import RuntimeSettingsStore
-from app.runtime.stores.scenario_pack_store import ScenarioPackStore
 from app.services.agent_governance import AgentGovernanceService
+from app.services.agent_version_maintenance import is_agent_version_maintenance_active
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.improvement_governor_service import ImprovementGovernorService
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
@@ -96,6 +98,12 @@ agent_governance = AgentGovernanceService(
 agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
 # 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
+feedback_store.agent_exists = agent_governance.agent_exists
+runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_maintenance_active(
+    session_factory=runtime_db_session_factory,
+    store_for=agent_governance._store_for,
+    agent_id=agent_id,
+)
 
 
 # #24-C/D：单一 per-agent 版本解析器——复用 agent_governance._store_for 缓存按 agent_id 路由到各业务 Agent
@@ -106,7 +114,6 @@ def _resolve_agent_version_id(agent_id: Optional[str]) -> Optional[str]:
 
 
 feedback_store.agent_version_provider = _resolve_agent_version_id
-scenario_pack_store = ScenarioPackStore(runtime_db_session_factory)
 improvement_store = ImprovementStore(runtime_db_session_factory)
 improvement_content_store = ImprovementContentStore(runtime_db_session_factory)
 improvement_governor_service = ImprovementGovernorService(
@@ -133,6 +140,34 @@ bearer_auth = HTTPBearer(auto_error=False)
 api_key_credentials = Security(bearer_auth)
 
 
+def _reconcile_runtime_orphans() -> None:
+    reconciled_turn_count = 0
+    while batch := session_store.reconcile_expired_turns(limit=100):
+        reconciled_turn_count += len(batch)
+    if reconciled_turn_count:
+        logger.warning("reconciled expired SDK session turns: %s", reconciled_turn_count)
+    recovered_provisions = agent_registry_store.recover_incomplete_provisions()
+    if recovered_provisions:
+        logger.warning("recovered expired business Agent provisions: %s", recovered_provisions)
+    orphan_eval_runs = feedback_store.reconcile_orphan_eval_runs()
+    if orphan_eval_runs:
+        logger.warning("reconciled expired EvalRuns: %s", orphan_eval_runs)
+    regression_reconciliation = agent_governance.reconcile_regression_runs()
+    if any(regression_reconciliation.values()):
+        logger.warning("reconciled interrupted Agent change set regressions: %s", regression_reconciliation)
+
+
+async def _runtime_orphan_recovery_loop() -> None:
+    while True:
+        await asyncio.sleep(RUNTIME_RECOVERY_INTERVAL_SECONDS)
+        try:
+            await asyncio.to_thread(_reconcile_runtime_orphans)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("runtime orphan reconciliation failed")
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
@@ -140,6 +175,7 @@ async def lifespan(_: FastAPI):
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
+    _reconcile_runtime_orphans()
     agent_version_store.ensure_bootstrap()
     # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
     # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
@@ -152,16 +188,42 @@ async def lifespan(_: FastAPI):
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
     )
-    # 部署契约告警（不阻断）：requires_web_hitl 的 Agent 在 HITL 关闭时执行能力不可用（ask 型工具 fail-loud）。
+    cleanup_summary = agent_governance.reconcile_worktree_cleanups()
+    if cleanup_summary["completed"] or cleanup_summary["failed"]:
+        logger.info("worktree cleanup reconciliation: %s", cleanup_summary)
+    for session in session_store.list():
+        if not session.sdk_session_id or session.sdk_store_ready_at is not None or session.active_run_id:
+            continue
+        profile = profiles.get(session.agent_id or "")
+        if profile is None:
+            logger.error("legacy SDK session %s has no resolvable owning Agent", session.session_id)
+            continue
+        try:
+            await ensure_sdk_store_ready(
+                session_store,
+                session,
+                workspace_dir=profile.workspace_dir,
+                claude_config_dir=profile.claude_config_dir,
+            )
+        except Exception as exc:
+            # 迁移失败保持 fail closed；请求路径会返回明确的 runtime unavailable，绝不回退本地读取。
+            logger.error("legacy SDK session migration failed for %s: %s", session.session_id, exc.__class__.__name__)
+    # 原生 project settings 含 ask 的 Agent 在 HITL 关闭时执行能力不可用；运行时统一 fail-loud。
     if not settings.enable_claude_web_hitl:
         requiring = agents_requiring_web_hitl(profiles)
         if requiring:
             logger.warning(
-                "业务 Agent %s 声明 requires_web_hitl 但 ENABLE_CLAUDE_WEB_HITL=false："
+                "业务 Agent %s 的 project settings 含 permissions.ask，但 ENABLE_CLAUDE_WEB_HITL=false："
                 "其响应处置执行能力不可用（ask 型工具将被 fail-loud 拒绝），如需执行处置请开启 web HITL。",
                 requiring,
             )
-    yield
+    recovery_task = asyncio.create_task(_runtime_orphan_recovery_loop(), name="runtime-orphan-recovery")
+    try:
+        yield
+    finally:
+        recovery_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await recovery_task
 
 
 app = FastAPI(
@@ -230,6 +292,7 @@ app.include_router(
         agent_registry_store=agent_registry_store,
         session_store=session_store,
         require_api_key=require_api_key,
+        version_maintenance=agent_governance.version_maintenance,
     )
 )
 app.include_router(
@@ -272,7 +335,12 @@ app.include_router(
 app.include_router(
     create_agent_governance_router(
         agent_governance=agent_governance,
-        feedback_store=feedback_store,
+        require_api_key=require_api_key,
+    )
+)
+app.include_router(
+    create_agent_change_set_regression_router(
+        agent_governance=agent_governance,
         runtime=runtime,
         require_api_key=require_api_key,
     )
@@ -326,16 +394,13 @@ app.include_router(
 )
 app.include_router(create_langfuse_traces_router(runtime=runtime, require_api_key=require_api_key))
 app.include_router(create_assets_router(asset_store=asset_store, require_api_key=require_api_key))
-app.include_router(create_scenario_packs_router(scenario_pack_store=scenario_pack_store, feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_agent_jobs_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_eval_router(feedback_store=feedback_store, runtime=runtime, require_api_key=require_api_key))
-app.include_router(create_regression_assets_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(create_feedback_cases_router(feedback_store=feedback_store, require_api_key=require_api_key))
 app.include_router(
     create_feedback_workbench_router(
         feedback_store=feedback_store,
         improvement_store=improvement_store,
-        runtime=runtime,
         require_api_key=require_api_key,
     )
 )

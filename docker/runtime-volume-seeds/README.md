@@ -12,6 +12,8 @@
 
 `runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
+已从模板退役的托管文件登记在 `workspace-policy/retired-seed-assets.json`。容器启动只会删除内容 SHA256 与登记值完全一致的旧 seed 副本，并先在运行卷 `data/.retired-seed-assets/` 下生成私有备份和审计；用户修改内容会保留，符号链接、非普通文件或路径安全异常会阻断自动清理。
+
 ## 预置业务 Agent
 
 - `main-agent`：默认安全运营样板业务 Agent。
@@ -20,7 +22,7 @@
 - `ai-soc-gap-analyzer`：AI SOC 差距评估业务 Agent，基于能力模型和证据快照输出成熟度评分、差距、风险和下一步行动。
 - `security-operations-expert`：网络安全运营专家业务 Agent，面向告警分流、事件调查、威胁狩猎和响应处置闭环；响应处置部分融合 `response-disposal` 的 MCP、skill、subagent、权限和审计配置。
 
-> 所有业务 Agent 的 Bash 由 `.claude/settings.json` 直接放行，不走 Web HITL；风险由 sandbox、PreToolUse hook、deny 规则和审计兜底。`response-disposal` 与 `security-operations-expert` 的 agent.yaml 声明 `requires_web_hitl: true`（部署契约，被运行时读取+强制）：其响应处置执行/入库（settings ask 层的 `mcp__soc-playbook-execution__*` / `mcp__soc-playbook-registry__*`）依赖 `ENABLE_CLAUDE_WEB_HITL=true` 的人审。关闭时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），启动日志告警，`GET /api/agent-registry` 的 `requires_web_hitl` 字段透出该要求。真实执行处置须在开启 HITL 的交互式会话进行。
+> 业务 Agent 的权限只由 workspace `.claude/settings.json` 声明：Bash 在 sandbox、敏感路径 deny、fail-closed `PreToolUse` hook 与审计边界内执行；需要人审的 MCP 操作进入 `permissions.ask`。运行时直接从该原生配置派生 `requires_web_hitl` 观测值，`agent.yaml` 不再保存第二份权限声明。`response-disposal` 与 `security-operations-expert` 的处置执行/入库工具依赖 `ENABLE_CLAUDE_WEB_HITL=true`；关闭时 ask 型工具 fail-loud。容器启动会幂等迁移既有业务 Agent workspace，迁移失败会阻断启动。
 
 ## 占位符
 

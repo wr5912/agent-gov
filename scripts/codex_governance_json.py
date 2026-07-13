@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Protocol
 
-
 PYTHON_SUFFIXES = {".py"}
 
 
@@ -62,7 +61,6 @@ def is_allowed_jsonobject_field(field_name: str) -> bool:
         "checks_json",
         "compensations",
         "error_json",
-        "eval_case_snapshot",
         "eval_cases",
         "execution_apply_result",
         "gate_result",

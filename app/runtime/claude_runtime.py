@@ -21,6 +21,7 @@ from .agent_profiles import (
     candidate_profile,
 )
 from .async_iterators import close_async_iterator
+from .claude_runtime_session_persistence import RuntimeSessionPersistenceMixin
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
 from .errors import RuntimeUnavailableError
@@ -33,9 +34,7 @@ from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .records.source_records import AgentRunRecord
 from .runtime_activity import RuntimeActivityExtractor
-from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
-from .sdk_session_errors import is_missing_sdk_session_error
 from .session_store import LocalSession, LocalSessionStore
 from .session_turn_lease import SessionTurnLeaseHeartbeat
 from .settings import AppSettings
@@ -63,6 +62,10 @@ def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
 class RuntimeRequestContext:
     session: LocalSession
     run_id: str
+    run_generation: int
+    attempted_sdk_session_id: str
+    sdk_project_key: str
+    sdk_session_store: Any
     agent_version_id: Optional[str]
     created_at: str
     prompt: str
@@ -70,6 +73,8 @@ class RuntimeRequestContext:
     langfuse_trace_id: Optional[str] = None
     langfuse_trace_url: Optional[str] = None
     agent_id: str = MAIN_AGENT_PROFILE
+    finalized: bool = False
+    finalization_attempted: bool = False
 
 
 @dataclass
@@ -81,9 +86,12 @@ class RuntimeQueryState:
     total_cost_usd: Optional[float] = None
     stop_reason: Optional[str] = None
     errors: list[str] = field(default_factory=list)
+    mirror_errors: list[str] = field(default_factory=list)
+    result_observed: bool = False
+    result_is_error: bool = False
 
 
-class ClaudeRuntime(FeedbackRuntimeJobsMixin):
+class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
     """Thin runtime adapter around Claude Agent SDK.
 
     Design goals:
@@ -100,14 +108,18 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         feedback_store: FeedbackStore | None = None,
         agent_version_store: AgentVersionProvider | None = None,
         user_input_service: ClaudeUserInputService | None = None,
+        agent_version_maintenance_provider: Callable[[str], bool] | None = None,
     ) -> None:
+        if settings.enable_file_checkpointing:
+            raise RuntimeUnavailableError("ENABLE_FILE_CHECKPOINTING is incompatible with the durable Claude SDK SessionStore")
         self.settings = settings
         self.session_store = session_store
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
+        self.agent_version_maintenance_provider = agent_version_maintenance_provider
         self.user_input_service = user_input_service
         self.profiles = build_profiles(settings)
-        self.activity_extractor = RuntimeActivityExtractor(settings)
+        self.activity_extractor = RuntimeActivityExtractor()
         self.langfuse = RuntimeLangfuseClient(settings)
         self.model_provider_router = ModelProviderRouter(settings)
         self.output_formatter = DSPyOutputFormatter(settings, langfuse=self.langfuse, provider_router=self.model_provider_router)
@@ -122,7 +134,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             FeedbackEvalRunner(
                 feedback_store=feedback_store,
                 run_chat=self.run,
-                current_agent_version_id=self._current_agent_version_id,
                 run_candidate_chat=lambda req, wt, commit, cs, aid: self.run_candidate(
                     req, worktree_path=wt, candidate_commit_sha=commit, change_set_id=cs, agent_id=aid
                 ),
@@ -132,17 +143,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         )
 
     def _build_prompt(self, req: ChatRequest) -> str:
-        parts: list[str] = []
-        agent = req.agent or self.settings.default_agent
-        skills = req.skills if req.skills is not None else self.settings.default_skills
-        if agent:
-            parts.append(
-                f"请优先委派或使用名为 `{agent}` 的 Claude Code subagent 处理本次任务；如果运行时无法直接切换到该 subagent，则按该 subagent 的职责边界执行。"
-            )
-        if skills:
-            parts.append(f"本次任务优先使用这些 Skills：{', '.join(skills)}。")
-        parts.append(req.message)
-        return "\n\n".join(parts)
+        return req.message
 
     def _should_suppress_exception(self, exc: Exception, errors: list[str]) -> bool:
         if not errors:
@@ -155,13 +156,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         context: RuntimeRequestContext,
         state: RuntimeQueryState,
     ) -> bool:
-        return (
-            self.settings.enable_sdk_session_resume
-            and context.session.sdk_session_id is not None
-            and not state.messages
-            and not state.errors
-            and is_missing_sdk_session_error(exc)
-        )
+        # durable SessionStore 已在 turn 前完成 legacy import；缺失 resume 表示存储损坏，
+        # 不能在同一个 intent 内清映射并静默创建另一条 SDK session。
+        return False
 
     def _clear_stale_sdk_session(self, context: RuntimeRequestContext) -> None:
         context.session = self.session_store.clear_sdk_session(
@@ -187,15 +184,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "sdk_session_id": session.sdk_session_id,
             "alert_id": req.alert_id,
             "case_id": req.case_id,
-            "agent": req.agent or self.settings.default_agent,
-            "skills": req.skills if req.skills is not None else self.settings.default_skills,
-            "skills_mode": req.skills_mode or self.settings.default_skills_mode,
-            "allowed_tools": None,
-            "disallowed_tools": None,
             "max_turns": req.max_turns or self.settings.max_turns,
             "model": req.model or self.settings.agent_model,
-            "permission_mode": None,
-            "claude_config_source": "official_files",
             "system_append": req.system_append,
             "metadata": req.metadata,
         }
@@ -299,8 +289,12 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         version_id = PROFILE_VERSION_IDS.get(profile_name)  # type: ignore[arg-type]
         return profile_version_snapshot(profile, version_id=version_id) if version_id else profile_version_snapshot(profile)
 
-    def _raise_if_version_maintenance(self) -> None:
-        if self.agent_version_store is not None and self.agent_version_store.is_maintenance_active():
+    def _raise_if_version_maintenance(self, agent_id: str) -> None:
+        if self.agent_version_maintenance_provider is not None:
+            active = self.agent_version_maintenance_provider(agent_id)
+        else:
+            active = agent_id == MAIN_AGENT_PROFILE and self.agent_version_store is not None and self.agent_version_store.is_maintenance_active()
+        if active:
             raise RuntimeUnavailableError("Agent version maintenance is in progress; retry after restore completes.")
 
     def fetch_langfuse_trace(self, trace_id: str) -> Optional[JsonObject]:
@@ -337,13 +331,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         req: ChatRequest,
         session: LocalSession,
         *,
+        context: RuntimeRequestContext | None = None,
         profile: AgentRuntimeProfile | None = None,
-        execution_mode: str = "stream",
         can_use_tool: Any = None,
     ) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
-
-        from app.runtime.policy import build_default_hooks
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         env = self._profile_env(profile)
@@ -365,34 +357,29 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": self.settings.include_partial_messages,
             "cli_path": self.settings.claude_cli_path,
-            "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
-            "extra_args": self.settings.claude_extra_args,
             "max_thinking_tokens": self.settings.max_thinking_tokens,
             "effort": self.settings.effort,
             "enable_file_checkpointing": self.settings.enable_file_checkpointing,
             "session_store_flush": self.settings.session_store_flush,
             "load_timeout_ms": self.settings.load_timeout_ms,
-            "hooks": build_default_hooks(profile),
+            "setting_sources": ["project"],
         }
-        if execution_mode == "non_stream_bypass":
-            kwargs["permission_mode"] = "bypassPermissions"
-        elif execution_mode in {"stream_hitl", "non_stream_hitl_required"}:
-            # non_stream_hitl_required：requires_web_hitl 的 Agent 在非流式(无 HITL 面)下用 default 权限，
-            # 配合 can_use_tool 对 ask 型工具 fail-loud deny，取代 bypassPermissions 的静默放行。
-            kwargs["permission_mode"] = "default"
+        if context is not None:
+            kwargs["session_store"] = context.sdk_session_store
         if can_use_tool is not None:
             kwargs["can_use_tool"] = can_use_tool
-        if self.settings.setting_sources is not None:
-            kwargs["setting_sources"] = self.settings.setting_sources
-        if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl", "non_stream_hitl_required"}:
-            kwargs["permission_prompt_tool_name"] = self.settings.permission_prompt_tool_name
 
         # Resume the previous Claude Code session when possible. The API session id
         # is not necessarily equal to the internal Claude session id returned by SDK.
-        if self.settings.enable_sdk_session_resume and session.sdk_session_id:
+        if context is not None:
+            if self.settings.enable_sdk_session_resume and session.sdk_session_id:
+                kwargs["resume"] = context.attempted_sdk_session_id
+            else:
+                kwargs["session_id"] = context.attempted_sdk_session_id
+        elif self.settings.enable_sdk_session_resume and session.sdk_session_id:
             kwargs["resume"] = session.sdk_session_id
         elif session.turns == 0:
             # If caller provides a UUID-looking session id, use it for the first Claude session.
@@ -440,27 +427,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         self.job_runner.output_formatter = self.output_formatter
         return await self.job_runner.format_agent_text(job_type=job_type, raw_text=raw_text, job_input=job_input)
 
-    def _new_runtime_request_context(
-        self, req: ChatRequest, *, agent_version_id_override: Optional[str] = None, agent_id: str = MAIN_AGENT_PROFILE
-    ) -> RuntimeRequestContext:
-        self._raise_if_version_maintenance()
-        run_id = str(uuid.uuid4())
-        session = self.session_store.get_or_create_owned(req.session_id, agent_id=agent_id, metadata=req.metadata)
-        session = self.session_store.claim_turn(session, run_id=run_id, agent_id=agent_id)
-        agent_version_id = agent_version_id_override if agent_version_id_override is not None else self._current_agent_version_id(agent_id)
-        created_at = utc_now()
-        prompt = self._build_prompt(req)
-        telemetry_input = self._request_telemetry_input(req, prompt, session, run_id, agent_version_id)
-        return RuntimeRequestContext(
-            session=session,
-            run_id=run_id,
-            agent_version_id=agent_version_id,
-            agent_id=agent_id,
-            created_at=created_at,
-            prompt=prompt,
-            telemetry_input=telemetry_input,
-        )
-
     def _runtime_observation_metadata(
         self,
         context: RuntimeRequestContext,
@@ -477,11 +443,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "alert_id": telemetry.get("alert_id"),
             "case_id": telemetry.get("case_id"),
             "mode": mode,
-            "permission_mode": telemetry.get("permission_mode"),
             "claude_web_hitl_enabled": telemetry.get("claude_web_hitl_enabled"),
             "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
-            "agent": telemetry.get("agent"),
-            "skills_mode": telemetry.get("skills_mode"),
         }
 
     def _langfuse_propagation_attributes(
@@ -545,6 +508,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         event = message_event_name(msg)
         plain["event"] = event
         state.messages.append(plain)
+        if getattr(msg, "subtype", None) == "mirror_error":
+            mirror_error = str(getattr(msg, "error", None) or "SessionStore mirror failed")
+            state.mirror_errors.append(mirror_error)
+            state.errors.append(f"SessionStoreMirrorError: {mirror_error}")
         if text:
             state.answer_parts.append(text)
 
@@ -554,6 +521,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         if not isinstance(msg, result_message_type):
             return event, text, plain, False, []
+        state.result_observed = True
+        state.result_is_error = bool(getattr(msg, "is_error", False))
         state.usage = getattr(msg, "usage", None) or getattr(msg, "model_usage", None)
         state.total_cost_usd = getattr(msg, "total_cost_usd", None)
         state.stop_reason = getattr(msg, "stop_reason", None)
@@ -568,7 +537,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         state: RuntimeQueryState,
     ) -> tuple[str, JsonObject, JsonObject]:
         answer = AgentJobRunner.dedupe_answer_parts(state.answer_parts)
-        agent_activity = self.activity_extractor.agent_activity_payload(req, state.messages)
+        agent_activity = self.activity_extractor.agent_activity_payload(state.messages)
         output = self._runtime_output_payload(
             run_id=context.run_id,
             agent_version_id=context.agent_version_id,
@@ -632,42 +601,6 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             tags=trace_attributes.get("tags") if isinstance(trace_attributes.get("tags"), list) else None,
         )
 
-    def _complete_runtime_request(
-        self,
-        req: ChatRequest,
-        context: RuntimeRequestContext,
-        state: RuntimeQueryState,
-        answer: str,
-        agent_activity: JsonObject,
-    ) -> None:
-        run_record = self._feedback_run_record(
-            run_id=context.run_id,
-            agent_id=context.agent_id,
-            agent_version_id=context.agent_version_id,
-            session=context.session,
-            sdk_session_id=state.sdk_session_id,
-            req=req,
-            answer=answer,
-            messages=state.messages,
-            agent_activity=agent_activity,
-            usage=state.usage,
-            total_cost_usd=state.total_cost_usd,
-            stop_reason=state.stop_reason,
-            errors=state.errors,
-            created_at=context.created_at,
-            completed_at=utc_now(),
-            langfuse_trace_id=context.langfuse_trace_id,
-            langfuse_trace_url=context.langfuse_trace_url,
-        )
-        context.session = self.session_store.complete_turn(
-            context.session,
-            run_id=context.run_id,
-            agent_id=context.agent_id,
-            sdk_session_id=state.sdk_session_id,
-            title=req.message[:80],
-            run_record=run_record,
-        )
-
     def _run_response(self, context: RuntimeRequestContext, state: RuntimeQueryState, answer: str, agent_activity: JsonObject) -> ChatResponse:
         return ChatResponse(
             run_id=context.run_id,
@@ -707,21 +640,20 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         agent_version_id_override: Optional[str] = None,
     ) -> ChatResponse:
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
-        context = self._new_runtime_request_context(
+        context = await self._new_runtime_request_context(
             req,
+            profile=profile,
             agent_version_id_override=agent_version_id_override,
-            agent_id=profile.name,
+            agent_id=profile.agent_id,
         )
         heartbeat = SessionTurnLeaseHeartbeat(
             self.session_store,
             session_id=context.session.session_id,
             run_id=context.run_id,
+            run_generation=context.run_generation,
         )
-        try:
-            async with heartbeat:
-                return await self._run_claimed(req, context=context, profile=profile)
-        finally:
-            self.session_store.release_turn(context.session.session_id, run_id=context.run_id)
+        async with heartbeat:
+            return await self._run_claimed(req, context=context, profile=profile)
 
     async def _run_claimed(
         self,

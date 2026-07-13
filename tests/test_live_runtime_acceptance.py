@@ -51,6 +51,7 @@ _CONTAINER_REQUIRED_PATHS = (
     Path("/data/business-agents/main-agent/claude-root"),
 )
 _TRUTHY = {"1", "true", "yes", "on", "container"}
+_STRICT_LIVE_RUNTIME = os.environ.get("REQUIRE_LIVE_RUNTIME", "").strip().lower() in _TRUTHY
 
 
 def _read_live_creds() -> dict[str, str]:
@@ -102,13 +103,22 @@ def _live_provider_skip_reason() -> str | None:
 
 _LIVE_PROVIDER_SKIP_REASON = _live_provider_skip_reason()
 
+if _STRICT_LIVE_RUNTIME:
+    strict_failures = [
+        reason
+        for reason in (_CONTAINER_ACCEPTANCE_SKIP_REASON, _LIVE_PROVIDER_SKIP_REASON)
+        if reason is not None
+    ]
+    if strict_failures:
+        raise RuntimeError("严格 live 验收前置条件不满足: " + "; ".join(strict_failures))
+
 pytestmark = [
     pytest.mark.skipif(
-        _LIVE_PROVIDER_SKIP_REASON is not None,
+        not _STRICT_LIVE_RUNTIME and _LIVE_PROVIDER_SKIP_REASON is not None,
         reason=_LIVE_PROVIDER_SKIP_REASON or "",
     ),
     pytest.mark.skipif(
-        _CONTAINER_ACCEPTANCE_SKIP_REASON is not None,
+        not _STRICT_LIVE_RUNTIME and _CONTAINER_ACCEPTANCE_SKIP_REASON is not None,
         reason=_CONTAINER_ACCEPTANCE_SKIP_REASON or "",
     ),
 ]

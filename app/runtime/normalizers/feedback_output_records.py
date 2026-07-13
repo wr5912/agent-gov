@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from pydantic import ConfigDict, Field
 from pydantic.types import JsonValue
 
@@ -38,32 +36,6 @@ class NormalizedExecutionOperation(NormalizedOutputRecord):
     rationale: JsonValue = None
 
 
-class NormalizedGeneratedEvalCase(NormalizedOutputRecord):
-    schema_version: JsonValue = None
-    eval_case_id: JsonValue = None
-    status: JsonValue = None
-    source: JsonValue = None
-    source_feedback_case_id: JsonValue = None
-    source_run_id: JsonValue = None
-    source_kind: JsonValue = None
-    source_id: JsonValue = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
-    asset_layer: JsonValue = None
-    promotion_status: JsonValue = None
-    blocking_policy: JsonValue = None
-    scenario_pack: JsonValue = None
-    severity: JsonValue = None
-    flaky_status: JsonValue = None
-    variant_role: JsonValue = None
-    prompt: JsonValue = None
-    expected_behavior: JsonValue = None
-    checks_json: JsonObject = Field(default_factory=dict)
-    labels: Optional[list[str]] = None
-    source_summary: JsonValue = None
-    attribution_summary: JsonValue = None
-    optimization_plan_summary: JsonValue = None
-
-
 class NormalizedAttributionOutput(NormalizedOutputRecord):
     feedback_case_id: JsonValue = None
     attribution_job_id: JsonValue = None
@@ -86,14 +58,4 @@ class NormalizedExecutionPlanOutput(NormalizedOutputRecord):
     validation: JsonValue = None
     risk: JsonValue = None
     human_review_required: JsonValue = None
-    no_action_reason: JsonValue = None
-
-
-class NormalizedFeedbackEvalCaseGenerationOutput(NormalizedOutputRecord):
-    job_id: JsonValue = None
-    scope_kind: JsonValue = None
-    scope_id: JsonValue = None
-    eval_cases: list[NormalizedGeneratedEvalCase] = Field(default_factory=list)
-    results: list[JsonObject] = Field(default_factory=list)
-    status: str
     no_action_reason: JsonValue = None

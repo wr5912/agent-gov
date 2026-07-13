@@ -16,7 +16,7 @@
 
 因此，本文件定义一条边界：
 
-- **目标愿景和四阶段改进治理方案**：以业务 Agent、改进事项、反馈、系统理解、归因结果、优化方案、回归资产、发布、资产 Registry 等领域术语为准。
+- **目标愿景和四阶段改进治理方案**：以业务 Agent、改进事项、反馈、系统理解、归因结果、优化方案、TestDataset、EvalRun、发布、资产 Registry 等领域术语为准。
 - **当前实现基线**：可以保留代码和真实运行态中的历史名称，但必须说明这些名称属于迁移前实现事实，不代表未来用户主流程术语。
 - **历史评审报告**：保留当时证据和措辞，不回写成新的产品术语；如被引用，应通过本文解释映射关系。
 
@@ -57,8 +57,8 @@
 | 归因结果 | `Attribution` | `attribution` | `attribution_id` | 对问题来源、证据、责任边界和建议方向的解释。 |
 | 优化方案 | `OptimizationPlan` | `optimization_plan` | `optimization_plan_id` | 可执行或可审批的改进方案，不等同于旧 `proposal` 文案。 |
 | 执行记录 | `ExecutionRecord` | `execution` | `execution_id` | 后端受控应用改动、候选版本、结果和审计记录。 |
-| 回归资产 | `RegressionAsset` | `regression_asset` | `regression_asset_id` | 从高价值反馈沉淀出的长期防退化资产。 |
-| 回归运行 | `RegressionRun` | `regression_run` | `regression_run_id` | 对候选版本或发布前状态执行回归验证的记录。 |
+| 测试数据集 | `TestDataset` | `test_dataset` | `dataset_id` | 从确认后的事项证据链采用的 typed 长期测试资产，包含修订、生命周期和有序用例。 |
+| 评估运行 | `EvalRun` | `eval_run` | `eval_run_id` | 对候选版本执行某个 TestDataset 不可变修订快照的记录。 |
 | 发布 | `Release` | `release` | `release_id` | 已通过门禁并固化到业务 Agent 版本链的结果。 |
 | 资产 Registry | `AssetRegistry` | `asset` | `asset_id` | 数据资产、方法论资产、执行资产和审计资产的关联视图。 |
 | Trace 摘要 | `TraceSummary` | `trace_summary` | `trace_summary_id` | 面向用户和治理流程的运行证据摘要，不暴露完整底层日志为主体验。 |

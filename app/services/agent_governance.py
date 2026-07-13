@@ -5,22 +5,30 @@ from collections.abc import Callable
 from pathlib import Path
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.exc import IntegrityError
 
+from app.runtime.agent_admission import AgentAdmissionError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.errors import FeedbackStoreError
 from app.runtime.json_types import JsonObject
+from app.runtime.records.eval_run_records import EvalRunProjectionRecord
 from app.runtime.runtime_db import (
     AgentChangeSetEventModel,
     AgentChangeSetModel,
     AgentReleaseModel,
     utc_now,
 )
+from app.runtime.runtime_db_base import begin_sqlite_write_transaction
 from app.runtime.state_machines import validate_transition
+from app.runtime.stores.feedback_eval_store import EvalRunReviewPlan
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_change_set_provisioner import ChangeSetProvisionConflict, ChangeSetSource, provision_change_set
-from app.services.agent_change_set_worktree_lifecycle import abandon_change_set_and_cleanup, cleanup_published_change_set
+from app.services.agent_change_set_worktree_lifecycle import (
+    abandon_change_set_and_cleanup,
+    execute_worktree_cleanup,
+    reconcile_worktree_cleanup_tasks,
+)
 from app.services.agent_publication import (
     PublicationFinalizationLost,
     PublicationIntent,
@@ -28,15 +36,13 @@ from app.services.agent_publication import (
     PublicationTagConflict,
     capture_publication_source,
     commit_publication_intent,
-    finalize_intent_source,
-    reconcile_publication_failure,
-    release_matches_intent,
-    release_payload,
     validate_intent_provenance,
-    validate_tag_claim,
 )
+from app.services.agent_publication_finalization import finalize_publication_once
 from app.services.agent_publication_provenance import project_current_attribution
 from app.services.agent_regression import AgentRegressionMixin
+from app.services.agent_release_workflows import publish_change_set, restore_release, rollback_release
+from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
 # pending_approval 不可直接发布：高风险变更必须先经 approve_change_set 转为 approved（AGV-041）。
@@ -71,6 +77,7 @@ class AgentGovernanceService(AgentRegressionMixin):
     ) -> None:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
+        self.version_maintenance = AgentVersionMaintenanceCoordinator(feedback_store.Session)
         # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
         # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
         self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
@@ -167,6 +174,41 @@ class AgentGovernanceService(AgentRegressionMixin):
         with self.feedback_store.Session() as db:
             row = db.get(AgentChangeSetModel, change_set_id)
             return self._change_set_to_payload(row) if row else None
+
+    def _get_persisted_regression_eval_run(self, eval_run_id: str) -> JsonObject | None:
+        return self.feedback_store.get_eval_run(eval_run_id)
+
+    def _get_persisted_regression_eval_run_by_attempt(self, regression_attempt_id: str) -> JsonObject | None:
+        return self.feedback_store._get_eval_run_by_regression_attempt_id(regression_attempt_id)
+
+    def _plan_regression_review(
+        self,
+        eval_run_id: str,
+        *,
+        review_id: str,
+        operator: str,
+        reason: str,
+        scope: str,
+        items: list[JsonObject],
+    ) -> EvalRunReviewPlan:
+        return self.feedback_store.plan_eval_run_review(
+            eval_run_id,
+            review_id=review_id,
+            operator=operator,
+            reason=reason,
+            scope=scope,
+            items=items,
+        )
+
+    def _apply_regression_review(self, db: object, plan: EvalRunReviewPlan) -> None:
+        self.feedback_store.apply_eval_run_review(db, plan)
+
+    def validate_regression_dataset(self, *, change_set_id: str, dataset_id: str, candidate_commit_sha: str) -> None:
+        self.feedback_store.validate_regression_eval_dataset(
+            dataset_id=dataset_id,
+            change_set_id=change_set_id,
+            candidate_commit_sha=candidate_commit_sha,
+        )
 
     def list_change_set_events(self, change_set_id: str) -> list[JsonObject]:
         with self.feedback_store.Session() as db:
@@ -275,7 +317,58 @@ class AgentGovernanceService(AgentRegressionMixin):
         return self._transition_change_set(change_set_id, "rejected", fields={"rejection_note": note}, action="rejected", operator=operator)
 
     def abandon_change_set(self, change_set_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
-        return abandon_change_set_and_cleanup(self, change_set_id, operator=operator, note=note)
+        change_set = self.get_change_set(change_set_id)
+        if change_set is None:
+            raise AgentGovernanceError(404, "Agent change set not found")
+        agent_id = self._normalize_agent_id(str(change_set.get("agent_id") or ""))
+        try:
+            with self.version_maintenance.lease(
+                agent_id=agent_id,
+                kind="abandon",
+                owner_id=f"{operator}:{change_set_id}",
+            ) as lease:
+                result = abandon_change_set_and_cleanup(
+                    self,
+                    change_set_id,
+                    operator=operator,
+                    note=note,
+                    assert_maintenance_active=lease.assert_active,
+                )
+                lease.check()
+                return result
+        except AgentAdmissionError as exc:
+            raise AgentGovernanceError(409, str(exc)) from exc
+
+    def retry_worktree_cleanup(
+        self,
+        change_set_id: str,
+        *,
+        operator: str = "runtime",
+        force: bool = True,
+    ) -> JsonObject:
+        change_set = self.get_change_set(change_set_id)
+        if change_set is None:
+            raise AgentGovernanceError(404, "Agent change set not found")
+        agent_id = self._normalize_agent_id(str(change_set.get("agent_id") or ""))
+        try:
+            with self.version_maintenance.lease(
+                agent_id=agent_id,
+                kind="worktree_cleanup",
+                owner_id=f"{operator}:{change_set_id}",
+            ) as lease:
+                result = execute_worktree_cleanup(
+                    self,
+                    change_set_id,
+                    force=force,
+                    assert_maintenance_active=lease.assert_active,
+                )
+                lease.check()
+                return result
+        except AgentAdmissionError as exc:
+            raise AgentGovernanceError(409, str(exc)) from exc
+
+    def reconcile_worktree_cleanups(self, *, limit: int = 100) -> JsonObject:
+        return reconcile_worktree_cleanup_tasks(self, limit=limit)
 
     def publish_change_set(
         self,
@@ -286,52 +379,14 @@ class AgentGovernanceService(AgentRegressionMixin):
         note: str | None = None,
         force: bool = False,
     ) -> JsonObject:
-        change_set = self.get_change_set(change_set_id)
-        if not change_set:
-            raise AgentGovernanceError(404, "Agent change set not found")
-        if change_set["status"] == "published":
-            return cleanup_published_change_set(self, change_set_id, self._published_release(change_set, requested_tag_name=tag_name))
-        if tag_name and change_set["status"] != "publishing":
-            candidate = str(change_set.get("candidate_commit_sha") or "")
-            if not candidate:
-                raise AgentGovernanceError(409, "Agent change set has no candidate commit")
-            try:
-                self._store_for(change_set.get("agent_id")).validate_publication_target(candidate, tag_name)
-            except AgentGitError as exc:
-                raise AgentGovernanceError(409, f"Agent publish preflight failed: {exc}") from exc
-        intent = self._reserve_publication_intent(
+        return publish_change_set(
+            self,
             change_set_id,
             operator=operator,
             tag_name=tag_name,
             note=note,
             force=force,
         )
-        store = self._store_for(intent.agent_id)
-        try:
-            result = store.publish_commit(
-                intent.commit_sha,
-                tag_name=intent.tag_name,
-                message=intent.note or f"Publish {change_set_id}",
-            )
-        except AgentGitError as exc:
-            cancelled = reconcile_publication_failure(
-                self.feedback_store.Session,
-                store,
-                intent=intent,
-                detail=str(exc),
-                updated_at=utc_now(),
-                add_event=self._add_event_row,
-            )
-            suffix = "; publication intent was cancelled before side effects" if cancelled else ""
-            raise AgentGovernanceError(409, f"Agent publish failed: {exc}{suffix}") from exc
-        archive = result.get("archive") if isinstance(result.get("archive"), dict) else {}
-        try:
-            return cleanup_published_change_set(self, change_set_id, self._finalize_publication(intent, archive=archive))
-        except SQLAlchemyError as exc:
-            raise AgentGovernanceError(
-                409,
-                "Agent Git publication completed, but release metadata is pending reconciliation; retry publish",
-            ) from exc
 
     def list_releases(self, *, status: str | None = None, agent_id: str | None = None, limit: int = 100) -> list[JsonObject]:
         stmt = select(AgentReleaseModel).order_by(AgentReleaseModel.created_at.desc()).limit(limit)
@@ -348,46 +403,10 @@ class AgentGovernanceService(AgentRegressionMixin):
             return self._release_to_payload(row) if row else None
 
     def rollback_release(self, release_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
-        release = self.get_release(release_id)
-        if not release:
-            raise AgentGovernanceError(404, "Agent release not found")
-        store = self._store_for(release.get("agent_id"))
-        rollback_target = str(release.get("previous_commit_sha") or "")
-        if not rollback_target:
-            rollback_target = str(store.version_summary(str(release["commit_sha"]), reason="rollback_target").get("parent_version_id") or "")
-        if not rollback_target:
-            raise AgentGovernanceError(409, "Agent release has no previous commit to roll back to")
-        try:
-            result = store.rollback_to_ref(rollback_target)
-        except AgentGitError as exc:
-            self._transition_release(release_id, "rollback_failed", fields={"rollback_error": str(exc)}, operator=operator)
-            raise AgentGovernanceError(409, f"Agent rollback failed: {exc}") from exc
-        updated = self._transition_release(
-            release_id,
-            "rolled_back",
-            fields={"rollback_result": result, "rollback_note": note, "rollback_target_commit_sha": rollback_target},
-            operator=operator,
-        )
-        return updated
+        return rollback_release(self, release_id, operator=operator, note=note)
 
     def restore_release(self, release_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
-        release = self.get_release(release_id)
-        if not release:
-            raise AgentGovernanceError(404, "Agent release not found")
-        store = self._store_for(release.get("agent_id"))
-        try:
-            result = store.rollback_to_ref(str(release["commit_sha"]))
-        except AgentGitError as exc:
-            raise AgentGovernanceError(409, f"Agent release restore failed: {exc}") from exc
-        return {
-            "schema_version": "agent-release-restore/v1",
-            "release": self.get_release(release_id) or release,
-            "restore_result": {
-                **result,
-                "operator": operator,
-                "note": note,
-            },
-        }
+        return restore_release(self, release_id, operator=operator, note=note)
 
     def _transition_change_set(
         self,
@@ -401,6 +420,7 @@ class AgentGovernanceService(AgentRegressionMixin):
         transaction_mutation: Callable[[object], None] | None = None,
     ) -> JsonObject:
         with self.feedback_store.Session.begin() as db:
+            begin_sqlite_write_transaction(db.connection())
             row = db.get(AgentChangeSetModel, change_set_id)
             if not row:
                 raise AgentGovernanceError(404, "Agent change set not found")
@@ -572,83 +592,7 @@ class AgentGovernanceService(AgentRegressionMixin):
             ) from exc
 
     def _finalize_publication_once(self, intent: PublicationIntent, *, archive: JsonObject) -> JsonObject:
-        now = utc_now()
-        with self.feedback_store.Session() as db:
-            row = db.get(AgentChangeSetModel, intent.change_set_id)
-            if not row:
-                raise AgentGovernanceError(404, "Agent change set not found")
-            self._validate_publication_intent(row, intent, requested_tag_name=intent.tag_name)
-            if row.status == "published":
-                return self._published_release(self._change_set_to_payload(row), requested_tag_name=intent.tag_name)
-            validate_transition("agent_change_set", row.status, "published")
-            previous_updated_at = row.updated_at
-            before = self._change_set_to_payload(row)
-            release = release_payload(
-                intent,
-                archive=archive,
-                created_at=intent.started_at,
-                updated_at=now,
-            )
-            payload = {
-                **dict(row.payload_json or {}),
-                "status": "published",
-                "updated_at": now,
-                "latest_release_id": intent.release_id,
-                "latest_release": release,
-                "force_published": intent.force,
-                "force_publication_blocker": intent.force_publication_blocker,
-                "force_publish_note": intent.note if intent.force else None,
-                "publication_error": None,
-            }
-        with self.feedback_store.Session.begin() as db:
-            finalize_intent_source(db, intent, completed_at=now)
-            finalized = db.execute(
-                update(AgentChangeSetModel)
-                .where(
-                    AgentChangeSetModel.change_set_id == intent.change_set_id,
-                    AgentChangeSetModel.status == "publishing",
-                    AgentChangeSetModel.updated_at == previous_updated_at,
-                    AgentChangeSetModel.candidate_commit_sha == intent.commit_sha,
-                )
-                .values(status="published", updated_at=now, payload_json=payload)
-            ).rowcount
-            if finalized != 1:
-                raise PublicationFinalizationLost
-            try:
-                validate_tag_claim(db, intent)
-            except PublicationTagConflict as exc:
-                raise AgentGovernanceError(409, str(exc)) from exc
-            release_row = db.get(AgentReleaseModel, intent.release_id)
-            if release_row is None:
-                release_row = AgentReleaseModel(
-                    release_id=intent.release_id,
-                    agent_id=intent.agent_id,
-                    created_at=intent.started_at,
-                    updated_at=now,
-                    status="published",
-                    tag_name=intent.tag_name,
-                    commit_sha=intent.commit_sha,
-                    change_set_id=intent.change_set_id,
-                    archive_path=release.get("archive_path"),
-                    payload_json=release,
-                )
-                db.add(release_row)
-            elif not release_matches_intent(release_row, intent):
-                raise AgentGovernanceError(409, "Existing Agent release metadata conflicts with publication intent")
-            else:
-                release_row.updated_at = now
-                release_row.archive_path = release.get("archive_path")
-                release_row.payload_json = release
-            self._add_event_row(
-                db,
-                intent.change_set_id,
-                "force_published" if intent.force else "published",
-                intent.operator,
-                before=before,
-                after=payload,
-            )
-            db.flush()
-        return release
+        return finalize_publication_once(self, intent, archive=archive)
 
     @staticmethod
     def _validate_publication_start(status: str, *, publication_blocker: str | None, force: bool) -> None:
@@ -733,10 +677,25 @@ class AgentGovernanceService(AgentRegressionMixin):
     def _eval_run_publication_blocker(eval_run: object) -> str | None:
         if not isinstance(eval_run, dict):
             return None
+        try:
+            record = EvalRunProjectionRecord.model_validate(eval_run)
+        except ValueError:
+            record = None
+        if (
+            record is not None
+            and record.result_status == "passed_with_notes"
+            and record.gate_result.status == "passed_with_notes"
+            and record.gate_result.review_decision is not None
+        ):
+            return None
+        if record is not None and record.gate_result.review_decision is not None:
+            rejected_case_ids = record.gate_result.blocked_dataset_case_ids
+            if rejected_case_ids:
+                return f"回归验证存在失败用例（{len(rejected_case_ids)} 条用例经人工复核拒绝），禁止发布。请修复后重新运行回归并确认通过。"
         failed_case_ids = [
-            str(item.get("eval_case_id"))
+            str(item.get("dataset_case_id"))
             for item in eval_run.get("items") or []
-            if isinstance(item, dict) and item.get("eval_case_id") and str(item.get("status") or "") in {"failed", "needs_human_review"}
+            if isinstance(item, dict) and item.get("dataset_case_id") and str(item.get("status") or "") in {"failed", "needs_human_review"}
         ]
         summary = eval_run.get("summary") if isinstance(eval_run.get("summary"), dict) else {}
         summary_failed = _safe_int(summary.get("failed")) + _safe_int(summary.get("needs_human_review"))

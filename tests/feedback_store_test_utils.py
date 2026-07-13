@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from app.runtime.runtime_db import TestDatasetCaseModel, TestDatasetModel, utc_now
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -36,6 +37,7 @@ def _record_run(store: FeedbackStore):
     return store.record_run(
         {
             "run_id": "run-1",
+            "agent_id": "main-agent",
             "session_id": "session-1",
             "alert_id": "alert-1",
             "case_id": "case-1",
@@ -54,60 +56,66 @@ def _record_run(store: FeedbackStore):
     )
 
 
-def _eval_case_generation_output(job: dict, feedback_case: dict, **overrides):
-    input_json = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
-    source_run = {}
-    for item in input_json.get("feedback_cases") or []:
-        if item.get("feedback_case", {}).get("feedback_case_id") == feedback_case["feedback_case_id"]:
-            source_run = item.get("source_run") or {}
-            break
-    output = {
-        "job_id": job["job_id"],
-        "scope_kind": job.get("scope_kind"),
-        "scope_id": job.get("scope_id"),
-        "status": "completed",
-        "eval_cases": [
-            {
-                "status": "draft",
-                "source": "eval_case_governor",
-                "source_feedback_case_id": feedback_case["feedback_case_id"],
-                "source_run_id": source_run.get("run_id"),
-                "source_kind": "feedback_case",
-                "source_id": feedback_case["feedback_case_id"],
-                "source_refs": [{"source_kind": "feedback_case", "source_id": feedback_case["feedback_case_id"]}],
-                "asset_layer": "candidate",
-                "promotion_status": "candidate",
-                "blocking_policy": "non_blocking",
-                "flaky_status": "stable",
-                "variant_role": "original_reproduction",
-                "prompt": source_run.get("message") or "复测原始反馈场景。",
-                "expected_behavior": "回答前读取当前 workspace 配置，并基于最新配置给出完整结论。",
-                "checks_json": {
-                    "requires_non_empty_answer": True,
-                    "requires_no_runtime_errors": True,
-                    "requires_tool_use": True,
-                },
-                "labels": ["feedback_optimization", "tool_data_incomplete"],
-            }
-        ],
-        "results": [],
-    }
-    output.update(overrides)
-    return output
-
-
-def _complete_eval_case_generation_job(store: FeedbackStore, job: dict, *, feedback_case: dict, **overrides):
-    completed = store.complete_projected_agent_job(job, _eval_case_generation_output(job, feedback_case, **overrides))
-    return completed["validated_output_json"]["eval_cases"][0]
+def _seed_test_dataset(
+    store: FeedbackStore,
+    *,
+    agent_id: str,
+    dataset_id: str,
+    candidate_agent_version_id: str | None = None,
+    source_improvement_id: str | None = None,
+    source_execution_id: str | None = None,
+) -> str:
+    now = utc_now()
+    with store.Session.begin() as db:
+        db.add(
+            TestDatasetModel(
+                dataset_id=dataset_id,
+                agent_id=agent_id,
+                owner_kind="business_agent",
+                owner_id=agent_id,
+                source_improvement_id=source_improvement_id or f"fixture-{dataset_id}",
+                name=f"Fixture {dataset_id}",
+                description="",
+                scope="test",
+                revision=1,
+                lifecycle_state="active",
+                source_regression_assessment_id=f"reg-{dataset_id}",
+                source_regression_assessment_updated_at=now,
+                source_normalized_feedback_id=f"nf-{dataset_id}",
+                source_normalized_feedback_updated_at=now,
+                source_attribution_id=f"attr-{dataset_id}",
+                source_attribution_updated_at=now,
+                source_optimization_plan_id=f"opt-{dataset_id}",
+                source_optimization_plan_updated_at=now,
+                source_execution_id=source_execution_id or f"exec-{dataset_id}",
+                source_execution_updated_at=now,
+                candidate_agent_version_id=candidate_agent_version_id or f"candidate-{dataset_id}",
+                source_feedback_ids_json=[],
+                quality_tags_json=[],
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        db.flush()
+        db.add(
+            TestDatasetCaseModel(
+                case_id=f"tdc-{dataset_id}",
+                dataset_id=dataset_id,
+                position=1,
+                prompt="验证 typed dataset 执行路径",
+                expected_behavior="返回非空且无运行错误的结果",
+                checkpoints_json=["输出非空"],
+            )
+        )
+    return dataset_id
 
 
 __all__ = [
     "FeedbackSignalCreateRequest",
     "FeedbackStore",
     "SocEventIngestRequest",
-    "_complete_eval_case_generation_job",
-    "_eval_case_generation_output",
     "_record_run",
+    "_seed_test_dataset",
     "_settings",
     "_store",
     "pytest",

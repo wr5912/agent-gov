@@ -1,6 +1,6 @@
 // 四阶段改进治理 §10 ContextPackage：四种上下文类型（问题摘要 / AI 分析 / Playwright 复现 / 完整 JSON）。
 // 缺失归因、证据、Trace 或版本时输出 missing reason，不用空对象冒充完整上下文。
-import type { Asset } from "./api/assets";
+import type { Asset, TestDataset } from "./api/assets";
 import type {
   Attribution,
   ExecutionRecord,
@@ -25,6 +25,7 @@ export interface ContextInputs {
   optimizationPlan?: OptimizationPlan | null;
   execution?: ExecutionRecord | null;
   assets?: Asset[];
+  testDataset?: TestDataset | null;
   model?: string;
   langfuseUrl?: string;
 }
@@ -66,7 +67,7 @@ function missingReasons(inputs: ContextInputs): string[] {
   if (!inputs.optimizationPlan) reasons.push("optimization_plan 缺失：尚未生成或读取优化方案。");
   if (!inputs.execution) reasons.push("execution 缺失：尚未生成或读取执行记录。");
   if (!inputs.assets?.length) reasons.push("assets 缺失：尚未沉淀本事项资产。");
-  if (!inputs.assets?.some((asset) => asset.asset_type === "test_dataset")) reasons.push("test_dataset_refs 缺失：尚未把当前测试集固化为测试数据集资产。");
+  if (!inputs.testDataset) reasons.push("test_dataset_ref 缺失：尚未把当前测试集固化为 typed TestDataset。");
   return reasons;
 }
 
@@ -167,19 +168,10 @@ function playwrightReproduction(inputs: ContextInputs): string {
 }
 
 function fullJson(inputs: ContextInputs): string {
-  const { item, agentName, links, normalizedFeedback, attribution, feedbacks, optimizationPlan, execution, assets } = inputs;
+  const { item, agentName, links, normalizedFeedback, attribution, feedbacks, optimizationPlan, execution, assets, testDataset } = inputs;
   const runIds = [...new Set((feedbacks ?? []).map((f) => f.run_id).filter(Boolean))];
   const sessionIds = [...new Set((feedbacks ?? []).map((f) => f.session_id).filter(Boolean))];
   const version = inferredAgentVersion(inputs);
-  const testDatasetRefs = (assets ?? [])
-    .filter((asset) => asset.asset_type === "test_dataset")
-    .map((asset) => ({
-      test_dataset_id: asset.asset_id,
-      agent_id: asset.agent_id,
-      improvement_id: asset.source_improvement_id || item.improvement_id,
-      title: asset.title,
-      provenance_body: asset.body,
-    }));
   return JSON.stringify(
     {
       context_version: "1.0",
@@ -216,7 +208,20 @@ function fullJson(inputs: ContextInputs): string {
         session_ids: sessionIds,
         langfuse_url: inputs.langfuseUrl || "",
       } : { missing: true, reason: "来源反馈没有 run_id，无法定位运行 Trace。" },
-      test_dataset_refs: testDatasetRefs.length ? testDatasetRefs : { missing: true, reason: "尚未把当前测试集固化为测试数据集资产。" },
+      test_dataset_ref: testDataset ? {
+        dataset_id: testDataset.dataset_id,
+        agent_id: testDataset.agent_id,
+        owner_kind: testDataset.owner_kind,
+        owner_id: testDataset.owner_id,
+        source_improvement_id: testDataset.source_improvement_id,
+        lifecycle_state: testDataset.lifecycle_state,
+        revision: testDataset.revision,
+        name: testDataset.name,
+        scope: testDataset.scope,
+        quality_tags: testDataset.quality_tags,
+        provenance: testDataset.provenance,
+        cases: testDataset.cases,
+      } : { missing: true, reason: "尚未把当前测试集固化为 typed TestDataset。" },
       evidence: attribution?.evidence?.length ? attribution.evidence : { missing: true, reason: "归因记录没有证据条目。" },
       assets: assets?.length ? assets.map((asset) => ({
         asset_id: asset.asset_id,

@@ -100,10 +100,6 @@ export type AgentConfigFileUpdateResponse = OpenApiAgentConfigFileUpdateResponse
 export type ChatRequest = OpenApiChatRequest;
 
 export interface AgentActivity {
-  requested_skills: string[];
-  skills_mode?: string;
-  allowed_tools: string[];
-  disallowed_tools: string[];
   tool_names: string[];
   tool_calls: Record<string, unknown>[];
   tool_results: Record<string, unknown>[];

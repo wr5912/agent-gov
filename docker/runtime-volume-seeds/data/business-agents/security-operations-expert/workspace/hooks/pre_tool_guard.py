@@ -1,76 +1,61 @@
 #!/usr/bin/env python3
-"""Claude Code PreToolUse hook: hard-deny clearly unsafe operations.
+"""Fail-closed Claude Code PreToolUse guard for business-agent Bash calls."""
 
-This hook does not replace Claude Code authorization. Web HITL is reserved only
-for mcp__sec-ops__soc_api__execute; Bash is allowed by settings and this hook
-only returns deny for commands that must never run.
-"""
 import json
 import re
 import sys
 
-try:
-    payload = json.load(sys.stdin)
-except Exception:
-    # fail-closed：畸形/空 stdin 时明确 deny，守卫 hook 异常不放行（不 fail-open）。
+DENY_PATTERNS = (
+    r"\brm\s+-rf\s+/(?:\*|\s|$)",
+    r"\bdd\s+if=.*\s+of=/dev/",
+    r"\bmkfs(?:\.|\s)",
+    r"\b(?:shutdown|reboot|poweroff)\b",
+    r"\biptables\b.*\s-F\b",
+    r"\bkubectl\s+(?:delete|drain|cordon|apply|patch|replace|scale|rollout)\b",
+    r"\bterraform\s+apply\b",
+    r"\bansible-playbook\b.*(?:--limit\s+(?:all|production|prod)|production|prod)",
+    r"\bsystemctl\s+(?:restart|stop)\b",
+    r"\b(?:nmap|masscan)\b.*(?:-sS|-sT|-A|--script)",
+    r"\bdocker\s+(?:rm|rmi|system\s+prune|volume\s+rm)\b",
+    r"\b(?:ssh|scp)\b",
+    r"\bcurl\b.*\|\s*(?:bash|sh)\b",
+    r"\bwget\b.*\|\s*(?:bash|sh)\b",
+    r":\(\)\s*\{\s*:\|:&\s*\};:",
+)
+
+
+def _deny(reason: str) -> None:
     print(
         json.dumps(
             {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
                     "permissionDecision": "deny",
-                    "permissionDecisionReason": "PreToolUse 守卫无法解析工具输入，安全起见已阻止。",
+                    "permissionDecisionReason": reason,
                 }
-            },
-            ensure_ascii=False,
+            }
         )
     )
-    sys.exit(0)
-tool_name = payload.get("tool_name", "")
-tool_input = payload.get("tool_input", {}) or {}
-command = tool_input.get("command", "") if isinstance(tool_input, dict) else ""
 
-DENY_PATTERNS = [
-    r"rm\s+-rf\s+/(\s|$)",
-    r"mkfs\.",
-    r"dd\s+if=.*\s+of=/dev/",
-    r":\(\)\s*\{\s*:\|:&\s*\};:",
-    r"curl\s+[^|]+\|\s*(sh|bash)",
-    r"wget\s+[^|]+\|\s*(sh|bash)",
-]
-ASK_PATTERNS = [
-    r"\biptables\b.*\s-F\b",
-    r"\bkubectl\b\s+delete\b",
-    r"\bterraform\b\s+apply\b",
-    r"\bansible-playbook\b.*(--limit\s+all|production|prod)",
-    r"\bsystemctl\b\s+(restart|stop)\b",
-    r"\b(nmap|masscan)\b.*(-sS|-sT|-A|--script)",
-]
 
-# Block known destructive commands.
-for pattern in DENY_PATTERNS:
-    if command and re.search(pattern, command, flags=re.IGNORECASE):
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "检测到高危破坏性命令，已阻止。请改为生成处置计划或 dry-run。"
-            }
-        }, ensure_ascii=False))
-        sys.exit(0)
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict) or not isinstance(payload.get("tool_name"), str):
+            raise ValueError("expected a PreToolUse object with tool_name")
+        if payload["tool_name"] != "Bash":
+            return 0
+        tool_input = payload.get("tool_input")
+        if not isinstance(tool_input, dict) or not isinstance(tool_input.get("command"), str):
+            raise ValueError("expected tool_input.command string")
+        command = tool_input["command"]
+    except Exception as exc:
+        print(f"PreToolUse safety validation failed closed: {exc.__class__.__name__}", file=sys.stderr)
+        return 2
+    if any(re.search(pattern, command, flags=re.IGNORECASE) for pattern in DENY_PATTERNS):
+        _deny("A destructive or remote command was denied by the workspace safety policy.")
+    return 0
 
-# Deny risky production shell commands. Other mutating MCP tools fall through
-# to Claude's native ask/can_use_tool path instead of being pseudo-approved here.
-for pattern in ASK_PATTERNS:
-    if command and re.search(pattern, command, flags=re.IGNORECASE):
-        print(json.dumps({
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "deny",
-                "permissionDecisionReason": "该命令可能影响生产环境，已阻止 Agent 直接执行。请改为输出处置计划（含审批、影响范围、回滚方案、验证方法）或由人工执行。"
-            }
-        }, ensure_ascii=False))
-        sys.exit(0)
 
-# No decision means continue with normal permission flow.
-sys.exit(0)
+if __name__ == "__main__":
+    raise SystemExit(main())

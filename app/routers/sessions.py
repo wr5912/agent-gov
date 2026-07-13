@@ -4,10 +4,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.concurrency import run_in_threadpool
 
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.errors import NotFoundError, SessionConflictError
+from app.runtime.sdk_session_migration import committed_sdk_history_store
 from app.runtime.session_history import read_session_history
 from app.runtime.session_schemas import SessionDeleteResponse, SessionInfo, SessionMessagesResponse
 from app.runtime.session_store import LocalSession, LocalSessionStore
@@ -15,9 +15,7 @@ from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
 
 
-def _resolve_owning_profile(
-    settings: AppSettings, agent_registry_store: AgentRegistryStore, session: LocalSession
-) -> tuple[Path, Path]:
+def _resolve_owning_profile(settings: AppSettings, agent_registry_store: AgentRegistryStore, session: LocalSession) -> tuple[Path, Path]:
     """Strongly resolve (workspace_dir, claude_config_dir) for the session's owning agent.
 
     The owning agent is the backend-owned ``session.agent_id`` persisted by the runtime at chat
@@ -76,11 +74,16 @@ def create_sessions_router(
             # No SDK transcript produced yet -> empty history (not an owning-agent error).
             return SessionMessagesResponse(session_id=session_id, sdk_session_id=None, title=session.title)
         workspace_dir, claude_config_dir = _resolve_owning_profile(settings, agent_registry_store, session)
-        history = await run_in_threadpool(
-            read_session_history,
-            sdk_session_id=session.sdk_session_id,
+        session, sdk_store = await committed_sdk_history_store(
+            session_store,
+            session,
             workspace_dir=workspace_dir,
             claude_config_dir=claude_config_dir,
+        )
+        history = await read_session_history(
+            sdk_store=sdk_store,
+            sdk_session_id=session.sdk_session_id,
+            workspace_dir=workspace_dir,
             scrub=settings.session_history_scrub,
             limit=limit,
             offset=offset,

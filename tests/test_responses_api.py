@@ -118,6 +118,14 @@ def test_control_missing_agent_id_422(monkeypatch, tmp_path: Path) -> None:
         # agentgov 存在但 agent_id 缺失 -> 硬 422，不静默跑 main
         assert client.post("/v1/responses", json={"input": "hi", "agentgov": {}}).status_code == 422
         assert client.post("/v1/responses", json={"input": "hi", "agentgov": {"agent_id": "  "}}).status_code == 422
+        # HITL 由 workspace 原生 permissions.ask 与服务端交互面控制，不接受无效的请求级旁路字段。
+        assert (
+            client.post(
+                "/v1/responses",
+                json={"input": "hi", "agentgov": {"agent_id": "soc-ops", "hitl": {"enabled": True}}},
+            ).status_code
+            == 422
+        )
 
 
 def test_control_unknown_agent_404(monkeypatch, tmp_path: Path) -> None:

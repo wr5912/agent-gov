@@ -200,7 +200,7 @@ class RegressionAssessmentModel(Base):
     """回归保障评估 RegressionAssessment（四阶段改进治理 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
 
     与改进事项 1:1。cases_json：[{prompt, expected_behavior, checkpoints[]}]。status：draft / confirmed
-    （确认=已采纳为回归资产）。generated_by：governor / heuristic。独立新表。
+    （确认=允许后续采用为 typed TestDataset）。generated_by：governor / heuristic。独立新表。
     """
 
     __tablename__ = "regression_assessments"

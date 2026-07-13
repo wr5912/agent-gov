@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.runtime.json_types import JsonObject
-from app.runtime.schemas import ExtensibleResponse
+from app.runtime.schemas import EvalRunResponse, ExtensibleResponse
 
 
 class AgentRepositoryStatusResponse(ExtensibleResponse):
@@ -85,7 +85,7 @@ class AgentChangeSetEventResponse(ExtensibleResponse):
 
     @model_validator(mode="before")
     @classmethod
-    def hide_internal_publication_intent(cls, value: object) -> object:
+    def hide_internal_coordination_fields(cls, value: object) -> object:
         if not isinstance(value, dict):
             return value
         public_value = dict(value)
@@ -99,6 +99,11 @@ class AgentChangeSetEventResponse(ExtensibleResponse):
 
 class AgentPublicationErrorResponse(BaseModel):
     detail: str
+    updated_at: str
+
+
+class AgentRegressionErrorResponse(BaseModel):
+    error_type: str
     updated_at: str
 
 
@@ -118,7 +123,7 @@ class AgentChangeSetResponse(ExtensibleResponse):
     note: Optional[str] = None
     diff_summary: JsonObject = Field(default_factory=dict)
     latest_eval_run_id: Optional[str] = None
-    latest_eval_run: Optional[JsonObject] = None
+    latest_eval_run: Optional[EvalRunResponse] = None
     latest_release_id: Optional[str] = None
     source_improvement_id: Optional[str] = None
     source_attribution_id: Optional[str] = None
@@ -126,13 +131,17 @@ class AgentChangeSetResponse(ExtensibleResponse):
     publication_provenance_blocker: Optional[str] = None
     publication_blocker: Optional[str] = None
     publication_error: Optional[AgentPublicationErrorResponse] = None
+    regression_error: Optional[AgentRegressionErrorResponse] = None
+    worktree_cleanup_pending: bool = False
+    worktree_cleanup: Optional[JsonObject] = None
 
     @model_validator(mode="before")
     @classmethod
     def hide_internal_publication_intent(cls, value: object) -> object:
-        if isinstance(value, dict) and "publication_intent" in value:
+        if isinstance(value, dict) and ({"publication_intent", "regression_dataset_id"} & value.keys()):
             public_value = dict(value)
             public_value.pop("publication_intent", None)
+            public_value.pop("regression_dataset_id", None)
             return public_value
         return value
 
@@ -169,7 +178,27 @@ class AgentChangeSetActionRequest(BaseModel):
 
 
 class AgentChangeSetRegressionRunRequest(BaseModel):
-    eval_case_ids: list[str] | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_id: str = Field(min_length=1)
+
+
+class AgentChangeSetRegressionReviewItemRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    dataset_case_id: str = Field(min_length=1, max_length=128)
+    decision: Literal["approve", "reject"]
+    note: str = Field(default="", max_length=2048)
+
+
+class AgentChangeSetRegressionReviewRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    review_id: str = Field(min_length=1, max_length=128)
+    operator: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=2048)
+    scope: Literal["current_eval_run"]
+    decisions: list[AgentChangeSetRegressionReviewItemRequest] = Field(min_length=1)
 
 
 class AgentChangeSetPublishRequest(BaseModel):

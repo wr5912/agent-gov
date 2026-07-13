@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -233,11 +234,20 @@ class FeedbackEvidenceStoreMixin:
         return record.to_payload()
 
     def _runtime_config_summary(self, effective_mcp_config: JsonObject) -> JsonObject:
+        project_settings_path = self.main_workspace_dir / ".claude" / "settings.json"
+        try:
+            project_settings_bytes = project_settings_path.read_bytes()
+        except OSError:
+            project_settings_bytes = None
         return {
             "main_workspace_dir": str(self.main_workspace_dir),
             "data_dir": str(self.data_dir),
             "report_output_dir": str(self.data_dir / "outputs" / "reports"),
-            "main_profile_writable_paths": [str(self.data_dir / "outputs")],
+            "project_settings": {
+                "source": "workspace_project_settings" if project_settings_bytes is not None else "missing",
+                "exists": project_settings_bytes is not None,
+                "sha256": hashlib.sha256(project_settings_bytes).hexdigest() if project_settings_bytes is not None else None,
+            },
             "default_max_turns_env": self._safe_env_value("MAX_TURNS"),
             "claude_config_source": "official_files",
             "effective_mcp_config_source": effective_mcp_config.get("source"),

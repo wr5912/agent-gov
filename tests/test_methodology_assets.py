@@ -20,7 +20,7 @@ _GOVERNANCE_METHODS = (
     AgentJobType.ATTRIBUTION,
     AgentJobType.OPTIMIZATION_PLAN,
     AgentJobType.EXECUTION,
-    AgentJobType.EVAL_CASE_GENERATION,
+    AgentJobType.REGRESSION_ASSESSMENT,
 )
 
 

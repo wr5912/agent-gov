@@ -32,9 +32,13 @@ def _settings(tmp_path):
 
 
 def _store_with_stale_session(settings, session_id):
+    from claude_agent_sdk import project_key_for_directory
+
     store = LocalSessionStore(settings.session_dir)
     session = store.get_or_create_owned(session_id, agent_id="main-agent")
     session.sdk_session_id = "stale-sdk"
+    session.sdk_project_key = project_key_for_directory(str(settings.main_workspace_dir))
+    session.sdk_store_ready_at = "2026-07-13T00:00:00+00:00"
     store.save(session)
     return store
 
@@ -169,14 +173,19 @@ def test_non_stream_turn_renews_lease_while_sdk_query_runs(tmp_path, monkeypatch
         async for _ in prompt:
             pass
         await asyncio.wait_for(renewed.wait(), timeout=1)
-        yield AssistantMessage(content=[TextBlock(text="renewed")], model="<synthetic>", session_id="sdk-renewed")
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "user", "uuid": "heartbeat-entry"}],
+        )
+        yield AssistantMessage(content=[TextBlock(text="renewed")], model="<synthetic>", session_id=sdk_session_id)
         yield ResultMessage(
             subtype="success",
             duration_ms=1,
             duration_api_ms=0,
             is_error=False,
             num_turns=1,
-            session_id="sdk-renewed",
+            session_id=sdk_session_id,
             result="renewed",
         )
 
@@ -189,8 +198,13 @@ def test_non_stream_turn_renews_lease_while_sdk_query_runs(tmp_path, monkeypatch
     store = LocalSessionStore(settings.session_dir)
     original_renew = store.renew_turn
 
-    def observe_renewal(session_id, *, run_id, lease_seconds=None):
-        expires_at = original_renew(session_id, run_id=run_id, lease_seconds=lease_seconds)
+    def observe_renewal(session_id, *, run_id, run_generation=None, lease_seconds=None):
+        expires_at = original_renew(
+            session_id,
+            run_id=run_id,
+            run_generation=run_generation,
+            lease_seconds=lease_seconds,
+        )
         renewed.set()
         return expires_at
 
@@ -209,9 +223,9 @@ def test_stream_turn_fails_closed_when_lease_renewal_loses_ownership(tmp_path, m
     query_cancelled = asyncio.Event()
 
     async def blocking_query(*, prompt, options, transport=None):
-        async for _ in prompt:
-            pass
         try:
+            async for _ in prompt:
+                pass
             await asyncio.Event().wait()
         finally:
             query_cancelled.set()
@@ -226,11 +240,7 @@ def test_stream_turn_fails_closed_when_lease_renewal_loses_ownership(tmp_path, m
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
 
-    def lose_lease(session_id, *, run_id, lease_seconds=None):
-        assert store.release_turn(session_id, run_id=run_id) is True
-        takeover = store.get(session_id)
-        assert takeover is not None
-        store.claim_turn(takeover, run_id="run-takeover", agent_id="main-agent")
+    def lose_lease(session_id, *, run_id, run_generation=None, lease_seconds=None):
         raise SessionConflictError(f"Session {session_id} lease lost for {run_id}")
 
     monkeypatch.setattr(store, "renew_turn", lose_lease)
@@ -244,8 +254,7 @@ def test_stream_turn_fails_closed_when_lease_renewal_loses_ownership(tmp_path, m
     asyncio.run(exercise_failure())
 
     saved = store.get("sess-heartbeat-lost")
-    assert saved is not None and saved.turns == 0 and saved.active_run_id == "run-takeover"
-    assert store.release_turn("sess-heartbeat-lost", run_id="run-takeover") is True
+    assert saved is not None and saved.turns == 0 and saved.active_run_id is None
 
 
 @pytest.mark.parametrize("via_responses_sse", [False, True], ids=["runtime", "responses-sse"])
@@ -258,11 +267,16 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
     async def blocking_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "assistant", "uuid": "partial-entry"}],
+        )
         current_task = asyncio.current_task()
         assert current_task is not None
         sdk_task["value"] = current_task
         try:
-            yield AssistantMessage(content=[TextBlock(text="partial")], model="<synthetic>", session_id="sdk-partial")
+            yield AssistantMessage(content=[TextBlock(text="partial")], model="<synthetic>", session_id=sdk_session_id)
             await asyncio.Event().wait()
         finally:
             query_cancelled.set()
@@ -309,7 +323,7 @@ def test_client_cancel_closes_sdk_task_and_discards_unfinished_turn(tmp_path, mo
     assert saved.turns == 0
     assert saved.sdk_session_id is None
     assert saved.active_run_id is None
-    assert feedback_store.find_run(run_id=run_id) is None
+    assert feedback_store.find_run(run_id=run_id) is not None
 
 
 def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeypatch):
@@ -322,11 +336,16 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
     async def blocking_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "assistant", "uuid": "partial-entry"}],
+        )
         current_task = asyncio.current_task()
         assert current_task is not None
         sdk_task["value"] = current_task
         try:
-            yield AssistantMessage(content=[TextBlock(text="partial")], model="<synthetic>", session_id="sdk-partial")
+            yield AssistantMessage(content=[TextBlock(text="partial")], model="<synthetic>", session_id=sdk_session_id)
             await asyncio.Event().wait()
         finally:
             query_cancelled.set()
@@ -382,7 +401,7 @@ def test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails(tmp_path, monkeyp
     assert saved.turns == 0
     assert saved.sdk_session_id is None
     assert saved.active_run_id is None
-    assert feedback_store.find_run(run_id=run_id) is None
+    assert feedback_store.find_run(run_id=run_id) is not None
 
 
 def test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete(tmp_path, monkeypatch):
@@ -396,10 +415,15 @@ def test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete(tm
             pass
         started.set()
         await release.wait()
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "user", "uuid": "blocking-entry"}],
+        )
         yield AssistantMessage(
             content=[TextBlock(text="completed")],
             model="<synthetic>",
-            session_id="sdk-active",
+            session_id=sdk_session_id,
         )
         yield ResultMessage(
             subtype="success",
@@ -407,7 +431,7 @@ def test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete(tm
             duration_api_ms=0,
             is_error=False,
             num_turns=1,
-            session_id="sdk-active",
+            session_id=sdk_session_id,
             result="completed",
         )
 
@@ -430,7 +454,7 @@ def test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete(tm
     saved = store.get("sess-stream-active")
 
     assert saved is not None
-    assert saved.sdk_session_id == "sdk-active"
+    assert uuid.UUID(saved.sdk_session_id)
     assert saved.turns == 1
     assert saved.active_run_id is None
     assert "error" not in [event["event"] for event in events]
@@ -503,13 +527,13 @@ def test_run_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatc
     result = asyncio.run(runtime.run(ChatRequest(message="hello", session_id="sess-stale")))
 
     saved = store.get("sess-stale")
-    assert calls == ["stale-sdk", None]
-    assert result.answer == "hello after retry"
-    assert result.errors == []
-    assert result.sdk_session_id == "new-sdk"
+    assert calls == ["stale-sdk"]
+    assert result.answer == ""
+    assert result.errors == ["RuntimeError: No conversation found with session ID: stale-sdk"]
+    assert result.sdk_session_id == "stale-sdk"
     assert saved is not None
-    assert saved.sdk_session_id == "new-sdk"
-    assert saved.turns == 1
+    assert saved.sdk_session_id == "stale-sdk"
+    assert saved.turns == 0
 
 
 def test_stream_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeypatch):
@@ -553,14 +577,11 @@ def test_stream_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeyp
     events = asyncio.run(collect(runtime))
 
     saved = store.get("sess-stream-stale")
-    result_event = next(event for event in events if event["event"] == "result")
-    assert calls == ["stale-sdk", None]
-    assert [event["event"] for event in events] == ["session", "message", "message", "result", "done"]
-    assert "error" not in [event["event"] for event in events]
-    assert result_event["data"]["sdk_session_id"] == "new-stream-sdk"
+    assert calls == ["stale-sdk"]
+    assert [event["event"] for event in events] == ["session", "error", "done"]
     assert saved is not None
-    assert saved.sdk_session_id == "new-stream-sdk"
-    assert saved.turns == 1
+    assert saved.sdk_session_id == "stale-sdk"
+    assert saved.turns == 0
 
 
 def test_stream_retries_when_process_error_stderr_reports_missing_session(tmp_path, monkeypatch):
@@ -609,12 +630,12 @@ def test_stream_retries_when_process_error_stderr_reports_missing_session(tmp_pa
     events = asyncio.run(collect(runtime))
 
     saved = store.get("sess-process-stale")
-    result_event = next(event for event in events if event["event"] == "result")
-    assert calls == ["stale-sdk", None]
-    assert "error" not in [event["event"] for event in events]
-    assert result_event["data"]["sdk_session_id"] == "new-sdk"
+    assert calls == ["stale-sdk"]
+    assert "result" not in [event["event"] for event in events]
+    assert "error" in [event["event"] for event in events]
     assert saved is not None
-    assert saved.sdk_session_id == "new-sdk"
+    assert saved.sdk_session_id == "stale-sdk"
+    assert saved.turns == 0
 
 
 def test_stream_retries_when_process_error_hides_stderr_detail(tmp_path, monkeypatch):
@@ -662,9 +683,9 @@ def test_stream_retries_when_process_error_hides_stderr_detail(tmp_path, monkeyp
     events = asyncio.run(collect(runtime))
 
     saved = store.get("sess-hidden-stale")
-    result_event = next(event for event in events if event["event"] == "result")
-    assert calls == ["stale-sdk", None]
-    assert "error" not in [event["event"] for event in events]
-    assert result_event["data"]["sdk_session_id"] == "new-sdk"
+    assert calls == ["stale-sdk"]
+    assert "result" not in [event["event"] for event in events]
+    assert "error" in [event["event"] for event in events]
     assert saved is not None
-    assert saved.sdk_session_id == "new-sdk"
+    assert saved.sdk_session_id == "stale-sdk"
+    assert saved.turns == 0

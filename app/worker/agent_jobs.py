@@ -14,6 +14,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryStore
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceService
 from app.services.agent_job_worker import AgentJobWorker
+from app.services.agent_version_maintenance import is_agent_version_maintenance_active
 from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ logger = logging.getLogger(__name__)
 def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
     settings = settings or get_settings()
     session_store = LocalSessionStore(settings.session_dir)
+    reconciled_turns = session_store.reconcile_expired_turns()
+    if reconciled_turns:
+        logger.warning("reconciled expired SDK session turns: %s", reconciled_turns)
     agent_version_store = GitAgentVersionStore(
         repository_dir=settings.agent_git_repository_dir,
         worktrees_dir=settings.agent_git_worktrees_dir,
@@ -49,6 +53,12 @@ def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
     agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
     agent_governance = AgentGovernanceService(feedback_store=feedback_store, agent_version_store=agent_version_store)
     agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
+    feedback_store.agent_exists = agent_governance.agent_exists
+    runtime.agent_version_maintenance_provider = lambda agent_id: is_agent_version_maintenance_active(
+        session_factory=feedback_store.Session,
+        store_for=agent_governance._store_for,
+        agent_id=agent_id,
+    )
     feedback_store.agent_version_provider = lambda aid: agent_governance._store_for(aid or "main-agent").current_version_id()
     poll_interval = float(os.getenv("AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS", "2"))
     logger.info(

@@ -1,7 +1,7 @@
 import { authHeaders, makeUrl, readError, requestJson } from "./request";
+import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
 export * from "./feedback";
-export * from "./regressionAssets";
 import type {
   AgentInfo,
   AgentSummary,
@@ -292,14 +292,67 @@ export function rejectAgentChangeSet(config: RuntimeClientConfig, changeSetId: s
   );
 }
 
-export function runAgentChangeSetRegression(config: RuntimeClientConfig, changeSetId: string, evalCaseIds?: string[]) {
+export function runAgentChangeSetRegression(
+  config: RuntimeClientConfig,
+  changeSetId: string,
+  datasetId: string,
+  caseCount: number,
+) {
+  const normalizedCaseCount = Number.isFinite(caseCount) && caseCount > 0 ? Math.floor(caseCount) : 1;
+  const timeoutMs = Math.min(
+    2_147_000_000,
+    normalizedCaseCount * GOVERNANCE_AGENT_TIMEOUT_MS + 30_000,
+  );
   return requestJson<EvalRunResponse>(
     config,
     `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eval_case_ids: evalCaseIds }),
+      body: JSON.stringify({ dataset_id: datasetId }),
+      timeoutMs,
+    },
+  );
+}
+
+export type RegressionReviewDecision = {
+  dataset_case_id: string;
+  decision: "approve" | "reject";
+};
+
+export type AgentChangeSetRegressionReviewRequest = {
+  review_id: string;
+  operator: string;
+  reason: string;
+  scope: "current_eval_run";
+  decisions: RegressionReviewDecision[];
+};
+
+export function reviewAgentChangeSetRegression(
+  config: RuntimeClientConfig,
+  changeSetId: string,
+  evalRunId: string,
+  payload: AgentChangeSetRegressionReviewRequest,
+) {
+  return requestJson<EvalRunResponse>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs/${encodeURIComponent(evalRunId)}/review`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function retryAgentChangeSetWorktreeCleanup(config: RuntimeClientConfig, changeSetId: string) {
+  return requestJson<AgentChangeSet>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/worktree-cleanup/retry`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operator: "ui" }),
     },
   );
 }

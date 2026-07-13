@@ -494,7 +494,7 @@ class GitAgentVersionStore:
             "sha256": self._sha256_file(archive_path),
         }
 
-    def rollback_to_ref(self, ref: str) -> JsonObject:
+    def rollback_to_ref(self, ref: str, *, expected_current_ref: str | None = None) -> JsonObject:
         with self._lock:
             self._maintenance = True
             try:
@@ -503,6 +503,13 @@ class GitAgentVersionStore:
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
                 previous = self.current_commit_sha()
+                if expected_current_ref is not None:
+                    expected = self._resolve_ref(expected_current_ref)
+                    if previous != expected:
+                        raise AgentGitError(
+                            "Agent workspace HEAD changed before version maintenance "
+                            f"(expected {expected}, found {previous or 'missing'})"
+                        )
                 self._git(["reset", "--hard", target], cwd=self.repository_dir)
                 return {
                     "previous_commit_sha": previous,

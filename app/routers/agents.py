@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,7 +9,6 @@ from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     list_business_agent_templates,
-    seed_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError
 from app.runtime.schemas import (
@@ -26,6 +24,7 @@ from app.runtime.stores.agent_registry_store import AgentRegistryRecord, AgentRe
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.agent_governance import AgentGovernanceService
+from app.services.business_agent_provisioning import provision_business_agent
 
 _PASSED_EVAL_RESULT_STATUSES = {"passed", "passed_with_notes"}
 
@@ -59,11 +58,16 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
         # 缺陷③：agent_id 直接作路径段，business_agent_layout 收敛了防穿越校验，非法 → 422。
-        workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
+        workspace_dir = business_agent_layout(settings.data_dir, agent_id).workspace
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    record = store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
-    seed_business_agent_workspace(Path(record.workspace_dir), agent_id=record.agent_id, name=record.name, template_id=template_id)
+    record = provision_business_agent(
+        store=store,
+        agent_id=agent_id,
+        name=req.name,
+        workspace_dir=workspace_dir,
+        template_id=template_id,
+    )
     return _summary(record)
 
 
@@ -116,7 +120,7 @@ def create_agents_router(
     async def transition_agent(agent_id: str, req: AgentLifecycleTransitionRequest) -> AgentSummaryResponse:
         # 生命周期转移（AGV-020）；非法转移由状态机拒绝并返回可理解错误（409）。
         # eval 门（AGV-027）：从 evaluating 进入 active 必须有该 Agent 通过的评估运行——
-        # 复用场景包/配置变更后须评估通过才能激活，避免未验证配置直接上线。
+        # 复用能力配置或修改配置后须评估通过才能激活，避免未验证配置直接上线。
         if req.status == "active":
             current = agent_registry_store.get_agent(agent_id)
             if current is not None and current.status == "evaluating" and not _has_passed_eval(agent_id):

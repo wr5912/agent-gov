@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
-import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
 import { EVIDENCE_PANEL_DEFAULT_WIDTH, PlaygroundEvidencePanel } from "./components/PlaygroundEvidencePanel";
 import { PlaygroundRuntimeSettingsDrawer } from "./components/PlaygroundRuntimeSettingsDrawer";
@@ -98,7 +97,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "release" | "asset">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "asset">("chat");
   const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
@@ -137,6 +136,10 @@ export default function App() {
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
   const activeMessageCount = activeMessages.length;
+  const activeBackendSessionTurns = useMemo(
+    () => sessions.find((session) => session.session_id === activeSessionId)?.turns ?? 0,
+    [activeSessionId, sessions],
+  );
   const activeTraceMessage = useMemo(() => {
     if (activeTraceMessageId) {
       const selected = activeMessages.find((message) => message.id === activeTraceMessageId);
@@ -232,9 +235,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!activeSessionId || activeMessageCount > 0 || streaming) return;
-    const backendSession = sessions.find((session) => session.session_id === activeSessionId);
-    if (!backendSession || backendSession.turns <= 0) return;
+    if (!activeSessionId || activeMessageCount > 0 || streaming || activeBackendSessionTurns <= 0) return;
 
     const controller = new AbortController();
     void getConversationItems(effectiveClientConfig, activeSessionId, controller.signal)
@@ -255,7 +256,7 @@ export default function App() {
     return () => {
       controller.abort();
     };
-  }, [activeMessageCount, activeSessionId, effectiveClientConfig, sessions, setMessagesBySession, streaming]);
+  }, [activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, setMessagesBySession, streaming]);
 
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
@@ -619,10 +620,6 @@ export default function App() {
     setActiveWindow("improvement");
   }
 
-  function showReleaseWindow() {
-    setActiveWindow("release");
-  }
-
   function showAssetWindow() {
     setActiveWindow("asset");
   }
@@ -697,16 +694,15 @@ export default function App() {
           scopeAgentId={selectedBusinessAgentId}
           businessAgents={businessAgents}
         />
-      ) : activeWindow === "release" ? (
-        <ReleaseWorkbench
+      ) : activeWindow === "improvement" ? (
+        <ImprovementWorkbench
           clientConfig={effectiveClientConfig}
           scopeAgentId={selectedBusinessAgentId}
+          langfuseUrl={langfuseUrl}
           releases={agentReleases}
           changeSets={agentChangeSets}
-          onRefresh={refreshAll}
+          onGovernanceRefresh={refreshAll}
         />
-      ) : activeWindow === "improvement" ? (
-        <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} langfuseUrl={langfuseUrl} />
       ) : (
         <div className="playground-shell" data-testid="playground-shell">
           {sessionSidebarOpen ? (

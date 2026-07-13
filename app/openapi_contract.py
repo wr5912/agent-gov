@@ -59,11 +59,9 @@ _DOMAIN_PREFIXES = (
     "/api/agent-registry",
     "/api/improvements",
     "/api/assets",
-    "/api/scenario-packs",
     "/api/langfuse/traces",
     "/api/agent-jobs",
     "/api/eval-",
-    "/api/regression-assets",
     "/api/feedback-",
     "/api/evidence-packages",
     "/api/agent-runs",
@@ -74,6 +72,7 @@ _DOMAIN_PREFIXES = (
     "/api/agent-repository",
     "/api/agent-change-sets",
     "/api/agent-releases",
+    "/api/test-datasets",
 )
 _RUNTIME_OR_RELEASE_PREFIXES = (
     "/api/chat",
@@ -136,6 +135,12 @@ def expected_error_statuses(path: str, method: str, operation: OpenApiMapping) -
 
 
 def _special_error_statuses(path: str, method: str) -> set[int]:
+    if method == "get" and path in {"/api/test-datasets", "/api/test-datasets/{dataset_id}"}:
+        return {400, 409}
+    if method == "get" and path == "/api/test-datasets/{dataset_id}/revisions":
+        return {400}
+    if method == "post" and path == "/api/feedback-cases":
+        return {404}
     if path == CHAT_STREAM_PATH or path == "/api/chat":
         return {400, 404, 422, 503}
     if path == "/v1/chat/completions":

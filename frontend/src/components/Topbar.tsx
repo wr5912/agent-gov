@@ -1,7 +1,7 @@
 import { Database, ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
 import type { AgentSummary, RuntimeHealth } from "../types/runtime";
 
-type ActiveWindow = "chat" | "improvement" | "release" | "asset";
+type ActiveWindow = "chat" | "improvement" | "asset";
 
 interface TopbarProps {
   health: RuntimeHealth | null;

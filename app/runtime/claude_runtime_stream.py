@@ -7,10 +7,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .agent_job_runner import AgentJobRunner
-from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
 from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState
-from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
+from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
 from .message_utils import to_plain
 from .runtime_db import utc_now
@@ -37,11 +37,10 @@ class StreamRun:
     turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
 
 
-def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
-    context = runtime._new_runtime_request_context(req, agent_id=profile.name)
+async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
+    context = await runtime._new_runtime_request_context(req, profile=profile, agent_id=profile.agent_id)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
     context.telemetry_input["claude_web_hitl_enabled"] = web_hitl_enabled
-    context.telemetry_input["permission_mode"] = "default" if web_hitl_enabled else None
     return StreamRun(
         runtime=runtime,
         req=req,
@@ -61,28 +60,26 @@ async def stream_claude_runtime(
     profile: AgentRuntimeProfile | None = None,
 ) -> AsyncIterator[JsonObject]:
     selected_profile = profile or runtime.profiles[MAIN_AGENT_PROFILE]
-    stream_run = _new_stream_run(runtime, req, selected_profile)
+    stream_run = await _new_stream_run(runtime, req, selected_profile)
     context = stream_run.request_context
     heartbeat = SessionTurnLeaseHeartbeat(
         runtime.session_store,
         session_id=context.session.session_id,
         run_id=context.run_id,
+        run_generation=context.run_generation,
     )
     stream_run.turn_heartbeat = heartbeat
-    try:
-        async with heartbeat:
-            source = _stream_claimed_run(stream_run)
-            try:
-                async for event in source:
-                    yield event
-            finally:
-                await close_async_iterator(source)
-    finally:
-        runtime.session_store.release_turn(context.session.session_id, run_id=context.run_id)
+    async with heartbeat:
+        source = _stream_claimed_run(stream_run)
+        try:
+            async for event in source:
+                yield event
+        finally:
+            await close_async_iterator(source)
 
 
 async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject]:
-    from claude_agent_sdk import ResultMessage, query
+    from claude_agent_sdk import ClaudeSDKClient, ResultMessage, query
 
     runtime = stream_run.runtime
     req = stream_run.req
@@ -107,7 +104,17 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
-                sdk_task = asyncio.create_task(_run_sdk_query(stream_run, event_queue, root_span, generation, query, ResultMessage))
+                sdk_task = asyncio.create_task(
+                    _run_sdk_query(
+                        stream_run,
+                        event_queue,
+                        root_span,
+                        generation,
+                        query,
+                        ClaudeSDKClient,
+                        ResultMessage,
+                    )
+                )
                 source = _drain_stream_queue(stream_run, event_queue, sdk_task)
                 try:
                     async for event in source:
@@ -123,16 +130,12 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(stream_run.profile.name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
-            return PermissionResultAllow()
         service = stream_run.runtime.user_input_service
         if service is None:
             return PermissionResultDeny(message="Claude Web HITL is not available.")
         decision = await service.create_and_wait(
             event_queue=event_queue,
-            business_agent_id=stream_run.profile.name,
+            business_agent_id=stream_run.profile.agent_id,
             run_id=stream_run.request_context.run_id,
             api_session_id=stream_run.request_context.session.session_id,
             sdk_session_id=stream_run.query_state.sdk_session_id,
@@ -149,24 +152,12 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     return sdk_can_use_tool
 
 
-def _hitl_required_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
-    """HITL 关闭但 ``profile.requires_web_hitl`` 时的 fail-loud 回调。
-
-    命中真正需要 HITL 的工具时，明确 deny 并向流发一条 ``error`` 事件，
-    取代 SDK 的静默 deny，让调用方能区分"需开 HITL"与"工具坏"，也避免非流式 bypass 的静默放行语义漂移到流式。
-    不需要 HITL 的工具直行。
-    """
-    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+def _native_ask_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
+    """HITL 关闭时拒绝项目权限规则产生的 ask，并向流显式报错。"""
+    from claude_agent_sdk import PermissionResultDeny
 
     async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(stream_run.profile.name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
-            return PermissionResultAllow()
-        message = (
-            f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启："
-            f"业务 Agent {stream_run.profile.name} 的响应处置执行依赖 web HITL，请开启后重试或改用 dry-run。"
-        )
+        message = f"项目权限规则要求人工审批工具 {tool_name}，但 ENABLE_CLAUDE_WEB_HITL 未开启：业务 Agent {stream_run.profile.agent_id} 请开启后重试。"
         await event_queue.put({"event": "error", "data": {"errors": [message]}})
         return PermissionResultDeny(message=message)
 
@@ -177,34 +168,39 @@ async def _emit_query_events(
     stream_run: StreamRun,
     event_queue: asyncio.Queue[JsonObject | None],
     query_func: Any,
+    sdk_client_factory: Any,
     result_message_type: type,
 ) -> None:
     runtime = stream_run.runtime
     runtime.model_provider_router.ensure_agent_runtime_ready()
-    # HITL 关闭但该 Agent 声明 requires_web_hitl 时，挂 fail-loud deny 回调（而非静默 deny），执行门 loud。
-    hitl_fail_loud = stream_run.profile.requires_web_hitl and not stream_run.web_hitl_enabled
-    if stream_run.web_hitl_enabled:
+    native_ask_configured = read_requires_web_hitl(stream_run.profile.workspace_dir)
+    if native_ask_configured and stream_run.web_hitl_enabled:
         can_use_tool = _sdk_tool_callback(stream_run, event_queue)
-    elif hitl_fail_loud:
-        can_use_tool = _hitl_required_deny_callback(stream_run, event_queue)
+    elif native_ask_configured:
+        can_use_tool = _native_ask_deny_callback(stream_run, event_queue)
     else:
         can_use_tool = None
     options = runtime._build_options(
         stream_run.req,
         stream_run.request_context.session,
+        context=stream_run.request_context,
         profile=stream_run.profile,
-        execution_mode="stream_hitl" if stream_run.web_hitl_enabled else "stream",
         can_use_tool=can_use_tool,
     )
-    # can_use_tool 需要流式输入模式保持 prompt 流打开（HITL-on 与 fail-loud 都需要）。
-    input_done = asyncio.Event() if (stream_run.web_hitl_enabled or hitl_fail_loud) else None
-    prompt_stream = (
-        _single_prompt_stream_until_done(stream_run.request_context.prompt, input_done)
-        if input_done is not None
-        else AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt)
+    messages = (
+        query_with_interactive_client(
+            prompt=stream_run.request_context.prompt,
+            options=options,
+            sdk_client_factory=sdk_client_factory,
+        )
+        if can_use_tool is not None
+        else query_func(
+            prompt=AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt),
+            options=options,
+        )
     )
     try:
-        async for msg in query_func(prompt=prompt_stream, options=options):
+        async for msg in messages:
             event, text, plain, is_result, result_errors = runtime._track_query_message(
                 msg,
                 stream_run.query_state,
@@ -212,20 +208,24 @@ async def _emit_query_events(
             )
             await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
             if is_result:
-                if input_done is not None:
-                    input_done.set()
+                if stream_run.query_state.mirror_errors:
+                    _abort_stream_run(
+                        stream_run,
+                        terminal_status="failed",
+                        error=stream_run.query_state.mirror_errors[-1],
+                    )
+                    await event_queue.put(
+                        {
+                            "event": "error",
+                            "data": {"errors": list(stream_run.query_state.errors)},
+                        }
+                    )
+                    continue
                 # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
                 _persist_stream_run(stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
     finally:
-        if input_done is not None:
-            input_done.set()
-
-
-async def _single_prompt_stream_until_done(prompt: str, done: asyncio.Event) -> AsyncIterator[JsonObject]:
-    async for item in AgentJobRunner.single_prompt_stream(prompt):
-        yield item
-    await done.wait()
+        await close_async_iterator(messages)
 
 
 async def _publish_result_event(
@@ -236,7 +236,7 @@ async def _publish_result_event(
     runtime = stream_run.runtime
     context = stream_run.request_context
     state = stream_run.query_state
-    agent_activity = runtime.activity_extractor.agent_activity_payload(stream_run.req, state.messages)
+    agent_activity = runtime.activity_extractor.agent_activity_payload(state.messages)
     await event_queue.put(
         {
             "event": "result",
@@ -265,20 +265,15 @@ async def _run_sdk_query(
     root_span: Any,
     generation: Any,
     query_func: Any,
+    sdk_client_factory: Any,
     result_message_type: type,
 ) -> None:
     cancelled = False
     try:
-        try:
-            await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
-        except Exception as exc:
-            if not stream_run.runtime._should_retry_without_sdk_resume(exc, stream_run.request_context, stream_run.query_state):
-                raise
-            stream_run.runtime._clear_stale_sdk_session(stream_run.request_context)
-            stream_run.query_state = RuntimeQueryState(sdk_session_id=None)
-            await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
-    except asyncio.CancelledError:
+        await _emit_query_events(stream_run, event_queue, query_func, sdk_client_factory, result_message_type)
+    except asyncio.CancelledError as exc:
         cancelled = True
+        _abort_stream_run(stream_run, terminal_status="cancelled", error=exc)
         raise
     except Exception as exc:
         if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
@@ -313,8 +308,6 @@ def _persist_stream_run(stream_run: StreamRun) -> None:
         return
     stream_run.persistence_attempted = True
     runtime = stream_run.runtime
-    if stream_run.turn_heartbeat is not None:
-        stream_run.turn_heartbeat.stop()
     answer, agent_activity, output = runtime._runtime_output_from_state(
         stream_run.req,
         stream_run.request_context,
@@ -322,6 +315,34 @@ def _persist_stream_run(stream_run: StreamRun) -> None:
     )
     stream_run.final_output = output
     runtime._complete_runtime_request(stream_run.req, stream_run.request_context, stream_run.query_state, answer, agent_activity)
+    if stream_run.turn_heartbeat is not None:
+        stream_run.turn_heartbeat.stop()
+    stream_run.persisted = True
+
+
+def _abort_stream_run(
+    stream_run: StreamRun,
+    *,
+    terminal_status: str,
+    error: BaseException | str,
+) -> None:
+    if stream_run.request_context.finalized or stream_run.request_context.finalization_attempted:
+        return
+    if stream_run.turn_heartbeat is not None:
+        stream_run.turn_heartbeat.stop()
+    answer, _, output = stream_run.runtime._runtime_output_from_state(
+        stream_run.req,
+        stream_run.request_context,
+        stream_run.query_state,
+    )
+    stream_run.final_output = output
+    stream_run.runtime._abort_runtime_request(
+        stream_run.req,
+        stream_run.request_context,
+        stream_run.query_state,
+        terminal_status=terminal_status,
+        error=error,
+    )
     stream_run.persisted = True
 
 
@@ -331,7 +352,14 @@ async def _complete_stream_run(
     generation: Any,
 ) -> None:
     runtime = stream_run.runtime
-    _persist_stream_run(stream_run)  # 幂等：is_result 已落则跳过；error/无 result 路径在此兜底
+    if stream_run.query_state.result_observed and not stream_run.query_state.mirror_errors:
+        _persist_stream_run(stream_run)
+    else:
+        _abort_stream_run(
+            stream_run,
+            terminal_status="failed",
+            error=(stream_run.query_state.mirror_errors[-1] if stream_run.query_state.mirror_errors else "SDK query ended without ResultMessage"),
+        )
     runtime._update_runtime_observations(
         root_span,
         generation,

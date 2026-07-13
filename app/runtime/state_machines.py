@@ -48,21 +48,6 @@ EVAL_RUN_STATES = {
     "failed",
 }
 
-EVAL_CASE_STATES = {
-    "draft",
-    "active",
-    "archived",
-}
-
-EVAL_CASE_PROMOTION_STATES = {
-    "candidate",
-    "needs_review",
-    "approved",
-    "rejected",
-    "superseded",
-    "archived",
-}
-
 PENDING_CORRELATION_STATES = {
     "pending",
     "resolved",
@@ -76,6 +61,7 @@ AGENT_CHANGE_SET_STATES = {
     "approved",
     "rejected",
     "regression_running",
+    "regression_review_required",
     "regression_passed",
     "regression_failed",
     "publishing",
@@ -110,6 +96,36 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
 
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
+
+# Agent registry reservation is deliberately separate from the public lifecycle.
+# A provisioning row is an internal saga intent and must never be listed or run.
+AGENT_PROVISION_STATES = {"provisioning", "ready"}
+
+AGENT_PROVISION_TRANSITIONS: Mapping[str, set[str]] = {
+    "provisioning": {"ready"},
+    "ready": {"provisioning"},
+}
+
+# One SDK turn owns exactly one persistence intent. Running intents may only
+# enter a terminal state; retries create a new run instead of reopening the
+# previous intent.
+SESSION_TURN_INTENT_STATES = {
+    "running",
+    "succeeded",
+    "failed",
+    "cancelled",
+    "interrupted",
+}
+
+SESSION_TURN_INTENT_TERMINAL_STATES = SESSION_TURN_INTENT_STATES - {"running"}
+
+SESSION_TURN_INTENT_TRANSITIONS: Mapping[str, set[str]] = {
+    "running": set(SESSION_TURN_INTENT_TERMINAL_STATES),
+    "succeeded": set(),
+    "failed": set(),
+    "cancelled": set(),
+    "interrupted": set(),
+}
 
 # 改进事项阶段（四阶段改进治理 跨代重建：事项级单一领域实体 ImprovementItem 的生命周期单一来源）。
 # 七段对应中文 反馈收集/系统整理/归因分析/优化方案/执行优化/回归测试/发布；release 为终态。
@@ -190,19 +206,6 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "completed": set(),
         "failed": set(),
     },
-    "eval_case": {
-        "draft": {"active", "archived"},
-        "active": {"draft", "archived"},
-        "archived": set(),
-    },
-    "eval_case_promotion": {
-        "candidate": {"needs_review", "approved", "rejected", "superseded", "archived"},
-        "needs_review": {"candidate", "approved", "rejected", "superseded", "archived"},
-        "approved": {"needs_review", "superseded", "archived"},
-        "rejected": {"candidate", "archived"},
-        "superseded": set(),
-        "archived": set(),
-    },
     "pending_correlation": {
         "pending": {"resolved"},
         "resolved": set(),
@@ -214,7 +217,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending_approval": {"approved", "rejected", "regression_running", "abandoned", "failed"},
         "approved": {"regression_running", "regression_passed", "publishing", "rejected", "abandoned", "failed"},
         "rejected": {"abandoned"},
-        "regression_running": {"regression_passed", "regression_failed", "failed"},
+        "regression_running": {"regression_review_required", "regression_passed", "regression_failed", "failed"},
+        "regression_review_required": {"regression_running", "regression_passed", "regression_failed", "rejected", "abandoned", "failed"},
         "regression_passed": {"approved", "publishing", "regression_running", "abandoned"},
         "regression_failed": {"regression_running", "rejected", "abandoned", "failed", "publishing"},
         "publishing": {"candidate_committed", "approved", "regression_passed", "regression_failed", "published"},
@@ -229,6 +233,8 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rollback_failed": {"rolled_back"},
     },
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
+    "agent_provision": AGENT_PROVISION_TRANSITIONS,
+    "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
     "improvement_execution": IMPROVEMENT_EXECUTION_TRANSITIONS,
 }
@@ -238,12 +244,12 @@ _KNOWN_STATES = {
     "agent_job": AGENT_JOB_STATES,
     "case": CASE_STATES,
     "eval_run": EVAL_RUN_STATES,
-    "eval_case": EVAL_CASE_STATES,
-    "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
+    "agent_provision": AGENT_PROVISION_STATES,
+    "session_turn_intent": SESSION_TURN_INTENT_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,
     "improvement_execution": IMPROVEMENT_EXECUTION_STATES,
 }

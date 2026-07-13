@@ -189,6 +189,10 @@ async function main() {
     const assistantText = (assistantTexts.at(-1) || "").trim();
     assert(assistantText.length > 0, "assistant response text did not render");
     assert(!assistantText.includes("运行失败"), `assistant response rendered as failure: ${assistantText.slice(0, 300)}`);
+    assert(
+      assistantText.includes("AGENTGOV_OPENAI_E2E_OK"),
+      `assistant response did not contain the requested live-model sentinel: ${assistantText.slice(0, 300)}`,
+    );
 
     const sessionId = runBody.conversation.slice("conv_".length);
     const runs = await api(`/api/agent-runs?session_id=${encodeURIComponent(sessionId)}&limit=1`);

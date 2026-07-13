@@ -7,6 +7,7 @@ API 契约，不另存副本。单测覆盖：role 来自 SessionMessage.type、
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import pytest
 from app.runtime.errors import NotFoundError, SessionConflictError
 from app.runtime.session_history import _scrub_message, normalize_message, read_session_history
 from app.runtime.session_store import LocalSession
+from claude_agent_sdk import project_key_for_directory
 from fastapi.testclient import TestClient
 
 from test_api_execution_optimizer import _load_app
@@ -32,6 +34,17 @@ class _FakeInfo:
     def __init__(self, custom_title=None, summary=None) -> None:
         self.custom_title = custom_title
         self.summary = summary
+
+
+def test_frontend_history_loader_does_not_restart_for_equivalent_session_refreshes() -> None:
+    source = (Path(__file__).resolve().parents[1] / "frontend/src/App.tsx").read_text(encoding="utf-8")
+
+    assert "const activeBackendSessionTurns = useMemo" in source
+    assert "streaming || activeBackendSessionTurns <= 0" in source
+    assert (
+        "[activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, "
+        "setMessagesBySession, streaming]"
+    ) in source
 
 
 # ---------------------------------------------------------------- adapter unit
@@ -89,53 +102,76 @@ def test_scrub_toggle_redacts_content_keeps_structure() -> None:
     assert scrubbed["tool_result"]["tool_use_id"] == "t1" and scrubbed["tool_result"]["is_error"] is False
 
 
-def test_read_session_history_projects_via_sdk_and_restores_env(monkeypatch) -> None:
-    import os
-
+def test_read_session_history_projects_via_committed_sdk_store(monkeypatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_messages(sid, directory=None, limit=None, offset=0):
-        seen["cfg"] = os.environ.get("CLAUDE_CONFIG_DIR")
+    async def fake_messages(store, sid, directory=None, limit=None, offset=0):
+        seen["store"] = store
         seen["dir"] = directory
         seen["limit"] = limit
         return [_FakeMsg("user", [{"type": "text", "text": "q"}]), _FakeMsg("assistant", [{"type": "text", "text": "a"}])]
 
+    async def fake_info(store, sid, directory=None):
+        return _FakeInfo(summary="标题")
+
+    async def fake_subagents(store, sid, directory=None):
+        return ["agent-x"]
+
+    async def fake_subagent_messages(store, sid, aid, directory=None):
+        return [_FakeMsg("assistant", [{"type": "text", "text": "sub"}])]
+
     fake_sdk = type(
         "FakeSdk",
         (),
         {
-            "get_session_info": staticmethod(lambda sid, directory=None: _FakeInfo(summary="标题")),
-            "get_session_messages": staticmethod(fake_messages),
-            "list_subagents": staticmethod(lambda sid, directory=None: ["agent-x"]),
-            "get_subagent_messages": staticmethod(lambda sid, aid, directory=None: [_FakeMsg("assistant", [{"type": "text", "text": "sub"}])]),
+            "get_session_info_from_store": staticmethod(fake_info),
+            "get_session_messages_from_store": staticmethod(fake_messages),
+            "list_subagents_from_store": staticmethod(fake_subagents),
+            "get_subagent_messages_from_store": staticmethod(fake_subagent_messages),
         },
     )
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_sdk)
-    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
-
-    out = read_session_history(sdk_session_id="sid", workspace_dir="/main-workspace", claude_config_dir="/cfg/.claude", limit=10)
+    committed_store = object()
+    out = asyncio.run(
+        read_session_history(
+            sdk_store=committed_store,
+            sdk_session_id="sid",
+            workspace_dir="/main-workspace",
+            limit=10,
+        )
+    )
     assert out["sdk_session_id"] == "sid" and out["title"] == "标题"
     assert [m["role"] for m in out["messages"]] == ["user", "assistant"]
     assert out["subagents"][0]["agent_id"] == "agent-x"
     assert out["subagents"][0]["messages"][0]["blocks"][0]["text"] == "sub"
-    # 读取期临时把 CLAUDE_CONFIG_DIR 指向该 profile，读完还原（不泄漏给并发子进程）
-    assert seen["cfg"] == "/cfg/.claude" and seen["dir"] == "/main-workspace" and seen["limit"] == 10
-    assert os.environ.get("CLAUDE_CONFIG_DIR") is None
+    assert seen["store"] is committed_store and seen["dir"] == "/main-workspace" and seen["limit"] == 10
 
 
 def test_read_session_history_scrub_applies_to_subagents(monkeypatch) -> None:
+    async def info(store, sid, directory=None):
+        return None
+
+    async def messages(store, sid, directory=None, limit=None, offset=0):
+        return [_FakeMsg("user", [{"type": "text", "text": "main"}])]
+
+    async def subagents(store, sid, directory=None):
+        return ["agent-x"]
+
+    async def subagent_messages(store, sid, aid, directory=None):
+        return [_FakeMsg("assistant", [{"type": "text", "text": "subsecret"}])]
+
     fake_sdk = type(
         "FakeSdk",
         (),
         {
-            "get_session_info": staticmethod(lambda sid, directory=None: None),
-            "get_session_messages": staticmethod(lambda sid, directory=None, limit=None, offset=0: [_FakeMsg("user", [{"type": "text", "text": "main"}])]),
-            "list_subagents": staticmethod(lambda sid, directory=None: ["agent-x"]),
-            "get_subagent_messages": staticmethod(lambda sid, aid, directory=None: [_FakeMsg("assistant", [{"type": "text", "text": "subsecret"}])]),
+            "get_session_info_from_store": staticmethod(info),
+            "get_session_messages_from_store": staticmethod(messages),
+            "list_subagents_from_store": staticmethod(subagents),
+            "get_subagent_messages_from_store": staticmethod(subagent_messages),
         },
     )
     monkeypatch.setitem(sys.modules, "claude_agent_sdk", fake_sdk)
-    out = read_session_history(sdk_session_id="sid", workspace_dir="/w", claude_config_dir="/c", scrub=True)
+    out = asyncio.run(read_session_history(sdk_store=object(), sdk_session_id="sid", workspace_dir="/w", scrub=True))
     assert out["messages"][0]["blocks"][0]["text"] == "[redacted]"
     assert out["subagents"][0]["messages"][0]["blocks"][0]["text"] == "[redacted]"
 
@@ -161,9 +197,18 @@ def test_endpoint_session_without_transcript_returns_empty(monkeypatch, tmp_path
 
 def test_endpoint_projects_history(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    module.session_store.save(LocalSession(session_id="s1", sdk_session_id="sdk-1", agent_id="main-agent", title="t"))
+    module.session_store.save(
+        LocalSession(
+            session_id="s1",
+            sdk_session_id="sdk-1",
+            sdk_project_key=project_key_for_directory(str(module.settings.main_workspace_dir)),
+            sdk_store_ready_at="2026-07-13T00:00:00+00:00",
+            agent_id="main-agent",
+            title="t",
+        )
+    )
 
-    def fake_read(*, sdk_session_id, workspace_dir, claude_config_dir, scrub, limit, offset):
+    async def fake_read(*, sdk_store, sdk_session_id, workspace_dir, scrub, limit, offset):
         return {
             "sdk_session_id": sdk_session_id,
             "title": "t",
@@ -263,19 +308,25 @@ def test_endpoint_missing_owning_agent_is_session_conflict_409(monkeypatch, tmp_
 def test_endpoint_routes_registered_business_agent(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
     module.agent_registry_store.create_business_agent(name="Biz", agent_id="biz-9", workspace_dir="/custom/ws-biz-9")
-    module.session_store.save(LocalSession(session_id="sb", sdk_session_id="sdk-b", agent_id="biz-9"))
+    module.session_store.save(
+        LocalSession(
+            session_id="sb",
+            sdk_session_id="sdk-b",
+            sdk_project_key=project_key_for_directory("/custom/ws-biz-9"),
+            sdk_store_ready_at="2026-07-13T00:00:00+00:00",
+            agent_id="biz-9",
+        )
+    )
     captured: dict[str, str] = {}
 
-    def fake_read(*, sdk_session_id, workspace_dir, claude_config_dir, scrub, limit, offset):
+    async def fake_read(*, sdk_store, sdk_session_id, workspace_dir, scrub, limit, offset):
         captured["ws"] = str(workspace_dir)
-        captured["cfg"] = str(claude_config_dir)
         return {"sdk_session_id": sdk_session_id, "title": None, "messages": [], "subagents": []}
 
     monkeypatch.setattr(sessions_mod, "read_session_history", fake_read)
     with TestClient(module.app) as client:
         assert client.get("/api/sessions/sb/messages").status_code == 200
     assert captured["ws"] == "/custom/ws-biz-9"  # #22：cwd = 注册表 workspace_dir，不硬推导
-    assert captured["cfg"].endswith("/business-agents/biz-9/claude-root/.claude")
 
 
 def test_endpoint_rejects_invalid_limit_offset(monkeypatch, tmp_path: Path) -> None:

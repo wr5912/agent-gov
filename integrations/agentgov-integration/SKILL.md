@@ -19,10 +19,10 @@ AgentGov 是 agent 运行治理底座，被上层业务系统通过 HTTP API 集
 1. 选 / 建业务 Agent：`GET|POST /api/agent-registry`；`main-agent` 是预制业务 Agent，但 chat 仍要显式传 `agent_id`。
 2. 跑对话：`POST /api/chat` 返回完整结果；`POST /api/chat/stream` 返回 SSE；`POST /v1/chat/completions` 走 OpenAI 兼容出口 Agent。
 3. 回放历史：`GET /api/sessions`、`GET /api/sessions/{session_id}/messages`；只传 `session_id`。
-4. 提交反馈：`POST /api/feedback-cases`，可挂 `run_id`/`session_id`；归因、优化、回归由 AgentGov 内部治理链路处理。
-5. 评估 / 回归：使用 `/api/eval-cases`、`/api/eval-runs`、`/api/regression-assets/...`。
+4. 提交反馈：先创建或识别 `signal`、`soc_event` 或已解析的 `pending_correlation`，再以至少一个 `source_refs: [{source_kind, source_id}]` 调用 `POST /api/feedback-cases`，且所有来源必须归属同一业务 Agent。`run_id`/`session_id` 等运行字段从来源投影，不直接放入 FeedbackCase 请求；归因、优化、回归由 AgentGov 内部治理链路处理。
+5. 评估 / 回归：确认 RegressionAssessment 后调用 `POST /api/improvements/{improvement_id}/test-dataset/adopt`；通过 `/api/test-datasets` 管理 typed 数据集。候选 ChangeSet 调用 `/regression-runs`；自然语言语义待复核时调用绑定当前 EvalRun 的 `/regression-runs/{eval_run_id}/review`，提交幂等 review ID、操作人、原因、固定 scope 和全部 case 决策。不要提交全局用例 ID、客户端执行结果或 backend-owned run/change set 绑定。
 6. 版本发布 / 回滚：使用 `/api/agent-change-sets/...`、`/api/agent-releases/...`。
-7. 资产复用：使用 `/api/assets`、`/api/assets/{asset_id}/inherit`。
+7. 资产复用：`/api/assets` 只承载 `methodology`、`execution`、`audit` 通用资产及继承；TestDataset 使用专用 typed API，不创建旧 `regression` 资产。
 
 ## SSE + Web HITL 确认卡
 

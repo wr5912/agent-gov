@@ -28,4 +28,21 @@ relax_volume_permissions "${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}"
 relax_volume_permissions "${DATA_DIR:-/data}"
 relax_volume_permissions "${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}"
 
+# 两个迁移必须位于递归卷放权之后，避免私有 backup/audit 的 0700/0600 权限被再次放宽。
+python /app/scripts/reconcile_business_agent_workspace_policy.py \
+    --runtime-root / \
+    --runtime-volume-mode container \
+    --template-dir /app/docker/runtime-volume-seeds \
+    --apply \
+    --operator container-entrypoint \
+    --quiet
+
+python /app/scripts/retire_runtime_seed_assets.py \
+    --runtime-root / \
+    --runtime-volume-mode container \
+    --registry /app/docker/runtime-volume-seeds/workspace-policy/retired-seed-assets.json \
+    --apply \
+    --operator container-entrypoint \
+    --quiet
+
 exec "$@"

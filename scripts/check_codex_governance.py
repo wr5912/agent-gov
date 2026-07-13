@@ -310,7 +310,6 @@ def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
         "_coerce_payload",
         "_json_object",
         "filtered_mcp_servers",
-        "load_programmatic_agents",
         "parse_frontmatter_markdown",
     }
     if qualified_name.rsplit(".", 1)[-1] in boundary_names:
@@ -322,7 +321,6 @@ def _is_owned_dict_return(rel_path: str, qualified_name: str) -> bool:
         "_version_snapshot",
         ".build_env",
         ".claude_env",
-        ".claude_extra_args",
         ".file_context",
         ".policy_json",
         ".to_payload",

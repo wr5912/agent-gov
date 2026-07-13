@@ -23,6 +23,9 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
+      "Read(/data/business-agents/**/claude-root/**)",
+      "Read(/data/agent-governance/**)",
+      "Read(/data/runtime.sqlite3*)",
       "Read(/data/business-agents/ai-soc-gap-analyzer/claude-root/.claude.json)",
       "Read(/data/business-agents/ai-soc-gap-analyzer/claude-root/.claude/projects/**)",
       "Bash(rm -rf /*)",
@@ -42,6 +45,21 @@
       "mcp__*__*quarantine*"
     ]
   },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking command safety"
+          }
+        ]
+      }
+    ]
+  },
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
@@ -53,6 +71,9 @@
       "denyRead": [
         "./.env",
         "./secrets",
+        "/data/business-agents/**/claude-root/**",
+        "/data/agent-governance/**",
+        "/data/runtime.sqlite3*",
         "/data/business-agents/ai-soc-gap-analyzer/claude-root/.claude.json"
       ]
     },

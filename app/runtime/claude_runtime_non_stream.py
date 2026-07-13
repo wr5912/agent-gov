@@ -1,33 +1,67 @@
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Any
 
 from .agent_job_runner import AgentJobRunner
-from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
+from .agent_profiles import read_requires_web_hitl
+from .async_iterators import close_async_iterator
+from .claude_sdk_interactive import query_with_interactive_client
 
 if TYPE_CHECKING:
     from .agent_profiles import AgentRuntimeProfile
-    from .claude_runtime import ClaudeRuntime, RuntimeRequestContext
+    from .claude_runtime import ClaudeRuntime, RuntimeQueryState, RuntimeRequestContext
     from .schemas import ChatRequest, ChatResponse
 
 
-def _non_stream_hitl_deny_callback(profile_name: str) -> Any:
-    """非流式无人审路径只允许无需 HITL 的工具。"""
-    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
+def _non_stream_native_ask_deny_callback(profile_name: str) -> Any:
+    """非流式无人审路径拒绝项目权限规则产生的每个 ask。"""
+    from claude_agent_sdk import PermissionResultDeny
 
     async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(profile_name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(profile_name, tool_name):
-            return PermissionResultAllow()
         return PermissionResultDeny(
-            message=(
-                f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启且非流式无人审面："
-                f"业务 Agent {profile_name} 的响应处置执行请改用流式 + 开启 HITL，或先做 dry-run。"
-            )
+            message=(f"项目权限规则要求人工审批工具 {tool_name}，但非流式运行没有审批面：业务 Agent {profile_name} 请改用流式并开启 ENABLE_CLAUDE_WEB_HITL。")
         )
 
     return deny
+
+
+async def _execute_non_stream_query(
+    runtime: ClaudeRuntime,
+    req: ChatRequest,
+    *,
+    context: RuntimeRequestContext,
+    profile: AgentRuntimeProfile,
+    state: RuntimeQueryState,
+) -> None:
+    from claude_agent_sdk import ClaudeSDKClient, ResultMessage, query
+
+    runtime.model_provider_router.ensure_agent_runtime_ready()
+    can_use_tool = _non_stream_native_ask_deny_callback(profile.name) if read_requires_web_hitl(profile.workspace_dir) else None
+    options = runtime._build_options(
+        req,
+        context.session,
+        context=context,
+        profile=profile,
+        can_use_tool=can_use_tool,
+    )
+    messages = (
+        query_with_interactive_client(
+            prompt=context.prompt,
+            options=options,
+            sdk_client_factory=ClaudeSDKClient,
+        )
+        if can_use_tool is not None
+        else query(
+            prompt=AgentJobRunner.single_prompt_stream(context.prompt),
+            options=options,
+        )
+    )
+    try:
+        async for msg in messages:
+            runtime._track_query_message(msg, state, ResultMessage)
+    finally:
+        await close_async_iterator(messages)
 
 
 async def run_claimed_claude_runtime(
@@ -37,12 +71,8 @@ async def run_claimed_claude_runtime(
     context: RuntimeRequestContext,
     profile: AgentRuntimeProfile,
 ) -> ChatResponse:
-    from claude_agent_sdk import ResultMessage, query
-
     from .claude_runtime import RuntimeQueryState
 
-    hitl_required = profile.requires_web_hitl
-    context.telemetry_input["permission_mode"] = "default" if hitl_required else "bypassPermissions"
     context.telemetry_input["claude_web_hitl_enabled"] = False
     state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
     root_metadata = runtime._runtime_observation_metadata(context, "non_stream", profile=profile)
@@ -65,28 +95,22 @@ async def run_claimed_claude_runtime(
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **propagation)
                 try:
-
-                    async def execute_query() -> None:
-                        runtime.model_provider_router.ensure_agent_runtime_ready()
-                        options = runtime._build_options(
-                            req,
-                            context.session,
-                            profile=profile,
-                            execution_mode="non_stream_hitl_required" if hitl_required else "non_stream_bypass",
-                            can_use_tool=_non_stream_hitl_deny_callback(profile.name) if hitl_required else None,
-                        )
-                        prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
-                        async for msg in query(prompt=prompt_stream, options=options):
-                            runtime._track_query_message(msg, state, ResultMessage)
-
-                    try:
-                        await execute_query()
-                    except Exception as exc:
-                        if not runtime._should_retry_without_sdk_resume(exc, context, state):
-                            raise
-                        runtime._clear_stale_sdk_session(context)
-                        state = RuntimeQueryState(sdk_session_id=None)
-                        await execute_query()
+                    await _execute_non_stream_query(
+                        runtime,
+                        req,
+                        context=context,
+                        profile=profile,
+                        state=state,
+                    )
+                except asyncio.CancelledError as exc:
+                    runtime._abort_runtime_request(
+                        req,
+                        context,
+                        state,
+                        terminal_status="cancelled",
+                        error=exc,
+                    )
+                    raise
                 except Exception as exc:
                     if not runtime._should_suppress_exception(exc, state.errors):
                         state.errors.append(f"{exc.__class__.__name__}: {exc}")
@@ -95,5 +119,14 @@ async def run_claimed_claude_runtime(
                 runtime._update_runtime_observations(root_span, generation, context, state, output, propagation)
     runtime._flush_langfuse()
     runtime._sync_langfuse_trace(context, propagation, output)
-    runtime._complete_runtime_request(req, context, state, answer, agent_activity)
+    if state.result_observed and not state.mirror_errors:
+        runtime._complete_runtime_request(req, context, state, answer, agent_activity)
+    else:
+        runtime._abort_runtime_request(
+            req,
+            context,
+            state,
+            terminal_status="failed",
+            error=state.mirror_errors[-1] if state.mirror_errors else "SDK query ended without ResultMessage",
+        )
     return runtime._run_response(context, state, answer, agent_activity)

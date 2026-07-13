@@ -8,10 +8,10 @@ from contextlib import contextmanager
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
+from app.runtime.agent_profiles import candidate_profile
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
-from app.runtime.policy import build_profile_pre_tool_use_hook
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -95,14 +95,39 @@ async def _collect_prompt(prompt):
     return items
 
 
-def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
+async def _success_result(options, text=""):
+    from claude_agent_sdk import ResultMessage
+
+    await _mirror_entry(options)
+    return ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=0,
+        is_error=False,
+        num_turns=1,
+        session_id=options.resume or options.session_id,
+        result=text,
+    )
+
+
+async def _mirror_entry(options, *, entry_uuid="test-transcript-entry"):
+    sdk_session_id = options.resume or options.session_id
+    await options.session_store.append(
+        {
+            "project_key": options.session_store.binding.project_key,
+            "session_id": sdk_session_id,
+        },
+        [{"type": "user", "uuid": entry_uuid}],
+    )
+
+
+def test_run_without_native_ask_uses_finite_streaming_prompt(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["prompt_is_string"] = isinstance(prompt, str)
         seen["prompt_items"] = await _collect_prompt(prompt)
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -125,6 +150,16 @@ def test_run_uses_streaming_prompt_for_policy_hooks(tmp_path, monkeypatch):
     ]
 
 
+def test_runtime_rejects_file_checkpointing_with_durable_session_store(tmp_path):
+    from app.runtime.errors import RuntimeUnavailableError
+
+    settings = _settings(tmp_path)
+    settings.enable_file_checkpointing = True
+
+    with pytest.raises(RuntimeUnavailableError, match="incompatible"):
+        ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+
 def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     seen = {}
 
@@ -132,8 +167,7 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
         seen["options"] = options
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -147,18 +181,16 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     options = seen["options"]
 
     assert result.errors == []
-    assert getattr(options, "setting_sources", None) is None
+    assert list(getattr(options, "setting_sources", None) or []) == ["project"]
     assert getattr(options, "settings", None) is None
     assert getattr(options, "mcp_servers", None) in (None, {})
     assert getattr(options, "agents", None) is None
     assert getattr(options, "allowed_tools", None) in (None, [])
     assert getattr(options, "disallowed_tools", None) in (None, [])
-    assert getattr(options, "permission_mode", None) == "bypassPermissions"
+    assert getattr(options, "permission_mode", None) is None
     assert getattr(options, "can_use_tool", None) is None
     assert getattr(options, "permission_prompt_tool_name", None) is None
-    pre_tool_hooks = getattr(options, "hooks", {}).get("PreToolUse", [])
-    pre_tool_matchers = {getattr(matcher, "matcher", None) for matcher in pre_tool_hooks}
-    assert {"Bash", "Write", "Edit"}.issubset(pre_tool_matchers)
+    assert getattr(options, "hooks", None) is None
     assert options.cwd == settings.main_workspace_dir
     assert options.env["HOME"] == str(settings.main_claude_root)
     assert options.env["CLAUDE_CONFIG_DIR"] == str(settings.main_claude_root / ".claude")
@@ -166,6 +198,43 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert options.env["CLAUDE_HOOK_AUDIT_LOG"] == str(settings.data_dir / "transcripts" / "claude-hook-audit.jsonl")
     assert options.env["AGENT_PROFILE"] == "main-agent"
     assert "CLAUDE_CODE_ENABLE_TELEMETRY" not in options.env
+
+
+def test_candidate_runtime_uses_business_agent_owner_for_session_and_maintenance(tmp_path, monkeypatch):
+    seen_maintenance_agents = []
+
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        yield await _success_result(options)
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    settings = _settings(tmp_path)
+    session_store = LocalSessionStore(settings.session_dir)
+    runtime = ClaudeRuntime(
+        settings,
+        session_store,
+        agent_version_maintenance_provider=lambda agent_id: seen_maintenance_agents.append(agent_id) or False,
+    )
+    worktree = tmp_path / "candidate-worktree"
+    worktree.mkdir()
+    profile = candidate_profile(settings, agent_id="soc-ops", workspace_dir=worktree, candidate_id="agc-test")
+
+    result = asyncio.run(
+        runtime.run(
+            ChatRequest(message="candidate regression", session_id="candidate-session", agent_id="soc-ops"),
+            profile=profile,
+            agent_version_id_override="candidate-sha",
+        )
+    )
+
+    session = session_store.get("candidate-session")
+    assert result.agent_version_id == "candidate-sha"
+    assert seen_maintenance_agents == ["soc-ops"]
+    assert session is not None
+    assert session.agent_id == "soc-ops"
 
 
 def test_profile_env_marks_backend_owned_workspace_trusted(tmp_path):
@@ -200,8 +269,7 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
         seen["options"] = options
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -337,8 +405,7 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
         called = True
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -350,8 +417,8 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
         asyncio.run(
             runtime._run_profile_json(
                 profile_name="governor",
-                prompt="generate eval cases",
-                job_type="eval_case_generation",
+                prompt="assess regression coverage",
+                job_type="regression_assessment",
                 job_input={},
             )
         )
@@ -361,68 +428,6 @@ def test_background_agent_job_requires_model_credentials_before_query(tmp_path, 
     assert exc_info.value.raw_output_json is not None
     assert exc_info.value.raw_output_json["profile_name"] == "governor"
     assert exc_info.value.raw_output_json["missing"] == ["MODEL_PROVIDER_API_KEY", "ANTHROPIC_API_KEY"]
-
-
-def test_profile_path_hook_allows_governor_business_agent_read_path(tmp_path):
-    settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["governor"]
-    hook = build_profile_pre_tool_use_hook(profile)
-
-    result = asyncio.run(
-        hook(
-            {
-                "tool_name": "Read",
-                "tool_input": {"file_path": str(settings.main_workspace_dir / "CLAUDE.md")},
-            },
-            None,
-            {},
-        )
-    )
-
-    assert result == {}
-
-
-def test_profile_path_hook_allows_governor_data_read_path(tmp_path):
-    settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["governor"]
-    hook = build_profile_pre_tool_use_hook(profile)
-
-    result = asyncio.run(
-        hook(
-            {
-                "tool_name": "Read",
-                "tool_input": {"file_path": str(settings.data_dir / "evidence" / "feedback.json")},
-            },
-            None,
-            {},
-        )
-    )
-
-    assert result == {}
-
-
-def test_profile_path_hook_blocks_write_outside_writable_paths(tmp_path):
-    settings = _settings(tmp_path)
-    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
-    profile = runtime.profiles["governor"]
-    hook = build_profile_pre_tool_use_hook(profile)
-
-    result = asyncio.run(
-        hook(
-            {
-                "tool_name": "Write",
-                "tool_input": {"file_path": str(settings.main_workspace_dir / "CLAUDE.md")},
-            },
-            None,
-            {},
-        )
-    )
-
-    output = result["hookSpecificOutput"]
-    assert output["permissionDecision"] == "deny"
-    assert "Write target is outside allowed paths for profile governor" in output["permissionDecisionReason"]
 
 
 def test_governor_job_options_use_profile_minimum_max_turns(tmp_path):
@@ -453,8 +458,7 @@ def test_explicit_main_mcp_config_override_is_not_injected_into_options(tmp_path
         seen["options"] = options
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -546,8 +550,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         seen["options"] = options
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -694,8 +697,7 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
         seen["options"] = options
         async for _ in prompt:
             pass
-        if False:
-            yield None
+        yield await _success_result(options)
 
     import claude_agent_sdk
 
@@ -807,11 +809,13 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        sdk_session_id = options.resume or options.session_id
+        await _mirror_entry(options, entry_uuid="result-error-entry")
         yield AssistantMessage(
             content=[TextBlock(text="bad model")],
             model="<synthetic>",
             error="invalid_request",
-            session_id="sdk-session",
+            session_id=sdk_session_id,
         )
         yield ResultMessage(
             subtype="success",
@@ -819,7 +823,7 @@ def test_run_normalizes_result_error_and_dedupes_answer(tmp_path, monkeypatch):
             duration_api_ms=0,
             is_error=True,
             num_turns=1,
-            session_id="sdk-session",
+            session_id=sdk_session_id,
             result="bad model",
             api_error_status=404,
         )
@@ -844,6 +848,8 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        sdk_session_id = options.resume or options.session_id
+        await _mirror_entry(options, entry_uuid="langfuse-run-entry")
         yield {
             "type": "assistant",
             "content": [
@@ -882,7 +888,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
         yield AssistantMessage(
             content=[TextBlock(text="hello answer")],
             model="<synthetic>",
-            session_id="sdk-session",
+            session_id=sdk_session_id,
         )
         yield ResultMessage(
             subtype="success",
@@ -890,7 +896,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
             duration_api_ms=0,
             is_error=False,
             num_turns=1,
-            session_id="sdk-session",
+            session_id=sdk_session_id,
             result="hello answer",
             usage={"input_tokens": 3, "output_tokens": 5},
             total_cost_usd=0.01,
@@ -953,7 +959,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
     )
 
     assert result.answer == "hello answer"
-    assert result.agent_activity["requested_skills"] == []
+    assert "permission_policy_source" not in result.agent_activity
     assert result.agent_activity["tool_names"] == [
         "Skill",
         "Read",
@@ -1013,10 +1019,8 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "alert_id": "alert-1",
                 "case_id": "case-1",
                 "mode": "non_stream",
-                "permission_mode": "bypassPermissions",
                 "claude_web_hitl_enabled": "false",
                 "profile": "main-agent",
-                "skills_mode": "default",
                 "tenant_id": "tenant-a",
             },
             "trace_name": "runtime.business_agent.main-agent",
@@ -1032,6 +1036,8 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
+        sdk_session_id = options.resume or options.session_id
+        await _mirror_entry(options, entry_uuid="langfuse-stream-entry")
         yield {
             "hook_event_name": "PreToolUse",
             "tool_name": "Read",
@@ -1041,7 +1047,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
         yield AssistantMessage(
             content=[TextBlock(text="stream answer")],
             model="<synthetic>",
-            session_id="sdk-session",
+            session_id=sdk_session_id,
         )
         yield ResultMessage(
             subtype="success",
@@ -1049,7 +1055,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
             duration_api_ms=0,
             is_error=False,
             num_turns=1,
-            session_id="sdk-session",
+            session_id=sdk_session_id,
             result="stream answer",
             usage={"input_tokens": 7, "output_tokens": 11},
             stop_reason="end_turn",

@@ -125,7 +125,7 @@ def _register_regression_routes(
     @router.post(
         "/improvements/{improvement_id}/regression-assessment/generate",
         response_model=RegressionAssessmentResponse,
-        summary="Generate regression test cases through the governor",
+        summary="Generate regression assessment candidates through the governor",
     )
     async def generate_regression(improvement_id: str) -> RegressionAssessmentResponse:
         require_improvement(improvement_id)
@@ -150,7 +150,7 @@ def _register_regression_routes(
     @router.post(
         "/improvements/{improvement_id}/regression-assessment/confirm",
         response_model=RegressionAssessmentResponse,
-        summary="Confirm regression assessment as a regression asset",
+        summary="Confirm regression assessment for typed TestDataset adoption",
     )
     async def confirm_regression(improvement_id: str) -> RegressionAssessmentResponse:
         execution = content_store.get_execution(improvement_id)

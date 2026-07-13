@@ -4,7 +4,7 @@
 
 - ``POST /v1/responses`` 采用 OpenAI Responses 外形（``input`` / ``instructions`` / ``store`` /
   ``conversation`` / ``previous_response_id`` / ``metadata``）+ 顶层 ``agentgov`` 强类型扩展。
-- ``agentgov`` 是唯一承载「OpenAI 标准字段无法表达的控制面」的地方（业务 Agent 选择、HITL、
+- ``agentgov`` 是唯一承载「OpenAI 标准字段无法表达的控制面」的地方（业务 Agent 选择、
   turn cap、raw 调试）；``extra="forbid"`` 堵未知字段。
 - ``metadata`` 只放后端不解释、原样回显的观测标签；``alert_id``/``case_id`` 是 backend-owned
   路由输入，走 ``agentgov``（不寄生 opaque metadata）。
@@ -22,13 +22,6 @@ from app.runtime.json_types import JsonObject
 
 # 顶层请求默认 extra="ignore"（pydantic 默认）：不 reject 真实 OpenAI 客户端发来的、
 # 本项目暂不建模的标准字段（temperature/top_p/tools/reasoning 等）。只有 agentgov 子模型 forbid。
-
-
-class AgentGovHitl(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    enabled: bool = False
-    allow_for_run: bool = False
 
 
 class AgentGovDebug(BaseModel):
@@ -49,7 +42,6 @@ class AgentGovRequestExtension(BaseModel):
     alert_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     case_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Code turn cap.")
-    hitl: Optional[AgentGovHitl] = None
     debug: Optional[AgentGovDebug] = None
 
 

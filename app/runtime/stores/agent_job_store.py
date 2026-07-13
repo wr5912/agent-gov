@@ -1,22 +1,16 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, cast
+from typing import Any, Optional
 
 from sqlalchemy import select, update
 
 from ..agent_job_logging import log_agent_job_event
-from ..agent_job_types import AgentJobType, FormatterOutputModel, ProjectedOutputModel, coerce_agent_job_type
-from ..feedback_schemas import (
-    FeedbackEvalCaseGenerationFormatterOutput,
-    coerce_feedback_eval_case_generation_output_model,
-    output_model_payload,
-)
+from ..agent_job_types import FormatterOutputModel, ProjectedOutputModel, coerce_agent_job_type
 from ..json_types import JsonObject
 from ..records.agent_job_records import AgentJobRecord
-from ..runtime_db import AgentJobModel, EvalCaseModel, utc_now
+from ..runtime_db import AgentJobModel, utc_now
 from ..state_machines import validate_transition
 
 _UNSET = object()
@@ -25,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class AgentJobStoreMixin:
-    """Generic async Agent job queue plus current eval-case-generation projection."""
+    """Generic persisted Agent job queue and lifecycle operations."""
 
     def create_agent_job(
         self,
@@ -161,18 +155,17 @@ class AgentJobStoreMixin:
     def complete_projected_agent_job(
         self,
         job: JsonObject,
-        job_output: FormatterOutputModel | ProjectedOutputModel | JsonObject,
+        _job_output: FormatterOutputModel | ProjectedOutputModel | JsonObject,
     ) -> Optional[JsonObject]:
         job_id = str(job.get("job_id") or "")
         try:
             job_type = coerce_agent_job_type(str(job.get("job_type") or ""))
         except ValueError:
             return self.fail_agent_job(job_id, error_code="UNSUPPORTED_AGENT_JOB_TYPE", message=f"Unsupported agent job type: {job.get('job_type')}")
-        if job_type != AgentJobType.EVAL_CASE_GENERATION:
-            return self.fail_agent_job(job_id, error_code="REMOVED_AGENT_JOB_TYPE", message=f"Removed legacy Agent job type: {job_type}")
-        return self._complete_eval_case_generation_agent_job(
-            job,
-            cast(FeedbackEvalCaseGenerationFormatterOutput | JsonObject, job_output),
+        return self.fail_agent_job(
+            job_id,
+            error_code="UNSUPPORTED_AGENT_JOB_COMPLETION",
+            message=f"Persisted completion is not registered for Agent job type: {job_type}",
         )
 
     def fail_projected_agent_job(
@@ -215,188 +208,6 @@ class AgentJobStoreMixin:
             self._apply_agent_job_json_fields(row, fields)
             self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
         return self.get_agent_job(job_id)
-
-    def _complete_eval_case_generation_agent_job(
-        self,
-        job: JsonObject,
-        formatter_output: FeedbackEvalCaseGenerationFormatterOutput | JsonObject,
-    ) -> Optional[JsonObject]:
-        output_model, error = coerce_feedback_eval_case_generation_output_model(formatter_output)
-        if output_model:
-            raw_payload = output_model_payload(output_model)
-        elif isinstance(formatter_output, FeedbackEvalCaseGenerationFormatterOutput):
-            raw_payload = output_model_payload(formatter_output)
-        else:
-            raw_payload = formatter_output
-        if not output_model:
-            return self._complete_agent_job(
-                str(job["job_id"]),
-                raw_output_json=raw_payload,
-                error_json={"error_code": "SCHEMA_VALIDATION_FAILED", "message": error or "invalid eval case generation output"},
-                status="needs_human_review",
-            )
-        validated = output_model_payload(output_model)
-        job_id = str(job["job_id"])
-        with self.Session.begin() as db:
-            row = self._claim_agent_job_completion(db, job_id)
-            if row is None:
-                current = db.get(AgentJobModel, job_id)
-                return self._agent_job_to_dict(current) if current else None
-            current_job = self._agent_job_to_dict(row)
-            projected = self._project_eval_case_generation(db, current_job, validated)
-            self._apply_agent_job_json_fields(
-                row,
-                {
-                    "raw_output_json": raw_payload,
-                    "validated_output_json": projected,
-                    "error_json": None,
-                },
-            )
-            self._append_agent_job_update_row(
-                db,
-                job_id,
-                status="completed" if projected.get("status") == "completed" else "needs_human_review",
-                completed_at=utc_now(),
-            )
-        return self.get_agent_job(job_id)
-
-    def _complete_agent_job(
-        self,
-        job_id: str,
-        *,
-        raw_output_json: Any = _UNSET,
-        validated_output_json: Any = _UNSET,
-        error_json: Any = _UNSET,
-        status: str,
-    ) -> Optional[JsonObject]:
-        with self.Session.begin() as db:
-            row = self._claim_agent_job_completion(db, job_id)
-            if row is None:
-                current = db.get(AgentJobModel, job_id)
-                return self._agent_job_to_dict(current) if current else None
-            fields: JsonObject = {}
-            if raw_output_json is not _UNSET:
-                fields["raw_output_json"] = raw_output_json
-            if validated_output_json is not _UNSET:
-                fields["validated_output_json"] = validated_output_json
-            if error_json is not _UNSET:
-                fields["error_json"] = error_json
-            self._apply_agent_job_json_fields(row, fields)
-            self._append_agent_job_update_row(db, job_id, status=status, completed_at=utc_now())
-        return self.get_agent_job(job_id)
-
-    def _project_eval_case_generation(self, db: Any, job: JsonObject, output: JsonObject) -> JsonObject:
-        job_input = job.get("input_json") if isinstance(job.get("input_json"), dict) else {}
-        force = bool(job_input.get("force"))
-        created = reused = updated = skipped = 0
-        eval_cases: list[JsonObject] = []
-        results: list[JsonObject] = []
-        now = utc_now()
-        for item in output.get("eval_cases") or []:
-            if not isinstance(item, dict) or not self._string(item.get("prompt")):
-                skipped += 1
-                results.append({"status": "skipped", "reason": "missing prompt"})
-                continue
-            payload = self._eval_case_payload_from_agent(item, job_input, now)
-            if payload is None:
-                skipped += 1
-                results.append({"status": "skipped", "reason": "source feedback case is not in job input"})
-                continue
-            existing_row = db.scalars(
-                select(EvalCaseModel)
-                .where(EvalCaseModel.source_feedback_case_id == self._string(payload.get("source_feedback_case_id")))
-                .order_by(EvalCaseModel.updated_at.desc())
-            ).first()
-            existing = self._eval_case_to_dict(existing_row) if existing_row else None
-            if existing and not force:
-                reused += 1
-                eval_cases.append(existing)
-                results.append(self._eval_case_generation_result(payload, existing, "reused"))
-                continue
-            if existing:
-                payload["eval_case_id"] = existing["eval_case_id"]
-                payload["created_at"] = existing["created_at"]
-                self._update_eval_case_row(db, payload)
-                updated += 1
-                eval_cases.append(payload)
-                results.append(self._eval_case_generation_result(payload, payload, "updated"))
-                continue
-            self._add_eval_case_row(db, payload)
-            created += 1
-            eval_cases.append(payload)
-            results.append(self._eval_case_generation_result(payload, payload, "created"))
-        return {
-            **output,
-            "job_id": job["job_id"],
-            "scope_kind": job.get("scope_kind"),
-            "scope_id": job.get("scope_id"),
-            "status": "completed" if eval_cases else "needs_human_review",
-            "created": created,
-            "reused": reused,
-            "updated": updated,
-            "skipped": skipped,
-            "eval_cases": eval_cases,
-            "results": results,
-        }
-
-    def _eval_case_payload_from_agent(self, item: JsonObject, job_input: JsonObject, now: str) -> Optional[JsonObject]:
-        feedback_contexts = [context for context in job_input.get("feedback_cases") or [] if isinstance(context, dict)]
-        feedback_context_by_case_id = {
-            str((context.get("feedback_case") or {}).get("feedback_case_id")): context
-            for context in feedback_contexts
-            if isinstance(context.get("feedback_case"), dict) and (context.get("feedback_case") or {}).get("feedback_case_id")
-        }
-        allowed_feedback_case_ids = set(feedback_context_by_case_id)
-        requested_feedback_case_id = self._string(item.get("source_feedback_case_id"))
-        fallback_feedback_case_id = self._string(job_input.get("feedback_case_id"))
-        if requested_feedback_case_id and requested_feedback_case_id not in allowed_feedback_case_ids:
-            return None
-        source_feedback_case_id = requested_feedback_case_id or (fallback_feedback_case_id if fallback_feedback_case_id in allowed_feedback_case_ids else None)
-        if not source_feedback_case_id and len(allowed_feedback_case_ids) == 1:
-            source_feedback_case_id = next(iter(allowed_feedback_case_ids))
-        if not source_feedback_case_id:
-            return None
-
-        context = feedback_context_by_case_id.get(source_feedback_case_id) or {}
-        source_run = context.get("source_run") if isinstance(context.get("source_run"), dict) else {}
-        source_refs = [dict(ref) for ref in context.get("source_refs") or [] if isinstance(ref, dict)]
-        if len(source_refs) == 1:
-            source_kind = self._string(source_refs[0].get("source_kind")) or "feedback_case"
-            source_id = self._string(source_refs[0].get("source_id")) or source_feedback_case_id
-        else:
-            source_kind = "feedback_case"
-            source_id = source_feedback_case_id
-
-        payload = {
-            "eval_case_id": f"evc-{uuid.uuid4()}",
-            "created_at": now,
-            "status": "draft",
-            "source": "eval_case_governor",
-            "source_feedback_case_id": source_feedback_case_id,
-            "source_run_id": self._string(source_run.get("run_id")),
-            "source_kind": source_kind,
-            "source_id": source_id,
-            "source_refs": source_refs,
-            "scenario_pack": self._string(item.get("scenario_pack")),
-            "prompt": str(item.get("prompt") or "").strip(),
-            "expected_behavior": self._string(item.get("expected_behavior")) or "",
-            "checks_json": item.get("checks_json") if isinstance(item.get("checks_json"), dict) else {},
-            "labels": self._unique_strings([*(item.get("labels") or []), "feedback_optimization"]),
-            "source_summary": item.get("source_summary") if isinstance(item.get("source_summary"), dict) else None,
-            "attribution_summary": item.get("attribution_summary") if isinstance(item.get("attribution_summary"), dict) else None,
-            "optimization_plan_summary": item.get("optimization_plan_summary") if isinstance(item.get("optimization_plan_summary"), dict) else None,
-        }
-        payload["updated_at"] = now
-        return self._eval_case_with_asset_defaults(payload)
-
-    def _eval_case_generation_result(self, payload: JsonObject, eval_case: JsonObject, status: str) -> JsonObject:
-        return {
-            "source_kind": payload.get("source_kind"),
-            "source_id": payload.get("source_id"),
-            "feedback_case_id": payload.get("source_feedback_case_id"),
-            "eval_case_id": eval_case.get("eval_case_id"),
-            "status": status,
-        }
 
     def _apply_agent_job_json_fields(self, row: AgentJobModel, fields: JsonObject) -> AgentJobModel:
         payload = AgentJobRecord.from_row(row).to_payload()

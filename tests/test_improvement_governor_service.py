@@ -7,7 +7,6 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-
 from app.runtime.errors import BusinessRuleViolation
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
@@ -240,10 +239,11 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
 
 
 def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
-    """governor EVAL_CASE_GENERATION → 回归用例候选；prompt 由后端原始输入覆盖。"""
+    """governor REGRESSION_ASSESSMENT 生成候选；prompt 由后端原始输入覆盖。"""
     seen: dict[str, object] = {}
 
     async def fake_run(**kwargs):
+        assert kwargs["job_type"] == "regression_assessment"
         seen.update(kwargs["job_input"])
         kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
         return {"eval_cases": [

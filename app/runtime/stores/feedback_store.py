@@ -4,7 +4,6 @@ import hashlib
 from collections.abc import Callable, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
-from threading import RLock
 from typing import Any, Optional
 
 from ...version import APP_VERSION
@@ -17,19 +16,15 @@ from ..runtime_db import (
     make_session_factory,
     runtime_db_path_from_data_dir,
 )
-from .agent_job_queue_store import AgentJobQueueStoreMixin
 from .agent_job_store import AgentJobStoreMixin
 from .feedback_case_store import FeedbackCaseStoreMixin
 from .feedback_eval_store import FeedbackEvalStoreMixin
 from .feedback_evidence_store import FeedbackEvidenceStoreMixin
-from .feedback_regression_asset_store import FeedbackRegressionAssetStoreMixin
 from .feedback_source_store import FeedbackSourceStoreMixin
 
 
 class FeedbackStore(
-    AgentJobQueueStoreMixin,
     AgentJobStoreMixin,
-    FeedbackRegressionAssetStoreMixin,
     FeedbackEvalStoreMixin,
     FeedbackEvidenceStoreMixin,
     FeedbackCaseStoreMixin,
@@ -43,6 +38,7 @@ class FeedbackStore(
         data_dir: Path,
         workspace_dir: Optional[Path] = None,
         agent_version_provider: Optional[Callable[[Optional[str]], Optional[str]]] = None,
+        agent_exists: Optional[Callable[[str], bool]] = None,
         runtime_version: str = APP_VERSION,
         enable_debug_evidence: bool = True,
         agent_job_timeout_seconds: int = 300,
@@ -56,13 +52,11 @@ class FeedbackStore(
         self.db_path = runtime_db_path_from_data_dir(data_dir)
         self.Session = make_session_factory(self.db_path)
         self.agent_version_provider = agent_version_provider
+        self.agent_exists = agent_exists
         self.runtime_version = runtime_version
         self.enable_debug_evidence = enable_debug_evidence
         self.agent_job_timeout_seconds = agent_job_timeout_seconds
         self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[JsonObject]]] = None
-        # Legacy cleanup anchor only. New Agent jobs keep input/output/error in SQLite.
-        self.tmp_jobs_dir = data_dir / ".runtime-tmp" / "jobs"
-        self._job_create_lock = RLock()
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[JsonObject]]) -> None:
         # The fetcher is owned by the backend so Langfuse credentials never enter

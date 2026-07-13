@@ -1,24 +1,29 @@
 import asyncio
 import json
 
+import pytest
+from app.runtime import session_turn_lease
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profiles import build_business_agent_profile
+from app.runtime.async_iterators import close_async_iterator
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.claude_user_input_service import ClaudeUserInputService
-from app.runtime.hitl_policy import SECURITY_OPERATIONS_EXECUTE_TOOL, SECURITY_OPERATIONS_EXPERT_AGENT_ID
+from app.runtime.errors import SessionConflictError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
 
+SECURITY_OPERATIONS_EXPERT_AGENT_ID = "security-operations-expert"
+SECURITY_OPERATIONS_EXECUTE_TOOL = "mcp__sec-ops__soc_api__execute"
+
 
 def _settings(
     tmp_path,
     *,
     enable_hitl: bool,
-    requires_web_hitl: bool = False,
     agent_id: str = "main-agent",
     ask_rules: list[str] | None = None,
 ) -> AppSettings:
@@ -33,16 +38,13 @@ def _settings(
             {
                 "permissions": {
                     "allow": ["Bash(*)"],
-                    "ask": ask_rules or ["mcp__soc-playbook-execution__*"],
+                    "ask": ["mcp__soc-playbook-execution__*"] if ask_rules is None else ask_rules,
                     "deny": [],
                 }
             }
         ),
         encoding="utf-8",
     )
-    if requires_web_hitl:
-        # 部署契约声明：build_business_agent_profile 读此字段 -> profile.requires_web_hitl=True
-        workspace.joinpath("agent.yaml").write_text(f"agent:\n  id: {agent_id}\n  requires_web_hitl: true\n", encoding="utf-8")
     claude_home.mkdir(parents=True, exist_ok=True)
     return AppSettings(
         _env_file=None,
@@ -53,7 +55,6 @@ def _settings(
         MAIN_CLAUDE_ROOT=claude_root,
         CLAUDE_HOME=claude_home,
         ENABLE_CLAUDE_WEB_HITL=enable_hitl,
-        PERMISSION_PROMPT_TOOL_NAME="legacy-prompt-tool",
     )
 
 
@@ -66,31 +67,86 @@ def _decision_from_request(request: dict[str, object], *, action: str = "allow_o
     return ClaudeUserInputDecisionRequest.model_validate({"action": action, "decision_token": request["decision_token"]})
 
 
-def _pre_tool_hook_matchers(options: object) -> set[str]:
-    return {getattr(matcher, "matcher", "") for matcher in getattr(options, "hooks", {}).get("PreToolUse", [])}
-
-
 def _profile(settings: AppSettings, agent_id: str):
     return build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=business_agent_layout(settings.data_dir, agent_id).workspace)
 
 
-def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monkeypatch):
+def _patch_interactive_sdk_client(monkeypatch, fake_query, seen: dict[str, object]) -> None:
+    import claude_agent_sdk
+
+    class FakeClaudeSDKClient:
+        def __init__(self, *, options, transport=None):
+            self.options = options
+            self.responses = None
+            self.control_task = None
+
+        async def connect(self, control_stream):
+            async def consume_control_stream():
+                async for _ in control_stream:
+                    pass
+                seen["control_closed"] = True
+
+            self.control_task = asyncio.create_task(consume_control_stream())
+            await asyncio.sleep(0)
+            assert not self.control_task.done()
+            seen["control_opened"] = True
+
+        async def query(self, prompt, session_id="default"):
+            self.responses = fake_query(prompt=prompt, options=self.options)
+
+        async def receive_response(self):
+            from claude_agent_sdk import ResultMessage
+
+            assert self.responses is not None
+            async for message in self.responses:
+                yield message
+                if isinstance(message, ResultMessage):
+                    return
+
+        async def disconnect(self):
+            if self.responses is not None:
+                await close_async_iterator(self.responses)
+            assert self.control_task is not None
+            await asyncio.wait_for(self.control_task, timeout=1)
+            seen["disconnected"] = True
+
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClaudeSDKClient)
+
+
+async def _success_result(options, *, text: str):
+    from claude_agent_sdk import ResultMessage
+
+    sdk_session_id = options.resume or options.session_id
+    await options.session_store.append(
+        {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+        [{"type": "user", "uuid": f"{text}-entry"}],
+    )
+    return ResultMessage(
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=0,
+        is_error=False,
+        num_turns=1,
+        session_id=sdk_session_id,
+        result=text,
+    )
+
+
+def test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        seen["prompt_item"] = await anext(prompt)
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["permission_result"] = await options.can_use_tool(
             "mcp__soc-playbook-execution__submit",
             {"playbook_id": "pb-1"},
             {"tool_use_id": "toolu-hitl", "agent_id": "sdk-subagent"},
         )
-        if False:
-            yield None
+        yield await _success_result(options, text="approved")
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
     settings = _settings(tmp_path, enable_hitl=True)
     service, store = _service(tmp_path)
@@ -111,38 +167,38 @@ def test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow(tmp_path, monk
             rest.append(event)
         return [session_event, required_event, *rest]
 
-    events = asyncio.run(scenario())
+    events = asyncio.run(asyncio.wait_for(scenario(), timeout=2))
 
     assert [event["event"] for event in events] == [
         "session",
         "claude_user_input_required",
         "claude_user_input_resolved",
+        "message",
+        "result",
         "done",
     ]
-    assert getattr(seen["options"], "permission_mode", None) == "default"
+    assert getattr(seen["options"], "permission_mode", None) is None
     assert getattr(seen["options"], "can_use_tool", None) is not None
-    assert {"Bash", "Write", "Edit"}.issubset(_pre_tool_hook_matchers(seen["options"]))
+    assert getattr(seen["options"], "hooks", None) is None
+    assert list(getattr(seen["options"], "setting_sources", None) or []) == ["project"]
     assert getattr(seen["options"], "permission_prompt_tool_name", None) is None
-    assert seen["prompt_item"]["message"]["content"] == "needs tool approval"
+    assert seen["prompt_items"][0]["message"]["content"] == "needs tool approval"
+    assert seen["control_open_at_callback"] is True
+    assert seen["control_closed"] is True
+    assert seen["disconnected"] is True
     assert seen["permission_result"].__class__.__name__ == "PermissionResultAllow"
     record = store.list(run_id=str(events[0]["data"]["run_id"]))[0]
     assert record.status == "resolved"
     assert record.decision == "allow_once"
 
 
-def test_stream_security_operations_expert_only_execute_requests_hitl(tmp_path, monkeypatch):
+def test_stream_security_operations_expert_native_ask_requests_hitl(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        await anext(prompt)
-        seen["manual_result"] = await options.can_use_tool(
-            "mcp__sec-ops__soc_api__manual",
-            {"playbookId": "pb-1"},
-            {"tool_use_id": "manual"},
-        )
-        seen["write_result"] = await options.can_use_tool("Write", {"file_path": "./notes.md"}, {"tool_use_id": "write"})
-        seen["question_result"] = await options.can_use_tool("AskUserQuestion", {"question": "confirm?"}, {"tool_use_id": "ask"})
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["execute_result"] = await options.can_use_tool(
             SECURITY_OPERATIONS_EXECUTE_TOOL,
             {"actionKey": "isolate_host"},
@@ -151,14 +207,11 @@ def test_stream_security_operations_expert_only_execute_requests_hitl(tmp_path, 
         if False:
             yield None
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
     settings = _settings(
         tmp_path,
         enable_hitl=True,
-        requires_web_hitl=True,
         agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
         ask_rules=[SECURITY_OPERATIONS_EXECUTE_TOOL],
     )
@@ -189,60 +242,56 @@ def test_stream_security_operations_expert_only_execute_requests_hitl(tmp_path, 
         "claude_user_input_resolved",
         "done",
     ]
-    assert seen["manual_result"].__class__.__name__ == "PermissionResultAllow"
-    assert seen["write_result"].__class__.__name__ == "PermissionResultAllow"
-    assert seen["question_result"].__class__.__name__ == "PermissionResultDeny"
     assert seen["execute_result"].__class__.__name__ == "PermissionResultAllow"
+    assert seen["control_open_at_callback"] is True
     records = store.list(run_id=str(events[0]["data"]["run_id"]))
     assert [record.tool_name for record in records] == [SECURITY_OPERATIONS_EXECUTE_TOOL]
 
 
-def test_stream_does_not_attach_hitl_when_switch_is_disabled(tmp_path, monkeypatch):
+def test_stream_without_native_ask_consumes_finite_prompt_without_permission_bridge(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        seen["prompt_item"] = await anext(prompt)
-        if False:
-            yield None
+        seen["prompt_items"] = [item async for item in prompt]
+        yield await _success_result(options, text="ordinary")
 
     import claude_agent_sdk
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
-    settings = _settings(tmp_path, enable_hitl=False)
+    settings = _settings(tmp_path, enable_hitl=False, ask_rules=[])
     service, store = _service(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
 
     async def collect():
         return [event async for event in runtime.stream(ChatRequest(message="no hitl"))]
 
-    events = asyncio.run(collect())
+    events = asyncio.run(asyncio.wait_for(collect(), timeout=2))
 
-    assert [event["event"] for event in events] == ["session", "done"]
+    assert [event["event"] for event in events] == ["session", "message", "result", "done"]
     assert getattr(seen["options"], "can_use_tool", None) is None
-    assert {"Bash", "Write", "Edit"}.issubset(_pre_tool_hook_matchers(seen["options"]))
+    assert getattr(seen["options"], "hooks", None) is None
     assert getattr(seen["options"], "permission_mode", None) is None
-    assert seen["prompt_item"]["message"]["content"] == "no hitl"
+    assert seen["prompt_items"][0]["message"]["content"] == "no hitl"
     assert store.list(limit=10) == []
 
 
 def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch):
-    # requires_web_hitl 的 Agent + HITL 关：挂 fail-loud deny 回调（非静默 None），命中 ask 工具 deny + error 事件
+    # project settings 含 ask 且 HITL 关闭：命中 ask 工具时 fail-loud deny，不依赖第二份 agent.yaml 标志。
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        await anext(prompt)
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
         if False:
             yield None
 
-    import claude_agent_sdk
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-
-    settings = _settings(tmp_path, enable_hitl=False, requires_web_hitl=True)
+    settings = _settings(tmp_path, enable_hitl=False)
     service, store = _service(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
 
@@ -253,30 +302,28 @@ def test_stream_fail_loud_when_hitl_required_but_disabled(tmp_path, monkeypatch)
     names = [event["event"] for event in events]
     assert getattr(seen["options"], "can_use_tool", None) is not None  # fail-loud 回调已挂
     assert seen["permission_result"].__class__.__name__ == "PermissionResultDeny"
+    assert seen["control_open_at_callback"] is True
     assert "ENABLE_CLAUDE_WEB_HITL" in seen["permission_result"].message
     assert "error" in names  # 命中 ask 工具产明确 error 事件（非静默）
     assert store.list(limit=10) == []  # 未创建 HITL 请求（HITL 关）
 
 
-def test_stream_security_operations_expert_disabled_hitl_only_execute_fails_loud(tmp_path, monkeypatch):
+def test_stream_security_operations_expert_native_ask_fails_loud_when_hitl_disabled(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        await anext(prompt)
-        seen["manual_result"] = await options.can_use_tool("mcp__sec-ops__soc_api__manual", {}, {"tool_use_id": "manual"})
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["execute_result"] = await options.can_use_tool(SECURITY_OPERATIONS_EXECUTE_TOOL, {}, {"tool_use_id": "execute"})
         if False:
             yield None
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
     settings = _settings(
         tmp_path,
         enable_hitl=False,
-        requires_web_hitl=True,
         agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
         ask_rules=[SECURITY_OPERATIONS_EXECUTE_TOOL],
     )
@@ -289,57 +336,54 @@ def test_stream_security_operations_expert_disabled_hitl_only_execute_fails_loud
 
     events = asyncio.run(asyncio.wait_for(collect(), timeout=5))
     names = [event["event"] for event in events]
-    assert seen["manual_result"].__class__.__name__ == "PermissionResultAllow"
     assert seen["execute_result"].__class__.__name__ == "PermissionResultDeny"
+    assert seen["control_open_at_callback"] is True
     assert "ENABLE_CLAUDE_WEB_HITL" in seen["execute_result"].message
     assert "error" in names
     assert store.list(limit=10) == []
 
 
 def test_run_fail_loud_when_hitl_required(tmp_path, monkeypatch):
-    # 非流式 run() + requires_web_hitl：permission_mode=default（非 bypassPermissions）+ can_use_tool deny ask 型工具
+    # 非流式 run() 不覆盖项目 permission mode；can_use_tool 仅为原生 ask 提供 fail-closed 交互桥。
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["permission_result"] = await options.can_use_tool("mcp__soc-playbook-execution__submit", {}, {"tool_use_id": "t1"})
         if False:
             yield None
 
-    import claude_agent_sdk
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-
-    settings = _settings(tmp_path, enable_hitl=False, requires_web_hitl=True)
+    settings = _settings(tmp_path, enable_hitl=False)
     service, _store = _service(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
 
     asyncio.run(runtime.run(ChatRequest(message="dispose")))
-    assert getattr(seen["options"], "permission_mode", None) == "default"  # 非 bypassPermissions
+    assert getattr(seen["options"], "permission_mode", None) is None
     assert getattr(seen["options"], "can_use_tool", None) is not None
     assert seen["permission_result"].__class__.__name__ == "PermissionResultDeny"
+    assert seen["control_open_at_callback"] is True
 
 
-def test_run_security_operations_expert_non_execute_tools_are_direct_allowed(tmp_path, monkeypatch):
+def test_run_security_operations_expert_native_ask_is_denied_without_web_surface(tmp_path, monkeypatch):
     seen = {}
 
     async def fake_query(*, prompt, options, transport=None):
         seen["options"] = options
-        seen["manual_result"] = await options.can_use_tool("mcp__sec-ops__soc_api__manual", {}, {"tool_use_id": "manual"})
-        seen["write_result"] = await options.can_use_tool("Write", {"file_path": "./notes.md"}, {"tool_use_id": "write"})
-        seen["question_result"] = await options.can_use_tool("AskUserQuestion", {"question": "confirm?"}, {"tool_use_id": "ask"})
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["control_open_at_callback"] = not seen.get("control_closed", False)
         seen["execute_result"] = await options.can_use_tool(SECURITY_OPERATIONS_EXECUTE_TOOL, {}, {"tool_use_id": "execute"})
         if False:
             yield None
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
 
     settings = _settings(
         tmp_path,
         enable_hitl=False,
-        requires_web_hitl=True,
         agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
         ask_rules=[SECURITY_OPERATIONS_EXECUTE_TOOL],
     )
@@ -348,24 +392,71 @@ def test_run_security_operations_expert_non_execute_tools_are_direct_allowed(tmp
     profile = _profile(settings, SECURITY_OPERATIONS_EXPERT_AGENT_ID)
 
     asyncio.run(runtime.run(ChatRequest(message="dispose"), profile=profile))
-    assert getattr(seen["options"], "permission_mode", None) == "default"
-    assert seen["manual_result"].__class__.__name__ == "PermissionResultAllow"
-    assert seen["write_result"].__class__.__name__ == "PermissionResultAllow"
-    assert seen["question_result"].__class__.__name__ == "PermissionResultDeny"
+    assert getattr(seen["options"], "permission_mode", None) is None
     assert seen["execute_result"].__class__.__name__ == "PermissionResultDeny"
+    assert seen["control_open_at_callback"] is True
+
+
+@pytest.mark.parametrize("mode", ["stream", "run"])
+def test_runtime_reads_native_ask_from_workspace_on_each_turn(mode, tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["prompt_items"] = [item async for item in prompt]
+        seen["permission_result"] = await options.can_use_tool(
+            "mcp__dynamic__execute",
+            {},
+            {"tool_use_id": "dynamic"},
+        )
+        if False:
+            yield None
+
+    _patch_interactive_sdk_client(monkeypatch, fake_query, seen)
+    settings = _settings(tmp_path, enable_hitl=False, ask_rules=[])
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    settings.main_workspace_dir.joinpath(".claude", "settings.json").write_text(
+        json.dumps({"permissions": {"ask": ["mcp__dynamic__execute"]}}),
+        encoding="utf-8",
+    )
+
+    if mode == "stream":
+
+        async def collect():
+            return [event async for event in runtime.stream(ChatRequest(message="dynamic ask"))]
+
+        asyncio.run(asyncio.wait_for(collect(), timeout=2))
+    else:
+        asyncio.run(runtime.run(ChatRequest(message="dynamic ask")))
+
+    assert seen["permission_result"].__class__.__name__ == "PermissionResultDeny"
+    assert seen["prompt_items"][0]["message"]["content"] == "dynamic ask"
 
 
 def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
     async def fake_query(*, prompt, options, transport=None):
         await anext(prompt)
-        if False:
-            yield None
+        from claude_agent_sdk import ResultMessage
+
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "user", "uuid": "completion-test-entry"}],
+        )
+        yield ResultMessage(
+            subtype="success",
+            duration_ms=1,
+            duration_api_ms=0,
+            is_error=False,
+            num_turns=1,
+            session_id=sdk_session_id,
+            result="done",
+        )
 
     import claude_agent_sdk
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
 
-    settings = _settings(tmp_path, enable_hitl=False)
+    settings = _settings(tmp_path, enable_hitl=False, ask_rules=[])
     service, _store = _service(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir), user_input_service=service)
 
@@ -382,5 +473,94 @@ def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
 
     events = asyncio.run(scenario())
 
-    assert [event["event"] for event in events] == ["session", "error", "done"]
-    assert "RuntimeError: completion boom" in events[1]["data"]["errors"]
+    assert [event["event"] for event in events] == ["session", "message", "error", "done"]
+    assert "RuntimeError: completion boom" in events[2]["data"]["errors"]
+
+
+def test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn(tmp_path, monkeypatch):
+    from claude_agent_sdk import AssistantMessage, TextBlock
+
+    seen = {}
+    query_cancelled = asyncio.Event()
+
+    async def blocking_query(*, prompt, options, transport=None):
+        seen["prompt_items"] = [item async for item in prompt]
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "assistant", "uuid": "interactive-cancel-entry"}],
+        )
+        try:
+            yield AssistantMessage(content=[TextBlock(text="partial")], model="<synthetic>", session_id=sdk_session_id)
+            await asyncio.Event().wait()
+        finally:
+            query_cancelled.set()
+
+    _patch_interactive_sdk_client(monkeypatch, blocking_query, seen)
+    settings = _settings(tmp_path, enable_hitl=False)
+    session_store = LocalSessionStore(settings.session_dir)
+    service, _store = _service(tmp_path)
+    runtime = ClaudeRuntime(settings, session_store, user_input_service=service)
+    session_id = "interactive-client-cancel"
+
+    async def scenario():
+        source = runtime.stream(ChatRequest(message="cancel", session_id=session_id))
+        assert (await anext(source))["event"] == "session"
+        assert (await anext(source))["event"] == "message"
+        await close_async_iterator(source)
+        await asyncio.wait_for(query_cancelled.wait(), timeout=1)
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=2))
+    saved = session_store.get(session_id)
+
+    assert saved is not None
+    assert saved.turns == 0
+    assert saved.sdk_session_id is None
+    assert saved.active_run_id is None
+    assert seen["control_closed"] is True
+    assert seen["disconnected"] is True
+
+
+def test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn(tmp_path, monkeypatch):
+    seen = {}
+    query_cancelled = asyncio.Event()
+
+    async def blocking_query(*, prompt, options, transport=None):
+        seen["prompt_items"] = [item async for item in prompt]
+        try:
+            await asyncio.Event().wait()
+        finally:
+            query_cancelled.set()
+        if False:  # pragma: no cover - keep this function an async generator
+            yield None
+
+    _patch_interactive_sdk_client(monkeypatch, blocking_query, seen)
+    monkeypatch.setattr(session_turn_lease, "DEFAULT_SESSION_TURN_HEARTBEAT_INTERVAL_SECONDS", 0.01)
+    monkeypatch.setattr(session_turn_lease, "DEFAULT_SESSION_TURN_LEASE_SECONDS", 1.0)
+    settings = _settings(tmp_path, enable_hitl=False)
+    session_store = LocalSessionStore(settings.session_dir)
+    service, _store = _service(tmp_path)
+
+    def lose_lease(session_id, *, run_id, run_generation=None, lease_seconds=None):
+        raise SessionConflictError(f"Session {session_id} lease lost for {run_id}")
+
+    monkeypatch.setattr(session_store, "renew_turn", lose_lease)
+    runtime = ClaudeRuntime(settings, session_store, user_input_service=service)
+    session_id = "interactive-lease-loss"
+
+    async def scenario():
+        source = runtime.stream(ChatRequest(message="lease", session_id=session_id))
+        assert (await anext(source))["event"] == "session"
+        with pytest.raises(SessionConflictError, match="lease lost"):
+            await anext(source)
+        await asyncio.wait_for(query_cancelled.wait(), timeout=1)
+
+    asyncio.run(asyncio.wait_for(scenario(), timeout=2))
+    saved = session_store.get(session_id)
+
+    assert saved is not None
+    assert saved.turns == 0
+    assert saved.sdk_session_id is None
+    assert saved.active_run_id is None
+    assert seen["control_closed"] is True
+    assert seen["disconnected"] is True

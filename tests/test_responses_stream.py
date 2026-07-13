@@ -7,6 +7,8 @@ import asyncio
 import json
 from pathlib import Path
 
+import pytest
+from app.runtime.async_iterators import close_async_iterator
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.schemas import ChatRequest
 from fastapi.testclient import TestClient
@@ -14,15 +16,61 @@ from fastapi.testclient import TestClient
 from test_api_execution_optimizer import _load_app
 
 
-def _fake_sdk_query_success(sdk_session: str = "sdk-race"):
+def _patch_sdk_query(monkeypatch, fake_query) -> None:
+    """Install the same fake behind one-shot and bidirectional SDK drivers."""
+    import claude_agent_sdk
+
+    class FakeClaudeSDKClient:
+        def __init__(self, *, options, transport=None):
+            self.options = options
+            self.responses = None
+            self.control_task = None
+
+        async def connect(self, control_stream):
+            async def consume_control_stream():
+                async for _ in control_stream:
+                    pass
+
+            self.control_task = asyncio.create_task(consume_control_stream())
+            await asyncio.sleep(0)
+            assert not self.control_task.done()
+
+        async def query(self, prompt, session_id="default"):
+            self.responses = fake_query(prompt=prompt, options=self.options)
+
+        async def receive_response(self):
+            from claude_agent_sdk import ResultMessage
+
+            assert self.responses is not None
+            async for message in self.responses:
+                yield message
+                if isinstance(message, ResultMessage):
+                    return
+
+        async def disconnect(self):
+            if self.responses is not None:
+                await close_async_iterator(self.responses)
+            assert self.control_task is not None
+            await asyncio.wait_for(self.control_task, timeout=1)
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClaudeSDKClient)
+
+
+def _fake_sdk_query_success(entry_label: str = "sdk-race"):
     """真实 stream 全链用的 fake SDK query：yield AssistantMessage + ResultMessage（走持久化）。"""
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
-        yield AssistantMessage(content=[TextBlock(text="收到")], model="<synthetic>", session_id=sdk_session)
-        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sdk_session, result="收到")
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "user", "uuid": f"{entry_label}-entry"}],
+        )
+        yield AssistantMessage(content=[TextBlock(text="收到")], model="<synthetic>", session_id=sdk_session_id)
+        yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sdk_session_id, result="收到")
 
     return fake_query
 
@@ -499,7 +547,7 @@ def test_endpoint_stream_projects_hitl_confirmation(monkeypatch, tmp_path: Path)
     assert "decision_token" not in by["agentgov.confirmation.resolved"]["payload"]
 
 
-def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tmp_path: Path) -> None:
+def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session(monkeypatch, tmp_path: Path) -> None:
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     calls: list[str | None] = []
@@ -521,9 +569,7 @@ def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tm
             result="responses stream after retry",
         )
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_sdk_query(monkeypatch, fake_query)
 
     module = _load_app(monkeypatch, tmp_path)
     module.feedback_store.record_run({"run_id": "prev-stale", "session_id": "sess-stale", "agent_id": "main-agent"})
@@ -539,21 +585,20 @@ def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tm
         assert resp.status_code == 200, resp.text
 
     names = [name for name, _ in _parse(resp.text)]
-    assert calls == ["stale-sdk", None]
-    assert "response.failed" not in names
-    assert "response.completed" in names
-    assert "responses stream after retry" in resp.text
+    assert calls == []
+    assert "response.failed" in names
+    assert "response.completed" not in names
     saved = module.session_store.get("sess-stale")
     assert saved is not None
-    assert saved.sdk_session_id == "new-sdk"
+    assert saved.sdk_session_id == "stale-sdk"
+    assert saved.turns == 0
 
 
 def test_stream_persists_session_and_run_before_response_completed(monkeypatch, tmp_path: Path) -> None:
     # race 回归：在 result 事件（-> response.completed）时刻，session（sdk_session_id+agent_id）与 run 必须已落库，
     # 使 /v1/conversations/items 与 /v1/responses/{id} retrieve 在完成信号时刻即可查（修复前此处未落库、会失败）。
-    import claude_agent_sdk
 
-    monkeypatch.setattr(claude_agent_sdk, "query", _fake_sdk_query_success("sdk-race"))
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-race"))
     module = _load_app(monkeypatch, tmp_path)
 
     at_result: dict = {}
@@ -566,27 +611,32 @@ def test_stream_persists_session_and_run_before_response_completed(monkeypatch, 
         if ev.get("event") == "result":
             s = module.session_store.get("sess-race")
             at_result["sdk_session_id"] = s.sdk_session_id if s else None
+            at_result["event_sdk_session_id"] = data.get("sdk_session_id")
             at_result["agent_id"] = s.agent_id if s else None
             at_result["run_found"] = bool(run_id.get("v")) and module.feedback_store.find_run(run_id=run_id["v"]) is not None
 
     _drive_stream(module, ChatRequest(message="hi", session_id="sess-race"), on_event=check)
 
-    assert at_result.get("sdk_session_id") == "sdk-race"  # session 已落库
+    assert at_result.get("sdk_session_id") == at_result.get("event_sdk_session_id")  # session 已落库
+    assert at_result.get("sdk_session_id")
     assert at_result.get("agent_id")  # agent_id 非空（否则 items 会从空列表退化为 500）
     assert at_result.get("run_found") is True  # run 已记录（retrieve 完成即可查）
 
 
 def test_stream_run_write_failure_rolls_back_session_completion(monkeypatch, tmp_path: Path) -> None:
-    import app.runtime.session_store as session_store_module
-    import claude_agent_sdk
+    import app.runtime.session_turn_persistence as turn_persistence_module
 
-    monkeypatch.setattr(claude_agent_sdk, "query", _fake_sdk_query_success("sdk-rollback"))
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-rollback"))
     module = _load_app(monkeypatch, tmp_path)
 
+    calls = 0
+
     def fail_run_write(db, record):
+        nonlocal calls
+        calls += 1
         raise RuntimeError("injected run write failure")
 
-    monkeypatch.setattr(session_store_module, "upsert_agent_run_record", fail_run_write)
+    monkeypatch.setattr(turn_persistence_module, "upsert_agent_run_record", fail_run_write)
     events = _drive_stream(module, ChatRequest(message="hi", session_id="sess-rollback"))
     session_event = next(event for event in events if event.get("event") == "session")
     run_id = session_event["data"]["run_id"]
@@ -597,13 +647,48 @@ def test_stream_run_write_failure_rolls_back_session_completion(monkeypatch, tmp
     assert saved.turns == 0
     assert saved.sdk_session_id is None
     assert module.feedback_store.find_run(run_id=run_id) is None
+    assert calls == 3
+
+
+@pytest.mark.parametrize("failure_point", ["before_commit", "after_commit"])
+def test_stream_retries_transient_turn_finalization(
+    monkeypatch,
+    tmp_path: Path,
+    failure_point: str,
+) -> None:
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success(f"sdk-retry-{failure_point}"))
+    module = _load_app(monkeypatch, tmp_path)
+    original = module.session_store.finalize_persisted_turn
+    calls = 0
+
+    def flaky_finalize(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            if failure_point == "after_commit":
+                original(**kwargs)
+            raise RuntimeError(f"transient {failure_point}")
+        return original(**kwargs)
+
+    monkeypatch.setattr(module.session_store, "finalize_persisted_turn", flaky_finalize)
+    events = _drive_stream(
+        module,
+        ChatRequest(message="retry finalization", session_id=f"sess-retry-{failure_point}"),
+    )
+
+    session_event = next(event for event in events if event.get("event") == "session")
+    run_id = session_event["data"]["run_id"]
+    saved = module.session_store.get(f"sess-retry-{failure_point}")
+    assert calls == 2
+    assert [event.get("event") for event in events][-2:] == ["result", "done"]
+    assert saved is not None and saved.turns == 1 and saved.active_run_id is None
+    assert module.feedback_store.find_run(run_id=run_id) is not None
 
 
 def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
     # 幂等：is_result 处落库 + finally 兜底，不得双落库。
-    import claude_agent_sdk
 
-    monkeypatch.setattr(claude_agent_sdk, "query", _fake_sdk_query_success("sdk-once"))
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-once"))
     module = _load_app(monkeypatch, tmp_path)
     calls = {"n": 0}
     original = module.runtime._complete_runtime_request
@@ -619,7 +704,6 @@ def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
 
 def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path) -> None:
     # error/无 ResultMessage 路径：finally 兜底落库一次，仍发 error+done。
-    import claude_agent_sdk
 
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
@@ -627,21 +711,60 @@ def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path)
         raise RuntimeError("boom before result")
         yield  # pragma: no cover
 
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_sdk_query(monkeypatch, fake_query)
     module = _load_app(monkeypatch, tmp_path)
     calls = {"n": 0}
-    original = module.runtime._complete_runtime_request
+    original = module.runtime._abort_runtime_request
 
     def counting(*a, **k):
         calls["n"] += 1
         return original(*a, **k)
 
-    monkeypatch.setattr(module.runtime, "_complete_runtime_request", counting)
+    monkeypatch.setattr(module.runtime, "_abort_runtime_request", counting)
     events = _drive_stream(module, ChatRequest(message="hi", session_id="sess-err"))
     names = [e.get("event") for e in events]
-    assert calls["n"] == 1  # 兜底落库一次
+    assert calls["n"] == 1
     assert "error" in names and "done" in names
-    assert module.session_store.get("sess-err") is not None  # session 已落库
+    saved = module.session_store.get("sess-err")
+    assert saved is not None and saved.turns == 0 and saved.active_run_id is None
+
+
+@pytest.mark.parametrize("failure_point", ["before_commit", "after_commit"])
+def test_stream_retries_transient_turn_abort(
+    monkeypatch,
+    tmp_path: Path,
+    failure_point: str,
+) -> None:
+    async def fake_query(*, prompt, options, transport=None):
+        async for _ in prompt:
+            pass
+        raise RuntimeError("query failed before result")
+        yield  # pragma: no cover
+
+    _patch_sdk_query(monkeypatch, fake_query)
+    module = _load_app(monkeypatch, tmp_path)
+    original = module.session_store.abort_persisted_turn
+    calls = 0
+
+    def flaky_abort(**kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            if failure_point == "after_commit":
+                original(**kwargs)
+            raise RuntimeError(f"transient {failure_point}")
+        return original(**kwargs)
+
+    monkeypatch.setattr(module.session_store, "abort_persisted_turn", flaky_abort)
+    events = _drive_stream(
+        module,
+        ChatRequest(message="retry abort", session_id=f"sess-abort-{failure_point}"),
+    )
+
+    saved = module.session_store.get(f"sess-abort-{failure_point}")
+    assert calls == 2
+    assert [event.get("event") for event in events][-2:] == ["error", "done"]
+    assert saved is not None and saved.turns == 0 and saved.active_run_id is None
 
 
 def test_endpoint_sdk_result_error_is_failed_terminal_for_playground(monkeypatch, tmp_path: Path) -> None:
@@ -650,21 +773,24 @@ def test_endpoint_sdk_result_error_is_failed_terminal_for_playground(monkeypatch
     async def fake_query(*, prompt, options, transport=None):
         async for _ in prompt:
             pass
-        yield AssistantMessage(content=[TextBlock(text="bad model")], model="<synthetic>", session_id="sdk-error")
+        sdk_session_id = options.resume or options.session_id
+        await options.session_store.append(
+            {"project_key": options.session_store.binding.project_key, "session_id": sdk_session_id},
+            [{"type": "user", "uuid": "sdk-error-entry"}],
+        )
+        yield AssistantMessage(content=[TextBlock(text="bad model")], model="<synthetic>", session_id=sdk_session_id)
         yield ResultMessage(
             subtype="success",
             duration_ms=1,
             duration_api_ms=0,
             is_error=True,
             num_turns=1,
-            session_id="sdk-error",
+            session_id=sdk_session_id,
             result="bad model",
             api_error_status=404,
         )
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    _patch_sdk_query(monkeypatch, fake_query)
     module = _load_app(monkeypatch, tmp_path)
     with TestClient(module.app) as client:
         _register_biz(client)
@@ -681,4 +807,4 @@ def test_endpoint_sdk_result_error_is_failed_terminal_for_playground(monkeypatch
     assert names.count("agentgov.error") == 1
     by = dict(events)
     assert by["agentgov.error"]["payload"]["errors"] == ["Claude Code API error (404): bad model"]
-    assert by["agentgov.result"]["payload"]["sdk_session_id"] == "sdk-error"
+    assert by["agentgov.result"]["payload"]["sdk_session_id"]

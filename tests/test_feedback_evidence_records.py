@@ -9,7 +9,7 @@ def test_evidence_package_projection_rejects_invalid_persisted_file_path(tmp_pat
     store, _ = _store(tmp_path)
     _record_run(store)
     signal = store.create_signal(FeedbackSignalCreateRequest(run_id="run-1", labels=["evidence_gap"]))
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]])
+    feedback_case = store.create_case(source_refs=[("signal", signal["signal_id"])])
     evidence = store.create_evidence_package(feedback_case["feedback_case_id"])
 
     with store.Session.begin() as db:

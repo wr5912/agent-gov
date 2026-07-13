@@ -50,21 +50,12 @@ def test_pending_correlation_state_machine_rejects_resolved_to_pending():
         validate_transition("pending_correlation", "resolved", "pending")
 
 
-def test_eval_case_state_machine_allows_governed_lifecycle():
-    validate_transition("eval_case", "draft", "active")
-    validate_transition("eval_case", "active", "archived")
-    validate_transition("eval_case_promotion", "candidate", "approved")
-    validate_transition("eval_case_promotion", "approved", "superseded")
-
-
-def test_eval_case_state_machine_rejects_archived_reopen():
-    with pytest.raises(StateTransitionError, match="archived -> active"):
-        validate_transition("eval_case", "archived", "active")
-
-
 def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
     validate_transition("agent_change_set", "draft", "candidate_committed")
     validate_transition("agent_change_set", "candidate_committed", "regression_running")
+    validate_transition("agent_change_set", "regression_running", "regression_review_required")
+    validate_transition("agent_change_set", "regression_review_required", "regression_passed")
+    validate_transition("agent_change_set", "regression_review_required", "regression_failed")
     validate_transition("agent_change_set", "regression_running", "regression_passed")
     validate_transition("agent_change_set", "regression_passed", "publishing")
     validate_transition("agent_change_set", "publishing", "published")
@@ -88,6 +79,13 @@ def test_improvement_execution_claim_must_finish_before_confirmation():
     validate_transition("improvement_execution", "applying", "draft")
     with pytest.raises(StateTransitionError, match="applying -> confirmed"):
         validate_transition("improvement_execution", "applying", "confirmed")
+
+
+@pytest.mark.parametrize("terminal", ["succeeded", "failed", "cancelled", "interrupted"])
+def test_session_turn_intent_only_moves_from_running_to_terminal(terminal):
+    validate_transition("session_turn_intent", "running", terminal)
+    with pytest.raises(StateTransitionError, match=f"{terminal} -> running"):
+        validate_transition("session_turn_intent", terminal, "running")
 
 
 def test_state_machine_rejects_unknown_status():

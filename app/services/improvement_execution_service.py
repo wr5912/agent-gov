@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
 from app.runtime.agent_git_store import AgentGitError
 from app.runtime.agent_job_types import AgentJobType, FormatterOutputModel, agent_job_spec
@@ -30,6 +30,47 @@ _BASE_CONFIG_TARGETS = ["CLAUDE.md", ".claude/settings.json", ".mcp.json"]
 _MAX_SKILL_TARGETS = 12
 _INVALID_CHANGE_SET_STATES = {"rejected", "abandoned", "failed"}
 _EXECUTION_CLAIM_TTL_SECONDS = 600
+
+
+class _ExecutionPlanChange(TypedDict):
+    target: str
+    change: str
+
+
+def _scoped_execution_recommendations(
+    changes: list[_ExecutionPlanChange],
+    targets: list[str],
+) -> list[tuple[str, str]]:
+    scoped: list[tuple[str, str]] = []
+    for change in changes:
+        recommendation = str(change.get("change") or "").strip()
+        target = _editable_target_for_hint(str(change.get("target") or ""), targets)
+        if recommendation and target:
+            scoped.append((target, recommendation))
+    return scoped
+
+
+def _editable_target_for_hint(target_hint: str, targets: list[str]) -> str | None:
+    hint = Path(target_hint.strip().replace("\\", "/")).as_posix().casefold()
+    if not hint:
+        return None
+    for target in targets:
+        normalized = Path(target).as_posix().casefold()
+        aliases = {normalized}
+        if normalized.startswith(".claude/"):
+            aliases.add(normalized.removeprefix(".claude/"))
+        if any(alias in hint for alias in aliases):
+            return target
+    generic = hint.strip()
+    if generic in {"prompt", "system_prompt"}:
+        return next((target for target in targets if Path(target).as_posix() == "CLAUDE.md"), None)
+    if generic in {"mcp", "mcp_config"}:
+        return next((target for target in targets if Path(target).as_posix() == ".mcp.json"), None)
+    if generic in {"runtime_config", "settings"}:
+        return next((target for target in targets if Path(target).as_posix() == ".claude/settings.json"), None)
+    if generic == "skill":
+        return next((target for target in targets if Path(target).as_posix().startswith(".claude/skills/")), None)
+    return None
 
 
 @dataclass(frozen=True)
@@ -383,10 +424,18 @@ class ImprovementExecutionService:
         trace_ref: dict[str, str],
     ) -> FormatterOutputModel:
         spec = agent_job_spec(AgentJobType.EXECUTION)
-        changes = [change for change in (getattr(plan, "changes", []) or []) if isinstance(change, dict)]
-        recommendations = [str(change.get("change", "")).strip() for change in changes if change.get("change")]
+        changes = [
+            _ExecutionPlanChange(
+                target=str(change.get("target") or ""),
+                change=str(change.get("change") or ""),
+            )
+            for change in (getattr(plan, "changes", []) or [])
+            if isinstance(change, dict)
+        ]
+        scoped_recommendations = _scoped_execution_recommendations(changes, targets)
         plan_summary = getattr(plan, "summary", "") or "优化方案"
-        primary = targets[0]
+        primary = scoped_recommendations[0][0] if scoped_recommendations else targets[0]
+        recommendations = [recommendation for _, recommendation in scoped_recommendations]
         job_input: JsonObject = {
             "proposal": {
                 "title": plan_summary[:200],
@@ -394,7 +443,7 @@ class ImprovementExecutionService:
                 "objective": plan_summary,
                 "recommendation": "；".join(recommendations) or plan_summary,
                 "recommended_actions": recommendations or [plan_summary],
-                "target_type": str((changes[0].get("target") if changes else "prompt") or "prompt"),
+                "target_type": primary,
                 "target_path": primary,
                 "target_summary": f"在 {primary} 等可写配置资产落实：{plan_summary}",
             },

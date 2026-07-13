@@ -34,7 +34,7 @@ class AgentSummaryResponse(BaseModel):
     origin: str = Field(default="user", description="来源：seed（声明式基线，禁删，去 seed 源移除）/ user（用户创建，可删除）。")
     requires_web_hitl: bool = Field(
         default=False,
-        description="部署契约：为 true 时该 Agent 的响应处置执行（ask 型工具）依赖 ENABLE_CLAUDE_WEB_HITL；关闭时执行能力不可用（运行时 fail-loud）。",
+        description="从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。",
     )
 
 
@@ -78,68 +78,3 @@ class AgentDeletionImpact(BaseModel):
 class AgentDeleteResponse(BaseModel):
     deleted: AgentSummaryResponse
     impact: AgentDeletionImpact = Field(description="删除前的治理影响面提示，避免无声删除治理对象。")
-
-
-class ScenarioPackCreateRequest(BaseModel):
-    name: str
-    business_goal: str = Field(default="", description="场景包的业务目标。")
-    scope: str = Field(default="", description="适用范围。")
-    risk_level: str = Field(default="medium", description="风险等级：low/medium/high。")
-
-
-class ScenarioPackResponse(BaseModel):
-    """场景包/能力域（AGV-026/027）：业务目标+适用范围+风险等级，关联 Agent/eval/资产。"""
-
-    scenario_pack_id: str
-    name: str
-    business_goal: str = ""
-    scope: str = ""
-    risk_level: str = "medium"
-    created_at: str
-    agent_ids: list[str] = Field(default_factory=list, description="装配了该场景包能力的 Agent。")
-    eval_case_ids: list[str] = Field(default_factory=list)
-    asset_refs: list[str] = Field(default_factory=list, description="关联的 prompt/skill/SOP/发布准入规则等资产引用。")
-    merged_into: Optional[str] = Field(default=None, description="若被合并，指向主资产场景包 id（引用经此重定向，不丢失）。")
-
-
-class DuplicateScenarioPackGroupResponse(BaseModel):
-    """一组规范化重名的疑似重复场景包及合并建议（AGV-023）。"""
-
-    normalized_name: str
-    scenario_pack_ids: list[str]
-    suggested_primary_id: str
-
-
-class ScenarioPackMergeRequest(BaseModel):
-    duplicate_ids: list[str] = Field(description="并入主资产的重复场景包 id 列表。")
-
-
-class ScenarioPackAssociateRequest(BaseModel):
-    agent_ids: Optional[list[str]] = Field(default=None, description="装配该场景包的 Agent（追加）。")
-    eval_case_ids: Optional[list[str]] = Field(default=None, description="关联的 eval case（追加）。")
-    asset_refs: Optional[list[str]] = Field(default=None, description="关联的资产引用（追加）。")
-
-
-class ScenarioPackCopyRequest(BaseModel):
-    name: str = Field(description="复制出的新场景包名称。")
-
-
-class ScenarioPackAgentValidation(BaseModel):
-    """跨 Agent 复用的单 Agent 验证结果（评估报告）。"""
-
-    agent_id: str
-    eval_runs: int = Field(default=0, description="该 Agent 已完成的评估运行数。")
-    passed_eval_runs: int = Field(default=0, description="其中通过（passed/passed_with_notes）的评估运行数。")
-    latest_result_status: Optional[str] = Field(default=None, description="最近一次完成评估的结果状态。")
-
-
-class ScenarioPackReuseProvenanceResponse(BaseModel):
-    """场景包跨 Agent 复用记录（AGV-010/045）：来源、适用范围、风险、方法论资产与跨 Agent 评估报告。"""
-
-    scenario_pack_id: str
-    source_pack_id: Optional[str] = Field(default=None, description="复用来源场景包（copied_from）；原创为 null。")
-    risk_level: str = Field(description="复用风险等级。")
-    scope_agent_ids: list[str] = Field(default_factory=list, description="复用范围：装配该场景包的业务 Agent。")
-    methodology_asset_refs: list[str] = Field(default_factory=list, description="可复用方法论资产引用（prompt/skill/SOP/发布策略）。")
-    methodology_eval_case_ids: list[str] = Field(default_factory=list, description="可复用评估用例（方法论资产）。")
-    validation: list[ScenarioPackAgentValidation] = Field(default_factory=list, description="跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。")

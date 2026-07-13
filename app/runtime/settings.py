@@ -37,10 +37,6 @@ def _string_dict(value: JsonObject) -> dict[str, str]:
     return {str(key): str(val) for key, val in value.items()}
 
 
-def _optional_string_dict(value: JsonObject) -> dict[str, str | None]:
-    return {str(key): None if val is None else str(val) for key, val in value.items()}
-
-
 # main 已并入业务模型：其 workspace/claude-root 由 business_agent_layout(data_dir, "main-agent")
 # 派生（在 /data 下），不再有专属顶层挂载与 env 字段。governor 仍是顶层挂载的特殊治理 Agent。
 MAIN_AGENT_ID = "main-agent"
@@ -163,9 +159,7 @@ class AppSettings(BaseSettings):
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
     host_data_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "data"), alias="HOST_DATA_MOUNT")
-    host_governor_workspace_mount: str = Field(
-        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "governor-workspace"), alias="HOST_GOVERNOR_WORKSPACE_MOUNT"
-    )
+    host_governor_workspace_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "governor-workspace"), alias="HOST_GOVERNOR_WORKSPACE_MOUNT")
     host_governor_claude_root_mount: str = Field(
         default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "governor"), alias="HOST_GOVERNOR_CLAUDE_ROOT_MOUNT"
     )
@@ -192,10 +186,6 @@ class AppSettings(BaseSettings):
 
     agent_model: Optional[str] = Field(default="claude-sonnet-4-5", alias="AGENT_MODEL")
     fallback_model: Optional[str] = Field(default=None, alias="FALLBACK_MODEL")
-    default_agent: Optional[str] = Field(default=None, alias="DEFAULT_AGENT")
-
-    default_skills_raw: Optional[str] = Field(default=None, alias="DEFAULT_SKILLS")
-    default_skills_mode: Literal["all", "default", "none"] = Field(default="default", alias="DEFAULT_SKILLS_MODE")
     claude_system_append: Optional[str] = Field(default=None, alias="CLAUDE_SYSTEM_APPEND")
 
     enable_sdk_session_resume: bool = Field(default=True, alias="ENABLE_SDK_SESSION_RESUME")
@@ -205,9 +195,7 @@ class AppSettings(BaseSettings):
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
     dspy_output_formatter_model: Optional[str] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_MODEL")
-    dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(
-        default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS"
-    )
+    dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS")
     dspy_output_formatter_max_retries: int = Field(default=1, alias="DSPY_OUTPUT_FORMATTER_MAX_RETRIES")
     dspy_output_formatter_max_tokens: int = Field(default=8192, alias="DSPY_OUTPUT_FORMATTER_MAX_TOKENS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
@@ -217,9 +205,7 @@ class AppSettings(BaseSettings):
     max_buffer_size: Optional[int] = Field(default=None, alias="MAX_BUFFER_SIZE")
 
     claude_cli_path: Optional[Path] = Field(default=None, alias="CLAUDE_CLI_PATH")
-    claude_add_dirs_raw: Optional[str] = Field(default=None, alias="CLAUDE_ADD_DIRS")
     claude_betas_raw: Optional[str] = Field(default=None, alias="CLAUDE_BETAS")
-    permission_prompt_tool_name: Optional[str] = Field(default=None, alias="PERMISSION_PROMPT_TOOL_NAME")
     claude_user: Optional[str] = Field(default=None, alias="CLAUDE_USER")
     max_thinking_tokens: Optional[int] = Field(default=None, alias="MAX_THINKING_TOKENS")
     effort: Optional[Literal["low", "medium", "high", "xhigh", "max"]] = Field(default=None, alias="EFFORT")
@@ -228,7 +214,6 @@ class AppSettings(BaseSettings):
     load_timeout_ms: int = Field(default=60000, alias="LOAD_TIMEOUT_MS")
 
     claude_env_json: Optional[str] = Field(default=None, alias="CLAUDE_ENV_JSON")
-    claude_extra_args_json: Optional[str] = Field(default=None, alias="CLAUDE_EXTRA_ARGS_JSON")
 
     agent_git_service_provider: Literal["local", "gitea"] = Field(default="local", alias="AGENT_GIT_SERVICE_PROVIDER")
     agent_git_service_url: Optional[str] = Field(default=None, alias="AGENT_GIT_SERVICE_URL")
@@ -325,29 +310,16 @@ class AppSettings(BaseSettings):
         return (self.claude_config_dir or self.claude_home) / "projects"
 
     @property
-    def default_skills(self) -> Optional[list[str]]:
-        skills = _csv(self.default_skills_raw)
-        return skills or None
-
-    @property
-    def claude_add_dirs(self) -> list[str]:
-        return _csv(self.claude_add_dirs_raw)
-
-    @property
     def claude_betas(self) -> list[str]:
         return _csv(self.claude_betas_raw)
 
     @property
-    def setting_sources(self) -> Optional[list[str]]:
-        return None
+    def setting_sources(self) -> list[str]:
+        return ["project"]
 
     @property
     def claude_env(self) -> dict[str, str]:
         return _string_dict(_json_object(self.claude_env_json))
-
-    @property
-    def claude_extra_args(self) -> dict[str, str | None]:
-        return _optional_string_dict(_json_object(self.claude_extra_args_json))
 
     @property
     def langfuse_otel_signals(self) -> list[str]:
@@ -382,15 +354,11 @@ class AppSettings(BaseSettings):
 
     @property
     def agent_git_worktrees_dir(self) -> Path:
-        return self.agent_git_worktrees_dir_override or business_agent_layout(
-            self.data_dir, MAIN_AGENT_ID
-        ).version_base / "worktrees"
+        return self.agent_git_worktrees_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "worktrees"
 
     @property
     def agent_release_archives_dir(self) -> Path:
-        return self.agent_release_archives_dir_override or business_agent_layout(
-            self.data_dir, MAIN_AGENT_ID
-        ).version_base / "releases"
+        return self.agent_release_archives_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "releases"
 
     @property
     def runtime_db_path(self) -> Path:
@@ -458,6 +426,4 @@ def validate_hitl_single_api_process(settings: AppSettings, env: Mapping[str, st
         except ValueError as exc:
             raise RuntimeError(f"{key} must be an integer when ENABLE_CLAUDE_WEB_HITL=true") from exc
         if count > 1:
-            raise RuntimeError(
-                f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions"
-            )
+            raise RuntimeError(f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions")

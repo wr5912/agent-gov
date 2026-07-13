@@ -202,6 +202,7 @@ class SocEventRecord(StrictRuntimeRecord):
     event_type: SocEventType
     timestamp: str
     created_at: str
+    agent_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -245,6 +246,7 @@ class SocEventRecord(StrictRuntimeRecord):
                 "event_id": row.event_id,
                 "event_type": row.event_type,
                 "source_system": row.source_system,
+                "agent_id": row.agent_id,
                 "run_id": row.run_id,
                 "matched_run_id": row.matched_run_id,
                 "session_id": row.session_id,

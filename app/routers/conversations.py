@@ -5,7 +5,6 @@ from collections.abc import Callable
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from fastapi.concurrency import run_in_threadpool
 
 from app.routers.sessions import _resolve_owning_profile
 from app.runtime.errors import NotFoundError
@@ -25,6 +24,7 @@ from app.runtime.openai_responses_schemas import (
     ConversationItemList,
     ConversationList,
 )
+from app.runtime.sdk_session_migration import committed_sdk_history_store
 from app.runtime.session_history import read_session_history
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
@@ -86,12 +86,17 @@ async def _list_items_impl(
     if not session.sdk_session_id:
         return ConversationItemList()  # 尚无 SDK transcript -> 空历史（非 owning-agent 错误）
     workspace_dir, claude_config_dir = _resolve_owning_profile(settings, agent_registry_store, session)
-    offset = _offset_from_cursor(after)
-    history = await run_in_threadpool(
-        read_session_history,
-        sdk_session_id=session.sdk_session_id,
+    session, sdk_store = await committed_sdk_history_store(
+        session_store,
+        session,
         workspace_dir=workspace_dir,
         claude_config_dir=claude_config_dir,
+    )
+    offset = _offset_from_cursor(after)
+    history = await read_session_history(
+        sdk_store=sdk_store,
+        sdk_session_id=session.sdk_session_id,
+        workspace_dir=workspace_dir,
         scrub=settings.session_history_scrub,
         limit=limit + 1,  # 多取一条判定 has_more，避免「恰好 limit 条 -> 误 True -> 下一页空」off-by-one
         offset=offset,

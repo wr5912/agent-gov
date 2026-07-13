@@ -8,8 +8,9 @@ from sqlalchemy.orm import sessionmaker
 from ..asset_db import AssetModel
 from ..errors import BusinessRuleViolation, NotFoundError
 from ..runtime_db import utc_now
+from .test_dataset_store import TestDatasetStore
 
-ASSET_TYPES = {"regression", "test_dataset", "methodology", "execution", "audit"}
+ASSET_TYPES = {"methodology", "execution", "audit"}
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,7 @@ class AssetStore:
 
     def __init__(self, session_factory: sessionmaker) -> None:
         self._session_factory = session_factory
+        self.test_datasets = TestDatasetStore(session_factory)
 
     def list_assets(
         self,
@@ -38,8 +40,10 @@ class AssetStore:
         asset_type: str | None = None,
         source_improvement_id: str | None = None,
     ) -> list[AssetRecord]:
+        if asset_type and asset_type not in ASSET_TYPES:
+            raise BusinessRuleViolation(f"Unknown asset_type: {asset_type}; expected one of {sorted(ASSET_TYPES)}")
         with self._session_factory.begin() as db:
-            query = db.query(AssetModel)
+            query = db.query(AssetModel).filter(AssetModel.asset_type.in_(ASSET_TYPES))
             if agent_id:
                 query = query.filter(AssetModel.agent_id == agent_id)
             if asset_type:
@@ -52,7 +56,7 @@ class AssetStore:
     def get_asset(self, asset_id: str) -> AssetRecord | None:
         with self._session_factory.begin() as db:
             row = db.get(AssetModel, asset_id)
-            return _record(row) if row is not None else None
+            return _record(row) if row is not None and row.asset_type in ASSET_TYPES else None
 
     def create_asset(
         self,

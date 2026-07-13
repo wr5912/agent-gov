@@ -173,9 +173,14 @@ make ui-up
 make ui-smoke
 ```
 
-反馈优化工作台浏览器回归使用 Playwright，默认读取 `docker/.env` 中的 `API_KEY` 并按 Compose 端口访问 `http://localhost:55173` 和 `http://localhost:58080`。该检查会创建一条测试反馈信号和改进事项，并把截图写入根目录 `artifacts/`：
+反馈优化工作台的确定性设计基线使用 mock 后端；真实功能与效果验收必须显式指向已经启动的容器 UI/API，不会回退到 mock。真实检查会创建测试改进事项、执行四阶段业务动作、固化并以 revision CAS 激活 typed TestDataset、运行候选回归、逐条完成人工复核并走普通发布，确认刷新后仍投影持久化 EvalRun 和审计决策，并把三种视口和失败详情截图写入 `/tmp`：
 
 ```bash
+make ui-design-parity
+
+RUNTIME_UI_BASE=http://localhost:55173 \
+RUNTIME_API_BASE=http://localhost:58080 \
+RUNTIME_API_KEY='<optional-api-key>' \
 make ui-feedback-smoke
 ```
 
@@ -207,12 +212,15 @@ pnpm --dir frontend generate:api-types
 - Agent job 队列：`GET /api/agent-jobs`、`GET /api/agent-jobs/{job_id}`。
 - 证据包与分析任务：`POST /api/feedback-cases/{feedback_case_id}/evidence-packages`、`GET /api/evidence-packages/{evidence_package_id}`、`GET /api/evidence-packages/{evidence_package_id}/files/{file_name}`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs`、`POST /api/feedback-cases/{feedback_case_id}/attribution-jobs/regenerate`。
 - 改进事项四阶段内容：`POST/GET /api/improvements`、`GET /api/improvements/{improvement_id}`、`POST /api/improvements/{improvement_id}/lifecycle`、`POST /api/improvements/{improvement_id}/archive`、`GET/PUT /api/improvements/{improvement_id}/normalized-feedback`、`POST /api/improvements/{improvement_id}/normalized-feedback/confirm`、`GET/PUT /api/improvements/{improvement_id}/attribution`、`POST /api/improvements/{improvement_id}/attribution/generate`、`POST /api/improvements/{improvement_id}/attribution/confirm`、`GET/PUT /api/improvements/{improvement_id}/optimization-plan`、`POST /api/improvements/{improvement_id}/optimization-plan/generate`、`POST /api/improvements/{improvement_id}/optimization-plan/confirm`、`GET /api/improvements/{improvement_id}/execution`、`POST /api/improvements/{improvement_id}/execution/apply`、`POST /api/improvements/{improvement_id}/execution/confirm`、`GET /api/improvements/{improvement_id}/regression-assessment`、`POST /api/improvements/{improvement_id}/regression-assessment/generate`、`POST /api/improvements/{improvement_id}/regression-assessment/confirm`、`GET /api/langfuse/traces/{trace_id}`。内容写入或生成成功后由后端推进对应阶段；`/lifecycle` 只允许返回较早阶段返工，不提供通用前推。执行记录只能由隔离 worktree 的 `execution/apply` 业务动作生成，客户端不能手工伪造已执行证据。
-- 评估、回归资产和版本治理：`POST /api/eval-datasets/feedback/sync`、`GET /api/eval-cases`、`PATCH /api/eval-cases/{eval_case_id}`、`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`POST/GET /api/eval-runs/{eval_run_id}/impact-analysis`、`GET /api/regression-assets`、`GET/PATCH /api/regression-assets/{eval_case_id}`、`POST /api/regression-assets/{eval_case_id}/promote`、`POST /api/regression-assets/{eval_case_id}/archive`、`POST /api/regression-assets/{eval_case_id}/mark-flaky`、`POST /api/regression-assets/{eval_case_id}/unmark-flaky`、`POST /api/regression-assets/{eval_case_id}/supersede`、`GET /api/regression-assets/{eval_case_id}/revisions`、`GET /api/regression-assets/{eval_case_id}/governance-events`、`GET /api/agent-repository`、`POST /api/agent-repository/discard-changes`、`POST /api/agent-repository/snapshot`、`GET /api/agent-repository/current`、`POST/GET /api/agent-change-sets`、`GET /api/agent-change-sets/{change_set_id}`、`GET /api/agent-change-sets/{change_set_id}/events`、`GET /api/agent-change-sets/{change_set_id}/diff`、`GET /api/agent-change-sets/{change_set_id}/file-diff`、`POST /api/agent-change-sets/{change_set_id}/publish`、`GET /api/agent-releases`、`GET /api/agent-releases/{release_id}`、`POST /api/agent-releases/{release_id}/restore`。
+- typed 测试数据集：`POST /api/improvements/{improvement_id}/test-dataset/adopt`、`GET /api/test-datasets`、`GET /api/test-datasets/{dataset_id}`、`POST /api/test-datasets/{dataset_id}/lifecycle`、`GET /api/test-datasets/{dataset_id}/revisions`。数据集由确认后的事项证据链派生，按业务 Agent 隔离并以 expected revision 推进生命周期；事项返工产生新的 execution / 回归评估证据链时会采用为新的确定性 dataset 版本，旧数据集及历史 EvalRun 快照保持不变。只有 `active` 可启动运行，EvalRun 原子占用为 `evaluating` 并在完成、失败或取消后恢复 `active`；运行时以 15 分钟 heartbeat 租约保护活跃 EvalRun，新 API 进程不会抢占仍在执行的运行，过期任务由启动检查和每分钟 reconciliation 收口。
+- 评估与版本治理：`POST/GET /api/eval-runs`、`GET /api/eval-runs/{eval_run_id}`、`GET /api/agent-repository`、`POST /api/agent-repository/discard-changes`、`POST /api/agent-repository/snapshot`、`GET /api/agent-repository/current`、`POST/GET /api/agent-change-sets`、`GET /api/agent-change-sets/{change_set_id}`、`GET /api/agent-change-sets/{change_set_id}/events`、`GET /api/agent-change-sets/{change_set_id}/diff`、`GET /api/agent-change-sets/{change_set_id}/file-diff`、`POST /api/agent-change-sets/{change_set_id}/regression-runs`、`POST /api/agent-change-sets/{change_set_id}/regression-runs/{eval_run_id}/review`、`POST /api/agent-change-sets/{change_set_id}/publish`、`GET /api/agent-releases`、`GET /api/agent-releases/{release_id}`、`POST /api/agent-releases/{release_id}/restore`、`POST /api/agent-releases/{release_id}/rollback`。候选回归入口会在运行前精确校验 TestDataset 的事项、execution 与 candidate provenance；手工 `/api/eval-runs` 不替代 ChangeSet 发布门禁。自然语言 `expected_behavior` / `checkpoints` 没有结构化断言时，ChangeSet 进入 `regression_review_required`。review 请求必须以 `review_id` 幂等绑定当前 EvalRun，携带操作人、原因、固定 scope 和全部待复核 case 决策；全接受后以 `passed_with_notes` 打开普通发布门禁，任一拒绝继续阻断。原始 item/check 证据不改写，人工复核也不能覆盖 required check 失败或替代强制发布。
+
+3.0.0 删除旧 `/api/eval-cases*`、`/api/regression-assets*`、`/api/scenario-packs*`、反馈用例生成/同步路由和 `eval_case_generation` Agent job，不提供双读写兼容层。升级现有运行卷时，SQLite migration 0040 会先把旧全局用例、场景包、独立 regression 资产、旧运行归档和旧 job 的完整原始行写入 `archived_legacy_evaluation_rows`，再在同一写事务中删除旧表/记录；客户端应迁移到 Improvement `regression-assessment`、typed TestDataset 和 EvalRun API。同版本还将 `POST /api/feedback-cases` 的旧 `source_ids` 替换为必填且非空的 typed `source_refs: [{source_kind, source_id}]`；客户端必须先写入或识别反馈来源，不得直接提交 `run_id`/`session_id` 等投影字段。
 
 运行态数据默认保存在 Docker 数据卷 `/data` 下，对应宿主机 `${HOME}/volume-agent-gov/data/`：
 
-- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、改进事项、四阶段内容子资源、评估用例、评估运行和 API session 的权威存储。
-- 归因、方案、执行和回归用例生成的治理 Agent 结果都以 SQLite 为权威存储；后端从 SQLite、证据包和 Langfuse trace 构造 prompt context，不再要求内部 Agent 读取 job 输入目录。
+- `/data/runtime.sqlite3` 是反馈信号、SOC 事件、处置单、证据包 manifest 和文件内容、`agent_jobs`、改进事项、四阶段内容子资源、typed TestDataset、EvalRun 和 API session 的权威存储。
+- 归因、方案、执行和回归评估的治理 Agent 结果都以 SQLite 为权威存储；后端从 SQLite、证据包和 Langfuse trace 构造 prompt context，不再要求内部 Agent 读取 job 输入目录。
 - `/data/business-agents/<agent_id>/workspace` 是业务智能体 Git 版本源；候选 worktree 默认在同级 `version/worktrees/`，发布归档默认在 `version/releases/`。预制 `main-agent` 对应 `/data/business-agents/main-agent/version/{worktrees,releases}`。
 - `/data/feedback-signals/`、`/data/soc-events/`、`/data/feedback-cases/` 等旧目录仅为兼容路径，不再是权威存储。
 
@@ -328,7 +336,7 @@ OTEL_LOG_RAW_API_BODIES=1
 - docker 镜像 tag 由 `make build` / `make up` 从 `VERSION` 注入 `${APP_VERSION}` 派生，不在 compose 硬编码。
 - git release tag 为 `v` + `VERSION`。
 
-发布流程：① 改 `VERSION` → ② `make sync-version` → ③ `make test`（含版本一致性硬门）→ ④ commit → ⑤ `git tag v$(cat VERSION) && git push --tags`。
+发布流程：① 改 `VERSION` → ② `make sync-version` → ③ 使用该版本镜像完成 `make test` 与真实容器验收 → ④ commit 并推送目标分支 → ⑤ `make tag`。`make tag` 只创建并推送 `v<VERSION>` 这一枚 annotated tag；禁止使用 `git push --tags` 批量推送本地 tag。
 
 `scripts/check_version_consistency.py`（已并入 `make test` 的 `codex-guard`）断言上述各处与 `VERSION` 一致，并在 HEAD 带 `v*` tag 时要求其等于 `v`+`VERSION`，从根上堵住"打 tag 不 bump 版本号"的漂移。
 
@@ -354,19 +362,18 @@ curl -X POST "$API_BASE/api/chat" \
   -H "Authorization: Bearer $API_KEY" \
   -d '{
     "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-    "skills_mode": "all"
+    "agent_id": "main-agent"
   }'
 ```
 
-指定 subagent 和 skill：
+选择其他已注册业务 Agent：
 
 ```bash
 curl -X POST "$API_BASE/api/chat" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
   -d '{
-    "agent": "soc-analyst",
-    "skills": ["alert-triage"],
+    "agent_id": "soc-analyst",
     "message": "分析这个告警：rundll32.exe 加载 WININET.dll，父进程为 EdgeUpdate，命令行为 DispatchAPICall 1"
   }'
 ```
@@ -377,7 +384,7 @@ curl -X POST "$API_BASE/api/chat" \
 curl -N -X POST "$API_BASE/api/chat/stream" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $API_KEY" \
-  -d '{"message":"你好，先介绍你的能力", "skills_mode":"all"}'
+  -d '{"message":"你好，先介绍你的能力", "agent_id":"main-agent"}'
 ```
 
 ## OpenAI Compatible 接口
@@ -396,7 +403,7 @@ curl -X POST "$API_BASE/v1/chat/completions" \
   }'
 ```
 
-注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现；真正的 Agent 偏好参数，如 `agent`、`skills`，建议使用 `/api/chat`。工具权限、MCP 和 hooks 以 Claude Code 官方配置文件为准。
+注意：这是兼容接入用的轻量 shim，不是完整 OpenAI API 实现。新集成使用 `/v1/responses` 的 `agentgov.agent_id` 显式选择业务 Agent；原生 `/api/chat*` 同样要求 `agent_id`。`agent`、`skills`、`skills_mode`、`allowed_tools`、`disallowed_tools` 和 `permission_mode` 已从 Chat 请求契约删除，传入会返回 `422`。工具权限、MCP、skills、subagents 和 hooks 以业务 Agent workspace 的 Claude Code 项目配置为准。
 
 ## 管理 API
 
@@ -494,7 +501,7 @@ agent: soc-analyst
 
 ## 权限与安全
 
-`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。Agent、skill、MCP 与项目权限规则仍由 Claude Code project discovery 加载；Runtime 不注入 agents 或工具 allow/deny 列表，但会通过 `ClaudeAgentOptions` 设置 `setting_sources`、`permission_mode`、`PreToolUse` hooks，并在 HITL/fail-closed 场景注入 `can_use_tool` callback。
+`SKILL.md` 的 `allowed-tools` 字段兼容 Claude Code CLI。Agent、skill、MCP、权限、hooks 和 sandbox 均由 Claude Code project discovery 加载。Runtime 的 `ClaudeAgentOptions` 只选择 `setting_sources=["project"]`，不注入 agents、工具 allow/deny、`permission_mode` 或 hooks；`can_use_tool` 仅作为项目权限规则判定为 `ask` 后的人机交互桥，不参与 allow/deny 判定。
 
 默认 `docker/runtime-volume-seeds/data/business-agents/<agent_id>/workspace/.claude/settings.json` 中设置：
 
@@ -503,7 +510,13 @@ agent: soc-analyst
   "permissions": {
     "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Bash(*)", "Write(/data/outputs/**)", "mcp__sec-ops-data__*"],
     "ask": ["Edit(./**)", "Write(./**)"],
-    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(/claude-roots/main/.claude.json)"]
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(/data/business-agents/**/claude-root/**)",
+      "Read(/data/agent-governance/**)",
+      "Read(/data/runtime.sqlite3*)"
+    ]
   }
 }
 ```
@@ -515,7 +528,9 @@ agent: soc-analyst
 - 写/处置类 MCP 工具如放入 `ask`，才会在 `/api/chat/stream` + `ENABLE_CLAUDE_WEB_HITL=true` 下走 Web 确认卡片。
 - 任何未预先允许且未进入 `ask` 的工具不会弹交互式确认，而是拒绝。
 
-`app/runtime/policy.py` 还提供了 SDK 级 PreToolUse hook，用于阻断高危 Bash 命令，并把 main profile 的 `Write` 限制在 `/data/outputs`。日报类输出应写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
+高危 Bash 阻断由 workspace `.claude/settings.json` 中的原生 `PreToolUse` command hook 与 fail-closed sandbox 执行，hook 脚本随 workspace 配置一同治理；后端不保留并行策略实现。日报类输出应写入 `/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`。
+
+容器启动会在 bootstrap 后执行幂等的 native workspace policy 迁移，为既有业务 Agent 卷补齐上述敏感读取边界和 fail-closed hook；实际修改会先备份并写入 hash/version 审计，迁移失败会阻断服务启动。`requires_web_hitl` 仅是从 workspace `permissions.ask` 派生的只读观测值，权限真相仍只在 project settings。
 
 不要把宿主机敏感目录挂入容器，例如：
 

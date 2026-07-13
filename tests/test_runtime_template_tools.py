@@ -13,9 +13,9 @@ SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+import restore_runtime_template_backup as restore_module  # noqa: E402
 from bootstrap_runtime_volume import LOCAL_DEBUG_RUNTIME_VOLUME_ROOT, bootstrap_runtime_volume, resolve_runtime_root  # noqa: E402
 from export_runtime_template import _create_backup, export_runtime_template  # noqa: E402
-from reconcile_business_agent_hitl_policy import reconcile_business_agent_hitl_policy  # noqa: E402
 from restore_runtime_template_backup import restore_backup  # noqa: E402
 from runtime_cleanup import cleanup_runtime_artifacts  # noqa: E402
 from runtime_template_safety import sanitize_path, scan_path  # noqa: E402
@@ -225,7 +225,7 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
         json.dumps(
             {
                 "permissions": {"allow": ["Write(/data/outputs/**)"], "deny": ["Read(/claude-roots/main/.claude.json)"]},
-                "hooks": {"PreToolUse": [{"hooks": [{"command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\""}]}]},
+                "hooks": {"PreToolUse": [{"hooks": [{"command": 'python "$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py"'}]}]},
                 "sandbox": {
                     "filesystem": {"allowWrite": ["/data/outputs"], "denyRead": ["/claude-roots/main/.claude.json"]},
                     "network": {"allowedDomains": ["${SERVICE_HOST}", "${INTERNAL_DOMAIN}"]},
@@ -285,7 +285,7 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
     assert str(runtime_root / "data" / "outputs") in settings["permissions"]["allow"][0]
     assert str(runtime_root / "claude-roots" / "main" / ".claude.json") in settings["permissions"]["deny"][0]
-    assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\""
+    assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == 'python "$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py"'
     assert settings["sandbox"]["network"]["allowedDomains"] == ["localhost", "127.0.0.1", "host.docker.internal", "*.internal", "*.corp"]
     assert f"workspace: {runtime_root / 'main-workspace'}" in agent
     assert "data_root: /data\n" not in agent
@@ -332,140 +332,6 @@ def test_bootstrap_runtime_volume_renders_response_disposal_mcp_urls(tmp_path):
     assert mcp["mcpServers"]["sec-ops"]["url"] == "http://localhost:58003/mcp"
     assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://localhost:58002/mcp"
     assert mcp["mcpServers"]["soc-playbook-execution"]["url"] == "http://localhost:58001/mcp"
-
-
-def test_reconcile_business_agent_hitl_policy_dry_run_and_apply(tmp_path):
-    template = tmp_path / "template"
-    template_workspace = template / "data" / "business-agents" / "main-agent" / "workspace"
-    template_settings = template_workspace / ".claude"
-    template_hooks = template_workspace / "hooks"
-    template_settings.mkdir(parents=True)
-    template_hooks.mkdir(parents=True)
-    (template_settings / "settings.json").write_text(
-        json.dumps(
-            {
-                "permissions": {
-                    "allow": ["mcp__sec-ops-data__*"],
-                    "ask": ["mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"],
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    (template_hooks / "pre_tool_guard.py").write_text("# hard deny only\nsys.exit(0)\n", encoding="utf-8")
-    (template_workspace / "CLAUDE.md").write_text(
-        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- Bash 已由 settings 直接放行，风险由 sandbox、PreToolUse hook 和 deny 规则拦截，不走 Web HITL。\n- ask 型 MCP 写入/处置工具的最终授权由 Claude 原生 Web 确认卡片处理。\n- 触发 MCP Web 确认后，等待用户在确认卡片中允许一次或拒绝，不要重复输出处置计划/确认表格。\n\n## 5. 输出规范\n",
-        encoding="utf-8",
-    )
-    runtime_root = tmp_path / "runtime"
-    workspace = runtime_root / "data" / "business-agents" / "main-agent" / "workspace"
-    settings_dir = workspace / ".claude"
-    hooks_dir = workspace / "hooks"
-    settings_dir.mkdir(parents=True)
-    hooks_dir.mkdir(parents=True)
-    old_settings = {
-        "permissions": {
-            "allow": ["mcp__sec-ops-data__*", "mcp__*__*write*", "mcp__*__*update*", "mcp__*__*delete*"],
-            "ask": ["Bash(*)"],
-        }
-    }
-    (settings_dir / "settings.json").write_text(json.dumps(old_settings), encoding="utf-8")
-    (workspace / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"soc-playbook-query": {"type": "http", "url": "${SOC_PLAYBOOK_QUERY_MCP_URL}"}}}),
-        encoding="utf-8",
-    )
-    (hooks_dir / "pre_tool_guard.py").write_text('print("permissionDecision\\": \\"allow\\"")\n# MCP 写入/处置动作放行\n', encoding="utf-8")
-    (workspace / "CLAUDE.md").write_text(
-        "# Agent\n\n确认与执行规则（避免重复确认死循环）：\n\n- 用户确认后必须立即调用对应工具执行。\n\n## 5. 输出规范\n",
-        encoding="utf-8",
-    )
-
-    dry_run = reconcile_business_agent_hitl_policy(
-        runtime_root=runtime_root,
-        template_dir=template,
-        env_file=tmp_path / "missing.env",
-        runtime_volume_mode="container",
-        apply=False,
-    )
-
-    assert dry_run["dry_run"] is True
-    assert len(dry_run["changes"]) == 4
-    assert json.loads((settings_dir / "settings.json").read_text(encoding="utf-8")) == old_settings
-
-    applied = reconcile_business_agent_hitl_policy(
-        runtime_root=runtime_root,
-        template_dir=template,
-        env_file=tmp_path / "missing.env",
-        runtime_volume_mode="container",
-        apply=True,
-        operator="pytest",
-    )
-
-    updated = json.loads((settings_dir / "settings.json").read_text(encoding="utf-8"))["permissions"]
-    mcp = json.loads((workspace / ".mcp.json").read_text(encoding="utf-8"))
-    assert "mcp__*__*write*" not in updated["allow"]
-    assert "mcp__*__*write*" in updated["ask"]
-    assert "Bash(*)" in updated["allow"]
-    assert "Bash(*)" not in updated["ask"]
-    assert mcp["mcpServers"]["soc-playbook-query"]["url"] == "http://host.docker.internal:58001/mcp"
-    assert (hooks_dir / "pre_tool_guard.py").read_text(encoding="utf-8") == "# hard deny only\nsys.exit(0)\n"
-    claude_md = (workspace / "CLAUDE.md").read_text(encoding="utf-8")
-    assert "Bash 已由 settings 直接放行" in claude_md
-    assert "Claude 原生 Web 确认卡片" in claude_md
-    assert applied["changes"][0].get("backup")
-    event_log = runtime_root / "data" / "transcripts" / "business-agent-hitl-reconcile.jsonl"
-    assert event_log.exists()
-    event = json.loads(event_log.read_text(encoding="utf-8").strip())
-    assert event["operator"] == "pytest"
-    assert event["change_count"] == 4
-
-
-def test_reconcile_security_operations_expert_hitl_policy_execute_only(tmp_path):
-    template = tmp_path / "template"
-    (template / "data" / "business-agents" / "security-operations-expert" / "workspace").mkdir(parents=True)
-    runtime_root = tmp_path / "runtime"
-    workspace = runtime_root / "data" / "business-agents" / "security-operations-expert" / "workspace"
-    settings_dir = workspace / ".claude"
-    settings_dir.mkdir(parents=True)
-    old_settings = {
-        "permissions": {
-            "allow": ["mcp__sec-ops__*", "mcp__sec-ops__*delete*"],
-            "ask": [
-                "Bash(*)",
-                "Edit(./**)",
-                "Write(./**)",
-                "mcp__sec-ops__*execute*",
-                "mcp__sec-ops__*manual*",
-                "mcp__sec-ops__*create*",
-                "mcp__sec-ops__*delete*",
-            ],
-            "deny": [],
-        }
-    }
-    (settings_dir / "settings.json").write_text(json.dumps(old_settings), encoding="utf-8")
-
-    reconcile_business_agent_hitl_policy(
-        runtime_root=runtime_root,
-        template_dir=template,
-        env_file=tmp_path / "missing.env",
-        runtime_volume_mode="container",
-        apply=True,
-        operator="pytest",
-    )
-
-    updated = json.loads((settings_dir / "settings.json").read_text(encoding="utf-8"))["permissions"]
-    assert "Bash(*)" in updated["allow"]
-    assert "Edit(./**)" in updated["allow"]
-    assert "Write(./**)" in updated["allow"]
-    assert "mcp__sec-ops__*" in updated["allow"]
-    assert updated["ask"] == ["mcp__sec-ops__soc_api__execute"]
-    assert "Bash(*)" not in updated["ask"]
-    assert "Edit(./**)" not in updated["ask"]
-    assert "Write(./**)" not in updated["ask"]
-    assert "mcp__sec-ops__*manual*" not in updated["ask"]
-    assert "mcp__sec-ops__*create*" not in updated["ask"]
-    assert "mcp__sec-ops__*delete*" not in updated["ask"]
-    assert "AskUserQuestion" in updated["deny"]
 
 
 def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_path):
@@ -574,6 +440,15 @@ def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):
     assert resolve_runtime_root(None, env_file) == LOCAL_DEBUG_RUNTIME_VOLUME_ROOT
 
 
+def _write_runtime_backup(path: Path, sizes: list[int]) -> None:
+    with tarfile.open(path, "w:gz") as archive:
+        for index, size in enumerate(sizes):
+            payload = bytes([index % 256]) * size
+            member = tarfile.TarInfo(f"template/file-{index}.txt")
+            member.size = size
+            archive.addfile(member, io.BytesIO(payload))
+
+
 def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
     template = tmp_path / "template"
     template.mkdir()
@@ -586,9 +461,9 @@ def test_restore_runtime_template_backup_creates_pre_restore_backup(tmp_path):
     restored = restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
 
     assert restored["ok"] is True
-    assert restored["pre_restore_backup"] is None
-    assert restored["cleanup_removed"]
-    assert not backup_dir.exists()
+    assert restored["pre_restore_backup"] is not None
+    assert Path(restored["pre_restore_backup"]).is_file()
+    assert Path(restored["pre_restore_backup"]).parent == backup_dir
     assert (template / "README.md").read_text(encoding="utf-8") == "before"
 
 
@@ -616,6 +491,7 @@ def test_restore_runtime_template_backup_rejects_symlink_member(tmp_path):
 
     assert not (outside / "payload.txt").exists()
     assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
 
 
 def test_restore_runtime_template_backup_rejects_hardlink_member(tmp_path):
@@ -637,4 +513,132 @@ def test_restore_runtime_template_backup_rejects_hardlink_member(tmp_path):
         restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
 
     assert outside.read_text(encoding="utf-8") == "unchanged"
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rejects_excess_member_count(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "too-many-members.tar.gz"
+    _write_runtime_backup(backup_path, [0, 0, 0])
+    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBERS", 2)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="member count budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "sizes", "message"),
+    [
+        ("MAX_TAR_MEMBER_BYTES", 4, [5], "declared byte budget"),
+        ("MAX_TAR_DECLARED_BYTES", 6, [4, 4], "total declared byte budget"),
+    ],
+)
+def test_restore_runtime_template_backup_rejects_declared_byte_budgets(
+    tmp_path,
+    monkeypatch,
+    limit_name,
+    limit,
+    sizes,
+    message,
+):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "declared-budget.tar.gz"
+    _write_runtime_backup(backup_path, sizes)
+    monkeypatch.setattr(restore_module, limit_name, limit)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match=message):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rechecks_actual_member_bytes(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "actual-member-budget.tar.gz"
+    _write_runtime_backup(backup_path, [1])
+    monkeypatch.setattr(restore_module, "MAX_TAR_MEMBER_BYTES", 4)
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda self, member: io.BytesIO(b"12345"))
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="extracted byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rechecks_total_actual_bytes(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "actual-total-budget.tar.gz"
+    _write_runtime_backup(backup_path, [3, 3])
+    monkeypatch.setattr(restore_module, "MAX_TAR_EXTRACTED_BYTES", 5)
+
+    backup_dir = tmp_path / "backups"
+    with pytest.raises(ValueError, match="total extracted byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+    assert not backup_dir.exists()
+
+
+def test_restore_runtime_template_backup_rejects_compressed_archive_budget_before_backup(tmp_path, monkeypatch):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "oversized.tar.gz"
+    backup_path.write_bytes(b"12345")
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(restore_module, "MAX_TAR_ARCHIVE_BYTES", 4)
+
+    with pytest.raises(ValueError, match="compressed byte budget"):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not backup_dir.exists()
+    assert (template / "README.md").read_text(encoding="utf-8") == "current"
+
+@pytest.mark.parametrize(
+    ("limit_name", "limit", "member_name", "message"),
+    [
+        ("MAX_TAR_MEMBER_NAME_BYTES", 12, "template/name-is-too-long.txt", "name exceeds byte budget"),
+        ("MAX_TAR_PATH_DEPTH", 2, "template/a/b/payload.txt", "path exceeds depth budget"),
+    ],
+)
+def test_restore_runtime_template_backup_rejects_member_path_budgets(
+    tmp_path,
+    monkeypatch,
+    limit_name,
+    limit,
+    member_name,
+    message,
+):
+    template = tmp_path / "template"
+    template.mkdir()
+    (template / "README.md").write_text("current", encoding="utf-8")
+    backup_path = tmp_path / "path-budget.tar.gz"
+    with tarfile.open(backup_path, "w:gz") as archive:
+        member = tarfile.TarInfo(member_name)
+        member.size = 1
+        archive.addfile(member, io.BytesIO(b"x"))
+    backup_dir = tmp_path / "backups"
+    monkeypatch.setattr(restore_module, limit_name, limit)
+
+    with pytest.raises(ValueError, match=message):
+        restore_backup(backup_path=backup_path, template_dir=template, backup_dir=backup_dir)
+
+    assert not backup_dir.exists()
     assert (template / "README.md").read_text(encoding="utf-8") == "current"

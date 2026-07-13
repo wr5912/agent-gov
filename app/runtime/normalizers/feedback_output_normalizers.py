@@ -7,8 +7,6 @@ from .feedback_output_records import (
     NormalizedAttributionOutput,
     NormalizedExecutionOperation,
     NormalizedExecutionPlanOutput,
-    NormalizedFeedbackEvalCaseGenerationOutput,
-    NormalizedGeneratedEvalCase,
 )
 
 
@@ -78,15 +76,6 @@ def normalize_attribution_output(payload: JsonObject) -> JsonObject:
     return NormalizedAttributionOutput.model_validate(normalized).to_payload()
 
 
-def _string_list(value: object) -> list[str]:
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if value is None:
-        return []
-    text = str(value).strip()
-    return [text] if text else []
-
-
 def normalize_execution_plan_output(payload: JsonObject) -> JsonObject:
     normalized: JsonObject = dict(payload)
     status = normalized.get("status")
@@ -121,47 +110,6 @@ def normalize_execution_plan_output(payload: JsonObject) -> JsonObject:
         if normalized.get(key) is not None and not isinstance(normalized.get(key), str):
             normalized[key] = _human_text(normalized.get(key))
     return NormalizedExecutionPlanOutput.model_validate(normalized).to_payload()
-
-
-def normalize_feedback_eval_case_generation_output(payload: JsonObject) -> JsonObject:
-    normalized: JsonObject = dict(payload)
-    if "eval_cases" not in normalized and isinstance(normalized.get("eval_case"), dict):
-        normalized["eval_cases"] = [normalized["eval_case"]]
-    cases: list[NormalizedGeneratedEvalCase] = []
-    for item in normalized.get("eval_cases") or []:
-        if not isinstance(item, dict):
-            continue
-        case = dict(item)
-        case.setdefault("schema_version", "feedback-eval-case/v1")
-        case["status"] = _normalize_eval_case_status(case.get("status"))
-        case["asset_layer"] = str(case.get("asset_layer") or "candidate")
-        case["promotion_status"] = str(case.get("promotion_status") or ("approved" if case["status"] == "active" else "candidate"))
-        case["blocking_policy"] = str(case.get("blocking_policy") or ("blocking" if case["status"] == "active" else "non_blocking"))
-        case["severity"] = str(case.get("severity") or "medium")
-        case["flaky_status"] = str(case.get("flaky_status") or "stable")
-        case["variant_role"] = str(case.get("variant_role") or "original_reproduction")
-        case["labels"] = _string_list(case.get("labels"))
-        case["checks_json"] = case.get("checks_json") if isinstance(case.get("checks_json"), dict) else {}
-        for key in ("prompt", "expected_behavior"):
-            if case.get(key) is not None and not isinstance(case.get(key), str):
-                case[key] = _human_text(case.get(key))
-        if not str(case.get("prompt") or "").strip():
-            case["prompt"] = str(case.get("title") or case.get("source_summary") or "").strip()
-        cases.append(NormalizedGeneratedEvalCase.model_validate(case))
-    normalized["eval_cases"] = [case.to_payload() for case in cases]
-    if not cases and not normalized.get("no_action_reason"):
-        normalized["no_action_reason"] = "eval-case-governor 未生成可用评估用例。"
-    normalized["status"] = "completed" if cases and normalized.get("status") != "needs_human_review" else "needs_human_review"
-    return NormalizedFeedbackEvalCaseGenerationOutput.model_validate(normalized).to_payload()
-
-
-def _normalize_eval_case_status(value: object) -> str:
-    status = str(value or "").strip().lower()
-    if status in {"active", "draft", "archived"}:
-        return status
-    if status in {"approved", "blocking"}:
-        return "active"
-    return "draft"
 
 
 def _human_text(value: object) -> str:

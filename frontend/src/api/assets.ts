@@ -5,6 +5,9 @@ import type { RuntimeClientConfig } from "../types/runtime";
 
 export type Asset = components["schemas"]["AssetResponse"];
 export type AssetCreateRequest = components["schemas"]["AssetCreateRequest"];
+export type TestDataset = components["schemas"]["TestDatasetResponse"];
+export type TestDatasetRevision = components["schemas"]["TestDatasetRevisionResponse"];
+export type TestDatasetLifecycleRequest = components["schemas"]["TestDatasetLifecycleRequest"];
 
 export function listAssets(config: RuntimeClientConfig, opts: { agentId?: string; assetType?: string; sourceImprovementId?: string } = {}) {
   const params = new URLSearchParams();
@@ -29,4 +32,56 @@ export function inheritAsset(config: RuntimeClientConfig, assetId: string, targe
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target_agent_id: targetAgentId }),
   });
+}
+
+export function listTestDatasets(
+  config: RuntimeClientConfig,
+  opts: { agentId: string; sourceImprovementId?: string },
+) {
+  const params = new URLSearchParams({ agent_id: opts.agentId });
+  if (opts.sourceImprovementId) params.set("source_improvement_id", opts.sourceImprovementId);
+  return requestJson<TestDataset[]>(config, `/api/test-datasets?${params.toString()}`);
+}
+
+export function getTestDataset(config: RuntimeClientConfig, datasetId: string, agentId: string) {
+  const query = new URLSearchParams({ agent_id: agentId });
+  return requestJson<TestDataset>(config, `/api/test-datasets/${encodeURIComponent(datasetId)}?${query.toString()}`);
+}
+
+export function adoptTestDataset(config: RuntimeClientConfig, improvementId: string) {
+  return requestJson<TestDataset>(
+    config,
+    `/api/improvements/${encodeURIComponent(improvementId)}/test-dataset/adopt`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    },
+  );
+}
+
+export function transitionTestDataset(
+  config: RuntimeClientConfig,
+  datasetId: string,
+  agentId: string,
+  payload: TestDatasetLifecycleRequest,
+) {
+  const query = new URLSearchParams({ agent_id: agentId });
+  return requestJson<TestDataset>(
+    config,
+    `/api/test-datasets/${encodeURIComponent(datasetId)}/lifecycle?${query.toString()}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function listTestDatasetRevisions(config: RuntimeClientConfig, datasetId: string, agentId: string) {
+  const query = new URLSearchParams({ agent_id: agentId });
+  return requestJson<TestDatasetRevision[]>(
+    config,
+    `/api/test-datasets/${encodeURIComponent(datasetId)}/revisions?${query.toString()}`,
+  );
 }

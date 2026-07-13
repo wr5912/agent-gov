@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import subprocess
 import sys
@@ -38,22 +39,15 @@ def test_runtime_db_adds_session_active_run_lease_without_rewriting_rows(tmp_pat
             )
             """
         )
-        connection.execute(
-            "INSERT INTO sessions VALUES ('sess-existing', 'sdk-existing', 'main-agent', 't', 't', 'title', 2, '{}')"
-        )
+        connection.execute("INSERT INTO sessions VALUES ('sess-existing', 'sdk-existing', 'main-agent', 't', 't', 'title', 2, '{}')")
 
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
-        columns = {
-            str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()
-        }
+        columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()}
         existing = connection.exec_driver_sql(
-            "SELECT sdk_session_id, turns, active_run_id, active_run_expires_at "
-            "FROM sessions WHERE session_id = 'sess-existing'"
+            "SELECT sdk_session_id, turns, active_run_id, active_run_expires_at FROM sessions WHERE session_id = 'sess-existing'"
         ).fetchone()
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0035_session_active_run_lease'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0035_session_active_run_lease'").fetchone()
 
     assert {"active_run_id", "active_run_expires_at"} <= columns
     assert existing == ("sdk-existing", 2, None, None)
@@ -98,7 +92,7 @@ def test_claude_user_input_db_cold_import_has_no_runtime_db_cycle():
     assert result.returncode == 0, result.stderr
 
 
-def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
+def test_runtime_db_archives_removed_eval_job_after_agent_job_schema_upgrade(tmp_path):
     db_path = tmp_path / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -150,9 +144,17 @@ def test_runtime_db_migrates_agent_jobs_without_output_schema_version(tmp_path):
     with factory.kw["bind"].connect() as connection:
         columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(agent_jobs)").fetchall()}
         row = connection.exec_driver_sql("SELECT job_id, job_type FROM agent_jobs WHERE job_id = 'job-old'").fetchone()
+        archived = connection.exec_driver_sql(
+            "SELECT row_json FROM archived_legacy_evaluation_rows WHERE source_table = 'agent_jobs' AND source_key = ?",
+            ('{"job_id":"job-old"}',),
+        ).one()
 
     assert "output_schema_version" not in columns
-    assert tuple(row) == ("job-old", "eval_case_generation")
+    assert row is None
+    archived_job = json.loads(archived[0])
+    assert archived_job["job_id"] == "job-old"
+    assert archived_job["job_type"] == "eval_case_generation"
+    assert archived_job["status"] == "queued"
 
 
 def test_runtime_db_migrates_generated_by_onto_existing_content_tables(tmp_path):
@@ -343,7 +345,7 @@ def test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain(t
     assert migration is not None
 
 
-def test_runtime_db_renames_eval_case_targeted_regression_layer(tmp_path):
+def test_runtime_db_archives_eval_case_after_historical_targeted_layer_rename(tmp_path):
     db_path = tmp_path / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
         connection.execute(
@@ -376,16 +378,47 @@ def test_runtime_db_renames_eval_case_targeted_regression_layer(tmp_path):
 
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
-        value = connection.exec_driver_sql("SELECT asset_layer FROM eval_cases WHERE eval_case_id = 'evc-old'").fetchone()[0]
-        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0023_eval_case_targeted_regression_layer'").fetchone()
+        table = connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'eval_cases'").fetchone()
+        archived = connection.exec_driver_sql(
+            "SELECT row_json FROM archived_legacy_evaluation_rows WHERE source_table = 'eval_cases' AND source_key = ?",
+            ('{"eval_case_id":"evc-old"}',),
+        ).one()
+        migrations = {
+            str(row[0])
+            for row in connection.exec_driver_sql(
+                "SELECT version FROM schema_migrations WHERE version IN "
+                "('0023_eval_case_targeted_regression_layer', '0040_archive_and_remove_legacy_evaluation_chain')"
+            ).fetchall()
+        }
 
-    assert value == "targeted_regression"
-    assert migration is not None
+    assert table is None
+    assert json.loads(archived[0])["asset_layer"] == "targeted_regression"
+    assert migrations == {
+        "0023_eval_case_targeted_regression_layer",
+        "0040_archive_and_remove_legacy_evaluation_chain",
+    }
 
 
 def test_runtime_db_backfills_feedback_case_agent_id_from_signals(tmp_path):
     db_path = tmp_path / "runtime.sqlite3"
     with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE agent_registry (
+                agent_id VARCHAR(128) PRIMARY KEY,
+                name VARCHAR(256) NOT NULL,
+                category VARCHAR(32) NOT NULL,
+                workspace_dir VARCHAR(2048) NOT NULL,
+                created_at VARCHAR(64) NOT NULL
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO agent_registry (agent_id, name, category, workspace_dir, created_at)
+            VALUES ('agent-alpha', 'Agent Alpha', 'business', '/workspace/agent-alpha', '2026-06-12T00:00:00Z')
+            """
+        )
         connection.execute(
             """
             CREATE TABLE feedback_signals (
@@ -573,7 +606,7 @@ def test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency(tmp_pat
                 source_system="siem",
                 timestamp="2026-05-20T00:03:00+00:00",
                 alert_id="alert-concurrent",
-                payload={"title": "并发告警"},
+                metadata={"title": "并发告警"},
             )
         )
         return result["correlation_status"]

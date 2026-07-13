@@ -24,6 +24,9 @@
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
+      "Read(/data/business-agents/**/claude-root/**)",
+      "Read(/data/agent-governance/**)",
+      "Read(/data/runtime.sqlite3*)",
       "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude.json)",
       "Read(/data/business-agents/security-data-standardization-review/claude-root/.claude/projects/**)",
       "Bash(rm -rf /*)",
@@ -40,19 +43,20 @@
       "mcp__*__*kill*",
       "mcp__*__*quarantine*",
       "mcp__*__*execute*",
-      "mcp__*__*submit*"
+      "mcp__*__*submit*",
+      "mcp__*__*register*"
     ]
   },
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|mcp__.*",
+        "matcher": "Bash",
         "hooks": [
           {
             "type": "command",
             "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
             "timeout": 10,
-            "statusMessage": "检查标准化审查工具风险"
+            "statusMessage": "Checking command safety"
           }
         ]
       }
@@ -97,6 +101,9 @@
       "denyRead": [
         "./.env",
         "./secrets",
+        "/data/business-agents/**/claude-root/**",
+        "/data/agent-governance/**",
+        "/data/runtime.sqlite3*",
         "/data/business-agents/security-data-standardization-review/claude-root/.claude.json"
       ]
     },

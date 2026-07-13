@@ -17,25 +17,25 @@ from .feedback_schemas import (
     AttributionOutput,
     ExecutionPlanFormatterOutput,
     ExecutionPlanOutput,
-    FeedbackEvalCaseGenerationFormatterOutput,
-    FeedbackEvalCaseGenerationOutput,
     ImprovementOptimizationPlanFormatterOutput,
     ImprovementOptimizationPlanOutput,
     NormalizedFeedbackFormatterOutput,
     NormalizedFeedbackOutput,
+    RegressionAssessmentFormatterOutput,
+    RegressionAssessmentOutput,
 )
 from .json_types import JsonObject
 from .prompts.feedback_prompt_contexts import (
     build_attribution_prompt_context,
-    build_eval_case_generation_prompt_context,
     build_execution_prompt_context,
     build_improvement_optimization_prompt_context,
+    build_regression_assessment_prompt_context,
 )
 from .prompts.feedback_prompts import (
     attribution_prompt,
-    eval_case_generation_prompt,
     execution_plan_prompt,
     improvement_optimization_plan_prompt,
+    regression_assessment_prompt,
 )
 
 
@@ -45,24 +45,24 @@ FormatterOutputModel: TypeAlias = (
     AttributionFormatterOutput
     | ImprovementOptimizationPlanFormatterOutput
     | ExecutionPlanFormatterOutput
-    | FeedbackEvalCaseGenerationFormatterOutput
+    | RegressionAssessmentFormatterOutput
     | NormalizedFeedbackFormatterOutput
 )
 ProjectedOutputModel: TypeAlias = (
-    AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | FeedbackEvalCaseGenerationOutput | NormalizedFeedbackOutput
+    AttributionOutput | ImprovementOptimizationPlanOutput | ExecutionPlanOutput | RegressionAssessmentOutput | NormalizedFeedbackOutput
 )
 FormatterOutputModelClass: TypeAlias = (
     type[AttributionFormatterOutput]
     | type[ImprovementOptimizationPlanFormatterOutput]
     | type[ExecutionPlanFormatterOutput]
-    | type[FeedbackEvalCaseGenerationFormatterOutput]
+    | type[RegressionAssessmentFormatterOutput]
     | type[NormalizedFeedbackFormatterOutput]
 )
 ProjectedOutputModelClass: TypeAlias = (
     type[AttributionOutput]
     | type[ImprovementOptimizationPlanOutput]
     | type[ExecutionPlanOutput]
-    | type[FeedbackEvalCaseGenerationOutput]
+    | type[RegressionAssessmentOutput]
     | type[NormalizedFeedbackOutput]
 )
 
@@ -71,7 +71,7 @@ class AgentJobType(StrEnum):
     ATTRIBUTION = "attribution"
     OPTIMIZATION_PLAN = "optimization_plan"
     EXECUTION = "execution"
-    EVAL_CASE_GENERATION = "eval_case_generation"
+    REGRESSION_ASSESSMENT = "regression_assessment"
     NORMALIZED_FEEDBACK = "normalized_feedback"
 
 
@@ -106,15 +106,17 @@ class ExecutionFormattingSignature(dspy.Signature):
     )
 
 
-class EvalCaseGenerationFormattingSignature(dspy.Signature):
-    """把 eval-case-governor 的自然语言或片段 JSON 转换为评估用例生成输出模型。
+class RegressionAssessmentFormattingSignature(dspy.Signature):
+    """把回归保障治理结果转换为四阶段回归评估输出模型。
 
-    只能使用 raw_agent_output 中已有的评估用例业务要点。每个 eval case 必须包含
-    prompt、expected_behavior、checks_json 和 labels；证据不足时输出 no_action_reason。
+    只能使用 raw_agent_output 中已有的业务要点。每项只包含 expected_behavior、
+    checks_json 和 labels；复测输入由后端从原始证据绑定，证据不足时输出 no_action_reason。
     """
 
-    raw_agent_output: str = dspy.InputField(desc="eval-case-governor 原始输出。")
-    formatted_output: FeedbackEvalCaseGenerationFormatterOutput = dspy.OutputField(desc="评估用例草案业务内容，不包含 job、scope、结果计数和生命周期字段。")
+    raw_agent_output: str = dspy.InputField(desc="回归保障治理 Agent 原始输出。")
+    formatted_output: RegressionAssessmentFormatterOutput = dspy.OutputField(
+        desc="四阶段回归评估业务内容，不包含 prompt、job、scope、标识、时间戳和生命周期字段。"
+    )
 
 
 class NormalizedFeedbackFormattingSignature(dspy.Signature):
@@ -146,8 +148,8 @@ def _execution_prompt_builder(job_input: JsonObject) -> str:
     return execution_plan_prompt(prompt_context=build_execution_prompt_context(job_input))
 
 
-def _eval_case_prompt_builder(job_input: JsonObject) -> str:
-    return eval_case_generation_prompt(prompt_context=build_eval_case_generation_prompt_context(job_input))
+def _regression_assessment_prompt_builder(job_input: JsonObject) -> str:
+    return regression_assessment_prompt(prompt_context=build_regression_assessment_prompt_context(job_input))
 
 
 def _normalized_feedback_prompt_builder(job_input: JsonObject) -> str:
@@ -180,13 +182,13 @@ AGENT_JOB_SPECS: Final[dict[AgentJobType, AgentJobSpec]] = {
         formatter_output_model=ExecutionPlanFormatterOutput,
         formatter_signature=ExecutionFormattingSignature,
     ),
-    AgentJobType.EVAL_CASE_GENERATION: AgentJobSpec(
-        job_type=AgentJobType.EVAL_CASE_GENERATION,
+    AgentJobType.REGRESSION_ASSESSMENT: AgentJobSpec(
+        job_type=AgentJobType.REGRESSION_ASSESSMENT,
         profile_name=GOVERNOR_PROFILE,
-        prompt_builder=_eval_case_prompt_builder,
-        output_model=FeedbackEvalCaseGenerationOutput,
-        formatter_output_model=FeedbackEvalCaseGenerationFormatterOutput,
-        formatter_signature=EvalCaseGenerationFormattingSignature,
+        prompt_builder=_regression_assessment_prompt_builder,
+        output_model=RegressionAssessmentOutput,
+        formatter_output_model=RegressionAssessmentFormatterOutput,
+        formatter_signature=RegressionAssessmentFormattingSignature,
     ),
     AgentJobType.NORMALIZED_FEEDBACK: AgentJobSpec(
         job_type=AgentJobType.NORMALIZED_FEEDBACK,

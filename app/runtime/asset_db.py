@@ -9,7 +9,7 @@ from .runtime_db import Base, utc_now
 class AssetModel(Base):
     """治理资产（四阶段改进治理 W3 资产 Registry 复利中心）。
 
-    资产是从改进闭环沉淀下来、可跨业务 Agent 复用的方法论/回归/执行/审计资产。
+    资产是从改进闭环沉淀下来、可跨业务 Agent 复用的方法论/执行/审计资产。
     inherited_from 记录被继承的源资产 ID（复利来源），source_improvement_id 记录沉淀来源事项。
     独立新表，create_all 创建，无需改表迁移。
     """

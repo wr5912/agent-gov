@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-
 from app.runtime.errors import BusinessRuleViolation, NotFoundError
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.asset_store import AssetStore
@@ -18,13 +17,14 @@ def _store(tmp_path: Path) -> AssetStore:
 def test_create_list_get(tmp_path: Path) -> None:
     store = _store(tmp_path)
     a = store.create_asset(agent_id="soc", asset_type="methodology", title="误报归因法", body="步骤...", source_improvement_id="imp-1")
-    dataset = store.create_asset(agent_id="soc", asset_type="test_dataset", title="时间窗口测试数据集", body='{"test_dataset_id":"tds-1"}', source_improvement_id="imp-1")
-    store.create_asset(agent_id="soc", asset_type="regression", title="时间窗口回归集")
+    execution = store.create_asset(agent_id="soc", asset_type="execution", title="时间窗口核验脚本")
     store.create_asset(agent_id="shop", asset_type="methodology", title="退款方法论")
-    assert {x.asset_id for x in store.list_assets(agent_id="soc")} == {a.asset_id, dataset.asset_id, *[x.asset_id for x in store.list_assets(agent_id="soc", asset_type="regression")]}
+    assert {x.asset_id for x in store.list_assets(agent_id="soc")} == {
+        a.asset_id,
+        execution.asset_id,
+    }
     methods = store.list_assets(agent_id="soc", asset_type="methodology")
     assert [x.asset_id for x in methods] == [a.asset_id]
-    assert [x.body for x in store.list_assets(agent_id="soc", asset_type="test_dataset")] == ['{"test_dataset_id":"tds-1"}']
     assert store.get_asset(a.asset_id).source_improvement_id == "imp-1"
 
 
@@ -34,6 +34,14 @@ def test_create_rejects_bad_input(tmp_path: Path) -> None:
         store.create_asset(agent_id="", asset_type="methodology", title="x")
     with pytest.raises(BusinessRuleViolation):
         store.create_asset(agent_id="soc", asset_type="bogus", title="x")
+    with pytest.raises(BusinessRuleViolation):
+        store.create_asset(agent_id="soc", asset_type="test_dataset", title="字符串测试集", body="{}")
+    with pytest.raises(BusinessRuleViolation):
+        store.list_assets(agent_id="soc", asset_type="test_dataset")
+    with pytest.raises(BusinessRuleViolation):
+        store.create_asset(agent_id="soc", asset_type="regression", title="旧独立回归资产")
+    with pytest.raises(BusinessRuleViolation):
+        store.list_assets(agent_id="soc", asset_type="regression")
     with pytest.raises(BusinessRuleViolation):
         store.create_asset(agent_id="soc", asset_type="methodology", title="  ")
 
@@ -56,9 +64,9 @@ def test_inherit_compounds_to_target_agent(tmp_path: Path) -> None:
 def test_list_by_source_improvement_id(tmp_path: Path) -> None:
     """四阶段改进治理 §11.2：按沉淀来源改进事项过滤资产。"""
     store = _store(tmp_path)
-    store.create_asset(agent_id="soc", asset_type="regression", title="回归A", source_improvement_id="imp-1")
+    store.create_asset(agent_id="soc", asset_type="execution", title="执行A", source_improvement_id="imp-1")
     store.create_asset(agent_id="soc", asset_type="methodology", title="方法B", source_improvement_id="imp-1")
-    store.create_asset(agent_id="soc", asset_type="regression", title="回归C", source_improvement_id="imp-2")
+    store.create_asset(agent_id="soc", asset_type="audit", title="审计C", source_improvement_id="imp-2")
     only1 = store.list_assets(source_improvement_id="imp-1")
-    assert {a.title for a in only1} == {"回归A", "方法B"}
-    assert [a.title for a in store.list_assets(source_improvement_id="imp-2")] == ["回归C"]
+    assert {a.title for a in only1} == {"执行A", "方法B"}
+    assert [a.title for a in store.list_assets(source_improvement_id="imp-2")] == ["审计C"]

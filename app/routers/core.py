@@ -50,11 +50,7 @@ def build_health_payload(
     app: FastAPI,
     agent_version_store: AgentVersionProvider,
 ) -> RuntimeHealthResponse:
-    repository_status = (
-        agent_version_store.repository_status()
-        if hasattr(agent_version_store, "repository_status")
-        else {}
-    )
+    repository_status = agent_version_store.repository_status() if hasattr(agent_version_store, "repository_status") else {}
     return RuntimeHealthResponse(
         status="ok",
         api_host=settings.api_host,
@@ -64,7 +60,6 @@ def build_health_payload(
         data_dir=str(settings.data_dir),
         runtime_db_backend="sqlite",
         runtime_db_path=str(settings.runtime_db_path),
-        legacy_file_store_enabled=False,
         claude_root=str(settings.claude_root),
         claude_home=str(settings.claude_home),
         claude_config_mode=settings.claude_config_mode,
@@ -72,13 +67,10 @@ def build_health_payload(
         claude_global_config_file=str(settings.claude_global_config_file),
         setting_sources_effective=settings.setting_sources,
         model=settings.agent_model,
-        default_agent=settings.default_agent,
-        default_skills_mode=settings.default_skills_mode,
         provider_api_url_configured=bool(settings.provider_api_url),
         provider_api_key_configured=bool(settings.provider_api_key),
         model_provider_route=ModelProviderRouter(settings).health_summary(),
         claude_web_hitl_enabled=settings.enable_claude_web_hitl,
-        programmatic_agents=False,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
         agent_version_id=agent_version_store.current_version_id(),
         runtime_dependency_versions=runtime_dependency_versions(),

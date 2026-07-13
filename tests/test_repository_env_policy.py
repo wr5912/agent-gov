@@ -151,9 +151,7 @@ def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
 
 def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_enabled() -> None:
     business_agents_dir = REPO_ROOT / "docker/runtime-volume-seeds/data/business-agents"
-    settings_files = sorted(
-        business_agents_dir.glob("*/workspace/.claude/settings.json")
-    )
+    settings_files = sorted(business_agents_dir.glob("*/workspace/.claude/settings.json"))
     sandbox_enabled = False
     for path in settings_files:
         text = path.read_text(encoding="utf-8")
@@ -234,6 +232,12 @@ def test_official_env_examples_do_not_define_claude_config_takeover_keys() -> No
         "ENABLE_POLICY_HOOKS=",
         "ENABLE_PROGRAMMATIC_AGENTS=",
         "CLAUDE_SETTING_SOURCES=",
+        "DEFAULT_AGENT=",
+        "DEFAULT_SKILLS=",
+        "DEFAULT_SKILLS_MODE=",
+        "CLAUDE_ADD_DIRS=",
+        "PERMISSION_PROMPT_TOOL_NAME=",
+        "CLAUDE_EXTRA_ARGS_JSON=",
     }
     for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
         text = (REPO_ROOT / env_file).read_text(encoding="utf-8")

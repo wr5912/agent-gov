@@ -33,6 +33,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     store.record_run(
         {
             "run_id": run_id,
+            "agent_id": "main-agent",
             "session_id": "sess-mcp-config-failed",
             "message": "生成一份日报",
             "answer_summary": "",
@@ -57,7 +58,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
             comment="生成日报失败",
         )
     )
-    feedback_case = store.create_case(source_ids=[signal["signal_id"]], title="日报失败")
+    feedback_case = store.create_case(source_refs=[("signal", signal["signal_id"])], title="日报失败")
 
     manifest = store.create_evidence_package(feedback_case["feedback_case_id"])
 
@@ -67,9 +68,14 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
     assert completeness["has_mcp_connection_summary"] is True
     assert completeness["has_runtime_env_snapshot"] is True
     assert completeness["has_workspace_placeholder_summary"] is True
+    runtime_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "runtime_config_summary.json")["content"]
     effective_mcp = store.get_evidence_package_file(manifest["evidence_package_id"], "effective_mcp_config.json")["content"]
     connection_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "mcp_connection_summary.json")["content"]
     placeholder_summary = store.get_evidence_package_file(manifest["evidence_package_id"], "workspace_placeholder_summary.json")["content"]
+    assert runtime_summary["project_settings"]["source"] == "workspace_project_settings"
+    assert runtime_summary["project_settings"]["exists"] is True
+    assert len(runtime_summary["project_settings"]["sha256"]) == 64
+    assert "main_profile_writable_paths" not in runtime_summary
     assert effective_mcp["source"] == "workspace_project"
     assert effective_mcp["unresolved_placeholders"] == [{"path": "$.sec-ops-data.url", "placeholder": "MCP_SERVER_URL"}]
     assert connection_summary["failed_server_names"] == ["sec-ops-data"]

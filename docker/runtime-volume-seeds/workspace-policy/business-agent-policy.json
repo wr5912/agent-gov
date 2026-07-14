@@ -1,5 +1,5 @@
 {
-  "version": "2026-07-13.4",
+  "version": "2026-07-14.1",
   "settings": {
     "permissions": {
       "defaultMode": "default",
@@ -45,6 +45,11 @@
     }
   },
   "agentSettings": {
+    "security-operations-expert": {
+      "sandbox": {
+        "autoAllowBashIfSandboxed": true
+      }
+    },
     "security-data-standardization-review": {
       "permissions": {
         "deny": [

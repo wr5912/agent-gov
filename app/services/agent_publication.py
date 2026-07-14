@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.json_types import JsonObject
-from app.runtime.runtime_db import AgentChangeSetModel, AgentReleaseModel, AgentReleaseTagClaimModel
+from app.runtime.runtime_db import (
+    AgentChangeSetModel,
+    AgentReleaseModel,
+    AgentReleaseSourceClaimModel,
+    AgentReleaseTagClaimModel,
+)
 from app.runtime.state_machines import validate_transition
 from app.services.agent_publication_provenance import (
     PublicationSourceRevision,
@@ -28,6 +33,10 @@ class PublicationFinalizationLost(RuntimeError):
 
 class PublicationTagConflict(ValueError):
     """A release tag is already owned by another change set in the same Agent repository."""
+
+
+class PublicationSourceConflict(ValueError):
+    """A source improvement is already owned by another publication intent."""
 
 
 @dataclass(frozen=True)
@@ -137,7 +146,9 @@ def commit_publication_intent(
         with session_factory.begin() as db:
             validate_intent_provenance(db, intent)
             _assert_release_tag_available(db, intent)
+            _assert_release_source_available(db, intent)
             _ensure_tag_claim(db, intent)
+            _ensure_source_claim(db, intent)
             reserved = db.execute(
                 update(AgentChangeSetModel)
                 .where(
@@ -160,6 +171,12 @@ def commit_publication_intent(
             )
     except IntegrityError as exc:
         with session_factory() as db:
+            source_claim = _source_claim(db, intent)
+            if source_claim is not None and (source_claim.change_set_id, source_claim.release_id) != (
+                intent.change_set_id,
+                intent.release_id,
+            ):
+                raise _source_conflict(intent, source_claim.change_set_id) from exc
             claim = db.get(AgentReleaseTagClaimModel, (intent.agent_id, intent.tag_name))
             if claim is not None and (claim.change_set_id, claim.release_id) == (intent.change_set_id, intent.release_id):
                 raise PublicationReservationLost from exc
@@ -181,6 +198,18 @@ def validate_tag_claim(db: Session, intent: PublicationIntent) -> None:
     actual = (claim.change_set_id, claim.release_id) if claim else None
     if actual != expected:
         raise PublicationTagConflict(f"Release tag {intent.tag_name!r} is not owned by this publication intent")
+
+
+def validate_source_claim(db: Session, intent: PublicationIntent) -> None:
+    if not intent.source_improvement_id:
+        return
+    claim = _source_claim(db, intent)
+    expected = (intent.change_set_id, intent.release_id)
+    actual = (claim.change_set_id, claim.release_id) if claim else None
+    if actual != expected:
+        raise PublicationSourceConflict(
+            f"来源改进事项 {intent.source_improvement_id} 的发布预留不属于当前变更集"
+        )
 
 
 def record_publication_error(
@@ -284,6 +313,9 @@ def _cancel_publication_intent(
         claim = db.get(AgentReleaseTagClaimModel, (intent.agent_id, intent.tag_name))
         if claim and (claim.change_set_id, claim.release_id) == (intent.change_set_id, intent.release_id):
             db.delete(claim)
+        source_claim = _source_claim(db, intent)
+        if source_claim and (source_claim.change_set_id, source_claim.release_id) == (intent.change_set_id, intent.release_id):
+            db.delete(source_claim)
         add_event(
             db,
             intent.change_set_id,
@@ -309,6 +341,18 @@ def _assert_release_tag_available(db: Session, intent: PublicationIntent) -> Non
         raise PublicationTagConflict(f"Release tag {intent.tag_name!r} is already assigned to another release in Agent {intent.agent_id}")
 
 
+def _assert_release_source_available(db: Session, intent: PublicationIntent) -> None:
+    if not intent.source_improvement_id:
+        return
+    releases = db.scalars(select(AgentReleaseModel).where(AgentReleaseModel.agent_id == intent.agent_id)).all()
+    for release in releases:
+        source_improvement_id = str((release.payload_json or {}).get("source_improvement_id") or "")
+        if source_improvement_id != intent.source_improvement_id:
+            continue
+        if (release.change_set_id, release.release_id) != (intent.change_set_id, intent.release_id):
+            raise _source_conflict(intent, str(release.change_set_id or "unknown"))
+
+
 def _ensure_tag_claim(db: Session, intent: PublicationIntent) -> None:
     claim = db.get(AgentReleaseTagClaimModel, (intent.agent_id, intent.tag_name))
     if claim is None:
@@ -325,6 +369,38 @@ def _ensure_tag_claim(db: Session, intent: PublicationIntent) -> None:
         return
     if (claim.change_set_id, claim.release_id) != (intent.change_set_id, intent.release_id):
         raise PublicationTagConflict(f"Release tag {intent.tag_name!r} is already owned by change set {claim.change_set_id}")
+
+
+def _ensure_source_claim(db: Session, intent: PublicationIntent) -> None:
+    if not intent.source_improvement_id:
+        return
+    claim = _source_claim(db, intent)
+    if claim is None:
+        db.add(
+            AgentReleaseSourceClaimModel(
+                agent_id=intent.agent_id,
+                source_improvement_id=intent.source_improvement_id,
+                change_set_id=intent.change_set_id,
+                release_id=intent.release_id,
+                created_at=intent.started_at,
+            )
+        )
+        db.flush()
+        return
+    if (claim.change_set_id, claim.release_id) != (intent.change_set_id, intent.release_id):
+        raise _source_conflict(intent, claim.change_set_id)
+
+
+def _source_claim(db: Session, intent: PublicationIntent) -> AgentReleaseSourceClaimModel | None:
+    if not intent.source_improvement_id:
+        return None
+    return db.get(AgentReleaseSourceClaimModel, (intent.agent_id, intent.source_improvement_id))
+
+
+def _source_conflict(intent: PublicationIntent, owner_change_set_id: str) -> PublicationSourceConflict:
+    return PublicationSourceConflict(
+        f"来源改进事项 {intent.source_improvement_id} 已由变更集 {owner_change_set_id} 持有发布预留，不能重复发布"
+    )
 
 
 def release_payload(

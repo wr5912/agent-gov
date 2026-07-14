@@ -12,6 +12,8 @@ from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
 
+from feedback_store_test_utils import _seed_execution_record
+
 
 def _content(tmp_path: Path) -> ImprovementContentStore:
     return ImprovementContentStore(make_session_factory(tmp_path / "runtime.sqlite3"))
@@ -388,7 +390,8 @@ def test_regression_heuristic_provides_default_gate_thresholds(tmp_path: Path) -
 def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
     """执行记录新增 risk_level/rollback_strategy/rollback_instructions 的 DB 列 + Record 映射回环。"""
     content = _content(tmp_path)
-    content.upsert_execution(
+    _seed_execution_record(
+        content,
         "imp-1", summary="已应用", risk_level="中",
         rollback_strategy="回滚到执行前基线 Agent 版本", rollback_instructions=["放弃 change_set", "恢复版本"],
     )

@@ -910,7 +910,7 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 
 自动验收（部分）：`tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version`、
 `tests/test_improvement_execution_service.py::test_parallel_apply_creates_only_one_change_set` 和
-`tests/test_improvement_execution_service.py::test_missing_link_is_reconciled_after_finalize`
+`tests/test_improvement_execution_service.py::test_missing_link_is_reconciled_in_same_request_after_finalize`
 证明服务层可生成候选并绑定版本，且并发申请和 finalize/link 分步失败可幂等对账。
 仍缺 execution apply HTTP API 经真实 governor、Git worktree、file diff 和 change set 投影的联合端到端证据。
 

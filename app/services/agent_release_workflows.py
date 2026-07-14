@@ -33,6 +33,8 @@ class _GovernanceService(Protocol):
 
     def _normalize_agent_id(self, agent_id: str | None) -> str: ...
 
+    def _ref_policy_validator(self, store: Any, agent_id: str) -> Callable[[str], None]: ...
+
     def _published_release(self, change_set: JsonObject, *, requested_tag_name: str | None) -> JsonObject: ...
 
     def _reserve_publication_intent(
@@ -143,6 +145,7 @@ def _publish_change_set_locked(
             intent.commit_sha,
             tag_name=intent.tag_name,
             message=intent.note or f"Publish {change_set_id}",
+            validate_ref=service._ref_policy_validator(store, intent.agent_id),
         )
         assert_maintenance_active()
     except (AgentGitError, AgentAdmissionError) as exc:
@@ -277,7 +280,7 @@ def _reconcile_release_operation(
             if not current_head:
                 raise AgentGitError("Agent Git repository is not initialized")
             lease.assert_active()
-            git_result = _apply_or_reconcile_git(store, claim, current_head=current_head)
+            git_result = _apply_or_reconcile_git(service, store, claim, current_head=current_head)
             lease.assert_active()
             _mark_git_applied(service, claim, git_result=git_result)
             _complete_release_operation(service, claim, git_result=git_result)
@@ -379,7 +382,7 @@ def _run_release_operation(
             if completed is not None:
                 return completed
             lease.assert_active()
-            git_result = _apply_or_reconcile_git(store, claim, current_head=current_head)
+            git_result = _apply_or_reconcile_git(service, store, claim, current_head=current_head)
             lease.assert_active()
             _mark_git_applied(service, claim, git_result=git_result)
             completed_result = _complete_release_operation(service, claim, git_result=git_result)
@@ -578,7 +581,7 @@ def _resume_release_operation(
         operation.status = "reserved"
 
 
-def _apply_or_reconcile_git(store: Any, claim: _OperationClaim, *, current_head: str) -> JsonObject:
+def _apply_or_reconcile_git(service: _GovernanceService, store: Any, claim: _OperationClaim, *, current_head: str) -> JsonObject:
     if claim.status == "git_applied":
         if current_head != claim.target_commit_sha:
             raise AgentGitError(
@@ -593,6 +596,7 @@ def _apply_or_reconcile_git(store: Any, claim: _OperationClaim, *, current_head:
     return store.rollback_to_ref(
         claim.target_commit_sha,
         expected_current_ref=claim.expected_head_sha,
+        validate_ref=service._ref_policy_validator(store, claim.agent_id),
     )
 
 

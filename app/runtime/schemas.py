@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
+from app.runtime.response_disposition_control import TrustedResponseDispositionContext
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 from app.runtime.test_dataset_schemas import TestCaseResponse, TestDatasetResponse
 
@@ -38,6 +39,12 @@ class ChatRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
     system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
     metadata: JsonObject = Field(default_factory=dict)
+
+
+class RuntimeChatRequest(ChatRequest):
+    """Internal request enriched only after the API trust boundary validates RO control."""
+
+    response_disposition: Optional[TrustedResponseDispositionContext] = Field(default=None, exclude=True)
 
 
 class ChatResponse(BaseModel):

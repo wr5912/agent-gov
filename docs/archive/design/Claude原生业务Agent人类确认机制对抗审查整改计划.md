@@ -2,9 +2,11 @@
 
 > 归档说明（2026-07-10）：本文记录 canonical Responses/HITL 落地前的对抗审查与执行计划，仅用于历史审计，不再代表当前接口。当前外部契约见 [AgentGov 集成指南](../../AgentGov集成指南.md)，工程决策见 [Responses-first ADR](../../engineering/OpenAI兼容接口能否替代原生Chat端点评估.md)。
 >
-> 文档状态：对抗审查后的整改执行计划。
+> 文档状态：历史整改计划；2026-07-13 起由当前运行时契约取代。本文保留决策背景，文中的 `bypassPermissions`、仅开关开启才挂 callback、Bash 全量直放和普通请求禁止 `updated_input` 的绝对表述不再代表现状。
 > 生成日期：2026-06-29。
 > 关联历史主方案：[Claude 原生业务Agent人类确认机制整改实现方案](./Claude原生业务Agent人类确认机制整改实现方案.md)。
+
+当前契约：非流式权限询问全部 fail-closed；流式始终挂显式 callback，HITL 关闭时拒绝 ask；通用 Bash 进入 `ask` 且 run 授权按低风险类别隔离。`updated_input` 仍禁止普通 HITL 使用，但 RO 认证的 `approved_execution` 可用它精确批准 `soc_api__create` / `soc_api__manual` 的单次输入，且有一次性 claim 防回放。
 
 ## 1. 整改结论
 

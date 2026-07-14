@@ -64,14 +64,6 @@ x-runtime-volume-seeds: &runtime-volume-seeds
   bind:
     create_host_path: false
 
-x-claude-code-sandbox-runtime: &claude-code-sandbox-runtime
-  cap_add:
-    - SYS_ADMIN
-    - NET_ADMIN
-  security_opt:
-    - seccomp=unconfined
-    - apparmor=unconfined
-
 services:
   agent-gov-litellm-sidecar:
     build:
@@ -91,7 +83,6 @@ services:
     logging: *default-logging
 
   claude-agent-api:
-    <<: *claude-code-sandbox-runtime
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -130,7 +121,9 @@ services:
       MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
       HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
+      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
+      RESPONSE_ORCHESTRATOR_API_KEY: ${RESPONSE_ORCHESTRATOR_API_KEY:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
       no_proxy: ${no_proxy:-}

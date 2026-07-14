@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.engine import Connection
 
-from .runtime_db_base import utc_now
+from .runtime_db_base import Base, utc_now
 
 
 def migrate_0037_eval_runs_use_typed_dataset_snapshots(connection: Connection) -> None:
@@ -93,37 +93,11 @@ def _create_legacy_eval_archives(connection: Connection) -> None:
 
 
 def _create_typed_eval_tables(connection: Connection) -> None:
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE eval_runs (
-            eval_run_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            created_at VARCHAR(64) NOT NULL,
-            completed_at VARCHAR(64),
-            status VARCHAR(64) NOT NULL,
-            agent_id VARCHAR(128) NOT NULL,
-            dataset_id VARCHAR(128) NOT NULL
-                REFERENCES test_datasets(dataset_id),
-            agent_version_id VARCHAR(256),
-            source VARCHAR(128) NOT NULL,
-            payload_json JSON NOT NULL
-        )
-        """
-    )
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE eval_run_items (
-            eval_run_item_id VARCHAR(128) NOT NULL PRIMARY KEY,
-            eval_run_id VARCHAR(128) NOT NULL
-                REFERENCES eval_runs(eval_run_id) ON DELETE CASCADE,
-            dataset_case_id VARCHAR(128) NOT NULL
-                REFERENCES test_dataset_cases(case_id),
-            agent_run_id VARCHAR(128),
-            status VARCHAR(64) NOT NULL,
-            score FLOAT,
-            payload_json JSON NOT NULL
-        )
-        """
-    )
+    for table_name in ("eval_runs", "eval_run_items"):
+        table = Base.metadata.tables.get(table_name)
+        if table is None:
+            raise RuntimeError(f"Runtime model metadata is missing {table_name}")
+        table.create(connection)
 
 
 def _create_eval_indexes(connection: Connection) -> None:

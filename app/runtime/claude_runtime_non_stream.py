@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import read_requires_web_hitl
 from .async_iterators import close_async_iterator
+from .claude_runtime_permissions import non_stream_permission_callback, runtime_response_disposition
 from .claude_sdk_interactive import query_with_interactive_client
 
 if TYPE_CHECKING:
@@ -13,18 +14,6 @@ if TYPE_CHECKING:
     from .claude_runtime import ClaudeRuntime, RuntimeQueryState, RuntimeRequestContext
     from .schemas import ChatRequest, ChatResponse
     from .session_turn_lease import SessionTurnLeaseHeartbeat
-
-
-def _non_stream_native_ask_deny_callback(profile_name: str) -> Any:
-    """非流式无人审路径拒绝项目权限规则产生的每个 ask。"""
-    from claude_agent_sdk import PermissionResultDeny
-
-    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        return PermissionResultDeny(
-            message=(f"项目权限规则要求人工审批工具 {tool_name}，但非流式运行没有审批面：业务 Agent {profile_name} 请改用流式并开启 ENABLE_CLAUDE_WEB_HITL。")
-        )
-
-    return deny
 
 
 async def _execute_non_stream_query(
@@ -39,7 +28,7 @@ async def _execute_non_stream_query(
 
     await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
     native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, profile.workspace_dir)
-    can_use_tool = _non_stream_native_ask_deny_callback(profile.name) if native_ask_configured else None
+    can_use_tool = non_stream_permission_callback(profile.name, runtime_response_disposition(req)) if native_ask_configured else None
     options = await asyncio.to_thread(
         runtime._build_options,
         req,
@@ -78,6 +67,8 @@ async def run_claimed_claude_runtime(
     from .claude_runtime import RuntimeQueryState
 
     context.telemetry_input["claude_web_hitl_enabled"] = False
+    if profile.requires_web_hitl:
+        context.telemetry_input["permission_mode"] = "default"
     state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
     root_metadata = runtime._runtime_observation_metadata(context, "non_stream", profile=profile)
     propagation = runtime._langfuse_propagation_attributes(req, context, "non_stream", profile=profile)

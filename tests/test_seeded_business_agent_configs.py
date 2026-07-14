@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from app.runtime.agent_profiles import build_profiles, discover_seeded_business_agents, seed_business_agent_ids
+from app.runtime.managed_agent_policy import GENERIC_MCP_MUTATION_RULES
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.schemas import ChatResponse
 from app.runtime.settings import AppSettings
@@ -39,7 +40,7 @@ def test_security_data_standardization_review_seed_permissions_are_review_only()
     settings = json.loads((REVIEW_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))
     permissions = settings["permissions"]
 
-    assert permissions.get("ask") == []
+    assert permissions.get("ask") == ["Bash(*)", *GENERIC_MCP_MUTATION_RULES]
     assert "mcp__sec-ops-data__*" in permissions["allow"]
     assert "Write(/data/outputs/security-data-standardization-review/**)" in permissions["allow"]
     for forbidden in (
@@ -80,7 +81,7 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
     settings = json.loads((AI_SOC_GAP_WORKSPACE / ".claude" / "settings.json").read_text(encoding="utf-8"))
     permissions = settings["permissions"]
 
-    assert permissions.get("ask") == []
+    assert permissions.get("ask") == ["Bash(*)", *GENERIC_MCP_MUTATION_RULES]
     assert "Read(/data/uploads/**)" in permissions["allow"]
     assert "Write(/data/outputs/ai-soc-gap-analyzer/**)" in permissions["allow"]
     for forbidden in (
@@ -95,11 +96,14 @@ def test_ai_soc_gap_analyzer_seed_permissions_are_assessment_only() -> None:
     assert "Write(./**)" not in permissions["deny"]
 
 
-def test_seeded_business_agents_allow_bash_without_hitl() -> None:
+def test_seeded_general_business_agents_route_broad_bash_to_hitl() -> None:
     for settings_path in sorted(SEED_ROOT.glob("*/workspace/.claude/settings.json")):
         permissions = json.loads(settings_path.read_text(encoding="utf-8"))["permissions"]
-        assert "Bash(*)" in permissions.get("allow", []), settings_path
-        assert "Bash(*)" not in permissions.get("ask", []), settings_path
+        if SECOPS_EXPERT_AGENT_ID in settings_path.parts:
+            assert "Bash(*)" in permissions.get("allow", []), settings_path
+            continue
+        assert "Bash(*)" not in permissions.get("allow", []), settings_path
+        assert "Bash(*)" in permissions.get("ask", []), settings_path
 
 
 def test_seeded_sandbox_settings_fail_closed_without_workspace_write_deny() -> None:
@@ -112,6 +116,7 @@ def test_seeded_sandbox_settings_fail_closed_without_workspace_write_deny() -> N
         permissions = settings["permissions"]
         assert sandbox["failIfUnavailable"] is True, settings_path
         assert sandbox["allowUnsandboxedCommands"] is False, settings_path
+        assert sandbox["enableWeakerNestedSandbox"] is False, settings_path
         assert "Edit(./**)" not in permissions.get("deny", []), settings_path
         assert "Write(./**)" not in permissions.get("deny", []), settings_path
 
@@ -213,8 +218,10 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     assert "Write(/data/outputs/security-operations-expert/**)" in permissions["allow"]
     assert "Write(/data/outputs/**)" not in permissions["allow"]
 
-    assert permissions["ask"] == ["mcp__sec-ops__soc_api__execute"]
-    assert "mcp__sec-ops__soc_api__manual" not in permissions["ask"]
+    assert permissions["ask"] == [
+        "mcp__sec-ops__soc_api__create",
+        "mcp__sec-ops__soc_api__manual",
+    ]
     assert "mcp__sec-ops__*manual*" not in permissions["ask"]
     assert "mcp__sec-ops__*create*" not in permissions["ask"]
     assert "mcp__sec-ops__*delete*" not in permissions["ask"]
@@ -223,6 +230,8 @@ def test_security_operations_expert_fuses_response_disposal_permissions() -> Non
     assert "Edit(./**)" not in permissions["ask"]
     assert "Write(./**)" not in permissions["ask"]
     assert "AskUserQuestion" in permissions["deny"]
+    assert "mcp__sec-ops__soc_api__execute" in permissions["deny"]
+    assert "mcp__sec-ops__soc_api__create_1" in permissions["deny"]
 
     serialized = json.dumps(settings, ensure_ascii=False)
     assert "response-disposal/claude-root" not in serialized
@@ -246,18 +255,17 @@ def test_security_operations_expert_config_matches_agent_id_and_response_contrac
     assert list(mcp["mcpServers"]) == ["sec-ops"]
     assert mcp["mcpServers"]["sec-ops"]["url"] == "${SEC_OPS_MCP_URL}"
 
-    assert "响应处置部分直接继承并融合" in claude_md
-    assert "单 server" in claude_md
+    assert "响应处置系统（RO）通过结构化 `phase` 驱动" in claude_md
+    assert "phase=proposal" in claude_md
+    assert "phase=approved_execution" in claude_md
     assert "threat-response-disposition" in claude_md
-    assert "response-playbook-builder" in claude_md
-    assert "只允许 `mcp__sec-ops__soc_api__execute`" in claude_md
-    assert "`mcp__sec-ops__soc_api__manual` / `execute` / `create*` 等" not in claude_md
-    assert "settings.json 只让 soc_api__execute 走 web HITL" in agent_yaml
+    assert "`mcp__sec-ops__soc_api__execute` 是单原子动作执行接口" in claude_md
+    assert "create/manual 每次请求逐次校验批准快照" in agent_yaml
     assert "告警分流" in analysis_skill
     assert "真实响应处置交给 threat-response-disposition" in analysis_skill
-    assert "整本剧本交给 SOC" in response_skill
-    assert "只有 `soc_api__execute` 属 ask 型需 Web HITL" in response_skill
-    assert "create` 类，属 ask 型需人审" not in response_skill
+    assert "用户确认对象始终是完整剧本" in response_skill
+    assert "create` / `manual` 的 AgentGov ask 是 RO 内部授权握手" in response_skill
+    assert "获得 `instanceId` 后立即停止" in response_skill
 
 
 def test_hitl_required_deployment_contract_and_low_fixes() -> None:

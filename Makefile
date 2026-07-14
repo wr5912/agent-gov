@@ -8,12 +8,32 @@ COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
 	app/openapi_contract.py \
+	app/routers/claude_user_input.py \
+	app/routers/conversations.py \
+	app/routers/responses.py \
+	app/runtime/api_auth.py \
+	app/runtime/advisory_lock.py \
 	app/runtime/agent_job_types.py \
+	app/runtime/claude_runtime_permissions.py \
+	app/runtime/claude_runtime_stream.py \
+	app/runtime/claude_user_input_service.py \
 	app/runtime/output_formatter.py \
 	app/runtime/agent_job_runner.py \
 	app/runtime/claude_runtime.py \
 	app/runtime/model_provider.py \
 	app/runtime/model_provider_capabilities.py \
+	app/runtime/openai_responses_adapter.py \
+	app/runtime/openai_responses_schemas.py \
+	app/runtime/openai_responses_stream.py \
+	app/runtime/managed_agent_policy.py \
+	app/runtime/runtime_coordination.py \
+	app/runtime/runtime_initialization.py \
+	app/runtime/service_launcher.py \
+	app/runtime/records/response_disposition_records.py \
+	app/runtime/response_disposition_control.py \
+	app/runtime/response_disposition_db.py \
+	app/runtime/response_disposition_stream.py \
+	app/runtime/stores/response_disposition_claim_store.py \
 	app/services/improvement_execution_service.py \
 	app/services/improvement_governor_service.py \
 	app/services/workspace_execution_applier.py \
@@ -40,7 +60,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-workspace-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -101,8 +121,8 @@ ui-feedback-smoke:
 	@VERIFY_SCREENSHOT_DIR="$${VERIFY_SCREENSHOT_DIR:-/tmp/agentgov-ui-feedback-smoke}" pnpm --dir frontend run verify:real-container
 
 langfuse-dirs:
-	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --quiet
 	@runtime_root=$$($(PYTHON_RUN) -c 'from pathlib import Path; import sys; sys.path.insert(0, "scripts"); from bootstrap_runtime_volume import resolve_runtime_root; print(resolve_runtime_root(None, Path("docker/.env")).as_posix())'); \
+	mkdir -p "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio"; \
 	chmod a+rwx "$$runtime_root/langfuse" "$$runtime_root/langfuse/postgres" "$$runtime_root/langfuse/clickhouse" "$$runtime_root/langfuse/clickhouse/data" "$$runtime_root/langfuse/clickhouse/logs" "$$runtime_root/langfuse/redis" "$$runtime_root/langfuse/minio" 2>/dev/null || true
 
 langfuse-up: langfuse-dirs
@@ -118,14 +138,10 @@ langfuse-smoke:
 	$(PYTHON_RUN) scripts/langfuse_smoke.py --env-file docker/.env
 
 runtime-bootstrap:
-	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py
-	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --apply
+	$(COMPOSE) run --rm --no-deps claude-agent-api prepare
 
-runtime-repair-managed-config:
-	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --repair-managed-config
-
-runtime-reconcile-business-agent-workspace-policy:
-	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --apply
+runtime-validate:
+	$(COMPOSE) run --rm --no-deps claude-agent-api validate
 
 runtime-clean:
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --runtime-artifacts
@@ -134,11 +150,10 @@ local-debug-env:
 	cp -n docker/.env.local-debug.example docker/.env.local-debug || true
 
 local-debug-bootstrap: local-debug-env
-	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug
-	$(PYTHON_RUN) scripts/reconcile_business_agent_workspace_policy.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --apply
+	$(PYTHON_RUN) -m app.runtime.service_launcher prepare
 
-local-debug-repair-managed-config: local-debug-env
-	$(PYTHON_RUN) scripts/bootstrap_runtime_volume.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --repair-managed-config
+local-debug-validate: local-debug-env
+	$(PYTHON_RUN) -m app.runtime.service_launcher validate
 
 local-debug-clean: local-debug-env
 	$(PYTHON_RUN) scripts/cleanup_runtime_artifacts.py --env-file docker/.env.local-debug --runtime-volume-mode local-debug --runtime-artifacts
@@ -230,4 +245,4 @@ main-flow-test:
 	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)
 
 container-live-test:
-	$(COMPOSE) run --rm -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api sh -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'
+	$(COMPOSE) run --rm --entrypoint sh -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

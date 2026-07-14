@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import app.routers.conversations as conv_module
+from app.runtime.runtime_db import SessionRecordModel
 from app.runtime.session_store import LocalSession
 from fastapi.testclient import TestClient
 
@@ -64,15 +65,25 @@ def test_create_get_list_delete(monkeypatch, tmp_path: Path) -> None:
 
 def test_active_turn_blocks_both_session_delete_surfaces(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
-    session = module.session_store.get_or_create_owned("sess-active-delete", agent_id="main-agent")
-    module.session_store.claim_turn(session, run_id="run-active-delete", agent_id="main-agent")
+    module.session_store.get_or_create_owned("sess-active-delete", agent_id="main-agent")
+    with module.session_store.Session.begin() as db:
+        session = db.get(SessionRecordModel, "sess-active-delete")
+        assert session is not None
+        session.active_run_id = "run-active-delete"
+        session.active_run_expires_at = "2999-01-01T00:00:00+00:00"
+        session.active_run_generation = 1
 
     with TestClient(module.app) as client:
         active = next(item for item in client.get("/v1/conversations").json()["data"] if item["id"] == "conv_sess-active-delete")
         assert active["agentgov"]["active_run_id"] == "run-active-delete"
         assert client.delete("/api/sessions/sess-active-delete").status_code == 409
         assert client.delete("/v1/conversations/conv_sess-active-delete").status_code == 409
-        assert module.session_store.release_turn("sess-active-delete", run_id="run-active-delete")
+        with module.session_store.Session.begin() as db:
+            session = db.get(SessionRecordModel, "sess-active-delete")
+            assert session is not None
+            session.active_run_id = None
+            session.active_run_expires_at = None
+            session.active_run_generation = 0
         deleted = client.delete("/v1/conversations/conv_sess-active-delete")
 
     assert deleted.status_code == 200
@@ -84,6 +95,27 @@ def test_create_strips_reserved_metadata(monkeypatch, tmp_path: Path) -> None:
     with TestClient(module.app) as client:
         body = client.post("/v1/conversations", json={"metadata": {"__agentgov_x__": "y", "source": "s"}}).json()
     assert body["metadata"] == {"source": "s"}
+
+
+def test_response_orchestrator_can_only_create_conversation_mapping(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(
+        monkeypatch,
+        tmp_path,
+        api_key="general-secret",
+        response_orchestrator_api_key="ro-secret",
+    )
+    general_headers = {"Authorization": "Bearer general-secret"}
+    ro_headers = {"Authorization": "Bearer ro-secret"}
+
+    with TestClient(module.app) as client:
+        created = client.post("/v1/conversations", json={}, headers=ro_headers)
+        conversation_id = created.json()["id"]
+        assert created.status_code == 200
+        assert client.get("/v1/conversations", headers=ro_headers).status_code == 403
+        assert client.get(f"/v1/conversations/{conversation_id}", headers=ro_headers).status_code == 403
+        assert client.get(f"/v1/conversations/{conversation_id}/items", headers=ro_headers).status_code == 403
+        assert client.delete(f"/v1/conversations/{conversation_id}", headers=ro_headers).status_code == 403
+        assert client.delete(f"/v1/conversations/{conversation_id}", headers=general_headers).status_code == 200
 
 
 def test_get_unknown_conversation_404(monkeypatch, tmp_path: Path) -> None:

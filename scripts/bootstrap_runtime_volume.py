@@ -7,12 +7,10 @@ import os
 import re
 import shutil
 from collections.abc import Iterable, MutableMapping
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypedDict
 
 try:
-    from scripts.runtime_cleanup import cleanup_runtime_artifacts
     from scripts.runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
@@ -21,7 +19,6 @@ try:
         validate_rendered_config,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
-    from runtime_cleanup import cleanup_runtime_artifacts
     from runtime_template_renderer import (
         RuntimeTemplateRenderContext,
         build_render_context,
@@ -59,6 +56,7 @@ RUNTIME_DATA_DIRS = (
     "data/business-agents/main-agent/version/worktrees",
     "data/business-agents/main-agent/version/releases",
     "data/business-agents/main-agent/version/candidate-claude-roots",
+    "data/business-agents/main-agent/claude-root/.claude",
     "langfuse/postgres",
     "langfuse/clickhouse/data",
     "langfuse/clickhouse/logs",
@@ -66,8 +64,6 @@ RUNTIME_DATA_DIRS = (
     "langfuse/minio",
 )
 SKIP_TEMPLATE_ROOT_ENTRIES = {"README.md", ".template-sanitization.json", "workspace-policy"}
-PRIVATE_RUNTIME_FILENAMES = {".env", ".mcp.local.json", "CLAUDE.local.md", "settings.local.json"}
-PRIVATE_RUNTIME_DIR_NAMES = {".git", ".runtime-volume-seeds-backups", "data", "langfuse"}
 LEGACY_AGENT_GOVERNANCE_MIGRATIONS = (
     (Path("data/agent-governance/worktrees"), Path("data/business-agents/main-agent/version/worktrees")),
     (Path("data/agent-governance/releases"), Path("data/business-agents/main-agent/version/releases")),
@@ -82,10 +78,6 @@ class BootstrapResult(TypedDict):
     created_dirs: list[str]
     copied: list[str]
     skipped_existing: list[str]
-    repaired: list[str]
-    removed: list[str]
-    backups: list[str]
-    cleanup_removed: list[str]
     migrated: list[str]
     validation_errors: list[str]
 
@@ -102,9 +94,9 @@ def _expand_env_value(value: str, env: dict[str, str]) -> str:
 
 
 def _load_env_file(path: Path) -> MutableMapping[str, str]:
-    env = dict(os.environ)
+    env: dict[str, str] = {}
     if not path.exists():
-        return env
+        return dict(os.environ)
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
@@ -114,7 +106,14 @@ def _load_env_file(path: Path) -> MutableMapping[str, str]:
         if not key:
             continue
         env[key] = _expand_env_value(value, env)
+    env.update(os.environ)
     return env
+
+
+def load_runtime_env(path: Path) -> MutableMapping[str, str]:
+    """Load the selected runtime env file without mutating process environment."""
+
+    return _load_env_file(path)
 
 
 def _runtime_root_for_mode(mode: str | None) -> Path:
@@ -165,28 +164,23 @@ def _copy_missing(
     dest: Path,
     *,
     rel_path: Path,
-    overwrite: bool,
-    repair_managed_config: bool,
     dry_run: bool,
     render_context: RuntimeTemplateRenderContext,
     copied: list[str],
     skipped: list[str],
-    repaired: list[str],
-    backups: list[str],
     validation_errors: list[str],
 ) -> None:
-    # #27：data/business-agents/<agent>/ 是活的优化状态（反馈优化闭环 publish 写入的 workspace）——
-    # bootstrap 对它只做存在性对账（fill-missing：缺失才补全新 seed Agent），强制关掉 overwrite/repair，
-    # 绝不覆盖用户在卷里积累的优化成果与 per-agent git 历史。seed 只是「出生配置」，不回灌已存在 Agent。
+    # 业务 Agent workspace 是 Git 版本源。只有整个 workspace 不存在时才播种出生配置；
+    # 已存在 workspace 不逐文件 fill-missing，避免把版本中有意删除的文件复活。
     parts = rel_path.parts
-    if len(parts) >= 2 and parts[0] == "data" and parts[1] == "business-agents":
-        overwrite = False
-        repair_managed_config = False
+    is_business_workspace_root = len(parts) == 4 and parts[0] == "data" and parts[1] == "business-agents" and parts[3] == "workspace"
+    if is_business_workspace_root and src.is_dir() and dest.exists():
+        skipped.append(dest.as_posix())
+        return
     # governor-workspace 是平台治理配置（治理执行者的 prompt/权限/skill），不是用户在卷里积累的业务优化态，
     # 应始终跟随 seed：每次 bootstrap 从 seed 强制覆盖，使「改 governor 配置→重建」即在现网生效
     # （只覆盖 seed 中存在的文件，卷内私有/会话文件不动；业务 Agent 卷仍走上面的 fill-missing、绝不回灌）。
-    elif parts and parts[0] == "governor-workspace":
-        overwrite = True
+    overwrite = bool(parts and parts[0] == "governor-workspace")
     if src.is_dir():
         if not dry_run:
             dest.mkdir(parents=True, exist_ok=True)
@@ -195,14 +189,10 @@ def _copy_missing(
                 child,
                 dest / child.name,
                 rel_path=rel_path / child.name,
-                overwrite=overwrite,
-                repair_managed_config=repair_managed_config,
                 dry_run=dry_run,
                 render_context=render_context,
                 copied=copied,
                 skipped=skipped,
-                repaired=repaired,
-                backups=backups,
                 validation_errors=validation_errors,
             )
         return
@@ -211,20 +201,6 @@ def _copy_missing(
         content = render_template_file(src.read_text(encoding="utf-8"), rel_path=rel_path, context=render_context)
         validation_errors.extend(validate_rendered_config(content, rel_path=rel_path, context=render_context))
     if dest.exists() and not overwrite:
-        if repair_managed_config and content is not None:
-            existing = dest.read_text(encoding="utf-8")
-            if existing != content:
-                repaired.append(dest.as_posix())
-                backup = _backup_path(dest, runtime_root=render_context.runtime_root)
-                backups.append(backup.as_posix())
-                if not dry_run:
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    backup.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(dest, backup)
-                    dest.write_text(content, encoding="utf-8")
-            else:
-                skipped.append(dest.as_posix())
-            return
         skipped.append(dest.as_posix())
         return
     copied.append(dest.as_posix())
@@ -235,50 +211,6 @@ def _copy_missing(
         shutil.copy2(src, dest)
     else:
         dest.write_text(content, encoding="utf-8")
-
-
-def _backup_path(path: Path, *, runtime_root: Path) -> Path:
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    try:
-        rel_path = path.relative_to(runtime_root)
-    except ValueError as exc:
-        raise ValueError(f"Refusing to create runtime backup outside runtime root: {path}") from exc
-    return runtime_root / ".runtime-volume-seeds-backups" / timestamp / rel_path
-
-
-def _template_file_set(template_dir: Path) -> set[Path]:
-    if not template_dir.exists():
-        return set()
-    return {path.relative_to(template_dir) for path in template_dir.rglob("*") if path.is_file()}
-
-
-def _is_stale_template_doc_candidate(rel_path: Path, template_files: set[Path]) -> bool:
-    if rel_path in template_files:
-        return False
-    parts = rel_path.parts
-    if len(parts) < 2:
-        return False
-    if parts[0] not in _workspace_dir_names():
-        return False
-    if any(part in PRIVATE_RUNTIME_DIR_NAMES for part in parts):
-        return False
-    if rel_path.name in PRIVATE_RUNTIME_FILENAMES or ".bak-" in rel_path.name:
-        return False
-    if rel_path.suffix != ".md":
-        return False
-    if len(parts) == 2 and rel_path.name == "README.md":
-        return True
-    if len(parts) >= 3 and parts[1] == "docs":
-        return True
-    return len(parts) >= 3 and parts[1] in {"hooks", "mcp_servers"} and rel_path.name == "README.md"
-
-
-def _workspace_dir_names() -> set[str]:
-    # 顶层挂载的 workspace 种子目录名；main 已迁入 data/business-agents/main-agent/workspace，
-    # 不再是顶层 workspace（其配置作为预制业务 Agent 种子随 data/ 子树拷入卷）。
-    return {
-        "governor-workspace",
-    }
 
 
 def _remove_empty_parents(path: Path, *, stop_at: Path) -> None:
@@ -334,50 +266,16 @@ def _merge_legacy_dir(
     _remove_empty_parents(legacy.parent, stop_at=runtime_root / "data")
 
 
-def _remove_stale_template_docs(
-    *,
-    runtime_root: Path,
-    template_dir: Path,
-    dry_run: bool,
-    removed: list[str],
-    backups: list[str],
-) -> None:
-    template_files = _template_file_set(template_dir)
-    if not runtime_root.exists():
-        return
-    for path in sorted(runtime_root.rglob("*")):
-        if not path.is_file():
-            continue
-        rel_path = path.relative_to(runtime_root)
-        if not _is_stale_template_doc_candidate(rel_path, template_files):
-            continue
-        removed.append(path.as_posix())
-        backup = _backup_path(path, runtime_root=runtime_root)
-        backups.append(backup.as_posix())
-        if dry_run:
-            continue
-        backup.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(path, backup)
-        path.unlink()
-        _remove_empty_parents(path.parent, stop_at=runtime_root / rel_path.parts[0])
-
-
 def bootstrap_runtime_volume(
     *,
     runtime_root: Path,
     template_dir: Path,
     runtime_volume_mode: str = "container",
     env: MutableMapping[str, str] | None = None,
-    overwrite: bool = False,
-    repair_managed_config: bool = False,
     dry_run: bool = False,
 ) -> BootstrapResult:
     copied: list[str] = []
     skipped: list[str] = []
-    repaired: list[str] = []
-    removed: list[str] = []
-    backups: list[str] = []
-    cleanup_removed: list[str] = []
     migrated: list[str] = []
     validation_errors: list[str] = []
     created_dirs: list[str] = []
@@ -405,36 +303,17 @@ def bootstrap_runtime_volume(
                 entry,
                 runtime_root / entry.name,
                 rel_path=Path(entry.name),
-                overwrite=overwrite,
-                repair_managed_config=repair_managed_config,
                 dry_run=dry_run,
                 render_context=render_context,
                 copied=copied,
                 skipped=skipped,
-                repaired=repaired,
-                backups=backups,
                 validation_errors=validation_errors,
             )
-        if repair_managed_config:
-            _remove_stale_template_docs(
-                runtime_root=runtime_root,
-                template_dir=template_dir,
-                dry_run=dry_run,
-                removed=removed,
-                backups=backups,
-            )
-            if not validation_errors:
-                cleanup_result = cleanup_runtime_artifacts(runtime_root=runtime_root, dry_run=dry_run)
-                cleanup_removed.extend(cleanup_result["removed"])
 
     return {
         "created_dirs": created_dirs,
         "copied": copied,
         "skipped_existing": skipped,
-        "repaired": repaired,
-        "removed": removed,
-        "backups": backups,
-        "cleanup_removed": cleanup_removed,
         "migrated": migrated,
         "validation_errors": validation_errors,
     }
@@ -450,12 +329,6 @@ def main() -> int:
     )
     parser.add_argument("--template-dir", type=Path, default=_repo_root() / DEFAULT_TEMPLATE_DIR)
     parser.add_argument("--env-file", type=Path, default=_repo_root() / DEFAULT_ENV_FILE)
-    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing runtime files. Default is fill-missing only.")
-    parser.add_argument(
-        "--repair-managed-config",
-        action="store_true",
-        help="Re-render existing runtime-volume-seeds managed text files; remove transient backups and stale template README/docs files after successful validation.",
-    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
@@ -469,8 +342,6 @@ def main() -> int:
         template_dir=template_dir,
         runtime_volume_mode=runtime_volume_mode,
         env=env,
-        overwrite=args.overwrite,
-        repair_managed_config=args.repair_managed_config,
         dry_run=args.dry_run,
     )
     if not args.quiet:
@@ -486,7 +357,7 @@ def main() -> int:
                 indent=2,
             )
         )
-    return 0
+    return 1 if result["validation_errors"] else 0
 
 
 if __name__ == "__main__":

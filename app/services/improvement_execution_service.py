@@ -156,6 +156,59 @@ class ImprovementExecutionService:
         except Exception as exc:
             return self._handle_execution_failure(claim, store=store, error=exc)
 
+    def reconcile_expired_executions(self, *, limit: int = 100) -> JsonObject:
+        now = datetime.now(timezone.utc).isoformat()
+        recovered = released = skipped = failed = 0
+        for expired in self._claims.list_expired_claims(now=now, limit=limit):
+            try:
+                item = self._improvements.get_improvement(expired.improvement_id)
+                if item is None:
+                    raise DataIntegrityError(f"Expired execution has no improvement item: {expired.improvement_id}")
+                _, claim_expires_at = _lease_window()
+                claim = self._claims.claim_execution(
+                    expired.improvement_id,
+                    change_set_id=expired.change_set_id,
+                    base_commit_sha=expired.base_commit_sha,
+                    source_optimization_plan_id=expired.source_optimization_plan_id,
+                    source_optimization_plan_updated_at=expired.source_optimization_plan_updated_at,
+                    source_attribution_id=expired.source_attribution_id,
+                    source_attribution_updated_at=expired.source_attribution_updated_at,
+                    claim_token=uuid.uuid4().hex,
+                    now=now,
+                    claim_expires_at=claim_expires_at,
+                )
+                store = self._gov._store_for(getattr(item, "agent_id", "main-agent") or "main-agent")
+                if self._candidate_commit_exists(claim, store=store):
+                    try:
+                        self._recover_candidate_claim(claim, store=store)
+                    except Exception as exc:  # noqa: BLE001 - always release a corrupt durable fence.
+                        self._finish_without_application(
+                            claim,
+                            f"候选版本自动对账失败：{exc.__class__.__name__}: {exc}",
+                            retain_change_set=True,
+                        )
+                        failed += 1
+                    else:
+                        recovered += 1
+                    continue
+                retain_change_set = self._compensate_unapplied_change_set(
+                    claim,
+                    store=store,
+                    reason="过期执行申请未发现候选版本，后台对账已释放。",
+                )
+                self._finish_without_application(
+                    claim,
+                    "过期执行申请未发现候选版本，已释放执行锁。",
+                    retain_change_set=retain_change_set,
+                )
+                released += 1
+            except ConflictError:
+                skipped += 1
+            except Exception:  # noqa: BLE001 - isolate corrupt rows so later claims still reconcile.
+                failed += 1
+                logger.exception("expired improvement execution reconciliation failed: %s", expired.improvement_id)
+        return {"recovered": recovered, "released": released, "skipped": skipped, "failed": failed}
+
     async def _execute_claim(
         self,
         claim: ExecutionClaim,
@@ -194,15 +247,17 @@ class ImprovementExecutionService:
             reason = str(data.get("no_action_reason") or "governor 未产出可应用执行操作")
             return self._abandon_no_action(claim, store=store, reason=reason)
         self._renew_claim(claim)
-        self._execution_app.apply_execution_operations(
-            operations,
-            workspace_dir=worktree,
-            target_policy=policy,
-            content_guard=guard_execution_write,
-            allowed_targets=set(targets),
-        )
-        self._renew_claim(claim)
-        candidate = store.commit_worktree(worktree, message=f"Improvement {claim.improvement_id} execution apply")
+        with store.mutation_guard():
+            self._execution_app.apply_execution_operations(
+                operations,
+                workspace_dir=worktree,
+                target_policy=policy,
+                content_guard=guard_execution_write,
+                workspace_guard=lambda candidate: self._gov.require_workspace_policy(candidate, agent_id),
+                allowed_targets=set(targets),
+            )
+            self._renew_claim(claim)
+            candidate = store.commit_worktree(worktree, message=f"Improvement {claim.improvement_id} execution apply")
         self._gov.mark_candidate_committed(
             claim.change_set_id,
             candidate_commit_sha=candidate,
@@ -295,8 +350,18 @@ class ImprovementExecutionService:
 
     def _handle_execution_failure(self, claim: ExecutionClaim, *, store: Any, error: Exception) -> ExecutionRecord:
         if self._candidate_commit_exists(claim, store=store):
-            self._expire_claim(claim)
-            raise error
+            try:
+                return self._recover_candidate_claim(claim, store=store)
+            except Exception as recovery_error:
+                try:
+                    self._finish_without_application(
+                        claim,
+                        f"候选版本对账失败：{recovery_error.__class__.__name__}: {recovery_error}",
+                        retain_change_set=True,
+                    )
+                except ConflictError:
+                    self._expire_claim(claim)
+                raise error from recovery_error
         try:
             self._renew_claim(claim)
         except ConflictError as claim_conflict:
@@ -393,6 +458,23 @@ class ImprovementExecutionService:
         except Exception:  # noqa: BLE001 - absence/corruption is handled as unapplied compensation.
             return False
         return bool(head and head != claim.base_commit_sha)
+
+    def _recover_candidate_claim(self, claim: ExecutionClaim, *, store: Any) -> ExecutionRecord:
+        existing = self._content.get_execution(claim.improvement_id)
+        if _has_applied_execution(existing):
+            self._ensure_change_set_link(existing)
+            return existing  # type: ignore[return-value]
+        change_set = self._gov.get_change_set(claim.change_set_id)
+        if change_set is None:
+            raise DataIntegrityError("Execution candidate change set disappeared during reconciliation")
+        evidence = self._candidate_evidence(claim, change_set=change_set, store=store)
+        if evidence is None:
+            raise DataIntegrityError("Execution candidate evidence disappeared during reconciliation")
+        return self._finalize_candidate(
+            claim,
+            evidence=evidence,
+            summary="已自动对账恢复中断的候选 Agent 版本。",
+        )
 
     def _ensure_change_set_link(self, record: ExecutionRecord | None) -> None:
         if record is None or not record.change_set_id:

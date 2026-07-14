@@ -5,9 +5,6 @@ import json
 from sqlalchemy.engine import Connection
 
 from .runtime_db_base import utc_now
-from .runtime_db_migrations_0036 import (
-    migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
-)
 
 AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT = (
     "job_id",

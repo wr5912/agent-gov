@@ -4,16 +4,26 @@ import ast
 import json
 import os
 import stat
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
+
+from scripts.runtime_template_renderer import (
+    RuntimeTemplateRenderContext,
+    build_render_context,
+    is_template_managed_text_file,
+    render_template_file,
+    validate_rendered_config,
+)
 
 # 创建业务 Agent 时基于的模板 catalog（docker/runtime-volume-seeds/templates/business-agent/<template_id>/）。
 # 默认按模块相对路径解析，容器内为 /app/docker/...（镜像 COPY），本机调试为 <repo>/docker/...；
 # 可经 BUSINESS_AGENT_TEMPLATES_DIR 覆盖。
 DEFAULT_TEMPLATE_ID = "general"
 _TEMPLATES_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "docker" / "runtime-volume-seeds" / "templates" / "business-agent"
+_RUNTIME_SEEDS_DIR_DEFAULT = Path(__file__).resolve().parents[2] / "docker" / "runtime-volume-seeds"
 # 渲染占位符：模板文本里的 {{AGENT_ID}} / {{AGENT_NAME}} 被替换为具体值（双花括号不与 JSON 冲突）。
 _PLACEHOLDER_AGENT_ID = "{{AGENT_ID}}"
 _PLACEHOLDER_AGENT_NAME = "{{AGENT_NAME}}"
@@ -28,17 +38,23 @@ _STARTER_CLAUDE_MD = """# {name}
 其运行、反馈归因、评估和版本治理。高风险动作须经外部系统或授权用户确认。
 """
 
-# 业务 Agent 是被治理对象：起始权限保守，默认只读自身工作区；Bash 由 sandbox、hook
-# 与 deny 兜底直接执行，不走后端 HITL；写入工作区仍需确认。运行时治理根隔离由
-# build_business_agent_profile 在 profile 层另行拒绝。
+# 业务 Agent 是被治理对象：起始权限保守，默认只读自身工作区；Bash 走原生 ask/HITL，
+# 写入工作区仍需确认。运行时治理根隔离由 build_business_agent_profile 在 profile 层另行拒绝。
 _STARTER_SETTINGS: dict = {
     "$schema": "https://json.schemastore.org/claude-code-settings.json",
     "permissions": {
         "defaultMode": "default",
         "disableBypassPermissionsMode": "disable",
-        "allow": ["Read(./**)", "Glob", "Grep", "Skill", "Bash(*)"],
-        "ask": ["Edit(./**)", "Write(./**)"],
+        "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
+        "ask": ["Bash(*)", "Edit(./**)", "Write(./**)"],
         "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"],
+    },
+    "sandbox": {
+        "enabled": True,
+        "failIfUnavailable": True,
+        "autoAllowBashIfSandboxed": False,
+        "enableWeakerNestedSandbox": False,
+        "allowUnsandboxedCommands": False,
     },
 }
 
@@ -88,6 +104,10 @@ class WorkspaceProvisionJournal:
     created_directories: tuple[_CreatedPath, ...]
 
 
+class InvalidDeclaredBusinessAgentSeed(RuntimeError):
+    """声明式业务 Agent seed 无法安全物化。"""
+
+
 def business_agent_templates_dir() -> Path:
     """模板 catalog 根目录（env 覆盖优先）。"""
     override = os.environ.get("BUSINESS_AGENT_TEMPLATES_DIR")
@@ -117,6 +137,40 @@ def list_business_agent_templates() -> list[str]:
     return ids or [DEFAULT_TEMPLATE_ID]
 
 
+def prepare_declared_business_agent_workspace(
+    *,
+    agent_id: str,
+    name: str,
+    runtime_volume_mode: str,
+    env: Mapping[str, str],
+    runtime_root: Path,
+) -> WorkspaceTemplatePlan | None:
+    """Read and render a same-id declared seed before reserving persistent state."""
+
+    seed_root = Path(os.environ.get("RUNTIME_VOLUME_SEEDS_DIR") or _RUNTIME_SEEDS_DIR_DEFAULT)
+    source_workspace = seed_root / "data" / "business-agents" / agent_id / "workspace"
+    source_stat = _lstat(source_workspace)
+    if source_stat is None:
+        return None
+    if stat.S_ISLNK(source_stat.st_mode) or not stat.S_ISDIR(source_stat.st_mode):
+        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed must be a real directory: {agent_id}")
+    context = build_render_context(mode=runtime_volume_mode, env=env, runtime_root=runtime_root)
+    try:
+        entries = tuple(
+            _read_template_tree(
+                source_workspace,
+                agent_id=agent_id,
+                name=name,
+                render_context=context,
+            )
+        )
+    except WorkspaceSafetyError as exc:
+        raise InvalidDeclaredBusinessAgentSeed(str(exc)) from exc
+    if not entries:
+        raise InvalidDeclaredBusinessAgentSeed(f"Declared workspace seed is empty: {agent_id}")
+    return WorkspaceTemplatePlan(template_id=f"declared:{agent_id}", entries=entries)
+
+
 def _render(text: str, *, agent_id: str, name: str) -> str:
     return text.replace(_PLACEHOLDER_AGENT_ID, agent_id).replace(_PLACEHOLDER_AGENT_NAME, name)
 
@@ -126,6 +180,7 @@ def prepare_business_agent_workspace(
     agent_id: str,
     name: str,
     template_id: str = DEFAULT_TEMPLATE_ID,
+    render_context: RuntimeTemplateRenderContext | None = None,
 ) -> WorkspaceTemplatePlan:
     """Read, render and validate the whole template before any DB/FS mutation."""
     normalized = (template_id or DEFAULT_TEMPLATE_ID).strip() or DEFAULT_TEMPLATE_ID
@@ -138,11 +193,18 @@ def prepare_business_agent_workspace(
     template_stat = _lstat(template_path)
     if template_stat is None:
         if normalized == DEFAULT_TEMPLATE_ID and _lstat(root) is None:
-            return _inline_plan(agent_id=agent_id, name=name)
+            return _inline_plan(agent_id=agent_id, name=name, render_context=render_context)
         raise UnknownBusinessAgentTemplate(f"Unknown business agent template: {normalized!r}; available: {list_business_agent_templates()}")
     if stat.S_ISLNK(template_stat.st_mode) or not stat.S_ISDIR(template_stat.st_mode):
         raise WorkspaceSafetyError(f"Business Agent template must be a real directory: {normalized}")
-    entries = tuple(_read_template_tree(template_path, agent_id=agent_id, name=name))
+    entries = tuple(
+        _read_template_tree(
+            template_path,
+            agent_id=agent_id,
+            name=name,
+            render_context=render_context,
+        )
+    )
     if not entries:
         raise WorkspaceSafetyError(f"Business Agent template is empty: {normalized}")
     return WorkspaceTemplatePlan(template_id=normalized, entries=entries)
@@ -225,17 +287,35 @@ def initialize_business_agent_workspace(workspace_dir: Path, *, agent_id: str, n
     seed_business_agent_workspace(workspace_dir, agent_id=agent_id, name=name, template_id=DEFAULT_TEMPLATE_ID)
 
 
-def _inline_plan(*, agent_id: str, name: str) -> WorkspaceTemplatePlan:
+def _inline_plan(
+    *,
+    agent_id: str,
+    name: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> WorkspaceTemplatePlan:
     values = {
         PurePosixPath("CLAUDE.md"): _STARTER_CLAUDE_MD.format(name=name, agent_id=agent_id),
         PurePosixPath(".claude/settings.json"): json.dumps(_STARTER_SETTINGS, ensure_ascii=False, indent=2) + "\n",
         PurePosixPath(".mcp.json"): json.dumps(_STARTER_MCP, ensure_ascii=False, indent=2) + "\n",
     }
-    entries = tuple(_validated_entry(relative_path, content, 0o644) for relative_path, content in values.items())
+    entries = tuple(
+        _validated_entry(
+            relative_path,
+            _render_managed_content(relative_path, content, render_context),
+            0o644,
+        )
+        for relative_path, content in values.items()
+    )
     return WorkspaceTemplatePlan(template_id=DEFAULT_TEMPLATE_ID, entries=entries)
 
 
-def _read_template_tree(root: Path, *, agent_id: str, name: str) -> list[WorkspaceTemplateEntry]:
+def _read_template_tree(
+    root: Path,
+    *,
+    agent_id: str,
+    name: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> list[WorkspaceTemplateEntry]:
     rendered: list[WorkspaceTemplateEntry] = []
     for current, directories, files in os.walk(root, topdown=True, followlinks=False):
         current_path = Path(current)
@@ -259,9 +339,30 @@ def _read_template_tree(root: Path, *, agent_id: str, name: str) -> list[Workspa
                 continue
             source = current_path / filename
             source_stat, text = _read_regular_text_no_follow(source)
-            content = _render(text, agent_id=agent_id, name=name)
+            content = _render_managed_content(
+                relative_path,
+                _render(text, agent_id=agent_id, name=name),
+                render_context,
+            )
             rendered.append(_validated_entry(relative_path, content, stat.S_IMODE(source_stat.st_mode)))
     rendered.sort(key=lambda entry: entry.relative_path.as_posix())
+    return rendered
+
+
+def _render_managed_content(
+    relative_path: PurePosixPath,
+    content: str,
+    render_context: RuntimeTemplateRenderContext | None,
+) -> str:
+    if render_context is None:
+        return content
+    path = Path(relative_path.as_posix())
+    if not is_template_managed_text_file(path):
+        return content
+    rendered = render_template_file(content, rel_path=path, context=render_context)
+    errors = validate_rendered_config(rendered, rel_path=path, context=render_context)
+    if errors:
+        raise WorkspaceSafetyError("; ".join(errors))
     return rendered
 
 

@@ -4,6 +4,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.runtime.api_auth import ApiPrincipal
 from app.runtime.claude_user_input_schemas import (
     ClaudeUserInputDecisionRequest,
     ClaudeUserInputDecisionResponse,
@@ -12,6 +13,7 @@ from app.runtime.claude_user_input_schemas import (
 )
 from app.runtime.claude_user_input_service import (
     ClaudeUserInputConflict,
+    ClaudeUserInputForbidden,
     ClaudeUserInputInvalid,
     ClaudeUserInputNotFound,
     ClaudeUserInputService,
@@ -23,23 +25,61 @@ def _response(record: ClaudeUserInputRequestRecord) -> ClaudeUserInputRequestRes
     return ClaudeUserInputRequestResponse(**record.public_payload())
 
 
+def _submit_decision(
+    service: ClaudeUserInputService,
+    request_id: str,
+    req: ClaudeUserInputDecisionRequest,
+    principal: ApiPrincipal,
+) -> ClaudeUserInputDecisionResponse:
+    if principal != ApiPrincipal.RESPONSE_ORCHESTRATOR and req.updated_input is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="updated_input is only accepted for protected SOC tool requests",
+        )
+    try:
+        decided_by = "response_orchestrator" if principal == ApiPrincipal.RESPONSE_ORCHESTRATOR else "api_key_client"
+        record = service.submit_decision(
+            request_id,
+            decision=req,
+            decided_by=decided_by,
+            principal=principal,
+        )
+    except ClaudeUserInputNotFound as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except ClaudeUserInputConflict as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    except ClaudeUserInputInvalid as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    except ClaudeUserInputForbidden as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    return ClaudeUserInputDecisionResponse(
+        request_id=record.request_id,
+        status=record.status,  # type: ignore[arg-type]
+        decision=record.decision or "",
+        resolved_at=record.resolved_at,
+    )
+
+
 def create_claude_user_input_router(
     *,
     service: ClaudeUserInputService,
     require_api_key: Callable,
+    authenticate_api_or_ro: Callable,
 ) -> APIRouter:
-    router = APIRouter(tags=["claude-user-input"], dependencies=[Depends(require_api_key)])
+    router = APIRouter(tags=["claude-user-input"])
 
     @router.get(
         "/api/claude-user-input-requests",
         response_model=ClaudeUserInputRequestListResponse,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
+        dependencies=[Depends(require_api_key)],
     )
     @router.get(
         "/api/claude-hitl-requests",
         response_model=ClaudeUserInputRequestListResponse,
         summary="List Claude SDK HITL requests for Playground Web confirmation",
         include_in_schema=False,
+        dependencies=[Depends(require_api_key)],
     )
     async def list_requests(
         session_id: str | None = Query(default=None),
@@ -77,20 +117,11 @@ def create_claude_user_input_router(
         summary="Resolve one active Claude SDK HITL request",
         include_in_schema=False,
     )
-    async def decide(request_id: str, req: ClaudeUserInputDecisionRequest) -> ClaudeUserInputDecisionResponse:
-        try:
-            record = service.submit_decision(request_id, decision=req, decided_by="api_key_client")
-        except ClaudeUserInputNotFound as exc:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        except ClaudeUserInputConflict as exc:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-        except ClaudeUserInputInvalid as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
-        return ClaudeUserInputDecisionResponse(
-            request_id=record.request_id,
-            status=record.status,  # type: ignore[arg-type]
-            decision=record.decision or "",
-            resolved_at=record.resolved_at,
-        )
+    async def decide(
+        request_id: str,
+        req: ClaudeUserInputDecisionRequest,
+        principal: ApiPrincipal = Depends(authenticate_api_or_ro),  # noqa: B008 - FastAPI dependency factory
+    ) -> ClaudeUserInputDecisionResponse:
+        return _submit_decision(service, request_id, req, principal)
 
     return router

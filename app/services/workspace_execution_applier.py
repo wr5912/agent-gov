@@ -9,6 +9,7 @@ from app.runtime.execution_targets import WorkspaceExecutionTargetPolicy
 
 # 写入结构化配置文件的安全护栏回调：(target_path, new_bytes, original_bytes) -> None，违规抛错。
 ContentGuard = Callable[..., None]
+WorkspaceGuard = Callable[[Path], None]
 
 
 class WorkspaceExecutionApplyError(FeedbackStoreError):
@@ -34,6 +35,7 @@ class WorkspaceExecutionApplier:
         workspace_dir: Path,
         target_policy: WorkspaceExecutionTargetPolicy | None = None,
         content_guard: ContentGuard | None = None,
+        workspace_guard: WorkspaceGuard | None = None,
         allowed_targets: set[str] | None = None,
     ) -> None:
         if not operations:
@@ -65,7 +67,12 @@ class WorkspaceExecutionApplier:
             writes.append((dest, data))
         if not writes:
             raise WorkspaceExecutionApplyError("Execution plan has no writable operations")
-        self._write_with_rollback(writes, originals)
+        self._write_with_rollback(
+            writes,
+            originals,
+            workspace_dir=workspace_dir,
+            workspace_guard=workspace_guard,
+        )
 
     def _operation_bytes(self, item: dict, *, op: str, target_path: str, original: bytes | None) -> bytes:
         expected_sha = str(item.get("expected_sha256") or "").strip()
@@ -94,11 +101,20 @@ class WorkspaceExecutionApplier:
             return content.encode("utf-8")
         raise WorkspaceExecutionApplyError(f"Unsupported operation: {op}")
 
-    def _write_with_rollback(self, writes: list[tuple[Path, bytes]], originals: dict[Path, bytes | None]) -> None:
+    def _write_with_rollback(
+        self,
+        writes: list[tuple[Path, bytes]],
+        originals: dict[Path, bytes | None],
+        *,
+        workspace_dir: Path,
+        workspace_guard: WorkspaceGuard | None,
+    ) -> None:
         try:
             for dest, data in writes:
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 dest.write_bytes(data)
+            if workspace_guard is not None:
+                workspace_guard(workspace_dir)
         except Exception as exc:
             rollback_errors: list[str] = []
             for dest, data in originals.items():

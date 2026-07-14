@@ -1,10 +1,17 @@
 from __future__ import annotations
 
+import json
+from typing import Any
+from uuid import uuid4
+
 import pytest
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
+from app.runtime.improvement_db import ExecutionRecordModel
 from app.runtime.runtime_db import TestDatasetCaseModel, TestDatasetModel, utc_now
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
+from app.runtime.stores.improvement_store import advance_improvement_stage_in_transaction
 
 
 def _settings(tmp_path):
@@ -19,12 +26,28 @@ def _settings(tmp_path):
         DATA_DIR=data,
         GOVERNOR_CLAUDE_ROOT=governor_root,
         MODEL_PROVIDER_API_KEY="sk-test-provider",
+        RUNTIME_VOLUME_MODE="local-debug",
     )
     workspace = settings.main_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     (settings.main_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
+    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Test Agent")
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
-    (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return settings
 
 
@@ -110,11 +133,71 @@ def _seed_test_dataset(
     return dataset_id
 
 
+def _seed_execution_record(
+    content: Any,
+    improvement_id: str,
+    *,
+    summary: str,
+    changes_applied: list[str] | None = None,
+    agent_version: str = "",
+    generated_by: str = "heuristic",
+    change_set_id: str = "",
+    applied_agent_version_id: str = "",
+    applied_diff: dict | None = None,
+    risk_level: str = "",
+    rollback_strategy: str = "",
+    rollback_instructions: list[str] | None = None,
+    generation_trace_id: str = "",
+    generation_trace_url: str = "",
+    advance_to_stage: str | None = None,
+) -> Any:
+    """Seed an execution artifact without exposing a production bypass API."""
+
+    now = utc_now()
+    with content._session_factory.begin() as db:
+        row = db.query(ExecutionRecordModel).filter_by(improvement_id=improvement_id).one_or_none()
+        if row is None:
+            row = ExecutionRecordModel(
+                execution_id=f"exec-test-{uuid4().hex[:12]}",
+                improvement_id=improvement_id,
+                created_at=now,
+            )
+            db.add(row)
+        row.summary = summary
+        row.changes_applied_json = list(changes_applied or [])
+        row.agent_version = agent_version
+        row.status = "draft"
+        row.generated_by = generated_by
+        row.change_set_id = change_set_id
+        row.applied_agent_version_id = applied_agent_version_id
+        row.applied_diff_json = dict(applied_diff or {})
+        row.risk_level = risk_level
+        row.rollback_strategy = rollback_strategy
+        row.rollback_instructions_json = list(rollback_instructions or [])
+        row.generation_trace_id = generation_trace_id
+        row.generation_trace_url = generation_trace_url
+        row.base_commit_sha = ""
+        row.source_optimization_plan_id = ""
+        row.source_optimization_plan_updated_at = ""
+        row.source_attribution_id = ""
+        row.source_attribution_updated_at = ""
+        row.claim_token = ""
+        row.claim_expires_at = ""
+        row.updated_at = now
+        db.flush()
+        if advance_to_stage:
+            advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
+    record = content.get_execution(improvement_id)
+    assert record is not None
+    return record
+
+
 __all__ = [
     "FeedbackSignalCreateRequest",
     "FeedbackStore",
     "SocEventIngestRequest",
     "_record_run",
+    "_seed_execution_record",
     "_seed_test_dataset",
     "_settings",
     "_store",

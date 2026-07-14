@@ -120,7 +120,7 @@ def _tracked_text_files(repo_root: Path = REPO_ROOT) -> list[tuple[str, str]]:
             continue
         path = repo_root / rel_path
         if not path.is_file():
-            continue
+            continue  # A tracked file deleted by the current change cannot contribute text to the resulting tree.
         raw = path.read_bytes()
         if b"\0" in raw:
             continue
@@ -165,17 +165,11 @@ def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_
     assert "socat" in packages
 
 
-def test_compose_grants_bubblewrap_namespace_permissions_only_to_claude_code_api() -> None:
+def test_compose_does_not_grant_unconfined_or_namespace_capabilities() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    service = services["claude-agent-api"]
-    assert "SYS_ADMIN" in service.get("cap_add", [])
-    assert "NET_ADMIN" in service.get("cap_add", [])
-    assert "seccomp=unconfined" in service.get("security_opt", [])
-    assert "apparmor=unconfined" in service.get("security_opt", [])
-
-    for service_name in ("agent-gov-litellm-sidecar", "claude-agent-ui"):
+    for service_name in services:
         service = services[service_name]
         assert "SYS_ADMIN" not in service.get("cap_add", [])
         assert "NET_ADMIN" not in service.get("cap_add", [])
@@ -422,3 +416,17 @@ def test_governance_ci_uses_repository_pnpm_version_without_corepack_download() 
     assert "package_json_file: frontend/package.json" in workflow
     assert "cache-dependency-path: frontend/pnpm-lock.yaml" in workflow
     assert "corepack enable pnpm" not in workflow
+
+
+def test_compose_uses_api_coordinator_without_runtime_init_container() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "agent-gov-runtime-init" not in services
+    assert "claude-agent-worker" not in services
+    assert services["claude-agent-ui"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert "healthcheck" in services["claude-agent-api"]
+    assert services["claude-agent-api"]["healthcheck"]["test"][-1].endswith("/health/live")
+    assert 'ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]' in dockerfile
+    assert not (REPO_ROOT / "docker/entrypoint.sh").exists()

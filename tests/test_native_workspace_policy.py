@@ -70,8 +70,15 @@ def _canonical_policy() -> dict[str, object]:
 
 @pytest.mark.parametrize("workspace", BUSINESS_WORKSPACES, ids=lambda path: path.parent.name)
 def test_business_agent_seed_matches_canonical_native_policy(workspace: Path) -> None:
-    canonical = _canonical_policy()["settings"]
+    policy = _canonical_policy()
+    canonical = policy["settings"]
     assert isinstance(canonical, dict)
+    agent_settings = policy.get("agentSettings", {}).get(workspace.parent.name, {})
+    sandbox_overlay = agent_settings.get("sandbox", {}) if isinstance(agent_settings, dict) else {}
+    expected_auto_allow = sandbox_overlay.get(
+        "autoAllowBashIfSandboxed",
+        canonical["sandbox"]["autoAllowBashIfSandboxed"],
+    )
     settings = json.loads((workspace / ".claude" / "settings.json").read_text(encoding="utf-8"))
     permissions = settings["permissions"]
     sandbox = settings["sandbox"]
@@ -82,7 +89,7 @@ def test_business_agent_seed_matches_canonical_native_policy(workspace: Path) ->
     assert settings["hooks"]["PreToolUse"] == canonical["hooks"]["PreToolUse"]
     assert sandbox["enabled"] is True
     assert sandbox["failIfUnavailable"] is True
-    assert sandbox["autoAllowBashIfSandboxed"] is False
+    assert sandbox["autoAllowBashIfSandboxed"] is expected_auto_allow
     assert sandbox["allowUnsandboxedCommands"] is False
     assert set(sandbox["filesystem"]["denyRead"]) >= SENSITIVE_SANDBOX_PATHS
     if workspace.parent.name == "security-data-standardization-review":

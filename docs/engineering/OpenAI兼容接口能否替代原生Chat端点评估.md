@@ -106,6 +106,8 @@
 | `agentgov.alert_id` / `case_id` | AgentGov 扩展 | 反馈闭环路由输入（backend-owned）；adapter 须回填 `agent_runs` index 列 |
 | `agentgov.max_turns` | AgentGov 扩展 | Claude Code turn cap，对应现有 `ChatRequest.max_turns`，不等同于 OpenAI output token limit |
 | `agentgov.debug` | AgentGov 扩展 | raw SDK envelope 等开发调试开关 |
+| `agentgov.phase` | AgentGov 扩展 | RO 认证的 `proposal` / `approved_execution`；仅 `security-operations-expert` 接受 |
+| `agentgov.approval_request_id` / `playbook_digest` / `execution_run_id` | AgentGov 扩展 | `approved_execution` 的一次性审批绑定；要求 stream + HITL，防回放 claim 由后端持有 |
 
 > `input` 为 items 数组时，服务端取其文本/内容映射为本轮 Claude Code prompt。`instructions` 使用 OpenAI 标准字段名，但 AgentGov 的 system 身份以 Claude Code preset + workspace `CLAUDE.md` 为治理态单一真相源；因此 `instructions` 在本项目中只作为 **append-only** 追加指令，不具备替换受治理 prompt 的能力，**语义区别于官方 replace/swap**（strict 模式处置见「模式口径」）。不再新增 `agentgov.system_append` 这类平行字段。
 
@@ -113,6 +115,7 @@
 
 - **strict mode**：请求不含 `agentgov`。该模式**标准字段形状兼容** OpenAI Responses，使用运营者配置的 OpenAI-compat Agent，不发 `agentgov.*` 私有事件。**但不是纯 OpenAI 语义子集**：AgentGov 的 system 身份以 Claude Code preset + workspace `CLAUDE.md` 为单一真相源，`instructions` 为 **append-only**、不实现官方 replace/swap 语义，因此 strict mode 传 `instructions` 固定返回 `422`，避免纯 OpenAI 客户端误以为能替换或清空系统身份。
 - **control mode**：请求含 `agentgov`。该模式启用 AgentGov 控制面，`agentgov.agent_id` 必填，可使用服务端配置的 HITL、工具时间线、raw SDK 调试和反馈治理投影；`instructions` 同样只作 append-only 追加。HITL 只由 workspace `permissions.ask` 与 `ENABLE_CLAUDE_WEB_HITL` 决定，请求传入 `agentgov.hitl` 固定返回 422。
+- **RO response-disposition mode**：control mode 的受保护子集。设置 `agentgov.phase` 或其执行绑定时必须使用独立 `RESPONSE_ORCHESTRATOR_API_KEY`；普通 API key 返回 `403`，未配置专用 key 返回 `503`。RO key 不能用于普通 control/strict 请求、retrieve 或会话读写管理，只额外允许按需 `POST /v1/conversations` 创建映射。`approved_execution` 只允许精确 `soc_api__create` / `soc_api__manual` 逐次 `allow_once + updated_input`，`soc_api__execute` 始终拒绝。
 - 其余标准字段在两种模式下形状与含义一致；`agentgov` 不得复制、改名或覆盖已有 OpenAI 标准字段。
 
 当前响应形态：

@@ -44,7 +44,7 @@ def test_config_update_is_fenced_by_same_agent_runtime_but_allows_other_agent(tm
         )
     )
     client = TestClient(app)
-    body = {"content": '{"mcpServers": {"demo": {"command": "node"}}}\n'}
+    body = {"content": '{"mcpServers": {"demo": {"type": "http", "url": "https://example.invalid/mcp"}}}\n'}
 
     blocked = client.put(
         "/api/agent-config-file",
@@ -60,6 +60,4 @@ def test_config_update_is_fenced_by_same_agent_runtime_but_allows_other_agent(tm
     assert blocked.status_code == 409
     assert "active runtime turn" in blocked.json()["detail"]
     assert allowed.status_code == 200
-    assert business_agent_layout(data_dir, "agent-a").workspace.joinpath(".mcp.json").read_text(
-        encoding="utf-8"
-    ) == '{"mcpServers": {}}\n'
+    assert business_agent_layout(data_dir, "agent-a").workspace.joinpath(".mcp.json").read_text(encoding="utf-8") == '{"mcpServers": {}}\n'

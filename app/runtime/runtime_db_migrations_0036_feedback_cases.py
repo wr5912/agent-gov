@@ -124,22 +124,9 @@ def _backfill_soc_event_agent_id(connection: Connection) -> None:
 
 
 def _create_feedback_case_source_tables(connection: Connection) -> None:
-    connection.exec_driver_sql(
-        """
-        CREATE TABLE IF NOT EXISTS feedback_case_sources (
-            source_kind VARCHAR(32) NOT NULL,
-            source_id VARCHAR(128) NOT NULL,
-            case_id VARCHAR(128) NOT NULL
-                REFERENCES feedback_cases(feedback_case_id) ON DELETE CASCADE,
-            agent_id VARCHAR(128) NOT NULL,
-            is_direct BOOLEAN NOT NULL DEFAULT 1,
-            direct_position INTEGER,
-            created_at VARCHAR(64) NOT NULL,
-            PRIMARY KEY (source_kind, source_id)
-        )
-        """
-    )
     claim_columns = _table_columns(connection, "feedback_case_sources")
+    if not claim_columns:
+        raise RuntimeError("0036 requires model-owned feedback_case_sources schema before data migration")
     if "is_direct" not in claim_columns:
         connection.exec_driver_sql("ALTER TABLE feedback_case_sources ADD COLUMN is_direct BOOLEAN NOT NULL DEFAULT 1")
     if "direct_position" not in claim_columns:

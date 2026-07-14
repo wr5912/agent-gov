@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Optional
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text, create_engine, event
+from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text, create_engine, event, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -45,14 +45,16 @@ from .runtime_db_migrations import (
     migrate_0033_repair_improvement_stages_from_artifacts,
     migrate_0034_repair_feedback_case_assignments,
     migrate_0035_session_active_run_lease,
-    migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
 )
+from .runtime_db_migrations_0036 import migrate_0036_agent_maintenance_feedback_and_session_reconciliation
 from .runtime_db_migrations_0037 import migrate_0037_eval_runs_use_typed_dataset_snapshots
 from .runtime_db_migrations_0038 import migrate_0038_remove_agent_registry_requires_web_hitl
 from .runtime_db_migrations_0039 import migrate_0039_test_dataset_revision_provenance
 from .runtime_db_migrations_0040 import migrate_0040_archive_and_remove_legacy_evaluation_chain
 from .runtime_db_migrations_0041 import migrate_0041_agent_registry_provisioning_saga
 from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_queue
+from .runtime_db_migrations_0043 import migrate_0043_response_disposition_claims
+from .runtime_db_migrations_0044 import migrate_0044_agent_release_source_claims
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -64,6 +66,7 @@ from .agent_maintenance_db import (  # noqa: E402,F401
     AgentWorktreeCleanupTaskModel,
 )
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
+from .response_disposition_db import ResponseDispositionClaimModel  # noqa: E402,F401
 from .test_dataset_db import (  # noqa: E402,F401
     ArchivedTestDatasetAssetModel,
     TestDatasetCaseModel,
@@ -94,7 +97,7 @@ class SessionRecordModel(Base):
     metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
     active_run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     active_run_expires_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    active_run_generation: Mapped[int] = mapped_column(default=0)
+    active_run_generation: Mapped[int] = mapped_column(default=0, server_default=text("0"))
     sdk_project_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
     sdk_store_ready_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     sdk_store_migration_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -335,6 +338,20 @@ Index("ux_agent_release_tag_claims_change_set", AgentReleaseTagClaimModel.change
 Index("ux_agent_release_tag_claims_release", AgentReleaseTagClaimModel.release_id, unique=True)
 
 
+class AgentReleaseSourceClaimModel(Base):
+    __tablename__ = "agent_release_source_claims"
+
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_improvement_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(String(128), index=True)
+    release_id: Mapped[str] = mapped_column(String(128), index=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+Index("ux_agent_release_source_claims_change_set", AgentReleaseSourceClaimModel.change_set_id, unique=True)
+Index("ux_agent_release_source_claims_release", AgentReleaseSourceClaimModel.release_id, unique=True)
+
+
 class EvalRunModel(Base):
     __tablename__ = "eval_runs"
 
@@ -521,6 +538,8 @@ def _run_runtime_migrations(engine: Engine) -> None:
             "0042_retire_persisted_agent_job_queue",
             migrate_0042_retire_persisted_agent_job_queue,
         ),
+        ("0043_response_disposition_claims", migrate_0043_response_disposition_claims),
+        ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
     ):
         if version in applied:
             continue

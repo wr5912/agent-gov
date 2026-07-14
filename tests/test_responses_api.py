@@ -12,8 +12,21 @@ from fastapi.testclient import TestClient
 from test_api_execution_optimizer import _load_app
 
 
-def _register_biz(client: TestClient, agent_id: str = "soc-ops", name: str = "客服助手") -> None:
-    assert client.post("/api/agent-registry", json={"name": name, "agent_id": agent_id}).status_code == 201
+def _register_biz(
+    client: TestClient,
+    agent_id: str = "soc-ops",
+    name: str = "客服助手",
+    *,
+    headers: dict[str, str] | None = None,
+) -> None:
+    assert (
+        client.post(
+            "/api/agent-registry",
+            json={"name": name, "agent_id": agent_id},
+            headers=headers,
+        ).status_code
+        == 201
+    )
 
 
 def _fake_capturing_run(captured: dict):
@@ -133,6 +146,140 @@ def test_control_unknown_agent_404(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(module.runtime, "run", _fake_capturing_run({}))
     with TestClient(module.app) as client:
         assert client.post("/v1/responses", json={"input": "hi", "agentgov": {"agent_id": "ghost"}}).status_code == 404
+
+
+# ---------------------------------------------------------------- response-disposition trust boundary
+
+
+def test_response_disposition_proposal_requires_ro_and_projects_trusted_context(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(
+        monkeypatch,
+        tmp_path,
+        api_key="general-secret",
+        response_orchestrator_api_key="ro-secret",
+    )
+    captured: dict = {}
+    monkeypatch.setattr(module.runtime, "run", _fake_capturing_run(captured))
+    general_headers = {"Authorization": "Bearer general-secret"}
+    ro_headers = {"Authorization": "Bearer ro-secret"}
+    request = {
+        "input": "draft a response playbook",
+        "agentgov": {
+            "agent_id": "security-operations-expert",
+            "case_id": "case-1",
+            "phase": "proposal",
+        },
+    }
+
+    with TestClient(module.app) as client:
+        _register_biz(
+            client,
+            agent_id="security-operations-expert",
+            name="Security Operations Expert",
+            headers=general_headers,
+        )
+        assert client.post("/v1/responses", json=request, headers=general_headers).status_code == 403
+        ordinary_ro = client.post(
+            "/v1/responses",
+            json={"input": "ordinary", "agentgov": {"agent_id": "security-operations-expert"}},
+            headers=ro_headers,
+        )
+        response = client.post("/v1/responses", json=request, headers=ro_headers)
+
+    assert ordinary_ro.status_code == 403
+    assert response.status_code == 200, response.text
+    disposition = captured["req"].response_disposition
+    assert disposition is not None
+    assert disposition.phase == "proposal"
+    assert disposition.case_id == "case-1"
+    assert response.json()["agentgov"]["phase"] == "proposal"
+
+
+def test_response_disposition_approved_execution_validates_and_rejects_replay(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("ENABLE_CLAUDE_WEB_HITL", "true")
+    module = _load_app(
+        monkeypatch,
+        tmp_path,
+        api_key="general-secret",
+        response_orchestrator_api_key="ro-secret",
+    )
+    general_headers = {"Authorization": "Bearer general-secret"}
+    ro_headers = {"Authorization": "Bearer ro-secret"}
+    captured: dict = {}
+
+    async def fake_stream(req, *, profile=None):
+        captured["req"] = req
+        yield {"event": "session", "data": {"run_id": "run-approved", "session_id": "session-approved"}}
+        yield {"event": "done", "data": "[DONE]"}
+
+    monkeypatch.setattr(module.runtime, "stream", fake_stream)
+    request = {
+        "input": "submit approved response playbook",
+        "stream": True,
+        "agentgov": {
+            "agent_id": "security-operations-expert",
+            "case_id": "case-1",
+            "phase": "approved_execution",
+            "approval_request_id": "approval-1",
+            "playbook_digest": "a" * 64,
+            "execution_run_id": "execution-1",
+        },
+    }
+
+    with TestClient(module.app) as client:
+        _register_biz(
+            client,
+            agent_id="security-operations-expert",
+            name="Security Operations Expert",
+            headers=general_headers,
+        )
+        assert client.post("/v1/responses", json=request, headers=general_headers).status_code == 403
+        invalid_agent = {
+            **request,
+            "agentgov": {**request["agentgov"], "agent_id": "main-agent", "approval_request_id": "approval-other"},
+        }
+        assert client.post("/v1/responses", json=invalid_agent, headers=ro_headers).status_code == 422
+        invalid_digest = {
+            **request,
+            "agentgov": {**request["agentgov"], "playbook_digest": "A" * 64},
+        }
+        assert client.post("/v1/responses", json=invalid_digest, headers=ro_headers).status_code == 422
+        first = client.post("/v1/responses", json=request, headers=ro_headers)
+        replay = client.post("/v1/responses", json=request, headers=ro_headers)
+
+    assert first.status_code == 200, first.text
+    assert replay.status_code == 409
+    assert captured["req"].response_disposition.approval_request_id == "approval-1"
+    claim = module.response_disposition_claim_store.get("approval-1")
+    assert claim is not None
+    assert claim.status == "cancelled"
+    assert claim.agent_run_id == "run-approved"
+
+
+def test_response_disposition_reports_missing_ro_configuration(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path, api_key="general-secret")
+    general_headers = {"Authorization": "Bearer general-secret"}
+    with TestClient(module.app) as client:
+        _register_biz(
+            client,
+            agent_id="security-operations-expert",
+            name="Security Operations Expert",
+            headers=general_headers,
+        )
+        response = client.post(
+            "/v1/responses",
+            json={
+                "input": "draft",
+                "agentgov": {
+                    "agent_id": "security-operations-expert",
+                    "case_id": "case-1",
+                    "phase": "proposal",
+                },
+            },
+            headers=general_headers,
+        )
+
+    assert response.status_code == 503
 
 
 # ---------------------------------------------------------------- strict 模式

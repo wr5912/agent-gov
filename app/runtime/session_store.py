@@ -12,7 +12,7 @@ from . import session_turn_lease
 from .agent_admission import claim_runtime_admission, lease_expires_at
 from .errors import SessionConflictError
 from .json_types import JsonObject
-from .records.source_records import AgentRunRecord, upsert_agent_run_record
+from .records.source_records import AgentRunRecord
 from .runtime_db import SessionRecordModel, SessionTurnIntentModel, make_session_factory, runtime_db_path_from_data_dir, utc_now
 from .sdk_session_store import discard_staged_entries, promote_staged_entries
 from .session_turn_persistence import (
@@ -178,47 +178,6 @@ class LocalSessionStore:
                 self._raise_conflict(db.get(SessionRecordModel, session.session_id), session)
         session.updated_at = next_updated_at
 
-    def claim_turn(
-        self,
-        session: LocalSession,
-        *,
-        run_id: str,
-        agent_id: str,
-        lease_seconds: float | None = None,
-    ) -> LocalSession:
-        """CAS-claim one active SDK turn so concurrent turns and deletion fail closed."""
-        clean_run_id = run_id.strip()
-        if not clean_run_id:
-            raise ValueError("run_id is required to claim a session turn")
-        now = utc_now()
-        effective_lease_seconds = session_turn_lease.DEFAULT_SESSION_TURN_LEASE_SECONDS if lease_seconds is None else lease_seconds
-        expires_at = session_turn_lease.turn_lease_expires_at(effective_lease_seconds)
-        statement = (
-            update(SessionRecordModel)
-            .where(
-                SessionRecordModel.session_id == session.session_id,
-                SessionRecordModel.updated_at == session.updated_at,
-                SessionRecordModel.turns == session.turns,
-                SessionRecordModel.agent_id == agent_id,
-                or_(
-                    SessionRecordModel.active_run_id.is_(None),
-                    and_(
-                        SessionRecordModel.active_run_expires_at.is_not(None),
-                        SessionRecordModel.active_run_expires_at <= now,
-                    ),
-                ),
-            )
-            .values(active_run_id=clean_run_id, active_run_expires_at=expires_at, updated_at=now)
-        )
-        with self.Session.begin() as db:
-            result = db.execute(statement)
-            record = db.get(SessionRecordModel, session.session_id)
-            if result.rowcount != 1 or record is None:
-                if record is not None and self._record_has_active_run(record):
-                    raise SessionConflictError(f"Session {session.session_id} already has an active turn")
-                self._raise_conflict(record, session, agent_id=agent_id)
-            return self._to_session(record)
-
     def begin_persisted_turn(
         self,
         session: LocalSession,
@@ -316,49 +275,6 @@ class LocalSessionStore:
             if result.rowcount != 1:
                 raise SessionConflictError(f"Session {session_id} active turn is no longer owned by run {clean_run_id}")
         return expires_at
-
-    def complete_turn(
-        self,
-        session: LocalSession,
-        *,
-        run_id: str,
-        agent_id: str,
-        sdk_session_id: Optional[str],
-        title: str,
-        run_record: AgentRunRecord | None = None,
-    ) -> LocalSession:
-        """CAS one completed turn and optionally persist its run in the same transaction."""
-        next_updated_at = utc_now()
-        statement = (
-            update(SessionRecordModel)
-            .where(
-                SessionRecordModel.session_id == session.session_id,
-                SessionRecordModel.updated_at == session.updated_at,
-                SessionRecordModel.turns == session.turns,
-                SessionRecordModel.agent_id == agent_id,
-                SessionRecordModel.active_run_id == run_id,
-            )
-            .values(
-                sdk_session_id=sdk_session_id if sdk_session_id is not None else session.sdk_session_id,
-                updated_at=next_updated_at,
-                title=session.title or title,
-                turns=SessionRecordModel.turns + 1,
-                active_run_id=None,
-                active_run_expires_at=None,
-            )
-        )
-        with self.Session.begin() as db:
-            result = db.execute(statement)
-            if result.rowcount != 1:
-                self._raise_conflict(db.get(SessionRecordModel, session.session_id), session, agent_id=agent_id)
-            record = db.get(SessionRecordModel, session.session_id)
-            if record is None:  # pragma: no cover - guarded by rowcount
-                raise SessionConflictError(f"Session {session.session_id} disappeared while completing a turn")
-            if run_record is not None:
-                if run_record.session_id != session.session_id:
-                    raise ValueError("Agent run session_id must match the completed session")
-                upsert_agent_run_record(db, run_record)
-            return self._to_session(record)
 
     def finalize_persisted_turn(
         self,
@@ -568,27 +484,6 @@ class LocalSessionStore:
             record.sdk_store_migration_error = error[:2000]
             record.updated_at = utc_now()
             return True
-
-    def release_turn(self, session_id: str, *, run_id: str) -> bool:
-        """Release an unfinished claim after an exception or client cancellation."""
-        with self.Session.begin() as db:
-            intent = db.get(SessionTurnIntentModel, run_id)
-            if intent is not None and intent.status == "running":
-                return False
-            result = db.execute(
-                update(SessionRecordModel)
-                .where(
-                    SessionRecordModel.session_id == session_id,
-                    SessionRecordModel.active_run_id == run_id,
-                )
-                .values(
-                    active_run_id=None,
-                    active_run_expires_at=None,
-                    active_run_generation=0,
-                    updated_at=utc_now(),
-                )
-            )
-            return result.rowcount == 1
 
     def clear_sdk_session(
         self,

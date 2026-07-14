@@ -27,6 +27,7 @@ from app.runtime.openai_responses_adapter import (
     response_from_chat_response,
     response_id_from_run,
 )
+from app.runtime.response_disposition_control import TrustedResponseDispositionContext
 from app.runtime.schemas import ChatResponse
 
 # 与 claude_runtime_stream.py:258 的 15s 空闲保活一致；client_idle 必须 > 该值。
@@ -103,7 +104,14 @@ def _created_response(run_id: Optional[str], model: Optional[str], session_id: O
 
 
 def _response_from_result(
-    data: JsonObject, *, model: Optional[str], effective_agent_id: Optional[str], answer_parts: list[str], control: bool, created_at: Optional[int]
+    data: JsonObject,
+    *,
+    model: Optional[str],
+    effective_agent_id: Optional[str],
+    answer_parts: list[str],
+    control: bool,
+    created_at: Optional[int],
+    response_disposition: TrustedResponseDispositionContext | None,
 ) -> JsonObject:
     """由 result 帧 + 累计文本增量重建 response 对象（复用非流式投影，单一来源）。"""
     chat = ChatResponse(
@@ -118,7 +126,14 @@ def _response_from_result(
         stop_reason=_str(data.get("stop_reason")),
         errors=list(data.get("errors")) if isinstance(data.get("errors"), list) else [],
     )
-    response = response_from_chat_response(chat, model=model, agent_id=effective_agent_id, metadata={}, created_at=created_at).model_dump(exclude_none=True)
+    response = response_from_chat_response(
+        chat,
+        model=model,
+        agent_id=effective_agent_id,
+        metadata={},
+        created_at=created_at,
+        response_disposition=response_disposition,
+    ).model_dump(exclude_none=True)
     if not control:
         response.pop("agentgov", None)  # strict：纯 OpenAI 响应对象，不泄露 agentgov
     return response
@@ -130,6 +145,7 @@ class _ResponsesSseProjector:
     effective_agent_id: Optional[str]
     control: bool
     sdk_raw: bool
+    response_disposition: TrustedResponseDispositionContext | None = None
     seq: int = 0
     run_id: Optional[str] = None
     item_id: Optional[str] = None
@@ -219,6 +235,7 @@ class _ResponsesSseProjector:
             answer_parts=self.answer_parts,
             control=self.control,
             created_at=self.created_at,
+            response_disposition=self.response_disposition,
         )
         raw_errors = data.get("errors")
         errors = [str(error) for error in raw_errors] if isinstance(raw_errors, list) else []
@@ -273,9 +290,16 @@ async def iter_responses_sse(
     effective_agent_id: Optional[str],
     control: bool,
     sdk_raw: bool = False,
+    response_disposition: TrustedResponseDispositionContext | None = None,
 ) -> AsyncIterator[str]:
     """消费 ``runtime.stream`` 帧，产出 Responses-style SSE 字符串。"""
-    projector = _ResponsesSseProjector(model=model, effective_agent_id=effective_agent_id, control=control, sdk_raw=sdk_raw)
+    projector = _ResponsesSseProjector(
+        model=model,
+        effective_agent_id=effective_agent_id,
+        control=control,
+        sdk_raw=sdk_raw,
+        response_disposition=response_disposition,
+    )
     try:
         try:
             async for frame in source:

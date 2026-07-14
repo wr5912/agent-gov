@@ -22,6 +22,7 @@ from .agent_profiles import (
     candidate_profile,
 )
 from .async_iterators import close_async_iterator
+from .claude_runtime_permissions import runtime_response_disposition
 from .claude_runtime_session_persistence import RuntimeSessionPersistenceMixin
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
@@ -30,10 +31,12 @@ from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
+from .managed_agent_policy import ManagedAgentPolicyError, require_profile_runtime_workspace_policy
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
 from .records.source_records import AgentRunRecord
+from .response_disposition_control import response_disposition_fields, trusted_response_disposition_prompt
 from .runtime_activity import RuntimeActivityExtractor
 from .schemas import ChatRequest, ChatResponse
 from .session_store import LocalSession, LocalSessionStore
@@ -197,6 +200,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         run_id: str,
         agent_version_id: Optional[str],
     ) -> JsonObject:
+        disposition = runtime_response_disposition(req)
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -210,6 +214,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             "model": req.model or self.settings.agent_model,
             "system_append": req.system_append,
             "metadata": req.metadata,
+            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _runtime_output_payload(
@@ -273,6 +278,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         if self.feedback_store is None:
             return None
         answer_summary = answer.strip().replace("\n", " ")[:500]
+        disposition = runtime_response_disposition(req)
         return self.feedback_store.prepare_run_record(
             {
                 "run_id": run_id,
@@ -295,6 +301,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
                 "metadata": req.metadata,
                 "created_at": created_at,
                 "completed_at": completed_at,
+                **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
             }
         )
 
@@ -343,6 +350,10 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             env["CLAUDE_HOOK_AUDIT_LOG"] = str(profile.data_dir / "transcripts" / "claude-hook-audit.jsonl")
         env["AGENT_PROFILE"] = profile.name
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = f"secops-runtime/{profile.name}"
+        try:
+            require_profile_runtime_workspace_policy(profile, runtime_mode=self.settings.runtime_volume_mode, env=env)
+        except ManagedAgentPolicyError as exc:
+            raise RuntimeUnavailableError(f"Business Agent managed policy is invalid: {exc}") from exc
         profile.claude_root.mkdir(parents=True, exist_ok=True)
         profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
         ensure_claude_workspace_trusted(profile)
@@ -363,7 +374,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         env = self._profile_env(profile)
         env.update(self.model_provider_router.claude_env())
 
-        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append] if part)
+        disposition_prompt = trusted_response_disposition_prompt(runtime_response_disposition(req))
+        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append, disposition_prompt] if part)
         system_prompt = {"type": "preset", "preset": "claude_code"}
         if system_append:
             system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
@@ -392,7 +404,10 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         if context is not None:
             kwargs["session_store"] = context.sdk_session_store
         if can_use_tool is not None:
+            kwargs["permission_mode"] = "default"
             kwargs["can_use_tool"] = can_use_tool
+        if self.settings.setting_sources is not None:
+            kwargs["setting_sources"] = self.settings.setting_sources
 
         # Resume the previous Claude Code session when possible. The API session id
         # is not necessarily equal to the internal Claude session id returned by SDK.
@@ -465,6 +480,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             "alert_id": telemetry.get("alert_id"),
             "case_id": telemetry.get("case_id"),
             "mode": mode,
+            "permission_mode": telemetry.get("permission_mode"),
             "claude_web_hitl_enabled": telemetry.get("claude_web_hitl_enabled"),
             "profile": (profile or self.profiles[MAIN_AGENT_PROFILE]).name,
         }
@@ -511,11 +527,13 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         return None
 
     def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
+        disposition = runtime_response_disposition(req)
         return {
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
             "prompt": context.prompt,
             "model": req.model or self.settings.agent_model,
+            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _track_query_message(
@@ -577,6 +595,9 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             stop_reason=state.stop_reason,
             errors=state.errors,
         )
+        disposition = runtime_response_disposition(req)
+        if disposition is not None:
+            output["response_disposition"] = response_disposition_fields(disposition)
         return answer, agent_activity, output
 
     def _update_runtime_observations(
@@ -642,16 +663,18 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
 
     @staticmethod
     def _stream_session_event(req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
+        data: JsonObject = {
+            "run_id": context.run_id,
+            "agent_version_id": context.agent_version_id,
+            "session_id": context.session.session_id,
+            "sdk_session_id": context.session.sdk_session_id,
+            "alert_id": req.alert_id,
+            "case_id": req.case_id,
+        }
+        data.update(response_disposition_fields(runtime_response_disposition(req)))
         return {
             "event": "session",
-            "data": {
-                "run_id": context.run_id,
-                "agent_version_id": context.agent_version_id,
-                "session_id": context.session.session_id,
-                "sdk_session_id": context.session.sdk_session_id,
-                "alert_id": req.alert_id,
-                "case_id": req.case_id,
-            },
+            "data": data,
         }
 
     async def run(

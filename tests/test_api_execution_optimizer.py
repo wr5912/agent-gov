@@ -1,8 +1,11 @@
 import importlib
+import json
 import sys
 
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 
-def _load_app(monkeypatch, tmp_path, *, api_key=""):
+
+def _load_app(monkeypatch, tmp_path, *, api_key="", response_orchestrator_api_key=""):
     root = tmp_path / "docker" / "volume"
     workspace = root / "main-workspace"
     data = root / "data"
@@ -22,12 +25,26 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     ):
         path.mkdir(parents=True, exist_ok=True)
 
-    main_ws = data / "business-agents" / "main-agent" / "workspace"
-    main_ws.mkdir(parents=True, exist_ok=True)
-    main_ws.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
-
     monkeypatch.setenv("RUNTIME_CONTAINER", "0")
     monkeypatch.setenv("RUNTIME_VOLUME_MODE", "local-debug")
+    main_ws = data / "business-agents" / "main-agent" / "workspace"
+    seed_business_agent_workspace(main_ws, agent_id="main-agent", name="Main Agent")
+    main_ws.joinpath("CLAUDE.md").write_text("原始规则\n", encoding="utf-8")
+    main_ws.joinpath(".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("HOST_RUNTIME_VOLUME_ROOT", str(root))
     monkeypatch.setenv("HOST_DATA_MOUNT", str(data))
     monkeypatch.setenv("HOST_GOVERNOR_WORKSPACE_MOUNT", str(governor_workspace))
@@ -43,6 +60,7 @@ def _load_app(monkeypatch, tmp_path, *, api_key=""):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "")
     monkeypatch.setenv("MODEL_PROVIDER_API_KEY", "")
     monkeypatch.setenv("API_KEY", api_key)
+    monkeypatch.setenv("RESPONSE_ORCHESTRATOR_API_KEY", response_orchestrator_api_key)
     monkeypatch.setenv("AGENT_GIT_REPOSITORY_DIR", str(main_ws))
     monkeypatch.setenv("AGENT_GIT_WORKTREES_DIR", str(agent_worktrees))
     monkeypatch.setenv("AGENT_RELEASE_ARCHIVES_DIR", str(release_archives))

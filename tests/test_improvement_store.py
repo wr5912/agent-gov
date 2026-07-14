@@ -15,6 +15,8 @@ from app.runtime.state_machines import StateTransitionError
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 
+from feedback_store_test_utils import _seed_execution_record
+
 
 def _store(tmp_path: Path) -> ImprovementStore:
     return ImprovementStore(make_session_factory(tmp_path / "runtime.sqlite3"))
@@ -155,7 +157,8 @@ def test_refine_archive_and_delete_require_explicit_abandonment(tmp_path: Path, 
                 payload_json={"status": change_set_status},
             )
         )
-    content.upsert_execution(
+    _seed_execution_record(
+        content,
         improvement.improvement_id,
         summary="applied",
         changes_applied=["prompt"],

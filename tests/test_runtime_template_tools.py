@@ -287,6 +287,7 @@ def test_bootstrap_runtime_volume_renders_local_debug_managed_config(tmp_path):
     assert str(runtime_root / "claude-roots" / "main" / ".claude.json") in settings["permissions"]["deny"][0]
     assert settings["hooks"]["PreToolUse"][0]["hooks"][0]["command"] == 'python "$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py"'
     assert settings["sandbox"]["network"]["allowedDomains"] == ["localhost", "127.0.0.1", "host.docker.internal", "*.internal", "*.corp"]
+    assert settings["sandbox"]["enableWeakerNestedSandbox"] is False
     assert f"workspace: {runtime_root / 'main-workspace'}" in agent
     assert "data_root: /data\n" not in agent
     assert f"`{runtime_root / 'data' / 'outputs' / 'reports' / 'daily-secops-report-YYYY-MM-DD.md'}`" in report_writer
@@ -350,87 +351,6 @@ def test_bootstrap_runtime_volume_keeps_container_paths_in_container_mode(tmp_pa
     report_writer = (runtime_root / "main-workspace" / ".claude" / "agents" / "report-writer.md").read_text(encoding="utf-8")
     assert result["validation_errors"] == []
     assert "`/data/outputs/reports/daily-secops-report-YYYY-MM-DD.md`" in report_writer
-
-
-def test_bootstrap_runtime_volume_repairs_managed_config_and_cleans_backups(tmp_path):
-    template = tmp_path / "template"
-    workspace_template = template / "main-workspace"
-    workspace_template.mkdir(parents=True)
-    (workspace_template / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
-        encoding="utf-8",
-    )
-    runtime_root = tmp_path / "runtime"
-    runtime_workspace = runtime_root / "main-workspace"
-    runtime_workspace.mkdir(parents=True)
-    (runtime_workspace / ".mcp.json").write_text(
-        json.dumps({"mcpServers": {"sec-ops-data": {"type": "http", "url": "${MCP_SERVER_URL}"}}}),
-        encoding="utf-8",
-    )
-
-    result = bootstrap_runtime_volume(
-        runtime_root=runtime_root,
-        template_dir=template,
-        runtime_volume_mode="local-debug",
-        env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
-        repair_managed_config=True,
-    )
-
-    mcp = json.loads((runtime_workspace / ".mcp.json").read_text(encoding="utf-8"))
-    assert mcp["mcpServers"]["sec-ops-data"]["url"] == "http://localhost:58001/mcp"
-    assert result["repaired"] == [(runtime_workspace / ".mcp.json").as_posix()]
-    assert result["backups"]
-    assert not Path(result["backups"][0]).exists()
-    assert ".runtime-volume-seeds-backups" in result["backups"][0]
-    assert (runtime_root / ".runtime-volume-seeds-backups").as_posix() in result["cleanup_removed"]
-    assert not (runtime_root / ".runtime-volume-seeds-backups").exists()
-
-
-def test_repair_managed_config_removes_stale_template_docs_without_runtime_data(tmp_path):
-    template = tmp_path / "template"
-    # main 已迁出顶层；用 governor-workspace 作为受管顶层 workspace 验证 stale-doc 清理。
-    workspace_template = template / "governor-workspace"
-    workspace_template.mkdir(parents=True)
-    (workspace_template / "CLAUDE.md").write_text("当前模板\n", encoding="utf-8")
-    runtime_root = tmp_path / "runtime"
-    runtime_workspace = runtime_root / "governor-workspace"
-    runtime_workspace.mkdir(parents=True)
-    stale_readme = runtime_workspace / "README.md"
-    stale_doc = runtime_workspace / "docs" / "MCP_REPLACEMENT_GUIDE.md"
-    stale_hook_readme = runtime_workspace / "hooks" / "README.md"
-    runtime_data = runtime_root / "data" / "runtime.sqlite3"
-    private_mcp = runtime_workspace / ".mcp.local.json"
-    git_file = runtime_workspace / ".git" / "config"
-    stale_readme.write_text("旧说明\n", encoding="utf-8")
-    stale_doc.parent.mkdir(parents=True)
-    stale_doc.write_text("旧 docs\n", encoding="utf-8")
-    stale_hook_readme.parent.mkdir(parents=True)
-    stale_hook_readme.write_text("旧 hook 说明\n", encoding="utf-8")
-    runtime_data.parent.mkdir(parents=True)
-    runtime_data.write_text("sqlite", encoding="utf-8")
-    private_mcp.write_text("{}\n", encoding="utf-8")
-    git_file.parent.mkdir(parents=True)
-    git_file.write_text("[core]\n", encoding="utf-8")
-
-    result = bootstrap_runtime_volume(
-        runtime_root=runtime_root,
-        template_dir=template,
-        runtime_volume_mode="local-debug",
-        env={},
-        repair_managed_config=True,
-    )
-
-    assert not stale_readme.exists()
-    assert not stale_doc.exists()
-    assert not stale_hook_readme.exists()
-    assert runtime_data.exists()
-    assert private_mcp.exists()
-    assert git_file.exists()
-    assert result["removed"] == [stale_readme.as_posix(), stale_doc.as_posix(), stale_hook_readme.as_posix()]
-    assert len(result["backups"]) == 3
-    assert all(not Path(path).exists() for path in result["backups"])
-    assert (runtime_root / ".runtime-volume-seeds-backups").as_posix() in result["cleanup_removed"]
-    assert not (runtime_root / ".runtime-volume-seeds-backups").exists()
 
 
 def test_resolve_runtime_root_uses_local_debug_mode_default(tmp_path):

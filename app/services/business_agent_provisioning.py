@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from pathlib import Path
 
 from app.runtime.business_agent_workspace import (
     WorkspaceProvisioningError,
     WorkspaceProvisionJournal,
     WorkspaceSafetyError,
+    WorkspaceTemplatePlan,
     apply_business_agent_workspace_plan,
     prepare_business_agent_workspace,
     rollback_business_agent_workspace,
@@ -22,10 +24,12 @@ def provision_business_agent(
     name: str,
     workspace_dir: Path,
     template_id: str,
+    plan: WorkspaceTemplatePlan | None = None,
+    validate_workspace: Callable[[Path], None] | None = None,
 ) -> AgentRegistryRecord:
     """Coordinate preflight, DB reservation, FS apply and DB finalization."""
     try:
-        plan = prepare_business_agent_workspace(
+        prepared_plan = plan or prepare_business_agent_workspace(
             agent_id=agent_id,
             name=name,
             template_id=template_id,
@@ -42,9 +46,11 @@ def provision_business_agent(
     try:
         journal = apply_business_agent_workspace_plan(
             workspace_dir,
-            plan,
+            prepared_plan,
             require_workspace_absent=reservation.require_workspace_absent,
         )
+        if validate_workspace is not None:
+            validate_workspace(workspace_dir)
         store.renew_business_agent_provision(reservation)
         return store.finalize_business_agent(reservation)
     except Exception as exc:

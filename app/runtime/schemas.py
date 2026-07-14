@@ -102,6 +102,8 @@ class ConfigMappingResponse(BaseModel):
 class RuntimeRootResponse(BaseModel):
     name: str
     health: str
+    liveness: str
+    readiness: str
     docs: Optional[str] = None
     redoc: Optional[str] = None
     openapi: Optional[str] = None
@@ -125,6 +127,56 @@ class RuntimeDependencyVersions(BaseModel):
     opentelemetry_exporter_otlp_proto_http: Optional[str] = None
 
 
+class RuntimeLivenessResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    runtime_version: str
+
+
+class ModelProviderReadiness(BaseModel):
+    status: Literal["not_checked", "checking", "ready", "degraded"]
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    reason: Optional[str] = None
+    route: Optional[str] = None
+    probe: Optional[str] = None
+    status_code: Optional[int] = None
+    duration_ms: Optional[int] = None
+    retryable: Optional[bool] = None
+    action: Optional[str] = None
+    checked_at: Optional[str] = None
+
+
+class ModelProviderVersionProbe(BaseModel):
+    status: Literal["skipped", "succeeded", "failed"]
+    endpoint: Optional[str] = None
+    version: Optional[str] = None
+    reason: Optional[str] = None
+    status_code: Optional[int] = None
+    duration_ms: Optional[int] = None
+    error_code: Optional[str] = None
+
+
+class ModelProviderRouteHealth(BaseModel):
+    backend: str
+    route: Optional[str] = None
+    provider_endpoint_configured: bool
+    provider_endpoint: Optional[str] = None
+    claude_base_url: Optional[str] = None
+    formatter_api_base: Optional[str] = None
+    formatter_model_prefix: Optional[str] = None
+    sidecar_required: Optional[bool] = None
+    sidecar_base_url: Optional[str] = None
+    provider_api_key_required: bool
+    version_probe: Optional[ModelProviderVersionProbe] = None
+    readiness: ModelProviderReadiness
+
+
+class RuntimeReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    runtime_version: str
+    model_provider: ModelProviderReadiness
+
+
 class RuntimeHealthResponse(ExtensibleResponse):
     status: str
     api_host: str
@@ -143,7 +195,7 @@ class RuntimeHealthResponse(ExtensibleResponse):
     model: Optional[str] = None
     provider_api_url_configured: bool
     provider_api_key_configured: bool
-    model_provider_route: JsonObject = Field(default_factory=dict)
+    model_provider_route: ModelProviderRouteHealth
     claude_web_hitl_enabled: bool = False
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None

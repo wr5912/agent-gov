@@ -310,6 +310,59 @@ def test_exact_completion_retry_canonicalizes_optional_run_fields(tmp_path):
     assert retried.active_run_id is None
 
 
+def test_exhausted_finalization_recovery_interrupts_owned_turn(tmp_path):
+    _seed_turn(tmp_path)
+    store = LocalSessionStore(tmp_path / "sessions")
+
+    recovered, outcome = store.recover_persisted_turn_finalization(
+        session_id="api-session",
+        run_id="run-1",
+        run_generation=7,
+        sdk_session_id="sdk-session",
+        run_record=_run_record(),
+        terminal_status="succeeded",
+        completed_at="2026-07-13T00:01:00+00:00",
+        cause="SessionConflictError: injected CAS failure",
+    )
+
+    assert outcome == "interrupted"
+    assert recovered.active_run_id is None
+    assert recovered.active_run_generation == 0
+    with store.Session() as db:
+        intent = db.get(SessionTurnIntentModel, "run-1")
+        run = db.get(AgentRunModel, "run-1")
+        entry = db.query(SdkSessionEntryModel).one()
+        assert intent is not None and intent.status == "interrupted"
+        assert intent.error_json["type"] == "RuntimeFinalizationFailed"
+        assert run is not None and run.payload_json["turn_status"] == "interrupted"
+        assert entry.committed_at is None and entry.discarded_at is not None
+
+
+def test_exhausted_finalization_recovery_accepts_already_committed_winner(tmp_path):
+    _seed_turn(tmp_path)
+    store = LocalSessionStore(tmp_path / "sessions")
+    kwargs = {
+        "session_id": "api-session",
+        "run_id": "run-1",
+        "run_generation": 7,
+        "sdk_session_id": "sdk-session",
+        "title": "hello",
+        "run_record": _run_record(),
+        "terminal_status": "succeeded",
+        "completed_at": "2026-07-13T00:01:00+00:00",
+    }
+    store.finalize_persisted_turn(**kwargs)
+
+    recovered, outcome = store.recover_persisted_turn_finalization(
+        **{key: value for key, value in kwargs.items() if key != "title"},
+        cause="RuntimeError: raised after commit",
+    )
+
+    assert outcome == "completed"
+    assert recovered.turns == 1
+    assert recovered.active_run_id is None
+
+
 def test_exact_abort_retry_allows_session_to_advance_to_next_turn(tmp_path):
     _seed_turn(tmp_path)
     store = LocalSessionStore(tmp_path / "sessions")

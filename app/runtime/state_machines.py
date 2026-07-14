@@ -12,28 +12,6 @@ class StateTransitionError(FeedbackStoreError):
     error_code = "STATE_TRANSITION_ERROR"
 
 
-JOB_STATES = {
-    "created",
-    "queued",
-    "running",
-    "schema_validating",
-    "evidence_packaging",
-    "completed",
-    "failed",
-    "needs_human_review",
-    "timeout",
-}
-
-JOB_IN_PROGRESS_STATES = {
-    "created",
-    "queued",
-    "running",
-    "schema_validating",
-    "evidence_packaging",
-}
-
-AGENT_JOB_STATES = JOB_STATES
-
 CASE_STATES = {
     "pending_evidence",
     "pending_attribution",
@@ -75,6 +53,20 @@ AGENT_RELEASE_STATES = {
     "archived",
     "rolled_back",
     "rollback_failed",
+}
+
+AGENT_RELEASE_OPERATION_STATES = {
+    "reserved",
+    "git_applied",
+    "completed",
+    "failed",
+}
+
+AGENT_RELEASE_OPERATION_TRANSITIONS: Mapping[str, set[str]] = {
+    "reserved": {"git_applied", "failed"},
+    "git_applied": {"completed", "failed"},
+    "completed": set(),
+    "failed": {"reserved"},
 }
 
 # 业务 Agent 生命周期（AGV-020）。archived 为终态：仍可审计但不参与新运行、不可再转移。
@@ -172,28 +164,6 @@ IMPROVEMENT_EXECUTION_TRANSITIONS: Mapping[str, set[str]] = {
 }
 
 _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
-    "job": {
-        "created": {"queued", "running", "failed"},
-        "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "schema_validating": {"completed", "needs_human_review", "failed", "timeout"},
-        "evidence_packaging": {"queued", "running", "failed", "timeout"},
-        "needs_human_review": {"schema_validating", "failed"},
-        "failed": {"schema_validating"},
-        "completed": set(),
-        "timeout": set(),
-    },
-    "agent_job": {
-        "created": {"queued", "running", "failed"},
-        "queued": {"running", "schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "running": {"schema_validating", "completed", "needs_human_review", "failed", "timeout"},
-        "schema_validating": {"completed", "needs_human_review", "failed", "timeout"},
-        "evidence_packaging": {"queued", "running", "failed", "timeout"},
-        "needs_human_review": {"schema_validating", "failed"},
-        "failed": {"schema_validating"},
-        "completed": set(),
-        "timeout": set(),
-    },
     "case": {
         "pending_evidence": {"pending_attribution", "attribution_queued", "needs_human_review"},
         "pending_attribution": {"attribution_queued", "pending_review", "needs_human_review"},
@@ -232,6 +202,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "rolled_back": set(),
         "rollback_failed": {"rolled_back"},
     },
+    "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
     "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
@@ -240,13 +211,12 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
 }
 
 _KNOWN_STATES = {
-    "job": JOB_STATES,
-    "agent_job": AGENT_JOB_STATES,
     "case": CASE_STATES,
     "eval_run": EVAL_RUN_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
+    "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
     "session_turn_intent": SESSION_TURN_INTENT_STATES,

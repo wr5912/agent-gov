@@ -12,7 +12,8 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/output_formatter.py \
 	app/runtime/agent_job_runner.py \
 	app/runtime/claude_runtime.py \
-	app/services/agent_job_worker.py \
+	app/runtime/model_provider.py \
+	app/runtime/model_provider_capabilities.py \
 	app/services/improvement_execution_service.py \
 	app/services/improvement_governor_service.py \
 	app/services/workspace_execution_applier.py \
@@ -30,6 +31,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/audit_openapi_contract.py \
 	scripts/codex_governance_typed_output.py \
 	scripts/check_test_coverage_policy.py \
+	scripts/diagnose_runtime_health.py \
 	scripts/runtime_template_renderer.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
@@ -38,7 +40,7 @@ PYTHON_TYPECHECK_TARGETS := \
 COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
 COVERAGE_POLICY ?= tests/coverage_policy.json
 
-.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test smoke zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-workspace-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-repair-managed-config runtime-reconcile-business-agent-workspace-policy runtime-clean local-debug-env local-debug-bootstrap local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
@@ -51,7 +53,11 @@ build:
 	$(COMPOSE) build
 
 up:
-	$(COMPOSE) up -d
+	@if ! $(COMPOSE) up -d --wait --remove-orphans; then \
+		$(MAKE) --no-print-directory compose-diagnose; \
+		exit 1; \
+	fi
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py || true
 
 down:
 	$(COMPOSE) down
@@ -156,10 +162,10 @@ runtime-volume-seeds-restore-list:
 	$(PYTHON_RUN) scripts/restore_runtime_template_backup.py --list
 
 smoke:
-	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
-	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
-	curl -s "$$api_base/health" | $(PYTHON_RUN) -m json.tool
+	@$(PYTHON_RUN) scripts/diagnose_runtime_health.py --require-ready
+
+compose-diagnose:
+	@bash scripts/compose_diagnose.sh
 
 chat:
 	@host_port=$${HOST_PORT:-$$(awk -F= '$$1 == "HOST_PORT" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
@@ -188,6 +194,9 @@ container-openapi-check:
 	api_base=$${API_BASE:-$$(awk -F= '$$1 == "API_BASE" {sub(/^[^=]*=/, ""); print; exit}' docker/.env 2>/dev/null)}; \
 	api_base=$${api_base:-http://localhost:$${host_port:-58080}}; \
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --base-url "$$api_base" --compare-local --fail
+
+container-health-e2e:
+	bash scripts/run_healthcheck_container_e2e.sh
 
 sync-version:
 	@v=$$(cat VERSION); sed -i '0,/"version":/s/"version": *"[^"]*"/"version": "'$$v'"/' frontend/package.json; echo "synced frontend/package.json -> $$v"

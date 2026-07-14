@@ -30,6 +30,7 @@ from .session_turn_persistence import (
 from .session_turn_persistence import (
     reconcile_expired_turns as reconcile_expired_turn_transactions,
 )
+from .session_turn_persistence import recover_persisted_turn_finalization as recover_persisted_turn_finalization_transaction
 
 
 @dataclass
@@ -442,6 +443,37 @@ class LocalSessionStore:
                 completed_at=completed_at,
             )
             return self._to_session(record)
+
+    def recover_persisted_turn_finalization(
+        self,
+        *,
+        session_id: str,
+        run_id: str,
+        run_generation: int,
+        sdk_session_id: str,
+        run_record: AgentRunRecord,
+        terminal_status: str,
+        completed_at: str,
+        cause: str,
+    ) -> tuple[LocalSession, str]:
+        if terminal_status not in {"succeeded", "failed"}:
+            raise ValueError("ResultMessage turn status must be succeeded or failed")
+        with self.Session.begin() as db:
+            record = db.get(SessionRecordModel, session_id)
+            if record is None:
+                raise SessionConflictError(f"Session {session_id} was deleted concurrently")
+            outcome = recover_persisted_turn_finalization_transaction(
+                db,
+                session=record,
+                run_id=run_id,
+                run_generation=run_generation,
+                sdk_session_id=sdk_session_id,
+                run_record=run_record,
+                terminal_status=terminal_status,  # type: ignore[arg-type]
+                completed_at=completed_at,
+                cause=cause,
+            )
+            return self._to_session(record), outcome
 
     def reconcile_expired_turns(self, *, session_id: str | None = None, limit: int = 100) -> list[str]:
         return reconcile_expired_turn_transactions(self.Session, session_id=session_id, limit=limit)

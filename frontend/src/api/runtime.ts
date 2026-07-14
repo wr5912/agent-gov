@@ -626,9 +626,7 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   }
 
   if (envelope.event === "error") {
-    const errors = isRecord(envelope.data) && Array.isArray(envelope.data.errors)
-      ? envelope.data.errors.map(String).join("\n")
-      : JSON.stringify(envelope.data);
+    const errors = formatStreamError(envelope.data);
     handlers.onError?.(errors, envelope.data);
     return;
   }
@@ -636,6 +634,29 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   if (envelope.event === "done") {
     handlers.onDone?.();
   }
+}
+
+function formatStreamError(data: unknown): string {
+  if (!isRecord(data)) return JSON.stringify(data);
+  const errorCode = stringOrUndefined(data.error_code);
+  if (!errorCode) {
+    return Array.isArray(data.errors) ? data.errors.map(String).join("\n") : JSON.stringify(data);
+  }
+  const detail = stringOrUndefined(data.message) || stringOrUndefined(data.detail) || "Model-backed runtime request failed.";
+  const lines = [`${errorCode}: ${detail}`];
+  const probe = stringOrUndefined(data.probe);
+  const reason = stringOrUndefined(data.reason);
+  const endpoint = stringOrUndefined(data.endpoint);
+  if (probe || reason || endpoint) {
+    lines.push([
+      `probe=${probe || "unknown"}`,
+      `reason=${reason || "unknown"}`,
+      ...(endpoint ? [`endpoint=${endpoint}`] : []),
+    ].join(" "));
+  }
+  const action = stringOrUndefined(data.action);
+  if (action) lines.push(`action=${action}`);
+  return lines.join("\n");
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

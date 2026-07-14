@@ -42,6 +42,7 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
   const runtimeMappings = existingMappings.filter((item) => item.display_group === "versioning_runtime");
   const userStateMappings = existingMappings.filter((item) => item.display_group === "agent_user_state");
   const agentRepositoryPath = runtimeMappings.find((item) => item.kind === "agent-git-repository")?.container_path;
+  const providerReadiness = props.health?.model_provider_route?.readiness;
 
   return (
     <DrawerShell
@@ -98,6 +99,20 @@ export function PlaygroundRuntimeSettingsDrawer(props: PlaygroundRuntimeSettings
             <Metric label="Claude Home" value={props.configMapping?.claude_home || props.health?.claude_home || "-"} mono />
             <Metric label="Config Mode" value={props.health?.claude_config_mode || "-"} />
             <Metric label="Provider Key" value={props.health?.provider_api_key_configured ? "configured" : "missing"} tone={props.health?.provider_api_key_configured ? "good" : "warn"} />
+            <Metric
+              label="Model Provider"
+              value={providerReadiness?.status || "not checked"}
+              tone={providerReadiness?.status === "ready" ? "good" : "warn"}
+            />
+            {providerReadiness?.error_code ? (
+              <div className="runtime-provider-diagnostic" data-testid="model-provider-diagnostic">
+                <strong>{providerReadiness.error_code}</strong>
+                <span>
+                  probe={providerReadiness.probe || "unknown"} · reason={providerReadiness.reason || "unknown"}
+                </span>
+                {providerReadiness.action ? <p>{providerReadiness.action}</p> : null}
+              </div>
+            ) : null}
           </DebugPanel>
 
           <DebugPanel icon={<FileJson size={15} />} title="Agent 配置">

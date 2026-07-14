@@ -11,7 +11,7 @@
 关键约束：导入时**只读入一个本地 dict，绝不改写全局 `os.environ`**（否则 collection 阶段会污染
 同进程其他测试）；凭据仅在每个 live 用例内经 `monkeypatch` 临时注入、用完即还原。
 
-运行方式：必须在 Docker Compose API/worker 容器等真实容器测试环境中执行，使用 `docker/.env`
+运行方式：必须在 Docker Compose API 容器等真实容器测试环境中执行，使用 `docker/.env`
 经 Compose 注入的运行时环境；`docker/.env.local-debug` 只用于本机调试专项测试，不用于本文件。
 宿主机直接执行会 skip，不伪装成 local-debug。
 
@@ -78,7 +78,7 @@ _LIVE_CREDS = _read_live_creds()
 
 def _container_acceptance_skip_reason() -> str | None:
     if os.environ.get("RUNTIME_CONTAINER", "").strip().lower() not in _TRUTHY:
-        return "live 验收必须在 Docker Compose API/worker 容器等真实容器环境中运行（RUNTIME_CONTAINER=1）"
+        return "live 验收必须在 Docker Compose API 容器等真实容器环境中运行（RUNTIME_CONTAINER=1）"
     missing = [path.as_posix() for path in _CONTAINER_REQUIRED_PATHS if not path.exists()]
     if missing:
         return f"live 验收缺少容器运行态挂载: {', '.join(missing)}"

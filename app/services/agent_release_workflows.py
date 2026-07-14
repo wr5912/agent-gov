@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,6 +17,8 @@ from app.runtime.runtime_db import AgentReleaseModel, utc_now
 from app.runtime.state_machines import validate_transition
 from app.services.agent_change_set_worktree_lifecycle import cleanup_published_change_set
 from app.services.agent_publication import PublicationFinalizationLost, reconcile_publication_failure
+
+logger = logging.getLogger(__name__)
 
 
 class _GovernanceService(Protocol):
@@ -59,6 +62,8 @@ class _OperationClaim:
     agent_id: str
     expected_head_sha: str
     target_commit_sha: str
+    status: str
+    git_result: JsonObject
 
 
 def publish_change_set(
@@ -207,6 +212,135 @@ def restore_release(
             "note": note,
         },
     }
+
+
+def reconcile_release_operations(
+    service: _GovernanceService,
+    *,
+    limit: int = 100,
+    now: str | None = None,
+) -> JsonObject:
+    """Reconcile expired rollback and restore intents after process interruption."""
+    cutoff = now or utc_now()
+    with service.feedback_store.Session() as db:
+        candidates = list(
+            db.scalars(
+                select(AgentReleaseOperationModel.operation_id)
+                .where(
+                    AgentReleaseOperationModel.operation_kind.in_({"rollback", "restore"}),
+                    AgentReleaseOperationModel.status.in_({"reserved", "git_applied"}),
+                    AgentReleaseOperationModel.claim_expires_at.is_not(None),
+                    AgentReleaseOperationModel.claim_expires_at <= cutoff,
+                )
+                .order_by(AgentReleaseOperationModel.created_at)
+                .limit(max(1, limit))
+            ).all()
+        )
+    summary: JsonObject = {"completed": [], "failed": [], "deferred": []}
+    for operation_id in candidates:
+        _reconcile_release_operation(service, str(operation_id), cutoff=cutoff, summary=summary)
+    return summary
+
+
+def _reconcile_release_operation(
+    service: _GovernanceService,
+    operation_id: str,
+    *,
+    cutoff: str,
+    summary: JsonObject,
+) -> None:
+    with service.feedback_store.Session() as db:
+        operation = db.get(AgentReleaseOperationModel, operation_id)
+        if operation is None:
+            return
+        agent_id = operation.agent_id
+        operation_kind = operation.operation_kind
+        owner_id = f"reconciler:{operation.operator}:{operation_id}"
+    claim: _OperationClaim | None = None
+    try:
+        with service.version_maintenance.lease(
+            agent_id=agent_id,
+            kind=f"{operation_kind}_reconcile",
+            owner_id=owner_id,
+        ) as lease:
+            claim = _claim_release_operation_for_reconciliation(
+                service,
+                operation_id=operation_id,
+                maintenance_claim=lease.claim,
+                cutoff=cutoff,
+            )
+            if claim is None:
+                _summary_append(summary, "deferred", operation_id)
+                return
+            store = service._store_for(claim.agent_id)
+            current_head = str(store.current_commit_sha() or "")
+            if not current_head:
+                raise AgentGitError("Agent Git repository is not initialized")
+            lease.assert_active()
+            git_result = _apply_or_reconcile_git(store, claim, current_head=current_head)
+            lease.assert_active()
+            _mark_git_applied(service, claim, git_result=git_result)
+            _complete_release_operation(service, claim, git_result=git_result)
+            lease.check()
+        _summary_append(summary, "completed", operation_id)
+    except AgentAdmissionError:
+        _summary_append(summary, "deferred", operation_id)
+    except AgentGitError as exc:
+        if claim is not None:
+            try:
+                _mark_release_operation_failed(service, claim, detail=str(exc))
+            except Exception:
+                logger.exception(
+                    "event=agent_release.reconcile_failure_persistence_failed operation_id=%s",
+                    operation_id,
+                )
+                _summary_append(summary, "deferred", operation_id)
+                return
+        _summary_append(summary, "failed", operation_id)
+    except SQLAlchemyError as exc:
+        logger.warning(
+            "event=agent_release.reconcile_deferred operation_id=%s reason=%s",
+            operation_id,
+            exc.__class__.__name__,
+        )
+        _summary_append(summary, "deferred", operation_id)
+    except Exception:
+        logger.exception(
+            "event=agent_release.reconcile_unexpected operation_id=%s",
+            operation_id,
+        )
+        _summary_append(summary, "deferred", operation_id)
+
+
+def _claim_release_operation_for_reconciliation(
+    service: _GovernanceService,
+    *,
+    operation_id: str,
+    maintenance_claim: AgentMaintenanceClaim,
+    cutoff: str,
+) -> _OperationClaim | None:
+    with service.feedback_store.Session.begin() as db:
+        operation = db.get(AgentReleaseOperationModel, operation_id)
+        if (
+            operation is None
+            or operation.operation_kind not in {"rollback", "restore"}
+            or operation.status not in {"reserved", "git_applied"}
+            or not operation.claim_expires_at
+            or operation.claim_expires_at > cutoff
+        ):
+            return None
+        operation.claim_token = maintenance_claim.token
+        operation.claim_generation = maintenance_claim.generation
+        operation.claim_expires_at = maintenance_claim.expires_at
+        operation.updated_at = utc_now()
+        db.flush()
+        return _claim_from_row(operation)
+
+
+def _summary_append(summary: JsonObject, key: str, operation_id: str) -> None:
+    values = summary.get(key)
+    if isinstance(values, list):
+        values.append(operation_id)
 
 
 def _run_release_operation(
@@ -440,24 +574,36 @@ def _resume_release_operation(
     operation.updated_at = now
     operation.error_json = {}
     if operation.status == "failed":
+        validate_transition("agent_release_operation", operation.status, "reserved")
         operation.status = "reserved"
 
 
 def _apply_or_reconcile_git(store: Any, claim: _OperationClaim, *, current_head: str) -> JsonObject:
+    if claim.status == "git_applied":
+        if current_head != claim.target_commit_sha:
+            raise AgentGitError(
+                "Agent workspace HEAD changed after the rollback Git effect was persisted "
+                f"(expected target {claim.target_commit_sha}, found {current_head})"
+            )
+        return claim.git_result or _reconciled_git_result(claim)
     if current_head == claim.target_commit_sha:
-        return {
-            "previous_commit_sha": claim.expected_head_sha,
-            "current_commit_sha": claim.target_commit_sha,
-            "rollback_target_ref": claim.target_commit_sha,
-            "requires_runtime_restart": True,
-            "reconciled_after_interruption": True,
-        }
+        return _reconciled_git_result(claim)
     if current_head != claim.expected_head_sha:
         raise AgentGitError(f"Agent workspace HEAD changed during version maintenance (expected {claim.expected_head_sha}, found {current_head})")
     return store.rollback_to_ref(
         claim.target_commit_sha,
         expected_current_ref=claim.expected_head_sha,
     )
+
+
+def _reconciled_git_result(claim: _OperationClaim) -> JsonObject:
+    return {
+        "previous_commit_sha": claim.expected_head_sha,
+        "current_commit_sha": claim.target_commit_sha,
+        "rollback_target_ref": claim.target_commit_sha,
+        "requires_runtime_restart": True,
+        "reconciled_after_interruption": True,
+    }
 
 
 def _mark_git_applied(
@@ -468,24 +614,21 @@ def _mark_git_applied(
 ) -> None:
     now = utc_now()
     with service.feedback_store.Session.begin() as db:
-        changed = db.execute(
-            update(AgentReleaseOperationModel)
-            .where(
-                AgentReleaseOperationModel.operation_id == claim.operation_id,
-                AgentReleaseOperationModel.claim_token == claim.token,
-                AgentReleaseOperationModel.claim_generation == claim.generation,
-                AgentReleaseOperationModel.status.in_({"reserved", "git_applied"}),
-            )
-            .values(
-                status="git_applied",
-                observed_head_sha=str(git_result.get("current_commit_sha") or ""),
-                result_json=git_result,
-                error_json={},
-                updated_at=now,
-            )
-        ).rowcount
-        if changed != 1:
+        operation = db.get(AgentReleaseOperationModel, claim.operation_id)
+        if (
+            operation is None
+            or operation.claim_token != claim.token
+            or operation.claim_generation != claim.generation
+            or operation.status not in {"reserved", "git_applied"}
+        ):
             raise AgentGitError("Agent release maintenance claim was fenced before Git result persistence")
+        if operation.status == "reserved":
+            validate_transition("agent_release_operation", operation.status, "git_applied")
+        operation.status = "git_applied"
+        operation.observed_head_sha = str(git_result.get("current_commit_sha") or "")
+        operation.result_json = git_result
+        operation.error_json = {}
+        operation.updated_at = now
 
 
 def _complete_release_operation(
@@ -526,6 +669,7 @@ def _complete_release_operation(
             ).rowcount
             if changed != 1:
                 raise AgentGitError("Agent release metadata changed before rollback completion")
+        validate_transition("agent_release_operation", operation.status, "completed")
         operation.status = "completed"
         operation.result_json = git_result
         operation.error_json = {}
@@ -553,6 +697,8 @@ def _mark_release_operation_failed(
         operation = db.get(AgentReleaseOperationModel, claim.operation_id)
         if operation is None or operation.claim_token != claim.token or operation.claim_generation != claim.generation or operation.status == "completed":
             return
+        if operation.status != "failed":
+            validate_transition("agent_release_operation", operation.status, "failed")
         operation.status = "failed"
         operation.error_json = {"detail": detail, "updated_at": now}
         operation.updated_at = now
@@ -600,6 +746,8 @@ def _claim_from_row(row: AgentReleaseOperationModel) -> _OperationClaim:
         agent_id=row.agent_id,
         expected_head_sha=row.expected_head_sha,
         target_commit_sha=row.target_commit_sha,
+        status=row.status,
+        git_result=dict(row.result_json or {}),
     )
 
 

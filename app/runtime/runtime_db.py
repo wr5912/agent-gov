@@ -52,6 +52,7 @@ from .runtime_db_migrations_0038 import migrate_0038_remove_agent_registry_requi
 from .runtime_db_migrations_0039 import migrate_0039_test_dataset_revision_provenance
 from .runtime_db_migrations_0040 import migrate_0040_archive_and_remove_legacy_evaluation_chain
 from .runtime_db_migrations_0041 import migrate_0041_agent_registry_provisioning_saga
+from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_queue
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
@@ -515,6 +516,10 @@ def _run_runtime_migrations(engine: Engine) -> None:
         (
             "0041_agent_registry_provisioning_saga",
             migrate_0041_agent_registry_provisioning_saga,
+        ),
+        (
+            "0042_retire_persisted_agent_job_queue",
+            migrate_0042_retire_persisted_agent_job_queue,
         ),
     ):
         if version in applied:

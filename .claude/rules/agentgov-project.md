@@ -38,7 +38,7 @@
 ## 项目验证入口
 
 - 局部开发验证：`.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。
-- 主流程验证：`make main-flow-test`（改动反馈优化主流程、Agent job、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/coverage_policy.json` 已绑定对应 nodeid 或 UI verification script）。
+- 主流程验证：`make main-flow-test`（改动反馈优化主流程、治理模型任务、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/coverage_policy.json` 已绑定对应 nodeid 或 UI verification script）。
 - 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
 - 覆盖清单或测试 manifest：`tests/coverage_policy.json`（主流程覆盖清单与全局覆盖率基线的单一入口）。
 
@@ -64,7 +64,7 @@
 
 - 修改 SQLite schema、migration、runtime data 布局或 `${HOME}/volume-agent-gov` 兼容策略。
 - 修改公开 API、OpenAPI、前端生成类型、用户可见 UI 主流程或容器部署行为。
-- 修改反馈优化主流程、Agent job、formatter、store 投影、业务 Agent workspace 模板或 runtime/env。
+- 修改反馈优化主流程、治理模型任务、formatter、store 投影、业务 Agent workspace 模板或 runtime/env。
 - 删除旧 router/store/schema/test/UI 入口，或一次提交跨后端、前端、docs、tests、配置中的两个及以上配置面。
 
 提交正文只写工程意图、兼容影响和已完成验证；不要复述大段 diff，不写 prompt 流水账，不写真实密钥、本机私有路径或运行态数据。
@@ -75,7 +75,7 @@
 - 应用配置文件：约定放 `config/*.yaml` 或 `config/*.json`（当前未创建）。
 - Docker/Compose 入口：`docker/`，`docker/docker-compose.yml`。
 - 持久化数据路径：容器默认 `${HOME}/volume-agent-gov`，本机调试默认 `/tmp/local-debug-volume-agent-gov`；`docker/volume/` 仅迁移来源。
-- 密钥边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或后台 Agent job 模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
+- 密钥边界：真实 API key、MCP header、数据库凭据、本机私有路径和运行态数据不得提交。涉及 `RUNTIME_CONTAINER`、`RUNTIME_VOLUME_MODE`、上述 env 文件、Docker volume、Langfuse 或治理模型凭据的改动，先按 `.claude/skills/runtime-env-governance/SKILL.md` 做 Consumer x Mode x Boundary 矩阵。
 - `.claude/settings.json` 的 Read deny 只约束内建文件工具；未启用 sandbox 时不能把它当作 Bash/Python 子进程的 OS 级密钥隔离。
 
 ## Claude Code 专项

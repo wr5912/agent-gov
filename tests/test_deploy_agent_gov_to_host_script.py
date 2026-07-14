@@ -83,7 +83,7 @@ def test_deploy_script_uses_loaded_images_for_full_compose_stack() -> None:
     assert "git archive origin/master" in text
     assert "working tree must be clean" not in text
     assert "--profile langfuse down --remove-orphans" in text
-    assert "--profile langfuse up -d --force-recreate --no-build --pull never" in text
+    assert "--profile langfuse up -d --wait --wait-timeout 180 --remove-orphans --force-recreate --no-build --pull never" in text
     assert "container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov)" in text
     assert 'docker ps -aq --filter "name=${container_name_prefix}-"' in text
     assert 'docker ps -aq --filter "name=agent-gov"' not in text
@@ -109,7 +109,11 @@ def test_deploy_script_uses_python_health_checks_without_remote_curl_dependency(
     text = _script_text()
 
     assert "from urllib.request import Request, urlopen" in text
-    assert '("API health", "http://127.0.0.1:${host_port}/health", 60, True)' in text
+    assert '("API liveness", "http://127.0.0.1:${host_port}/health/live", 60, True)' in text
     assert '("UI", "http://127.0.0.1:${frontend_port}", 60, False)' in text
     assert '("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False)' in text
     assert "curl " not in text
+    assert "except HTTPError as exc:" in text
+    assert 'last_error = f"HTTP {exc.code}"' in text
+    assert "diagnose_runtime_health.py" in text
+    assert "bash scripts/compose_diagnose.sh" in text

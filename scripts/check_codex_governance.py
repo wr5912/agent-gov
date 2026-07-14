@@ -411,11 +411,6 @@ class _PythonMetricVisitor(ast.NodeVisitor):
                 target_name = _annotation_target_name(target)
                 qualified_name = ".".join([*self.scope, target_name]) if self.scope else target_name
                 self.map_any_boundaries.add(f"{qualified_name}:annotation")
-        if self.rel_path == "app/services/agent_job_worker.py" and annotation_contains_name(node.value, "BaseModel"):
-            for target in node.targets:
-                target_name = _annotation_target_name(target)
-                if target_name == "RunProfileJson":
-                    self.typed_output_stage_erasure.add(f"{target_name}:alias:BaseModel")
         self.generic_visit(node)
 
 

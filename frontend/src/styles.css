@@ -66,9 +66,10 @@ button:disabled {
   align-items: center;
 }
 
-.topbar-left { gap: 10px; font-size: 13px; }
+.topbar-left { gap: 10px; min-width: 0; font-size: 13px; }
 .topbar-actions { gap: 8px; }
 .topbar-sep { width: 1px; height: 18px; background: var(--line); }
+.topbar-provider-status { flex: 0 0 auto; white-space: nowrap; font-size: 12px; }
 .muted { color: var(--muted); }
 .topbar-view-button.active {
   border-color: rgba(37, 99, 235, 0.42);
@@ -6221,6 +6222,23 @@ body.is-resizing-evidence-panel {
   font-size: 13px;
 }
 .runtime-debug-panel-body { display: flex; flex-direction: column; gap: 8px; }
+.runtime-provider-diagnostic {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+.runtime-provider-diagnostic strong,
+.runtime-provider-diagnostic span,
+.runtime-provider-diagnostic p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.runtime-provider-diagnostic span,
+.runtime-provider-diagnostic p { color: var(--muted); line-height: 1.45; }
 .runtime-debug-card {
   display: grid;
   gap: 4px;
@@ -6469,6 +6487,7 @@ body.is-resizing-evidence-panel {
   .topbar-left > span:nth-child(2),
   .topbar-left > .topbar-sep,
   .topbar-left > .muted,
+  .topbar-provider-status,
   .topbar-agent > span { display: none; }
   .topbar-agent { flex: 1 1 auto; min-width: 0; }
   .topbar-agent-select { width: 100%; max-width: none; }

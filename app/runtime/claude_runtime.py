@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator, Callable, Mapping
@@ -24,7 +25,7 @@ from .async_iterators import close_async_iterator
 from .claude_runtime_session_persistence import RuntimeSessionPersistenceMixin
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
-from .errors import RuntimeUnavailableError
+from .errors import BusinessRuleViolation, RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
@@ -109,6 +110,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         agent_version_store: AgentVersionProvider | None = None,
         user_input_service: ClaudeUserInputService | None = None,
         agent_version_maintenance_provider: Callable[[str], bool] | None = None,
+        business_profile_resolver: Callable[[Optional[str]], AgentRuntimeProfile | None] | None = None,
     ) -> None:
         if settings.enable_file_checkpointing:
             raise RuntimeUnavailableError("ENABLE_FILE_CHECKPOINTING is incompatible with the durable Claude SDK SessionStore")
@@ -117,6 +119,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         self.agent_version_maintenance_provider = agent_version_maintenance_provider
+        self.business_profile_resolver = business_profile_resolver
         self.user_input_service = user_input_service
         self.profiles = build_profiles(settings)
         self.activity_extractor = RuntimeActivityExtractor()
@@ -141,6 +144,25 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             if feedback_store is not None
             else None
         )
+
+    def _resolve_runtime_profile(
+        self,
+        req: ChatRequest,
+        explicit_profile: AgentRuntimeProfile | None,
+    ) -> AgentRuntimeProfile:
+        requested_agent_id = (req.agent_id or "").strip()
+        if explicit_profile is not None:
+            if requested_agent_id and explicit_profile.agent_id != requested_agent_id:
+                raise BusinessRuleViolation(f"Runtime profile {explicit_profile.agent_id} does not match requested business agent {requested_agent_id}")
+            return explicit_profile
+
+        if self.business_profile_resolver is not None:
+            resolved = self.business_profile_resolver(requested_agent_id or None)
+            return resolved or self.profiles[MAIN_AGENT_PROFILE]
+
+        if requested_agent_id and requested_agent_id != MAIN_AGENT_PROFILE:
+            raise RuntimeUnavailableError(f"Business profile resolver is not configured for requested agent {requested_agent_id}")
+        return self.profiles[MAIN_AGENT_PROFILE]
 
     def _build_prompt(self, req: ChatRequest) -> str:
         return req.message
@@ -639,7 +661,7 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         profile: AgentRuntimeProfile | None = None,
         agent_version_id_override: Optional[str] = None,
     ) -> ChatResponse:
-        profile = profile or self.profiles[MAIN_AGENT_PROFILE]
+        profile = await asyncio.to_thread(self._resolve_runtime_profile, req, profile)
         context = await self._new_runtime_request_context(
             req,
             profile=profile,
@@ -653,7 +675,12 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
             run_generation=context.run_generation,
         )
         async with heartbeat:
-            return await self._run_claimed(req, context=context, profile=profile)
+            return await self._run_claimed(
+                req,
+                context=context,
+                profile=profile,
+                heartbeat=heartbeat,
+            )
 
     async def _run_claimed(
         self,
@@ -661,10 +688,17 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
         *,
         context: RuntimeRequestContext,
         profile: AgentRuntimeProfile,
+        heartbeat: SessionTurnLeaseHeartbeat,
     ) -> ChatResponse:
         from .claude_runtime_non_stream import run_claimed_claude_runtime
 
-        return await run_claimed_claude_runtime(self, req, context=context, profile=profile)
+        return await run_claimed_claude_runtime(
+            self,
+            req,
+            context=context,
+            profile=profile,
+            heartbeat=heartbeat,
+        )
 
     async def run_candidate(
         self, req: ChatRequest, *, worktree_path: Path, candidate_commit_sha: str, change_set_id: str, agent_id: str = MAIN_AGENT_PROFILE
@@ -676,7 +710,8 @@ class ClaudeRuntime(RuntimeSessionPersistenceMixin, FeedbackRuntimeJobsMixin):
     async def stream(self, req: ChatRequest, *, profile: AgentRuntimeProfile | None = None) -> AsyncIterator[JsonObject]:
         from .claude_runtime_stream import stream_claude_runtime
 
-        source = stream_claude_runtime(self, req, profile=profile)
+        selected_profile = await asyncio.to_thread(self._resolve_runtime_profile, req, profile)
+        source = stream_claude_runtime(self, req, profile=selected_profile)
         try:
             async for event in source:
                 yield event

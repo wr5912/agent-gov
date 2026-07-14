@@ -56,10 +56,11 @@
           ]
         },
         {
-          "id": "agent_job_terminal_state_is_atomic",
-          "description": "timeout 与 worker 失败竞争时只允许一个 Agent job 终态获胜，迟到失败不得覆盖 timeout 证据。",
+          "id": "historical_agent_job_queue_is_retired",
+          "description": "已退役的持久化 Agent job 队列不再暴露写路径；迁移把未完成记录稳定关闭，同时保留历史输入、输出与错误证据供只读查询。",
           "pytest": [
-            "tests/test_agent_job_store.py::test_timeout_winner_discards_late_agent_failure"
+            "tests/test_runtime_db_0042.py::test_0042_retires_non_terminal_queue_rows_without_losing_evidence",
+            "tests/test_agent_job_history.py::test_historical_agent_jobs_remain_read_only_and_queryable"
           ]
         },
         {
@@ -218,7 +219,7 @@
             "tests/test_runtime_db_0040.py::test_0040_is_idempotent_after_source_tables_are_removed",
             "tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together",
             "tests/test_runtime_db_0040.py::test_fresh_schema_has_only_typed_evaluation_tables",
-            "tests/test_agent_job_store.py::test_removed_eval_case_generation_job_type_is_rejected",
+            "tests/test_agent_job_history.py::test_removed_eval_case_generation_job_type_is_rejected",
             "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema"
           ]
         },
@@ -273,6 +274,10 @@
             "tests/test_agent_version_maintenance.py::test_expired_runtime_with_running_intent_fails_closed_until_reconciled",
             "tests/test_agent_version_maintenance.py::test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance",
             "tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_applies_expired_reserved_rollback_before_git",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_git_applied_without_repeating_reset",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset",
+            "tests/test_agent_maintenance_recovery.py::test_release_reconciler_isolates_unexpected_operation_failure",
             "tests/test_agent_maintenance_recovery.py::test_restore_expected_head_cas_rejects_intervening_git_change",
             "tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete",
             "tests/test_agent_maintenance_recovery.py::test_rollback_rejects_non_current_release_without_resetting_newer_head",
@@ -320,6 +325,17 @@
             "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
             "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
           ]
+        },
+        {
+          "id": "provider_failure_does_not_block_control_plane_liveness",
+          "description": "外部 vLLM 探测超时只降级模型 readiness；API/UI liveness 保持快速可用，诊断快照和模型动作向 UI 投影脱敏的稳定 code、reason、probe 与 action。真实容器 Playwright 入口为 make container-health-e2e。",
+          "pytest": [
+            "tests/test_health_endpoints.py::test_health_endpoints_remain_fast_while_external_vllm_probe_is_stuck",
+            "tests/test_health_endpoints.py::test_readiness_reports_sanitized_vllm_timeout_and_recovers",
+            "tests/test_runtime_health_diagnose.py::test_diagnose_prints_specific_degraded_provider_reason",
+            "tests/test_repository_env_policy.py::test_compose_healthcheck_uses_local_liveness_without_provider_dependency"
+          ],
+          "real_container_ui_target": "container-health-e2e"
         }
       ]
     },

@@ -1,0 +1,40 @@
+services:
+  slow-vllm:
+    build:
+      context: ..
+      dockerfile: docker/e2e/slow-vllm.Dockerfile
+    image: agent-gov-slow-vllm:e2e
+    container_name: ${CONTAINER_NAME_PREFIX}-slow-vllm
+    environment:
+      SLOW_VLLM_DELAY_SECONDS: "8"
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8000/health/live', timeout=1)"]
+      interval: 1s
+      timeout: 2s
+      retries: 10
+    restart: "no"
+
+  agent-gov-litellm-sidecar:
+    environment:
+      MODEL_PROVIDER_BACKEND: vllm
+      MODEL_PROVIDER_API_KEY: health-e2e-key
+      MODEL_PROVIDER_API_URL: http://slow-vllm:8000
+      AGENT_MODEL: agent-gov-model
+    depends_on:
+      slow-vllm:
+        condition: service_healthy
+
+  claude-agent-api:
+    environment:
+      API_KEY: health-e2e-key
+      MODEL_PROVIDER_BACKEND: vllm
+      MODEL_PROVIDER_API_KEY: health-e2e-key
+      MODEL_PROVIDER_API_URL: http://slow-vllm:8000
+      MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: "5"
+      MODEL_PROVIDER_WARNING_TTL_SECONDS: "0"
+      AGENT_MODEL: agent-gov-model
+    depends_on:
+      slow-vllm:
+        condition: service_healthy
+      agent-gov-litellm-sidecar:
+        condition: service_started

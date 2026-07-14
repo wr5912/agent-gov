@@ -13,6 +13,7 @@ from .sdk_session_store import discard_staged_entries, promote_staged_entries
 from .state_machines import validate_transition
 
 TurnTerminalStatus = Literal["succeeded", "failed", "cancelled", "interrupted"]
+FinalizationRecoveryOutcome = Literal["completed", "interrupted"]
 
 
 @dataclass(frozen=True)
@@ -182,6 +183,72 @@ def abort_persisted_turn(
     session.active_run_expires_at = None
     session.active_run_generation = 0
     session.updated_at = now
+
+
+def recover_persisted_turn_finalization(
+    db: Any,
+    *,
+    session: SessionRecordModel,
+    run_id: str,
+    run_generation: int,
+    sdk_session_id: str,
+    run_record: AgentRunRecord,
+    terminal_status: Literal["succeeded", "failed"],
+    completed_at: str,
+    cause: str,
+    recovered_at: str | None = None,
+) -> FinalizationRecoveryOutcome:
+    """Resolve exhausted finalization retries without leaving a live turn lease."""
+    intent = db.get(SessionTurnIntentModel, run_id)
+    if intent is None:
+        raise SessionConflictError(f"SDK turn intent {run_id} does not exist")
+    if intent.status == terminal_status:
+        assert_completed_persisted_turn(
+            db,
+            session=session,
+            run_id=run_id,
+            sdk_session_id=sdk_session_id,
+            run_record=run_record,
+            terminal_status=terminal_status,
+            completed_at=completed_at,
+        )
+        return "completed"
+    if intent.status != "running":
+        raise SessionConflictError(f"SDK turn intent {run_id} was finalized as {intent.status}")
+
+    now = recovered_at or utc_now()
+    _assert_turn_fence(session, intent, run_generation=run_generation, require_unexpired=False, now=now)
+    error: JsonObject = {
+        "type": "RuntimeFinalizationFailed",
+        "message": "SDK turn finalization retries were exhausted; the turn was interrupted",
+        "cause": cause[:2000],
+    }
+    _transition_running_intent(
+        db,
+        intent=intent,
+        terminal_status="interrupted",
+        now=now,
+        error=error,
+    )
+    discard_staged_entries(db, run_id=run_id, discarded_at=now)
+    interrupted_payload = run_record.to_payload()
+    prior_errors = interrupted_payload.get("errors")
+    errors = list(prior_errors) if isinstance(prior_errors, list) else []
+    errors.append("RuntimeFinalizationFailed: SDK turn finalization retries were exhausted")
+    interrupted_payload.update(
+        {
+            "sdk_session_id": intent.source_sdk_session_id,
+            "completed_at": now,
+            "errors": errors,
+            "turn_status": "interrupted",
+        }
+    )
+    upsert_agent_run_record(db, AgentRunRecord.from_payload(interrupted_payload))
+    session.active_run_id = None
+    session.active_run_expires_at = None
+    session.active_run_generation = 0
+    session.updated_at = now
+    return "interrupted"
 
 
 def reconcile_expired_turns(

@@ -73,7 +73,7 @@ def test_settings_permissions_put_mcp_mutations_in_ask_not_allow():
         assert rule in perms.get("ask", []), f"{rule} 应在 ask"
 
 
-def test_daily_report_low_risk_permissions_are_direct_allow():
+def test_daily_report_scoped_low_risk_permissions_are_direct_allow():
     perms = json.loads(SETTINGS.read_text(encoding="utf-8"))["permissions"]
     sandbox_fs = json.loads(SETTINGS.read_text(encoding="utf-8"))["sandbox"]["filesystem"]
 
@@ -82,8 +82,8 @@ def test_daily_report_low_risk_permissions_are_direct_allow():
     assert "Bash(date *)" in perms["allow"]
     assert "Bash(pwd)" in perms["allow"]
     assert "Bash(mkdir -p /data/reports/**)" in perms["allow"]
-    assert "Bash(*)" in perms["allow"]
-    assert "Bash(*)" not in perms.get("ask", [])
+    assert "Bash(*)" not in perms["allow"]
+    assert "Bash(*)" in perms.get("ask", [])
     assert "/data/reports" in sandbox_fs["allowWrite"]
 
 
@@ -100,7 +100,8 @@ def test_response_disposal_execution_mcp_is_ask_not_allow():
 def test_claude_md_requires_execute_after_confirmation_without_reconfirm():
     """CLAUDE.md §4：对话计划与 Claude 原生工具确认分层，禁止重复确认。"""
     text = CLAUDE_MD.read_text(encoding="utf-8")
-    assert "Bash 已由 settings 直接放行" in text
+    assert "Bash(*) 统一走 ask" in text
+    assert "低风险命令类别授权" in text
     assert "Claude 原生 Web 确认卡片" in text
     assert "不要重复输出处置计划/确认表格" in text
     assert "不要把普通对话回复当成绕过工具权限的依据" in text

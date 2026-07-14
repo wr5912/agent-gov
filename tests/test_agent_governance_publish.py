@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.agent_paths import business_agent_layout
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.schemas import FeedbackSignalCreateRequest
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.services.agent_governance import AgentGovernanceError, AgentGovernanceService
@@ -24,7 +27,15 @@ def _governance(tmp_path):
         workspace_dir=settings.main_workspace_dir,
         agent_version_provider=lambda _aid=None: agent_store.current_version_id(),
     )
-    return AgentGovernanceService(feedback_store=store, agent_version_store=agent_store), agent_store
+    return (
+        AgentGovernanceService(
+            feedback_store=store,
+            agent_version_store=agent_store,
+            runtime_mode=settings.runtime_volume_mode,
+            runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
+        ),
+        agent_store,
+    )
 
 
 def _candidate_change_set(
@@ -34,6 +45,9 @@ def _candidate_change_set(
     content: str = "# Test Agent\n\n发布候选变更。\n",
     agent_id: str | None = None,
 ):
+    if agent_id and agent_id != "main-agent":
+        workspace = business_agent_layout(governance.feedback_store.data_dir, agent_id).workspace
+        seed_business_agent_workspace(workspace, agent_id=agent_id, name=agent_id)
     change_set = governance.create_change_set(title="候选发布测试", operator="tester", agent_id=agent_id)
     worktree_path = Path(str(change_set["worktree_path"]))
     worktree_path.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
@@ -66,15 +80,35 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert governance.list_releases(agent_id="biz-other") == []
 
 
+def test_publish_rejects_candidate_that_drifts_managed_mcp_server(tmp_path):
+    governance, store = _governance(tmp_path)
+    original_head = store.current_commit_sha()
+    change_set = governance.create_change_set(title="invalid managed MCP", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    mcp_path = worktree / ".mcp.json"
+    mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+    mcp["mcpServers"]["sec-ops-data"]["url"] = "http://unapproved.example/mcp"
+    mcp_path.write_text(json.dumps(mcp), encoding="utf-8")
+    candidate = store.commit_worktree(worktree, message="drift managed MCP")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-invalid-policy",
+    )
+
+    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+
+    assert store.current_commit_sha() == original_head
+
+
 def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     """B3.2/B3.3（AGV-017 per-agent 版本隔离）：业务 Agent 的 change set/release 落在自己独立的版本 store，与 main 互不混淆。"""
     governance, main_store = _governance(tmp_path)
     main_head_before = main_store.current_commit_sha()
 
     # 为业务 Agent 创建 → 提交 → 发布一条独立版本记录。
-    biz_change_set = _candidate_change_set(
-        governance, main_store, content="# Biz Agent\n\n业务 Agent 候选。\n", agent_id="biz-agent-001"
-    )
+    biz_change_set = _candidate_change_set(governance, main_store, content="# Biz Agent\n\n业务 Agent 候选。\n", agent_id="biz-agent-001")
     assert biz_change_set["agent_id"] == "biz-agent-001"
     biz_release = governance.publish_change_set(str(biz_change_set["change_set_id"]), operator="tester")
     assert biz_release["agent_id"] == "biz-agent-001"
@@ -87,13 +121,9 @@ def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     assert biz_store.repository_dir != main_store.repository_dir
 
     # 按 Agent 过滤互不串扰：各自只看到自己的 change set/release。
-    assert [cs["change_set_id"] for cs in governance.list_change_sets(agent_id="biz-agent-001")] == [
-        biz_change_set["change_set_id"]
-    ]
+    assert [cs["change_set_id"] for cs in governance.list_change_sets(agent_id="biz-agent-001")] == [biz_change_set["change_set_id"]]
     assert governance.list_change_sets(agent_id="main-agent") == []
-    assert [rel["release_id"] for rel in governance.list_releases(agent_id="biz-agent-001")] == [
-        biz_release["release_id"]
-    ]
+    assert [rel["release_id"] for rel in governance.list_releases(agent_id="biz-agent-001")] == [biz_release["release_id"]]
     assert governance.list_releases(agent_id="main-agent") == []
 
     # main 路径不受影响：仍可独立创建并发布 main 版本，且与业务 Agent 链不混淆。
@@ -120,9 +150,7 @@ def test_governance_serves_multiple_business_agents_with_isolated_closed_loops(t
         case = store.create_case(source_ids=[signal["signal_id"]], title=f"{agent_id} 反馈")
         change_set = _candidate_change_set(governance, main_store, content=f"# {agent_id}\n\n候选\n", agent_id=agent_id)
         release = governance.publish_change_set(str(change_set["change_set_id"]), operator="tester")
-        eval_run = store.create_eval_run(
-            eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"])
-        )
+        eval_run = store.create_eval_run(eval_case_ids=[], agent_version_id=release["commit_sha"], change_set_id=str(change_set["change_set_id"]))
         records[agent_id] = {"signal": signal, "case": case, "change_set": change_set, "release": release, "eval": eval_run}
 
     # 治理 Agent（单一 governance 实例）为不同业务 Agent 各自管理独立版本 store（物理隔离）。
@@ -329,9 +357,7 @@ def test_rejected_change_set_records_audit_event(tmp_path):
     change_set = _candidate_change_set(governance, agent_store)
     change_set_id = str(change_set["change_set_id"])
 
-    governance.request_change_set_approval(
-        change_set_id, operator="reviewer", reason="风险过高", impact_scope="工具配置", rollback_plan="撤销变更"
-    )
+    governance.request_change_set_approval(change_set_id, operator="reviewer", reason="风险过高", impact_scope="工具配置", rollback_plan="撤销变更")
     rejected = governance.reject_change_set(change_set_id, operator="reviewer", note="不通过")
 
     assert rejected["status"] == "rejected"

@@ -64,14 +64,6 @@ x-runtime-volume-seeds: &runtime-volume-seeds
   bind:
     create_host_path: false
 
-x-claude-code-sandbox-runtime: &claude-code-sandbox-runtime
-  cap_add:
-    - SYS_ADMIN
-    - NET_ADMIN
-  security_opt:
-    - seccomp=unconfined
-    - apparmor=unconfined
-
 services:
   agent-gov-litellm-sidecar:
     build:
@@ -91,7 +83,6 @@ services:
     logging: *default-logging
 
   claude-agent-api:
-    <<: *claude-code-sandbox-runtime
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -130,7 +121,9 @@ services:
       MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
       HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
+      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
+      RESPONSE_ORCHESTRATOR_API_KEY: ${RESPONSE_ORCHESTRATOR_API_KEY:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
       no_proxy: ${no_proxy:-}
@@ -147,17 +140,29 @@ services:
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     depends_on:
       - agent-gov-litellm-sidecar
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c 'import json, os, urllib.request;
+          port = os.environ.get("API_PORT", "8080");
+          response = urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3);
+          payload = json.load(response);
+          assert 200 <= response.status < 300 and payload.get("status") == "ok"'
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
     restart: unless-stopped
     logging: *default-logging
 
   claude-agent-worker:
-    <<: *claude-code-sandbox-runtime
     build:
       context: ..
       dockerfile: docker/Dockerfile
     image: agent-gov-api:${APP_VERSION:-dev}
     container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-worker
-    command: ["python", "-m", "app.worker.agent_jobs"]
+    command: ["worker"]
     extra_hosts:
       - "host.docker.internal:host-gateway"
     env_file:
@@ -184,7 +189,9 @@ services:
       MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
       GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
       HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-}
+      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
+      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
+      RESPONSE_ORCHESTRATOR_API_KEY: ${RESPONSE_ORCHESTRATOR_API_KEY:-}
       CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
       NO_PROXY: ${NO_PROXY:-}
       no_proxy: ${no_proxy:-}
@@ -201,8 +208,10 @@ services:
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
     depends_on:
-      - agent-gov-litellm-sidecar
-      - claude-agent-api
+      agent-gov-litellm-sidecar:
+        condition: service_started
+      claude-agent-api:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
 
@@ -226,7 +235,8 @@ services:
       COREPACK_NPM_REGISTRY: https://registry.npmmirror.com
       PNPM_CONFIG_REGISTRY: https://registry.npmmirror.com
     depends_on:
-      - claude-agent-api
+      claude-agent-api:
+        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
 

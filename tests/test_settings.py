@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import pytest
-
 from app.runtime.settings import (
     AppSettings,
     runtime_settings_log_fields,
@@ -12,6 +11,8 @@ from app.runtime.settings import (
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 _PROFILE_ENV_KEYS = (
+    "API_KEY",
+    "RESPONSE_ORCHESTRATOR_API_KEY",
     "API_PORT",
     "LOG_LEVEL",
     "RUNTIME_VOLUME_MODE",
@@ -35,6 +36,15 @@ _PROFILE_ENV_KEYS = (
     "DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS",
     "HITL_TIMEOUT_SECONDS",
 )
+
+
+def test_settings_requires_distinct_general_and_response_orchestrator_keys() -> None:
+    with pytest.raises(ValueError, match="must be different"):
+        AppSettings(_env_file=None, API_KEY="same-secret", RESPONSE_ORCHESTRATOR_API_KEY="same-secret")
+
+    settings = AppSettings(_env_file=None, API_KEY="  ", RESPONSE_ORCHESTRATOR_API_KEY="  ro-secret  ")
+    assert settings.api_key is None
+    assert settings.response_orchestrator_api_key == "ro-secret"
 
 
 def test_settings_selects_container_env_file_when_container_marker_is_set(tmp_path, monkeypatch):
@@ -188,6 +198,7 @@ def test_runtime_settings_log_fields_are_explicit_and_non_secret(monkeypatch):
         "model_provider_vllm_allow_direct": False,
         "provider_api_key_configured": False,
         "provider_api_url_configured": False,
+        "response_orchestrator_api_key_configured": False,
         "governance_agent_timeout_seconds": 300,
         "dspy_output_formatter_timeout_seconds": 300,
         "claude_web_hitl_enabled": False,
@@ -237,7 +248,7 @@ def test_validate_hitl_single_api_process_rejects_multi_worker_env():
         validate_hitl_single_api_process(enabled, env={"API_WORKERS": "many"})
 
 
-def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):
+def test_get_settings_is_pure_and_does_not_create_runtime_dirs(tmp_path, monkeypatch):
     from app.runtime.settings import get_settings
 
     for key in _PROFILE_ENV_KEYS:
@@ -262,6 +273,6 @@ def test_get_settings_creates_all_profile_dirs(tmp_path, monkeypatch):
         settings.agent_git_worktrees_dir,
         settings.agent_release_archives_dir,
     )
-    assert all(path.is_dir() for path in expected_dirs)
+    assert all(not path.exists() for path in expected_dirs)
 
     get_settings.cache_clear()

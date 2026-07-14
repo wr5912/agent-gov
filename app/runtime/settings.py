@@ -73,6 +73,7 @@ class RuntimeSettingsLogFields(TypedDict):
     model_provider_vllm_allow_direct: bool
     provider_api_key_configured: bool
     provider_api_url_configured: bool
+    response_orchestrator_api_key_configured: bool
     governance_agent_timeout_seconds: int
     dspy_output_formatter_timeout_seconds: int
     claude_web_hitl_enabled: bool
@@ -163,9 +164,7 @@ class AppSettings(BaseSettings):
     runtime_volume_mode: Literal["container", "local-debug"] = Field(default="container", alias="RUNTIME_VOLUME_MODE")
     host_runtime_volume_root: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT), alias="HOST_RUNTIME_VOLUME_ROOT")
     host_data_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "data"), alias="HOST_DATA_MOUNT")
-    host_governor_workspace_mount: str = Field(
-        default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "governor-workspace"), alias="HOST_GOVERNOR_WORKSPACE_MOUNT"
-    )
+    host_governor_workspace_mount: str = Field(default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "governor-workspace"), alias="HOST_GOVERNOR_WORKSPACE_MOUNT")
     host_governor_claude_root_mount: str = Field(
         default=str(CONTAINER_RUNTIME_VOLUME_ROOT / "claude-roots" / "governor"), alias="HOST_GOVERNOR_CLAUDE_ROOT_MOUNT"
     )
@@ -185,6 +184,7 @@ class AppSettings(BaseSettings):
     model_provider_probe_timeout_seconds: float = Field(default=30.0, alias="MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS")
     model_provider_warning_ttl_seconds: int = Field(default=300, alias="MODEL_PROVIDER_WARNING_TTL_SECONDS")
     api_key: Optional[str] = Field(default=None, alias="API_KEY")
+    response_orchestrator_api_key: Optional[str] = Field(default=None, alias="RESPONSE_ORCHESTRATOR_API_KEY")
 
     # 会话历史读取端点 GET /api/sessions/{id}/messages 默认返回完整对话正文（会话所有者回放自己的历史）；
     # 仅当该开关打开时对返回的 text/thinking/tool 输入与结果做脱敏。
@@ -205,9 +205,7 @@ class AppSettings(BaseSettings):
     enable_feedback_debug_evidence: bool = Field(default=True, alias="ENABLE_FEEDBACK_DEBUG_EVIDENCE")
     enable_dspy_output_formatter: bool = Field(default=True, alias="ENABLE_DSPY_OUTPUT_FORMATTER")
     dspy_output_formatter_model: Optional[str] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_MODEL")
-    dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(
-        default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS"
-    )
+    dspy_output_formatter_timeout_seconds_override: Optional[int] = Field(default=None, alias="DSPY_OUTPUT_FORMATTER_TIMEOUT_SECONDS")
     dspy_output_formatter_max_retries: int = Field(default=1, alias="DSPY_OUTPUT_FORMATTER_MAX_RETRIES")
     dspy_output_formatter_max_tokens: int = Field(default=8192, alias="DSPY_OUTPUT_FORMATTER_MAX_TOKENS")
     include_hook_events: bool = Field(default=True, alias="INCLUDE_HOOK_EVENTS")
@@ -265,8 +263,18 @@ class AppSettings(BaseSettings):
             return None
         return value
 
+    @field_validator("api_key", "response_orchestrator_api_key", mode="before")
+    @classmethod
+    def _blank_optional_api_key(cls, value: object) -> object:
+        if isinstance(value, str):
+            normalized = value.strip()
+            return normalized or None
+        return value
+
     def model_post_init(self, __context: Any) -> None:
         _derive_profile_dirs(self)
+        if self.api_key is not None and self.response_orchestrator_api_key is not None and self.api_key == self.response_orchestrator_api_key:
+            raise ValueError("API_KEY and RESPONSE_ORCHESTRATOR_API_KEY must be different")
 
     @property
     def settings_env_file(self) -> Path | None:
@@ -382,15 +390,11 @@ class AppSettings(BaseSettings):
 
     @property
     def agent_git_worktrees_dir(self) -> Path:
-        return self.agent_git_worktrees_dir_override or business_agent_layout(
-            self.data_dir, MAIN_AGENT_ID
-        ).version_base / "worktrees"
+        return self.agent_git_worktrees_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "worktrees"
 
     @property
     def agent_release_archives_dir(self) -> Path:
-        return self.agent_release_archives_dir_override or business_agent_layout(
-            self.data_dir, MAIN_AGENT_ID
-        ).version_base / "releases"
+        return self.agent_release_archives_dir_override or business_agent_layout(self.data_dir, MAIN_AGENT_ID).version_base / "releases"
 
     @property
     def runtime_db_path(self) -> Path:
@@ -401,17 +405,6 @@ class AppSettings(BaseSettings):
 def get_settings() -> AppSettings:
     settings = AppSettings()
     _derive_profile_dirs(settings)
-    settings.data_dir.mkdir(parents=True, exist_ok=True)
-    settings.main_workspace_dir.mkdir(parents=True, exist_ok=True)
-    settings.governor_workspace_dir.mkdir(parents=True, exist_ok=True)
-    settings.main_claude_root.mkdir(parents=True, exist_ok=True)
-    settings.governor_claude_root.mkdir(parents=True, exist_ok=True)
-    settings.claude_home.mkdir(parents=True, exist_ok=True)
-    if settings.resolved_claude_config_dir:
-        settings.resolved_claude_config_dir.mkdir(parents=True, exist_ok=True)
-    settings.agent_git_repository_dir.mkdir(parents=True, exist_ok=True)
-    settings.agent_git_worktrees_dir.mkdir(parents=True, exist_ok=True)
-    settings.agent_release_archives_dir.mkdir(parents=True, exist_ok=True)
     return settings
 
 
@@ -427,6 +420,7 @@ def runtime_settings_log_fields(settings: AppSettings) -> RuntimeSettingsLogFiel
         "model_provider_vllm_allow_direct": settings.model_provider_vllm_allow_direct,
         "provider_api_key_configured": provider_api_key_configured(settings.provider_api_key),
         "provider_api_url_configured": bool(settings.provider_api_url),
+        "response_orchestrator_api_key_configured": bool(settings.response_orchestrator_api_key),
         "governance_agent_timeout_seconds": settings.governance_agent_timeout_seconds,
         "dspy_output_formatter_timeout_seconds": settings.dspy_output_formatter_timeout_seconds,
         "claude_web_hitl_enabled": settings.enable_claude_web_hitl,
@@ -458,6 +452,4 @@ def validate_hitl_single_api_process(settings: AppSettings, env: Mapping[str, st
         except ValueError as exc:
             raise RuntimeError(f"{key} must be an integer when ENABLE_CLAUDE_WEB_HITL=true") from exc
         if count > 1:
-            raise RuntimeError(
-                f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions"
-            )
+            raise RuntimeError(f"ENABLE_CLAUDE_WEB_HITL=true requires a single API process; {key}={count} would break pending HITL decisions")

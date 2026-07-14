@@ -118,7 +118,10 @@ def _tracked_text_files() -> list[tuple[str, str]]:
     for rel_path in result.stdout.decode("utf-8").split("\0"):
         if not rel_path:
             continue
-        raw = (REPO_ROOT / rel_path).read_bytes()
+        path = REPO_ROOT / rel_path
+        if not path.is_file():
+            continue  # A tracked file deleted by the current change cannot contribute text to the resulting tree.
+        raw = path.read_bytes()
         if b"\0" in raw:
             continue
         files.append((rel_path, raw.decode("utf-8", errors="ignore")))
@@ -137,9 +140,7 @@ def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
 
 def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_enabled() -> None:
     business_agents_dir = REPO_ROOT / "docker/runtime-volume-seeds/data/business-agents"
-    settings_files = sorted(
-        business_agents_dir.glob("*/workspace/.claude/settings.json")
-    )
+    settings_files = sorted(business_agents_dir.glob("*/workspace/.claude/settings.json"))
     sandbox_enabled = False
     for path in settings_files:
         text = path.read_text(encoding="utf-8")
@@ -153,18 +154,11 @@ def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_
     assert "socat" in packages
 
 
-def test_compose_grants_bubblewrap_namespace_permissions_only_to_claude_code_services() -> None:
+def test_compose_does_not_grant_unconfined_or_namespace_capabilities() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    for service_name in ("claude-agent-api", "claude-agent-worker"):
-        service = services[service_name]
-        assert "SYS_ADMIN" in service.get("cap_add", [])
-        assert "NET_ADMIN" in service.get("cap_add", [])
-        assert "seccomp=unconfined" in service.get("security_opt", [])
-        assert "apparmor=unconfined" in service.get("security_opt", [])
-
-    for service_name in ("agent-gov-litellm-sidecar", "claude-agent-ui"):
+    for service_name in services:
         service = services[service_name]
         assert "SYS_ADMIN" not in service.get("cap_add", [])
         assert "NET_ADMIN" not in service.get("cap_add", [])
@@ -362,3 +356,20 @@ def test_runtime_volume_seeds_are_bound_read_only_for_api_and_worker() -> None:
     assert "create_host_path: false" in compose
     assert "- *runtime-volume-seeds" in api
     assert "- *runtime-volume-seeds" in worker
+
+
+def test_compose_uses_api_coordinator_without_runtime_init_container() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
+
+    assert "agent-gov-runtime-init" not in services
+    assert services["claude-agent-worker"]["command"] == ["worker"]
+    assert services["claude-agent-worker"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert services["claude-agent-ui"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert "healthcheck" in services["claude-agent-api"]
+    health_command = services["claude-agent-api"]["healthcheck"]["test"][1]
+    assert 'os.environ.get("API_PORT", "8080")' in health_command
+    assert "${API_PORT" not in health_command
+    assert 'ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]' in dockerfile
+    assert not (REPO_ROOT / "docker/entrypoint.sh").exists()

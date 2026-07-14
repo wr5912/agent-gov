@@ -9,9 +9,10 @@ from typing import TYPE_CHECKING, Any
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
 from .claude_runtime import RuntimeQueryState
-from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
+from .claude_runtime_permissions import runtime_response_disposition
 from .json_types import JsonObject
 from .message_utils import to_plain
+from .response_disposition_control import permission_denial_reason, response_disposition_fields
 from .runtime_db import utc_now
 from .schemas import ChatRequest
 
@@ -37,7 +38,7 @@ def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRunt
     context = runtime._new_runtime_request_context(req, agent_id=profile.name)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
     context.telemetry_input["claude_web_hitl_enabled"] = web_hitl_enabled
-    context.telemetry_input["permission_mode"] = "default" if web_hitl_enabled else None
+    context.telemetry_input["permission_mode"] = "default"
     return StreamRun(
         runtime=runtime,
         req=req,
@@ -92,13 +93,15 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(stream_run.profile.name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
-            return PermissionResultAllow()
+        response_disposition = runtime_response_disposition(stream_run.req)
+        denial = permission_denial_reason(stream_run.profile.name, tool_name, response_disposition)
+        if denial is not None:
+            return PermissionResultDeny(message=denial)
         service = stream_run.runtime.user_input_service
-        if service is None:
-            return PermissionResultDeny(message="Claude Web HITL is not available.")
+        if service is None or not stream_run.web_hitl_enabled:
+            message = f"工具 {tool_name} 请求人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启或 HITL 服务不可用；请求已显式拒绝。"
+            await event_queue.put({"event": "error", "data": {"errors": [message]}})
+            return PermissionResultDeny(message=message)
         decision = await service.create_and_wait(
             event_queue=event_queue,
             business_agent_id=stream_run.profile.name,
@@ -108,38 +111,17 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
             tool_name=tool_name,
             input_data=input_data,
             context=sdk_context,
+            response_disposition=response_disposition,
         )
         if decision.action == "allow_once":
+            if decision.updated_input is not None:
+                return PermissionResultAllow(updated_input=decision.updated_input)
             return PermissionResultAllow()
         if decision.action == "answer_question":
-            return PermissionResultAllow(updated_input=decision.ask_user_question_input or {})
+            return PermissionResultAllow(updated_input=decision.updated_input or decision.ask_user_question_input or {})
         return PermissionResultDeny(message=decision.message or "User denied Claude tool request.")
 
     return sdk_can_use_tool
-
-
-def _hitl_required_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
-    """HITL 关闭但 ``profile.requires_web_hitl`` 时的 fail-loud 回调。
-
-    命中真正需要 HITL 的工具时，明确 deny 并向流发一条 ``error`` 事件，
-    取代 SDK 的静默 deny，让调用方能区分"需开 HITL"与"工具坏"，也避免非流式 bypass 的静默放行语义漂移到流式。
-    不需要 HITL 的工具直行。
-    """
-    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
-
-    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(stream_run.profile.name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(stream_run.profile.name, tool_name):
-            return PermissionResultAllow()
-        message = (
-            f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启："
-            f"业务 Agent {stream_run.profile.name} 的响应处置执行依赖 web HITL，请开启后重试或改用 dry-run。"
-        )
-        await event_queue.put({"event": "error", "data": {"errors": [message]}})
-        return PermissionResultDeny(message=message)
-
-    return deny
 
 
 async def _emit_query_events(
@@ -150,23 +132,16 @@ async def _emit_query_events(
 ) -> None:
     runtime = stream_run.runtime
     runtime.model_provider_router.ensure_agent_runtime_ready()
-    # HITL 关闭但该 Agent 声明 requires_web_hitl 时，挂 fail-loud deny 回调（而非静默 deny），执行门 loud。
-    hitl_fail_loud = stream_run.profile.requires_web_hitl and not stream_run.web_hitl_enabled
-    if stream_run.web_hitl_enabled:
-        can_use_tool = _sdk_tool_callback(stream_run, event_queue)
-    elif hitl_fail_loud:
-        can_use_tool = _hitl_required_deny_callback(stream_run, event_queue)
-    else:
-        can_use_tool = None
+    can_use_tool = _sdk_tool_callback(stream_run, event_queue)
     options = runtime._build_options(
         stream_run.req,
         stream_run.request_context.session,
         profile=stream_run.profile,
-        execution_mode="stream_hitl" if stream_run.web_hitl_enabled else "stream",
+        execution_mode="stream",
         can_use_tool=can_use_tool,
     )
-    # can_use_tool 需要流式输入模式保持 prompt 流打开（HITL-on 与 fail-loud 都需要）。
-    input_done = asyncio.Event() if (stream_run.web_hitl_enabled or hitl_fail_loud) else None
+    # 只有实际存在 Web HITL 决策面时才保持输入流；否则兼容先消费完 prompt 再产出结果的传输实现。
+    input_done = asyncio.Event() if stream_run.web_hitl_enabled else None
     prompt_stream = (
         _single_prompt_stream_until_done(stream_run.request_context.prompt, input_done)
         if input_done is not None
@@ -206,24 +181,26 @@ async def _publish_result_event(
     context = stream_run.request_context
     state = stream_run.query_state
     agent_activity = runtime.activity_extractor.agent_activity_payload(stream_run.req, state.messages)
+    data: JsonObject = {
+        "session_id": context.session.session_id,
+        "sdk_session_id": state.sdk_session_id,
+        "run_id": context.run_id,
+        "agent_version_id": context.agent_version_id,
+        "langfuse_trace_id": context.langfuse_trace_id,
+        "langfuse_trace_url": context.langfuse_trace_url,
+        "alert_id": stream_run.req.alert_id,
+        "case_id": stream_run.req.case_id,
+        "agent_activity": agent_activity,
+        "usage": to_plain(state.usage),
+        "total_cost_usd": state.total_cost_usd,
+        "stop_reason": state.stop_reason,
+        "errors": result_errors,
+    }
+    data.update(response_disposition_fields(runtime_response_disposition(stream_run.req)))
     await event_queue.put(
         {
             "event": "result",
-            "data": {
-                "session_id": context.session.session_id,
-                "sdk_session_id": state.sdk_session_id,
-                "run_id": context.run_id,
-                "agent_version_id": context.agent_version_id,
-                "langfuse_trace_id": context.langfuse_trace_id,
-                "langfuse_trace_url": context.langfuse_trace_url,
-                "alert_id": stream_run.req.alert_id,
-                "case_id": stream_run.req.case_id,
-                "agent_activity": agent_activity,
-                "usage": to_plain(state.usage),
-                "total_cost_usd": state.total_cost_usd,
-                "stop_reason": state.stop_reason,
-                "errors": result_errors,
-            },
+            "data": data,
         }
     )
 

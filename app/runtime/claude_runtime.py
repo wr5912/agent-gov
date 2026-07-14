@@ -20,17 +20,19 @@ from .agent_profiles import (
     build_profiles,
     candidate_profile,
 )
+from .claude_runtime_permissions import non_stream_permission_callback, runtime_response_disposition
 from .claude_trust import ensure_claude_workspace_trusted
 from .claude_user_input_service import ClaudeUserInputService
 from .errors import RuntimeUnavailableError
 from .feedback_runtime_jobs import FeedbackRuntimeJobsMixin
 from .governor_job_trace import run_governor_profile_json
-from .hitl_policy import blocks_interactive_question, tool_requires_web_hitl
 from .integrations.runtime_langfuse import RuntimeLangfuseClient
 from .json_types import JsonObject
+from .managed_agent_policy import ManagedAgentPolicyError, require_profile_runtime_workspace_policy
 from .message_utils import extract_text, message_event_name, to_plain
 from .model_provider import ModelProviderRouter
 from .output_formatter import DSPyOutputFormatter
+from .response_disposition_control import response_disposition_fields, trusted_response_disposition_prompt
 from .runtime_activity import RuntimeActivityExtractor
 from .runtime_db import utc_now
 from .schemas import ChatRequest, ChatResponse
@@ -40,29 +42,6 @@ from .settings import AppSettings
 from .stores.feedback_store import FeedbackStore
 
 _LANGFUSE_ATTRIBUTE_MAX_LENGTH = 200
-
-
-def _non_stream_hitl_deny_callback(profile_name: str) -> Any:
-    """非流式 run() 下，requires_web_hitl 的 Agent 对真正需要 HITL 的工具明确 deny。
-
-    非流式无 SSE/HITL 面，故不发事件、不等待人审；deny 让高危工具在无审批的非交互路径
-    fail-loud（取代 bypassPermissions 的静默放行）。不需要 HITL 的工具直行。
-    """
-    from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
-
-    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        if blocks_interactive_question(profile_name, tool_name):
-            return PermissionResultDeny(message=f"工具 {tool_name} 已禁用：后台处置流程不得发起临时人工提问。")
-        if not tool_requires_web_hitl(profile_name, tool_name):
-            return PermissionResultAllow()
-        return PermissionResultDeny(
-            message=(
-                f"工具 {tool_name} 需人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启且非流式无人审面："
-                f"业务 Agent {profile_name} 的响应处置执行请改用流式 + 开启 HITL，或先做 dry-run。"
-            )
-        )
-
-    return deny
 
 
 def clean_langfuse_attribute_value(value: Any) -> Optional[str]:
@@ -196,6 +175,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         run_id: str,
         agent_version_id: Optional[str],
     ) -> JsonObject:
+        disposition = runtime_response_disposition(req)
         return {
             "run_id": run_id,
             "agent_version_id": agent_version_id,
@@ -216,6 +196,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "claude_config_source": "official_files",
             "system_append": req.system_append,
             "metadata": req.metadata,
+            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _runtime_output_payload(
@@ -279,6 +260,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         if self.feedback_store is None:
             return
         answer_summary = answer.strip().replace("\n", " ")[:500]
+        disposition = runtime_response_disposition(req)
         self.feedback_store.record_run(
             {
                 "run_id": run_id,
@@ -301,6 +283,7 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                 "metadata": req.metadata,
                 "created_at": created_at,
                 "completed_at": completed_at,
+                **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
             }
         )
 
@@ -345,6 +328,10 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             env["CLAUDE_HOOK_AUDIT_LOG"] = str(profile.data_dir / "transcripts" / "claude-hook-audit.jsonl")
         env["AGENT_PROFILE"] = profile.name
         env["CLAUDE_AGENT_SDK_CLIENT_APP"] = f"secops-runtime/{profile.name}"
+        try:
+            require_profile_runtime_workspace_policy(profile, runtime_mode=self.settings.runtime_volume_mode, env=env)
+        except ManagedAgentPolicyError as exc:
+            raise RuntimeUnavailableError(f"Business Agent managed policy is invalid: {exc}") from exc
         profile.claude_root.mkdir(parents=True, exist_ok=True)
         profile.claude_config_dir.mkdir(parents=True, exist_ok=True)
         ensure_claude_workspace_trusted(profile)
@@ -367,7 +354,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         env = self._profile_env(profile)
         env.update(self.model_provider_router.claude_env())
 
-        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append] if part)
+        disposition_prompt = trusted_response_disposition_prompt(runtime_response_disposition(req))
+        system_append = "\n\n".join(part for part in [self.settings.claude_system_append, req.system_append, disposition_prompt] if part)
         system_prompt = {"type": "preset", "preset": "claude_code"}
         if system_append:
             system_prompt = {"type": "preset", "preset": "claude_code", "append": system_append}
@@ -395,17 +383,12 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             "load_timeout_ms": self.settings.load_timeout_ms,
             "hooks": build_default_hooks(profile),
         }
-        if execution_mode == "non_stream_bypass":
-            kwargs["permission_mode"] = "bypassPermissions"
-        elif execution_mode in {"stream_hitl", "non_stream_hitl_required"}:
-            # non_stream_hitl_required：requires_web_hitl 的 Agent 在非流式(无 HITL 面)下用 default 权限，
-            # 配合 can_use_tool 对 ask 型工具 fail-loud deny，取代 bypassPermissions 的静默放行。
-            kwargs["permission_mode"] = "default"
         if can_use_tool is not None:
+            kwargs["permission_mode"] = "default"
             kwargs["can_use_tool"] = can_use_tool
         if self.settings.setting_sources is not None:
             kwargs["setting_sources"] = self.settings.setting_sources
-        if self.settings.permission_prompt_tool_name and execution_mode not in {"non_stream_bypass", "stream_hitl", "non_stream_hitl_required"}:
+        if self.settings.permission_prompt_tool_name and can_use_tool is None:
             kwargs["permission_prompt_tool_name"] = self.settings.permission_prompt_tool_name
 
         # Resume the previous Claude Code session when possible. The API session id
@@ -543,11 +526,13 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
         return None
 
     def _generation_input(self, req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
+        disposition = runtime_response_disposition(req)
         return {
             "run_id": context.run_id,
             "agent_version_id": context.agent_version_id,
             "prompt": context.prompt,
             "model": req.model or self.settings.agent_model,
+            **({"response_disposition": response_disposition_fields(disposition)} if disposition is not None else {}),
         }
 
     def _track_query_message(
@@ -603,6 +588,9 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
             stop_reason=state.stop_reason,
             errors=state.errors,
         )
+        disposition = runtime_response_disposition(req)
+        if disposition is not None:
+            output["response_disposition"] = response_disposition_fields(disposition)
         return answer, agent_activity, output
 
     def _update_runtime_observations(
@@ -702,16 +690,18 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
     @staticmethod
     def _stream_session_event(req: ChatRequest, context: RuntimeRequestContext) -> JsonObject:
+        data: JsonObject = {
+            "run_id": context.run_id,
+            "agent_version_id": context.agent_version_id,
+            "session_id": context.session.session_id,
+            "sdk_session_id": context.session.sdk_session_id,
+            "alert_id": req.alert_id,
+            "case_id": req.case_id,
+        }
+        data.update(response_disposition_fields(runtime_response_disposition(req)))
         return {
             "event": "session",
-            "data": {
-                "run_id": context.run_id,
-                "agent_version_id": context.agent_version_id,
-                "session_id": context.session.session_id,
-                "sdk_session_id": context.session.sdk_session_id,
-                "alert_id": req.alert_id,
-                "case_id": req.case_id,
-            },
+            "data": data,
         }
 
     async def run(
@@ -725,9 +715,8 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
 
         profile = profile or self.profiles[MAIN_AGENT_PROFILE]
         context = self._new_runtime_request_context(req, agent_version_id_override=agent_version_id_override, agent_id=profile.name)
-        # 非流式无 HITL 面：requires_web_hitl 的 Agent 不能 bypass 静默放行 ask 型高危工具，改 default + fail-loud deny。
-        hitl_required = profile.requires_web_hitl
-        context.telemetry_input["permission_mode"] = "default" if hitl_required else "bypassPermissions"
+        # 非流式没有决策面；所有真正触发 ask 的工具都由回调显式拒绝。
+        context.telemetry_input["permission_mode"] = "default"
         context.telemetry_input["claude_web_hitl_enabled"] = False
         state = RuntimeQueryState(sdk_session_id=context.session.sdk_session_id)
         root_metadata = self._runtime_observation_metadata(context, "non_stream", profile=profile)
@@ -757,8 +746,11 @@ class ClaudeRuntime(FeedbackRuntimeJobsMixin):
                                 req,
                                 context.session,
                                 profile=profile,
-                                execution_mode="non_stream_hitl_required" if hitl_required else "non_stream_bypass",
-                                can_use_tool=_non_stream_hitl_deny_callback(profile.name) if hitl_required else None,
+                                execution_mode="non_stream",
+                                can_use_tool=non_stream_permission_callback(
+                                    profile.name,
+                                    runtime_response_disposition(req),
+                                ),
                             )
                             prompt_stream = AgentJobRunner.single_prompt_stream(context.prompt)
                             async for msg in query(prompt=prompt_stream, options=options):

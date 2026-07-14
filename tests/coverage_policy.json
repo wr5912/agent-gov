@@ -84,7 +84,8 @@
             "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
             "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
             "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
-            "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions",
+            "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category",
+            "tests/test_claude_user_input.py::test_mutating_or_private_bash_cannot_receive_run_allow",
             "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
             "tests/test_claude_user_input.py::test_requested_carries_token_resolved_does_not",
             "tests/test_claude_user_input.py::test_answer_cannot_overwrite_raw_input_structural_keys"
@@ -134,15 +135,19 @@
           ]
         },
         {
-          "id": "security_operations_expert_execute_only_hitl",
-          "description": "security-operations-expert 只允许 soc_api__execute 触发 Web HITL；其他 sec-ops 与本地写工具直行，历史 broad ask 配置可调和。",
+          "id": "security_operations_expert_approved_playbook_hitl",
+          "description": "security-operations-expert 只在 RO 认证的 approved_execution 中对精确 soc_api__create/manual 逐次 HITL；execute 与其他 mutation 禁止，历史 workspace 可原子修复并回滚。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_fuses_response_disposal_permissions",
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_config_matches_agent_id_and_response_contract",
-            "tests/test_runtime_template_tools.py::test_reconcile_security_operations_expert_hitl_policy_execute_only",
-            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_only_execute_requests_hitl",
-            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_only_execute_fails_loud",
-            "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_non_execute_tools_are_direct_allowed"
+            "tests/test_managed_agent_policy.py::test_security_operations_workspace_matches_specialized_managed_policy",
+            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_migrated_with_git_snapshot",
+            "tests/test_runtime_coordination.py::test_dirty_workspace_blocks_managed_policy_migration",
+            "tests/test_runtime_coordination.py::test_open_change_set_blocks_migration_before_head_changes",
+            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_requires_ro_for_approved_create_and_manual",
+            "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_denies_approved_tools_and_execute",
+            "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_denies_all_permission_requests_without_stream_hitl",
+            "tests/test_claude_user_input.py::test_protected_soc_decision_requires_ro_one_shot_updated_input"
           ]
         }
       ]
@@ -185,6 +190,27 @@
           ]
         },
         {
+          "id": "response_disposition_ro_two_phase_contract",
+          "description": "RO 专用凭据驱动 proposal/approved_execution；批准执行要求 stream+HITL+完整绑定，一次性 claim 防回放，backend-owned metadata 不可伪造，claim 按 completed/failed/cancelled 收口。",
+          "pytest": [
+            "tests/test_responses_api.py::test_response_disposition_proposal_requires_ro_and_projects_trusted_context",
+            "tests/test_responses_api.py::test_response_disposition_approved_execution_validates_and_rejects_replay",
+            "tests/test_responses_api.py::test_response_disposition_reports_missing_ro_configuration",
+            "tests/test_response_disposition_control.py::test_response_disposition_validation_separates_proposal_and_approved_execution",
+            "tests/test_response_disposition_control.py::test_response_disposition_validation_fails_closed",
+            "tests/test_response_disposition_control.py::test_api_authenticator_keeps_general_and_response_orchestrator_scopes_separate",
+            "tests/test_response_disposition_control.py::test_public_metadata_strips_all_backend_owned_aliases_case_insensitively",
+            "tests/test_response_disposition_control.py::test_response_disposition_claim_is_one_shot_and_requires_manual_before_completion",
+            "tests/test_response_disposition_control.py::test_response_disposition_claim_allows_published_playbook_manual_without_create",
+            "tests/test_response_disposition_control.py::test_response_disposition_claim_cancels_orphaned_startup_work",
+            "tests/test_response_disposition_control.py::test_response_disposition_stream_binds_and_completes_claim",
+            "tests/test_response_disposition_control.py::test_response_disposition_stream_marks_error_and_missing_result_terminal_states",
+            "tests/test_responses_retrieve.py::test_retrieve_projects_persisted_response_disposition_context",
+            "tests/test_runtime_db.py::test_runtime_db_creates_response_disposition_claims_table",
+            "tests/test_settings.py::test_settings_requires_distinct_general_and_response_orchestrator_keys"
+          ]
+        },
+        {
           "id": "responses_streaming_sse",
           "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、error->failed、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
           "pytest": [
@@ -213,6 +239,7 @@
           "pytest": [
             "tests/test_conversations_api.py::test_create_get_list_delete",
             "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
+            "tests/test_conversations_api.py::test_response_orchestrator_can_only_create_conversation_mapping",
             "tests/test_conversations_api.py::test_get_unknown_conversation_404",
             "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",

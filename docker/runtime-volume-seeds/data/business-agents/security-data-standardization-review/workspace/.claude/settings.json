@@ -10,7 +10,6 @@
       "Glob",
       "Grep",
       "Skill",
-      "Bash(*)",
       "Bash(jq *)",
       "Bash(date *)",
       "Bash(date)",
@@ -19,7 +18,17 @@
       "Write(/data/outputs/security-data-standardization-review/**)",
       "mcp__sec-ops-data__*"
     ],
-    "ask": [],
+    "ask": [
+      "Bash(*)",
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*",
+      "mcp__*__*block*",
+      "mcp__*__*isolate*",
+      "mcp__*__*disable*",
+      "mcp__*__*kill*",
+      "mcp__*__*quarantine*"
+    ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
@@ -89,6 +98,7 @@
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
+    "enableWeakerNestedSandbox": false,
     "filesystem": {
       "allowWrite": [
         "/data/outputs/security-data-standardization-review",

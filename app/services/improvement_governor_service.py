@@ -399,18 +399,13 @@ class ImprovementGovernorService:
         attribution_output = self._regression_attribution_context(attr)
         optimization_plan = self._regression_plan_context(plan)
         return {
-            "feedback_cases": [
-                self._regression_feedback_case_context(case, attribution_output, optimization_plan)
-                for case in source_cases
-            ],
+            "feedback_cases": [self._regression_feedback_case_context(case, attribution_output, optimization_plan) for case in source_cases],
             "source_refs": [{"source_kind": "improvement", "source_id": getattr(item, "improvement_id", "")}],
             "existing_eval_cases": [],
         }
 
     @staticmethod
-    def _regression_feedback_case_context(
-        case: RegressionSourceCase, attribution_output: JsonObject, optimization_plan: JsonObject
-    ) -> JsonObject:
+    def _regression_feedback_case_context(case: RegressionSourceCase, attribution_output: JsonObject, optimization_plan: JsonObject) -> JsonObject:
         refs = [{"source_kind": "improvement_feedback", "source_id": case["feedback_id"]}]
         if case["run_id"]:
             refs.append({"source_kind": "agent_run", "source_id": case["run_id"]})
@@ -480,9 +475,7 @@ class ImprovementGovernorService:
         return new_summary, mapped, new_thresholds
 
     @staticmethod
-    def _heuristic_regression(
-        nf: Any, source_cases: list[RegressionSourceCase]
-    ) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
+    def _heuristic_regression(nf: Any, source_cases: list[RegressionSourceCase]) -> tuple[str, list[RegressionCaseItem], dict[str, str], str]:
         problem = getattr(nf, "problem", "") if nf else "反馈问题"
         cases = [
             RegressionCaseItem(

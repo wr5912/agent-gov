@@ -19,8 +19,7 @@ def _fake_sdk_query_success(sdk_session: str = "sdk-race"):
     from claude_agent_sdk import AssistantMessage, ResultMessage, TextBlock
 
     async def fake_query(*, prompt, options, transport=None):
-        async for _ in prompt:
-            pass
+        await anext(prompt)
         yield AssistantMessage(content=[TextBlock(text="收到")], model="<synthetic>", session_id=sdk_session)
         yield ResultMessage(subtype="success", duration_ms=1, duration_api_ms=0, is_error=False, num_turns=1, session_id=sdk_session, result="收到")
 
@@ -349,8 +348,7 @@ def test_endpoint_stream_retries_stale_previous_response_session(monkeypatch, tm
 
     async def fake_query(*, prompt, options, transport=None):
         calls.append(getattr(options, "resume", None))
-        async for _ in prompt:
-            pass
+        await anext(prompt)
         if len(calls) == 1:
             raise RuntimeError("No conversation found with session ID: stale-sdk")
         yield AssistantMessage(content=[TextBlock(text="responses stream after retry")], model="<synthetic>", session_id="new-sdk")
@@ -442,8 +440,7 @@ def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path)
     import claude_agent_sdk
 
     async def fake_query(*, prompt, options, transport=None):
-        async for _ in prompt:
-            pass
+        await anext(prompt)
         raise RuntimeError("boom before result")
         yield  # pragma: no cover
 

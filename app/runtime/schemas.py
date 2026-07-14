@@ -4,6 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic.types import JsonValue
 
 from app.runtime.json_types import JsonObject
+from app.runtime.response_disposition_control import TrustedResponseDispositionContext
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
 
 
@@ -16,12 +17,23 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
     alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
-    agent: Optional[str] = Field(default=None, description="Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files.")
-    agent_id: Optional[str] = Field(default=None, description="Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.")
-    skills: Optional[list[str]] = Field(default=None, description="Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files.")
+    agent: Optional[str] = Field(
+        default=None, description="Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files."
+    )
+    agent_id: Optional[str] = Field(
+        default=None,
+        description="Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.",
+    )
+    skills: Optional[list[str]] = Field(
+        default=None, description="Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files."
+    )
     skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution.")
-    allowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.")
-    disallowed_tools: Optional[list[str]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.")
+    allowed_tools: Optional[list[str]] = Field(
+        default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json."
+    )
+    disallowed_tools: Optional[list[str]] = Field(
+        default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json."
+    )
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
     permission_mode: Optional[str] = Field(default=None, description="Deprecated for SDK execution; configure permission mode in .claude/settings.json.")
@@ -38,6 +50,12 @@ class ChatRequest(BaseModel):
             ]
         }
     }
+
+
+class RuntimeChatRequest(ChatRequest):
+    """Internal request enriched only after the API trust boundary validates RO control."""
+
+    response_disposition: Optional[TrustedResponseDispositionContext] = Field(default=None, exclude=True)
 
 
 class ChatResponse(BaseModel):
@@ -405,7 +423,9 @@ class FeedbackEvalCaseUpdateRequest(BaseModel):
     checks_json: Optional[JsonObject] = None
     labels: Optional[list[str]] = None
     status: Optional[Literal["active", "draft", "archived"]] = None
-    asset_layer: Optional[Literal["candidate", "targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
+    asset_layer: Optional[
+        Literal["candidate", "targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]
+    ] = None
     promotion_status: Optional[Literal["candidate", "needs_review", "approved", "rejected", "superseded", "archived"]] = None
     blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
     scenario_pack: Optional[str] = None

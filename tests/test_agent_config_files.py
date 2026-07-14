@@ -54,7 +54,12 @@ def test_agent_config_file_updates_mcp_json_and_invalidates_sdk_resume(tmp_path:
     current = read_response.json()
     assert current["content"] == '{"mcpServers": {}}\n'
 
-    updated_content = '{"mcpServers": {"demo": {"command": "node", "args": ["server.js"]}}}\n'
+    updated_content = (
+        '{"mcpServers": {'
+        '"sec-ops-data": {"type": "http", "url": "http://host.docker.internal:58001/mcp"}, '
+        '"demo": {"type": "http", "url": "http://demo.internal/mcp"}'
+        "}}\n"
+    )
     update_response = client.put(
         "/api/agent-config-file",
         params={"agent_id": "main-agent", "path": ".mcp.json"},
@@ -91,6 +96,16 @@ def test_agent_config_file_rejects_invalid_json_and_stale_sha(tmp_path: Path) ->
         json={"content": "[]", "expected_sha256": None},
     )
     assert wrong_shape.status_code == 422
+
+    stdio = client.put(
+        "/api/agent-config-file",
+        params={"agent_id": "main-agent", "path": ".mcp.json"},
+        json={
+            "content": '{"mcpServers": {"demo": {"type": "stdio", "command": "node"}}}',
+            "expected_sha256": None,
+        },
+    )
+    assert stdio.status_code == 422
 
     stale = client.put(
         "/api/agent-config-file",

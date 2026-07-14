@@ -336,7 +336,7 @@ function AttributionPanels({
   onAttrDraftChange: (value: AttrDraft) => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
-  const evidence = attribution?.evidence?.length ? attribution.evidence : ["来源反馈一致", "关联 Run 可复现", "Trace 定位到问题节点"];
+  const evidence = attribution?.evidence ?? [];
   const traceRunId = feedbacks.find((f) => f.run_id)?.run_id || "";
   const attributionTraceUrl = concreteLangfuseTraceUrl({
     langfuseBaseUrl: langfuseUrl,
@@ -386,15 +386,24 @@ function AttributionPanels({
           </>
         )}
       </StageCard>
-      <StageCard letter="B" title="证据链" actionLabel={VIEW} testId="stage-panel-attribution-evidence"
+      <StageCard letter="B" title="证据链" actionLabel={editingAttribution ? undefined : VIEW} testId="stage-panel-attribution-evidence"
         onAction={() => onOpenDetail({
           key: "attribution-evidence", title: "证据链详情", size: "medium",
-          content: <Lines items={[...evidence, "时区差异可能放大误判，需要验证"]} empty="暂无证据。" />,
+          content: <Lines items={evidence} empty="暂无证据。" />,
         })}>
-        <ul className="iw-check-list" data-testid="attribution-evidence">
-          {evidence.map((entry) => <li className="ok" key={entry}>{entry}</li>)}
-          <li className="warn">时区差异可能放大误判，需要验证</li>
-        </ul>
+        {editingAttribution ? (
+          <textarea
+            className="iw-input iw-textarea"
+            data-testid="attr-edit-evidence"
+            value={attrDraft.evidence}
+            onChange={(event) => onAttrDraftChange({ ...attrDraft, evidence: event.target.value })}
+            placeholder="证据链（每行一条）"
+          />
+        ) : (
+          <div data-testid="attribution-evidence">
+            <Lines items={evidence} empty="暂无证据。" />
+          </div>
+        )}
       </StageCard>
       <StageCard letter="C" title="影响范围" actionLabel={VIEW} testId="stage-panel-impact-scope"
         onAction={() => onOpenDetail({

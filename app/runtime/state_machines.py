@@ -68,6 +68,20 @@ PENDING_CORRELATION_STATES = {
     "resolved",
 }
 
+RESPONSE_DISPOSITION_CLAIM_STATES = {
+    "claimed",
+    "completed",
+    "failed",
+    "cancelled",
+}
+
+RESPONSE_DISPOSITION_CLAIM_TRANSITIONS: Mapping[str, set[str]] = {
+    "claimed": {"completed", "failed", "cancelled"},
+    "completed": set(),
+    "failed": set(),
+    "cancelled": set(),
+}
+
 AGENT_CHANGE_SET_STATES = {
     "draft",
     "execution_ready",
@@ -196,6 +210,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending": {"resolved"},
         "resolved": set(),
     },
+    "response_disposition_claim": RESPONSE_DISPOSITION_CLAIM_TRANSITIONS,
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "abandoned", "failed"},
@@ -228,6 +243,7 @@ _KNOWN_STATES = {
     "eval_case": EVAL_CASE_STATES,
     "eval_case_promotion": EVAL_CASE_PROMOTION_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
+    "response_disposition_claim": RESPONSE_DISPOSITION_CLAIM_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,

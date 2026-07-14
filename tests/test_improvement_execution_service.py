@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,9 @@ class _FakeImprovements:
 
 
 class _FakeStore:
+    def mutation_guard(self):
+        return nullcontext()
+
     def version_summary(self, sha, *, reason, note=None):
         return {"agent_version_id": f"ver-{sha}"}
 
@@ -76,7 +80,16 @@ class _FakeExecApp:
         self.raises = raises
         self.applied: list[list] = []
 
-    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None, content_guard=None, allowed_targets=None):
+    def apply_execution_operations(
+        self,
+        operations,
+        *,
+        workspace_dir=None,
+        target_policy=None,
+        content_guard=None,
+        workspace_guard=None,
+        allowed_targets=None,
+    ):
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)

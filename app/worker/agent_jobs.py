@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from collections.abc import Callable
+
+from scripts.bootstrap_runtime_volume import load_runtime_env
 
 from app.runtime.agent_git_store import GitAgentVersionStore
+from app.runtime.api_health import api_health_ready, internal_api_health_url
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.logging_config import configure_runtime_logging
 from app.runtime.runtime_db import make_session_factory, runtime_db_path_from_data_dir
@@ -19,7 +23,11 @@ from app.version import APP_VERSION
 logger = logging.getLogger(__name__)
 
 
-def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
+def build_worker(
+    settings: AppSettings | None = None,
+    *,
+    can_claim_jobs: Callable[[], bool] | None = None,
+) -> AgentJobWorker:
     settings = settings or get_settings()
     session_store = LocalSessionStore(settings.session_dir)
     agent_version_store = GitAgentVersionStore(
@@ -47,7 +55,13 @@ def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
     # #24-C/D：worker 进程同样按业务 Agent 解析其自身版本库（复用 agent_governance._store_for），
     # 避免 worker 侧任意 stamping 落到 main 库；agent_exists 经注册表校验杜绝幽灵 Agent。
     agent_registry_store = AgentRegistryStore(make_session_factory(runtime_db_path_from_data_dir(settings.data_dir)))
-    agent_governance = AgentGovernanceService(feedback_store=feedback_store, agent_version_store=agent_version_store)
+    runtime_env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else {}
+    agent_governance = AgentGovernanceService(
+        feedback_store=feedback_store,
+        agent_version_store=agent_version_store,
+        runtime_mode=settings.runtime_volume_mode,
+        runtime_env=runtime_env,
+    )
     agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
     feedback_store.agent_version_provider = lambda aid: agent_governance._store_for(aid or "main-agent").current_version_id()
     poll_interval = float(os.getenv("AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS", "2"))
@@ -63,6 +77,7 @@ def build_worker(settings: AppSettings | None = None) -> AgentJobWorker:
         feedback_store=feedback_store,
         run_profile_json=lambda **kwargs: runtime._run_profile_json(**kwargs),
         poll_interval_seconds=poll_interval,
+        can_claim_jobs=can_claim_jobs,
     )
 
 
@@ -70,7 +85,8 @@ async def main() -> None:
     settings = get_settings()
     configure_runtime_logging(settings.log_level)
     logger.info("agent job worker starting")
-    await build_worker(settings).run_forever()
+    health_url = internal_api_health_url(settings)
+    await build_worker(settings, can_claim_jobs=lambda: api_health_ready(health_url)).run_forever()
 
 
 if __name__ == "__main__":

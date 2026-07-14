@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import uuid
 from pathlib import Path
 
-from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
+from scripts.bootstrap_runtime_volume import load_runtime_env
+
+from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.config_file_schemas import (
     AgentConfigFileResponse,
     AgentConfigFileUpdateRequest,
     AgentConfigFileUpdateResponse,
 )
 from app.runtime.execution_targets import MAX_EXECUTION_TARGET_CONTEXT_BYTES, WorkspaceExecutionTargetPolicy
+from app.runtime.managed_agent_policy import validate_managed_mcp_content
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -59,12 +65,14 @@ class AgentConfigFileService:
         request: AgentConfigFileUpdateRequest,
     ) -> AgentConfigFileUpdateResponse:
         safe_agent_id, target = self._resolve_target(agent_id=agent_id, path=path)
-        self._validate_content(path=path, content=request.content)
-        _, current_sha256, _ = self._read_target(target)
-        if request.expected_sha256 is not None and request.expected_sha256 != current_sha256:
-            raise AgentConfigFileError(409, "Config file changed; reload before applying edits")
-        target.write_text(request.content, encoding="utf-8")
-        content, sha256, size_bytes = self._read_target(target)
+        lock_path = business_agent_layout(self._settings.data_dir, safe_agent_id).version_base / ".repository.lock"
+        with advisory_lock(lock_path, mode="exclusive"):
+            _, current_sha256, _ = self._read_target(target)
+            if request.expected_sha256 is not None and request.expected_sha256 != current_sha256:
+                raise AgentConfigFileError(409, "Config file changed; reload before applying edits")
+            self._validate_content(agent_id=safe_agent_id, path=path, content=request.content)
+            self._atomic_write(target, request.content.encode("utf-8"))
+            content, sha256, size_bytes = self._read_target(target)
         invalidated = self._invalidate_session(agent_id=safe_agent_id, session_id=request.session_id)
         return AgentConfigFileUpdateResponse(
             agent_id=safe_agent_id,
@@ -126,7 +134,7 @@ class AgentConfigFileService:
             raise AgentConfigFileError(415, "Config file is not UTF-8 text") from exc
         return content, hashlib.sha256(data).hexdigest(), len(data)
 
-    def _validate_content(self, *, path: str, content: str) -> None:
+    def _validate_content(self, *, agent_id: str, path: str, content: str) -> None:
         data = content.encode("utf-8")
         if len(data) > MAX_EXECUTION_TARGET_CONTEXT_BYTES:
             raise AgentConfigFileError(413, "Config file content is too large")
@@ -137,6 +145,39 @@ class AgentConfigFileService:
                 raise AgentConfigFileError(422, f"Invalid JSON: {exc.msg}") from exc
             if not isinstance(parsed, dict):
                 raise AgentConfigFileError(422, ".mcp.json must contain a JSON object")
+            env = dict(load_runtime_env(self._settings.settings_env_file)) if self._settings.settings_env_file else dict(os.environ)
+            runtime_root = Path("/") if self._settings.data_dir.resolve() == Path("/data") else self._settings.data_dir.resolve().parent
+            violations = validate_managed_mcp_content(
+                content,
+                agent_id=agent_id,
+                runtime_mode=self._settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            )
+            if violations:
+                details = "; ".join(f"{item.rule_id}:{item.detail}" for item in violations)
+                raise AgentConfigFileError(422, f"Managed MCP policy rejected the update: {details}")
+
+    @staticmethod
+    def _atomic_write(target: Path, data: bytes) -> None:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        mode = target.stat().st_mode & 0o777 if target.exists() else 0o600
+        temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.tmp")
+        try:
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, mode)
+            try:
+                os.write(descriptor, data)
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            os.replace(temporary, target)
+        finally:
+            temporary.unlink(missing_ok=True)
+        directory = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
 
     def _invalidate_session(self, *, agent_id: str, session_id: str | None) -> bool:
         if not session_id:

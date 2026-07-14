@@ -10,7 +10,7 @@
 - 从当前运行态保存模板：`make runtime-volume-seeds-export`
 - 清理运行态备份和模板临时产物：`make clean-runtime-artifacts`
 
-`runtime-bootstrap` 默认只补齐缺失文件，不覆盖已有本地配置。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
+`runtime-bootstrap` 通过 API 同款启动协调器执行。业务 Agent 只在整个 workspace 缺失时播种出生配置；已有 workspace 不逐文件补齐或覆盖。真实部署值应写入 `docker/.env`、部署环境变量或不提交的本地私有配置文件。
 
 ## 预置业务 Agent
 
@@ -20,7 +20,9 @@
 - `ai-soc-gap-analyzer`：AI SOC 差距评估业务 Agent，基于能力模型和证据快照输出成熟度评分、差距、风险和下一步行动。
 - `security-operations-expert`：网络安全运营专家业务 Agent，面向告警分流、事件调查、威胁狩猎和响应处置闭环；响应处置部分融合 `response-disposal` 的 MCP、skill、subagent、权限和审计配置。
 
-> 所有业务 Agent 的 Bash 由 `.claude/settings.json` 直接放行，不走 Web HITL；风险由 sandbox、PreToolUse hook、deny 规则和审计兜底。`response-disposal` 与 `security-operations-expert` 的 agent.yaml 声明 `requires_web_hitl: true`（部署契约，被运行时读取+强制）：其响应处置执行/入库（settings ask 层的 `mcp__soc-playbook-execution__*` / `mcp__soc-playbook-registry__*`）依赖 `ENABLE_CLAUDE_WEB_HITL=true` 的人审。关闭时运行时对这些 ask 型工具 fail-loud（流式明确报错、非流式不再 bypass 静默放行），启动日志告警，`GET /api/agent-registry` 的 `requires_web_hitl` 字段透出该要求。真实执行处置须在开启 HITL 的交互式会话进行。
+> 通用业务 Agent 的 `Bash(*)` 基线放在 `ask`；流式 Web HITL 只可按本次 run 的低风险命令类别授权，高风险或未分类请求不得整轮放行。`response-disposal` 与 `security-operations-expert` 的 agent.yaml 声明 `requires_web_hitl: true`。其中 `security-operations-expert` 是受控例外：只有 RO 认证的 `approved_execution` 可对精确的 `mcp__sec-ops__soc_api__create` / `manual` 请求逐次 `allow_once`，`execute` 和其他 mutation 始终拒绝。非流式入口对所有权限询问 fail-closed；关闭 HITL 时流式入口也显式拒绝 ask 请求。
+
+API 是共享运行卷的启动协调者，worker 只消费已完成的 receipt。API/worker 活跃期持有共享租约；bootstrap 与受管策略迁移持有独占租约。已有 workspace 只有在 Git 工作树干净、且没有未终结 change set 时才自动迁移，并为每个受影响 Agent 创建 Git 快照；脏工作树或开放 change set 会阻断启动。`security-operations-expert` 的专用响应处置契约与通用 Bash/MCP/sandbox 基线共用这一策略入口，SDK 执行、配置编辑、候选发布和回滚也会 fail-closed 校验。
 
 ## 占位符
 

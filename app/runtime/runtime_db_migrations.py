@@ -483,6 +483,43 @@ def migrate_0027_agent_registry_requires_web_hitl(connection: Connection) -> Non
     connection.exec_driver_sql("UPDATE agent_registry SET requires_web_hitl = 0 WHERE requires_web_hitl IS NULL")
 
 
+def migrate_0028_response_disposition_claims(connection: Connection) -> None:
+    """Add the one-shot AgentGov approval consumption ledger.
+
+    The response orchestrator remains the playbook authority.  This table stores
+    only the minimal replay-prevention and execution-audit facts needed by the
+    AgentGov runtime.
+    """
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS response_disposition_claims (
+            approval_request_id VARCHAR(256) NOT NULL PRIMARY KEY,
+            case_id VARCHAR(256) NOT NULL,
+            playbook_digest VARCHAR(64) NOT NULL,
+            execution_run_id VARCHAR(256) NOT NULL,
+            response_id VARCHAR(256),
+            agent_run_id VARCHAR(128),
+            status VARCHAR(32) NOT NULL,
+            create_authorized BOOLEAN NOT NULL DEFAULT 0,
+            manual_authorized BOOLEAN NOT NULL DEFAULT 0,
+            failure_reason VARCHAR(1024),
+            created_at VARCHAR(64) NOT NULL,
+            updated_at VARCHAR(64) NOT NULL,
+            completed_at VARCHAR(64),
+            UNIQUE (execution_run_id)
+        )
+        """
+    )
+    for statement in (
+        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claim_status ON response_disposition_claims (status, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claim_case ON response_disposition_claims (case_id, created_at)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS ix_response_disposition_claims_execution_run_id ON response_disposition_claims (execution_run_id)",
+        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claims_response_id ON response_disposition_claims (response_id)",
+        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claims_agent_run_id ON response_disposition_claims (agent_run_id)",
+    ):
+        connection.exec_driver_sql(statement)
+
+
 def _json_string_list(value: object) -> list[str]:
     if isinstance(value, str):
         try:

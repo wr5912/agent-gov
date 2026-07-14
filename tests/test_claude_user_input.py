@@ -3,14 +3,22 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from app.routers.claude_user_input import create_claude_user_input_router
+from app.runtime.api_auth import ApiPrincipal
 from app.runtime.claude_user_input_schemas import ClaudeUserInputDecisionRequest
 from app.runtime.claude_user_input_service import (
     ClaudeUserInputConflict,
+    ClaudeUserInputForbidden,
     ClaudeUserInputInvalid,
     ClaudeUserInputService,
 )
+from app.runtime.response_disposition_control import (
+    SECURITY_OPERATIONS_EXPERT_AGENT_ID,
+    SOC_CREATE_TOOL,
+    TrustedResponseDispositionContext,
+)
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.claude_user_input_store import ClaudeUserInputStore
+from app.runtime.stores.response_disposition_claim_store import ResponseDispositionClaimStore
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -18,6 +26,19 @@ from fastapi.testclient import TestClient
 def _service(tmp_path, *, timeout_seconds: int = 5) -> ClaudeUserInputService:
     factory = make_session_factory(tmp_path / "runtime.sqlite3")
     return ClaudeUserInputService(ClaudeUserInputStore(factory), timeout_seconds=timeout_seconds)
+
+
+def _protected_service(tmp_path) -> tuple[ClaudeUserInputService, ResponseDispositionClaimStore]:
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    claim_store = ResponseDispositionClaimStore(factory)
+    return (
+        ClaudeUserInputService(
+            ClaudeUserInputStore(factory),
+            timeout_seconds=5,
+            response_disposition_claim_store=claim_store,
+        ),
+        claim_store,
+    )
 
 
 def _decision(token: str, **overrides: object) -> ClaudeUserInputDecisionRequest:
@@ -77,6 +98,62 @@ def test_tool_permission_allow_once_resolves_sdk_wait_and_keeps_debug_input(tmp_
     asyncio.run(scenario())
 
 
+def test_protected_soc_decision_requires_ro_one_shot_updated_input(tmp_path):
+    async def scenario():
+        service, claim_store = _protected_service(tmp_path)
+        disposition = TrustedResponseDispositionContext(
+            phase="approved_execution",
+            case_id="case-1",
+            approval_request_id="approval-1",
+            playbook_digest="a" * 64,
+            execution_run_id="execution-1",
+        )
+        claim_store.claim(disposition)
+        event_queue: asyncio.Queue = asyncio.Queue()
+        task = asyncio.create_task(
+            service.create_and_wait(
+                event_queue=event_queue,
+                business_agent_id=SECURITY_OPERATIONS_EXPERT_AGENT_ID,
+                run_id="run-1",
+                api_session_id="sess-1",
+                sdk_session_id="sdk-1",
+                tool_name=SOC_CREATE_TOOL,
+                input_data={"playbookId": "model-draft"},
+                context={"tool_use_id": "toolu-create"},
+                response_disposition=disposition,
+            )
+        )
+        request = (await event_queue.get())["data"]
+
+        with pytest.raises(ClaudeUserInputForbidden, match="response orchestrator"):
+            service.submit_decision(
+                request["request_id"],
+                decision=_decision(request["decision_token"], updated_input={"playbookId": "approved"}),
+                decided_by="ordinary-client",
+                principal=ApiPrincipal.GENERAL_API,
+            )
+        with pytest.raises(ClaudeUserInputInvalid, match="requires non-empty updated_input"):
+            service.submit_decision(
+                request["request_id"],
+                decision=_decision(request["decision_token"]),
+                decided_by="response-orchestrator",
+                principal=ApiPrincipal.RESPONSE_ORCHESTRATOR,
+            )
+
+        service.submit_decision(
+            request["request_id"],
+            decision=_decision(request["decision_token"], updated_input={"playbookId": "approved"}),
+            decided_by="response-orchestrator",
+            principal=ApiPrincipal.RESPONSE_ORCHESTRATOR,
+        )
+        sdk_decision = await task
+        claim = claim_store.get("approval-1")
+        assert sdk_decision.updated_input == {"playbookId": "approved"}
+        assert claim is not None and claim.create_authorized is True
+
+    asyncio.run(scenario())
+
+
 def test_user_input_request_expiry_uses_configured_timeout(tmp_path):
     async def scenario():
         service = _service(tmp_path, timeout_seconds=11)
@@ -120,7 +197,7 @@ def test_tool_permission_rejects_answer_question(tmp_path):
     asyncio.run(scenario())
 
 
-def test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions(tmp_path):
+def test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category(tmp_path):
     async def scenario():
         service = _service(tmp_path)
         event_queue, task, request = await _start_wait(service, input_data={"command": "date +%F"})
@@ -146,28 +223,35 @@ def test_tool_permission_allow_for_run_auto_allows_current_run_tool_permissions(
             run_id="run-1",
             api_session_id="sess-1",
             sdk_session_id="sdk-1",
-            tool_name="Write",
-            input_data={"file_path": "/data/reports/smoke.md", "content": "ok"},
+            tool_name="Bash",
+            input_data={"command": "date -u +%F"},
             context={"tool_use_id": "toolu-2", "agent_id": "subagent-1"},
         )
 
-        assert second_decision.action == "allow_once"
+        assert second_decision.action == "allow_once"  # same bash_clock_read category
         assert event_queue.empty()
 
-        # Product contract: allow_for_run grants the whole current run, including later high-risk tools.
-        third_decision = await service.create_and_wait(
-            event_queue=event_queue,
-            business_agent_id="main-agent",
-            run_id="run-1",
-            api_session_id="sess-1",
-            sdk_session_id="sdk-1",
-            tool_name="Bash",
-            input_data={"command": "rm -rf /tmp/agentgov-hitl-smoke"},
-            context={"tool_use_id": "toolu-3", "agent_id": "subagent-1"},
+        other_category_task = asyncio.create_task(
+            service.create_and_wait(
+                event_queue=event_queue,
+                business_agent_id="main-agent",
+                run_id="run-1",
+                api_session_id="sess-1",
+                sdk_session_id="sdk-1",
+                tool_name="Write",
+                input_data={"file_path": "/data/reports/smoke.md", "content": "ok"},
+                context={"tool_use_id": "toolu-3", "agent_id": "subagent-1"},
+            )
         )
-
-        assert third_decision.action == "allow_once"
-        assert event_queue.empty()
+        other_request = (await event_queue.get())["data"]
+        assert other_request["risk"]["run_allow_category"] == "report_write"
+        service.submit_decision(
+            other_request["request_id"],
+            decision=_decision(other_request["decision_token"], action="deny"),
+            decided_by="tester",
+        )
+        assert (await other_category_task).action == "deny"
+        assert (await event_queue.get())["event"] == "claude_user_input_resolved"
 
         service.clear_run_grants("run-1")
         _fourth_queue, fourth_task, fourth_request = await _start_wait(service, input_data={"command": "date +%F"})
@@ -244,18 +328,27 @@ def test_read_only_bash_run_grant_auto_allows_next_safe_probe(tmp_path):
         "sed -i s/a/b/ templates/reports/daily-secops-report.md",
         "cat /data/runtime.sqlite3",
         "cat /data/business-agents/main-agent/workspace/.env",
+        "cat .env*",
+        "cat $HOME/.ssh/id_rsa",
+        "grep -R token .",
         "ls; rm -rf /",
     ],
 )
-def test_mutating_or_private_bash_keeps_high_risk_run_allow_available_by_design(tmp_path, command):
+def test_mutating_or_private_bash_cannot_receive_run_allow(tmp_path, command):
     async def scenario():
         service = _service(tmp_path)
         _event_queue, task, request = await _start_wait(service, input_data={"command": command})
 
         assert request["risk"]["level"] == "high"
-        assert request["risk"]["run_allow_eligible"] is True
+        assert request["risk"]["run_allow_eligible"] is False
         assert "run_allow_category" not in request["risk"]
-        assert request["risk"]["run_allow_scope"] == "run"
+        assert "run_allow_scope" not in request["risk"]
+        with pytest.raises(ClaudeUserInputInvalid, match="eligible low-risk category"):
+            service.submit_decision(
+                request["request_id"],
+                decision=_decision(request["decision_token"], action="allow_for_run"),
+                decided_by="tester",
+            )
         service.submit_decision(
             request["request_id"],
             decision=_decision(request["decision_token"], action="deny"),
@@ -293,18 +386,26 @@ def test_allow_for_run_does_not_cross_run_boundary(tmp_path):
         assert (await other_run_task).action == "deny"
         assert (await other_run_queue.get())["event"] == "claude_user_input_resolved"
 
-        high_risk_decision = await service.create_and_wait(
-            event_queue=_event_queue,
-            business_agent_id="main-agent",
-            run_id="run-1",
-            api_session_id="sess-1",
-            sdk_session_id="sdk-1",
-            tool_name="Bash",
-            input_data={"command": "rm -rf /tmp/agentgov-hitl-smoke"},
-            context={"tool_use_id": "toolu-3", "agent_id": "subagent-1"},
+        high_risk_task = asyncio.create_task(
+            service.create_and_wait(
+                event_queue=_event_queue,
+                business_agent_id="main-agent",
+                run_id="run-1",
+                api_session_id="sess-1",
+                sdk_session_id="sdk-1",
+                tool_name="Bash",
+                input_data={"command": "rm -rf /tmp/agentgov-hitl-smoke"},
+                context={"tool_use_id": "toolu-3", "agent_id": "subagent-1"},
+            )
         )
-        assert high_risk_decision.action == "allow_once"
-        assert _event_queue.empty()
+        high_risk_request = (await _event_queue.get())["data"]
+        assert high_risk_request["risk"]["run_allow_eligible"] is False
+        service.submit_decision(
+            high_risk_request["request_id"],
+            decision=_decision(high_risk_request["decision_token"], action="deny"),
+            decided_by="tester",
+        )
+        assert (await high_risk_task).action == "deny"
 
     asyncio.run(scenario())
 
@@ -407,10 +508,16 @@ def test_cancel_orphan_waiting_requests_blocks_late_decision(tmp_path):
     asyncio.run(scenario())
 
 
-def test_decision_api_rejects_allow_modified_and_updated_input_extra(tmp_path):
+def test_decision_api_rejects_allow_modified_and_updated_input_for_ordinary_request(tmp_path):
     service = _service(tmp_path)
     app = FastAPI()
-    app.include_router(create_claude_user_input_router(service=service, require_api_key=lambda: None))
+    app.include_router(
+        create_claude_user_input_router(
+            service=service,
+            require_api_key=lambda: None,
+            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
+        )
+    )
     client = TestClient(app)
 
     async def create_request():
@@ -436,7 +543,13 @@ def test_decision_api_rejects_allow_modified_and_updated_input_extra(tmp_path):
 def test_decision_api_rejects_unknown_request_and_wrong_token(tmp_path):
     service = _service(tmp_path)
     app = FastAPI()
-    app.include_router(create_claude_user_input_router(service=service, require_api_key=lambda: None))
+    app.include_router(
+        create_claude_user_input_router(
+            service=service,
+            require_api_key=lambda: None,
+            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
+        )
+    )
     client = TestClient(app)
 
     async def create_request() -> dict[str, object]:
@@ -495,7 +608,13 @@ def test_answer_cannot_overwrite_raw_input_structural_keys(tmp_path):
 def test_v1_confirmation_path_wired_and_rejects_legacy_triple(tmp_path):
     service = _service(tmp_path)
     app = FastAPI()
-    app.include_router(create_claude_user_input_router(service=service, require_api_key=lambda: None))
+    app.include_router(
+        create_claude_user_input_router(
+            service=service,
+            require_api_key=lambda: None,
+            authenticate_api_or_ro=lambda: ApiPrincipal.GENERAL_API,
+        )
+    )
     client = TestClient(app)
 
     async def create_request() -> dict[str, object]:

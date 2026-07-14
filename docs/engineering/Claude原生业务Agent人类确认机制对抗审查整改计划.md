@@ -1,8 +1,10 @@
 # Claude 原生业务Agent人类确认机制对抗审查整改计划
 
-> 文档状态：对抗审查后的整改执行计划。
+> 文档状态：历史整改计划；2026-07-13 起由当前运行时契约取代。本文保留决策背景，文中的 `bypassPermissions`、仅开关开启才挂 callback、Bash 全量直放和普通请求禁止 `updated_input` 的绝对表述不再代表现状。
 > 生成日期：2026-06-29。
 > 关联主方案：`docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md`。
+
+当前契约：非流式权限询问全部 fail-closed；流式始终挂显式 callback，HITL 关闭时拒绝 ask；通用 Bash 进入 `ask` 且 run 授权按低风险类别隔离。`updated_input` 仍禁止普通 HITL 使用，但 RO 认证的 `approved_execution` 可用它精确批准 `soc_api__create` / `soc_api__manual` 的单次输入，且有一次性 claim 防回放。
 
 ## 1. 整改结论
 

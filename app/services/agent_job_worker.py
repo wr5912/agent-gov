@@ -34,13 +34,17 @@ class AgentJobWorker:
         run_profile_json: RunProfileJson,
         poll_interval_seconds: float = 2.0,
         worker_instance: str | None = None,
+        can_claim_jobs: Callable[[], bool] | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.run_profile_json = run_profile_json
         self.poll_interval_seconds = poll_interval_seconds
         self.worker_instance = worker_instance or f"{socket.gethostname()}:{os.getpid()}"
+        self.can_claim_jobs = can_claim_jobs
 
     async def run_once(self) -> AgentJobResponse | None:
+        if self.can_claim_jobs is not None and not self.can_claim_jobs():
+            return None
         for timed_out in self.feedback_store._timeout_stale_agent_jobs():
             log_agent_job_event(logger, logging.WARNING, "agent_job.stale_timeout", timed_out, worker_instance=self.worker_instance)
         job = self.feedback_store.claim_next_agent_job()

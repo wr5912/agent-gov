@@ -382,63 +382,6 @@ class ImprovementContentStore(ImprovementFeedbackStoreMixin):
             return _opt_record(row)
 
     # ---- ExecutionRecord（执行记录，§107）----
-    def upsert_execution(
-        self,
-        improvement_id: str,
-        *,
-        summary: str,
-        changes_applied: list[str] | None = None,
-        agent_version: str = "",
-        generated_by: str = "heuristic",
-        change_set_id: str = "",
-        applied_agent_version_id: str = "",
-        applied_diff: dict | None = None,
-        risk_level: str = "",
-        rollback_strategy: str = "",
-        rollback_instructions: list[str] | None = None,
-        generation_trace_id: str = "",
-        generation_trace_url: str = "",
-        advance_to_stage: str | None = None,
-    ) -> ExecutionRecord:
-        clean_summary = (summary or "").strip()
-        if not clean_summary:
-            raise BusinessRuleViolation("execution summary cannot be empty")
-        now = utc_now()
-        with self._session_factory.begin() as db:
-            self._lock_mutable_improvement(db, improvement_id)
-            row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()
-            if row is None:
-                row = ExecutionRecordModel(execution_id=f"exec-{uuid4().hex[:12]}", improvement_id=improvement_id, created_at=now)
-                db.add(row)
-            elif row.status == "applying":
-                raise ConflictError(f"Execution is currently applying: {improvement_id}")
-            validate_transition("improvement_execution", row.status, "draft")
-            row.summary = clean_summary
-            row.changes_applied_json = list(changes_applied or [])
-            row.agent_version = agent_version
-            row.status = "draft"
-            row.generated_by = generated_by
-            row.change_set_id = change_set_id
-            row.applied_agent_version_id = applied_agent_version_id
-            row.applied_diff_json = dict(applied_diff or {})
-            row.risk_level = risk_level
-            row.rollback_strategy = rollback_strategy
-            row.rollback_instructions_json = list(rollback_instructions or [])
-            row.generation_trace_id = generation_trace_id
-            row.generation_trace_url = generation_trace_url
-            row.base_commit_sha = ""
-            row.source_optimization_plan_id = ""
-            row.source_optimization_plan_updated_at = ""
-            row.source_attribution_id = ""
-            row.source_attribution_updated_at = ""
-            row.claim_token = ""
-            row.claim_expires_at = ""
-            row.updated_at = now
-            db.flush()
-            if advance_to_stage:
-                advance_improvement_stage_in_transaction(db, improvement_id, stage=advance_to_stage)
-            return _exec_record(row)
-
     def get_execution(self, improvement_id: str) -> ExecutionRecord | None:
         with self._session_factory.begin() as db:
             row = db.query(ExecutionRecordModel).filter(ExecutionRecordModel.improvement_id == improvement_id).one_or_none()

@@ -1,34 +1,54 @@
 import asyncio
+import json
 import uuid
 
 import pytest
 from app.runtime import session_turn_lease
 from app.runtime.async_iterators import close_async_iterator
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.errors import SessionConflictError
 from app.runtime.openai_responses_stream import iter_responses_sse
+from app.runtime.runtime_db import SessionRecordModel
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSession, LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
 
+from claude_runtime_test_utils import route_interactive_client_through_query
+
+
+@pytest.fixture(autouse=True)
+def _route_interactive_sdk_client(monkeypatch):
+    route_interactive_client_through_query(monkeypatch)
+
 
 def _settings(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "main-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
-    claude_home = claude_root / ".claude"
-    workspace.mkdir(parents=True, exist_ok=True)
-    claude_home.mkdir(parents=True, exist_ok=True)
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=workspace,
-        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
-        CLAUDE_ROOT=claude_root,
-        MAIN_CLAUDE_ROOT=claude_root,
-        CLAUDE_HOME=claude_home,
+        GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
+        RUNTIME_VOLUME_MODE="local-debug",
     )
+    workspace = settings.main_workspace_dir
+    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return settings
 
 
 def _store_with_stale_session(settings, session_id):
@@ -41,6 +61,26 @@ def _store_with_stale_session(settings, session_id):
     session.sdk_store_ready_at = "2026-07-13T00:00:00+00:00"
     store.save(session)
     return store
+
+
+def _begin_persisted_turn(
+    store: LocalSessionStore,
+    session: LocalSession,
+    *,
+    run_id: str,
+    agent_id: str,
+    lease_seconds: float | None = None,
+) -> LocalSession:
+    return store.begin_persisted_turn(
+        session,
+        run_id=run_id,
+        agent_id=agent_id,
+        attempted_sdk_session_id=str(uuid.uuid4()),
+        sdk_project_key=f"test-{agent_id}",
+        request={"message": "test"},
+        created_at="2026-07-14T00:00:00+00:00",
+        lease_seconds=lease_seconds,
+    )
 
 
 def test_session_owner_is_claimed_once_and_cannot_change(tmp_path):
@@ -69,70 +109,30 @@ def test_historical_session_without_owner_cannot_be_claimed(tmp_path):
         store.get_or_create_owned("sess-legacy", agent_id="soc-ops")
 
 
-def test_concurrent_session_completion_cannot_overwrite_sdk_mapping_when_timestamps_match(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.runtime.session_store.utc_now", lambda: "2026-01-01T00:00:00+00:00")
-    settings = _settings(tmp_path)
-    store = LocalSessionStore(settings.session_dir)
-    store.get_or_create_owned("sess-concurrent", agent_id="soc-ops")
-    first = store.get("sess-concurrent")
-    assert first is not None
-    first = store.claim_turn(first, run_id="run-first", agent_id="soc-ops")
-    second = store.get("sess-concurrent")
-    assert second is not None
-
-    store.complete_turn(
-        first,
-        run_id="run-first",
-        agent_id="soc-ops",
-        sdk_session_id="sdk-first",
-        title="first",
-    )
-    with pytest.raises(SessionConflictError, match="changed concurrently"):
-        store.complete_turn(
-            second,
-            run_id="run-first",
-            agent_id="soc-ops",
-            sdk_session_id="sdk-second",
-            title="second",
-        )
-
-    saved = store.get("sess-concurrent")
-    assert saved is not None
-    assert saved.sdk_session_id == "sdk-first"
-    assert saved.turns == 1
-
-
 def test_active_turn_blocks_delete_until_claim_is_released(tmp_path):
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
     session = store.get_or_create_owned("sess-active", agent_id="soc-ops")
-    claimed = store.claim_turn(session, run_id="run-active", agent_id="soc-ops")
+    claimed = _begin_persisted_turn(store, session, run_id="run-active", agent_id="soc-ops")
 
     assert claimed.active_run_id == "run-active"
     with pytest.raises(SessionConflictError, match="active turn"):
         store.delete("sess-active")
 
-    assert store.release_turn("sess-active", run_id="run-active") is True
+    with store.Session.begin() as db:
+        row = db.get(SessionRecordModel, "sess-active")
+        assert row is not None
+        row.active_run_id = None
+        row.active_run_expires_at = None
+        row.active_run_generation = 0
     assert store.delete("sess-active") is True
 
 
-def test_expired_turn_lease_can_be_reclaimed(tmp_path):
-    settings = _settings(tmp_path)
-    store = LocalSessionStore(settings.session_dir)
-    session = store.get_or_create_owned("sess-expired", agent_id="soc-ops")
-    store.claim_turn(session, run_id="run-expired", agent_id="soc-ops", lease_seconds=-1)
-    latest = store.get("sess-expired")
-
-    assert latest is not None and latest.active_run_id is None
-    reclaimed = store.claim_turn(latest, run_id="run-new", agent_id="soc-ops")
-    assert reclaimed.active_run_id == "run-new"
-
-
-def test_turn_lease_renewal_extends_expiry_without_changing_completion_version(tmp_path):
+def test_turn_lease_renewal_extends_persisted_turn_expiry(tmp_path):
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
     session = store.get_or_create_owned("sess-renew", agent_id="soc-ops")
-    claimed = store.claim_turn(session, run_id="run-renew", agent_id="soc-ops", lease_seconds=1)
+    claimed = _begin_persisted_turn(store, session, run_id="run-renew", agent_id="soc-ops", lease_seconds=1)
 
     renewed_expiry = store.renew_turn("sess-renew", run_id="run-renew", lease_seconds=120)
     renewed = store.get("sess-renew")
@@ -140,22 +140,14 @@ def test_turn_lease_renewal_extends_expiry_without_changing_completion_version(t
     assert renewed is not None
     assert renewed.active_run_expires_at == renewed_expiry
     assert renewed_expiry > claimed.active_run_expires_at
-    completed = store.complete_turn(
-        claimed,
-        run_id="run-renew",
-        agent_id="soc-ops",
-        sdk_session_id="sdk-renewed",
-        title="renewed",
-    )
-    assert completed.turns == 1
-    assert completed.active_run_id is None
+    assert renewed.active_run_generation == claimed.active_run_generation
 
 
 def test_turn_lease_renewal_rejects_wrong_run_id(tmp_path):
     settings = _settings(tmp_path)
     store = LocalSessionStore(settings.session_dir)
     session = store.get_or_create_owned("sess-renew-fenced", agent_id="soc-ops")
-    store.claim_turn(session, run_id="run-owner", agent_id="soc-ops")
+    _begin_persisted_turn(store, session, run_id="run-owner", agent_id="soc-ops")
 
     with pytest.raises(SessionConflictError, match="no longer owned"):
         store.renew_turn("sess-renew-fenced", run_id="run-intruder")
@@ -475,14 +467,11 @@ def test_build_options_does_not_reuse_api_session_id_after_resume_is_cleared(tmp
     assert getattr(first_options, "session_id", None) == session_id
     assert getattr(first_options, "resume", None) is None
 
-    session = store.claim_turn(session, run_id="run-first", agent_id="main-agent")
-    store.complete_turn(
-        session,
-        run_id="run-first",
-        agent_id="main-agent",
-        sdk_session_id=None,
-        title="first",
-    )
+    with store.Session.begin() as db:
+        row = db.get(SessionRecordModel, session_id)
+        assert row is not None
+        row.turns = 1
+        row.updated_at = "2026-07-14T00:00:00+00:00"
     resumed_after_config_change = store.get(session_id)
     assert resumed_after_config_change is not None
     second_options = runtime._build_options(

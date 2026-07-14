@@ -42,7 +42,8 @@ class ClaudeUserInputDecisionRequest(BaseModel):
     授权仅凭 ``request_id``(URL) 定位 + ``decision_token``(per-request、hmac constant-time)；不再回传
     ``run_id``/``session_id``/``business_agent_id`` 三元组（冗余、GET list 公开可读、不构成第二因子）。
     ``answer_question`` 应答收敛为单一 ``answer``（对象，其键并入 SDK AskUserQuestion 的 updated_input）。
-    ``extra="forbid"`` 堵未设计字段（如 ``updated_input``/``allow_modified``）。
+    ``updated_input`` 仅供 RO 对受保护 SOC 工具进行逐次、精确输入授权；普通 HITL 请求不得使用。
+    ``extra="forbid"`` 堵未设计字段（如 ``allow_modified``）。
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -50,6 +51,7 @@ class ClaudeUserInputDecisionRequest(BaseModel):
     action: Literal["allow_once", "allow_for_run", "deny", "answer_question"]
     decision_token: str
     answer: Optional[JsonObject] = None
+    updated_input: Optional[JsonObject] = None
     message: Optional[str] = None
 
 

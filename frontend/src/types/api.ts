@@ -2228,16 +2228,36 @@ export interface components {
              */
             alert_id?: string | null;
             /**
+             * Approval Request Id
+             * @description RO-owned one-shot approval identifier.
+             */
+            approval_request_id?: string | null;
+            /**
              * Case Id
              * @description Feedback-loop routing input (backend-owned).
              */
             case_id?: string | null;
             debug?: components["schemas"]["AgentGovDebug"] | null;
             /**
+             * Execution Run Id
+             * @description RO-owned unique execution identifier.
+             */
+            execution_run_id?: string | null;
+            /**
              * Max Turns
              * @description Claude Code turn cap.
              */
             max_turns?: number | null;
+            /**
+             * Phase
+             * @description Authenticated response-disposition phase. Only the response-orchestrator credential may set it.
+             */
+            phase?: ("proposal" | "approved_execution") | null;
+            /**
+             * Playbook Digest
+             * @description Lowercase SHA-256 digest of the approved playbook.
+             */
+            playbook_digest?: string | null;
         };
         /**
          * AgentGovResponseExtension
@@ -2252,15 +2272,25 @@ export interface components {
             agent_id?: string | null;
             /** Agent Version Id */
             agent_version_id?: string | null;
+            /** Approval Request Id */
+            approval_request_id?: string | null;
+            /** Case Id */
+            case_id?: string | null;
             /** Conversation Id */
             conversation_id?: string | null;
             /** Errors */
             errors?: string[];
+            /** Execution Run Id */
+            execution_run_id?: string | null;
             /**
              * Output Text
              * @description Convenience aggregate of output[] text; AgentGov projection, not an OpenAI wire-standard field.
              */
             output_text?: string | null;
+            /** Phase */
+            phase?: ("proposal" | "approved_execution") | null;
+            /** Playbook Digest */
+            playbook_digest?: string | null;
             /** Run Id */
             run_id?: string | null;
             /** Sdk Session Id */
@@ -2906,7 +2936,8 @@ export interface components {
          *     授权仅凭 ``request_id``(URL) 定位 + ``decision_token``(per-request、hmac constant-time)；不再回传
          *     ``run_id``/``session_id``/``business_agent_id`` 三元组（冗余、GET list 公开可读、不构成第二因子）。
          *     ``answer_question`` 应答收敛为单一 ``answer``（对象，其键并入 SDK AskUserQuestion 的 updated_input）。
-         *     ``extra="forbid"`` 堵未设计字段（如 ``updated_input``/``allow_modified``）。
+         *     ``updated_input`` 仅供 RO 对受保护 SOC 工具进行逐次、精确输入授权；普通 HITL 请求不得使用。
+         *     ``extra="forbid"`` 堵未设计字段（如 ``allow_modified``）。
          */
         ClaudeUserInputDecisionRequest: {
             /**
@@ -2922,6 +2953,10 @@ export interface components {
             decision_token: string;
             /** Message */
             message?: string | null;
+            /** Updated Input */
+            updated_input?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
         };
         /** ClaudeUserInputDecisionResponse */
         ClaudeUserInputDecisionResponse: {

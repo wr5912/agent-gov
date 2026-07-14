@@ -32,9 +32,11 @@ def test_seed_renders_placeholders_and_is_idempotent(tmp_path: Path) -> None:
     assert "{{AGENT_ID}}" not in claude_md and "{{AGENT_NAME}}" not in claude_md
     assert (ws / ".claude" / "settings.json").exists()
     assert (ws / ".mcp.json").exists()
-    permissions = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))["permissions"]
-    assert "Bash(*)" in permissions["allow"]
-    assert "Bash(*)" not in permissions["ask"]
+    settings = json.loads((ws / ".claude" / "settings.json").read_text(encoding="utf-8"))
+    permissions = settings["permissions"]
+    assert "Bash(*)" not in permissions["allow"]
+    assert "Bash(*)" in permissions["ask"]
+    assert settings["sandbox"]["enableWeakerNestedSandbox"] is False
     # catalog 的 README 不应被播种进 workspace。
     assert not (ws / "README.md").exists()
 
@@ -47,6 +49,4 @@ def test_seed_renders_placeholders_and_is_idempotent(tmp_path: Path) -> None:
 def test_unknown_template_id_rejected(tmp_path: Path) -> None:
     """外部输入：未知 template_id 必须拒绝（路由层投影为 422），不静默回退。"""
     with pytest.raises(UnknownBusinessAgentTemplate):
-        seed_business_agent_workspace(
-            tmp_path / "ws", agent_id="x", name="X", template_id="does-not-exist-../escape"
-        )
+        seed_business_agent_workspace(tmp_path / "ws", agent_id="x", name="X", template_id="does-not-exist-../escape")

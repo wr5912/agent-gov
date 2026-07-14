@@ -10,9 +10,11 @@ from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
 from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState
+from .claude_runtime_permissions import runtime_response_disposition
 from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
 from .message_utils import to_plain
+from .response_disposition_control import permission_denial_reason, response_disposition_fields
 from .runtime_db import utc_now
 from .schemas import ChatRequest
 from .session_turn_lease import SessionTurnLeaseHeartbeat
@@ -41,6 +43,8 @@ async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: Age
     context = await runtime._new_runtime_request_context(req, profile=profile, agent_id=profile.agent_id)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
     context.telemetry_input["claude_web_hitl_enabled"] = web_hitl_enabled
+    if profile.requires_web_hitl:
+        context.telemetry_input["permission_mode"] = "default"
     return StreamRun(
         runtime=runtime,
         req=req,
@@ -135,9 +139,15 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
     from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
+        response_disposition = runtime_response_disposition(stream_run.req)
+        denial = permission_denial_reason(stream_run.profile.agent_id, tool_name, response_disposition)
+        if denial is not None:
+            return PermissionResultDeny(message=denial)
         service = stream_run.runtime.user_input_service
-        if service is None:
-            return PermissionResultDeny(message="Claude Web HITL is not available.")
+        if service is None or not stream_run.web_hitl_enabled:
+            message = f"工具 {tool_name} 请求人工审批，但 ENABLE_CLAUDE_WEB_HITL 未开启或 HITL 服务不可用；请求已显式拒绝。"
+            await event_queue.put({"event": "error", "data": {"errors": [message]}})
+            return PermissionResultDeny(message=message)
         decision = await service.create_and_wait(
             event_queue=event_queue,
             business_agent_id=stream_run.profile.agent_id,
@@ -147,26 +157,17 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
             tool_name=tool_name,
             input_data=input_data,
             context=sdk_context,
+            response_disposition=response_disposition,
         )
         if decision.action == "allow_once":
+            if decision.updated_input is not None:
+                return PermissionResultAllow(updated_input=decision.updated_input)
             return PermissionResultAllow()
         if decision.action == "answer_question":
-            return PermissionResultAllow(updated_input=decision.ask_user_question_input or {})
+            return PermissionResultAllow(updated_input=decision.updated_input or decision.ask_user_question_input or {})
         return PermissionResultDeny(message=decision.message or "User denied Claude tool request.")
 
     return sdk_can_use_tool
-
-
-def _native_ask_deny_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
-    """HITL 关闭时拒绝项目权限规则产生的 ask，并向流显式报错。"""
-    from claude_agent_sdk import PermissionResultDeny
-
-    async def deny(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
-        message = f"项目权限规则要求人工审批工具 {tool_name}，但 ENABLE_CLAUDE_WEB_HITL 未开启：业务 Agent {stream_run.profile.agent_id} 请开启后重试。"
-        await event_queue.put({"event": "error", "data": {"errors": [message]}})
-        return PermissionResultDeny(message=message)
-
-    return deny
 
 
 async def _emit_query_events(
@@ -179,12 +180,7 @@ async def _emit_query_events(
     runtime = stream_run.runtime
     await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
     native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, stream_run.profile.workspace_dir)
-    if native_ask_configured and stream_run.web_hitl_enabled:
-        can_use_tool = _sdk_tool_callback(stream_run, event_queue)
-    elif native_ask_configured:
-        can_use_tool = _native_ask_deny_callback(stream_run, event_queue)
-    else:
-        can_use_tool = None
+    can_use_tool = _sdk_tool_callback(stream_run, event_queue) if native_ask_configured else None
     options = await asyncio.to_thread(
         runtime._build_options,
         stream_run.req,
@@ -244,24 +240,26 @@ async def _publish_result_event(
     context = stream_run.request_context
     state = stream_run.query_state
     agent_activity = runtime.activity_extractor.agent_activity_payload(state.messages)
+    data: JsonObject = {
+        "session_id": context.session.session_id,
+        "sdk_session_id": state.sdk_session_id,
+        "run_id": context.run_id,
+        "agent_version_id": context.agent_version_id,
+        "langfuse_trace_id": context.langfuse_trace_id,
+        "langfuse_trace_url": context.langfuse_trace_url,
+        "alert_id": stream_run.req.alert_id,
+        "case_id": stream_run.req.case_id,
+        "agent_activity": agent_activity,
+        "usage": to_plain(state.usage),
+        "total_cost_usd": state.total_cost_usd,
+        "stop_reason": state.stop_reason,
+        "errors": result_errors,
+    }
+    data.update(response_disposition_fields(runtime_response_disposition(stream_run.req)))
     await event_queue.put(
         {
             "event": "result",
-            "data": {
-                "session_id": context.session.session_id,
-                "sdk_session_id": state.sdk_session_id,
-                "run_id": context.run_id,
-                "agent_version_id": context.agent_version_id,
-                "langfuse_trace_id": context.langfuse_trace_id,
-                "langfuse_trace_url": context.langfuse_trace_url,
-                "alert_id": stream_run.req.alert_id,
-                "case_id": stream_run.req.case_id,
-                "agent_activity": agent_activity,
-                "usage": to_plain(state.usage),
-                "total_cost_usd": state.total_cost_usd,
-                "stop_reason": state.stop_reason,
-                "errors": result_errors,
-            },
+            "data": data,
         }
     )
 

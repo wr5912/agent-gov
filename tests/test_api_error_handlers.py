@@ -1,3 +1,4 @@
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.runtime.agent_git_store import AgentGitError
@@ -233,6 +234,7 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
     attribution = module.improvement_content_store.get_attribution(improvement.improvement_id)
     assert plan is not None and attribution is not None
     base = str(module.agent_version_store.current_commit_sha())
+    claimed_at = datetime.now(UTC)
     claim = module.improvement_content_store.execution_claims.claim_execution(
         improvement.improvement_id,
         change_set_id="agc-11111111-2222-3333-4444-555555555555",
@@ -242,8 +244,8 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
         source_attribution_id=attribution.attribution_id,
         source_attribution_updated_at=attribution.updated_at,
         claim_token="claim-api-abandon",
-        now="2026-07-10T00:00:00+00:00",
-        claim_expires_at="2026-07-10T00:10:00+00:00",
+        now=claimed_at.isoformat(),
+        claim_expires_at=(claimed_at + timedelta(minutes=10)).isoformat(),
     )
     change_set = module.agent_governance.create_change_set(
         change_set_id=claim.change_set_id,
@@ -283,8 +285,8 @@ def test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim(mo
         source_attribution_id=attribution.attribution_id,
         source_attribution_updated_at=attribution.updated_at,
         claim_token="claim-immediate-retry",
-        now="2026-07-10T00:01:00+00:00",
-        claim_expires_at="2026-07-10T00:11:00+00:00",
+        now=(claimed_at + timedelta(minutes=1)).isoformat(),
+        claim_expires_at=(claimed_at + timedelta(minutes=11)).isoformat(),
     )
     module.improvement_content_store.execution_claims.finish_without_application(
         improvement.improvement_id,

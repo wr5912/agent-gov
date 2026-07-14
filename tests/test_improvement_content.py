@@ -13,6 +13,7 @@ from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from fastapi.testclient import TestClient
 
+from feedback_store_test_utils import _seed_execution_record
 from test_api_execution_optimizer import _load_app
 
 
@@ -403,7 +404,8 @@ def test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_ad
             changes=[{"target": "prompt", "change": "x"}],
             advance_to_stage="optimization",
         )
-        content.upsert_execution(
+        _seed_execution_record(
+            content,
             improvement_id,
             summary="旧执行",
             changes_applied=["prompt"],
@@ -476,7 +478,8 @@ def test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation(monke
             advance_to_stage="optimization",
         )
         content.set_optimization_plan_status(improvement_id, status="confirmed")
-        content.upsert_execution(
+        _seed_execution_record(
+            content,
             improvement_id,
             summary="E1",
             changes_applied=["prompt"],
@@ -601,7 +604,8 @@ def test_optimization_plan_and_execution(monkeypatch, tmp_path: Path) -> None:
     module = _load_app(monkeypatch, tmp_path)
 
     async def apply_execution(improvement_id: str):
-        return module.improvement_content_store.upsert_execution(
+        return _seed_execution_record(
+            module.improvement_content_store,
             improvement_id,
             summary="已应用并生成版本",
             changes_applied=["prompt 更新"],
@@ -723,7 +727,8 @@ def test_unapplied_execution_record_does_not_advance_or_unlock_regression(monkey
     module = _load_app(monkeypatch, tmp_path)
 
     async def no_action_execution(improvement_id: str):
-        return module.improvement_content_store.upsert_execution(
+        return _seed_execution_record(
+            module.improvement_content_store,
             improvement_id,
             summary="未自动应用：没有安全的可执行操作。",
             changes_applied=[],
@@ -766,7 +771,8 @@ def test_regression_assessment_generate_get_confirm(monkeypatch, tmp_path: Path)
     module = _load_app(monkeypatch, tmp_path)
 
     async def apply_execution(improvement_id: str):
-        return module.improvement_content_store.upsert_execution(
+        return _seed_execution_record(
+            module.improvement_content_store,
             improvement_id,
             summary="已执行",
             changes_applied=["prompt"],

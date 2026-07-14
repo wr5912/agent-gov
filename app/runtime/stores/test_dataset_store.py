@@ -25,13 +25,13 @@ from ..improvement_db import (
 )
 from ..json_types import JsonObject
 from ..runtime_db import AgentChangeSetModel, EvalRunModel, TestDatasetCaseModel, TestDatasetModel, TestDatasetRevisionModel, utc_now
+from ..state_machines import validate_transition
 from ..test_dataset_schemas import (
     TestCaseRecord,
     TestDatasetProvenanceRecord,
     TestDatasetRecord,
     TestDatasetRevisionRecord,
 )
-from ..test_dataset_state import validate_test_dataset_transition
 
 _ADOPTABLE_CHANGE_SET_STATES = {
     "candidate_committed",
@@ -166,7 +166,7 @@ def transition_test_dataset_lifecycle_row(
 ) -> TestDatasetModel:
     if row.revision != expected_revision:
         raise ConflictError(f"TestDataset revision changed; expected {expected_revision}, current {row.revision}: {row.dataset_id}")
-    validate_test_dataset_transition(row.lifecycle_state, target_state)
+    validate_transition("test_dataset", row.lifecycle_state, target_state)
     if row.lifecycle_state == target_state:
         return row
     now = utc_now()

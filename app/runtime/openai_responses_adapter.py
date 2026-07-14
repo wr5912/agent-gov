@@ -20,7 +20,12 @@ from app.runtime.openai_responses_schemas import (
     ResponsesRequest,
     ResponseStatus,
 )
-from app.runtime.schemas import ChatRequest, ChatResponse
+from app.runtime.response_disposition_control import (
+    TrustedResponseDispositionContext,
+    is_backend_owned_metadata_key,
+    response_disposition_fields,
+)
+from app.runtime.schemas import ChatResponse, RuntimeChatRequest
 
 _CONVERSATION_PREFIX = "conv_"
 _RESPONSE_PREFIX = "resp_"
@@ -35,7 +40,7 @@ def public_metadata(metadata: object) -> JsonObject:
     """回显给客户端的 metadata，剥掉所有保留 backend 标记。"""
     if not isinstance(metadata, dict):
         return {}
-    return {k: v for k, v in metadata.items() if not str(k).startswith(_RESERVED_PREFIX)}
+    return {k: v for k, v in metadata.items() if not is_backend_owned_metadata_key(k)}
 
 
 def store_disabled(run: JsonObject) -> bool:
@@ -98,7 +103,8 @@ def build_chat_request(
     agent_id: Optional[str],
     system_append: Optional[str],
     session_id: Optional[str],
-) -> ChatRequest:
+    response_disposition: TrustedResponseDispositionContext | None = None,
+) -> RuntimeChatRequest:
     """映射到内部 ``ChatRequest``。alert_id/case_id 来自 agentgov（backend-owned），
     metadata 原样透传（观测标签）。runtime.run/stream 以 profile 为准，agent_id 仅作记录一致。
     ``store=false`` 时给持久化 metadata 打保留标记（不影响回显）。"""
@@ -107,7 +113,7 @@ def build_chat_request(
     metadata = public_metadata(req.metadata)
     if not req.store:
         metadata[STORE_MARKER_KEY] = False
-    return ChatRequest(
+    return RuntimeChatRequest(
         message=extract_input_text(req.input),
         session_id=session_id,
         agent_id=agent_id,
@@ -117,6 +123,7 @@ def build_chat_request(
         model=req.model,
         system_append=system_append,
         metadata=metadata,
+        response_disposition=response_disposition,
     )
 
 
@@ -173,6 +180,7 @@ def response_from_chat_response(
     agent_id: Optional[str],
     metadata: JsonObject,
     created_at: Optional[int] = None,
+    response_disposition: TrustedResponseDispositionContext | None = None,
 ) -> ResponseObject:
     """live 非流式：``runtime.run`` 的 ``ChatResponse`` -> ``ResponseObject``。"""
     answer = chat.answer or ""
@@ -197,6 +205,7 @@ def response_from_chat_response(
             total_cost_usd=chat.total_cost_usd,
             stop_reason=chat.stop_reason,
             errors=list(chat.errors or []),
+            **response_disposition_fields(response_disposition),
         ),
     )
 
@@ -219,6 +228,7 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
     errors = run.get("errors")
     usage = run.get("usage")
     cost = run.get("total_cost_usd")
+    response_disposition = _validated_response_disposition(run.get("response_disposition"))
     return ResponseObject(
         id=response_id_from_run(run_id) or run_id,
         created_at=iso_to_epoch(run.get("created_at")),
@@ -241,5 +251,15 @@ def response_from_run_payload(run: JsonObject) -> ResponseObject:
             total_cost_usd=cost if isinstance(cost, (int, float)) else None,
             stop_reason=_str_or_none(run.get("stop_reason")),
             errors=list(errors) if isinstance(errors, list) else [],
+            **response_disposition_fields(response_disposition),
         ),
     )
+
+
+def _validated_response_disposition(value: object) -> TrustedResponseDispositionContext | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        return TrustedResponseDispositionContext.model_validate(value)
+    except ValueError:
+        return None

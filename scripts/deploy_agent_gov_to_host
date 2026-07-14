@@ -404,6 +404,7 @@ frontend_port=$(expand_remote_value "$(read_env FRONTEND_HOST_PORT 55173)")
 langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 53000)")
 
 python3 - <<PY
+import json
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import time
@@ -421,6 +422,10 @@ for name, url, attempts, print_body in checks:
             request = Request(url, headers={"User-Agent": "agent-gov-deploy-smoke"})
             with urlopen(request, timeout=5) as response:
                 body = response.read(500)
+                if not 200 <= response.status < 300:
+                    raise RuntimeError(f"unexpected HTTP status {response.status}")
+                if print_body and json.loads(body.decode("utf-8")).get("status") != "ok":
+                    raise RuntimeError("AgentGov health payload is not ready")
                 print(f"{name} OK: {url} status={response.status}")
                 if print_body:
                     print(body.decode("utf-8", "replace"))

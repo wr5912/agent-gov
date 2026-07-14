@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import os
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from sqlalchemy import select, update
@@ -10,8 +11,9 @@ from sqlalchemy.exc import IntegrityError
 from app.runtime.agent_admission import AgentAdmissionError
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.errors import FeedbackStoreError
+from app.runtime.errors import ConflictError, FeedbackStoreError
 from app.runtime.json_types import JsonObject
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
 from app.runtime.records.eval_run_records import EvalRunProjectionRecord
 from app.runtime.runtime_db import (
     AgentChangeSetEventModel,
@@ -33,6 +35,7 @@ from app.services.agent_publication import (
     PublicationFinalizationLost,
     PublicationIntent,
     PublicationReservationLost,
+    PublicationSourceConflict,
     PublicationTagConflict,
     capture_publication_source,
     commit_publication_intent,
@@ -40,6 +43,7 @@ from app.services.agent_publication import (
 )
 from app.services.agent_publication_finalization import finalize_publication_once
 from app.services.agent_publication_provenance import project_current_attribution
+from app.services.agent_ref_policy import build_ref_policy_validator
 from app.services.agent_regression import AgentRegressionMixin
 from app.services.agent_release_workflows import (
     publish_change_set,
@@ -79,6 +83,8 @@ class AgentGovernanceService(AgentRegressionMixin):
         *,
         feedback_store: FeedbackStore,
         agent_version_store: GitAgentVersionStore,
+        runtime_mode: str = "container",
+        runtime_env: Mapping[str, str] | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
@@ -86,6 +92,8 @@ class AgentGovernanceService(AgentRegressionMixin):
         # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
         # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
         self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
+        self._runtime_mode = runtime_mode
+        self._runtime_env = dict(runtime_env or os.environ)
         # 缺陷④：非 main 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
         # 由 app 装配后注入（None 则不校验，便于单测）。
         self.agent_exists: Callable[[str], bool] | None = None
@@ -416,6 +424,29 @@ class AgentGovernanceService(AgentRegressionMixin):
     def restore_release(self, release_id: str, *, operator: str = "runtime", note: str | None = None) -> JsonObject:
         return restore_release(self, release_id, operator=operator, note=note)
 
+    def _ref_policy_validator(self, store: GitAgentVersionStore, agent_id: str) -> Callable[[str], None]:
+        return build_ref_policy_validator(
+            store,
+            agent_id,
+            data_dir=self.feedback_store.data_dir,
+            runtime_mode=self._runtime_mode,
+            runtime_env=self._runtime_env,
+        )
+
+    def require_workspace_policy(self, workspace: Path, agent_id: str) -> None:
+        data_dir = self.feedback_store.data_dir.resolve()
+        runtime_root = Path("/") if data_dir == Path("/data") else data_dir.parent
+        try:
+            require_runtime_workspace_policy(
+                workspace=workspace,
+                agent_id=self._normalize_agent_id(agent_id),
+                runtime_mode=self._runtime_mode,
+                env=self._runtime_env,
+                runtime_root=runtime_root,
+            )
+        except ManagedAgentPolicyError as exc:
+            raise ConflictError(f"Managed Agent policy rejected workspace: {exc}") from exc
+
     def _transition_change_set(
         self,
         change_set_id: str,
@@ -568,7 +599,7 @@ class AgentGovernanceService(AgentRegressionMixin):
                 after=after,
                 add_event=self._add_event_row,
             )
-        except PublicationTagConflict as exc:
+        except (PublicationSourceConflict, PublicationTagConflict) as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
         except PublicationReservationLost:
             return self._publication_intent_after_reservation_race(change_set_id, requested_tag_name=tag_name)

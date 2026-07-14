@@ -13,7 +13,7 @@ def test_evidence_package_includes_runtime_mcp_diagnostics(tmp_path, monkeypatch
         encoding="utf-8",
     )
     settings_dir = settings.main_workspace_dir / ".claude"
-    settings_dir.mkdir(parents=True)
+    settings_dir.mkdir(parents=True, exist_ok=True)
     (settings_dir / "settings.json").write_text(
         json.dumps({"sandbox": {"network": {"allowedDomains": ["${SERVICE_HOST}"]}}}),
         encoding="utf-8",

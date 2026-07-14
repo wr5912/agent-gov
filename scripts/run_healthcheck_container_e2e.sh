@@ -72,6 +72,19 @@ fi
 startup_seconds=$(( $(date +%s) - started_at ))
 echo "Compose control plane startup completed in ${startup_seconds}s"
 
+diagnosis=$(
+  .venv/bin/python scripts/diagnose_runtime_health.py \
+    --api-base "http://localhost:$api_port" \
+    --wait-seconds 10
+)
+printf '%s\n' "$diagnosis"
+grep -Fq "API: healthy" <<<"$diagnosis"
+grep -Fq "Model provider: degraded" <<<"$diagnosis"
+grep -Fq "error_code=VLLM_VERSION_PROBE_FAILED" <<<"$diagnosis"
+grep -Fq "reason=timeout" <<<"$diagnosis"
+grep -Fq "根因: API 容器已存活；外部模型 provider 就绪探测失败" <<<"$diagnosis"
+grep -Fq "这不是镜像启动失败，Compose dependency 报错只是次级症状" <<<"$diagnosis"
+
 RUNTIME_UI_BASE="http://localhost:$ui_port" \
 RUNTIME_API_BASE="http://localhost:$api_port" \
 RUNTIME_API_KEY="$api_key" \

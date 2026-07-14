@@ -10,7 +10,6 @@
       "Glob",
       "Grep",
       "Skill",
-      "Bash(*)",
       "Bash(jq *)",
       "Bash(date *)",
       "Bash(date)",
@@ -18,7 +17,17 @@
       "Bash(mkdir -p /data/outputs/ai-soc-gap-analyzer/**)",
       "Write(/data/outputs/ai-soc-gap-analyzer/**)"
     ],
-    "ask": [],
+    "ask": [
+      "Bash(*)",
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*",
+      "mcp__*__*block*",
+      "mcp__*__*isolate*",
+      "mcp__*__*disable*",
+      "mcp__*__*kill*",
+      "mcp__*__*quarantine*"
+    ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
@@ -64,6 +73,7 @@
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
+    "enableWeakerNestedSandbox": false,
     "filesystem": {
       "allowWrite": [
         "/data/outputs/ai-soc-gap-analyzer"

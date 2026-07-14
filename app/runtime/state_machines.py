@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import Literal, TypeAlias
 
 from .errors import FeedbackStoreError
 
@@ -29,6 +30,20 @@ EVAL_RUN_STATES = {
 PENDING_CORRELATION_STATES = {
     "pending",
     "resolved",
+}
+
+RESPONSE_DISPOSITION_CLAIM_STATES = {
+    "claimed",
+    "completed",
+    "failed",
+    "cancelled",
+}
+
+RESPONSE_DISPOSITION_CLAIM_TRANSITIONS: Mapping[str, set[str]] = {
+    "claimed": {"completed", "failed", "cancelled"},
+    "completed": set(),
+    "failed": set(),
+    "cancelled": set(),
 }
 
 AGENT_CHANGE_SET_STATES = {
@@ -85,6 +100,10 @@ AGENT_LIFECYCLE_TRANSITIONS: Mapping[str, set[str]] = {
     "deprecated": {"active", "archived"},
     "archived": set(),
 }
+
+# TestDataset shares this lifecycle graph, but remains a separately named
+# machine so every persisted transition passes through the central validator.
+TestDatasetLifecycleState: TypeAlias = Literal["draft", "active", "evaluating", "deprecated", "archived"]
 
 # 可参与新运行选择的生命周期状态（AGV-020 criterion 3：archived 等不参与新运行）。
 AGENT_RUNNABLE_LIFECYCLE_STATES = {"active", "evaluating"}
@@ -180,6 +199,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
         "pending": {"resolved"},
         "resolved": set(),
     },
+    "response_disposition_claim": RESPONSE_DISPOSITION_CLAIM_TRANSITIONS,
     "agent_change_set": {
         "draft": {"execution_ready", "candidate_committed", "pending_approval", "abandoned", "failed"},
         "execution_ready": {"candidate_committed", "abandoned", "failed"},
@@ -204,6 +224,7 @@ _TRANSITIONS: Mapping[str, Mapping[str, set[str]]] = {
     },
     "agent_release_operation": AGENT_RELEASE_OPERATION_TRANSITIONS,
     "agent_lifecycle": AGENT_LIFECYCLE_TRANSITIONS,
+    "test_dataset": AGENT_LIFECYCLE_TRANSITIONS,
     "agent_provision": AGENT_PROVISION_TRANSITIONS,
     "session_turn_intent": SESSION_TURN_INTENT_TRANSITIONS,
     "improvement_stage": IMPROVEMENT_STAGE_TRANSITIONS,
@@ -214,10 +235,12 @@ _KNOWN_STATES = {
     "case": CASE_STATES,
     "eval_run": EVAL_RUN_STATES,
     "pending_correlation": PENDING_CORRELATION_STATES,
+    "response_disposition_claim": RESPONSE_DISPOSITION_CLAIM_STATES,
     "agent_change_set": AGENT_CHANGE_SET_STATES,
     "agent_release": AGENT_RELEASE_STATES,
     "agent_release_operation": AGENT_RELEASE_OPERATION_STATES,
     "agent_lifecycle": AGENT_LIFECYCLE_STATES,
+    "test_dataset": AGENT_LIFECYCLE_STATES,
     "agent_provision": AGENT_PROVISION_STATES,
     "session_turn_intent": SESSION_TURN_INTENT_STATES,
     "improvement_stage": IMPROVEMENT_STAGES,

@@ -10,6 +10,8 @@ from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestReque
 from app.runtime.stores.feedback_store import FeedbackStore
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 
+from feedback_store_test_utils import _seed_execution_record
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -42,16 +44,45 @@ def test_runtime_db_adds_session_active_run_lease_without_rewriting_rows(tmp_pat
         connection.execute("INSERT INTO sessions VALUES ('sess-existing', 'sdk-existing', 'main-agent', 't', 't', 'title', 2, '{}')")
 
     factory = make_session_factory(db_path)
-    with factory.kw["bind"].connect() as connection:
-        columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()}
+    with factory.kw["bind"].begin() as connection:
+        table_info = {str(row[1]): row for row in connection.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()}
+        columns = set(table_info)
         existing = connection.exec_driver_sql(
-            "SELECT sdk_session_id, turns, active_run_id, active_run_expires_at FROM sessions WHERE session_id = 'sess-existing'"
+            "SELECT sdk_session_id, turns, active_run_id, active_run_expires_at, active_run_generation "
+            "FROM sessions WHERE session_id = 'sess-existing'"
         ).fetchone()
+        connection.exec_driver_sql(
+            "INSERT INTO sessions (session_id, created_at, updated_at, turns, metadata_json) VALUES ('sess-raw', 't', 't', 0, '{}')"
+        )
+        raw_generation = connection.exec_driver_sql(
+            "SELECT active_run_generation FROM sessions WHERE session_id = 'sess-raw'"
+        ).scalar_one()
         migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0035_session_active_run_lease'").fetchone()
 
-    assert {"active_run_id", "active_run_expires_at"} <= columns
-    assert existing == ("sdk-existing", 2, None, None)
+    assert {"active_run_id", "active_run_expires_at", "active_run_generation"} <= columns
+    assert table_info["active_run_generation"][4] == "0"
+    assert existing == ("sdk-existing", 2, None, None, 0)
+    assert raw_generation == 0
     assert migration is not None
+
+
+def test_fresh_runtime_db_uses_same_session_generation_server_default(tmp_path):
+    factory = make_session_factory(tmp_path / "fresh.sqlite3")
+
+    with factory.kw["bind"].begin() as connection:
+        defaults = {
+            str(row[1]): row[4]
+            for row in connection.exec_driver_sql("PRAGMA table_info(sessions)").fetchall()
+        }
+        connection.exec_driver_sql(
+            "INSERT INTO sessions (session_id, created_at, updated_at, turns, metadata_json) VALUES ('sess-fresh-raw', 't', 't', 0, '{}')"
+        )
+        generation = connection.exec_driver_sql(
+            "SELECT active_run_generation FROM sessions WHERE session_id = 'sess-fresh-raw'"
+        ).scalar_one()
+
+    assert defaults["active_run_generation"] == "0"
+    assert generation == 0
 
 
 def test_concurrent_schema_init_no_table_exists_race(tmp_path):
@@ -222,7 +253,8 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
         changes=[{"target": "prompt", "change": "x"}],
         risk_level="medium",
     )
-    content.upsert_execution(
+    _seed_execution_record(
+        content,
         "imp-0019",
         summary="执行",
         risk_level="high",
@@ -571,6 +603,31 @@ def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):
     } <= columns
     assert "ix_claude_user_input_agent_status" in indexes
     assert "ix_claude_user_input_run_status" in indexes
+    assert migration is not None
+
+
+def test_runtime_db_creates_response_disposition_claims_table(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(response_disposition_claims)").fetchall()}
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0043_response_disposition_claims'").fetchone()
+        indexes = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA index_list(response_disposition_claims)").fetchall()}
+
+    assert {
+        "approval_request_id",
+        "case_id",
+        "playbook_digest",
+        "execution_run_id",
+        "agent_run_id",
+        "status",
+        "create_authorized",
+        "manual_authorized",
+        "failure_reason",
+    } <= columns
+    assert "ix_response_disposition_claim_status" in indexes
+    assert "ix_response_disposition_claim_case" in indexes
     assert migration is not None
 
 

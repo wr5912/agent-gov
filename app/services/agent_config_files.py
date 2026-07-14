@@ -12,7 +12,10 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.runtime.agent_paths import InvalidAgentId, validate_agent_id
+from scripts.bootstrap_runtime_volume import load_runtime_env
+
+from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
 from app.runtime.config_file_schemas import (
     AgentConfigFileResponse,
     AgentConfigFileUpdateRequest,
@@ -20,6 +23,7 @@ from app.runtime.config_file_schemas import (
 )
 from app.runtime.errors import SessionConflictError
 from app.runtime.execution_targets import MAX_EXECUTION_TARGET_CONTEXT_BYTES, WorkspaceExecutionTargetPolicy
+from app.runtime.managed_agent_policy import validate_managed_mcp_content
 from app.runtime.session_store import LocalSessionStore
 from app.runtime.settings import AppSettings
 from app.runtime.stores.agent_registry_store import AgentRegistryStore
@@ -92,40 +96,42 @@ class AgentConfigFileService:
         request: AgentConfigFileUpdateRequest,
     ) -> AgentConfigFileUpdateResponse:
         safe_agent_id, target = self._resolve_target(agent_id=agent_id, path=path)
-        self._validate_content(path=path, content=request.content)
+        self._validate_content(agent_id=safe_agent_id, path=path, content=request.content)
         replacement_data = request.content.encode("utf-8")
-        with self._locked_parent(target, exclusive=True) as directory_fd:
-            original = self._read_snapshot(directory_fd=directory_fd, target_name=target.name)
-            if request.expected_sha256 is not None and request.expected_sha256 != original.sha256:
-                raise AgentConfigFileError(409, "Config file changed; reload before applying edits")
-            try:
-                self._atomic_replace(
-                    directory_fd=directory_fd,
-                    target_name=target.name,
-                    data=replacement_data,
-                    mode=original.mode,
-                )
-            except _AtomicReplaceFailure as exc:
-                if exc.replaced:
+        lock_path = business_agent_layout(self._settings.data_dir, safe_agent_id).version_base / ".repository.lock"
+        with advisory_lock(lock_path, mode="exclusive"):
+            with self._locked_parent(target, exclusive=True) as directory_fd:
+                original = self._read_snapshot(directory_fd=directory_fd, target_name=target.name)
+                if request.expected_sha256 is not None and request.expected_sha256 != original.sha256:
+                    raise AgentConfigFileError(409, "Config file changed; reload before applying edits")
+                try:
+                    self._atomic_replace(
+                        directory_fd=directory_fd,
+                        target_name=target.name,
+                        data=replacement_data,
+                        mode=original.mode,
+                    )
+                except _AtomicReplaceFailure as exc:
+                    if exc.replaced:
+                        self._rollback_replacement(
+                            directory_fd=directory_fd,
+                            target_name=target.name,
+                            original=original,
+                            replacement_data=replacement_data,
+                            operation="config update",
+                        )
+                    raise AgentConfigFileError(409, f"Config file update failed: {exc.cause.__class__.__name__}") from exc
+                try:
+                    invalidated = self._invalidate_session(agent_id=safe_agent_id, session_id=request.session_id)
+                except Exception:
                     self._rollback_replacement(
                         directory_fd=directory_fd,
                         target_name=target.name,
                         original=original,
                         replacement_data=replacement_data,
-                        operation="config update",
+                        operation="session invalidation",
                     )
-                raise AgentConfigFileError(409, f"Config file update failed: {exc.cause.__class__.__name__}") from exc
-            try:
-                invalidated = self._invalidate_session(agent_id=safe_agent_id, session_id=request.session_id)
-            except Exception:
-                self._rollback_replacement(
-                    directory_fd=directory_fd,
-                    target_name=target.name,
-                    original=original,
-                    replacement_data=replacement_data,
-                    operation="session invalidation",
-                )
-                raise
+                    raise
         return AgentConfigFileUpdateResponse(
             agent_id=safe_agent_id,
             path=path,
@@ -301,7 +307,7 @@ class AgentConfigFileService:
             cause = exc.cause if isinstance(exc, _AtomicReplaceFailure) else exc
             raise AgentConfigFileError(409, f"Config rollback failed after {operation}: {cause.__class__.__name__}") from exc
 
-    def _validate_content(self, *, path: str, content: str) -> None:
+    def _validate_content(self, *, agent_id: str, path: str, content: str) -> None:
         data = content.encode("utf-8")
         if len(data) > MAX_EXECUTION_TARGET_CONTEXT_BYTES:
             raise AgentConfigFileError(413, "Config file content is too large")
@@ -312,6 +318,18 @@ class AgentConfigFileService:
                 raise AgentConfigFileError(422, f"Invalid JSON: {exc.msg}") from exc
             if not isinstance(parsed, dict):
                 raise AgentConfigFileError(422, ".mcp.json must contain a JSON object")
+            env = dict(load_runtime_env(self._settings.settings_env_file)) if self._settings.settings_env_file else dict(os.environ)
+            runtime_root = Path("/") if self._settings.data_dir.resolve() == Path("/data") else self._settings.data_dir.resolve().parent
+            violations = validate_managed_mcp_content(
+                content,
+                agent_id=agent_id,
+                runtime_mode=self._settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            )
+            if violations:
+                details = "; ".join(f"{item.rule_id}:{item.detail}" for item in violations)
+                raise AgentConfigFileError(422, f"Managed MCP policy rejected the update: {details}")
 
     def _invalidate_session(self, *, agent_id: str, session_id: str | None) -> bool:
         if not session_id:

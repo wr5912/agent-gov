@@ -12,10 +12,21 @@
       "Glob",
       "Grep",
       "Skill",
-      "Bash(*)",
       "Write(/data/outputs/**)"
     ],
-    "ask": ["Edit(./**)", "Write(./**)"],
+    "ask": [
+      "Bash(*)",
+      "Edit(./**)",
+      "Write(./**)",
+      "mcp__*__*write*",
+      "mcp__*__*update*",
+      "mcp__*__*delete*",
+      "mcp__*__*block*",
+      "mcp__*__*isolate*",
+      "mcp__*__*disable*",
+      "mcp__*__*kill*",
+      "mcp__*__*quarantine*"
+    ],
     "deny": [
       "Read(./.env)",
       "Read(./.env.*)",
@@ -49,6 +60,7 @@
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
+    "enableWeakerNestedSandbox": false,
     "filesystem": {
       "allowWrite": ["/data/outputs", "./"],
       "denyRead": [

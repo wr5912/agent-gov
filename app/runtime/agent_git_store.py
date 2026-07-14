@@ -6,16 +6,24 @@ import os
 import shutil
 import subprocess
 import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol
 
-from app.runtime.feedback_privacy import SENSITIVE_KEY_PARTS
+from app.runtime.advisory_lock import advisory_lock
+from app.runtime.agent_git_workspace_diff import (
+    MAX_FILE_DIFF_BYTES,
+    parse_workspace_changes,
+    redact_sensitive_diff,
+    untracked_workspace_file_diff,
+    workspace_diff_error,
+)
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import utc_now
 from app.runtime.workspace_policy import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
 
-MAX_FILE_DIFF_BYTES = 200_000
 MAX_REPOSITORY_STATUS_DIFFS = 20
 
 
@@ -71,6 +79,7 @@ class GitAgentVersionStore:
         self.git_user_email = git_user_email
         self._maintenance = False
         self._lock = threading.RLock()
+        self._process_lock_path = self.worktrees_dir.parent / ".repository.lock"
         self.repository_dir.mkdir(parents=True, exist_ok=True)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
         self.releases_dir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +88,7 @@ class GitAgentVersionStore:
         return self._maintenance
 
     def ensure_bootstrap(self) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_git_available()
             if not (self.repository_dir / ".git").exists():
                 self._git(["init"], cwd=self.repository_dir)
@@ -150,7 +159,7 @@ class GitAgentVersionStore:
         parent_version_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
     ) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             self._git(["add", "-A", "--", "."], cwd=self.repository_dir)
             if self._has_staged_changes(self.repository_dir):
@@ -163,7 +172,7 @@ class GitAgentVersionStore:
             return summary
 
     def discard_workspace_changes(self, paths: list[str]) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             current = {str(item["path"]): item for item in self._workspace_changes()}
             requested = self._requested_dirty_paths(paths, current)
@@ -182,7 +191,7 @@ class GitAgentVersionStore:
     def workspace_file_diff(self, path: str) -> JsonObject:
         safe_path = self._safe_relative_path(path)
         if not safe_path:
-            return self._workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
+            return workspace_diff_error(path, "invalid_path", "路径不是合法的 workspace 相对路径。")
         changes = {str(item["path"]): item for item in self._workspace_changes()}
         change = changes.get(safe_path)
         status = str((change or {}).get("status") or "unchanged")
@@ -198,13 +207,13 @@ class GitAgentVersionStore:
             result["reason"] = "文件没有未提交变化。"
             return result
         if bool(change.get("untracked")):
-            return self._untracked_workspace_file_diff(safe_path, status)
+            return untracked_workspace_file_diff(self.repository_dir, safe_path, status)
         diff = self._git(["diff", "--no-ext-diff", "--no-renames", "HEAD", "--", safe_path], cwd=self.repository_dir, check=False)
         if len(diff.encode("utf-8")) > MAX_FILE_DIFF_BYTES:
             result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"diff 超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
             return result
         result["is_text"] = True
-        result["unified_diff"] = self._redact_sensitive_diff(diff)
+        result["unified_diff"] = redact_sensitive_diff(diff)
         if not result["unified_diff"]:
             result["reason"] = "文件变化无法生成文本 diff。"
         return result
@@ -252,7 +261,7 @@ class GitAgentVersionStore:
         }
 
     def create_worktree(self, change_set_id: str, *, base_ref: str | None = None) -> GitWorktreeRef:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             base_commit = self._resolve_ref(base_ref or "HEAD")
             branch_name = f"change-set/{change_set_id}"
@@ -305,7 +314,7 @@ class GitAgentVersionStore:
                 self._git(["branch", "-D", branch_name], cwd=self.repository_dir, check=False)
 
     def commit_worktree(self, worktree_path: Path, *, message: str) -> str:
-        with self._lock:
+        with self._mutation_guard():
             self._configure_repo(worktree_path)
             self._write_info_exclude(worktree_path)
             self._git(["add", "-A", "--", "."], cwd=worktree_path)
@@ -403,8 +412,15 @@ class GitAgentVersionStore:
         )
         return result
 
-    def publish_commit(self, commit_sha: str, *, tag_name: str, message: str) -> JsonObject:
-        with self._lock:
+    def publish_commit(
+        self,
+        commit_sha: str,
+        *,
+        tag_name: str,
+        message: str,
+        validate_ref: Callable[[str], None] | None = None,
+    ) -> JsonObject:
+        with self._mutation_guard():
             self._maintenance = True
             try:
                 self._ensure_repo_ready()
@@ -417,6 +433,8 @@ class GitAgentVersionStore:
                     raise AgentGitError(f"Release tag {tag_name!r} already points to a different commit")
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
+                if validate_ref is not None:
+                    validate_ref(candidate)
                 candidate_was_published = (
                     tagged_commit and self._git(["merge-base", candidate, str(current)], cwd=self.repository_dir, check=False).strip() == candidate
                 )
@@ -494,22 +512,27 @@ class GitAgentVersionStore:
             "sha256": self._sha256_file(archive_path),
         }
 
-    def rollback_to_ref(self, ref: str, *, expected_current_ref: str | None = None) -> JsonObject:
-        with self._lock:
+    def rollback_to_ref(
+        self,
+        ref: str,
+        *,
+        expected_current_ref: str | None = None,
+        validate_ref: Callable[[str], None] | None = None,
+    ) -> JsonObject:
+        with self._mutation_guard():
             self._maintenance = True
             try:
                 self._ensure_repo_ready()
                 target = self._resolve_ref(ref)
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
+                if validate_ref is not None:
+                    validate_ref(target)
                 previous = self.current_commit_sha()
                 if expected_current_ref is not None:
                     expected = self._resolve_ref(expected_current_ref)
                     if previous != expected:
-                        raise AgentGitError(
-                            "Agent workspace HEAD changed before version maintenance "
-                            f"(expected {expected}, found {previous or 'missing'})"
-                        )
+                        raise AgentGitError(f"Agent workspace HEAD changed before version maintenance (expected {expected}, found {previous or 'missing'})")
                 self._git(["reset", "--hard", target], cwd=self.repository_dir)
                 return {
                     "previous_commit_sha": previous,
@@ -520,34 +543,48 @@ class GitAgentVersionStore:
             finally:
                 self._maintenance = False
 
+    def workspace_changes(self) -> list[JsonObject]:
+        with self._mutation_guard():
+            self._ensure_repo_ready()
+            return list(self._workspace_changes())
+
+    def reset_to_ref_for_managed_migration(self, ref: str) -> None:
+        """Recover a journaled platform migration while the runtime phase lock is exclusive."""
+
+        with self._mutation_guard():
+            self._ensure_repo_ready()
+            target = self._resolve_ref(ref)
+            self._git(["reset", "--hard", target], cwd=self.repository_dir)
+            self._git(["clean", "-fd"], cwd=self.repository_dir)
+
+    def read_text_at_ref(self, ref: str, path: str) -> str | None:
+        safe_path = self._safe_relative_path(path)
+        if not safe_path:
+            raise AgentGitError(f"Invalid workspace path: {path!r}")
+        raw = self._read_file_at_ref(self._resolve_ref(ref), safe_path)
+        if raw is None:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AgentGitError(f"Workspace file is not UTF-8: {safe_path}") from exc
+
+    @contextmanager
+    def mutation_guard(self) -> Iterator[None]:
+        """Hold this Agent repository's in-process and cross-process mutation lease."""
+
+        with self._mutation_guard():
+            yield
+
+    @contextmanager
+    def _mutation_guard(self) -> Iterator[None]:
+        with self._lock:
+            with advisory_lock(self._process_lock_path, mode="exclusive"):
+                yield
+
     def _workspace_changes(self) -> list[JsonObject]:
         raw = self._git(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], cwd=self.repository_dir)
-        changes: list[JsonObject] = []
-        for line in raw.splitlines():
-            if len(line) < 4:
-                continue
-            index_status = line[0]
-            worktree_status = line[1]
-            raw_path = line[3:]
-            if " -> " in raw_path:
-                raw_path = raw_path.split(" -> ", 1)[1]
-            safe_path = self._safe_relative_path(raw_path)
-            if not safe_path:
-                continue
-            untracked = index_status == "?" and worktree_status == "?"
-            changes.append(
-                {
-                    "path": safe_path,
-                    "status": self._workspace_change_status(index_status, worktree_status),
-                    "index_status": index_status,
-                    "worktree_status": worktree_status,
-                    "staged": index_status not in {" ", "?"},
-                    "unstaged": worktree_status not in {" ", "?"},
-                    "untracked": untracked,
-                    "discardable": True,
-                }
-            )
-        return changes
+        return parse_workspace_changes(raw, normalize_path=self._safe_relative_path)
 
     def _requested_dirty_paths(self, paths: list[str], current: dict[str, JsonObject]) -> list[str]:
         requested: list[str] = []
@@ -560,86 +597,6 @@ class GitAgentVersionStore:
             if safe_path not in requested:
                 requested.append(safe_path)
         return requested
-
-    @staticmethod
-    def _workspace_change_status(index_status: str, worktree_status: str) -> str:
-        if index_status == "?" and worktree_status == "?":
-            return "untracked"
-        if "D" in {index_status, worktree_status}:
-            return "deleted"
-        if "A" in {index_status, worktree_status}:
-            return "added"
-        if "R" in {index_status, worktree_status}:
-            return "renamed"
-        if "M" in {index_status, worktree_status}:
-            return "modified"
-        return "changed"
-
-    def _untracked_workspace_file_diff(self, safe_path: str, status: str) -> JsonObject:
-        result: JsonObject = {
-            "path": safe_path,
-            "status": status,
-            "unified_diff": "",
-            "is_text": False,
-            "truncated": False,
-            "reason": None,
-        }
-        path = self.repository_dir / safe_path
-        if path.is_dir():
-            result["reason"] = "未跟踪目录未展开内容。"
-            return result
-        try:
-            data = path.read_bytes()
-        except OSError as exc:
-            result["reason"] = f"{exc.__class__.__name__}: {exc}"
-            return result
-        if len(data) > MAX_FILE_DIFF_BYTES:
-            result.update({"status": "binary_or_too_large", "truncated": True, "reason": f"文件超过 {MAX_FILE_DIFF_BYTES} bytes，未展开内容。"})
-            return result
-        if b"\x00" in data:
-            result["reason"] = "文件包含二进制内容，未展开内容。"
-            return result
-        try:
-            text = data.decode("utf-8")
-        except UnicodeDecodeError:
-            result["reason"] = "文件不是 UTF-8 文本，未展开内容。"
-            return result
-        result["is_text"] = True
-        result["unified_diff"] = self._redact_sensitive_diff(
-            "".join(
-                difflib.unified_diff(
-                    [],
-                    text.splitlines(keepends=True),
-                    fromfile=f"HEAD:{safe_path}",
-                    tofile=f"workspace:{safe_path}",
-                    lineterm="\n",
-                )
-            )
-        )
-        return result
-
-    def _workspace_diff_error(self, path: str, status: str, reason: str) -> JsonObject:
-        return {
-            "path": path,
-            "status": status,
-            "unified_diff": "",
-            "is_text": False,
-            "truncated": False,
-            "reason": reason,
-        }
-
-    @staticmethod
-    def _redact_sensitive_diff(diff: str) -> str:
-        lines: list[str] = []
-        for line in diff.splitlines(keepends=True):
-            lowered = line.lower()
-            if line.startswith(("+++", "---", "@@")) or not any(part in lowered for part in SENSITIVE_KEY_PARTS):
-                lines.append(line)
-                continue
-            marker = line[:1] if line[:1] in {"+", "-", " "} else ""
-            newline = "\n" if line.endswith("\n") else ""
-            lines.append(f"{marker}[redacted sensitive line]{newline}")
-        return "".join(lines)
 
     def _ensure_repo_ready(self) -> None:
         self.ensure_bootstrap()
@@ -671,6 +628,23 @@ class GitAgentVersionStore:
 
     def _ensure_safe_directory(self, cwd: Path) -> None:
         safe_path = str(cwd.resolve())
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(cwd),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return
+        diagnostic = f"{probe.stdout}\n{probe.stderr}".lower()
+        if "dubious ownership" not in diagnostic and "safe.directory" not in diagnostic:
+            # This helper only owns safe.directory recovery.  A missing or otherwise
+            # invalid repository is reported by the following repository-local Git
+            # command with its normal, more precise error; it must not grow the global
+            # safe.directory list.
+            return
         existing = self._git(["config", "--global", "--get-all", "safe.directory"], cwd=cwd, check=False)
         if safe_path in existing.splitlines() or "*" in existing.splitlines():
             return

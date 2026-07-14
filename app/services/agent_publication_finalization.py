@@ -16,10 +16,12 @@ from app.services.agent_change_set_worktree_lifecycle import (
 from app.services.agent_publication import (
     PublicationFinalizationLost,
     PublicationIntent,
+    PublicationSourceConflict,
     PublicationTagConflict,
     finalize_intent_source,
     release_matches_intent,
     release_payload,
+    validate_source_claim,
     validate_tag_claim,
 )
 
@@ -119,7 +121,10 @@ def _commit_finalization(
     with service.feedback_store.Session.begin() as db:
         source_conflict: JsonObject | None = None
         try:
+            validate_source_claim(db, intent)
             finalize_intent_source(db, intent, completed_at=now)
+        except PublicationSourceConflict as exc:
+            raise _error(409, str(exc)) from exc
         except ConflictError as exc:
             # Git publish/tag/archive 已是不可逆外部副作用。来源事项 CAS 失败时不能让 intent
             # 永久卡在 publishing，也不能覆盖并发产生的新内容；完成发布元数据并显式保留冲突。

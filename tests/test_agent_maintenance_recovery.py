@@ -33,6 +33,8 @@ def _governance(tmp_path):
     return AgentGovernanceService(
         feedback_store=feedback_store,
         agent_version_store=git_store,
+        runtime_mode=settings.runtime_volume_mode,
+        runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
     ), git_store
 
 
@@ -94,9 +96,9 @@ def test_restore_expected_head_cas_rejects_intervening_git_change(monkeypatch, t
     intervening = str(first["previous_commit_sha"])
     original = release_module._apply_or_reconcile_git
 
-    def change_head_before_cas(store, claim, *, current_head):
+    def change_head_before_cas(service, store, claim, *, current_head):
         store.rollback_to_ref(intervening)
-        return original(store, claim, current_head=current_head)
+        return original(service, store, claim, current_head=current_head)
 
     monkeypatch.setattr(release_module, "_apply_or_reconcile_git", change_head_before_cas)
     with pytest.raises(AgentGovernanceError, match="HEAD changed"):

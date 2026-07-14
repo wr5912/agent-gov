@@ -4,6 +4,7 @@ import json
 import logging
 
 import pytest
+from app.runtime.runtime_db import FeedbackCaseSourceModel
 from app.runtime.runtime_db_migrations_0036 import (
     migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
 )
@@ -99,6 +100,7 @@ def _legacy_engine(tmp_path):
             """
         )
         connection.exec_driver_sql("CREATE TABLE eval_runs (eval_run_id VARCHAR(128) PRIMARY KEY)")
+        FeedbackCaseSourceModel.__table__.create(connection)
     return engine
 
 
@@ -297,7 +299,7 @@ def test_0036_rejects_unassigned_source_owner_without_partial_claim_writes(tmp_p
         persisted = connection.exec_driver_sql(
             "SELECT agent_id, source_ids_json, event_ids_json FROM feedback_cases WHERE feedback_case_id = 'case-unassigned'"
         ).one()
-    assert claim_table is None
+    assert claim_table == ("feedback_case_sources",)
     assert persisted == ("main-agent", '["event-unassigned"]', '["event-unassigned"]')
 
 
@@ -321,7 +323,7 @@ def test_0036_rejects_case_with_multiple_source_owners(tmp_path) -> None:
 
     with engine.connect() as connection:
         claim_table = connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feedback_case_sources'").fetchone()
-    assert claim_table is None
+    assert claim_table == ("feedback_case_sources",)
 
 
 @pytest.mark.parametrize("owner_state", ["missing", "tombstoned"])
@@ -347,7 +349,7 @@ def test_0036_rejects_non_public_registered_source_owner(tmp_path, owner_state: 
 
     with engine.connect() as connection:
         claim_table = connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feedback_case_sources'").fetchone()
-    assert claim_table is None
+    assert claim_table == ("feedback_case_sources",)
 
 
 def test_0036_normalizes_typed_arrays_to_runtime_claim_order(tmp_path) -> None:
@@ -422,7 +424,7 @@ def test_0036_rejects_duplicate_loser_with_existing_evidence_and_rolls_back(tmp_
     with engine.connect() as connection:
         claim_table = connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feedback_case_sources'").fetchone()
         cases = connection.exec_driver_sql("SELECT feedback_case_id, agent_id, event_ids_json FROM feedback_cases ORDER BY feedback_case_id").all()
-    assert claim_table is None
+    assert claim_table == ("feedback_case_sources",)
     assert cases == [
         ("case-materialized-loser", "agent-a", '["event-shared"]'),
         ("case-winner", "main-agent", '["event-shared"]'),
@@ -517,7 +519,7 @@ def test_0036_rejects_pending_event_claim_group_split(tmp_path) -> None:
 
     with engine.connect() as connection:
         claim_table = connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feedback_case_sources'").fetchone()
-    assert claim_table is None
+    assert claim_table == ("feedback_case_sources",)
 
 
 def test_0036_ddl_rolls_back_as_one_sqlite_transaction(tmp_path) -> None:

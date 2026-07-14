@@ -49,6 +49,7 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
     live_status, live, live_error = _get_json(f"{api_base.rstrip('/')}/health/live", timeout=3)
     if live_error or live_status is None or not 200 <= live_status < 300 or not live or live.get("status") != "ok":
         print(f"API: unhealthy status={live_status or 'unreachable'} error={live_error or 'invalid liveness response'}")
+        print("根因: API liveness 不可达；当前不能归因于外部模型 provider，请检查 API 容器状态与 health log。")
         return 1
     print("API: healthy")
 
@@ -73,6 +74,16 @@ def diagnose(*, api_base: str, wait_seconds: float, require_ready: bool) -> int:
         value = readiness.get(key)
         if value is not None:
             print(f"{key}={value}")
+    if provider_status == "ready":
+        print("结论: API 容器与外部模型 provider 均已就绪。")
+    elif provider_status == "checking":
+        print("结论: API 容器已存活；外部模型 provider 就绪探测仍在进行，不能把该探测当作镜像或容器启动失败。")
+    else:
+        code = str(readiness.get("error_code") or "UNKNOWN_PROVIDER_READINESS_ERROR")
+        reason = str(readiness.get("reason") or "unknown")
+        print(
+            f"根因: API 容器已存活；外部模型 provider 就绪探测失败（code={code}, reason={reason}）。这不是镜像启动失败，Compose dependency 报错只是次级症状。"
+        )
     return 0 if provider_status == "ready" or not require_ready else 2
 
 

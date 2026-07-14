@@ -45,6 +45,13 @@ def test_agent_change_set_state_machine_allows_current_publish_lifecycle():
         validate_transition("agent_change_set", "regression_passed", "published")
 
 
+def test_test_dataset_uses_central_lifecycle_state_machine():
+    validate_transition("test_dataset", "draft", "active")
+    validate_transition("test_dataset", "active", "evaluating")
+    with pytest.raises(StateTransitionError, match="active -> draft"):
+        validate_transition("test_dataset", "active", "draft")
+
+
 def test_improvement_stage_state_machine_allows_four_stage_flow_with_refinement_edges():
     validate_transition("improvement_stage", "feedback_intake", "triage")
     validate_transition("improvement_stage", "triage", "attribution")

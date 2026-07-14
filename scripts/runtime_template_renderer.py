@@ -103,6 +103,10 @@ def render_template_file(text: str, *, rel_path: Path, context: RuntimeTemplateR
     if rel_path.name in _MANAGED_JSON_FILENAMES:
         loaded = json.loads(text)
         rendered = _render_json_value(loaded, rel_path=rel_path, context=context)
+        if rel_path.name == "settings.json" and isinstance(rendered, dict):
+            sandbox = rendered.get("sandbox")
+            if isinstance(sandbox, dict):
+                sandbox["enableWeakerNestedSandbox"] = context.mode == "container"
         return json.dumps(rendered, ensure_ascii=False, indent=2) + "\n"
     return _replace_template_values(text, context)
 

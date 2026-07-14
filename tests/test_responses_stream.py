@@ -554,8 +554,7 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
 
     async def fake_query(*, prompt, options, transport=None):
         calls.append(getattr(options, "resume", None))
-        async for _ in prompt:
-            pass
+        await anext(prompt)
         if len(calls) == 1:
             raise RuntimeError("No conversation found with session ID: stale-sdk")
         yield AssistantMessage(content=[TextBlock(text="responses stream after retry")], model="<synthetic>", session_id="new-sdk")
@@ -747,8 +746,7 @@ def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path)
     # error/无 ResultMessage 路径：finally 兜底落库一次，仍发 error+done。
 
     async def fake_query(*, prompt, options, transport=None):
-        async for _ in prompt:
-            pass
+        await anext(prompt)
         raise RuntimeError("boom before result")
         yield  # pragma: no cover
 

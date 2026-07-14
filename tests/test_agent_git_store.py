@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
@@ -18,6 +19,14 @@ def test_git_store_marks_repository_as_safe_before_local_config(tmp_path, monkey
         return ""
 
     monkeypatch.setattr(store, "_git", fake_git)
+    monkeypatch.setattr(
+        "app.runtime.agent_git_store.subprocess.run",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            returncode=128,
+            stdout="",
+            stderr="fatal: detected dubious ownership; add safe.directory",
+        ),
+    )
 
     store._configure_repo(repo)
 

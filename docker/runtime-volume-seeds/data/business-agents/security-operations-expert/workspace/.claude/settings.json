@@ -22,10 +22,18 @@
       "mcp__sec-ops__*"
     ],
     "ask": [
-      "mcp__sec-ops__soc_api__execute"
+      "mcp__sec-ops__soc_api__create",
+      "mcp__sec-ops__soc_api__manual"
     ],
     "deny": [
       "AskUserQuestion",
+      "mcp__sec-ops__soc_api__execute",
+      "mcp__sec-ops__soc_api__create_1",
+      "mcp__sec-ops__soc_api__update*",
+      "mcp__sec-ops__soc_api__delete*",
+      "mcp__sec-ops__soc_api__upload*",
+      "mcp__sec-ops__soc_api__cancel*",
+      "mcp__sec-ops__soc_api__rollback*",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./secrets/**)",
@@ -92,7 +100,8 @@
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
-    "autoAllowBashIfSandboxed": false,
+    "autoAllowBashIfSandboxed": true,
+    "enableWeakerNestedSandbox": false,
     "filesystem": {
       "allowWrite": [
         "/data/outputs/security-operations-expert",

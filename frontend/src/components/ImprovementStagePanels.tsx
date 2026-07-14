@@ -9,7 +9,7 @@ import type {
   OptimizationPlan,
   RegressionAssessment,
 } from "../api/improvements";
-import type { ImprovementStageView, VisibleImprovementStageKey } from "../improvementStage";
+import type { ImprovementStageView } from "../improvementStage";
 import {
   isPendingOperation,
   type ImprovementOperationError,
@@ -29,6 +29,7 @@ import { SourceFeedbackList } from "./ImprovementSourceFeedbackList";
 import { StageCard } from "./ImprovementStageCard";
 import { TestDatasetLifecycleControls } from "./TestDatasetLifecycleControls";
 import { Dl, GenerationError, GenerationStatus, Lines } from "./ImprovementStagePrimitives";
+import { ImprovementCrossStageGenerationStatus } from "./ImprovementCrossStageGenerationStatus";
 interface AttrDraft {
   summary: string;
   boundary: string;
@@ -38,29 +39,6 @@ interface AttrDraft {
 // 全部经统一 StageDetailDrawer（onOpenDetail）或对应管理抽屉打开，内容与卡片一一对应，无死按钮。
 const VIEW = "查看详情";
 const MANAGE = "管理";
-const OPERATION_TARGET_STAGE: Record<
-  ImprovementPendingOperation["kind"],
-  { stage: VisibleImprovementStageKey; testId: string }
-> = {
-  generate_attribution: { stage: "attribution_analysis", testId: "attribution-generation-status" },
-  generate_optimization_plan: { stage: "optimization_execution", testId: "optimization-generation-status" },
-  apply_execution: { stage: "optimization_execution", testId: "execution-generation-status" },
-  generate_regression: { stage: "test_release", testId: "regression-generation-status" },
-};
-
-function CrossStageGenerationStatus({
-  operation,
-  visibleStage,
-}: {
-  operation: ImprovementPendingOperation | null | undefined;
-  visibleStage: VisibleImprovementStageKey;
-}) {
-  if (!operation) return null;
-  const target = OPERATION_TARGET_STAGE[operation.kind];
-  if (target.stage === visibleStage) return null;
-  return <GenerationStatus operation={operation} testId={target.testId} />;
-}
-
 export function ImprovementStagePanels({
   item,
   clientConfig,
@@ -164,7 +142,7 @@ export function ImprovementStagePanels({
         <span>阶段工作面板 · {stageView.label}</span>
         <button className="iw-secondary-button" type="button" data-testid="open-context-drawer" onClick={onOpenContext}>获取上下文</button>
       </div>
-      {!readOnly ? <CrossStageGenerationStatus operation={pendingOperation} visibleStage={stageView.visibleKey} /> : null}
+      {!readOnly ? <ImprovementCrossStageGenerationStatus operation={pendingOperation} visibleStage={stageView.visibleKey} /> : null}
       {stageView.visibleKey === "feedback_sorting" ? (
         <FeedbackSortingPanels
           item={item}
@@ -363,7 +341,7 @@ function AttributionPanels({
   onAttrDraftChange: (value: AttrDraft) => void;
   onOpenDetail: (detail: StageDetail) => void;
 }) {
-  const evidence = attribution?.evidence?.length ? attribution.evidence : ["来源反馈一致", "关联 Run 可复现", "Trace 定位到问题节点"];
+  const evidence = attribution?.evidence ?? [];
   const traceRunId = feedbacks.find((f) => f.run_id)?.run_id || "";
   const attributionTraceUrl = concreteLangfuseTraceUrl({
     langfuseBaseUrl: langfuseUrl,
@@ -413,15 +391,24 @@ function AttributionPanels({
           </>
         )}
       </StageCard>
-      <StageCard letter="B" title="证据链" actionLabel={VIEW} testId="stage-panel-attribution-evidence"
+      <StageCard letter="B" title="证据链" actionLabel={editingAttribution ? undefined : VIEW} testId="stage-panel-attribution-evidence"
         onAction={() => onOpenDetail({
           key: "attribution-evidence", title: "证据链详情", size: "medium",
-          content: <Lines items={[...evidence, "时区差异可能放大误判，需要验证"]} empty="暂无证据。" />,
+          content: <Lines items={evidence} empty="暂无证据。" />,
         })}>
-        <ul className="iw-check-list" data-testid="attribution-evidence">
-          {evidence.map((entry) => <li className="ok" key={entry}>{entry}</li>)}
-          <li className="warn">时区差异可能放大误判，需要验证</li>
-        </ul>
+        {editingAttribution ? (
+          <textarea
+            className="iw-input iw-textarea"
+            data-testid="attr-edit-evidence"
+            value={attrDraft.evidence}
+            onChange={(event) => onAttrDraftChange({ ...attrDraft, evidence: event.target.value })}
+            placeholder="证据链（每行一条）"
+          />
+        ) : (
+          <div data-testid="attribution-evidence">
+            <Lines items={evidence} empty="暂无证据。" />
+          </div>
+        )}
       </StageCard>
       <StageCard letter="C" title="影响范围" actionLabel={VIEW} testId="stage-panel-impact-scope"
         onAction={() => onOpenDetail({

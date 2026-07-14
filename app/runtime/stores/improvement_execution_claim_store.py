@@ -237,6 +237,22 @@ class ImprovementExecutionClaimStore:
                 .values(claim_expires_at=now, updated_at=now)
             )
 
+    def list_expired_claims(self, *, now: str, limit: int = 100) -> list[ExecutionClaim]:
+        with self._session_factory() as db:
+            rows = (
+                db.query(ExecutionRecordModel)
+                .filter(
+                    ExecutionRecordModel.status == "applying",
+                    ExecutionRecordModel.claim_token != "",
+                    ExecutionRecordModel.claim_expires_at != "",
+                    ExecutionRecordModel.claim_expires_at <= now,
+                )
+                .order_by(ExecutionRecordModel.claim_expires_at, ExecutionRecordModel.execution_id)
+                .limit(max(1, limit))
+                .all()
+            )
+            return [_claim_from_row(row) for row in rows]
+
     @staticmethod
     def _new_claim(
         improvement_id: str,

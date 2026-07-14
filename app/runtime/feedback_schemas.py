@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, Optional, TypeVar, cast
+from typing import Literal, Optional, cast
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -19,7 +19,6 @@ from .normalizers.feedback_output_records import (
     NormalizedResponsibilityBoundary,
 )
 
-TOutputModel = TypeVar("TOutputModel", bound=BaseModel)
 FormatterAgentOutputNormalizer = Callable[[JsonObject], JsonObject]
 
 def _normalize_formatter_agent_output(value: object, normalizer: FormatterAgentOutputNormalizer) -> object:
@@ -176,30 +175,6 @@ def _validated_payload(model: type[NormalizedOutputRecord], normalized: JsonObje
     return output_model_payload(model.model_validate(normalized))
 
 
-def _coerce_output_model(
-    value: BaseModel | JsonObject,
-    *,
-    model: type[TOutputModel],
-    normalizer: object,
-) -> tuple[TOutputModel | None, str | None]:
-    if isinstance(value, model):
-        return value, None
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
-    try:
-        normalized = normalizer(payload)  # type: ignore[operator]
-        return model.model_validate(normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
-def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_attribution_output(payload)
-    try:
-        return _validated_payload(AttributionOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
 class ExecutionOperation(NormalizedExecutionOperation):
     operation: Literal["append_text", "replace_file", "create_file", "noop"]
     path: str
@@ -292,8 +267,3 @@ class RegressionAssessmentOutput(NormalizedOutputRecord):
         if not self.eval_cases and not self.no_action_reason:
             raise ValueError("regression assessment must include eval_cases or no_action_reason")
         return self
-def coerce_attribution_output_model(value: BaseModel | JsonObject) -> tuple[AttributionOutput | None, str | None]:
-    return _coerce_output_model(value, model=AttributionOutput, normalizer=normalize_attribution_output)
-
-def coerce_execution_plan_output_model(value: BaseModel | JsonObject) -> tuple[ExecutionPlanOutput | None, str | None]:
-    return _coerce_output_model(value, model=ExecutionPlanOutput, normalizer=normalize_execution_plan_output)

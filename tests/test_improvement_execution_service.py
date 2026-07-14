@@ -5,18 +5,21 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from app.runtime.agent_git_store import AgentGitError
-from app.runtime.errors import BusinessRuleViolation, ConflictError, RuntimeUnavailableError
-from app.runtime.improvement_db import ImprovementItemModel, OptimizationPlanModel
+from app.runtime.errors import BusinessRuleViolation, ConflictError, DataIntegrityError, RuntimeUnavailableError
+from app.runtime.improvement_db import ExecutionRecordModel, ImprovementItemModel, OptimizationPlanModel
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.runtime.stores.improvement_store import ImprovementStore
 from app.services.improvement_execution_service import ImprovementExecutionService
 from app.services.workspace_execution_applier import WorkspaceExecutionApplier
+
+from feedback_store_test_utils import _seed_execution_record
 
 
 def _content(tmp_path: Path) -> ImprovementContentStore:
@@ -63,6 +66,9 @@ class _FakeStore:
 
     def current_commit_sha(self):
         return "base-sha"
+
+    def mutation_guard(self):
+        return nullcontext()
 
     def version_summary(self, sha, *, reason, note=None):
         return {"agent_version_id": f"ver-{sha}"}
@@ -156,7 +162,16 @@ class _FakeExecApp:
         self.raises = raises
         self.applied: list[list] = []
 
-    def apply_execution_operations(self, operations, *, workspace_dir=None, target_policy=None, content_guard=None, allowed_targets=None):
+    def apply_execution_operations(
+        self,
+        operations,
+        *,
+        workspace_dir=None,
+        target_policy=None,
+        content_guard=None,
+        workspace_guard=None,
+        allowed_targets=None,
+    ):
         if self.raises:
             raise RuntimeError("apply blew up")
         self.applied.append(operations)
@@ -435,7 +450,8 @@ def test_unbound_heuristic_execution_does_not_block_reapply(tmp_path):
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
     _confirm_plan(content)
-    content.upsert_execution(
+    _seed_execution_record(
+        content,
         "imp-1",
         summary="已按优化方案应用变更并生成新版本（初步记录，待执行引擎对接）。",
         changes_applied=["prompt：旧占位"],
@@ -466,7 +482,7 @@ def test_existing_unapplied_change_set_resumes_instead_of_false_idempotence(tmp_
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
     _confirm_plan(content)
-    content.upsert_execution("imp-1", summary="已绑定候选变更集", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-1")
+    _seed_execution_record(content, "imp-1", summary="已绑定候选变更集", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-1")
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert calls["n"] == 1 and rec.change_set_id == "agc-1" and rec.applied_agent_version_id
 
@@ -494,7 +510,7 @@ def test_reapply_when_change_set_invalidated(tmp_path):
 
     svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
     _confirm_plan(content)
-    content.upsert_execution("imp-1", summary="旧绑定已作废", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-old")
+    _seed_execution_record(content, "imp-1", summary="旧绑定已作废", changes_applied=[], agent_version="", generated_by="governor", change_set_id="agc-old")
     rec = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert calls["n"] == 1 and rec.generated_by == "governor"
     assert ("agc-old", False) in gov.store.cleanup_modes
@@ -738,7 +754,7 @@ def test_source_revision_fences_finalize_and_same_change_set_takeover(tmp_path):
     assert _stage(tmp_path) == "optimization"
 
 
-def test_candidate_reconciles_after_execution_finalize_failure(tmp_path, monkeypatch):
+def test_candidate_reconciles_in_same_request_after_execution_finalize_failure(tmp_path, monkeypatch):
     gov = _FakeGovernance(tmp_path)
     calls = {"n": 0}
 
@@ -762,12 +778,6 @@ def test_candidate_reconciles_after_execution_finalize_failure(tmp_path, monkeyp
         return original_finalize(*args, **kwargs)
 
     monkeypatch.setattr(svc._claims, "finalize_execution_claim", fail_once)
-    with pytest.raises(RuntimeError, match="finalize failed"):
-        asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    interrupted = content.get_execution("imp-1")
-    assert interrupted is not None and interrupted.status == "applying" and not interrupted.applied_agent_version_id
-    assert _stage(tmp_path) == "optimization"
-
     recovered = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert recovered.applied_agent_version_id == "ver-cand-sha"
     assert calls["n"] == 1 and len(gov.created) == 1 and len(gov.committed) == 1
@@ -775,7 +785,7 @@ def test_candidate_reconciles_after_execution_finalize_failure(tmp_path, monkeyp
     assert len(svc._improvements.links) == 1
 
 
-def test_unmarked_worktree_commit_is_reconciled_without_second_candidate(tmp_path, monkeypatch):
+def test_unmarked_worktree_commit_is_reconciled_in_same_request(tmp_path, monkeypatch):
     gov = _FakeGovernance(tmp_path)
     calls = {"n": 0}
 
@@ -799,16 +809,80 @@ def test_unmarked_worktree_commit_is_reconciled_without_second_candidate(tmp_pat
         return original_mark(*args, **kwargs)
 
     monkeypatch.setattr(gov, "mark_candidate_committed", fail_once)
-    with pytest.raises(RuntimeError, match="mark failed"):
-        asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert gov.store.head == "cand-sha" and not gov.committed
-
     recovered = asyncio.run(svc.generate_and_apply_execution("imp-1"))
     assert recovered.applied_agent_version_id == "ver-cand-sha"
     assert calls["n"] == 1 and len(gov.created) == 1 and gov.committed == gov.created
 
 
-def test_missing_link_is_reconciled_after_finalize(tmp_path):
+def test_deterministic_candidate_reconciliation_failure_releases_applying_claim(tmp_path, monkeypatch):
+    gov = _FakeGovernance(tmp_path)
+
+    async def ready(**_kwargs):
+        return {
+            "status": "ready",
+            "summary": "candidate exists but finalize is corrupt",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
+    _confirm_plan(content)
+
+    def always_fail(*_args, **_kwargs):
+        raise DataIntegrityError("deterministic finalize failure")
+
+    monkeypatch.setattr(svc._claims, "finalize_execution_claim", always_fail)
+    with pytest.raises(DataIntegrityError, match="deterministic finalize failure"):
+        asyncio.run(svc.generate_and_apply_execution("imp-1"))
+
+    released = content.get_execution("imp-1")
+    assert released is not None
+    assert released.status == "draft" and not released.claim_token and released.change_set_id
+    assert "候选版本对账失败" in released.summary
+    assert _stage(tmp_path) == "optimization"
+
+
+def test_background_reconciler_recovers_expired_candidate_after_process_crash(tmp_path, monkeypatch):
+    gov = _FakeGovernance(tmp_path)
+
+    async def ready(**_kwargs):
+        return {
+            "status": "ready",
+            "summary": "candidate committed before process crash",
+            "operations": [{"operation": "append_text", "path": "CLAUDE.md", "append_text": "x", "expected_sha256": "s"}],
+        }
+
+    svc, content = _service(tmp_path, gov=gov, run_profile_json=ready)
+    _confirm_plan(content)
+    original_finalize = svc._claims.finalize_execution_claim
+    original_handler = svc._handle_execution_failure
+
+    def fail_finalize(*_args, **_kwargs):
+        raise RuntimeError("process crashed before execution finalize")
+
+    def simulate_process_exit(_claim, *, store, error):
+        raise error
+
+    monkeypatch.setattr(svc._claims, "finalize_execution_claim", fail_finalize)
+    monkeypatch.setattr(svc, "_handle_execution_failure", simulate_process_exit)
+    with pytest.raises(RuntimeError, match="process crashed"):
+        asyncio.run(svc.generate_and_apply_execution("imp-1"))
+
+    factory = make_session_factory(tmp_path / "runtime.sqlite3")
+    with factory.begin() as db:
+        row = db.query(ExecutionRecordModel).filter_by(improvement_id="imp-1").one()
+        row.claim_expires_at = "2000-01-01T00:00:00+00:00"
+
+    monkeypatch.setattr(svc._claims, "finalize_execution_claim", original_finalize)
+    monkeypatch.setattr(svc, "_handle_execution_failure", original_handler)
+    summary = svc.reconcile_expired_executions()
+
+    recovered = content.get_execution("imp-1")
+    assert summary == {"recovered": 1, "released": 0, "skipped": 0, "failed": 0}
+    assert recovered is not None and recovered.applied_agent_version_id == "ver-cand-sha"
+    assert recovered.status == "draft" and not recovered.claim_token
+
+
+def test_missing_link_is_reconciled_in_same_request_after_finalize(tmp_path):
     gov = _FakeGovernance(tmp_path)
     improvements = _FakeImprovements()
     improvements.fail_link_once = True
@@ -831,12 +905,8 @@ def test_missing_link_is_reconciled_after_finalize(tmp_path):
         run_profile_json=ready,
     )
     _confirm_plan(content)
-    with pytest.raises(RuntimeError, match="link insert failed"):
-        asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    finalized = content.get_execution("imp-1")
-    assert finalized is not None and finalized.applied_agent_version_id and _stage(tmp_path) == "execution"
-    assert not improvements.links
-
     recovered = asyncio.run(svc.generate_and_apply_execution("imp-1"))
-    assert recovered.execution_id == finalized.execution_id
+    assert recovered.applied_agent_version_id and _stage(tmp_path) == "execution"
+    repeated = asyncio.run(svc.generate_and_apply_execution("imp-1"))
+    assert repeated.execution_id == recovered.execution_id
     assert calls["n"] == 1 and len(gov.created) == 1 and len(improvements.links) == 1

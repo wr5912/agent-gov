@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -8,6 +9,8 @@ from pathlib import Path
 
 import pytest
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
+from app.runtime.agent_paths import business_agent_layout
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.errors import ConflictError, DataIntegrityError, FeedbackStoreError
 from app.runtime.improvement_db import AttributionModel, ExecutionRecordModel, ImprovementItemModel, OptimizationPlanModel
 from app.runtime.records.eval_run_records import EvalRunProjectionRecord
@@ -15,6 +18,7 @@ from app.runtime.response_schemas.agent_governance_response_schemas import Agent
 from app.runtime.runtime_db import (
     AgentChangeSetModel,
     AgentReleaseModel,
+    AgentReleaseSourceClaimModel,
     AgentReleaseTagClaimModel,
     EvalRunItemModel,
     EvalRunModel,
@@ -44,7 +48,15 @@ def _governance(tmp_path):
         workspace_dir=settings.main_workspace_dir,
         agent_version_provider=lambda _aid=None: agent_store.current_version_id(),
     )
-    return AgentGovernanceService(feedback_store=store, agent_version_store=agent_store), agent_store
+    return (
+        AgentGovernanceService(
+            feedback_store=store,
+            agent_version_store=agent_store,
+            runtime_mode=settings.runtime_volume_mode,
+            runtime_env={"MCP_SERVER_URL": "http://localhost:58001/mcp"},
+        ),
+        agent_store,
+    )
 
 
 def _candidate_change_set(
@@ -54,6 +66,9 @@ def _candidate_change_set(
     content: str = "# Test Agent\n\n发布候选变更。\n",
     agent_id: str | None = None,
 ):
+    if agent_id and agent_id != "main-agent":
+        workspace = business_agent_layout(governance.feedback_store.data_dir, agent_id).workspace
+        seed_business_agent_workspace(workspace, agent_id=agent_id, name=agent_id)
     change_set = governance.create_change_set(title="候选发布测试", operator="tester", agent_id=agent_id)
     worktree_path = Path(str(change_set["worktree_path"]))
     worktree_path.joinpath("CLAUDE.md").write_text(content, encoding="utf-8")
@@ -288,6 +303,28 @@ def test_change_set_and_release_carry_agent_id_and_filter(tmp_path):
     assert governance.list_releases(agent_id="biz-other") == []
 
 
+def test_publish_rejects_candidate_that_drifts_managed_mcp_server(tmp_path):
+    governance, store = _governance(tmp_path)
+    original_head = store.current_commit_sha()
+    change_set = governance.create_change_set(title="invalid managed MCP", operator="tester")
+    worktree = Path(str(change_set["worktree_path"]))
+    mcp_path = worktree / ".mcp.json"
+    mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
+    mcp["mcpServers"]["sec-ops-data"]["url"] = "http://unapproved.example/mcp"
+    mcp_path.write_text(json.dumps(mcp), encoding="utf-8")
+    candidate = store.commit_worktree(worktree, message="drift managed MCP")
+    committed = governance.mark_candidate_committed(
+        str(change_set["change_set_id"]),
+        candidate_commit_sha=candidate,
+        execution_job_id="job-invalid-policy",
+    )
+
+    with pytest.raises(AgentGovernanceError, match="Managed Agent policy rejected"):
+        governance.publish_change_set(str(committed["change_set_id"]), operator="tester")
+
+    assert store.current_commit_sha() == original_head
+
+
 def test_business_agent_version_chain_is_isolated_from_main(tmp_path):
     """B3.2/B3.3（AGV-017 per-agent 版本隔离）：业务 Agent 的 change set/release 落在自己独立的版本 store，与 main 互不混淆。"""
     governance, main_store = _governance(tmp_path)
@@ -518,6 +555,53 @@ def test_publish_finishes_metadata_without_overwriting_newer_source_after_git_si
     assert release["source_finalization_conflict"]["detail"] == ("Source improvement changed during publication finalization")
     assert projected["source_finalization_conflict"] == release["source_finalization_conflict"]
     assert agent_store.current_commit_sha() == change_set["candidate_commit_sha"]
+
+
+def test_source_claim_blocks_second_publication_before_git_side_effect(tmp_path, monkeypatch):
+    import app.services.agent_publication_finalization as finalization_module
+
+    governance, agent_store = _governance(tmp_path)
+    first = _candidate_change_set(governance, agent_store, content="# first source publication\n")
+    first_run = _persist_regression_run(governance, first, intent_id="evr-source-claim-first")
+    governance.complete_regression(
+        str(first["change_set_id"]),
+        eval_run_id=str(first_run["eval_run_id"]),
+        operator="tester",
+    )
+
+    def source_changed(*_args, **_kwargs):
+        raise ConflictError("Source improvement changed during publication finalization")
+
+    monkeypatch.setattr(finalization_module, "finalize_intent_source", source_changed)
+    first_release = governance.publish_change_set(str(first["change_set_id"]), operator="tester")
+    published_head = agent_store.current_commit_sha()
+    source_improvement_id = str(first_release["source_improvement_id"])
+
+    second = _candidate_change_set(governance, agent_store, content="# second source publication\n")
+    with governance.feedback_store.Session.begin() as db:
+        first_row = db.get(AgentChangeSetModel, str(first["change_set_id"]))
+        second_row = db.get(AgentChangeSetModel, str(second["change_set_id"]))
+        execution = db.query(ExecutionRecordModel).filter_by(improvement_id=source_improvement_id).one()
+        assert first_row is not None and second_row is not None
+        second_payload = dict(second_row.payload_json or {})
+        second_payload.update(
+            {
+                "source_improvement_id": source_improvement_id,
+                "source_attribution_id": (first_row.payload_json or {})["source_attribution_id"],
+            }
+        )
+        second_row.payload_json = second_payload
+        execution.change_set_id = str(second["change_set_id"])
+        execution.applied_agent_version_id = str(second["candidate_commit_sha"])
+
+    with pytest.raises(AgentGovernanceError, match="持有发布预留，不能重复发布"):
+        governance.publish_change_set(str(second["change_set_id"]), operator="tester")
+
+    assert agent_store.current_commit_sha() == published_head
+    assert governance.get_change_set(str(second["change_set_id"]))["status"] == "candidate_committed"
+    with governance.feedback_store.Session() as db:
+        claim = db.get(AgentReleaseSourceClaimModel, ("main-agent", source_improvement_id))
+        assert claim is not None and claim.change_set_id == first["change_set_id"]
 
 
 def test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_with_force(tmp_path, monkeypatch):
@@ -766,10 +850,10 @@ def test_concurrent_publish_reserves_one_intent_and_one_audit_event(tmp_path, mo
     allow_publish = threading.Event()
     real_publish_commit = agent_store.publish_commit
 
-    def synchronized_publish(commit_sha: str, *, tag_name: str, message: str):
+    def synchronized_publish(commit_sha: str, *, tag_name: str, message: str, validate_ref=None):
         publish_entered.set()
         assert allow_publish.wait(timeout=10)
-        return real_publish_commit(commit_sha, tag_name=tag_name, message=message)
+        return real_publish_commit(commit_sha, tag_name=tag_name, message=message, validate_ref=validate_ref)
 
     monkeypatch.setattr(agent_store, "publish_commit", synchronized_publish)
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -796,10 +880,10 @@ def test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation(
     allow_publish = threading.Event()
     real_publish_commit = agent_store.publish_commit
 
-    def synchronized_publish(commit_sha: str, *, tag_name: str, message: str):
+    def synchronized_publish(commit_sha: str, *, tag_name: str, message: str, validate_ref=None):
         publish_entered.set()
         assert allow_publish.wait(timeout=10)
-        return real_publish_commit(commit_sha, tag_name=tag_name, message=message)
+        return real_publish_commit(commit_sha, tag_name=tag_name, message=message, validate_ref=validate_ref)
 
     monkeypatch.setattr(agent_store, "publish_commit", synchronized_publish)
     with ThreadPoolExecutor(max_workers=2) as executor:

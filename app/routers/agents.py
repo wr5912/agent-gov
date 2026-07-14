@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Callable
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from scripts.bootstrap_runtime_volume import load_runtime_env
+from scripts.runtime_template_renderer import build_render_context
 
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
+    InvalidDeclaredBusinessAgentSeed,
+    WorkspaceSafetyError,
     list_business_agent_templates,
+    prepare_business_agent_workspace,
+    prepare_declared_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
 from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
@@ -53,7 +62,7 @@ def _resolve_template_id(raw: str | None) -> str:
 
 
 def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, store: AgentRegistryStore) -> AgentSummaryResponse:
-    """注册业务 Agent 并从所选模板幂等播种其 workspace。"""
+    """Stage, validate, version, atomically install, then register a business Agent."""
     template_id = _resolve_template_id(req.template_id)
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
@@ -61,14 +70,46 @@ def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, sto
         workspace_dir = business_agent_layout(settings.data_dir, agent_id).workspace
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    record = provision_business_agent(
-        store=store,
-        agent_id=agent_id,
-        name=req.name,
-        workspace_dir=workspace_dir,
-        template_id=template_id,
-    )
-    return _summary(record)
+    env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
+    runtime_root = Path("/") if settings.data_dir.resolve() == Path("/data") else settings.data_dir.resolve().parent
+    try:
+        render_context = build_render_context(mode=settings.runtime_volume_mode, env=env, runtime_root=runtime_root)
+        plan = (
+            prepare_declared_business_agent_workspace(
+                agent_id=agent_id,
+                name=req.name,
+                runtime_volume_mode=settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            )
+            if req.template_id is None
+            else None
+        )
+        if plan is None:
+            plan = prepare_business_agent_workspace(
+                agent_id=agent_id,
+                name=req.name,
+                template_id=template_id,
+                render_context=render_context,
+            )
+        record = provision_business_agent(
+            store=store,
+            agent_id=agent_id,
+            name=req.name,
+            workspace_dir=workspace_dir,
+            template_id=template_id,
+            plan=plan,
+            validate_workspace=lambda workspace: require_runtime_workspace_policy(
+                workspace=workspace,
+                agent_id=agent_id,
+                runtime_mode=settings.runtime_volume_mode,
+                env=env,
+                runtime_root=runtime_root,
+            ),
+        )
+        return _summary(record)
+    except (InvalidDeclaredBusinessAgentSeed, WorkspaceSafetyError, ManagedAgentPolicyError) as exc:
+        raise HTTPException(status_code=422, detail=f"Business agent template violates managed policy: {exc}") from exc
 
 
 def create_agents_router(

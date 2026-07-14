@@ -41,7 +41,6 @@ class FeedbackStore(
         agent_exists: Optional[Callable[[str], bool]] = None,
         runtime_version: str = APP_VERSION,
         enable_debug_evidence: bool = True,
-        agent_job_timeout_seconds: int = 300,
     ) -> None:
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
@@ -55,7 +54,6 @@ class FeedbackStore(
         self.agent_exists = agent_exists
         self.runtime_version = runtime_version
         self.enable_debug_evidence = enable_debug_evidence
-        self.agent_job_timeout_seconds = agent_job_timeout_seconds
         self.langfuse_trace_fetcher: Optional[Callable[[str], Optional[JsonObject]]] = None
 
     def set_langfuse_trace_fetcher(self, fetcher: Callable[[str], Optional[JsonObject]]) -> None:

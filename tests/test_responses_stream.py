@@ -646,8 +646,12 @@ def test_stream_run_write_failure_rolls_back_session_completion(monkeypatch, tmp
     assert saved is not None
     assert saved.turns == 0
     assert saved.sdk_session_id is None
+    assert saved.active_run_id == run_id
     assert module.feedback_store.find_run(run_id=run_id) is None
-    assert calls == 3
+    error_event = next(event for event in events if event.get("event") == "error")
+    assert error_event["data"]["error_code"] == "RUNTIME_FINALIZATION_FAILED"
+    assert error_event["data"]["recovery_status"] == "deferred_to_lease_expiry"
+    assert calls == 4  # 三次 finalize + 一次原子 interrupted 恢复；持续失败时保留 lease 交给过期对账器。
 
 
 @pytest.mark.parametrize("failure_point", ["before_commit", "after_commit"])
@@ -683,6 +687,43 @@ def test_stream_retries_transient_turn_finalization(
     assert [event.get("event") for event in events][-2:] == ["result", "done"]
     assert saved is not None and saved.turns == 1 and saved.active_run_id is None
     assert module.feedback_store.find_run(run_id=run_id) is not None
+
+
+def test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry(monkeypatch, tmp_path: Path) -> None:
+    from app.runtime.errors import SessionConflictError
+    from app.runtime.runtime_db import SessionTurnIntentModel
+
+    _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-finalize-exhausted"))
+    module = _load_app(monkeypatch, tmp_path)
+    original = module.session_store.finalize_persisted_turn
+    calls = 0
+
+    def fail_finalize(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise SessionConflictError("injected finalization CAS failure")
+
+    monkeypatch.setattr(module.session_store, "finalize_persisted_turn", fail_finalize)
+    events = _drive_stream(module, ChatRequest(message="first", session_id="sess-finalize-exhausted"))
+    session_event = next(event for event in events if event.get("event") == "session")
+    run_id = session_event["data"]["run_id"]
+
+    assert calls == 3
+    assert not any(event.get("event") == "result" for event in events)
+    error_event = next(event for event in events if event.get("event") == "error")
+    assert error_event["data"]["error_code"] == "RUNTIME_FINALIZATION_FAILED"
+    assert [event.get("event") for event in events][-2:] == ["error", "done"]
+    saved = module.session_store.get("sess-finalize-exhausted")
+    assert saved is not None and saved.active_run_id is None and saved.turns == 0
+    with module.session_store.Session() as db:
+        intent = db.get(SessionTurnIntentModel, run_id)
+        assert intent is not None and intent.status == "interrupted"
+
+    monkeypatch.setattr(module.session_store, "finalize_persisted_turn", original)
+    retried = _drive_stream(module, ChatRequest(message="retry", session_id="sess-finalize-exhausted"))
+    assert any(event.get("event") == "result" for event in retried)
+    saved = module.session_store.get("sess-finalize-exhausted")
+    assert saved is not None and saved.active_run_id is None and saved.turns == 1
 
 
 def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:

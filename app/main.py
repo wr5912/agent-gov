@@ -21,7 +21,7 @@ from app.routers.chat import create_chat_router
 from app.routers.claude_user_input import create_claude_user_input_router
 from app.routers.config import create_config_router
 from app.routers.conversations import create_conversations_router
-from app.routers.core import create_core_router
+from app.routers.core import create_core_router, refresh_runtime_dependency_versions
 from app.routers.error_handlers import register_error_handlers
 from app.routers.eval import create_eval_router
 from app.routers.feedback_cases import create_feedback_cases_router
@@ -37,6 +37,7 @@ from app.routers.sessions import create_sessions_router
 from app.routers.settings import create_settings_router
 from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_job_types import AgentJobType
+from app.runtime.agent_profile_resolver import resolve_business_profile
 from app.runtime.agent_profiles import agents_requiring_web_hitl, build_profiles, discover_seeded_business_agents, seed_business_agent_ids
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.claude_user_input_service import ClaudeUserInputService
@@ -81,7 +82,6 @@ feedback_store = FeedbackStore(
     agent_version_provider=None,  # #24-C/D：下方装配 per-agent 解析器（依赖 agent_governance._store_for）。
     runtime_version=APP_VERSION,
     enable_debug_evidence=settings.enable_feedback_debug_evidence,
-    agent_job_timeout_seconds=settings.governance_agent_timeout_seconds,
 )
 runtime_db_session_factory = make_session_factory(runtime_db_path_from_data_dir(settings.data_dir))
 claude_user_input_store = ClaudeUserInputStore(runtime_db_session_factory)
@@ -96,6 +96,7 @@ agent_governance = AgentGovernanceService(
     agent_version_store=agent_version_store,
 )
 agent_registry_store = AgentRegistryStore(runtime_db_session_factory)
+runtime.business_profile_resolver = lambda agent_id: resolve_business_profile(settings, agent_registry_store, agent_id)
 # 缺陷④：版本治理懒建版本库前校验业务 Agent 已注册，杜绝幽灵 Agent（main-agent 恒有效）。
 agent_governance.agent_exists = lambda aid: agent_registry_store.get_agent(aid) is not None
 feedback_store.agent_exists = agent_governance.agent_exists
@@ -155,6 +156,9 @@ def _reconcile_runtime_orphans() -> None:
     regression_reconciliation = agent_governance.reconcile_regression_runs()
     if any(regression_reconciliation.values()):
         logger.warning("reconciled interrupted Agent change set regressions: %s", regression_reconciliation)
+    release_reconciliation = agent_governance.reconcile_release_operations()
+    if any(release_reconciliation.values()):
+        logger.warning("reconciled interrupted Agent release rollback/restore operations: %s", release_reconciliation)
 
 
 async def _runtime_orphan_recovery_loop() -> None:
@@ -168,6 +172,29 @@ async def _runtime_orphan_recovery_loop() -> None:
             logger.exception("runtime orphan reconciliation failed")
 
 
+async def _refresh_model_provider_readiness() -> None:
+    summary = await asyncio.to_thread(runtime.model_provider_router.refresh_readiness)
+    log = logger.info if summary.get("status") == "ready" else logger.warning
+    log(
+        "event=model_provider.readiness status=%s error_code=%s reason=%s probe=%s duration_ms=%s action=%s",
+        summary.get("status"),
+        summary.get("error_code"),
+        summary.get("reason"),
+        summary.get("probe"),
+        summary.get("duration_ms"),
+        summary.get("action"),
+    )
+
+
+async def _refresh_runtime_dependency_snapshot() -> None:
+    versions = await asyncio.to_thread(refresh_runtime_dependency_versions)
+    logger.info(
+        "event=runtime.dependencies_refreshed claude_agent_sdk=%s bundled_claude_code_cli=%s",
+        versions.claude_agent_sdk,
+        versions.bundled_claude_code_cli,
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     logger.info(runtime_settings_log_message(settings))
@@ -175,7 +202,6 @@ async def lifespan(_: FastAPI):
     cancelled = claude_user_input_service.cancel_orphan_waiting_requests(reason="service_restarted")
     if cancelled:
         logger.info("cancelled orphan Claude user-input requests: %s", len(cancelled))
-    _reconcile_runtime_orphans()
     agent_version_store.ensure_bootstrap()
     # 预制 profile（main-agent + governor）优先，再用磁盘发现补充 seed 预置的其它业务 Agent，
     # 使运行卷 data/business-agents/* 下落盘的多业务 Agent 与 main-agent 走同一注册/路由/治理抽象。
@@ -188,6 +214,7 @@ async def lifespan(_: FastAPI):
         "business agent registry synced: %s",
         sorted(agent_id for agent_id, profile in profiles.items() if profile.category == "business"),
     )
+    _reconcile_runtime_orphans()
     cleanup_summary = agent_governance.reconcile_worktree_cleanups()
     if cleanup_summary["completed"] or cleanup_summary["failed"]:
         logger.info("worktree cleanup reconciliation: %s", cleanup_summary)
@@ -217,13 +244,24 @@ async def lifespan(_: FastAPI):
                 "其响应处置执行能力不可用（ask 型工具将被 fail-loud 拒绝），如需执行处置请开启 web HITL。",
                 requiring,
             )
+    runtime.model_provider_router.mark_readiness_checking()
+    provider_probe_task = asyncio.create_task(
+        _refresh_model_provider_readiness(),
+        name="model-provider-readiness",
+    )
+    dependency_probe_task = asyncio.create_task(
+        _refresh_runtime_dependency_snapshot(),
+        name="runtime-dependency-snapshot",
+    )
     recovery_task = asyncio.create_task(_runtime_orphan_recovery_loop(), name="runtime-orphan-recovery")
     try:
         yield
     finally:
-        recovery_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await recovery_task
+        for task in (provider_probe_task, dependency_probe_task, recovery_task):
+            task.cancel()
+        for task in (provider_probe_task, dependency_probe_task, recovery_task):
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 app = FastAPI(
@@ -269,7 +307,13 @@ def require_api_key(credentials: HTTPAuthorizationCredentials | None = api_key_c
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
 
-app.include_router(create_core_router(settings=settings, app=app, agent_version_store=agent_version_store))
+app.include_router(
+    create_core_router(
+        settings=settings,
+        app=app,
+        model_provider_router=runtime.model_provider_router,
+    )
+)
 app.include_router(
     create_chat_router(
         runtime=runtime,

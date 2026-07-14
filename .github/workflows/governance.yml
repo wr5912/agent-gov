@@ -46,15 +46,20 @@ jobs:
       - name: Runtime volume seeds safety scan (#27：新增/修改 seed 预置 Agent 子树须过脱敏门)
         run: make runtime-volume-seeds-scan
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          package_json_file: frontend/package.json
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Install frontend dependencies
-        run: |
-          corepack enable pnpm
-          pnpm --dir frontend install --frozen-lockfile
+        run: pnpm --dir frontend install --frozen-lockfile
 
       - name: Verify generated API types are fresh (F9：契约边界，前端类型须由 OpenAPI 生成)
         run: |

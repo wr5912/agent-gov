@@ -41,7 +41,12 @@ from app.services.agent_publication import (
 from app.services.agent_publication_finalization import finalize_publication_once
 from app.services.agent_publication_provenance import project_current_attribution
 from app.services.agent_regression import AgentRegressionMixin
-from app.services.agent_release_workflows import publish_change_set, restore_release, rollback_release
+from app.services.agent_release_workflows import (
+    publish_change_set,
+    reconcile_release_operations,
+    restore_release,
+    rollback_release,
+)
 from app.services.agent_version_maintenance import AgentVersionMaintenanceCoordinator
 
 TERMINAL_CHANGE_SET_STATES = {"published", "rejected", "abandoned", "failed"}
@@ -369,6 +374,9 @@ class AgentGovernanceService(AgentRegressionMixin):
 
     def reconcile_worktree_cleanups(self, *, limit: int = 100) -> JsonObject:
         return reconcile_worktree_cleanup_tasks(self, limit=limit)
+
+    def reconcile_release_operations(self, *, limit: int = 100) -> JsonObject:
+        return reconcile_release_operations(self, limit=limit)
 
     def publish_change_set(
         self,

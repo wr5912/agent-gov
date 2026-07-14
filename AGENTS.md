@@ -85,13 +85,14 @@
 - UI 语义矩阵：按钮、业务产物、API 副作用、状态推进、容器和信息归属，以及不应混入的内容。
   决策卡主按钮必须完成业务动作，状态推进只能是副作用。
 
-## 反馈闭环与 Agent Job 契约
+## 反馈闭环与治理模型契约
 
-反馈优化、归因、批次方案、Agent job、DSPy formatter、提示词、OpenAPI 或前端类型默认按
-产品级契约问题处理。排查必须贯通 UI/API -> `agent_jobs` -> store 投影 -> formatter ->
-持久化 payload，并核查空态、成功态、失败详情和重试入口。
+反馈优化、归因、治理模型任务、DSPy formatter、提示词、OpenAPI 或前端类型默认按
+产品级契约问题处理。排查必须贯通 UI/API -> application service -> runner/formatter ->
+store 投影 -> 持久化 payload，并核查空态、成功态、失败详情和重试入口。历史
+`agent_jobs` 只读查询不属于活跃执行链路。
 
-- `error_json`、`raw_output_json`、`validated_output_json`、聚合字段和页面状态必须属于同一契约。
+- 结构化错误、raw output、validated output、聚合字段和页面状态必须属于同一业务动作契约。
 - 单条与批次优化方案复用同一生成契约；保留分支必须证明不可合并。
 - 旧 proposal job/路由/prompt/signature/UI/生成类型必须从活跃主流程清零。
 - DSPy 成功输出以内层 Pydantic OutputModel 实例继续流转，不在 formatter 边界立即 dump。
@@ -145,13 +146,13 @@ make codex-guard
 
 - 离线模式是产品不变量，但始终会提供本地化 LLM；必需工作流不得依赖远程服务。
 - Docker 持久化宿主机根目录统一为 `${HOME}/volume-agent-gov`；`docker/volume/` 只作迁移来源。
-- `docker/.env` 服务 Compose/API/worker 容器；`docker/.env.local-debug` 服务宿主机 Python/
+- `docker/.env` 服务 Compose/API 容器；`docker/.env.local-debug` 服务宿主机 Python/
   PyCharm；`frontend/.env.local` 只服务 Vite。它们是按运行环境选择，不是 layered override。
 - 宿主机进程自动选择本机调试 env，容器由 Compose 注入 `RUNTIME_CONTAINER=1` 选择容器 env。
-- 本机后台 Agent job 不复用交互式 Claude `/login`；真实运行前私有 env 必须提供
+- 本机 API 内的治理模型任务不复用交互式 Claude `/login`；真实运行前私有 env 必须提供
   `MODEL_PROVIDER_API_KEY`，但真实值不得进入仓库、日志、文档、提交说明或最终回复。
 - API key、MCP header、数据库凭据、本机私有路径、运行态 SQLite 和私有日志不得提交。
-- 当前 Playground、调试 UI 和自托管 Langfuse 是开发观测面，可保留完整 prompt/tool/job/trace
+- 当前 Playground、调试 UI 和自托管 Langfuse 是开发观测面，可保留完整 prompt/tool/governance/trace
   I/O；该例外不放宽仓库和对外输出边界。
 - 修改 env 选择、路径、模型凭据或 Langfuse 地址时，同步 README、示例、policy 测试和启动日志。
 

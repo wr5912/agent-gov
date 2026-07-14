@@ -1,30 +1,11 @@
 import pytest
 from app.runtime.errors import FeedbackStoreError
-from app.runtime.state_machines import JOB_IN_PROGRESS_STATES, JOB_STATES, StateTransitionError, validate_transition
+from app.runtime.state_machines import StateTransitionError, validate_transition
 
 
-def test_job_state_machine_rejects_completed_reopen():
+def test_state_transition_error_uses_feedback_error_contract():
     assert issubclass(StateTransitionError, FeedbackStoreError)
     assert not issubclass(StateTransitionError, ValueError)
-    with pytest.raises(StateTransitionError, match="completed -> running"):
-        validate_transition("job", "completed", "running")
-
-
-def test_agent_job_state_machine_allows_current_lifecycle():
-    validate_transition("agent_job", "queued", "running")
-    validate_transition("agent_job", "running", "schema_validating")
-    validate_transition("agent_job", "schema_validating", "timeout")
-    validate_transition("agent_job", "evidence_packaging", "timeout")
-    validate_transition("agent_job", "schema_validating", "completed")
-    with pytest.raises(StateTransitionError, match="completed -> running"):
-        validate_transition("agent_job", "completed", "running")
-    with pytest.raises(StateTransitionError, match="timeout -> failed"):
-        validate_transition("agent_job", "timeout", "failed")
-
-
-def test_job_in_progress_states_are_known_job_states():
-    assert JOB_IN_PROGRESS_STATES <= JOB_STATES
-    assert "completed" not in JOB_IN_PROGRESS_STATES
 
 
 def test_case_state_machine_allows_retry_to_attribution():
@@ -88,9 +69,19 @@ def test_session_turn_intent_only_moves_from_running_to_terminal(terminal):
         validate_transition("session_turn_intent", terminal, "running")
 
 
+def test_agent_release_operation_transition_table_is_complete():
+    validate_transition("agent_release_operation", "reserved", "git_applied")
+    validate_transition("agent_release_operation", "reserved", "failed")
+    validate_transition("agent_release_operation", "git_applied", "completed")
+    validate_transition("agent_release_operation", "git_applied", "failed")
+    validate_transition("agent_release_operation", "failed", "reserved")
+    with pytest.raises(StateTransitionError, match="completed -> reserved"):
+        validate_transition("agent_release_operation", "completed", "reserved")
+
+
 def test_state_machine_rejects_unknown_status():
-    with pytest.raises(StateTransitionError, match="Unknown job status"):
-        validate_transition("job", "queued", "almost_done")
+    with pytest.raises(StateTransitionError, match="Unknown case status"):
+        validate_transition("case", "pending_evidence", "almost_done")
 
 
 def test_state_machine_rejects_missing_transition_table(monkeypatch):

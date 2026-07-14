@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .agent_profiles import AgentRuntimeProfile
     from .claude_runtime import ClaudeRuntime, RuntimeQueryState, RuntimeRequestContext
     from .schemas import ChatRequest, ChatResponse
+    from .session_turn_lease import SessionTurnLeaseHeartbeat
 
 
 def _non_stream_native_ask_deny_callback(profile_name: str) -> Any:
@@ -36,9 +37,11 @@ async def _execute_non_stream_query(
 ) -> None:
     from claude_agent_sdk import ClaudeSDKClient, ResultMessage, query
 
-    runtime.model_provider_router.ensure_agent_runtime_ready()
-    can_use_tool = _non_stream_native_ask_deny_callback(profile.name) if read_requires_web_hitl(profile.workspace_dir) else None
-    options = runtime._build_options(
+    await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
+    native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, profile.workspace_dir)
+    can_use_tool = _non_stream_native_ask_deny_callback(profile.name) if native_ask_configured else None
+    options = await asyncio.to_thread(
+        runtime._build_options,
         req,
         context.session,
         context=context,
@@ -70,6 +73,7 @@ async def run_claimed_claude_runtime(
     *,
     context: RuntimeRequestContext,
     profile: AgentRuntimeProfile,
+    heartbeat: SessionTurnLeaseHeartbeat,
 ) -> ChatResponse:
     from .claude_runtime import RuntimeQueryState
 
@@ -103,7 +107,8 @@ async def run_claimed_claude_runtime(
                         state=state,
                     )
                 except asyncio.CancelledError as exc:
-                    runtime._abort_runtime_request(
+                    await asyncio.to_thread(
+                        runtime._abort_runtime_request,
                         req,
                         context,
                         state,
@@ -116,13 +121,23 @@ async def run_claimed_claude_runtime(
                         state.errors.append(f"{exc.__class__.__name__}: {exc}")
 
                 answer, agent_activity, output = runtime._runtime_output_from_state(req, context, state)
-                runtime._update_runtime_observations(root_span, generation, context, state, output, propagation)
-    runtime._flush_langfuse()
-    runtime._sync_langfuse_trace(context, propagation, output)
+                await asyncio.to_thread(
+                    runtime._update_runtime_observations,
+                    root_span,
+                    generation,
+                    context,
+                    state,
+                    output,
+                    propagation,
+                )
+    await asyncio.to_thread(runtime._flush_langfuse)
+    await asyncio.to_thread(runtime._sync_langfuse_trace, context, propagation, output)
+    heartbeat.stop()
     if state.result_observed and not state.mirror_errors:
-        runtime._complete_runtime_request(req, context, state, answer, agent_activity)
+        await asyncio.to_thread(runtime._complete_runtime_request, req, context, state, answer, agent_activity)
     else:
-        runtime._abort_runtime_request(
+        await asyncio.to_thread(
+            runtime._abort_runtime_request,
             req,
             context,
             state,

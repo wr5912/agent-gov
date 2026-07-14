@@ -151,14 +151,6 @@ def _completion_raw_output_basemodel_source() -> str:
     )
 
 
-def _run_profile_alias_basemodel_source() -> str:
-    return (
-        "from typing import Awaitable, Callable\n"
-        "from pydantic import BaseModel\n\n"
-        "RunProfileJson = Callable[..., Awaitable[BaseModel]]\n"
-    )
-
-
 def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "large.py", 5)
@@ -462,11 +454,6 @@ def test_new_map_any_type_boundary_fails(
             "app/runtime/stores/feedback_batch_plan_store.py",
             _completion_raw_output_basemodel_source(),
             "new typed-output stage erasure: complete_batch_plan_job:arg:raw_output:BaseModel|JsonObject",
-        ),
-        (
-            "app/services/agent_job_worker.py",
-            _run_profile_alias_basemodel_source(),
-            "new typed-output stage erasure: RunProfileJson:alias:BaseModel",
         ),
     ],
 )

@@ -8,8 +8,9 @@ from contextlib import contextmanager
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
-from app.runtime.agent_profiles import candidate_profile
+from app.runtime.agent_profiles import build_business_agent_profile, candidate_profile
 from app.runtime.claude_runtime import ClaudeRuntime
+from app.runtime.errors import BusinessRuleViolation
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
 from app.runtime.schemas import ChatRequest
@@ -150,6 +151,62 @@ def test_run_without_native_ask_uses_finite_streaming_prompt(tmp_path, monkeypat
     ]
 
 
+@pytest.mark.parametrize("streaming", [False, True])
+def test_runtime_keeps_event_loop_responsive_during_blocking_failure_boundaries(
+    tmp_path,
+    monkeypatch,
+    streaming: bool,
+):
+    import threading
+    import time
+
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+    provider_started = threading.Event()
+    abort_started = threading.Event()
+    started_at: dict[str, float] = {}
+
+    def blocking_provider_check() -> None:
+        started_at["provider"] = time.monotonic()
+        provider_started.set()
+        time.sleep(0.25)
+        raise RuntimeError("provider unavailable")
+
+    original_abort = runtime._abort_runtime_request
+
+    def blocking_abort(*args, **kwargs) -> None:
+        started_at["abort"] = time.monotonic()
+        abort_started.set()
+        time.sleep(0.25)
+        original_abort(*args, **kwargs)
+
+    monkeypatch.setattr(runtime.model_provider_router, "ensure_agent_runtime_ready", blocking_provider_check)
+    monkeypatch.setattr(runtime, "_abort_runtime_request", blocking_abort)
+
+    async def scheduling_latency(started: threading.Event, phase: str) -> float:
+        assert await asyncio.to_thread(started.wait, 1)
+        return time.monotonic() - started_at[phase]
+
+    async def invoke_runtime():
+        provider_latency = asyncio.create_task(scheduling_latency(provider_started, "provider"))
+        abort_latency = asyncio.create_task(scheduling_latency(abort_started, "abort"))
+        await asyncio.sleep(0)
+        if streaming:
+            result = [event async for event in runtime.stream(ChatRequest(message="hello"))]
+        else:
+            result = await runtime.run(ChatRequest(message="hello"))
+        return result, await provider_latency, await abort_latency
+
+    result, provider_latency, abort_latency = asyncio.run(invoke_runtime())
+
+    assert provider_latency < 0.15
+    assert abort_latency < 0.15
+    if streaming:
+        assert any(event.get("event") == "error" for event in result)
+    else:
+        assert result.errors == ["RuntimeError: provider unavailable"]
+
+
 def test_runtime_rejects_file_checkpointing_with_durable_session_store(tmp_path):
     from app.runtime.errors import RuntimeUnavailableError
 
@@ -158,6 +215,50 @@ def test_runtime_rejects_file_checkpointing_with_durable_session_store(tmp_path)
 
     with pytest.raises(RuntimeUnavailableError, match="incompatible"):
         ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+
+def test_runtime_resolves_non_main_agent_for_internal_callers(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_query(*, prompt, options, transport=None):
+        seen["cwd"] = options.cwd
+        seen["profile"] = options.env["AGENT_PROFILE"]
+        async for _ in prompt:
+            pass
+        yield await _success_result(options)
+
+    import claude_agent_sdk
+
+    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    settings = _settings(tmp_path)
+    workspace = settings.data_dir / "business-agents" / "soc-ops" / "workspace"
+    workspace.mkdir(parents=True)
+    profile = build_business_agent_profile(settings, agent_id="soc-ops", workspace_dir=workspace)
+    resolved = []
+    runtime = ClaudeRuntime(
+        settings,
+        LocalSessionStore(settings.session_dir),
+        business_profile_resolver=lambda agent_id: resolved.append(agent_id) or profile,
+    )
+
+    result = asyncio.run(runtime.run(ChatRequest(message="evaluate", agent_id="soc-ops")))
+
+    assert resolved == ["soc-ops"]
+    assert seen == {"cwd": workspace, "profile": "soc-ops"}
+    assert runtime.session_store.get(result.session_id).agent_id == "soc-ops"
+
+
+def test_runtime_rejects_explicit_profile_agent_mismatch(tmp_path):
+    settings = _settings(tmp_path)
+    runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
+
+    with pytest.raises(BusinessRuleViolation, match="does not match"):
+        asyncio.run(
+            runtime.run(
+                ChatRequest(message="wrong owner", agent_id="soc-ops"),
+                profile=runtime.profiles["main-agent"],
+            )
+        )
 
 
 def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
@@ -786,7 +887,7 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
 
     from app.routers.core import build_health_payload
 
-    result = build_health_payload(settings=settings, app=main.app, agent_version_store=main.agent_version_store)
+    result = build_health_payload(settings=settings, app=main.app)
 
     assert result.langfuse_enabled is True
     assert result.langfuse_otel_endpoint_configured is True

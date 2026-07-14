@@ -45,7 +45,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentRepositoryStatusResponse,
         summary="Get Git-backed Agent repository status",
     )
-    async def get_agent_repository_status(agent_id: str | None = Query(default=None)) -> AgentRepositoryStatusResponse:
+    def get_agent_repository_status(agent_id: str | None = Query(default=None)) -> AgentRepositoryStatusResponse:
         return agent_governance.repository_status(agent_id)
 
     @router.post(
@@ -53,7 +53,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentRepositoryStatusResponse,
         summary="Discard confirmed uncommitted changes from a business Agent workspace (default main-agent)",
     )
-    async def discard_agent_repository_changes(
+    def discard_agent_repository_changes(
         req: AgentRepositoryDiscardChangesRequest, agent_id: str | None = Query(default=None)
     ) -> AgentRepositoryStatusResponse:
         return agent_governance.discard_repository_changes(req.paths, agent_id)
@@ -63,7 +63,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentGitRefResponse,
         summary="Save a business Agent workspace as an Agent version (default main-agent)",
     )
-    async def snapshot_agent_repository(req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
+    def snapshot_agent_repository(req: AgentRepositorySnapshotRequest, agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
         return agent_governance.snapshot_repository(operator=req.operator, note=req.note, agent_id=agent_id)
 
     @router.get(
@@ -71,7 +71,7 @@ def _register_repository_routes(router: APIRouter, agent_governance: AgentGovern
         response_model=AgentGitRefResponse,
         summary="Get current published Agent Git ref (default main-agent)",
     )
-    async def get_current_agent_ref(agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
+    def get_current_agent_ref(agent_id: str | None = Query(default=None)) -> AgentGitRefResponse:
         return agent_governance.current_ref(agent_id)
 
 
@@ -81,7 +81,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=list[AgentChangeSetResponse],
         summary="List Agent change sets",
     )
-    async def list_agent_change_sets(
+    def list_agent_change_sets(
         status: str | None = None,
         limit: int = Query(default=100, ge=1, le=500),
     ) -> list[AgentChangeSetResponse]:
@@ -92,7 +92,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=AgentChangeSetResponse,
         summary="Create an Agent change set worktree",
     )
-    async def create_agent_change_set(req: AgentChangeSetCreateRequest) -> AgentChangeSetResponse:
+    def create_agent_change_set(req: AgentChangeSetCreateRequest) -> AgentChangeSetResponse:
         return agent_governance.create_change_set(
             base_commit_sha=req.base_commit_sha,
             title=req.title,
@@ -104,7 +104,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=AgentChangeSetResponse,
         summary="Get one Agent change set",
     )
-    async def get_agent_change_set(change_set_id: str) -> AgentChangeSetResponse:
+    def get_agent_change_set(change_set_id: str) -> AgentChangeSetResponse:
         return ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
 
     @router.get(
@@ -112,7 +112,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=list[AgentChangeSetEventResponse],
         summary="List lifecycle events for one Agent change set",
     )
-    async def list_agent_change_set_events(change_set_id: str) -> list[AgentChangeSetEventResponse]:
+    def list_agent_change_set_events(change_set_id: str) -> list[AgentChangeSetEventResponse]:
         ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
         return agent_governance.list_change_set_events(change_set_id)
 
@@ -121,7 +121,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=AgentGitDiffResponse,
         summary="Diff an Agent change set against its base commit",
     )
-    async def diff_agent_change_set(change_set_id: str) -> AgentGitDiffResponse:
+    def diff_agent_change_set(change_set_id: str) -> AgentGitDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
         candidate = _require_candidate_commit(change_set)
         diff = agent_governance.change_set_diff(change_set, candidate)
@@ -132,7 +132,7 @@ def _register_change_set_read_routes(router: APIRouter, agent_governance: AgentG
         response_model=AgentGitFileDiffResponse,
         summary="Diff one file in an Agent change set",
     )
-    async def diff_agent_change_set_file(change_set_id: str, path: str) -> AgentGitFileDiffResponse:
+    def diff_agent_change_set_file(change_set_id: str, path: str) -> AgentGitFileDiffResponse:
         change_set = ensure_found(agent_governance.get_change_set(change_set_id), "Agent change set not found")
         candidate = _require_candidate_commit(change_set)
         diff = agent_governance.change_set_file_diff(change_set, candidate, path)
@@ -148,7 +148,7 @@ def _register_change_set_action_routes(
         response_model=AgentChangeSetResponse,
         summary="Approve an Agent change set for release",
     )
-    async def approve_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
+    def approve_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.approve_change_set(change_set_id, operator=req.operator, note=req.note)
 
     @router.post(
@@ -156,7 +156,7 @@ def _register_change_set_action_routes(
         response_model=AgentChangeSetResponse,
         summary="Reject an Agent change set",
     )
-    async def reject_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
+    def reject_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.reject_change_set(change_set_id, operator=req.operator, note=req.note)
 
     @router.post(
@@ -164,7 +164,7 @@ def _register_change_set_action_routes(
         response_model=AgentChangeSetResponse,
         summary="Abandon an Agent change set",
     )
-    async def abandon_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
+    def abandon_agent_change_set(change_set_id: str, req: AgentChangeSetActionRequest) -> AgentChangeSetResponse:
         return agent_governance.abandon_change_set(change_set_id, operator=req.operator, note=req.note)
 
     @router.post(
@@ -172,7 +172,7 @@ def _register_change_set_action_routes(
         response_model=AgentReleaseResponse,
         summary="Publish an approved Agent change set",
     )
-    async def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
+    def publish_agent_change_set(change_set_id: str, req: AgentChangeSetPublishRequest) -> AgentReleaseResponse:
         return agent_governance.publish_change_set(
             change_set_id,
             operator=req.operator,
@@ -186,7 +186,7 @@ def _register_change_set_action_routes(
         response_model=AgentChangeSetResponse,
         summary="Retry durable worktree cleanup for a terminal Agent change set",
     )
-    async def retry_agent_change_set_worktree_cleanup(
+    def retry_agent_change_set_worktree_cleanup(
         change_set_id: str,
         req: AgentChangeSetActionRequest,
     ) -> AgentChangeSetResponse:
@@ -203,7 +203,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         response_model=list[AgentReleaseResponse],
         summary="List published Agent releases",
     )
-    async def list_agent_releases(status: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[AgentReleaseResponse]:
+    def list_agent_releases(status: str | None = None, limit: int = Query(default=100, ge=1, le=500)) -> list[AgentReleaseResponse]:
         return agent_governance.list_releases(status=status, limit=limit)
 
     @router.get(
@@ -211,7 +211,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         response_model=AgentReleaseResponse,
         summary="Get one Agent release",
     )
-    async def get_agent_release(release_id: str) -> AgentReleaseResponse:
+    def get_agent_release(release_id: str) -> AgentReleaseResponse:
         return ensure_found(agent_governance.get_release(release_id), "Agent release not found")
 
     @router.post(
@@ -219,7 +219,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         response_model=AgentReleaseRestoreResponse,
         summary="Restore the main Agent workspace to one release",
     )
-    async def restore_agent_release(release_id: str, req: AgentReleaseRestoreRequest) -> AgentReleaseRestoreResponse:
+    def restore_agent_release(release_id: str, req: AgentReleaseRestoreRequest) -> AgentReleaseRestoreResponse:
         return agent_governance.restore_release(release_id, operator=req.operator, note=req.note)
 
     @router.post(
@@ -227,7 +227,7 @@ def _register_release_routes(router: APIRouter, agent_governance: AgentGovernanc
         response_model=AgentReleaseResponse,
         summary="Rollback the main Agent workspace to one release",
     )
-    async def rollback_agent_release(release_id: str, req: AgentReleaseRollbackRequest) -> AgentReleaseResponse:
+    def rollback_agent_release(release_id: str, req: AgentReleaseRollbackRequest) -> AgentReleaseResponse:
         return agent_governance.rollback_release(release_id, operator=req.operator, note=req.note)
 
 

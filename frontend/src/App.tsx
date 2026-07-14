@@ -171,12 +171,15 @@ export default function App() {
     setLoading(true);
     setLastError(undefined);
     try {
-      const [healthRes, sessionsRes, businessAgentsRes] = await Promise.all([
-        getHealth(effectiveClientConfig),
+      const healthRequest = getHealth(effectiveClientConfig).then((response) => {
+        setHealth(response);
+        return response;
+      });
+      const [, sessionsRes, businessAgentsRes] = await Promise.all([
+        healthRequest,
         getSessions(effectiveClientConfig),
         listBusinessAgents(effectiveClientConfig),
       ]);
-      setHealth(healthRes);
       setSessions(sessionsRes);
       setBusinessAgents(businessAgentsRes);
       // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。

@@ -165,16 +165,15 @@ def test_dockerfile_installs_claude_code_sandbox_dependencies_when_seed_sandbox_
     assert "socat" in packages
 
 
-def test_compose_grants_bubblewrap_namespace_permissions_only_to_claude_code_services() -> None:
+def test_compose_grants_bubblewrap_namespace_permissions_only_to_claude_code_api() -> None:
     compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
     services = compose["services"]
 
-    for service_name in ("claude-agent-api", "claude-agent-worker"):
-        service = services[service_name]
-        assert "SYS_ADMIN" in service.get("cap_add", [])
-        assert "NET_ADMIN" in service.get("cap_add", [])
-        assert "seccomp=unconfined" in service.get("security_opt", [])
-        assert "apparmor=unconfined" in service.get("security_opt", [])
+    service = services["claude-agent-api"]
+    assert "SYS_ADMIN" in service.get("cap_add", [])
+    assert "NET_ADMIN" in service.get("cap_add", [])
+    assert "seccomp=unconfined" in service.get("security_opt", [])
+    assert "apparmor=unconfined" in service.get("security_opt", [])
 
     for service_name in ("agent-gov-litellm-sidecar", "claude-agent-ui"):
         service = services[service_name]
@@ -369,14 +368,57 @@ def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
     assert "\n      API_KEY:" not in sidecar
 
 
-def test_runtime_volume_seeds_are_bound_read_only_for_api_and_worker() -> None:
+def test_runtime_volume_seeds_are_bound_read_only_for_api() -> None:
     compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
-    api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-worker:", 1)[0]
-    worker = compose.split("  claude-agent-worker:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
+    api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
 
     assert "source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}" in compose
     assert "target: /app/docker/runtime-volume-seeds" in compose
     assert "read_only: true" in compose
     assert "create_host_path: false" in compose
     assert "- *runtime-volume-seeds" in api
-    assert "- *runtime-volume-seeds" in worker
+
+
+def test_compose_healthcheck_uses_local_liveness_without_provider_dependency() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    api_health = services["claude-agent-api"]["healthcheck"]
+
+    assert api_health["test"] == [
+        "CMD",
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "2",
+        "http://127.0.0.1:${API_PORT:-8080}/health/live",
+    ]
+    assert api_health["timeout"] == "3s"
+    assert api_health["start_period"] == "20s"
+    assert api_health["retries"] == 12
+    assert "MODEL_PROVIDER" not in str(api_health)
+    assert services["claude-agent-ui"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert "claude-agent-worker" not in services
+
+
+def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    up_target = makefile.split("\nup:", 1)[1].split("\n\ndown:", 1)[0]
+    diagnose_script = (REPO_ROOT / "scripts/compose_diagnose.sh").read_text(encoding="utf-8")
+
+    assert "up -d --wait --remove-orphans" in up_target
+    assert "compose-diagnose" in up_target
+    assert "diagnose_runtime_health.py" in up_target
+    assert "compose config" not in diagnose_script
+    assert "docker inspect" in diagnose_script
+    assert "logs --no-color --tail=80" in diagnose_script
+
+
+def test_governance_ci_uses_repository_pnpm_version_without_corepack_download() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/governance.yml").read_text(encoding="utf-8")
+
+    assert "uses: pnpm/action-setup@v4" in workflow
+    assert "package_json_file: frontend/package.json" in workflow
+    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in workflow
+    assert "corepack enable pnpm" not in workflow

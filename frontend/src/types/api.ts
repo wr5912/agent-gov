@@ -1628,6 +1628,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check API process liveness without external dependencies */
+        get: operations["liveness_health_live_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read cached model provider readiness without starting a probe */
+        get: operations["readiness_health_ready_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/agentgov/confirmation-requests/{request_id}/decision": {
         parameters: {
             query?: never;
@@ -4022,6 +4056,79 @@ export interface components {
             stage: string;
         };
         JsonValue: unknown;
+        /** ModelProviderReadiness */
+        ModelProviderReadiness: {
+            /** Action */
+            action?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Probe */
+            probe?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            /** Route */
+            route?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "not_checked" | "checking" | "ready" | "degraded";
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** ModelProviderRouteHealth */
+        ModelProviderRouteHealth: {
+            /** Backend */
+            backend: string;
+            /** Claude Base Url */
+            claude_base_url?: string | null;
+            /** Formatter Api Base */
+            formatter_api_base?: string | null;
+            /** Formatter Model Prefix */
+            formatter_model_prefix?: string | null;
+            /** Provider Api Key Required */
+            provider_api_key_required: boolean;
+            /** Provider Endpoint */
+            provider_endpoint?: string | null;
+            /** Provider Endpoint Configured */
+            provider_endpoint_configured: boolean;
+            readiness: components["schemas"]["ModelProviderReadiness"];
+            /** Route */
+            route?: string | null;
+            /** Sidecar Base Url */
+            sidecar_base_url?: string | null;
+            /** Sidecar Required */
+            sidecar_required?: boolean | null;
+            version_probe?: components["schemas"]["ModelProviderVersionProbe"] | null;
+        };
+        /** ModelProviderVersionProbe */
+        ModelProviderVersionProbe: {
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "skipped" | "succeeded" | "failed";
+            /** Status Code */
+            status_code?: number | null;
+            /** Version */
+            version?: string | null;
+        };
         /** NormalizedFeedbackResponse */
         NormalizedFeedbackResponse: {
             /** Created At */
@@ -4551,10 +4658,7 @@ export interface components {
             langfuse_secret_key_configured: boolean;
             /** Model */
             model?: string | null;
-            /** Model Provider Route */
-            model_provider_route?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
+            model_provider_route: components["schemas"]["ModelProviderRouteHealth"];
             /** Provider Api Key Configured */
             provider_api_key_configured: boolean;
             /** Provider Api Url Configured */
@@ -4572,6 +4676,28 @@ export interface components {
             workspace_dir: string;
         } & {
             [key: string]: unknown;
+        };
+        /** RuntimeLivenessResponse */
+        RuntimeLivenessResponse: {
+            /** Runtime Version */
+            runtime_version: string;
+            /**
+             * Status
+             * @default ok
+             * @constant
+             */
+            status: "ok";
+        };
+        /** RuntimeReadinessResponse */
+        RuntimeReadinessResponse: {
+            model_provider: components["schemas"]["ModelProviderReadiness"];
+            /** Runtime Version */
+            runtime_version: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "not_ready";
         };
         /** SessionDeleteResponse */
         SessionDeleteResponse: {
@@ -11414,6 +11540,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeHealthResponse"];
+                };
+            };
+        };
+    };
+    liveness_health_live_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeLivenessResponse"];
+                };
+            };
+        };
+    };
+    readiness_health_ready_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeReadinessResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeReadinessResponse"];
                 };
             };
         };

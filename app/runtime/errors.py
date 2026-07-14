@@ -63,6 +63,12 @@ class RuntimeUnavailableError(FeedbackStoreError):
     error_code = "RUNTIME_UNAVAILABLE"
 
 
+class RuntimeFinalizationError(RuntimeUnavailableError):
+    """Raised after a completed SDK turn cannot be finalized durably."""
+
+    error_code = "RUNTIME_FINALIZATION_FAILED"
+
+
 class DataIntegrityError(FeedbackStoreError):
     """Raised when persisted feedback data is internally inconsistent."""
 

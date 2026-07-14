@@ -121,9 +121,14 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
                         yield event
                 finally:
                     await close_async_iterator(source)
-    runtime._flush_langfuse()
+    await asyncio.to_thread(runtime._flush_langfuse)
     if stream_run.final_output is not None:
-        runtime._sync_langfuse_trace(context, stream_run.propagation, stream_run.final_output)
+        await asyncio.to_thread(
+            runtime._sync_langfuse_trace,
+            context,
+            stream_run.propagation,
+            stream_run.final_output,
+        )
 
 
 def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
@@ -172,15 +177,16 @@ async def _emit_query_events(
     result_message_type: type,
 ) -> None:
     runtime = stream_run.runtime
-    runtime.model_provider_router.ensure_agent_runtime_ready()
-    native_ask_configured = read_requires_web_hitl(stream_run.profile.workspace_dir)
+    await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
+    native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, stream_run.profile.workspace_dir)
     if native_ask_configured and stream_run.web_hitl_enabled:
         can_use_tool = _sdk_tool_callback(stream_run, event_queue)
     elif native_ask_configured:
         can_use_tool = _native_ask_deny_callback(stream_run, event_queue)
     else:
         can_use_tool = None
-    options = runtime._build_options(
+    options = await asyncio.to_thread(
+        runtime._build_options,
         stream_run.req,
         stream_run.request_context.session,
         context=stream_run.request_context,
@@ -209,7 +215,8 @@ async def _emit_query_events(
             await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
             if is_result:
                 if stream_run.query_state.mirror_errors:
-                    _abort_stream_run(
+                    await asyncio.to_thread(
+                        _abort_stream_run,
                         stream_run,
                         terminal_status="failed",
                         error=stream_run.query_state.mirror_errors[-1],
@@ -222,7 +229,7 @@ async def _emit_query_events(
                     )
                     continue
                 # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
-                _persist_stream_run(stream_run)
+                await asyncio.to_thread(_persist_stream_run, stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
     finally:
         await close_async_iterator(messages)
@@ -273,12 +280,28 @@ async def _run_sdk_query(
         await _emit_query_events(stream_run, event_queue, query_func, sdk_client_factory, result_message_type)
     except asyncio.CancelledError as exc:
         cancelled = True
-        _abort_stream_run(stream_run, terminal_status="cancelled", error=exc)
+        await asyncio.to_thread(
+            _abort_stream_run,
+            stream_run,
+            terminal_status="cancelled",
+            error=exc,
+        )
         raise
     except Exception as exc:
         if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
             stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-            await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+            error_data: JsonObject = {"errors": list(stream_run.query_state.errors)}
+            error_code = getattr(exc, "error_code", None)
+            if isinstance(error_code, str) and error_code:
+                error_data["error_code"] = error_code
+                error_data["detail"] = str(exc)
+                error_details = getattr(exc, "error_details", None)
+                if isinstance(error_details, dict):
+                    error_data.update(error_details)
+                raw_output_json = getattr(exc, "raw_output_json", None)
+                if isinstance(raw_output_json, dict):
+                    error_data.update(raw_output_json)
+            await event_queue.put({"event": "error", "data": error_data})
     finally:
         if cancelled:
             if stream_run.runtime.user_input_service is not None:
@@ -314,9 +337,9 @@ def _persist_stream_run(stream_run: StreamRun) -> None:
         stream_run.query_state,
     )
     stream_run.final_output = output
-    runtime._complete_runtime_request(stream_run.req, stream_run.request_context, stream_run.query_state, answer, agent_activity)
     if stream_run.turn_heartbeat is not None:
         stream_run.turn_heartbeat.stop()
+    runtime._complete_runtime_request(stream_run.req, stream_run.request_context, stream_run.query_state, answer, agent_activity)
     stream_run.persisted = True
 
 
@@ -347,6 +370,14 @@ def _abort_stream_run(
 
 
 async def _complete_stream_run(
+    stream_run: StreamRun,
+    root_span: Any,
+    generation: Any,
+) -> None:
+    await asyncio.to_thread(_complete_stream_run_sync, stream_run, root_span, generation)
+
+
+def _complete_stream_run_sync(
     stream_run: StreamRun,
     root_span: Any,
     generation: Any,

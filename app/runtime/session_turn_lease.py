@@ -88,8 +88,12 @@ class SessionTurnLeaseHeartbeat:
                 }
                 if self._run_generation is not None:
                     kwargs["run_generation"] = self._run_generation
-                self._store.renew_turn(self._session_id, **kwargs)
+                await asyncio.to_thread(self._store.renew_turn, self._session_id, **kwargs)
             except Exception as exc:
+                # Finalization clears active_run_id. A renewal already dispatched to the
+                # thread pool may observe that terminal write after stop() was requested.
+                if self._stopped.is_set():
+                    return
                 self._failure = exc
                 owner_task = self._owner_task
                 if owner_task is not None and not owner_task.done():

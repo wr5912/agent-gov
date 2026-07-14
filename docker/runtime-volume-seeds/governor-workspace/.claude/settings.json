@@ -17,5 +17,12 @@
       "Bash(*)"
     ]
   },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": false,
+    "enableWeakerNestedSandbox": false,
+    "allowUnsandboxedCommands": false
+  },
   "includeGitInstructions": false
 }

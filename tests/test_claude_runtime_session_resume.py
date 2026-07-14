@@ -1,6 +1,8 @@
 import asyncio
+import json
 import uuid
 
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.schemas import ChatRequest
 from app.runtime.session_store import LocalSessionStore
@@ -8,21 +10,31 @@ from app.runtime.settings import AppSettings
 
 
 def _settings(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "main-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
-    claude_home = claude_root / ".claude"
-    workspace.mkdir(parents=True, exist_ok=True)
-    claude_home.mkdir(parents=True, exist_ok=True)
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=workspace,
-        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
-        CLAUDE_ROOT=claude_root,
-        MAIN_CLAUDE_ROOT=claude_root,
-        CLAUDE_HOME=claude_home,
+        GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
+        RUNTIME_VOLUME_MODE="local-debug",
     )
+    workspace = settings.main_workspace_dir
+    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return settings
 
 
 def _store_with_stale_session(settings, session_id):

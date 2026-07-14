@@ -75,10 +75,8 @@ COPY scripts/bootstrap_runtime_volume.py /app/scripts/bootstrap_runtime_volume.p
 COPY scripts/runtime_cleanup.py /app/scripts/runtime_cleanup.py
 COPY scripts/runtime_template_renderer.py /app/scripts/runtime_template_renderer.py
 COPY docker/runtime-volume-seeds /app/docker/runtime-volume-seeds
-COPY docker/entrypoint.sh /usr/local/bin/agent-gov-entrypoint
 
-RUN chmod +x /usr/local/bin/agent-gov-entrypoint \
-    && mkdir -p /governor-workspace /claude-roots/governor/.claude /data
+RUN mkdir -p /governor-workspace /claude-roots/governor/.claude /data
 
-ENTRYPOINT ["/usr/local/bin/agent-gov-entrypoint"]
-CMD ["sh", "-c", "uvicorn app.main:app --host ${API_HOST:-0.0.0.0} --port ${API_PORT:-8080} --log-level ${LOG_LEVEL:-info}"]
+ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]
+CMD ["api"]

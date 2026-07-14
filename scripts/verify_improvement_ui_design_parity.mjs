@@ -1214,12 +1214,28 @@ const RULES = [
     const optSrc = await has(page, "optimization-plan-source");
     return { ok: attrSrc && optSrc && validSrc, detail: `归因来源徽标=${attrSrc}(${src}) 方案来源徽标=${optSrc}` };
   } },
-  { id: "attribution-actions", phase: "P3", desc: "归因支持 修改/重新整理(§6 [确认][修改][重新整理])", async fn(page) {
+  { id: "attribution-actions", phase: "P3", desc: "归因支持修改/重新整理，证据只在 B 证据卡编辑并随 PUT 保存", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("attribution", "imp-demo02")))) return { ok: false, detail: "无改进事项" };
     await page.getByTestId("attribution").waitFor({ timeout: 6000 }).catch(() => {});
     const edit = await has(page, "edit-attribution");
     const regen = await has(page, "regenerate-attribution");
-    return { ok: edit && regen, detail: `修改=${edit} 重新整理=${regen}` };
+    if (!edit) return { ok: false, detail: `修改=${edit} 重新整理=${regen}` };
+    await page.getByTestId("edit-attribution").click();
+    const evidenceEditor = page.getByTestId("stage-panel-attribution-evidence").getByTestId("attr-edit-evidence");
+    const editorInEvidenceCard = await evidenceEditor.count() === 1;
+    const editorInConclusionCard = await page.getByTestId("attribution").getByTestId("attr-edit-evidence").count() === 0;
+    const previousEvidence = await evidenceEditor.inputValue().catch(() => "");
+    await evidenceEditor.fill(`${previousEvidence}\n人工补充证据`.trim());
+    observedApiRequests.length = 0;
+    await page.getByTestId("attr-save").click();
+    await waitForObservedRequest((request) => request.method === "PUT" && request.path.endsWith("/attribution"));
+    const putRequest = observedApiRequests.find((request) => request.method === "PUT" && request.path.endsWith("/attribution"));
+    const body = putRequest ? JSON.parse(putRequest.postData || "{}") : {};
+    const evidenceSaved = Array.isArray(body.evidence) && body.evidence.includes("人工补充证据");
+    return {
+      ok: edit && regen && editorInEvidenceCard && editorInConclusionCard && evidenceSaved,
+      detail: `修改=${edit} 重新整理=${regen} B卡编辑=${editorInEvidenceCard} A卡无证据编辑=${editorInConclusionCard} PUT证据=${evidenceSaved}`,
+    };
   } },
   { id: "decision-card-product-action", phase: "P1", desc: "决策卡主按钮必须调用业务产物 API，/lifecycle 只能作为副作用", async fn(page) {
     if (!(await openImprovementById(page, stageTarget("feedback", "imp-demo01")))) return { ok: false, detail: "无反馈整理事项" };

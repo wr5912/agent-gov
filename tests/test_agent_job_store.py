@@ -227,6 +227,31 @@ def test_agent_job_worker_logs_stale_timeout(tmp_path, caplog):
     assert "raw_output" not in messages
 
 
+def test_agent_job_worker_does_not_claim_when_api_is_unavailable(tmp_path):
+    store, _ = _store(tmp_path)
+    spec = agent_job_spec("eval_case_generation")
+    store.create_agent_job(
+        job_id="evg-api-unavailable",
+        job_type=spec.job_type,
+        scope_kind="feedback_dataset",
+        scope_id="feedback-dataset",
+        profile_name=spec.profile_name,
+        input_payload={"task": "generate_feedback_eval_cases"},
+    )
+
+    async def unused_runtime(**_kwargs):
+        raise AssertionError("worker must not execute while API is unavailable")
+
+    worker = AgentJobWorker(
+        feedback_store=store,
+        run_profile_json=unused_runtime,
+        can_claim_jobs=lambda: False,
+    )
+
+    assert asyncio.run(worker.run_once()) is None
+    assert store.get_agent_job("evg-api-unavailable")["status"] == "queued"
+
+
 def test_agent_job_projection_rejects_invalid_persisted_status(tmp_path):
     store, _ = _store(tmp_path)
     spec = agent_job_spec("eval_case_generation")

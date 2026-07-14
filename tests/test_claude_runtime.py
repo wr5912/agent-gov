@@ -8,6 +8,7 @@ from contextlib import contextmanager
 
 import pytest
 from app.runtime.agent_job_errors import AGENT_AUTH_REQUIRED, AgentAuthenticationRequiredError
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
 from app.runtime.integrations.runtime_langfuse import RuntimeLangfuseClient
 from app.runtime.model_provider import LITELLM_SIDECAR_BASE_URL, LOCAL_PROVIDER_DUMMY_API_KEY
@@ -71,21 +72,31 @@ class FakeLangfuseClient:
 
 
 def _settings(tmp_path):
-    workspace = tmp_path / "docker" / "volume" / "main-workspace"
     data = tmp_path / "docker" / "volume" / "data"
-    claude_root = tmp_path / "docker" / "volume" / "claude-roots" / "main"
-    claude_home = claude_root / ".claude"
-    workspace.mkdir(parents=True, exist_ok=True)
-    claude_home.mkdir(parents=True, exist_ok=True)
-    return AppSettings(
+    settings = AppSettings(
         _env_file=None,
-        WORKSPACE_DIR=workspace,
-        MAIN_WORKSPACE_DIR=workspace,
         DATA_DIR=data,
-        CLAUDE_ROOT=claude_root,
-        MAIN_CLAUDE_ROOT=claude_root,
-        CLAUDE_HOME=claude_home,
+        GOVERNOR_CLAUDE_ROOT=tmp_path / "docker" / "volume" / "claude-roots" / "governor",
+        RUNTIME_VOLUME_MODE="local-debug",
     )
+    workspace = settings.main_workspace_dir
+    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Main Agent")
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return settings
 
 
 async def _collect_prompt(prompt):
@@ -153,8 +164,8 @@ def test_default_options_use_main_runtime_profile(tmp_path, monkeypatch):
     assert getattr(options, "agents", None) is None
     assert getattr(options, "allowed_tools", None) in (None, [])
     assert getattr(options, "disallowed_tools", None) in (None, [])
-    assert getattr(options, "permission_mode", None) == "bypassPermissions"
-    assert getattr(options, "can_use_tool", None) is None
+    assert getattr(options, "permission_mode", None) == "default"
+    assert callable(getattr(options, "can_use_tool", None))
     assert getattr(options, "permission_prompt_tool_name", None) is None
     pre_tool_hooks = getattr(options, "hooks", {}).get("PreToolUse", [])
     pre_tool_matchers = {getattr(matcher, "matcher", None) for matcher in pre_tool_hooks}
@@ -213,9 +224,9 @@ def test_main_runtime_profile_does_not_inject_mcp_servers(tmp_path, monkeypatch)
         json.dumps(
             {
                 "mcpServers": {
-                    "sec-ops-data": {"url": "http://127.0.0.1:1/mcp", "transport": "http"},
-                    "security-kb": {"url": "http://127.0.0.1:2/mcp", "transport": "http"},
-                    "forbidden": {"url": "http://127.0.0.1:3/mcp", "transport": "http"},
+                    "sec-ops-data": {"type": "http", "url": "http://localhost:58001/mcp"},
+                    "security-kb": {"type": "http", "url": "http://127.0.0.1:2/mcp"},
+                    "forbidden": {"type": "http", "url": "http://127.0.0.1:3/mcp"},
                 }
             }
         ),
@@ -278,6 +289,7 @@ def test_feedback_job_options_inject_model_provider_credentials(tmp_path):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         MODEL_PROVIDER_API_KEY="sk-test-provider",
         MODEL_PROVIDER_API_URL="https://model-gateway.example.test/anthropic",
     )
@@ -318,6 +330,7 @@ def test_vllm_feedback_job_options_use_derived_litellm_sidecar(tmp_path, monkeyp
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         MODEL_PROVIDER_BACKEND="vllm",
         MODEL_PROVIDER_API_URL="http://vllm:8000",
     )
@@ -486,6 +499,7 @@ def test_explicit_main_mcp_config_override_is_not_injected_into_options(tmp_path
         CLAUDE_SETTINGS_PATH=settings_path,
         CLAUDE_MCP_CONFIG_PATH=mcp_path,
         CLAUDE_CONFIG_DIR=config_dir,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
     )
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     monkeypatch.setattr(runtime.langfuse, "get_client", lambda: None)
@@ -518,6 +532,7 @@ def test_main_mcp_override_does_not_inject_feedback_job_profile_mcp(tmp_path):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         CLAUDE_MCP_CONFIG_PATH=main_mcp_path,
     )
     settings.governor_workspace_dir.mkdir(parents=True, exist_ok=True)
@@ -560,6 +575,7 @@ def test_langfuse_env_is_passed_to_claude_sdk(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -630,6 +646,7 @@ def test_langfuse_dspy_instrumentation_uses_current_process_otel_env(tmp_path, m
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -662,6 +679,7 @@ def test_langfuse_dspy_instrumentation_skips_when_disabled(tmp_path, monkeypatch
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=False,
     )
 
@@ -676,6 +694,7 @@ def test_langfuse_requires_keys_when_enabled(tmp_path):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
     )
@@ -708,6 +727,7 @@ def test_claude_env_json_overrides_langfuse_defaults(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -774,6 +794,7 @@ def test_health_reports_langfuse_state_without_secrets(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -908,6 +929,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",
@@ -1013,7 +1035,7 @@ def test_run_enriches_langfuse_input_output(tmp_path, monkeypatch):
                 "alert_id": "alert-1",
                 "case_id": "case-1",
                 "mode": "non_stream",
-                "permission_mode": "bypassPermissions",
+                "permission_mode": "default",
                 "claude_web_hitl_enabled": "false",
                 "profile": "main-agent",
                 "skills_mode": "default",
@@ -1069,6 +1091,7 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
         DATA_DIR=base.data_dir,
         CLAUDE_ROOT=base.claude_root,
         CLAUDE_HOME=base.claude_home,
+        RUNTIME_VOLUME_MODE=base.runtime_volume_mode,
         LANGFUSE_ENABLED=True,
         LANGFUSE_PUBLIC_KEY="pk-test",
         LANGFUSE_SECRET_KEY="sk-test",

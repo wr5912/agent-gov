@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import os
+import tempfile
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from sqlalchemy import select
 
 from app.runtime.agent_git_store import AgentGitError, GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout, validate_agent_id
-from app.runtime.errors import FeedbackStoreError
+from app.runtime.errors import ConflictError, FeedbackStoreError
 from app.runtime.json_types import JsonObject
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
 from app.runtime.runtime_db import (
     AgentChangeSetEventModel,
     AgentChangeSetModel,
@@ -49,12 +52,16 @@ class AgentGovernanceService:
         *,
         feedback_store: FeedbackStore,
         agent_version_store: GitAgentVersionStore,
+        runtime_mode: str = "container",
+        runtime_env: Mapping[str, str] | None = None,
     ) -> None:
         self.feedback_store = feedback_store
         self.agent_version_store = agent_version_store
         # 多租户版本 store 注册表：main-agent 复用传入的主 store（行为不变），
         # 业务 Agent 各自懒初始化一套独立 git 版本链（B3.2/B3.3）。
         self._agent_stores: dict[str, GitAgentVersionStore] = {MAIN_AGENT_ID: agent_version_store}
+        self._runtime_mode = runtime_mode
+        self._runtime_env = dict(runtime_env or os.environ)
         # 缺陷④：非 main 业务 Agent 必须在注册表中存在才允许建/取其版本库，杜绝幽灵 Agent。
         # 由 app 装配后注入（None 则不校验，便于单测）。
         self.agent_exists: Callable[[str], bool] | None = None
@@ -103,9 +110,7 @@ class AgentGovernanceService:
         except AgentGitError as exc:
             raise AgentGovernanceError(409, str(exc)) from exc
 
-    def snapshot_repository(
-        self, *, operator: str = "runtime", note: str | None = None, agent_id: str | None = None
-    ) -> JsonObject:
+    def snapshot_repository(self, *, operator: str = "runtime", note: str | None = None, agent_id: str | None = None) -> JsonObject:
         normalized = self._normalize_agent_id(agent_id)
         try:
             return self._store_for(agent_id).create_snapshot(
@@ -127,9 +132,7 @@ class AgentGovernanceService:
         return self._store_for(change_set.get("agent_id")).diff_versions(str(change_set["base_commit_sha"]), candidate)
 
     def change_set_file_diff(self, change_set: JsonObject, candidate: str, path: str) -> JsonObject | None:
-        return self._store_for(change_set.get("agent_id")).diff_version_file(
-            str(change_set["base_commit_sha"]), candidate, path
-        )
+        return self._store_for(change_set.get("agent_id")).diff_version_file(str(change_set["base_commit_sha"]), candidate, path)
 
     def list_change_sets(
         self,
@@ -329,7 +332,10 @@ class AgentGovernanceService:
         tag_name = tag_name or f"agent-release-{utc_now().replace(':', '').replace('+', 'Z')}-{change_set_id[-8:]}"
         try:
             result = store.publish_commit(
-                str(change_set["candidate_commit_sha"]), tag_name=tag_name, message=note or f"Publish {change_set_id}"
+                str(change_set["candidate_commit_sha"]),
+                tag_name=tag_name,
+                message=note or f"Publish {change_set_id}",
+                validate_ref=self._ref_policy_validator(store, agent_id),
             )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Agent publish failed: {exc}") from exc
@@ -376,9 +382,13 @@ class AgentGovernanceService:
         release = self.get_release(release_id)
         if not release:
             raise AgentGovernanceError(404, "Agent release not found")
-        store = self._store_for(release.get("agent_id"))
+        agent_id = self._normalize_agent_id(release.get("agent_id"))
+        store = self._store_for(agent_id)
         try:
-            result = store.rollback_to_ref(str(release["commit_sha"]))
+            result = store.rollback_to_ref(
+                str(release["commit_sha"]),
+                validate_ref=self._ref_policy_validator(store, agent_id),
+            )
         except AgentGitError as exc:
             self._transition_release(release_id, "rollback_failed", fields={"rollback_error": str(exc)}, operator=operator)
             raise AgentGovernanceError(409, f"Agent rollback failed: {exc}") from exc
@@ -394,9 +404,13 @@ class AgentGovernanceService:
         release = self.get_release(release_id)
         if not release:
             raise AgentGovernanceError(404, "Agent release not found")
-        store = self._store_for(release.get("agent_id"))
+        agent_id = self._normalize_agent_id(release.get("agent_id"))
+        store = self._store_for(agent_id)
         try:
-            result = store.rollback_to_ref(str(release["commit_sha"]))
+            result = store.rollback_to_ref(
+                str(release["commit_sha"]),
+                validate_ref=self._ref_policy_validator(store, agent_id),
+            )
         except AgentGitError as exc:
             raise AgentGovernanceError(409, f"Agent release restore failed: {exc}") from exc
         return {
@@ -408,6 +422,56 @@ class AgentGovernanceService:
                 "note": note,
             },
         }
+
+    def _ref_policy_validator(self, store: GitAgentVersionStore, agent_id: str) -> Callable[[str], None]:
+        managed_paths = [".claude/settings.json", ".mcp.json"]
+        if agent_id == "security-operations-expert":
+            managed_paths.extend(
+                [
+                    "CLAUDE.md",
+                    "agent.yaml",
+                    ".claude/skills/threat-response-disposition/SKILL.md",
+                ]
+            )
+
+        def validate(ref: str) -> None:
+            try:
+                with tempfile.TemporaryDirectory(prefix=f"agentgov-policy-{agent_id}-") as temporary:
+                    workspace = Path(temporary)
+                    for relative in managed_paths:
+                        content = store.read_text_at_ref(ref, relative)
+                        if content is None:
+                            continue
+                        target = workspace / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_text(content, encoding="utf-8")
+                    data_dir = self.feedback_store.data_dir.resolve()
+                    runtime_root = Path("/") if data_dir == Path("/data") else data_dir.parent
+                    require_runtime_workspace_policy(
+                        workspace=workspace,
+                        agent_id=agent_id,
+                        runtime_mode=self._runtime_mode,
+                        env=self._runtime_env,
+                        runtime_root=runtime_root,
+                    )
+            except ManagedAgentPolicyError as exc:
+                raise AgentGitError(f"Managed Agent policy rejected ref {ref}: {exc}") from exc
+
+        return validate
+
+    def require_workspace_policy(self, workspace: Path, agent_id: str) -> None:
+        data_dir = self.feedback_store.data_dir.resolve()
+        runtime_root = Path("/") if data_dir == Path("/data") else data_dir.parent
+        try:
+            require_runtime_workspace_policy(
+                workspace=workspace,
+                agent_id=self._normalize_agent_id(agent_id),
+                runtime_mode=self._runtime_mode,
+                env=self._runtime_env,
+                runtime_root=runtime_root,
+            )
+        except ManagedAgentPolicyError as exc:
+            raise ConflictError(f"Managed Agent policy rejected workspace: {exc}") from exc
 
     def _transition_change_set(
         self,

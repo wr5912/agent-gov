@@ -15,7 +15,7 @@
 经 Compose 注入的运行时环境；`docker/.env.local-debug` 只用于本机调试专项测试，不用于本文件。
 宿主机直接执行会 skip，不伪装成 local-debug。
 
-chat 用例额外要求已 bootstrap 的容器运行卷（`make runtime-bootstrap` 或容器 entrypoint）。
+chat 用例额外要求已由 API 启动协调器或 `make runtime-bootstrap` 准备并验证的容器运行卷。
 """
 
 from __future__ import annotations

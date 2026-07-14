@@ -110,10 +110,22 @@ class ImprovementExecutionService:
             if data.get("status") != "ready" or not operations:
                 self._gov.abandon_change_set(change_set_id, note="governor 未产出可应用执行操作")
                 return self._heuristic(plan, improvement_id, reason=str(data.get("no_action_reason") or ""))
-            self._execution_app.apply_execution_operations(
-                operations, workspace_dir=worktree, target_policy=policy, content_guard=guard_execution_write, allowed_targets=set(targets)
-            )
-            applied_version, applied_diff = self._commit_candidate(store, worktree, pre_version, change_set_id, improvement_id)
+            with store.mutation_guard():
+                self._execution_app.apply_execution_operations(
+                    operations,
+                    workspace_dir=worktree,
+                    target_policy=policy,
+                    content_guard=guard_execution_write,
+                    workspace_guard=lambda candidate: self._gov.require_workspace_policy(candidate, agent_id),
+                    allowed_targets=set(targets),
+                )
+                applied_version, applied_diff = self._commit_candidate(
+                    store,
+                    worktree,
+                    pre_version,
+                    change_set_id,
+                    improvement_id,
+                )
         except Exception:
             try:
                 self._gov.abandon_change_set(change_set_id, note="执行应用失败，已放弃候选变更集并回滚 worktree")

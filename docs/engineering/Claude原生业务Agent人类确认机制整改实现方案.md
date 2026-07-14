@@ -1,9 +1,11 @@
 # Claude 原生业务Agent人类确认机制整改实现方案
 
-> 文档状态：审批用工程整改方案，不代表当前代码已经全部实现。
+> 文档状态：历史审批方案；2026-07-13 起由当前运行时契约取代。本文保留设计演进背景，后文中的 `bypassPermissions`、Bash 全量直放和普通 HITL 不支持 `updated_input` 等旧口径不再代表现状。
 > 适用范围：所有注册业务Agent（含 `main-agent`）的 Playground / Agent Runtime 交互运行。
 > 不适用范围：治理智能体 `governor`、归因/优化/执行/测试数据集治理/回归影响分析/发布治理等后台治理 job。
 > 原生依据：Claude Code / Claude Agent SDK 的权限、permission mode、`can_use_tool` / `canUseTool` 和 `AskUserQuestion` 是一等机制；AgentGov 只做 Web UI、等待桥接、审计投影和业务边界收敛。
+
+当前实现以 fail-closed 为基线：非流式权限询问全部拒绝；流式始终挂 callback，HITL 关闭时显式拒绝 ask；通用 Bash run 授权按低风险类别隔离。RO 使用独立服务间凭据驱动 `proposal` / `approved_execution`，后一阶段仅对精确 `soc_api__create` / `soc_api__manual` 逐次提交批准后的 `updated_input`，并由本地一次性 claim 防回放；`soc_api__execute` 始终禁止。
 
 ## 1. 结论
 

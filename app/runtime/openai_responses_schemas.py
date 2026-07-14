@@ -19,6 +19,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.runtime.json_types import JsonObject
+from app.runtime.response_disposition_control import ResponseDispositionPhase
 
 # 顶层请求默认 extra="ignore"（pydantic 默认）：不 reject 真实 OpenAI 客户端发来的、
 # 本项目暂不建模的标准字段（temperature/top_p/tools/reasoning 等）。只有 agentgov 子模型 forbid。
@@ -48,6 +49,13 @@ class AgentGovRequestExtension(BaseModel):
     )
     alert_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
     case_id: Optional[str] = Field(default=None, description="Feedback-loop routing input (backend-owned).")
+    phase: Optional[ResponseDispositionPhase] = Field(
+        default=None,
+        description="Authenticated response-disposition phase. Only the response-orchestrator credential may set it.",
+    )
+    approval_request_id: Optional[str] = Field(default=None, description="RO-owned one-shot approval identifier.")
+    playbook_digest: Optional[str] = Field(default=None, description="Lowercase SHA-256 digest of the approved playbook.")
+    execution_run_id: Optional[str] = Field(default=None, description="RO-owned unique execution identifier.")
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Claude Code turn cap.")
     hitl: Optional[AgentGovHitl] = None
     debug: Optional[AgentGovDebug] = None
@@ -105,6 +113,11 @@ class AgentGovResponseExtension(BaseModel):
     sdk_session_id: Optional[str] = None
     agent_id: Optional[str] = None
     agent_version_id: Optional[str] = None
+    phase: Optional[ResponseDispositionPhase] = None
+    case_id: Optional[str] = None
+    approval_request_id: Optional[str] = None
+    playbook_digest: Optional[str] = None
+    execution_run_id: Optional[str] = None
     trace_id: Optional[str] = None
     output_text: Optional[str] = Field(
         default=None,

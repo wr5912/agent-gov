@@ -125,9 +125,7 @@ def test_create_with_template_id_seeds_from_template_and_unknown_rejected(monkey
     with TestClient(module.app) as client:
         templates = client.get("/api/agent-registry/templates")
         ok = client.post("/api/agent-registry", json={"name": "模板助手", "agent_id": "tpl-ok", "template_id": "general"})
-        unknown = client.post(
-            "/api/agent-registry", json={"name": "未知模板", "agent_id": "tpl-bad", "template_id": "does-not-exist"}
-        )
+        unknown = client.post("/api/agent-registry", json={"name": "未知模板", "agent_id": "tpl-bad", "template_id": "does-not-exist"})
 
     assert templates.status_code == 200
     assert "general" in templates.json()["templates"]
@@ -353,10 +351,10 @@ def test_business_agent_workspace_scaffolds_safe_config_container(tmp_path: Path
 
     settings = json.loads(settings_path.read_text(encoding="utf-8"))
     mcp = json.loads(mcp_path.read_text(encoding="utf-8"))
-    # 起始权限保守：默认只读自身工作区，Bash 直行但仍由 sandbox/hook/deny 拦截；写入工作区需确认。
+    # 起始权限保守：默认只读自身工作区；Bash 与写入工作区都必须进入确认面。
     assert "Read(./.env)" in settings["permissions"]["deny"]
-    assert "Bash(*)" in settings["permissions"]["allow"]
-    assert "Bash(*)" not in settings["permissions"]["ask"]
+    assert "Bash(*)" not in settings["permissions"]["allow"]
+    assert "Bash(*)" in settings["permissions"]["ask"]
     assert settings["permissions"]["defaultMode"] == "default"
     # 起始 MCP 为空，不预置任何 server/header/凭据。
     assert mcp == {"mcpServers": {}}

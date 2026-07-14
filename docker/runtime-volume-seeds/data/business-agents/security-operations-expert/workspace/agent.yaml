@@ -6,9 +6,9 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 只有 mcp__sec-ops__soc_api__execute
-  # (POST /resp/actions/execute) 依赖 web HITL 人审。ENABLE_CLAUDE_WEB_HITL=false
-  # 时运行时只对该工具 fail-loud；其他 sec-ops 工具不得触发 HITL。
+  # 部署契约（被运行时读取+强制）：本 Agent 的原生 Web HITL 仅作为 RO 内部执行授权握手。
+  # 用户只在 RO 界面确认一次整本剧本；proposal 阶段拒绝写工具，approved_execution
+  # 阶段由 RO 对 create/manual 每次请求逐次校验批准快照并内部 allow_once。
   requires_web_hitl: true
 
 capabilities:
@@ -24,9 +24,6 @@ capabilities:
   - playbook_resolution
   - playbook_dry_run
   - playbook_execution_submission
-  - execution_result_query
-  - effect_evaluation
-  - analyst_summary
 
 paths:
   workspace: /data/business-agents/security-operations-expert/workspace
@@ -40,15 +37,14 @@ paths:
 
 mcp:
   default_transport: http
-  # 单一 SOC 网关（OpenAPI-MCP 管理器），由 .mcp.json 的 sec-ops server（url=${SEC_OPS_MCP_URL}）挂载。
-  # 工具经 mcp__sec-ops__<tool> 暴露；settings.json 只让 soc_api__execute 走 web HITL，其余 sec-ops 工具直接放行。
+  # 单一 SOC 网关由 .mcp.json 的 sec-ops server 挂载。整本确认由 RO 两阶段门承担。
   servers:
     sec-ops:
       purpose: 统一 SOC 网关，聚合 SOC 处置与研判数据能力
       risk: mixed
       tool_families:
         - name: mcp__sec-ops__soc_api__*
-          purpose: SOC 处置能力（剧本推荐/查询/校验/topology/execute/manual/create*/update*/delete*/upload/cancel 等；只有 soc_api__execute 需 HITL）
+          purpose: SOC 处置能力；create/manual 仅由 approved_execution 使用，execute 及其他 mutation 禁止
           risk: mixed
         - name: mcp__sec-ops__threat_analysis__*
           purpose: 研判数据只读（告警/事件/资产/分析结果等）
@@ -62,7 +58,6 @@ skills:
 subagents:
   disposition_planning: response-playbook-planning
   playbook_build: response-playbook-builder
-  summary: response-playbook-summarizer
 
 operational_model:
   evidence_first: true
@@ -79,25 +74,39 @@ operational_model:
     - cloud
     - vulnerability
 
+# AGENTGOV:SECURITY-APPROVAL:START
 approval_policy:
-  # 声明式说明（非运行时强制）：真实 HITL 门仅限 .claude/settings.json(ask) 中的 soc_api__execute；
-  # 其他处置工具直接按配置放行，Bash 风险由 pre_tool_guard 与 sandbox 兜底。
-  # 下列高危动作是剧本内步骤，经整本剧本 submit_playbook_execution 一次提交、由 threat-response-disposition skill 枚举进记录；
-  # 不存在逐动作独立 gate（agent 不拆步下发）。
-  require_confirmation:
-    - isolate_host
-    - disable_user
-    - block_ip
-    - block_domain
-    - block_hash
-    - kill_process
-    - delete_file
-    - update_production_policy
-    - submit_playbook_execution
-    - register_playbook
-  always_dry_run_first: true
-  require_rollback_plan: true
-  require_evidence: true
+  owner: response-orchestration
+  phase_field: phase
+  proposal_phase: proposal
+  approved_execution_phase: approved_execution
+  whole_playbook_only: true
+  user_confirmation_count: 1
+  native_web_hitl_role: ro_internal_execution_authorization
+  native_web_hitl_tools:
+    - mcp__sec-ops__soc_api__create
+    - mcp__sec-ops__soc_api__manual
+  native_web_hitl_decision: allow_once_per_request
+  validate_each_permission_input_against_approved_snapshot: true
+  proposal_side_effects: deny
+  approved_execution:
+    temporary:
+      - create_playbook
+      - submit_manual
+    published_reuse:
+      - submit_manual
+  forbidden_tools:
+    - mcp__sec-ops__soc_api__execute
+    - mcp__sec-ops__soc_api__update*
+    - mcp__sec-ops__soc_api__delete*
+    - mcp__sec-ops__soc_api__upload*
+    - mcp__sec-ops__soc_api__cancel*
+    - mcp__sec-ops__soc_api__rollback
+  stop_after_nonempty_instance_id: true
+  poll_execution_result: false
+  evaluate_effect: false
+  close_response_case: false
+# AGENTGOV:SECURITY-APPROVAL:END
 
 observability:
   hook_audit_log: /data/transcripts/claude-hook-audit.jsonl

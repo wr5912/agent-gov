@@ -1,18 +1,24 @@
 from __future__ import annotations
 
+import os
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
+from scripts.bootstrap_runtime_volume import load_runtime_env
 
+from app.runtime.agent_git_store import GitAgentVersionStore
 from app.runtime.agent_paths import InvalidAgentId, business_agent_layout
 from app.runtime.business_agent_workspace import (
     DEFAULT_TEMPLATE_ID,
     list_business_agent_templates,
     seed_business_agent_workspace,
+    seed_declared_business_agent_workspace,
 )
 from app.runtime.errors import ConflictError
+from app.runtime.managed_agent_policy import ManagedAgentPolicyError, require_runtime_workspace_policy
 from app.runtime.schemas import (
     AgentCreateRequest,
     AgentDeleteResponse,
@@ -54,17 +60,68 @@ def _resolve_template_id(raw: str | None) -> str:
 
 
 def _register_and_seed_agent(req: AgentCreateRequest, settings: AppSettings, store: AgentRegistryStore) -> AgentSummaryResponse:
-    """注册业务 Agent 并从所选模板幂等播种其 workspace。"""
+    """Stage, validate, version, atomically install, then register a business Agent."""
     template_id = _resolve_template_id(req.template_id)
     agent_id = (req.agent_id or "").strip() or f"biz-{uuid4().hex[:12]}"
     try:
         # 缺陷③：agent_id 直接作路径段，business_agent_layout 收敛了防穿越校验，非法 → 422。
-        workspace_dir = str(business_agent_layout(settings.data_dir, agent_id).workspace)
+        layout = business_agent_layout(settings.data_dir, agent_id)
     except InvalidAgentId as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    record = store.create_business_agent(name=req.name, agent_id=agent_id, workspace_dir=workspace_dir)
-    seed_business_agent_workspace(Path(record.workspace_dir), agent_id=record.agent_id, name=record.name, template_id=template_id)
-    return _summary(record)
+    if store.get_agent(agent_id) is not None:
+        raise ConflictError(f"Business agent already exists: {agent_id}")
+    layout.root.parent.mkdir(parents=True, exist_ok=True)
+    staging_root = layout.root.parent / f".{agent_id}.staging-{uuid4().hex}"
+    staging_workspace = staging_root / "workspace"
+    try:
+        env = dict(load_runtime_env(settings.settings_env_file)) if settings.settings_env_file else dict(os.environ)
+        runtime_root = Path("/") if settings.data_dir.resolve() == Path("/data") else settings.data_dir.resolve().parent
+        used_declared_seed = req.template_id is None and seed_declared_business_agent_workspace(
+            staging_workspace,
+            agent_id=agent_id,
+            runtime_volume_mode=settings.runtime_volume_mode,
+            env=env,
+            runtime_root=runtime_root,
+        )
+        if not used_declared_seed:
+            seed_business_agent_workspace(
+                staging_workspace,
+                agent_id=agent_id,
+                name=req.name,
+                template_id=template_id,
+            )
+        require_runtime_workspace_policy(
+            workspace=staging_workspace,
+            agent_id=agent_id,
+            runtime_mode=settings.runtime_volume_mode,
+            env=env,
+            runtime_root=runtime_root,
+        )
+        GitAgentVersionStore(
+            repository_dir=staging_workspace,
+            worktrees_dir=staging_root / "version" / "worktrees",
+            releases_dir=staging_root / "version" / "releases",
+            repository_name=f"{agent_id}-config",
+            git_user_name=settings.agent_git_user_name,
+            git_user_email=settings.agent_git_user_email,
+        ).ensure_bootstrap()
+        if layout.root.exists():
+            raise ConflictError(f"Business agent runtime directory already exists: {agent_id}")
+        os.replace(staging_root, layout.root)
+        try:
+            record = store.create_business_agent(
+                name=req.name,
+                agent_id=agent_id,
+                workspace_dir=str(layout.workspace),
+            )
+        except Exception:
+            shutil.rmtree(layout.root, ignore_errors=True)
+            raise
+        return _summary(record)
+    except ManagedAgentPolicyError as exc:
+        raise HTTPException(status_code=422, detail=f"Business agent template violates managed policy: {exc}") from exc
+    finally:
+        shutil.rmtree(staging_root, ignore_errors=True)
 
 
 def create_agents_router(

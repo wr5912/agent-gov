@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
+
 import pytest
+from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.schemas import FeedbackSignalCreateRequest, SocEventIngestRequest
 from app.runtime.settings import AppSettings
 from app.runtime.stores.feedback_store import FeedbackStore
@@ -18,12 +21,28 @@ def _settings(tmp_path):
         DATA_DIR=data,
         GOVERNOR_CLAUDE_ROOT=governor_root,
         MODEL_PROVIDER_API_KEY="sk-test-provider",
+        RUNTIME_VOLUME_MODE="local-debug",
     )
     workspace = settings.main_workspace_dir
     workspace.mkdir(parents=True, exist_ok=True)
     (settings.main_claude_root / ".claude").mkdir(parents=True, exist_ok=True)
+    seed_business_agent_workspace(workspace, agent_id="main-agent", name="Test Agent")
     (workspace / "CLAUDE.md").write_text("# Test Agent\n", encoding="utf-8")
-    (workspace / ".mcp.json").write_text("{}\n", encoding="utf-8")
+    (workspace / ".mcp.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "sec-ops-data": {
+                        "type": "http",
+                        "url": "http://localhost:58001/mcp",
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return settings
 
 

@@ -37,6 +37,7 @@ from .runtime_db_migrations import (
     migrate_0025_agent_governance_legacy_paths,
     migrate_0026_normalized_feedback_generation_refs,
     migrate_0027_agent_registry_requires_web_hitl,
+    migrate_0028_response_disposition_claims,
 )
 from .schema_self_heal import sync_missing_columns
 
@@ -44,6 +45,7 @@ _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
 
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
+from .response_disposition_db import ResponseDispositionClaimModel  # noqa: E402,F401
 
 
 class SchemaMigration(Base):
@@ -474,6 +476,7 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
         ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
         ("0027_agent_registry_requires_web_hitl", migrate_0027_agent_registry_requires_web_hitl),
+        ("0028_response_disposition_claims", migrate_0028_response_disposition_claims),
     ):
         if version in applied:
             continue

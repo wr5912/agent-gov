@@ -190,9 +190,7 @@ def test_runtime_db_migrates_improvement_detail_columns_on_existing_tables(tmp_p
             table: {str(r[1]) for r in connection.exec_driver_sql(f"PRAGMA table_info({table})").fetchall()}
             for table in ("attributions", "optimization_plans", "execution_records", "regression_assessments")
         }
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0019_improvement_detail_columns'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0019_improvement_detail_columns'").fetchone()
 
     assert {"counter_evidence_json", "uncertainty_factors_json", "verification_suggestions_json"} <= cols["attributions"]
     assert {"generation_trace_id", "generation_trace_url"} <= cols["attributions"]
@@ -227,9 +225,7 @@ def test_runtime_db_migrates_trace_columns_and_drops_legacy_optimization_chain(t
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
         tables = {str(row[0]) for row in connection.exec_driver_sql("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0022_remove_legacy_batch_optimization_chain'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0022_remove_legacy_batch_optimization_chain'").fetchone()
 
     assert set(legacy_tables).isdisjoint(tables)
     assert migration is not None
@@ -264,16 +260,12 @@ def test_runtime_db_renames_eval_case_targeted_regression_layer(tmp_path):
             )
             """
         )
-        connection.execute(
-            "INSERT INTO eval_cases (eval_case_id, status, prompt, asset_layer) VALUES ('evc-old', 'active', 'p', 'batch_specific')"
-        )
+        connection.execute("INSERT INTO eval_cases (eval_case_id, status, prompt, asset_layer) VALUES ('evc-old', 'active', 'p', 'batch_specific')")
 
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
         value = connection.exec_driver_sql("SELECT asset_layer FROM eval_cases WHERE eval_case_id = 'evc-old'").fetchone()[0]
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0023_eval_case_targeted_regression_layer'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0023_eval_case_targeted_regression_layer'").fetchone()
 
     assert value == "targeted_regression"
     assert migration is not None
@@ -387,26 +379,14 @@ def test_runtime_db_migrates_legacy_agent_governance_paths(tmp_path):
             )
             """
         )
-        connection.execute(
-            "INSERT INTO agent_change_sets (change_set_id, worktree_path) "
-            "VALUES ('cs-old', '/data/agent-governance/worktrees/cs-old')"
-        )
-        connection.execute(
-            "INSERT INTO agent_releases (release_id, archive_path) "
-            "VALUES ('rel-old', '/data/agent-governance/releases/rel-old.tar.gz')"
-        )
+        connection.execute("INSERT INTO agent_change_sets (change_set_id, worktree_path) VALUES ('cs-old', '/data/agent-governance/worktrees/cs-old')")
+        connection.execute("INSERT INTO agent_releases (release_id, archive_path) VALUES ('rel-old', '/data/agent-governance/releases/rel-old.tar.gz')")
 
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
-        worktree_path = connection.exec_driver_sql(
-            "SELECT worktree_path FROM agent_change_sets WHERE change_set_id = 'cs-old'"
-        ).fetchone()[0]
-        archive_path = connection.exec_driver_sql(
-            "SELECT archive_path FROM agent_releases WHERE release_id = 'rel-old'"
-        ).fetchone()[0]
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0025_agent_governance_legacy_paths'"
-        ).fetchone()
+        worktree_path = connection.exec_driver_sql("SELECT worktree_path FROM agent_change_sets WHERE change_set_id = 'cs-old'").fetchone()[0]
+        archive_path = connection.exec_driver_sql("SELECT archive_path FROM agent_releases WHERE release_id = 'rel-old'").fetchone()[0]
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0025_agent_governance_legacy_paths'").fetchone()
 
     assert worktree_path == "/data/business-agents/main-agent/version/worktrees/cs-old"
     assert archive_path == "/data/business-agents/main-agent/version/releases/rel-old.tar.gz"
@@ -419,9 +399,7 @@ def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
         columns = {str(r[1]) for r in connection.exec_driver_sql("PRAGMA table_info(claude_user_input_requests)").fetchall()}
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0020_claude_user_input_requests'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0020_claude_user_input_requests'").fetchone()
         index_rows = connection.exec_driver_sql("PRAGMA index_list(claude_user_input_requests)").fetchall()
         indexes = {str(row[1]) for row in index_rows}
 
@@ -441,6 +419,31 @@ def test_runtime_db_creates_claude_user_input_requests_table(tmp_path):
     } <= columns
     assert "ix_claude_user_input_agent_status" in indexes
     assert "ix_claude_user_input_run_status" in indexes
+    assert migration is not None
+
+
+def test_runtime_db_creates_response_disposition_claims_table(tmp_path):
+    db_path = tmp_path / "runtime.sqlite3"
+
+    factory = make_session_factory(db_path)
+    with factory.kw["bind"].connect() as connection:
+        columns = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(response_disposition_claims)").fetchall()}
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0028_response_disposition_claims'").fetchone()
+        indexes = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA index_list(response_disposition_claims)").fetchall()}
+
+    assert {
+        "approval_request_id",
+        "case_id",
+        "playbook_digest",
+        "execution_run_id",
+        "agent_run_id",
+        "status",
+        "create_authorized",
+        "manual_authorized",
+        "failure_reason",
+    } <= columns
+    assert "ix_response_disposition_claim_status" in indexes
+    assert "ix_response_disposition_claim_case" in indexes
     assert migration is not None
 
 
@@ -499,17 +502,13 @@ def test_runtime_db_migrates_normalized_feedback_provenance_columns(tmp_path):
             "problem TEXT, possible_reason TEXT, possible_object TEXT, impact TEXT, suggestion TEXT, user_quote TEXT, "
             "status VARCHAR(32), created_at VARCHAR(64), updated_at VARCHAR(64))"
         )
-        connection.execute(
-            "INSERT INTO normalized_feedbacks VALUES ('nf-1','imp-1','p','','','','','q','draft','t','t')"
-        )
+        connection.execute("INSERT INTO normalized_feedbacks VALUES ('nf-1','imp-1','p','','','','','q','draft','t','t')")
 
     factory = make_session_factory(db_path)
     with factory.kw["bind"].connect() as connection:
         cols = {str(row[1]) for row in connection.exec_driver_sql("PRAGMA table_info(normalized_feedbacks)").fetchall()}
         row = connection.exec_driver_sql("SELECT generated_by FROM normalized_feedbacks WHERE normalized_feedback_id='nf-1'").fetchone()
-        migration = connection.exec_driver_sql(
-            "SELECT version FROM schema_migrations WHERE version = '0026_normalized_feedback_generation_refs'"
-        ).fetchone()
+        migration = connection.exec_driver_sql("SELECT version FROM schema_migrations WHERE version = '0026_normalized_feedback_generation_refs'").fetchone()
 
     assert {"generated_by", "generation_trace_id", "generation_trace_url"} <= cols
     assert row is not None and row[0] == "heuristic"  # 旧行保留、默认值

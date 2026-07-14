@@ -6,10 +6,13 @@ import os
 import shutil
 import subprocess
 import threading
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Protocol
 
+from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_version_store import WORKSPACE_EXCLUDED_NAMES, WORKSPACE_EXCLUDED_PATTERNS
 from app.runtime.feedback_privacy import SENSITIVE_KEY_PARTS
 from app.runtime.json_types import JsonObject
@@ -20,14 +23,11 @@ MAX_REPOSITORY_STATUS_DIFFS = 20
 
 
 class AgentVersionProvider(Protocol):
-    def ensure_bootstrap(self) -> JsonObject:
-        ...
+    def ensure_bootstrap(self) -> JsonObject: ...
 
-    def current_version_id(self) -> Optional[str]:
-        ...
+    def current_version_id(self) -> Optional[str]: ...
 
-    def is_maintenance_active(self) -> bool:
-        ...
+    def is_maintenance_active(self) -> bool: ...
 
 
 class AgentGitError(RuntimeError):
@@ -74,6 +74,7 @@ class GitAgentVersionStore:
         self.git_user_email = git_user_email
         self._maintenance = False
         self._lock = threading.RLock()
+        self._process_lock_path = self.worktrees_dir.parent / ".repository.lock"
         self.repository_dir.mkdir(parents=True, exist_ok=True)
         self.worktrees_dir.mkdir(parents=True, exist_ok=True)
         self.releases_dir.mkdir(parents=True, exist_ok=True)
@@ -82,7 +83,7 @@ class GitAgentVersionStore:
         return self._maintenance
 
     def ensure_bootstrap(self) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_git_available()
             if not (self.repository_dir / ".git").exists():
                 self._git(["init"], cwd=self.repository_dir)
@@ -153,7 +154,7 @@ class GitAgentVersionStore:
         parent_version_id: Optional[str] = None,
         rollback_of_version_id: Optional[str] = None,
     ) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             self._git(["add", "-A", "--", "."], cwd=self.repository_dir)
             if self._has_staged_changes(self.repository_dir):
@@ -166,7 +167,7 @@ class GitAgentVersionStore:
             return summary
 
     def discard_workspace_changes(self, paths: list[str]) -> JsonObject:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             current = {str(item["path"]): item for item in self._workspace_changes()}
             requested = self._requested_dirty_paths(paths, current)
@@ -256,7 +257,7 @@ class GitAgentVersionStore:
         }
 
     def create_worktree(self, change_set_id: str, *, base_ref: str | None = None) -> GitWorktreeRef:
-        with self._lock:
+        with self._mutation_guard():
             self._ensure_repo_ready()
             base_commit = self._resolve_ref(base_ref or "HEAD")
             branch_name = f"change-set/{change_set_id}"
@@ -276,7 +277,7 @@ class GitAgentVersionStore:
             return GitWorktreeRef(change_set_id, branch_name, worktree_path, base_commit)
 
     def commit_worktree(self, worktree_path: Path, *, message: str) -> str:
-        with self._lock:
+        with self._mutation_guard():
             self._configure_repo(worktree_path)
             self._write_info_exclude(worktree_path)
             self._git(["add", "-A", "--", "."], cwd=worktree_path)
@@ -374,17 +375,27 @@ class GitAgentVersionStore:
         )
         return result
 
-    def publish_commit(self, commit_sha: str, *, tag_name: str, message: str) -> JsonObject:
-        with self._lock:
+    def publish_commit(
+        self,
+        commit_sha: str,
+        *,
+        tag_name: str,
+        message: str,
+        validate_ref: Callable[[str], None] | None = None,
+    ) -> JsonObject:
+        with self._mutation_guard():
             self._maintenance = True
             try:
                 self._ensure_repo_ready()
                 current = self.current_commit_sha()
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
-                self._git(["merge", "--ff-only", commit_sha], cwd=self.repository_dir)
+                target = self._resolve_ref(commit_sha)
+                if validate_ref is not None:
+                    validate_ref(target)
+                self._git(["merge", "--ff-only", target], cwd=self.repository_dir)
                 if not self._git(["tag", "--list", tag_name], cwd=self.repository_dir).strip():
-                    self._git(["tag", "-a", tag_name, "-m", message, commit_sha], cwd=self.repository_dir)
+                    self._git(["tag", "-a", tag_name, "-m", message, target], cwd=self.repository_dir)
                 archive = self.archive_ref(tag_name)
                 return {
                     "previous_commit_sha": current,
@@ -407,14 +418,16 @@ class GitAgentVersionStore:
             "sha256": self._sha256_file(archive_path),
         }
 
-    def rollback_to_ref(self, ref: str) -> JsonObject:
-        with self._lock:
+    def rollback_to_ref(self, ref: str, *, validate_ref: Callable[[str], None] | None = None) -> JsonObject:
+        with self._mutation_guard():
             self._maintenance = True
             try:
                 self._ensure_repo_ready()
                 target = self._resolve_ref(ref)
                 if self._git(["status", "--porcelain"], cwd=self.repository_dir).strip():
                     raise AgentGitError("Main Agent workspace has uncommitted changes")
+                if validate_ref is not None:
+                    validate_ref(target)
                 previous = self.current_commit_sha()
                 self._git(["reset", "--hard", target], cwd=self.repository_dir)
                 return {
@@ -425,6 +438,45 @@ class GitAgentVersionStore:
                 }
             finally:
                 self._maintenance = False
+
+    def workspace_changes(self) -> list[JsonObject]:
+        with self._mutation_guard():
+            self._ensure_repo_ready()
+            return list(self._workspace_changes())
+
+    def reset_to_ref_for_managed_migration(self, ref: str) -> None:
+        """Recover a journaled platform migration while the runtime phase lock is exclusive."""
+
+        with self._mutation_guard():
+            self._ensure_repo_ready()
+            target = self._resolve_ref(ref)
+            self._git(["reset", "--hard", target], cwd=self.repository_dir)
+            self._git(["clean", "-fd"], cwd=self.repository_dir)
+
+    def read_text_at_ref(self, ref: str, path: str) -> str | None:
+        safe_path = self._safe_relative_path(path)
+        if not safe_path:
+            raise AgentGitError(f"Invalid workspace path: {path!r}")
+        raw = self._read_file_at_ref(self._resolve_ref(ref), safe_path)
+        if raw is None:
+            return None
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise AgentGitError(f"Workspace file is not UTF-8: {safe_path}") from exc
+
+    @contextmanager
+    def mutation_guard(self) -> Iterator[None]:
+        """Hold this Agent repository's in-process and cross-process mutation lease."""
+
+        with self._mutation_guard():
+            yield
+
+    @contextmanager
+    def _mutation_guard(self) -> Iterator[None]:
+        with self._lock:
+            with advisory_lock(self._process_lock_path, mode="exclusive"):
+                yield
 
     def _workspace_changes(self) -> list[JsonObject]:
         raw = self._git(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames"], cwd=self.repository_dir)
@@ -577,6 +629,23 @@ class GitAgentVersionStore:
 
     def _ensure_safe_directory(self, cwd: Path) -> None:
         safe_path = str(cwd.resolve())
+        probe = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=str(cwd),
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if probe.returncode == 0:
+            return
+        diagnostic = f"{probe.stdout}\n{probe.stderr}".lower()
+        if "dubious ownership" not in diagnostic and "safe.directory" not in diagnostic:
+            # This helper only owns safe.directory recovery.  A missing or otherwise
+            # invalid repository is reported by the following repository-local Git
+            # command with its normal, more precise error; it must not grow the global
+            # safe.directory list.
+            return
         existing = self._git(["config", "--global", "--get-all", "safe.directory"], cwd=cwd, check=False)
         if safe_path in existing.splitlines() or "*" in existing.splitlines():
             return

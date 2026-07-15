@@ -36,6 +36,7 @@ def _service(tmp_path: Path, run_profile_json, find_run_by_id=None) -> tuple[Imp
     content.upsert_normalized_feedback("imp-1", problem="告警误报", possible_object="MCP 数据", possible_reason="时间不一致", suggestion="加时间校验", user_quote="这是误报")
     content.create_feedback(
         "imp-1",
+        agent_id="soc-ops",
         summary="告警时间窗口与事件时间不一致",
         raw_text="原始用户输入：请判断这条告警是否应升级处置。",
         run_id="run-1",

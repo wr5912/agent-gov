@@ -4,6 +4,7 @@ from typing import Literal, Optional
 
 from pydantic import ConfigDict, Field, field_validator, model_validator
 
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.runtime_db import EvalRunItemModel, EvalRunModel
 from app.runtime.state_machines import EVAL_RUN_STATES, validate_transition
 from app.runtime.test_dataset_schemas import TestCaseRecord, TestDatasetRecord
@@ -101,7 +102,7 @@ class EvalRunRecord(StrictRuntimeRecord):
     completed_at: Optional[str] = None
     status: EvalRunStatus
     result_status: EvalRunResultStatus = "running"
-    agent_id: str = "main-agent"
+    agent_id: str
     agent_version_id: Optional[str] = None
     source: str
     change_set_id: Optional[str] = None
@@ -196,7 +197,7 @@ class EvalRunRecord(StrictRuntimeRecord):
                 "created_at": row.created_at,
                 "completed_at": row.completed_at,
                 "status": row.status,
-                "agent_id": row.agent_id or "main-agent",
+                "agent_id": require_persisted_agent_id(row.agent_id, entity=f"EvalRun {row.eval_run_id}"),
                 "agent_version_id": row.agent_version_id,
                 "source": row.source,
             }

@@ -11,6 +11,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from app.runtime.agent_admission import AgentAdmissionError
 from app.runtime.agent_git_store import AgentGitError
 from app.runtime.agent_maintenance_db import AgentWorktreeCleanupTaskModel
+from app.runtime.agent_ownership import require_persisted_agent_id
 from app.runtime.improvement_db import ExecutionRecordModel
 from app.runtime.json_types import JsonObject
 from app.runtime.runtime_db import AgentChangeSetModel, utc_now
@@ -114,7 +115,7 @@ def abandon_change_set_and_cleanup(
                 db,
                 change_set_id,
                 reason=reason,
-                agent_id=str(change_set.get("agent_id") or "main-agent"),
+                agent_id=require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}"),
                 delete_branch=delete_branch,
             ),
         )
@@ -123,7 +124,7 @@ def abandon_change_set_and_cleanup(
             service,
             change_set_id,
             reason=reason,
-            agent_id=str(change_set.get("agent_id") or "main-agent"),
+            agent_id=require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}"),
             delete_branch=delete_branch,
         )
     return execute_worktree_cleanup(
@@ -148,7 +149,7 @@ def cleanup_published_change_set(
         ensure_worktree_cleanup_task(
             db,
             change_set_id=change_set_id,
-            agent_id=str(change_set.get("agent_id") or "main-agent"),
+            agent_id=require_persisted_agent_id(change_set.get("agent_id"), entity=f"Agent change set {change_set_id}"),
             delete_branch=True,
         )
     execute_worktree_cleanup(
@@ -385,12 +386,7 @@ def _fail_cleanup_task(
     now = utc_now()
     with service.feedback_store.Session.begin() as db:
         task = db.get(AgentWorktreeCleanupTaskModel, change_set_id)
-        if (
-            task is None
-            or task.status != "claimed"
-            or task.claim_token != token
-            or task.claim_generation != generation
-        ):
+        if task is None or task.status != "claimed" or task.claim_token != token or task.claim_generation != generation:
             return
         task.status = "failed"
         task.claim_token = None

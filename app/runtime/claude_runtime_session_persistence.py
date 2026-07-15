@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from claude_agent_sdk import project_key_for_directory
 
-from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from .agent_profiles import AgentRuntimeProfile
 from .errors import RuntimeFinalizationError
 from .json_types import JsonObject
 from .records.source_records import AgentRunRecord
@@ -32,7 +32,7 @@ class RuntimeSessionPersistenceMixin:
         *,
         profile: AgentRuntimeProfile,
         agent_version_id_override: Optional[str] = None,
-        agent_id: str = MAIN_AGENT_PROFILE,
+        agent_id: str,
     ) -> RuntimeRequestContext:
         from .claude_runtime import RuntimeRequestContext
 
@@ -55,9 +55,7 @@ class RuntimeSessionPersistenceMixin:
         attempted_sdk_session_id = session.sdk_session_id or str(uuid.uuid4())
         sdk_project_key = project_key_for_directory(str(profile.workspace_dir))
         agent_version_id = (
-            agent_version_id_override
-            if agent_version_id_override is not None
-            else await asyncio.to_thread(self._current_agent_version_id, agent_id)
+            agent_version_id_override if agent_version_id_override is not None else await asyncio.to_thread(self._current_agent_version_id, agent_id)
         )
         created_at = utc_now()
         prompt = self._build_prompt(req)

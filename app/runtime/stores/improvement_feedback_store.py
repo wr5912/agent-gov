@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
 
+from ..agent_ownership import require_persisted_agent_id
 from ..errors import BusinessRuleViolation, ConflictError, NotFoundError
 from ..improvement_db import (
     ImprovementFeedbackCaseAssignmentModel,
@@ -44,7 +45,7 @@ class ImprovementFeedbackStoreMixin:
         self,
         improvement_id: str,
         *,
-        agent_id: str = "main-agent",
+        agent_id: str,
         summary: str,
         source: str = "playground_run",
         status: str = "merged",
@@ -66,11 +67,18 @@ class ImprovementFeedbackStoreMixin:
         now = utc_now()
         with self._session_factory.begin() as db:
             self._lock_mutable_improvement(db, improvement_id)
-            self._require_feedback_intake(db.get(ImprovementItemModel, improvement_id))
+            item = db.get(ImprovementItemModel, improvement_id)
+            self._require_feedback_intake(item)
+            owner = require_persisted_agent_id(
+                item.agent_id if item is not None else agent_id,
+                entity=f"ImprovementItem {improvement_id}" if item is not None else f"Feedback for {improvement_id}",
+            )
+            if item is not None and owner != agent_id:
+                raise BusinessRuleViolation("Cannot create feedback across different business agents")
             row = ImprovementFeedbackModel(
                 feedback_id=feedback_id,
                 improvement_id=improvement_id,
-                agent_id=agent_id,
+                agent_id=owner,
                 summary=clean_summary,
                 source=source,
                 status=status,

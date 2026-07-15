@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -31,6 +32,7 @@ from scripts.runtime_template_renderer import build_render_context, render_templ
 SOC_EXECUTE_TOOL = "mcp__sec-ops__soc_api__execute"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEED_AGENT_ROOT = REPO_ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
+
 
 def _settings(
     tmp_path,
@@ -625,10 +627,12 @@ def test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn(tmp_path, m
 
 def test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn(tmp_path, monkeypatch):
     seen = {}
+    query_started = threading.Event()
     query_cancelled = asyncio.Event()
 
     async def blocking_query(*, prompt, options, transport=None):
         seen["prompt_items"] = [item async for item in prompt]
+        query_started.set()
         try:
             await asyncio.Event().wait()
         finally:
@@ -644,6 +648,8 @@ def test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn(tmp_path, mon
     service, _store = _service(tmp_path)
 
     def lose_lease(session_id, *, run_id, run_generation=None, lease_seconds=None):
+        if not query_started.wait(timeout=1):
+            raise AssertionError("SDK query did not start before lease renewal")
         raise SessionConflictError(f"Session {session_id} lease lost for {run_id}")
 
     monkeypatch.setattr(session_store, "renew_turn", lose_lease)
@@ -655,7 +661,7 @@ def test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn(tmp_path, mon
         assert (await anext(source))["event"] == "session"
         with pytest.raises(SessionConflictError, match="lease lost"):
             await anext(source)
-        await asyncio.wait_for(query_cancelled.wait(), timeout=1)
+        assert query_cancelled.is_set()
 
     asyncio.run(asyncio.wait_for(scenario(), timeout=2))
     saved = session_store.get(session_id)

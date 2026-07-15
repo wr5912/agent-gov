@@ -7,52 +7,113 @@ on:
       - main
       - master
 
+permissions:
+  contents: read
+
 jobs:
-  governance:
+  governance-static:
     runs-on: ubuntu-latest
     env:
       UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8
 
       - name: Install dependencies
         run: |
           uv venv .venv --python 3.11
-          uv pip install --python .venv/bin/python -r requirements.txt pytest
+          uv pip install --python .venv/bin/python -r requirements.txt
 
-      - name: Governance guard
+      - name: Static governance, types, and seed safety
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base_ref="origin/${{ github.base_ref }}"
           else
             base_ref="HEAD^"
           fi
-          .venv/bin/python scripts/check_codex_governance.py --mode fail --base-ref "$base_ref"
+          make ci-static GOVERNANCE_BASE_REF="$base_ref"
 
-      - name: Tests
-        run: make test
+  backend-main-full:
+    runs-on: ubuntu-latest
+    env:
+      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
 
-      - name: Runtime volume seeds safety scan (#27：新增/修改 seed 预置 Agent 子树须过脱敏门)
-        run: make runtime-volume-seeds-scan
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Install dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install --python .venv/bin/python -r requirements.txt
+
+      - name: Backend full suite
+        run: make test-backend
+
+      - name: Upload backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-main-full-diagnostics-${{ github.run_attempt }}
+          path: artifacts/test-quality/backend-main-full
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload trusted backend evidence
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: backend-main-full-evidence-${{ github.run_attempt }}
+          path: artifacts/test-quality/backend-main-full
+          if-no-files-found: error
+          retention-days: 30
+
+  frontend-ui:
+    runs-on: ubuntu-latest
+    env:
+      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
+      RETRIES: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Install backend contract dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install --python .venv/bin/python -r requirements.txt
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           package_json_file: frontend/package.json
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: "20"
           cache: pnpm
@@ -70,5 +131,71 @@ jobs:
       - name: Frontend build
         run: pnpm --dir frontend build
 
+      - name: Install Chromium
+        run: pnpm --dir frontend exec playwright install --with-deps chromium
+
+      - name: Verify Playwright runtime
+        run: pnpm --dir frontend run verify:playwright-runtime
+
       - name: Main flow UI states
-        run: make main-flow-test
+        run: make main-flow-ui-test
+
+      - name: Upload frontend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-ui-${{ github.run_attempt }}
+          path: artifacts/test-quality/frontend-ui
+          if-no-files-found: warn
+          retention-days: 30
+
+  quality-gate:
+    if: always()
+    needs:
+      - governance-static
+      - backend-main-full
+      - frontend-ui
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every blocking lane
+        env:
+          STATIC_RESULT: ${{ needs.governance-static.result }}
+          BACKEND_RESULT: ${{ needs.backend-main-full.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-ui.result }}
+        run: |
+          printf 'governance-static=%s\nbackend-main-full=%s\nfrontend-ui=%s\n' \
+            "$STATIC_RESULT" "$BACKEND_RESULT" "$FRONTEND_RESULT"
+          test "$STATIC_RESULT" = success
+          test "$BACKEND_RESULT" = success
+          test "$FRONTEND_RESULT" = success
+
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8
+
+      - name: Install collection and evidence dependencies
+        run: |
+          uv venv .venv --python 3.11
+          uv pip install --python .venv/bin/python -r requirements.txt
+
+      - name: Download trusted backend evidence
+        uses: actions/download-artifact@v8
+        with:
+          name: backend-main-full-evidence-${{ github.run_attempt }}
+          path: artifacts/trusted-backend
+
+      - name: Verify same-run complete evidence
+        run: |
+          .venv/bin/python scripts/check_test_quality_policy.py \
+            --policy tests/quality_policy.json \
+            --evidence-dir artifacts/trusted-backend \
+            --lane main-full \
+            --require-clean \
+            --expected-job backend-main-full

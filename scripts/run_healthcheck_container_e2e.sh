@@ -9,6 +9,21 @@ prefix="$project"
 runtime_root=$(mktemp -d /tmp/agentgov-health-runtime.XXXXXX)
 artifact_root=${VERIFY_SCREENSHOT_DIR:-$(mktemp -d /tmp/agentgov-health-artifacts.XXXXXX)}
 api_key=health-e2e-key
+compose_env_file=${COMPOSE_ENV_FILE:-}
+generated_env_file=
+if [[ -z "$compose_env_file" ]]; then
+  if [[ -f docker/.env ]]; then
+    compose_env_file=docker/.env
+  else
+    generated_env_file=$(mktemp /tmp/agentgov-compose-env.XXXXXX)
+    cp docker/.env.example "$generated_env_file"
+    compose_env_file=$generated_env_file
+  fi
+fi
+if [[ ! -f "$compose_env_file" ]]; then
+  echo "Compose env file does not exist: $compose_env_file" >&2
+  exit 1
+fi
 
 free_port() {
   python3 - <<'PY'
@@ -23,7 +38,7 @@ api_port=$(free_port)
 ui_port=$(free_port)
 compose=(
   docker compose
-  --env-file docker/.env
+  --env-file "$compose_env_file"
   -f docker/docker-compose.yml
   -f docker/e2e/docker-compose.provider-health.yml
   --project-name "$project"
@@ -38,6 +53,7 @@ cleanup() {
       -c 'chmod -R a+rwX /runtime' >/dev/null 2>&1 || true
     rm -rf "$runtime_root" || true
   fi
+  [[ -z "$generated_env_file" ]] || rm -f "$generated_env_file"
 }
 trap cleanup EXIT
 

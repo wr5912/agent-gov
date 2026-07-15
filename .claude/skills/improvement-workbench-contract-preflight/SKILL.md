@@ -32,7 +32,7 @@ description: "当整改 AgentGov 四阶段改进治理工作台、反馈闭环 U
 2. 证据链：UI state -> API response -> agent_jobs/store -> formatter output -> persisted payload 当前卡在哪层。
 3. 字段所有权：backend-owned、agent-owned、boundary-owned 分别是什么；LLM 不应输出哪些后端权威字段。
 4. 容器归属：决策卡、tab、card、drawer 各自承载什么；哪些内容明确不得出现。
-5. 验证绑定：目标 pytest/UI verification nodeid 是什么；需要补哪些负向断言，是否同步 `tests/coverage_policy.json`。
+5. 验证绑定：目标 pytest/UI verification nodeid 是什么；需要补哪些负向断言，是否同步 `tests/quality_policy.json`。
 ```
 
 ## 字段所有权

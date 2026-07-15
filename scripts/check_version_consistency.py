@@ -27,28 +27,34 @@ def _fail(msg: str) -> None:
     sys.exit(1)
 
 
-def main() -> None:
-    version_file = ROOT / "VERSION"
+def artifact_consistency_errors(root: Path, *, app_version: str) -> list[str]:
+    errors: list[str] = []
+    version_file = root / "VERSION"
     if not version_file.exists():
-        _fail("根 VERSION 文件缺失（版本唯一真相源）")
+        return ["根 VERSION 文件缺失（版本唯一真相源）"]
     version = version_file.read_text(encoding="utf-8").strip()
     if not _SEMVER.fullmatch(version):
-        _fail(f"VERSION 格式非法: {version!r}（应为 semver，如 2.7.15）")
+        return [f"VERSION 格式非法: {version!r}（应为 semver，如 2.7.15）"]
+    if app_version != version:
+        errors.append(f"app/version.py APP_VERSION={app_version!r} != VERSION={version!r}（version.py 应读取 VERSION，不得硬编码）")
+    pkg = json.loads((root / "frontend" / "package.json").read_text(encoding="utf-8"))
+    if pkg.get("version") != version:
+        errors.append(f"frontend/package.json version={pkg.get('version')!r} != VERSION={version!r}（运行 make sync-version 同步）")
+    compose = (root / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
+    hardcoded = re.findall(r"image:\s*(agent-gov-[a-z-]+:(?!\$\{APP_VERSION)\S+)", compose)
+    if hardcoded:
+        errors.append(f"docker-compose 镜像 tag 硬编码了版本（应用 ${{APP_VERSION:-dev}} 派生）: {hardcoded}")
+    return errors
 
+
+def main() -> None:
     sys.path.insert(0, str(ROOT))
     from app.version import APP_VERSION
 
-    if APP_VERSION != version:
-        _fail(f"app/version.py APP_VERSION={APP_VERSION!r} != VERSION={version!r}（version.py 应读取 VERSION，不得硬编码）")
-
-    pkg = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))
-    if pkg.get("version") != version:
-        _fail(f"frontend/package.json version={pkg.get('version')!r} != VERSION={version!r}（运行 make sync-version 同步）")
-
-    compose = (ROOT / "docker" / "docker-compose.yml").read_text(encoding="utf-8")
-    hardcoded = re.findall(r"image:\s*(agent-gov-[a-z-]+:(?!\$\{APP_VERSION)\S+)", compose)
-    if hardcoded:
-        _fail(f"docker-compose 镜像 tag 硬编码了版本（应用 ${{APP_VERSION:-dev}} 派生）: {hardcoded}")
+    errors = artifact_consistency_errors(ROOT, app_version=APP_VERSION)
+    if errors:
+        _fail(errors[0])
+    version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 
     # 仅在工作区干净时校验 tag：bump 提交前 HEAD 仍指向上一个 release（tag 与已 bump 的 VERSION 必然短暂不符），
     # 那是正常瞬态而非漂移；提交后 HEAD 是未打 tag 的新 commit，打 tag 时再校验即可。CI/干净态下此门生效。
@@ -73,17 +79,17 @@ def main() -> None:
     # 软告警（不 fail）：VERSION 领先本地最新 release tag = "bump 了版本但还没打 tag" 的漂移。
     # 单向硬门有意允许"bump 后延迟 tag"的开发窗口，这里只主动提醒，发布点用 `make tag` 补齐。
     try:
-        all_tags = subprocess.run(
-            ["git", "tag", "--list", "v*"], cwd=str(ROOT), capture_output=True, text=True, timeout=10
-        ).stdout.split()
+        all_tags = subprocess.run(["git", "tag", "--list", "v*"], cwd=str(ROOT), capture_output=True, text=True, timeout=10).stdout.split()
     except Exception:
         all_tags = []
     semver_tags = [t for t in all_tags if re.fullmatch(r"v\d+\.\d+\.\d+", t)]
     m = re.match(r"(\d+)\.(\d+)\.(\d+)", version)
     if semver_tags and m:
+
         def _ver_key(t: str) -> tuple[int, int, int]:
             a, b, c = t.lstrip("v").split(".")
             return (int(a), int(b), int(c))
+
         latest = max(semver_tags, key=_ver_key)
         if (int(m.group(1)), int(m.group(2)), int(m.group(3))) > _ver_key(latest):
             print(f"WARN: VERSION={version} 已领先最新 release tag {latest}；发布点请运行 `make tag` 补齐（不阻断）")

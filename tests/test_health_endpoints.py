@@ -56,6 +56,10 @@ def _vllm_router() -> ModelProviderRouter:
     return ModelProviderRouter(settings)
 
 
+def test_command_version_without_command_is_deterministic() -> None:
+    assert core.command_version(None) is None
+
+
 def test_health_views_have_no_provider_or_subprocess_side_effects(monkeypatch) -> None:
     router = _vllm_router()
     client = _health_app(monkeypatch, router)

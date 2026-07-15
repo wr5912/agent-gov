@@ -38,9 +38,10 @@
 ## 项目验证入口
 
 - 局部开发验证：`.venv/bin/python -m pytest -q tests/test_xxx.py::test_xxx`。
-- 主流程验证：`make main-flow-test`（改动反馈优化主流程、治理模型任务、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/coverage_policy.json` 已绑定对应 nodeid 或 UI verification script）。
-- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑全量 pytest、coverage JSON 和 coverage policy 硬门）。
-- 覆盖清单或测试 manifest：`tests/coverage_policy.json`（主流程覆盖清单与全局覆盖率基线的单一入口）。
+- 主流程验证：`make main-flow-test`（改动反馈优化主流程、治理模型任务、formatter、store 投影、API response 或用户可见 tab 状态时必须运行，并确认 `tests/quality_policy.json` 已绑定对应 nodeid 或 UI verification script）。
+- 完整验证硬门：`make test`（依赖 `codex-guard`，先运行 Agent 配置审计、Codex/docs 治理、阶段语言、版本一致性和 OpenAPI 契约检查，再跑 `main-full`、coverage 与可信证据校验）。
+- 测试资产单一入口：`tests/quality_policy.json`，统一管理覆盖率、双维分类、owner、lane、主流程、TIA、并行晋级、mutation 和 GAP；旧 coverage-only manifest 不得恢复。
+- TIA 与 xdist 在至少 20 组同 SHA 配对样本、跨越 14 天且零漏测/并行特有失败前只允许 shadow；PR/push 始终由完整串行后端 lane 阻塞。
 
 `warn`、dry-run 或只读审计类命令只能用于 Analyze 阶段观察；Verify 阶段必须运行正式 `--mode fail`，不得以 `warn` 作为通过标准。
 

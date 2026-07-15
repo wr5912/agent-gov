@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -183,6 +182,7 @@ def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_pa
         db.add(SessionRecordModel(session_id="session-a", agent_id="agent-a", metadata_json={}))
 
     runtime_claimed = threading.Event()
+    maintenance_started = threading.Event()
     commit_runtime = threading.Event()
 
     def claim_runtime_and_hold_transaction() -> None:
@@ -198,6 +198,7 @@ def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_pa
 
     def claim_maintenance_after_runtime_write() -> None:
         assert runtime_claimed.wait(timeout=5)
+        maintenance_started.set()
         acquire_maintenance(
             factory,
             agent_id="agent-a",
@@ -210,7 +211,7 @@ def test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance(tmp_pa
         runtime_future = executor.submit(claim_runtime_and_hold_transaction)
         maintenance_future = executor.submit(claim_maintenance_after_runtime_write)
         assert runtime_claimed.wait(timeout=5)
-        time.sleep(0.1)
+        assert maintenance_started.wait(timeout=5)
         assert not maintenance_future.done()
         commit_runtime.set()
         runtime_future.result(timeout=5)

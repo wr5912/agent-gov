@@ -110,7 +110,7 @@ def test_feedback_runtime_preflight_reference_is_linked():
     assert "feedback-runtime-preflight.md" in skill
     assert "UI state -> API response -> agent_jobs -> store projection -> formatter/validated output -> persisted payload" in preflight
     assert "backend-owned、agent-owned、boundary-owned" in preflight
-    assert "tests/coverage_policy.json" in preflight
+    assert "tests/quality_policy.json" in preflight
 
 
 def test_agentgov_boundary_first_entries_are_kept():

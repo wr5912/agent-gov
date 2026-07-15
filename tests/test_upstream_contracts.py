@@ -2,10 +2,9 @@
 （非 mock / 非合成 dict）钉住我们实际依赖的字段与 API 签名，一旦 `uv sync` 升级导致上游
 改名/改签名，这些测试立刻红灯暴露，而不是让 Langfuse 观测静默变空、系统悄悄退化。
 
-分三层：
+分两层：
 1. SDK message/block 形态契约 —— 真实 dataclass → to_plain → 我们的投影，断言 input/结果/usage 仍流通。
 2. Langfuse observation API 签名契约 —— 断言我们调用的 kwargs / 方法仍存在。
-3. Langfuse OTLP 摄取假设 —— 记录「logs 信号不被接收」这一已知事实的守卫点（在线，标记跳过）。
 """
 
 from __future__ import annotations
@@ -14,7 +13,6 @@ import dataclasses
 import inspect
 
 import claude_agent_sdk as sdk
-import pytest
 from app.runtime.message_utils import to_plain
 from app.runtime.runtime_activity import RuntimeActivityExtractor
 
@@ -90,14 +88,3 @@ def test_langfuse_client_start_as_current_observation_exists():
 
     assert callable(getattr(Langfuse, "start_as_current_observation", None))
     assert callable(getattr(Langfuse, "start_observation", None))  # 子观测非 current 工厂
-
-
-# ---- 层 3：Langfuse OTLP 摄取假设（在线守卫，默认跳过）----
-
-@pytest.mark.skip(reason="需在线 Langfuse；记录『/v1/logs 无接收端』这一已知事实的守卫点，见 langfuse_smoke")
-def test_langfuse_otlp_logs_endpoint_still_absent():
-    """占位：若 Langfuse 未来新增 /v1/logs（不再 404），说明可重新启用 logs 信号，应在此提示。
-
-    落地时在 make langfuse-smoke 里带真实鉴权 POST /api/public/otel/v1/{traces,logs}，
-    断言 traces!=404 且 logs==404；一旦 logs!=404 即提醒重新评估 LANGFUSE_OTEL_SIGNALS。
-    """

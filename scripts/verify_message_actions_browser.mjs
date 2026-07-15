@@ -33,7 +33,7 @@ const port = Number(process.env.MESSAGE_ACTIONS_PORT || 55198);
 const ui = (process.env.RUNTIME_UI_BASE || `http://127.0.0.1:${port}`).replace(/\/$/, "");
 const api = (process.env.RUNTIME_API_BASE || "http://runtime.test").replace(/\/$/, "");
 const key = process.env.RUNTIME_API_KEY || envv("FRONTEND_RUNTIME_API_KEY") || envv("API_KEY") || "";
-const RETRIES = Number(process.env.RETRIES || 3);
+const RETRIES = Number(process.env.RETRIES || 1);
 const screenshotDir = process.env.VERIFY_SCREENSHOT_DIR || mkdtempSync(join(tmpdir(), "agentgov-message-actions-"));
 
 function startVite() {

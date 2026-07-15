@@ -104,6 +104,8 @@ make smoke
 make container-health-e2e
 ```
 
+本地默认使用 `docker/.env`。干净 CI 或隔离验收可从 `docker/.env.example` 生成单一临时文件，并用 `COMPOSE_ENV_FILE=/path/to/env make container-health-e2e` 显式选择；该文件不是 layered override。健康 E2E 始终使用独立 Compose project、动态端口和临时 runtime 根，不写 `${HOME}/volume-agent-gov`。
+
 部署到 Docker Compose 主机：
 
 ```bash
@@ -591,7 +593,7 @@ ${HOME}/volume-agent-gov/data/runtime.sqlite3
 
 首次开发先运行 `make setup` 创建 `.venv` 和默认 `docker/.env`。本项目 Makefile 中的 Python 脚本入口统一使用 `.venv/bin/python`，不要直接依赖宿主机 `python3`。
 
-Docker Compose 部署只读取 `docker/.env`。Compose 会为 API 注入内部标记 `RUNTIME_CONTAINER=1`，Runtime 因此自动选择容器部署配置，默认宿主机运行态根目录是 `${HOME}/volume-agent-gov`。
+Docker Compose 部署默认读取 `docker/.env`；自动化环境可以通过 `COMPOSE_ENV_FILE` 选择另一份完整 env 文件，但同一次运行只读取这一份，不做分层覆盖。Compose 会为 API 注入内部标记 `RUNTIME_CONTAINER=1`，Runtime 因此自动选择容器部署配置，默认宿主机运行态根目录是 `${HOME}/volume-agent-gov`。
 
 本机 host/PyCharm 调试无需额外设置 `RUNTIME_VOLUME_MODE`。宿主机 Python 进程会自动读取 `docker/.env.local-debug`；该文件不会被 Docker Compose 加载，默认把全部 workspace、data 和 claude-root 指向 `/tmp/local-debug-volume-agent-gov`：
 

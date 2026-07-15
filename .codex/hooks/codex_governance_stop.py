@@ -20,8 +20,8 @@ GOVERNANCE_COMMANDS = (
     ("OpenAPI contract", [PYTHON, str(ROOT / "scripts/audit_openapi_contract.py"), "--fail"]),
     ("docs governance", [PYTHON, str(ROOT / "scripts/check_docs_governance.py")]),
     (
-        "test coverage manifest",
-        [PYTHON, str(ROOT / "scripts/check_test_coverage_policy.py"), "--manifest-only", "--policy", str(ROOT / "tests/coverage_policy.json")],
+        "test quality policy",
+        [PYTHON, str(ROOT / "scripts/check_test_quality_policy.py"), "--manifest-only", "--policy", str(ROOT / "tests/quality_policy.json")],
     ),
 )
 MAX_REASON_CHARS = 20000

@@ -18,9 +18,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlsplit
 
 if __package__:
-    from .check_test_coverage_policy import _validate_pytest_nodeid, collect_pytest_nodeids
+    from .test_quality.collection import collect_pytest_nodeids, validate_pytest_selector
 else:
-    from check_test_coverage_policy import _validate_pytest_nodeid, collect_pytest_nodeids
+    from test_quality.collection import collect_pytest_nodeids, validate_pytest_selector
 
 DOCS_INDEX = "docs/README.md"
 ARCHIVE_INDEX = "docs/archive/README.md"
@@ -212,7 +212,7 @@ def _documented_pytest_nodeids(root: Path, paths: Iterable[str]) -> list[str]:
 def _documented_pytest_nodeid_issues(root: Path, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
     issues: list[DocsGovernanceIssue] = []
     for nodeid in _documented_pytest_nodeids(root, paths):
-        for error in _validate_pytest_nodeid(nodeid, repo_root=root):
+        for error in validate_pytest_selector(nodeid, repo_root=root):
             issues.append(DocsGovernanceIssue("docs/", f"documented {error}"))
     return issues
 

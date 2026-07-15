@@ -16,5 +16,8 @@ dspy>=3.0,<4.0
 litellm==1.88.1
 tenacity>=8,<10
 pytest-cov>=7,<8
+pytest>=9,<10
+pytest-xdist==3.8.0
+mutmut==3.6.0
 ruff>=0.11,<1.0
 pyright>=1.1,<2.0

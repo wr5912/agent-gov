@@ -50,6 +50,7 @@
 
 ## 工程治理
 
+- [测试资产组合治理](./engineering/测试资产组合治理.md)：`docs/engineering/测试资产组合治理.md`，测试分类、生命周期、执行通道、可信证据、TIA/xdist 晋级和 mutation 的权威工程契约
 - [长程重构质量闭环](./engineering/长程重构质量闭环.md)：`docs/engineering/长程重构质量闭环.md`
 - [GSD长程重构阶段清单](./engineering/GSD长程重构阶段清单.md)：`docs/engineering/GSD长程重构阶段清单.md`
 - [vLLM 模型网关与 Sidecar 整改方案](./engineering/vLLM模型网关与Sidecar整改优化方案.md)：`docs/engineering/vLLM模型网关与Sidecar整改优化方案.md`

@@ -195,6 +195,14 @@ def test_official_docker_env_examples_do_not_define_runtime_volume_mode() -> Non
     assert "RUNTIME_VOLUME_MODE=" not in local_debug_example
 
 
+def test_official_env_examples_use_debug_api_key_without_forcing_response_orchestrator_key() -> None:
+    for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
+        lines = set((REPO_ROOT / env_file).read_text(encoding="utf-8").splitlines())
+
+        assert "API_KEY=change-me" in lines
+        assert "RESPONSE_ORCHESTRATOR_API_KEY=" in lines
+
+
 def test_local_debug_env_example_keeps_runtime_keys_in_sync() -> None:
     container_keys = _env_keys(REPO_ROOT / "docker/.env.example")
     local_debug_keys = _env_keys(REPO_ROOT / "docker/.env.local-debug.example")

@@ -600,7 +600,7 @@ export interface paths {
         put?: never;
         /**
          * Run a Claude Agent task as server-sent events
-         * @description Streams session, message, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).
+         * @description Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).
          */
         post: operations["chat_stream_api_chat_stream_post"];
         delete?: never;
@@ -1763,7 +1763,7 @@ export interface paths {
         put?: never;
         /**
          * Run an AgentGov business agent (OpenAI Responses-compatible)
-         * @description Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control envelope in control mode).
+         * @description Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). `agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE (`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode).
          */
         post: operations["create_response_v1_responses_post"];
         delete?: never;

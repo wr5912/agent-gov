@@ -204,7 +204,7 @@ http://localhost:55173
 
 这个 UI 不接管 Claude Code CLI 进程，不编辑宿主机敏感文件，不提供 Terminal。聊天、反馈闭环、评估和版本管理都通过后端 Runtime API 完成。
 
-每条 Claude Agent 回复的“回复细节”会保留完整 SDK/流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。
+每条 Claude Agent 回复的“回复细节”会保留完整 SDK/流式事件，并汇总本次请求的 Skill / Tool 使用情况。详情窗口支持关键字查找事件内容，底层 JSON 会完整展开显示。Claude Code 若在本轮末尾生成 Prompt Suggestion，Playground 会在输入框上方显示“下一步建议”；点击只把文本填入输入框，不会自动发送。
 
 ## 反馈优化闭环
 
@@ -396,6 +396,8 @@ curl -N -X POST "$API_BASE/api/chat/stream" \
   -H "Authorization: Bearer $API_KEY" \
   -d '{"message":"你好，先介绍你的能力", "agent_id":"main-agent"}'
 ```
+
+流式业务对话会尽力请求 Claude Code 生成下一轮建议。原生 `/api/chat/stream` 以 `event: prompt_suggestion` 输出 `{suggestion, run_id, session_id}`；canonical `/v1/responses` 仅在 control 模式以 `event: agentgov.prompt_suggestion` 输出统一信封，`payload` 为 `{suggestion, session_id}`，strict 模式不输出 AgentGov 扩展事件。建议可能因上游缓存或模型条件缺失而不生成；它只用于当前 Playground 输入辅助，不进入正式消息历史、SQLite run、response retrieve 或 SDK transcript。
 
 ## OpenAI Compatible 接口
 

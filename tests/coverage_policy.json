@@ -295,13 +295,14 @@
         },
         {
           "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground 从 SDK transcript 恢复历史、Trace、HITL、四阶段改进事项工作台、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "description": "Playground 从 SDK transcript 恢复历史、Prompt Suggestion 填入但不自动发送、Trace、HITL、四阶段改进事项工作台、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
           "pytest": [
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",
             "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
             "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
             "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
+            "tests/test_prompt_suggestions.py::test_runtime_emits_backend_owned_suggestion_without_persisting_it",
             "tests/test_claude_user_input.py::test_tool_permission_allow_for_run_is_scoped_to_current_low_risk_category",
             "tests/test_claude_user_input.py::test_mutating_or_private_bash_cannot_receive_run_allow",
             "tests/test_claude_user_input.py::test_decision_api_rejects_unknown_request_and_wrong_token",
@@ -493,10 +494,12 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、Prompt Suggestion 使用后端权威 ID 且 strict 隔离、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
             "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
+            "tests/test_responses_stream.py::test_prompt_suggestion_control_uses_session_context_ids_and_precedes_done",
+            "tests/test_chat_stream_agent_id.py::test_chat_stream_projects_prompt_suggestion_event",
             "tests/test_responses_stream.py::test_heartbeat_becomes_sse_comment",
             "tests/test_responses_stream.py::test_error_maps_to_failed",
             "tests/test_responses_stream.py::test_result_errors_map_to_one_failed_terminal_and_control_error",

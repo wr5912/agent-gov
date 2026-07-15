@@ -1,7 +1,7 @@
 """#20：/api/chat 与 /api/chat/stream 两个原生入口都要求 agent_id 必填且有效（不静默跑 main）。
 
-校验发生在进入 runtime 之前：缺失/空白 -> 422，未知业务 Agent -> 404。
-main-agent / 已注册业务 Agent 的成功路径会真正驱动 SDK，属容器 e2e，不在单测覆盖。
+校验发生在进入 runtime 之前：缺失/空白 -> 422，未知业务 Agent -> 404；
+成功路径只用 fake runtime 固定 SSE 投影，不在单测中调用真实模型。
 """
 
 from __future__ import annotations
@@ -56,3 +56,22 @@ def test_chat_rejects_removed_runtime_policy_fields(monkeypatch, tmp_path: Path)
 
                 assert response.status_code == 422
                 assert any(error.get("type") == "extra_forbidden" for error in response.json()["detail"])
+
+
+def test_chat_stream_projects_prompt_suggestion_event(monkeypatch, tmp_path: Path) -> None:
+    module = _load_app(monkeypatch, tmp_path)
+
+    async def fake_stream(req, *, profile=None):
+        yield {
+            "event": "prompt_suggestion",
+            "data": {"suggestion": "继续检查边界条件", "run_id": "run-1", "session_id": "session-1"},
+        }
+        yield {"event": "done", "data": "[DONE]"}
+
+    monkeypatch.setattr(module.runtime, "stream", fake_stream)
+    with TestClient(module.app) as client:
+        response = client.post("/api/chat/stream", json={"message": "hi", "agent_id": "main-agent"})
+
+    assert response.status_code == 200
+    assert "event: prompt_suggestion" in response.text
+    assert '"suggestion": "继续检查边界条件"' in response.text

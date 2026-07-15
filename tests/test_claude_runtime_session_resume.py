@@ -3,7 +3,7 @@ import json
 import uuid
 
 import pytest
-from app.runtime import session_turn_lease
+from app.runtime import claude_prompt_suggestions, session_turn_lease
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.business_agent_workspace import seed_business_agent_workspace
 from app.runtime.claude_runtime import ClaudeRuntime
@@ -555,9 +555,7 @@ def test_stream_retries_once_when_saved_sdk_session_is_missing(tmp_path, monkeyp
         req = ChatRequest(message="stream", session_id="sess-stream-stale")
         return [item async for item in runtime.stream(req)]
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-stream-stale")
@@ -608,9 +606,7 @@ def test_stream_retries_when_process_error_stderr_reports_missing_session(tmp_pa
         req = ChatRequest(message="stream", session_id="sess-process-stale")
         return [item async for item in runtime.stream(req)]
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-process-stale")
@@ -661,9 +657,7 @@ def test_stream_retries_when_process_error_hides_stderr_detail(tmp_path, monkeyp
         req = ChatRequest(message="stream", session_id="sess-hidden-stale")
         return [item async for item in runtime.stream(req)]
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     settings = _settings(tmp_path)
     store = _store_with_stale_session(settings, "sess-hidden-stale")

@@ -6,6 +6,427 @@
     },
     "files": []
   },
+  "owners": [
+    {
+      "id": "runtime-platform",
+      "description": "容器、模型提供商、运行时编排与持久化基础设施",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "improvement-governance",
+      "description": "反馈、改进事项、评测与发布闭环",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "agent-lifecycle",
+      "description": "业务 Agent 配置、版本、发布与回滚生命周期",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "security-response",
+      "description": "鉴权、权限、响应处置与安全边界",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "frontend-experience",
+      "description": "Playground 与治理工作台的浏览器体验",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "engineering-governance",
+      "description": "架构、文档、配置、测试和 CI 治理",
+      "contacts": ["@wr5912"]
+    },
+    {
+      "id": "integrations",
+      "description": "SDK、Langfuse、OpenAI 与外部协议集成",
+      "contacts": ["@wr5912"]
+    }
+  ],
+  "capabilities": [
+    {
+      "id": "cross-cutting-quality",
+      "description": "跨域回归、契约、迁移和数据完整性保护",
+      "risk": "high"
+    },
+    {
+      "id": "runtime-deployment",
+      "description": "真实容器、运行时依赖与模型提供商可用性",
+      "risk": "critical"
+    },
+    {
+      "id": "feedback-improvement-loop",
+      "description": "反馈到改进、评测、发布和回滚闭环",
+      "risk": "critical"
+    },
+    {
+      "id": "security-boundaries",
+      "description": "身份、权限、越权与响应处置控制",
+      "risk": "critical"
+    },
+    {
+      "id": "agent-lifecycle",
+      "description": "业务 Agent 创建、版本与发布生命周期",
+      "risk": "high"
+    },
+    {
+      "id": "frontend-workflows",
+      "description": "用户可见主流程与失败详情",
+      "risk": "high"
+    },
+    {
+      "id": "integration-observability",
+      "description": "上游 SDK、协议与可观测集成",
+      "risk": "high"
+    }
+  ],
+  "lanes": [
+    {
+      "id": "pr-fast",
+      "description": "受影响测试选择的 PR 快速反馈；满足证据门前只做 shadow",
+      "enforcement": "shadow",
+      "triggers": ["pull_request"]
+    },
+    {
+      "id": "main-full",
+      "description": "主干完整后端套件，排除依赖真实模型的 live 测试",
+      "enforcement": "blocking",
+      "triggers": ["pull_request", "push"]
+    },
+    {
+      "id": "main-flow",
+      "description": "产品主流程绑定的后端与浏览器验收",
+      "enforcement": "blocking",
+      "triggers": ["pull_request", "push"]
+    },
+    {
+      "id": "nightly-full",
+      "description": "固定串行哨兵、并行 shadow、跨版本与长时测试",
+      "enforcement": "scheduled",
+      "triggers": ["schedule", "workflow_dispatch"]
+    },
+    {
+      "id": "xdist-shadow",
+      "description": "n2/n4 与 load/worksteal 的同 SHA 配对并行证据",
+      "enforcement": "shadow",
+      "triggers": ["schedule", "workflow_dispatch"]
+    },
+    {
+      "id": "mutation",
+      "description": "高风险变更范围内的限时变异测试",
+      "enforcement": "scheduled",
+      "triggers": ["schedule", "workflow_dispatch", "release"]
+    },
+    {
+      "id": "release-live",
+      "description": "受保护环境中的真实容器、模型、迁移、恢复与回滚验收",
+      "enforcement": "release",
+      "triggers": ["workflow_dispatch", "release"]
+    }
+  ],
+  "portfolio": {
+    "rules": [
+      {
+        "id": "agent-lifecycle-suite",
+        "selectors": [
+          "tests/test_agent_*.py",
+          "tests/test_agv_acceptance.py",
+          "tests/test_asset*.py",
+          "tests/test_business_agent*.py",
+          "tests/test_multi_business_agent_governance.py",
+          "tests/test_seeded_business_agent_configs.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "component",
+          "purpose": "compatibility-migration",
+          "owner": "agent-lifecycle",
+          "capabilities": ["agent-lifecycle"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["db", "git"]
+        }
+      },
+      {
+        "id": "runtime-platform-suite",
+        "selectors": [
+          "tests/test_claude*.py",
+          "tests/test_config_mapping.py",
+          "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_health*.py",
+          "tests/test_import.py",
+          "tests/test_logging_config.py",
+          "tests/test_model_provider*.py",
+          "tests/test_restart_agent_gov_on_host_script.py",
+          "tests/test_runtime*.py",
+          "tests/test_schema_self_heal.py",
+          "tests/test_sdk*.py",
+          "tests/test_session*.py",
+          "tests/test_settings.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "integration",
+          "purpose": "defect-regression",
+          "owner": "runtime-platform",
+          "capabilities": ["runtime-deployment"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["db", "process", "port"]
+        }
+      },
+      {
+        "id": "improvement-governance-suite",
+        "selectors": [
+          "tests/test_execution_content_guards.py",
+          "tests/test_feedback*.py",
+          "tests/test_governor*.py",
+          "tests/test_improvement*.py",
+          "tests/test_normalized_feedback_generation.py",
+          "tests/test_test_datasets.py",
+          "tests/test_typed_dataset_eval_runs.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "component",
+          "purpose": "requirement-acceptance",
+          "owner": "improvement-governance",
+          "capabilities": ["feedback-improvement-loop"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["db", "git"]
+        }
+      },
+      {
+        "id": "security-response-suite",
+        "selectors": [
+          "tests/test_bootstrap_business_agent_protection.py",
+          "tests/test_managed_agent_policy.py",
+          "tests/test_mcp_config.py",
+          "tests/test_native_workspace_policy.py",
+          "tests/test_pre_tool_guard.py",
+          "tests/test_repository_env_policy.py",
+          "tests/test_response_disposition*.py",
+          "tests/test_workspace_hooks.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "security",
+          "purpose": "security-boundary",
+          "owner": "security-response",
+          "capabilities": ["security-boundaries"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["hermetic", "process"]
+        }
+      },
+      {
+        "id": "frontend-contract-suite",
+        "selectors": [
+          "tests/test_release_workbench_contract.py",
+          "tests/test_test_dataset_frontend_contract.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "contract",
+          "purpose": "requirement-acceptance",
+          "owner": "frontend-experience",
+          "capabilities": ["frontend-workflows"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["hermetic"]
+        }
+      },
+      {
+        "id": "integration-contract-suite",
+        "selectors": [
+          "tests/test_chat*.py",
+          "tests/test_conversations*.py",
+          "tests/test_langfuse*.py",
+          "tests/test_openai*.py",
+          "tests/test_openapi*.py",
+          "tests/test_responses*.py",
+          "tests/test_upstream_contracts.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "contract",
+          "purpose": "architecture-contract",
+          "owner": "integrations",
+          "capabilities": ["integration-observability"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["db", "process"]
+        }
+      },
+      {
+        "id": "engineering-governance-suite",
+        "selectors": ["tests/test_*.py"],
+        "exclude_selectors": [
+          "tests/test_agent_*.py",
+          "tests/test_agv_acceptance.py",
+          "tests/test_asset*.py",
+          "tests/test_bootstrap_business_agent_protection.py",
+          "tests/test_business_agent*.py",
+          "tests/test_chat*.py",
+          "tests/test_claude*.py",
+          "tests/test_config_mapping.py",
+          "tests/test_conversations*.py",
+          "tests/test_deploy_agent_gov_to_host_script.py",
+          "tests/test_execution_content_guards.py",
+          "tests/test_feedback*.py",
+          "tests/test_governor*.py",
+          "tests/test_health*.py",
+          "tests/test_import.py",
+          "tests/test_improvement*.py",
+          "tests/test_langfuse*.py",
+          "tests/test_live_runtime_acceptance.py",
+          "tests/test_logging_config.py",
+          "tests/test_managed_agent_policy.py",
+          "tests/test_mcp_config.py",
+          "tests/test_model_provider*.py",
+          "tests/test_multi_business_agent_governance.py",
+          "tests/test_native_workspace_policy.py",
+          "tests/test_normalized_feedback_generation.py",
+          "tests/test_openai*.py",
+          "tests/test_openapi*.py",
+          "tests/test_pre_tool_guard.py",
+          "tests/test_release_workbench_contract.py",
+          "tests/test_repository_env_policy.py",
+          "tests/test_response_disposition*.py",
+          "tests/test_responses*.py",
+          "tests/test_restart_agent_gov_on_host_script.py",
+          "tests/test_runtime*.py",
+          "tests/test_schema_self_heal.py",
+          "tests/test_sdk*.py",
+          "tests/test_seeded_business_agent_configs.py",
+          "tests/test_session*.py",
+          "tests/test_settings.py",
+          "tests/test_test_dataset_frontend_contract.py",
+          "tests/test_test_datasets.py",
+          "tests/test_typed_dataset_eval_runs.py",
+          "tests/test_upstream_contracts.py",
+          "tests/test_workspace_hooks.py"
+        ],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "contract",
+          "purpose": "architecture-contract",
+          "owner": "engineering-governance",
+          "capabilities": ["cross-cutting-quality"],
+          "lanes": ["main-full", "nightly-full"],
+          "parallelism": "worker-safe",
+          "resources": ["git", "process"]
+        }
+      },
+      {
+        "id": "live-runtime-acceptance",
+        "selectors": ["tests/test_live_runtime_acceptance.py"],
+        "classification": {
+          "lifecycle": "KEEP",
+          "level": "e2e",
+          "purpose": "requirement-acceptance",
+          "owner": "runtime-platform",
+          "capabilities": ["runtime-deployment"],
+          "lanes": ["release-live"],
+          "parallelism": "exclusive",
+          "resources": ["docker", "browser", "live-provider", "serial"]
+        }
+      }
+    ]
+  },
+  "quarantines": [],
+  "delete_candidates": [],
+  "gaps": [
+    {
+      "id": "langfuse-otlp-live-contract",
+      "capability": "integration-observability",
+      "owner": "integrations",
+      "risk": "medium",
+      "description": "真实 Langfuse OTLP traces/logs 接收端兼容性尚无可执行在线断言",
+      "target_lane": "release-live",
+      "issue": "#58",
+      "acceptance": [
+        "在受保护 live 环境使用真实鉴权探测 traces 与 logs 端点",
+        "断言结果不泄露鉴权信息并保存同次运行证据"
+      ]
+    }
+  ],
+  "impact": {
+    "mode": "shadow",
+    "unknown_change_lane": "main-full",
+    "always_full_paths": [
+      ".github/workflows/**",
+      "Makefile",
+      "pyproject.toml",
+      "requirements.txt",
+      "tests/quality_policy.json",
+      "scripts/test_quality/**"
+    ],
+    "rules": [
+      {
+        "id": "runtime-state",
+        "changed_paths": ["app/runtime/state_machines.py", "app/runtime/stores/**"],
+        "test_selectors": ["tests/test_state_machines.py", "tests/test_runtime_db*.py"]
+      },
+      {
+        "id": "improvement-loop",
+        "changed_paths": ["app/services/improvement_*.py", "app/routers/improvements*.py"],
+        "test_selectors": ["tests/test_improvement*.py", "tests/test_feedback*.py"]
+      },
+      {
+        "id": "runtime-execution",
+        "changed_paths": ["app/runtime/claude_*.py", "app/runtime/model_provider*.py"],
+        "test_selectors": ["tests/test_claude*.py", "tests/test_model_provider*.py"]
+      },
+      {
+        "id": "openai-contract",
+        "changed_paths": ["app/runtime/openai_*.py", "app/routers/responses.py", "app/routers/conversations.py"],
+        "test_selectors": ["tests/test_responses*.py", "tests/test_conversations*.py", "tests/test_openapi*.py"]
+      },
+      {
+        "id": "frontend-contract",
+        "changed_paths": ["frontend/**", "app/openapi_contract.py"],
+        "test_selectors": ["tests/test_openapi_export.py", "tests/test_documentation_contracts.py"]
+      }
+    ],
+    "promotion_gate": {
+      "min_paired_samples": 20,
+      "min_calendar_days": 14,
+      "max_misses": 0
+    }
+  },
+  "parallel": {
+    "mode": "shadow",
+    "worker_counts": [2, 4],
+    "schedulers": ["load", "worksteal"],
+    "promotion_gate": {
+      "min_paired_samples": 20,
+      "min_calendar_days": 14,
+      "max_misses": 0
+    },
+    "min_p50_speedup_percent": 20,
+    "max_cpu_minutes_increase_percent": 50,
+    "max_coverage_delta_percentage_points": 0.1
+  },
+  "mutation": {
+    "lane": "mutation",
+    "time_budget_seconds": 1200,
+    "targets": [
+      {
+        "path": "app/runtime/state_machines.py",
+        "tests": ["tests/test_state_machines.py"],
+        "min_score": 70
+      }
+    ]
+  },
+  "budgets": {
+    "pr_p95_seconds": 600,
+    "main_full_p95_seconds": 1800,
+    "max_flaky_rate_percent": 0,
+    "max_quarantine_days": 14,
+    "evidence_retention_days": 30
+  },
   "main_flows": [
     {
       "id": "improvement_item_governance",

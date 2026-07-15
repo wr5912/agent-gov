@@ -412,7 +412,7 @@ def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> Non
 def test_governance_ci_uses_repository_pnpm_version_without_corepack_download() -> None:
     workflow = (REPO_ROOT / ".github/workflows/governance.yml").read_text(encoding="utf-8")
 
-    assert "uses: pnpm/action-setup@v4" in workflow
+    assert "uses: pnpm/action-setup@v6" in workflow
     assert "package_json_file: frontend/package.json" in workflow
     assert "cache-dependency-path: frontend/pnpm-lock.yaml" in workflow
     assert "corepack enable pnpm" not in workflow

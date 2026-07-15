@@ -13,7 +13,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 
 | Consumer | Mode | Env source | Runtime root | Secret boundary | Verification |
 | --- | --- | --- | --- | --- | --- |
-| API container | container | `docker/.env` + Compose `RUNTIME_CONTAINER=1` | `${HOME}/volume-agent-gov` | private `docker/.env`, no real value in examples | `AppSettings`, Compose config sanitized check, startup log |
+| API container | container | 默认 `docker/.env`，自动化可由 `COMPOSE_ENV_FILE` 选择一份完整 env；Compose 注入 `RUNTIME_CONTAINER=1` | `${HOME}/volume-agent-gov`，隔离验收使用临时根 | private env, no real value in examples | `AppSettings`, Compose config sanitized check, startup log |
 | Host Python / PyCharm | local-debug | `docker/.env.local-debug` selected by non-container process | `/tmp/local-debug-volume-agent-gov` by default | private `docker/.env.local-debug`, no real value in examples | settings tests, bootstrap test, startup log |
 | Vite frontend dev | frontend-local | `frontend/.env.local` | none | debug UI can show full runtime input/output; `VITE_*` only in env | frontend build or browser smoke |
 | Langfuse self-hosted | container profile + host browser | Compose service URL in containers, `localhost:53000` on host/browser | `${HOME}/volume-agent-gov/langfuse` | dev trace keeps full prompt/tool/job I/O; Langfuse keys stay private | health fields and docs tests |
@@ -23,6 +23,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 
 - 这里不是 layered override。除非代码真实叠加读取多个 env 文件，否则不要写“覆盖文件”“私有覆盖”“覆盖配置”。
 - 用“选择 env 文件”“本机调试 env 文件”“容器部署 env 文件”“私有 env 文件”描述当前实现。
+- `COMPOSE_ENV_FILE` 只选择一份完整 Compose env，不能把它实现或描述成与 `docker/.env` 叠加。
 - `RUNTIME_VOLUME_MODE` 不应出现在官方 env 示例中；模式选择由运行环境和 `RUNTIME_CONTAINER` 决定。
 
 ## 设计规则
@@ -51,7 +52,7 @@ description: "治理 agent-gov 的 runtime/env、本机 PyCharm 调试、Docker/
 | --- | --- | --- | --- |
 | docs / skill / README 术语同步 | 宿主机仓库环境 | `git diff --check`、`scripts/check_docs_governance.py`、`scripts/check_codex_governance.py --mode fail`、相关 skill 单测 | 不默认跑 `make test`，不使用 `local-debug` |
 | settings/env 选择代码 | 宿主机仓库环境 | `tests/test_settings.py`、`tests/test_repository_env_policy.py`、`tests/test_documentation_contracts.py` | 不用 `docker/.env.local-debug` 伪装容器 |
-| provider 健康降级回归 | Docker Compose 容器 | `make container-health-e2e`，使用真实 API/UI/LiteLLM 容器和 Playwright | 不使用 local-debug 或后端单测替代浏览器证据 |
+| provider 健康降级回归 | Docker Compose 容器 | `make container-health-e2e`；CI 由示例生成临时 `COMPOSE_ENV_FILE`，使用真实 API/UI/LiteLLM 容器、临时 runtime 根和 Playwright | 不使用 local-debug、真实宿主卷或后端单测替代浏览器证据 |
 | live 模型或真实运行态验收 | Docker Compose 容器 | `make container-live-test`，使用 Compose 注入的 `docker/.env` 和容器路径 | 不使用 `docker/.env.local-debug` |
 | 启动 / 重启 / 重建 / 部署生效 | Docker Compose 既有服务 | `make ui-build && make ui-up && make ui-smoke`，必要时追加 API `/health` 与 `docker ps` | 不另起临时 Vite 服务，不用 local-debug 代替容器 |
 | local-debug 专项能力 | 宿主机 Python / PyCharm | 明确命名的 local-debug 专项测试和 bootstrap/repair 命令 | 不把结果声明为容器验收 |

@@ -42,3 +42,11 @@ exclude_also = [
 
 [tool.coverage.json]
 pretty_print = true
+
+[tool.mutmut]
+source_paths = ["app/runtime"]
+only_mutate = ["app/runtime/state_machines.py"]
+pytest_add_cli_args_test_selection = ["tests/test_state_machines.py"]
+mutate_only_covered_lines = true
+timeout_multiplier = 8.0
+timeout_constant = 1.0

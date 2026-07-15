@@ -176,49 +176,52 @@ def test_runtime_keeps_event_loop_responsive_during_blocking_failure_boundaries(
     streaming: bool,
 ):
     import threading
-    import time
 
     settings = _settings(tmp_path)
     runtime = ClaudeRuntime(settings, LocalSessionStore(settings.session_dir))
     provider_started = threading.Event()
+    provider_release = threading.Event()
     abort_started = threading.Event()
-    started_at: dict[str, float] = {}
+    abort_release = threading.Event()
+    blocked_boundaries: list[str] = []
 
     def blocking_provider_check() -> None:
-        started_at["provider"] = time.monotonic()
         provider_started.set()
-        time.sleep(0.25)
+        if not provider_release.wait(2):
+            blocked_boundaries.append("provider")
         raise RuntimeError("provider unavailable")
 
     original_abort = runtime._abort_runtime_request
 
     def blocking_abort(*args, **kwargs) -> None:
-        started_at["abort"] = time.monotonic()
         abort_started.set()
-        time.sleep(0.25)
+        if not abort_release.wait(2):
+            blocked_boundaries.append("abort")
         original_abort(*args, **kwargs)
 
     monkeypatch.setattr(runtime.model_provider_router, "ensure_agent_runtime_ready", blocking_provider_check)
     monkeypatch.setattr(runtime, "_abort_runtime_request", blocking_abort)
 
-    async def scheduling_latency(started: threading.Event, phase: str) -> float:
-        assert await asyncio.to_thread(started.wait, 1)
-        return time.monotonic() - started_at[phase]
+    async def release_blocking_boundary(started: threading.Event, release: threading.Event) -> None:
+        while not started.is_set():
+            await asyncio.sleep(0)
+        release.set()
 
     async def invoke_runtime():
-        provider_latency = asyncio.create_task(scheduling_latency(provider_started, "provider"))
-        abort_latency = asyncio.create_task(scheduling_latency(abort_started, "abort"))
+        provider_probe = asyncio.create_task(release_blocking_boundary(provider_started, provider_release))
+        abort_probe = asyncio.create_task(release_blocking_boundary(abort_started, abort_release))
         await asyncio.sleep(0)
         if streaming:
             result = [event async for event in runtime.stream(ChatRequest(message="hello"))]
         else:
             result = await runtime.run(ChatRequest(message="hello"))
-        return result, await provider_latency, await abort_latency
+        await provider_probe
+        await abort_probe
+        return result
 
-    result, provider_latency, abort_latency = asyncio.run(invoke_runtime())
+    result = asyncio.run(asyncio.wait_for(invoke_runtime(), timeout=15))
 
-    assert provider_latency < 0.15
-    assert abort_latency < 0.15
+    assert blocked_boundaries == []
     if streaming:
         assert any(event.get("event") == "error" for event in result)
     else:

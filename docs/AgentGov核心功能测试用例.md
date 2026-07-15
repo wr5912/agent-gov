@@ -1307,7 +1307,7 @@ change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner
 
 证据要求：OpenAPI/pytest 契约、前端网络请求、真实容器 Playwright 截图、API 响应、容器健康状态。
 
-自动验收：核心 API 契约已绑定到 `tests/coverage_policy.json` 的 `openai_responses_first_surface` 主流程，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_retrieve.py`、`tests/test_conversations_api.py`；旧 Chat 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `pnpm --dir frontend run verify:openai-responses-container`：该脚本打开 Compose UI、真实调用 Compose API，验证 UI 请求 `/v1/responses`、会话走 `/v1/conversations`、retrieve 可用，并执行 hostile / boundary 请求。
+自动验收：核心 API 契约已绑定到 `tests/quality_policy.json` 的 `openai_responses_first_surface` 主流程，覆盖 `tests/test_responses_api.py`、`tests/test_responses_stream.py`、`tests/test_responses_retrieve.py`、`tests/test_conversations_api.py`；旧 Chat 兼容由 `tests/test_chat_stream_agent_id.py` 和 `tests/test_openai_compat_agent_config.py` 回归。真实容器端到端验收使用 `pnpm --dir frontend run verify:openai-responses-container`：该脚本打开 Compose UI、真实调用 Compose API，验证 UI 请求 `/v1/responses`、会话走 `/v1/conversations`、retrieve 可用，并执行 hostile / boundary 请求。
 
 ## 开发推进规则
 

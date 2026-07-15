@@ -3,7 +3,8 @@ PYTHON ?= $(VENV)/bin/python
 UV ?= uv
 LITELLM_LOCAL_MODEL_COST_MAP ?= True
 PYTHON_RUN ?= LITELLM_LOCAL_MODEL_COST_MAP=$(LITELLM_LOCAL_MODEL_COST_MAP) $(PYTHON)
-COMPOSE ?= docker compose --env-file docker/.env -f docker/docker-compose.yml
+COMPOSE_ENV_FILE ?= docker/.env
+COMPOSE ?= docker compose --env-file $(COMPOSE_ENV_FILE) -f docker/docker-compose.yml
 # 版本唯一真相源：根 VERSION 文件。导出给 compose，让镜像 tag ${APP_VERSION} 派生（build/up 自动生效）。
 export APP_VERSION := $(shell cat $(CURDIR)/VERSION 2>/dev/null || echo dev)
 PYTHON_TYPECHECK_TARGETS := \
@@ -50,23 +51,36 @@ PYTHON_TYPECHECK_TARGETS := \
 	scripts/check_stage_language.py \
 	scripts/audit_openapi_contract.py \
 	scripts/codex_governance_typed_output.py \
-	scripts/check_test_coverage_policy.py \
+	scripts/check_test_quality_policy.py \
+	scripts/run_test_lane.py \
+	scripts/run_mutation_lane.py \
+	scripts/select_impacted_tests.py \
+	scripts/compare_test_shadow_evidence.py \
+	scripts/evaluate_test_shadow_history.py \
+	scripts/test_quality/collection.py \
+	scripts/test_quality/coverage.py \
+	scripts/test_quality/evidence.py \
+	scripts/test_quality/models.py \
+	scripts/test_quality/policy.py \
 	scripts/diagnose_runtime_health.py \
 	scripts/runtime_template_renderer.py \
 	scripts/runtime_cleanup.py \
 	scripts/cleanup_runtime_artifacts.py \
 	scripts/run_main_flow_tests.py
 
-COVERAGE_JSON ?= /tmp/agent-gov-coverage.json
-COVERAGE_POLICY ?= tests/coverage_policy.json
+TEST_ARTIFACT_ROOT ?= artifacts/test-quality
+BACKEND_TEST_ARTIFACT_DIR ?= $(TEST_ARTIFACT_ROOT)/backend-main-full
+QUALITY_POLICY ?= tests/quality_policy.json
+GOVERNANCE_BASE_REF ?=
+GOVERNANCE_BASE_REF_ARG := $(if $(strip $(GOVERNANCE_BASE_REF)),--base-ref $(GOVERNANCE_BASE_REF),)
 
-.PHONY: setup build up down logs test coverage main-flow-test openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
+.PHONY: setup build up down logs test test-backend coverage main-flow-test main-flow-ui-test mutation-test ci-static openapi-contract-check container-openapi-check container-live-test container-health-e2e smoke compose-diagnose zip chat codex-guard sync-version tag ruff-check ruff-format-check pyright typecheck ui-build ui-up ui-stop ui-logs ui-smoke ui-design-parity ui-feedback-smoke langfuse-dirs langfuse-up langfuse-stop langfuse-logs langfuse-smoke runtime-bootstrap runtime-validate runtime-clean local-debug-env local-debug-bootstrap local-debug-validate local-debug-clean runtime-volume-seeds-scan runtime-volume-seeds-export runtime-volume-seeds-restore runtime-volume-seeds-restore-list runtime-volume-seeds-clean clean-runtime-artifacts
 
 setup:
 	cp -n docker/.env.example docker/.env || true
 	@if ! command -v $(UV) >/dev/null 2>&1; then echo "uv is required. Install uv before running make setup." >&2; exit 1; fi
 	$(UV) venv $(VENV) --python 3.11
-	$(UV) pip install --python $(PYTHON) -r requirements.txt pytest
+	$(UV) pip install --python $(PYTHON) -r requirements.txt
 	$(MAKE) langfuse-dirs
 
 build:
@@ -194,12 +208,12 @@ chat:
 
 codex-guard:
 	$(PYTHON_RUN) .codex/skills/codex-config-optimizer/scripts/audit_codex_config.py --fail
-	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail
+	$(PYTHON_RUN) scripts/check_codex_governance.py --mode fail $(GOVERNANCE_BASE_REF_ARG)
 	$(PYTHON_RUN) scripts/check_stage_language.py
 	$(PYTHON_RUN) scripts/check_version_consistency.py
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
 	$(PYTHON_RUN) scripts/check_docs_governance.py
-	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --manifest-only --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/check_test_quality_policy.py --manifest-only --policy $(QUALITY_POLICY)
 
 openapi-contract-check:
 	$(PYTHON_RUN) scripts/audit_openapi_contract.py --fail
@@ -231,18 +245,27 @@ pyright:
 
 typecheck: ruff-check ruff-format-check pyright
 
-test: codex-guard
+ci-static: codex-guard typecheck runtime-volume-seeds-scan
+
+test-backend:
+	mkdir -p $(BACKEND_TEST_ARTIFACT_DIR)
 	$(PYTHON_RUN) -m compileall app
-	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
-	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/run_test_lane.py --policy $(QUALITY_POLICY) --lane main-full --artifact-dir $(BACKEND_TEST_ARTIFACT_DIR)
 	$(PYTHON_RUN) scripts/check_docs_governance.py --collect-pytest
 
+test: codex-guard test-backend
+
 coverage:
-	$(PYTHON_RUN) -m pytest -q --cov=app --cov=scripts --cov-branch --cov-report=term-missing:skip-covered --cov-report=json:$(COVERAGE_JSON)
-	$(PYTHON_RUN) scripts/check_test_coverage_policy.py --coverage-json $(COVERAGE_JSON) --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/run_test_lane.py --policy $(QUALITY_POLICY) --lane main-full --artifact-dir $(BACKEND_TEST_ARTIFACT_DIR)
 
 main-flow-test:
-	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(COVERAGE_POLICY)
+	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(QUALITY_POLICY)
+
+main-flow-ui-test:
+	$(PYTHON_RUN) scripts/run_main_flow_tests.py --policy $(QUALITY_POLICY) --ui-only --artifact-root $(TEST_ARTIFACT_ROOT)/frontend-ui
+
+mutation-test:
+	$(PYTHON_RUN) scripts/run_mutation_lane.py --policy $(QUALITY_POLICY) --artifact-dir $(TEST_ARTIFACT_ROOT)/mutation
 
 container-live-test:
 	$(COMPOSE) run --rm --entrypoint sh -e REQUIRE_LIVE_RUNTIME=1 -v "$(CURDIR):/app" -w /app claude-agent-api -lc 'python -m pytest -q -rs tests/test_live_runtime_acceptance.py'

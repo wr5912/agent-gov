@@ -280,6 +280,7 @@ async function main() {
     }
   }, [api, key, REAL]);
   let ok = false, detail = "";
+  let responsesRequestCount = 0;
   try {
     if (!REAL) {
       await page.route("**/*", async (route) => {
@@ -287,6 +288,7 @@ async function main() {
         if (url.hostname !== "runtime.test") return route.continue();
         requestedRuntimeUrls.push(`${url.pathname}${url.search}`);
         if (url.pathname === "/v1/responses") {
+          responsesRequestCount += 1;
           const body = route.request().postDataJSON();
           const sessionId = sessionIdFromResponsesBody(body);
           if (body?.input === "触发截断流负测") {
@@ -300,6 +302,7 @@ async function main() {
             { event: "agentgov.session", data: { session_id: sessionId } },
             { event: "response.output_text.delta", data: { delta: "我是 AgentGov 测试助手。" } },
             { event: "agentgov.result", data: { run_id: "mock-run", session_id: sessionId, agent_version_id: "v-mock", agent_activity: { tool_calls: [], tool_results: [], tool_names: [] } } },
+            { event: "agentgov.prompt_suggestion", data: { v: 1, type: "agentgov.prompt_suggestion", run_id: "mock-run", ts: Date.now() / 1000, seq: 4, payload: { suggestion: "继续检查失败路径。", session_id: sessionId } } },
             { event: "response.completed", data: { response: { status: "completed" } } },
             { event: "agentgov.done", data: { ok: true } },
           ]);
@@ -424,12 +427,20 @@ async function main() {
           await page.getByTestId("playground-evidence-panel").waitFor({ timeout: 8000 });
           await page.waitForFunction((count) => document.querySelectorAll("[data-message-id]").length > count, rowsBeforeSend, { timeout: 90000 });
           await waitNearBottom(page);
+          const suggestion = page.getByTestId("prompt-suggestion");
+          await suggestion.waitFor({ timeout: 8000 });
+          const requestsBeforeSuggestionClick = responsesRequestCount;
+          await suggestion.getByRole("button").click();
+          await page.waitForTimeout(100);
           autoPanelChecks = {
             skipped: false,
             sessionCollapsedAfterSend: await page.getByTestId("playground-session-sidebar").count() === 0,
             evidenceOpenAfterSend: await page.getByTestId("playground-evidence-panel").isVisible().catch(() => false),
             traceTabAfterSend: await page.getByTestId("evidence-tab-trace").isVisible().catch(() => false),
             autoBottomAfterSend: await scrollDistance(page) <= 24,
+            suggestionFilledInput: await page.getByTestId("chat-composer-input").inputValue() === "继续检查失败路径。",
+            suggestionDidNotAutoSend: responsesRequestCount === requestsBeforeSuggestionClick,
+            suggestionClearedAfterUse: await page.getByTestId("prompt-suggestion").count() === 0,
           };
           await page.getByTestId("playground-evidence-panel").getByLabel("折叠运行证据栏").click();
           await page.getByTestId("playground-evidence-panel").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
@@ -525,6 +536,9 @@ async function main() {
             && autoPanelChecks.evidenceOpenAfterSend
             && autoPanelChecks.traceTabAfterSend
             && autoPanelChecks.autoBottomAfterSend
+            && autoPanelChecks.suggestionFilledInput
+            && autoPanelChecks.suggestionDidNotAutoSend
+            && autoPanelChecks.suggestionClearedAfterUse
           ));
         detail = JSON.stringify({ counts, drawerChecks });
         if (ok) await page.screenshot({ path: join(screenshotDir, "agentgov-improvement-ui-after-message-actions.png") });

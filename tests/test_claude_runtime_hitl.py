@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 
 import pytest
-from app.runtime import session_turn_lease
+from app.runtime import claude_prompt_suggestions, session_turn_lease
 from app.runtime.agent_paths import business_agent_layout
 from app.runtime.agent_profiles import build_business_agent_profile
 from app.runtime.api_auth import ApiPrincipal
@@ -31,6 +31,7 @@ from scripts.runtime_template_renderer import build_render_context, render_templ
 SOC_EXECUTE_TOOL = "mcp__sec-ops__soc_api__execute"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SEED_AGENT_ROOT = REPO_ROOT / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
+
 
 def _settings(
     tmp_path,
@@ -153,6 +154,7 @@ def _patch_interactive_sdk_client(monkeypatch, fake_query, seen: dict[str, objec
             await asyncio.wait_for(self.control_task, timeout=1)
             seen["disconnected"] = True
 
+    monkeypatch.setattr(claude_prompt_suggestions, "PromptSuggestionClaudeClient", FakeClaudeSDKClient)
     monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClaudeSDKClient)
 
 
@@ -340,10 +342,8 @@ def test_stream_without_native_ask_consumes_finite_prompt_without_permission_bri
         seen["prompt_items"] = [item async for item in prompt]
         yield await _success_result(options, text="ordinary")
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     monkeypatch.setattr("app.runtime.claude_runtime_stream.read_requires_web_hitl", lambda _workspace: False)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, store = _service(tmp_path)
@@ -553,10 +553,8 @@ def test_stream_finishes_when_completion_step_raises(tmp_path, monkeypatch):
             result="done",
         )
 
-    import claude_agent_sdk
-
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
     monkeypatch.setattr("app.runtime.claude_runtime_stream.read_requires_web_hitl", lambda _workspace: False)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     settings = _settings(tmp_path, enable_hitl=False)
     service, _store = _service(tmp_path)

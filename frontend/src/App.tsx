@@ -14,19 +14,11 @@ import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
 import { messagesFromConversationItems } from "./playgroundHistory";
+import { usePromptSuggestion } from "./hooks/usePromptSuggestion";
+import { newId, newSessionId } from "./utils/ids";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
-
-function newId(prefix: string) {
-  const random = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-  return `${prefix}_${random}`;
-}
-
-// 会话 ID 使用裸 UUID（不带 sess_ 前缀），便于后端首次 SDK 调用直接把 session_id 传给 Claude SDK 并对齐 sdk_session_id（整改方案 §4.3 / Phase 1）。消息等临时 UI ID 仍可带前缀。
-function newSessionId(): string {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
-}
 
 function makeApiDocsUrl(apiBase: string): string {
   const base = apiBase.trim().replace(/\/$/, "");
@@ -123,6 +115,7 @@ export default function App() {
   }), [migratedClientConfig, runtimeDefaults]);
   const configMapping = useConfigMapping(effectiveClientConfig, selectedBusinessAgentId, setLastError);
   const { agents, skills } = useAgentCatalog(effectiveClientConfig, selectedBusinessAgentId, setLastError);
+  const promptSuggestion = usePromptSuggestion(activeSessionId, setInput);
 
   useEffect(() => {
     if (!shouldMigrateLegacyApiBase) return;
@@ -388,6 +381,7 @@ export default function App() {
     if (!message || streaming) return;
 
     const sessionId = activeSessionId || newSessionId();
+    promptSuggestion.clear(sessionId);
     setActiveSessionId(sessionId);
     setInput("");
     setStreaming(true);
@@ -514,6 +508,7 @@ export default function App() {
               return next;
             });
           },
+          onPromptSuggestion: (suggestion, runtimeSessionId) => promptSuggestion.receive(runtimeSessionId, suggestion),
           onResult: (result) => {
             if (!isRecord(result)) return;
             const runId = typeof result.run_id === "string" ? result.run_id : undefined;
@@ -672,7 +667,7 @@ export default function App() {
   function rerunMessage(message: ChatMessage) {
     const idx = activeMessages.findIndex((m) => m.id === message.id);
     for (let i = idx - 1; i >= 0; i -= 1) {
-      if (activeMessages[i].role === "user") { setInput(activeMessages[i].content); break; }
+      if (activeMessages[i].role === "user") { promptSuggestion.handleInputChange(activeMessages[i].content); break; }
     }
   }
 
@@ -727,7 +722,9 @@ export default function App() {
             activeSessionId={activeSessionId}
             sessionSidebarOpen={sessionSidebarOpen}
             agentName={currentAgentName}
-            onInputChange={setInput}
+            promptSuggestion={promptSuggestion.suggestion}
+            onInputChange={promptSuggestion.handleInputChange}
+            onUsePromptSuggestion={promptSuggestion.apply}
             onSend={sendMessage}
             onStop={stopStream}
             onToggleSession={() => { setSessionSidebarOpen((open) => !open); setPlaygroundDrawer(null); }}

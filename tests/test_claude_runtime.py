@@ -1195,9 +1195,9 @@ def test_stream_enriches_langfuse_input_output(tmp_path, monkeypatch):
     async def collect(runtime):
         return [item async for item in runtime.stream(ChatRequest(message="stream"))]
 
-    import claude_agent_sdk
+    from app.runtime import claude_prompt_suggestions
 
-    monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
 
     base = _settings(tmp_path)
     settings = AppSettings(

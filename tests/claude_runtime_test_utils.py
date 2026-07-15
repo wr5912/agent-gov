@@ -8,6 +8,11 @@ def route_interactive_client_through_query(monkeypatch: Any) -> None:
     """Let runtime tests reuse their fake SDK query through the interactive client."""
 
     import claude_agent_sdk
+    from app.runtime import claude_prompt_suggestions
+
+    async def query_with_prompt_suggestions(*, prompt: Any, options: Any):
+        async for message in claude_agent_sdk.query(prompt=prompt, options=options):
+            yield message
 
     class QueryBackedClaudeSDKClient:
         def __init__(self, *, options: Any, transport: Any = None) -> None:
@@ -27,11 +32,16 @@ def route_interactive_client_through_query(monkeypatch: Any) -> None:
             self.prompt = prompt
 
         async def receive_response(self):
-            async for message in claude_agent_sdk.query(prompt=self.prompt, options=self.options):
+            async for message in claude_prompt_suggestions.query_with_prompt_suggestions(
+                prompt=self.prompt,
+                options=self.options,
+            ):
                 yield message
 
         async def disconnect(self) -> None:
             if self.control_task is not None:
                 await self.control_task
 
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", query_with_prompt_suggestions)
+    monkeypatch.setattr(claude_prompt_suggestions, "PromptSuggestionClaudeClient", QueryBackedClaudeSDKClient)
     monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", QueryBackedClaudeSDKClient)

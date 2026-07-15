@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
+from app.runtime import claude_prompt_suggestions
 from app.runtime.async_iterators import close_async_iterator
 from app.runtime.openai_responses_stream import iter_responses_sse
 from app.runtime.schemas import ChatRequest
@@ -54,7 +55,8 @@ def _patch_sdk_query(monkeypatch, fake_query) -> None:
             await asyncio.wait_for(self.control_task, timeout=1)
 
     monkeypatch.setattr(claude_agent_sdk, "query", fake_query)
-    monkeypatch.setattr(claude_agent_sdk, "ClaudeSDKClient", FakeClaudeSDKClient)
+    monkeypatch.setattr(claude_prompt_suggestions, "query_with_prompt_suggestions", fake_query)
+    monkeypatch.setattr(claude_prompt_suggestions, "PromptSuggestionClaudeClient", FakeClaudeSDKClient)
 
 
 def _fake_sdk_query_success(entry_label: str = "sdk-race"):
@@ -125,6 +127,10 @@ _SESSION = {
     "data": {"run_id": "run-9", "session_id": "sess-9", "sdk_session_id": "sdk-9", "agent_version_id": "ver-9", "agent_id": "soc-ops"},
 }
 _ASSISTANT = {"event": "message", "data": {"event": "AssistantMessage", "text": "日报正文", "raw": {}}}
+_SUGGESTION = {
+    "event": "prompt_suggestion",
+    "data": {"suggestion": "  继续检查异常路径  ", "run_id": "hostile-run", "session_id": "hostile-session"},
+}
 _RESULT = {
     "event": "result",
     "data": {
@@ -165,13 +171,25 @@ def test_control_stream_maps_core_events() -> None:
 
 
 def test_strict_stream_emits_no_agentgov() -> None:
-    text = _collect([_SESSION, _ASSISTANT, _RESULT, _DONE], model="m", effective_agent_id="x", control=False)
+    text = _collect([_SESSION, _ASSISTANT, _RESULT, _SUGGESTION, _DONE], model="m", effective_agent_id="x", control=False)
     events = _parse(text)
     names = [n for n, _ in events]
     assert all(not n.startswith("agentgov.") for n in names)
     assert names == ["response.created", "response.output_text.delta", "response.completed"]
     # strict 的 completed response 不泄露 agentgov
     assert "agentgov" not in dict(events)["response.completed"]["response"]
+
+
+def test_prompt_suggestion_control_uses_session_context_ids_and_precedes_done() -> None:
+    events = _parse(_collect([_SESSION, _RESULT, _SUGGESTION, _DONE], model="m", effective_agent_id="x", control=True))
+    names = [name for name, _ in events]
+    suggestion = dict(events)["agentgov.prompt_suggestion"]
+
+    assert names.index("agentgov.prompt_suggestion") > names.index("agentgov.result")
+    assert names.index("agentgov.prompt_suggestion") < names.index("response.completed")
+    assert names.index("agentgov.prompt_suggestion") < names.index("agentgov.done")
+    assert suggestion["run_id"] == "run-9"
+    assert suggestion["payload"] == {"suggestion": "继续检查异常路径", "session_id": "sess-9"}
 
 
 def test_heartbeat_becomes_sse_comment() -> None:
@@ -596,7 +614,6 @@ def test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session
 def test_stream_persists_session_and_run_before_response_completed(monkeypatch, tmp_path: Path) -> None:
     # race 回归：在 result 事件（-> response.completed）时刻，session（sdk_session_id+agent_id）与 run 必须已落库，
     # 使 /v1/conversations/items 与 /v1/responses/{id} retrieve 在完成信号时刻即可查（修复前此处未落库、会失败）。
-
     _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-race"))
     module = _load_app(monkeypatch, tmp_path)
 
@@ -727,7 +744,6 @@ def test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry(mo
 
 def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
     # 幂等：is_result 处落库 + finally 兜底，不得双落库。
-
     _patch_sdk_query(monkeypatch, _fake_sdk_query_success("sdk-once"))
     module = _load_app(monkeypatch, tmp_path)
     calls = {"n": 0}
@@ -744,7 +760,6 @@ def test_stream_persists_exactly_once(monkeypatch, tmp_path: Path) -> None:
 
 def test_stream_error_path_persists_once_in_finally(monkeypatch, tmp_path: Path) -> None:
     # error/无 ResultMessage 路径：finally 兜底落库一次，仍发 error+done。
-
     async def fake_query(*, prompt, options, transport=None):
         await anext(prompt)
         raise RuntimeError("boom before result")

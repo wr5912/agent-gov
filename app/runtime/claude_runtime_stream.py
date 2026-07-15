@@ -6,6 +6,7 @@ from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from . import claude_prompt_suggestions
 from .agent_job_runner import AgentJobRunner
 from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
 from .async_iterators import close_async_iterator
@@ -83,7 +84,7 @@ async def stream_claude_runtime(
 
 
 async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject]:
-    from claude_agent_sdk import ClaudeSDKClient, ResultMessage, query
+    from claude_agent_sdk import ResultMessage
 
     runtime = stream_run.runtime
     req = stream_run.req
@@ -114,8 +115,8 @@ async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject
                         event_queue,
                         root_span,
                         generation,
-                        query,
-                        ClaudeSDKClient,
+                        claude_prompt_suggestions.query_with_prompt_suggestions,
+                        claude_prompt_suggestions.PromptSuggestionClaudeClient,
                         ResultMessage,
                     )
                 )
@@ -203,6 +204,18 @@ async def _emit_query_events(
     )
     try:
         async for msg in messages:
+            if isinstance(msg, claude_prompt_suggestions.PromptSuggestionMessage):
+                await event_queue.put(
+                    {
+                        "event": "prompt_suggestion",
+                        "data": {
+                            "suggestion": msg.suggestion,
+                            "run_id": stream_run.request_context.run_id,
+                            "session_id": stream_run.request_context.session.session_id,
+                        },
+                    }
+                )
+                continue
             event, text, plain, is_result, result_errors = runtime._track_query_message(
                 msg,
                 stream_run.query_state,

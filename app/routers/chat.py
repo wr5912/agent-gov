@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -45,7 +45,7 @@ def create_chat_router(
     @router.post(
         "/chat/stream",
         summary="Run a Claude Agent task as server-sent events",
-        description="Streams session, message, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).",
+        description="Streams session, message, prompt_suggestion, result, error, and done events as text/event-stream. Requires a valid agent_id (main-agent or a registered business agent).",
     )
     async def chat_stream(req: ChatRequest) -> StreamingResponse:
         _require_agent_id(req)

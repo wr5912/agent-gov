@@ -3,6 +3,7 @@ import { PlaygroundMessageScrollNavigator } from "./PlaygroundMessageScrollNavig
 import { useMessageScrollNavigation } from "../hooks/useMessageScrollNavigation";
 import type { ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest } from "../types/runtime";
 import { MessageBubble } from "./MessageBubble";
+import { PromptSuggestion } from "./PromptSuggestion";
 
 // 四阶段改进治理 §3 Playground：主区只留对话 + 回复动作 + 输入；会话和运行设置使用独立抽屉，不接管 Claude Code 进程。
 interface ChatPanelProps {
@@ -13,7 +14,9 @@ interface ChatPanelProps {
   activeSessionId?: string;
   sessionSidebarOpen: boolean;
   agentName: string;
+  promptSuggestion?: string;
   onInputChange: (value: string) => void;
+  onUsePromptSuggestion: () => void;
   onSend: () => void;
   onStop: () => void;
   onToggleSession: () => void;
@@ -35,7 +38,9 @@ export function ChatPanel({
   activeSessionId,
   sessionSidebarOpen,
   agentName,
+  promptSuggestion,
   onInputChange,
+  onUsePromptSuggestion,
   onSend,
   onStop,
   onToggleSession,
@@ -130,18 +135,21 @@ export function ChatPanel({
       </div>
 
       <footer className="composer">
-        <textarea
-          data-testid="chat-composer-input"
-          value={input}
-          onChange={(e) => onInputChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              onSend();
-            }
-          }}
-          placeholder="输入任务或问题，Ctrl/⌘ + Enter 发送..."
-        />
+        <div className="composer-input-column">
+          <PromptSuggestion suggestion={promptSuggestion} onUse={onUsePromptSuggestion} />
+          <textarea
+            data-testid="chat-composer-input"
+            value={input}
+            onChange={(e) => onInputChange(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                onSend();
+              }
+            }}
+            placeholder="输入任务或问题，Ctrl/⌘ + Enter 发送..."
+          />
+        </div>
         <div className="composer-actions">
           {streaming ? (
             <button className="secondary-button" data-testid="chat-stop" onClick={onStop}><Square size={15} /> 停止</button>

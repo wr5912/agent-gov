@@ -10,13 +10,16 @@
 from __future__ import annotations
 
 import dataclasses
+import importlib.metadata
 import inspect
+import subprocess
 
 import claude_agent_sdk as sdk
 from app.runtime.message_utils import to_plain
 from app.runtime.runtime_activity import RuntimeActivityExtractor
 
 # ---- 层 1：SDK message/block 形态契约（用真实 dataclass）----
+
 
 def test_sdk_block_fields_we_depend_on_still_exist():
     """我们的投影依赖这些字段名；上游改名即在此红灯。"""
@@ -47,8 +50,8 @@ def test_real_sdk_messages_project_to_child_observations():
 
     tool = next(c for c in children if c["kind"] == "tool")
     assert tool["name"] == "sdk.tool.Glob"
-    assert tool["input"] == {"pattern": "*.py"}        # 真实 ToolUseBlock.input 仍被抽到
-    assert tool["output"] == "a.py\nb.py"              # 真实 ToolResultBlock.content 仍被抽到
+    assert tool["input"] == {"pattern": "*.py"}  # 真实 ToolUseBlock.input 仍被抽到
+    assert tool["output"] == "a.py\nb.py"  # 真实 ToolResultBlock.content 仍被抽到
 
     gen = next(c for c in children if c["kind"] == "generation")
     assert gen["model"] == "deepseek-v4-flash"
@@ -58,8 +61,14 @@ def test_real_sdk_messages_project_to_child_observations():
 def test_real_result_message_usage_and_cost_shape():
     """ResultMessage 聚合 usage/cost 字段仍是我们 usage_details/cost_details 能吃的形态。"""
     rm = sdk.ResultMessage(
-        subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
-        num_turns=1, session_id="s", total_cost_usd=0.01, usage={"input_tokens": 10, "output_tokens": 5},
+        subtype="success",
+        duration_ms=1,
+        duration_api_ms=1,
+        is_error=False,
+        num_turns=1,
+        session_id="s",
+        total_cost_usd=0.01,
+        usage={"input_tokens": 10, "output_tokens": 5},
     )
     plain = to_plain(rm)
     extractor = RuntimeActivityExtractor()
@@ -67,7 +76,29 @@ def test_real_result_message_usage_and_cost_shape():
     assert extractor.cost_details(plain.get("total_cost_usd")) == {"total_cost_usd": 0.01}
 
 
+def test_prompt_suggestion_sdk_private_seam_and_bundled_cli_contract():
+    """Python SDK 未原生建模 Suggestion 期间，锁定适配器依赖的最小私有 seam。"""
+    from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
+    from claude_agent_sdk._internal.message_parser import parse_message
+    from claude_agent_sdk._internal.query import Query
+    from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
+
+    assert importlib.metadata.version("claude-agent-sdk") == "0.2.118"
+    assert inspect.isasyncgenfunction(Query.receive_messages)
+    assert parse_message({"type": "prompt_suggestion", "suggestion": "next", "uuid": "u", "session_id": "s"}) is None
+
+    options = ClaudeAgentOptions(extra_args={"prompt-suggestions": None})
+    client = ClaudeSDKClient(options=options)
+    assert client._query is None
+    transport = SubprocessCLITransport(prompt="", options=options)
+    bundled_cli = transport._find_bundled_cli()
+    assert bundled_cli is not None
+    help_text = subprocess.run([bundled_cli, "--help"], check=True, capture_output=True, text=True, timeout=10).stdout
+    assert "--prompt-suggestions" in help_text
+
+
 # ---- 层 2：Langfuse observation API 签名契约 ----
+
 
 def test_langfuse_start_observation_signature_contract():
     """我们给 start_observation 传的 kwargs 必须仍被 langfuse 接受；升级改签名即红灯。"""

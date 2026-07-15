@@ -303,7 +303,7 @@ def create_responses_router(
         description=(
             "Canonical run endpoint. No `agentgov` = strict (operator-configured agent, pure OpenAI shape). "
             "`agentgov` present = control (requires `agentgov.agent_id`). `stream=true` returns Responses-style SSE "
-            "(`response.*`; plus `agentgov.*` control envelope in control mode)."
+            "(`response.*`; plus `agentgov.*` control envelope, including optional `agentgov.prompt_suggestion`, in control mode)."
         ),
     )
     async def create_response(

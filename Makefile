@@ -15,6 +15,7 @@ PYTHON_TYPECHECK_TARGETS := \
 	app/runtime/api_auth.py \
 	app/runtime/advisory_lock.py \
 	app/runtime/agent_job_types.py \
+	app/runtime/claude_prompt_suggestions.py \
 	app/runtime/claude_runtime_permissions.py \
 	app/runtime/claude_runtime_stream.py \
 	app/runtime/claude_user_input_service.py \

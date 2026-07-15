@@ -413,6 +413,7 @@ export interface StreamChatHandlers {
   onEnvelope?: (envelope: StreamEnvelope) => void;
   onSession?: (sessionId: string, sdkSessionId?: string | null) => void;
   onText?: (text: string, raw: unknown) => void;
+  onPromptSuggestion?: (suggestion: string, sessionId: string) => void;
   onResult?: (result: unknown) => void;
   onError?: (message: string, raw?: unknown) => void;
   onDone?: () => void;
@@ -563,6 +564,8 @@ function translateResponsesEnvelope(env: StreamEnvelope): StreamEnvelope | null 
       return { event: "claude_user_input_required", data: payload };
     case "agentgov.confirmation.resolved":
       return { event: "claude_user_input_resolved", data: payload };
+    case "agentgov.prompt_suggestion":
+      return { event: "prompt_suggestion", data: payload };
     case "agentgov.done":
       return { event: "done", data: "[DONE]" };
     default:
@@ -617,6 +620,13 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   if (envelope.event === "message" && isRecord(envelope.data)) {
     const text = stringOrUndefined(envelope.data.text) || "";
     if (text && shouldAppendMessageText(envelope.data)) handlers.onText?.(text, envelope.data.raw ?? envelope.data);
+    return;
+  }
+
+  if (envelope.event === "prompt_suggestion" && isRecord(envelope.data)) {
+    const suggestion = stringOrUndefined(envelope.data.suggestion)?.trim();
+    const sessionId = stringOrUndefined(envelope.data.session_id);
+    if (suggestion && sessionId) handlers.onPromptSuggestion?.(suggestion, sessionId);
     return;
   }
 

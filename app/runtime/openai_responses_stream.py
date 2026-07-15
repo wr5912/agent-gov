@@ -5,7 +5,7 @@
 - 标准 OpenAI 通道：``response.created`` / ``response.output_text.delta`` / ``response.completed`` /
   ``response.failed``（两模式都发，纯 OpenAI 客户端可解析）。
 - AgentGov 控制通道：``agentgov.*`` 统一信封 ``{v, type, run_id, ts, seq, payload}``，**仅 control 模式下发**
-  （strict 客户端零污染）。session / tool_step / confirmation / result / error / done。
+  （strict 客户端零污染）。session / tool_step / confirmation / prompt_suggestion / result / error / done。
 - 保活：``heartbeat`` -> SSE comment 行（``: keepalive``），不进业务时间线。
 
 不变量：``heartbeat_interval_s`` 随 ``agentgov.session`` 下发，客户端据此派生 idle（不硬编码 180）；
@@ -148,6 +148,7 @@ class _ResponsesSseProjector:
     response_disposition: TrustedResponseDispositionContext | None = None
     seq: int = 0
     run_id: Optional[str] = None
+    session_id: Optional[str] = None
     item_id: Optional[str] = None
     created_at: Optional[int] = None
     answer_parts: list[str] = field(default_factory=list)
@@ -170,10 +171,12 @@ class _ResponsesSseProjector:
 
     def project(self, frame: JsonObject) -> list[str]:
         event = frame.get("event")
-        if event != "done" and (self.done_emitted or self.terminal_status is not None or self.pending_completed_response is not None):
-            return []
         data = frame.get("data")
         data = data if isinstance(data, dict) else {}
+        if event == "prompt_suggestion":
+            return self._project_prompt_suggestion(data)
+        if event != "done" and (self.done_emitted or self.terminal_status is not None or self.pending_completed_response is not None):
+            return []
         if event == "session":
             return self._project_session(data)
         if event == "message":
@@ -194,17 +197,31 @@ class _ResponsesSseProjector:
 
     def _project_session(self, data: JsonObject) -> list[str]:
         self.run_id = _str(data.get("run_id"))
+        self.session_id = _str(data.get("session_id"))
         self.item_id = f"msg_{self.run_id}" if self.run_id else None
         self.created_at = int(time.time())
         chunks = [
             self._std(
                 "response.created",
-                {"response": _created_response(self.run_id, self.model, _str(data.get("session_id")), self.created_at)},
+                {"response": _created_response(self.run_id, self.model, self.session_id, self.created_at)},
             )
         ]
         if self.control:
             chunks.append(self._envelope("agentgov.session", {**data, "heartbeat_interval_s": HEARTBEAT_INTERVAL_S}))
         return chunks
+
+    def _project_prompt_suggestion(self, data: JsonObject) -> list[str]:
+        if not self.control or self.done_emitted or self.terminal_status is not None:
+            return []
+        suggestion = _str(data.get("suggestion"))
+        if not suggestion or not suggestion.strip():
+            return []
+        return [
+            self._envelope(
+                "agentgov.prompt_suggestion",
+                {"suggestion": suggestion.strip(), "session_id": self.session_id},
+            )
+        ]
 
     def _project_message(self, data: JsonObject) -> list[str]:
         event_name = str(data.get("event") or "")

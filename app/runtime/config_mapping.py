@@ -1,13 +1,40 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Literal, TypeAlias
 
 from .agent_paths import business_agent_layout, validate_agent_id
 from .schemas import ConfigMappingItem, ConfigMappingResponse
 from .settings import AppSettings
 
-
 DEFAULT_AGENT_ID = "main-agent"
+
+_UserItemSpec: TypeAlias = tuple[str, tuple[str, ...]]
+_ProjectItemProfile = Literal["project", "local", "worktree"]
+_ProjectItemSpec: TypeAlias = tuple[_ProjectItemProfile, str, tuple[str, ...]]
+
+_USER_ITEM_SPECS: tuple[_UserItemSpec, ...] = (
+    ("settings", ("settings.json",)),
+    ("instructions", ("CLAUDE.md",)),
+    ("skills", ("skills",)),
+    ("agents", ("agents",)),
+    ("commands", ("commands",)),
+    ("output-styles", ("output-styles",)),
+)
+
+_PROJECT_ITEM_SPECS: tuple[_ProjectItemSpec, ...] = (
+    ("project", "instructions", ("CLAUDE.md",)),
+    ("local", "instructions", ("CLAUDE.local.md",)),
+    ("project", "mcp", (".mcp.json",)),
+    ("worktree", "worktree-include", (".worktreeinclude",)),
+    ("project", "settings", (".claude", "settings.json")),
+    ("local", "settings", (".claude", "settings.local.json")),
+    ("project", "rules", (".claude", "rules")),
+    ("project", "skills", (".claude", "skills")),
+    ("project", "commands", (".claude", "commands")),
+    ("project", "agents", (".claude", "agents")),
+    ("project", "output-styles", (".claude", "output-styles")),
+)
 
 
 # This module only projects Claude Code/AgentGov paths for the runtime-settings UI.
@@ -59,6 +86,29 @@ def _item(
     )
 
 
+def _user_item_from_spec(
+    settings: AppSettings,
+    *,
+    claude_home: Path,
+    spec: _UserItemSpec,
+    loaded_by_default: bool,
+    expose_host_mount: bool,
+) -> ConfigMappingItem:
+    kind, relative_parts = spec
+    return _item(
+        settings,
+        scope="user",
+        kind=kind,
+        path=claude_home.joinpath(*relative_parts),
+        loaded_by_default=loaded_by_default,
+        load_semantics="claude_optional",
+        display_group="agent_user_state",
+        safe_to_edit=False,
+        git_policy="ignored",
+        expose_host_mount=expose_host_mount,
+    )
+
+
 def _user_mapping_items(
     settings: AppSettings,
     *,
@@ -67,19 +117,23 @@ def _user_mapping_items(
     expose_host_mount: bool,
 ) -> list[ConfigMappingItem]:
     claude_home = claude_root / ".claude"
-    global_state = claude_root / ".claude.json"
+    items = [
+        _user_item_from_spec(
+            settings,
+            claude_home=claude_home,
+            spec=spec,
+            loaded_by_default=loaded_by_default,
+            expose_host_mount=expose_host_mount,
+        )
+        for spec in _USER_ITEM_SPECS
+    ]
     return [
-        _item(settings, scope="user", kind="settings", path=claude_home / "settings.json", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="user", kind="instructions", path=claude_home / "CLAUDE.md", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="user", kind="skills", path=claude_home / "skills", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="user", kind="agents", path=claude_home / "agents", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="user", kind="commands", path=claude_home / "commands", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="user", kind="output-styles", path=claude_home / "output-styles", loaded_by_default=loaded_by_default, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
+        *items,
         _item(
             settings,
             scope="global",
             kind="state",
-            path=global_state,
+            path=claude_root / ".claude.json",
             loaded_by_default=True,
             load_semantics="claude_optional",
             display_group="agent_user_state",
@@ -91,6 +145,50 @@ def _user_mapping_items(
     ]
 
 
+def _project_item_from_spec(
+    settings: AppSettings,
+    *,
+    project: Path,
+    spec: _ProjectItemSpec,
+    project_loaded: bool,
+    local_loaded: bool,
+    expose_host_mount: bool,
+) -> ConfigMappingItem:
+    profile, kind, relative_parts = spec
+    if profile == "local":
+        scope = "local"
+        loaded_by_default = local_loaded
+        load_semantics = "claude_optional"
+        display_group = "agent_user_state"
+        safe_to_edit = False
+        git_policy = "ignored"
+    else:
+        scope = "project"
+        loaded_by_default = project_loaded
+        load_semantics = "claude_loaded"
+        display_group = "agent_project_config"
+        safe_to_edit = True
+        git_policy = "tracked"
+    notes = None
+    if profile == "worktree":
+        loaded_by_default = False
+        load_semantics = "not_applicable"
+        notes = "Used by Claude Code worktree creation to copy selected gitignored files."
+    return _item(
+        settings,
+        scope=scope,
+        kind=kind,
+        path=project.joinpath(*relative_parts),
+        loaded_by_default=loaded_by_default,
+        load_semantics=load_semantics,
+        display_group=display_group,
+        safe_to_edit=safe_to_edit,
+        git_policy=git_policy,
+        expose_host_mount=expose_host_mount,
+        notes=notes,
+    )
+
+
 def _project_mapping_items(
     settings: AppSettings,
     *,
@@ -100,29 +198,15 @@ def _project_mapping_items(
     expose_host_mount: bool,
 ) -> list[ConfigMappingItem]:
     return [
-        _item(settings, scope="project", kind="instructions", path=project / "CLAUDE.md", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="local", kind="instructions", path=project / "CLAUDE.local.md", loaded_by_default=local_loaded, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="mcp", path=project / ".mcp.json", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(
+        _project_item_from_spec(
             settings,
-            scope="project",
-            kind="worktree-include",
-            path=project / ".worktreeinclude",
-            loaded_by_default=False,
-            load_semantics="not_applicable",
-            display_group="agent_project_config",
-            safe_to_edit=True,
-            git_policy="tracked",
+            project=project,
+            spec=spec,
+            project_loaded=project_loaded,
+            local_loaded=local_loaded,
             expose_host_mount=expose_host_mount,
-            notes="Used by Claude Code worktree creation to copy selected gitignored files.",
-        ),
-        _item(settings, scope="project", kind="settings", path=project / ".claude" / "settings.json", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="local", kind="settings", path=project / ".claude" / "settings.local.json", loaded_by_default=local_loaded, load_semantics="claude_optional", display_group="agent_user_state", safe_to_edit=False, git_policy="ignored", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="rules", path=project / ".claude" / "rules", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="skills", path=project / ".claude" / "skills", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="commands", path=project / ".claude" / "commands", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="agents", path=project / ".claude" / "agents", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
-        _item(settings, scope="project", kind="output-styles", path=project / ".claude" / "output-styles", loaded_by_default=project_loaded, load_semantics="claude_loaded", display_group="agent_project_config", safe_to_edit=True, git_policy="tracked", expose_host_mount=expose_host_mount),
+        )
+        for spec in _PROJECT_ITEM_SPECS
     ]
 
 
@@ -216,10 +300,10 @@ def build_config_mapping(
     safe_agent_id = validate_agent_id(agent_id)
     layout = business_agent_layout(settings.data_dir, safe_agent_id)
     sources = settings.setting_sources
-    source_set = set(sources or [])
-    user_loaded = sources is None or "user" in source_set
-    project_loaded = sources is None or "project" in source_set
-    local_loaded = sources is None or "local" in source_set
+    source_set = set(sources)
+    user_loaded = "user" in source_set
+    project_loaded = "project" in source_set
+    local_loaded = "local" in source_set
     mappings = [
         *_user_mapping_items(
             settings,

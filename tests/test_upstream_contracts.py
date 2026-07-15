@@ -13,13 +13,10 @@ from __future__ import annotations
 import dataclasses
 import inspect
 
-import pytest
-
 import claude_agent_sdk as sdk
+import pytest
 from app.runtime.message_utils import to_plain
 from app.runtime.runtime_activity import RuntimeActivityExtractor
-from tests.test_langfuse_tool_projection import _settings
-
 
 # ---- 层 1：SDK message/block 形态契约（用真实 dataclass）----
 
@@ -35,7 +32,7 @@ def test_sdk_block_fields_we_depend_on_still_exist():
     assert {"usage", "total_cost_usd"} <= rm, f"ResultMessage drift: {rm}"
 
 
-def test_real_sdk_messages_project_to_child_observations(tmp_path):
+def test_real_sdk_messages_project_to_child_observations():
     """端到端契约：真实 SDK dataclass → to_plain（同 _track_query_message）→ 投影出带 I/O 的子观测。"""
     tool_use = sdk.ToolUseBlock(id="call_1", name="Glob", input={"pattern": "*.py"})
     assistant = sdk.AssistantMessage(
@@ -48,7 +45,7 @@ def test_real_sdk_messages_project_to_child_observations(tmp_path):
 
     # 复刻 _track_query_message 的 to_plain 收口
     messages = [to_plain(assistant), to_plain(user)]
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(messages)
+    children = RuntimeActivityExtractor().sdk_child_observations(messages)
 
     tool = next(c for c in children if c["kind"] == "tool")
     assert tool["name"] == "sdk.tool.Glob"
@@ -60,14 +57,14 @@ def test_real_sdk_messages_project_to_child_observations(tmp_path):
     assert gen["usage_details"] == {"input_tokens": 100, "output_tokens": 20}  # 真实 usage 仍被解析
 
 
-def test_real_result_message_usage_and_cost_shape(tmp_path):
+def test_real_result_message_usage_and_cost_shape():
     """ResultMessage 聚合 usage/cost 字段仍是我们 usage_details/cost_details 能吃的形态。"""
     rm = sdk.ResultMessage(
         subtype="success", duration_ms=1, duration_api_ms=1, is_error=False,
         num_turns=1, session_id="s", total_cost_usd=0.01, usage={"input_tokens": 10, "output_tokens": 5},
     )
     plain = to_plain(rm)
-    extractor = RuntimeActivityExtractor(_settings(tmp_path))
+    extractor = RuntimeActivityExtractor()
     assert extractor.usage_details(plain.get("usage")) == {"input_tokens": 10, "output_tokens": 5}
     assert extractor.cost_details(plain.get("total_cost_usd")) == {"total_cost_usd": 0.01}
 

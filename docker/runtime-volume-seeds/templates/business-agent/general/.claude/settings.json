@@ -3,7 +3,17 @@
   "permissions": {
     "defaultMode": "default",
     "disableBypassPermissionsMode": "disable",
-    "allow": ["Read(./**)", "Glob", "Grep", "Skill"],
+    "allow": [
+      "Read(./**)",
+      "Read(/data/uploads/**)",
+      "Read(/data/outputs/**)",
+      "Read(/data/soc-events/**)",
+      "Read(/data/agent-memory/**)",
+      "Glob",
+      "Grep",
+      "Skill",
+      "Write(/data/outputs/**)"
+    ],
     "ask": [
       "Bash(*)",
       "Edit(./**)",
@@ -17,13 +27,55 @@
       "mcp__*__*kill*",
       "mcp__*__*quarantine*"
     ],
-    "deny": ["Read(./.env)", "Read(./.env.*)", "Read(./secrets/**)"]
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(/data/business-agents/**/claude-root/**)",
+      "Read(/data/agent-governance/**)",
+      "Read(/data/runtime.sqlite3*)",
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf /)",
+      "Bash(:(){ :|:& };:*)",
+      "Bash(curl *|sh*)",
+      "Bash(wget *|sh*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/hooks/pre_tool_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking command safety"
+          }
+        ]
+      }
+    ]
   },
   "sandbox": {
     "enabled": true,
     "failIfUnavailable": true,
     "autoAllowBashIfSandboxed": false,
     "enableWeakerNestedSandbox": false,
+    "filesystem": {
+      "allowWrite": ["/data/outputs", "./"],
+      "denyRead": [
+        "./.env",
+        "./secrets",
+        "/data/business-agents/**/claude-root/**",
+        "/data/agent-governance/**",
+        "/data/runtime.sqlite3*"
+      ]
+    },
+    "network": {
+      "allowedDomains": [],
+      "deniedDomains": []
+    },
     "allowUnsandboxedCommands": false
-  }
+  },
+  "includeGitInstructions": false
 }

@@ -1,7 +1,7 @@
 import { Database, ListChecks, MessageSquare, RefreshCw, Settings } from "lucide-react";
 import type { AgentSummary, RuntimeHealth } from "../types/runtime";
 
-type ActiveWindow = "chat" | "improvement" | "release" | "asset";
+type ActiveWindow = "chat" | "improvement" | "asset";
 
 interface TopbarProps {
   health: RuntimeHealth | null;
@@ -31,6 +31,8 @@ export function Topbar({
   onOpenAsset,
   onOpenSettings,
 }: TopbarProps) {
+  const providerReadiness = health?.model_provider_route?.readiness;
+  const providerStatus = providerReadiness?.status || "not_checked";
   return (
     <header className="topbar">
       <div className="topbar-left">
@@ -54,6 +56,13 @@ export function Topbar({
         </label>
         <span className="topbar-sep" />
         <span className="muted">{health?.model || "model not loaded"}</span>
+        <span
+          className={`topbar-provider-status ${providerStatus === "ready" ? "good" : "warn"}`}
+          data-testid="model-provider-status"
+          title={providerReadiness?.action || providerReadiness?.message || "Model provider has not been checked"}
+        >
+          Provider {providerStatus.replace("_", " ")}
+        </span>
       </div>
 
       <nav className="topbar-nav" aria-label="主导航">

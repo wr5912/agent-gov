@@ -5,20 +5,27 @@ import subprocess
 from importlib.metadata import PackageNotFoundError, version
 from importlib.util import find_spec
 from pathlib import Path
+from threading import Lock
 
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Response, status
 
-from app.runtime.agent_git_store import AgentVersionProvider
 from app.runtime.model_provider import ModelProviderRouter
-from app.runtime.schemas import RuntimeDependencyVersions, RuntimeHealthResponse, RuntimeRootResponse
+from app.runtime.schemas import (
+    RuntimeDependencyVersions,
+    RuntimeHealthResponse,
+    RuntimeLivenessResponse,
+    RuntimeReadinessResponse,
+    RuntimeRootResponse,
+)
 from app.runtime.settings import AppSettings
+from app.version import APP_VERSION
 
 
 def create_core_router(
     *,
     settings: AppSettings,
     app: FastAPI,
-    agent_version_store: AgentVersionProvider,
+    model_provider_router: ModelProviderRouter,
 ) -> APIRouter:
     router = APIRouter()
 
@@ -27,9 +34,37 @@ def create_core_router(
         return RuntimeRootResponse(
             name="AgentGov API",
             health="/health",
+            liveness="/health/live",
+            readiness="/health/ready",
             docs=app.docs_url,
             redoc=app.redoc_url,
             openapi=app.openapi_url,
+        )
+
+    @router.get(
+        "/health/live",
+        tags=["health"],
+        response_model=RuntimeLivenessResponse,
+        summary="Check API process liveness without external dependencies",
+    )
+    async def liveness() -> RuntimeLivenessResponse:
+        return RuntimeLivenessResponse(runtime_version=APP_VERSION)
+
+    @router.get(
+        "/health/ready",
+        tags=["health"],
+        response_model=RuntimeReadinessResponse,
+        responses={503: {"model": RuntimeReadinessResponse}},
+        summary="Read cached model provider readiness without starting a probe",
+    )
+    async def readiness(response: Response) -> RuntimeReadinessResponse:
+        provider = model_provider_router.readiness_summary()
+        ready = provider.get("status") == "ready"
+        response.status_code = status.HTTP_200_OK if ready else status.HTTP_503_SERVICE_UNAVAILABLE
+        return RuntimeReadinessResponse(
+            status="ready" if ready else "not_ready",
+            runtime_version=APP_VERSION,
+            model_provider=provider,
         )
 
     @router.get(
@@ -39,7 +74,11 @@ def create_core_router(
         summary="Check service health and discover API documentation URLs",
     )
     async def health() -> RuntimeHealthResponse:
-        return build_health_payload(settings=settings, app=app, agent_version_store=agent_version_store)
+        return build_health_payload(
+            settings=settings,
+            app=app,
+            model_provider_router=model_provider_router,
+        )
 
     return router
 
@@ -48,13 +87,9 @@ def build_health_payload(
     *,
     settings: AppSettings,
     app: FastAPI,
-    agent_version_store: AgentVersionProvider,
+    model_provider_router: ModelProviderRouter | None = None,
 ) -> RuntimeHealthResponse:
-    repository_status = (
-        agent_version_store.repository_status()
-        if hasattr(agent_version_store, "repository_status")
-        else {}
-    )
+    provider_router = model_provider_router or ModelProviderRouter(settings)
     return RuntimeHealthResponse(
         status="ok",
         api_host=settings.api_host,
@@ -64,7 +99,6 @@ def build_health_payload(
         data_dir=str(settings.data_dir),
         runtime_db_backend="sqlite",
         runtime_db_path=str(settings.runtime_db_path),
-        legacy_file_store_enabled=False,
         claude_root=str(settings.claude_root),
         claude_home=str(settings.claude_home),
         claude_config_mode=settings.claude_config_mode,
@@ -72,17 +106,13 @@ def build_health_payload(
         claude_global_config_file=str(settings.claude_global_config_file),
         setting_sources_effective=settings.setting_sources,
         model=settings.agent_model,
-        default_agent=settings.default_agent,
-        default_skills_mode=settings.default_skills_mode,
         provider_api_url_configured=bool(settings.provider_api_url),
         provider_api_key_configured=bool(settings.provider_api_key),
-        model_provider_route=ModelProviderRouter(settings).health_summary(),
+        model_provider_route=provider_router.health_summary(),
         claude_web_hitl_enabled=settings.enable_claude_web_hitl,
-        programmatic_agents=False,
         feedback_debug_evidence=settings.enable_feedback_debug_evidence,
-        agent_version_id=agent_version_store.current_version_id(),
+        agent_version_id=None,
         runtime_dependency_versions=runtime_dependency_versions(),
-        agent_repository_status=repository_status,
         langfuse_enabled=settings.langfuse_enabled,
         langfuse_base_url=settings.langfuse_base_url,
         langfuse_otel_endpoint_configured=bool(settings.langfuse_otel_endpoint),
@@ -97,8 +127,34 @@ def build_health_payload(
     )
 
 
+def package_version(package_name: str) -> str | None:
+    try:
+        return version(package_name)
+    except PackageNotFoundError:
+        return None
+
+
+_RUNTIME_DEPENDENCY_VERSIONS_LOCK = Lock()
+_RUNTIME_DEPENDENCY_VERSIONS = RuntimeDependencyVersions(
+    claude_agent_sdk=package_version("claude-agent-sdk"),
+    langfuse=package_version("langfuse"),
+    litellm=package_version("litellm"),
+    httpx=package_version("httpx"),
+    starlette=package_version("starlette"),
+    opentelemetry_sdk=package_version("opentelemetry-sdk"),
+    opentelemetry_exporter_otlp_proto_http=package_version("opentelemetry-exporter-otlp-proto-http"),
+)
+
+
 def runtime_dependency_versions() -> RuntimeDependencyVersions:
-    return RuntimeDependencyVersions(
+    with _RUNTIME_DEPENDENCY_VERSIONS_LOCK:
+        return _RUNTIME_DEPENDENCY_VERSIONS.model_copy()
+
+
+def refresh_runtime_dependency_versions() -> RuntimeDependencyVersions:
+    global _RUNTIME_DEPENDENCY_VERSIONS
+
+    discovered = RuntimeDependencyVersions(
         claude_agent_sdk=package_version("claude-agent-sdk"),
         bundled_claude_code_cli=bundled_claude_code_cli_version(),
         path_claude_code_cli=command_version(shutil.which("claude")),
@@ -109,13 +165,9 @@ def runtime_dependency_versions() -> RuntimeDependencyVersions:
         opentelemetry_sdk=package_version("opentelemetry-sdk"),
         opentelemetry_exporter_otlp_proto_http=package_version("opentelemetry-exporter-otlp-proto-http"),
     )
-
-
-def package_version(package_name: str) -> str | None:
-    try:
-        return version(package_name)
-    except PackageNotFoundError:
-        return None
+    with _RUNTIME_DEPENDENCY_VERSIONS_LOCK:
+        _RUNTIME_DEPENDENCY_VERSIONS = discovered
+    return discovered.model_copy()
 
 
 def bundled_claude_code_cli_version() -> str | None:

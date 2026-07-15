@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import stat
 import subprocess
 import sys
 from pathlib import Path
 
+import app.runtime.runtime_initialization as runtime_initialization
 import pytest
 from app.runtime.advisory_lock import advisory_lock
 from app.runtime.agent_git_store import GitAgentVersionStore
@@ -61,6 +63,8 @@ def _template(tmp_path: Path) -> Path:
     (workspace / ".claude").mkdir(parents=True)
     (workspace / ".claude" / "settings.json").write_text(json.dumps(settings), encoding="utf-8")
     (workspace / ".mcp.json").write_text('{"mcpServers": {}}\n', encoding="utf-8")
+    (workspace / "hooks").mkdir()
+    (workspace / "hooks" / "pre_tool_guard.py").write_text("# managed test hook\n", encoding="utf-8")
     return root
 
 
@@ -142,6 +146,9 @@ def test_clean_historical_workspace_is_migrated_with_git_snapshot(tmp_path):
     settings = _settings(tmp_path)
     template = _template(tmp_path)
     _prepare(settings, template)
+    expected_hook = (template / "data" / "business-agents" / "main-agent" / "workspace" / "hooks" / "pre_tool_guard.py").read_text(encoding="utf-8")
+    hook_path = settings.main_workspace_dir / "hooks" / "pre_tool_guard.py"
+    hook_path.unlink()
     store = _remove_managed_ask(settings, commit=True)
     historical_head = store.current_commit_sha()
 
@@ -150,6 +157,33 @@ def test_clean_historical_workspace_is_migrated_with_git_snapshot(tmp_path):
     assert receipt.agent_commits["main-agent"] == store.current_commit_sha()
     assert store.current_commit_sha() != historical_head
     assert store.workspace_changes() == []
+    assert hook_path.read_text(encoding="utf-8") == expected_hook
+    assert stat.S_IMODE(hook_path.stat().st_mode) == 0o600
+
+
+def test_managed_policy_migration_failure_restores_historical_git_snapshot(tmp_path, monkeypatch):
+    settings = _settings(tmp_path)
+    template = _template(tmp_path)
+    _prepare(settings, template)
+    hook_path = settings.main_workspace_dir / "hooks" / "pre_tool_guard.py"
+    hook_path.unlink()
+    store = _remove_managed_ask(settings, commit=True)
+    historical_head = store.current_commit_sha()
+    real_write = runtime_initialization._write_policy_changes
+
+    def write_then_fail(workspace, changes):
+        real_write(workspace, changes)
+        raise OSError("injected managed migration failure")
+
+    monkeypatch.setattr(runtime_initialization, "_write_policy_changes", write_then_fail)
+
+    with pytest.raises(OSError, match="injected managed migration failure"):
+        _prepare(settings, template)
+
+    assert store.current_commit_sha() == historical_head
+    assert store.workspace_changes() == []
+    assert not hook_path.exists()
+    assert not (RuntimeCoordinationPaths.from_data_dir(settings.data_dir).root / "migration-journal.json").exists()
 
 
 def test_dirty_workspace_blocks_managed_policy_migration(tmp_path):

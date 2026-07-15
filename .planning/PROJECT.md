@@ -4,7 +4,7 @@
 
 本项目是 AgentGov 的反馈优化闭环运行时。当前长程重构重点是把主 Agent 配置版本治理从 tar/manifest 快照模式升级为 Git-backed change set、候选回归、发布归档和可恢复回滚链路。
 
-## 当前长程任务
+## 已完成长程里程碑
 
 ### Agent 版本治理与 Diff 对比重构
 
@@ -23,7 +23,7 @@
 - `.planning/METHODOLOGY.md`
 - `docs/engineering/长程重构质量闭环.md`
 - `docs/engineering/GSD长程重构阶段清单.md`
-- `docs/Agent版本治理与Diff对比重构方案.md`
+- `docs/archive/design/Agent版本治理与Diff对比重构方案.md`
 - `docs/archive/design/Agent版本治理与Diff对比重构方案评审报告.md`
 - `docs/design_review_report/Agent版本治理与Diff对比重构方案评审报告v2.md`
 

@@ -151,14 +151,6 @@ def _completion_raw_output_basemodel_source() -> str:
     )
 
 
-def _run_profile_alias_basemodel_source() -> str:
-    return (
-        "from typing import Awaitable, Callable\n"
-        "from pydantic import BaseModel\n\n"
-        "RunProfileJson = Callable[..., Awaitable[BaseModel]]\n"
-    )
-
-
 def test_existing_oversized_file_is_allowed_when_not_growing(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "large.py", 5)
@@ -463,11 +455,6 @@ def test_new_map_any_type_boundary_fails(
             _completion_raw_output_basemodel_source(),
             "new typed-output stage erasure: complete_batch_plan_job:arg:raw_output:BaseModel|JsonObject",
         ),
-        (
-            "app/services/agent_job_worker.py",
-            _run_profile_alias_basemodel_source(),
-            "new typed-output stage erasure: RunProfileJson:alias:BaseModel",
-        ),
     ],
 )
 def test_new_typed_output_stage_erasure_fails(
@@ -654,7 +641,7 @@ def test_new_active_docs_file_requires_docs_index(tmp_path: Path) -> None:
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert "FAIL: docs/README.md: docs index is required when adding active docs" in result.stdout
+    assert "FAIL: docs/README.md: docs index is required when active docs exist" in result.stdout
 
 
 def test_new_active_docs_file_must_be_linked_from_docs_index(tmp_path: Path) -> None:
@@ -667,7 +654,7 @@ def test_new_active_docs_file_must_be_linked_from_docs_index(tmp_path: Path) -> 
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert "FAIL: docs/new-plan.md: new active docs file is not linked from docs/README.md" in result.stdout
+    assert "FAIL: docs/new-plan.md: active docs file is not linked from docs/README.md" in result.stdout
 
 
 def test_new_active_docs_file_with_cjk_path_must_be_linked_from_docs_index(tmp_path: Path) -> None:
@@ -680,7 +667,7 @@ def test_new_active_docs_file_with_cjk_path_must_be_linked_from_docs_index(tmp_p
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert "FAIL: docs/新增方案.md: new active docs file is not linked from docs/README.md" in result.stdout
+    assert "FAIL: docs/新增方案.md: active docs file is not linked from docs/README.md" in result.stdout
 
 
 def test_new_active_docs_file_linked_from_docs_index_passes(tmp_path: Path) -> None:
@@ -696,6 +683,69 @@ def test_new_active_docs_file_linked_from_docs_index_passes(tmp_path: Path) -> N
     assert "docs/new-plan.md" not in result.stdout
 
 
+def test_removing_existing_active_doc_from_index_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/current.md\n")
+    _write_text(tmp_path / "docs" / "current.md", "# Current\n")
+    _commit_all(tmp_path)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/current.md: active docs file is not linked from docs/README.md" in result.stdout
+
+
+def test_broken_local_markdown_link_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/current.md\n")
+    _write_text(tmp_path / "docs" / "current.md", "# Current\n\n[missing](./missing.md)\n")
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: docs/current.md: local Markdown link target does not exist at line 3: ./missing.md"
+        in result.stdout
+    )
+
+
+def test_external_and_anchor_markdown_links_pass(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/current.md\n")
+    _write_text(
+        tmp_path / "docs" / "current.md",
+        "# Current\n\n[section](#current)\n[official](https://example.com/docs)\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 0
+    assert "local Markdown link target" not in result.stdout
+
+
+def test_documented_missing_pytest_nodeid_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "tests" / "test_current.py", "def test_current():\n    assert True\n")
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n\n- docs/current.md\n")
+    _write_text(
+        tmp_path / "docs" / "current.md",
+        "# Current\n\n自动验收：`tests/test_current.py::test_deleted`。\n",
+    )
+    _commit_all(tmp_path)
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "documented pytest binding tests/test_current.py::test_deleted references missing test function test_deleted" in result.stdout
+
+
 def test_new_archive_docs_file_requires_archive_index(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)
@@ -706,7 +756,7 @@ def test_new_archive_docs_file_requires_archive_index(tmp_path: Path) -> None:
     result = _run_guard(tmp_path)
 
     assert result.returncode == 1
-    assert "FAIL: docs/archive/README.md: archive index is required when adding archived docs" in result.stdout
+    assert "FAIL: docs/archive/README.md: archive index is required when archived docs exist" in result.stdout
 
 
 def test_new_archive_docs_file_listed_in_archive_index_passes(tmp_path: Path) -> None:
@@ -726,6 +776,29 @@ def test_new_archive_docs_file_listed_in_archive_index_passes(tmp_path: Path) ->
 
     assert result.returncode == 0
     assert "docs/archive/old-plan.md" not in result.stdout
+
+
+def test_removing_existing_archive_doc_from_index_fails(tmp_path: Path) -> None:
+    _init_repo(tmp_path)
+    _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(tmp_path / "docs" / "README.md", "# Docs\n")
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n"
+        "| --- | --- | --- | --- |\n"
+        "| docs/old.md | docs/archive/old.md | docs/current.md | 2026-07-10 |\n",
+    )
+    _write_text(tmp_path / "docs" / "archive" / "old.md", "# Old\n")
+    _commit_all(tmp_path)
+    _write_text(
+        tmp_path / "docs" / "archive" / "README.md",
+        "| 原路径 | 归档路径 | 替代文档 | 归档日期 |\n| --- | --- | --- | --- |\n",
+    )
+
+    result = _run_guard(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: docs/archive/old.md: archived docs file is not listed" in result.stdout
 
 
 def test_archived_original_path_in_active_docs_fails(tmp_path: Path) -> None:
@@ -841,6 +914,10 @@ def test_long_term_authority_legacy_governance_agent_terms_fail(tmp_path: Path) 
 def test_current_baseline_legacy_governance_agent_terms_pass(tmp_path: Path) -> None:
     _init_repo(tmp_path)
     _write_lines(tmp_path / "app" / "small.py", 1)
+    _write_text(
+        tmp_path / "docs" / "README.md",
+        "# Docs\n\n- docs/反馈闭环当前实现基线.md\n",
+    )
     _write_text(
         tmp_path / "docs" / "反馈闭环当前实现基线.md",
         "# Current Baseline\n\n"

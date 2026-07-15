@@ -6,6 +6,7 @@ from pydantic.types import JsonValue
 from app.runtime.json_types import JsonObject
 from app.runtime.response_disposition_control import TrustedResponseDispositionContext
 from app.runtime.response_schemas.error_response_schemas import FeedbackJobErrorResponse
+from app.runtime.test_dataset_schemas import TestCaseResponse, TestDatasetResponse
 
 
 class ExtensibleResponse(BaseModel):
@@ -13,43 +14,31 @@ class ExtensibleResponse(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+        json_schema_extra={
+            "examples": [
+                {
+                    "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
+                    "agent_id": "main-agent",
+                    "max_turns": 8,
+                }
+            ]
+        },
+    )
+
     message: str = Field(..., description="User message or task prompt.")
     session_id: Optional[str] = Field(default=None, description="Client-visible session id. If omitted, the API creates one.")
     alert_id: Optional[str] = Field(default=None, description="Optional SOC alert id used by the feedback loop.")
     case_id: Optional[str] = Field(default=None, description="Optional SOC case id used by the feedback loop.")
-    agent: Optional[str] = Field(
-        default=None, description="Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files."
-    )
     agent_id: Optional[str] = Field(
         default=None,
         description="Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.",
     )
-    skills: Optional[list[str]] = Field(
-        default=None, description="Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files."
-    )
-    skills_mode: Optional[Literal["all", "default", "none"]] = Field(default=None, description="Deprecated; not passed to Claude SDK execution.")
-    allowed_tools: Optional[list[str]] = Field(
-        default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json."
-    )
-    disallowed_tools: Optional[list[str]] = Field(
-        default=None, description="Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json."
-    )
     max_turns: Optional[int] = Field(default=None, ge=1, le=50, description="Per-request turn cap. Defaults to MAX_TURNS.")
     model: Optional[str] = Field(default=None, description="Per-request model override. Defaults to AGENT_MODEL.")
-    permission_mode: Optional[str] = Field(default=None, description="Deprecated for SDK execution; configure permission mode in .claude/settings.json.")
     system_append: Optional[str] = Field(default=None, description="Extra instruction appended to the Claude Code preset prompt.")
     metadata: JsonObject = Field(default_factory=dict)
-
-    model_config = {
-        "json_schema_extra": {
-            "examples": [
-                {
-                    "message": "请说明当前 workspace 中有哪些 subagents 和 skills",
-                    "max_turns": 8,
-                }
-            ]
-        }
-    }
 
 
 class RuntimeChatRequest(ChatRequest):
@@ -113,13 +102,15 @@ class ConfigMappingResponse(BaseModel):
     claude_home: str
     claude_global_config_file: str
     claude_config_dir: Optional[str] = None
-    setting_sources_effective: Optional[list[str]] = None
+    setting_sources_effective: list[str]
     mappings: list[ConfigMappingItem]
 
 
 class RuntimeRootResponse(BaseModel):
     name: str
     health: str
+    liveness: str
+    readiness: str
     docs: Optional[str] = None
     redoc: Optional[str] = None
     openapi: Optional[str] = None
@@ -143,6 +134,56 @@ class RuntimeDependencyVersions(BaseModel):
     opentelemetry_exporter_otlp_proto_http: Optional[str] = None
 
 
+class RuntimeLivenessResponse(BaseModel):
+    status: Literal["ok"] = "ok"
+    runtime_version: str
+
+
+class ModelProviderReadiness(BaseModel):
+    status: Literal["not_checked", "checking", "ready", "degraded"]
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    reason: Optional[str] = None
+    route: Optional[str] = None
+    probe: Optional[str] = None
+    status_code: Optional[int] = None
+    duration_ms: Optional[int] = None
+    retryable: Optional[bool] = None
+    action: Optional[str] = None
+    checked_at: Optional[str] = None
+
+
+class ModelProviderVersionProbe(BaseModel):
+    status: Literal["skipped", "succeeded", "failed"]
+    endpoint: Optional[str] = None
+    version: Optional[str] = None
+    reason: Optional[str] = None
+    status_code: Optional[int] = None
+    duration_ms: Optional[int] = None
+    error_code: Optional[str] = None
+
+
+class ModelProviderRouteHealth(BaseModel):
+    backend: str
+    route: Optional[str] = None
+    provider_endpoint_configured: bool
+    provider_endpoint: Optional[str] = None
+    claude_base_url: Optional[str] = None
+    formatter_api_base: Optional[str] = None
+    formatter_model_prefix: Optional[str] = None
+    sidecar_required: Optional[bool] = None
+    sidecar_base_url: Optional[str] = None
+    provider_api_key_required: bool
+    version_probe: Optional[ModelProviderVersionProbe] = None
+    readiness: ModelProviderReadiness
+
+
+class RuntimeReadinessResponse(BaseModel):
+    status: Literal["ready", "not_ready"]
+    runtime_version: str
+    model_provider: ModelProviderReadiness
+
+
 class RuntimeHealthResponse(ExtensibleResponse):
     status: str
     api_host: str
@@ -152,21 +193,17 @@ class RuntimeHealthResponse(ExtensibleResponse):
     data_dir: str
     runtime_db_backend: str
     runtime_db_path: str
-    legacy_file_store_enabled: bool
     claude_root: str
     claude_home: str
     claude_config_mode: str
     claude_config_dir: Optional[str] = None
     claude_global_config_file: str
-    setting_sources_effective: Optional[list[str]] = None
+    setting_sources_effective: list[str]
     model: Optional[str] = None
-    default_agent: Optional[str] = None
-    default_skills_mode: Optional[Literal["all", "default", "none"]] = None
     provider_api_url_configured: bool
     provider_api_key_configured: bool
-    model_provider_route: JsonObject = Field(default_factory=dict)
+    model_provider_route: ModelProviderRouteHealth
     claude_web_hitl_enabled: bool = False
-    programmatic_agents: bool
     feedback_debug_evidence: bool
     agent_version_id: Optional[str] = None
     runtime_dependency_versions: RuntimeDependencyVersions = Field(default_factory=RuntimeDependencyVersions)
@@ -180,6 +217,8 @@ class RuntimeHealthResponse(ExtensibleResponse):
 
 
 class FeedbackSignalCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     signal_id: Optional[str] = None
     source_type: Literal["explicit_feedback", "implicit_feedback", "analyst_annotation"] = "explicit_feedback"
     timestamp: Optional[str] = None
@@ -241,6 +280,8 @@ class FeedbackSignalResponse(BaseModel):
 
 
 class SocEventIngestRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     event_id: str
     source_system: str
     event_type: Literal[
@@ -274,6 +315,7 @@ class SocEventResponse(ExtensibleResponse):
     event_type: str
     timestamp: str
     created_at: Optional[str] = None
+    agent_id: Optional[str] = None
     matched_run_id: Optional[str] = None
     run_id: Optional[str] = None
     session_id: Optional[str] = None
@@ -322,8 +364,10 @@ class PendingCorrelationResolveRequest(BaseModel):
 
 
 class FeedbackSourceRef(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
     source_kind: Literal["signal", "soc_event", "pending_correlation"]
-    source_id: str
+    source_id: str = Field(min_length=1)
 
 
 class FeedbackSourceUpdateRequest(BaseModel):
@@ -354,15 +398,9 @@ class FeedbackSourceResponse(ExtensibleResponse):
     alert_id: Optional[str] = None
     case_id: Optional[str] = None
     feedback_case_id: Optional[str] = None
-    eval_case_id: Optional[str] = None
     latest_attribution_job_id: Optional[str] = None
     latest_attribution_status: Optional[str] = None
     raw: JsonObject = Field(default_factory=dict)
-
-
-class FeedbackEvalCaseGenerateRequest(BaseModel):
-    source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
-    force: bool = False
 
 
 class AgentRunResponse(BaseModel):
@@ -387,7 +425,12 @@ class AgentRunResponse(BaseModel):
 
 
 class FeedbackCaseCreateRequest(BaseModel):
-    source_ids: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
+
+    source_refs: list[FeedbackSourceRef] = Field(
+        min_length=1,
+        description="One or more typed feedback sources owned by the same business Agent.",
+    )
     title: Optional[str] = None
     priority: Literal["high", "medium", "low"] = "medium"
 
@@ -412,128 +455,10 @@ class FeedbackCaseResponse(BaseModel):
     attribution_job_ids: list[str] = Field(default_factory=list)
 
 
-class FeedbackEvalDatasetSyncRequest(BaseModel):
-    feedback_case_id: Optional[str] = None
-    limit: int = Field(default=100, ge=1, le=500)
-
-
-class FeedbackEvalCaseUpdateRequest(BaseModel):
-    prompt: Optional[str] = None
-    expected_behavior: Optional[str] = None
-    checks_json: Optional[JsonObject] = None
-    labels: Optional[list[str]] = None
-    status: Optional[Literal["active", "draft", "archived"]] = None
-    asset_layer: Optional[
-        Literal["candidate", "targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]
-    ] = None
-    promotion_status: Optional[Literal["candidate", "needs_review", "approved", "rejected", "superseded", "archived"]] = None
-    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
-    scenario_pack: Optional[str] = None
-    severity: Optional[str] = None
-    flaky_status: Optional[Literal["stable", "flaky"]] = None
-    variant_role: Optional[str] = None
-    superseded_by_eval_case_id: Optional[str] = None
-    operator: Optional[str] = None
-    role: Optional[str] = None
-    reason: Optional[str] = None
-
-
-class RegressionAssetGovernanceActionRequest(BaseModel):
-    operator: str = "system"
-    role: str = "developer"
-    reason: str
-    asset_layer: Optional[Literal["targeted_regression", "smoke", "core_regression", "scenario_pack", "safety", "historical_bug", "exploratory"]] = None
-    blocking_policy: Optional[Literal["blocking", "blocking_if_relevant", "non_blocking"]] = None
-
-
-class RegressionAssetFlakyRequest(BaseModel):
-    operator: str = "system"
-    role: str = "developer"
-    reason: str
-
-
-class RegressionAssetSupersedeRequest(BaseModel):
-    superseded_by_eval_case_id: str
-    operator: str = "system"
-    role: str = "developer"
-    reason: str
-
-
 class FeedbackEvalRunCreateRequest(BaseModel):
-    eval_case_ids: list[str] = Field(default_factory=list)
+    model_config = ConfigDict(extra="forbid")
 
-
-class EvalCaseSourceSummaryResponse(ExtensibleResponse):
-    feedback_title: Optional[str] = None
-    feedback_status: Optional[str] = None
-    feedback_comments: list[str] = Field(default_factory=list)
-    source_label: Optional[str] = None
-    comment: Optional[str] = None
-    original_answer_summary: Optional[str] = None
-
-
-class EvalCaseAttributionSummaryResponse(ExtensibleResponse):
-    problem_type: Optional[str] = None
-    optimization_object_type: Optional[str] = None
-    actionability: Optional[str] = None
-    confidence: Optional[str] = None
-    rationale: Optional[str] = None
-
-
-class EvalCaseOptimizationPlanSummaryResponse(ExtensibleResponse):
-    summary: Optional[str] = None
-    changes: list[JsonObject] = Field(default_factory=list)
-    risk_level: Optional[str] = None
-
-
-class EvalCaseResponse(ExtensibleResponse):
-    schema_version: Optional[str] = None
-    eval_case_id: str
-    created_at: str
-    updated_at: str
-    status: str
-    source: Optional[str] = None
-    source_feedback_case_id: Optional[str] = None
-    source_run_id: Optional[str] = None
-    source_kind: Optional[str] = None
-    source_id: Optional[str] = None
-    source_refs: list[FeedbackSourceRef] = Field(default_factory=list)
-    asset_layer: Optional[str] = None
-    promotion_status: Optional[str] = None
-    blocking_policy: Optional[str] = None
-    scenario_pack: Optional[str] = None
-    severity: Optional[str] = None
-    flaky_status: Optional[str] = None
-    variant_role: Optional[str] = None
-    content_hash: Optional[str] = None
-    last_run_at: Optional[str] = None
-    last_result_status: Optional[str] = None
-    failure_rate: Optional[float] = None
-    superseded_by_eval_case_id: Optional[str] = None
-    prompt: str
-    labels: list[str] = Field(default_factory=list)
-    expected_behavior: Optional[str] = None
-    checks_json: JsonObject = Field(default_factory=dict)
-    source_summary: Optional[EvalCaseSourceSummaryResponse] = None
-    attribution_summary: Optional[EvalCaseAttributionSummaryResponse] = None
-    optimization_plan_summary: Optional[EvalCaseOptimizationPlanSummaryResponse] = None
-
-
-class FeedbackEvalCaseGenerateResultResponse(BaseModel):
-    source_kind: Optional[str] = None
-    source_id: Optional[str] = None
-    feedback_case_id: Optional[str] = None
-    eval_case_id: Optional[str] = None
-    status: str
-
-
-class FeedbackEvalCaseGenerateResponse(BaseModel):
-    created: int = 0
-    reused: int = 0
-    updated: int = 0
-    skipped: int = 0
-    eval_cases: list[EvalCaseResponse] = Field(default_factory=list)
-    results: list[FeedbackEvalCaseGenerateResultResponse] = Field(default_factory=list)
+    dataset_id: str = Field(min_length=1)
 
 
 class EvalRunCheckResultResponse(ExtensibleResponse):
@@ -546,14 +471,13 @@ class EvalRunCheckResultResponse(ExtensibleResponse):
 class EvalRunItemResponse(ExtensibleResponse):
     eval_run_item_id: str
     eval_run_id: str
-    eval_case_id: str
-    source_feedback_case_id: Optional[str] = None
+    dataset_case_id: str
     agent_run_id: Optional[str] = None
     agent_version_id: Optional[str] = None
     status: str
     score: Optional[float] = None
     check_results: list[EvalRunCheckResultResponse] = Field(default_factory=list)
-    eval_case_snapshot: JsonObject = Field(default_factory=dict)
+    dataset_case_snapshot: TestCaseResponse
     answer_summary: Optional[str] = None
     error_json: Optional[FeedbackJobErrorResponse] = None
     created_at: Optional[str] = None
@@ -569,46 +493,48 @@ class EvalRunSummaryResponse(BaseModel):
     passed_with_notes: int = 0
 
 
+class EvalRunReviewItemDecisionResponse(BaseModel):
+    dataset_case_id: str
+    decision: Literal["approve", "reject"]
+    note: str = ""
+
+
+class EvalRunReviewDecisionResponse(BaseModel):
+    review_id: str
+    operator: str
+    reason: str
+    scope: Literal["current_eval_run"]
+    items: list[EvalRunReviewItemDecisionResponse]
+    created_at: str
+
+
+class EvalRunGateResultResponse(BaseModel):
+    status: str
+    blocked_dataset_case_ids: list[str] = Field(default_factory=list)
+    review_dataset_case_ids: list[str] = Field(default_factory=list)
+    note_dataset_case_ids: list[str] = Field(default_factory=list)
+    review_decision: Optional[EvalRunReviewDecisionResponse] = None
+
+
 class EvalRunResponse(ExtensibleResponse):
     eval_run_id: str
+    dataset_id: str
+    dataset_snapshot: TestDatasetResponse
     created_at: str
     completed_at: Optional[str] = None
     status: str
     result_status: Optional[str] = None
+    agent_id: str
     agent_version_id: Optional[str] = None
     source: str
     change_set_id: Optional[str] = None
+    regression_attempt_id: Optional[str] = None
     candidate_commit_sha: Optional[str] = None
     candidate_worktree_path: Optional[str] = None
-    eval_case_ids: list[str] = Field(default_factory=list)
-    item_ids: list[str] = Field(default_factory=list)
     summary: EvalRunSummaryResponse = Field(default_factory=EvalRunSummaryResponse)
-    gate_result: JsonObject = Field(default_factory=dict)
+    gate_result: EvalRunGateResultResponse
     items: list[EvalRunItemResponse] = Field(default_factory=list)
     error_json: Optional[FeedbackJobErrorResponse] = None
-
-
-class EvalCaseRevisionResponse(ExtensibleResponse):
-    revision_id: str
-    eval_case_id: str
-    revision_number: int
-    created_at: str
-    created_by: str
-    reason: Optional[str] = None
-    content_hash: Optional[str] = None
-    snapshot: JsonObject = Field(default_factory=dict)
-
-
-class EvalCaseGovernanceEventResponse(ExtensibleResponse):
-    event_id: str
-    eval_case_id: str
-    action: str
-    operator: str
-    role: str
-    reason: str
-    created_at: str
-    before: JsonObject = Field(default_factory=dict)
-    after: JsonObject = Field(default_factory=dict)
 
 
 class EvidenceSourceRefsResponse(BaseModel):

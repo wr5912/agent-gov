@@ -112,13 +112,13 @@ def _dockerfile_apt_packages(path: Path) -> set[str]:
     return packages
 
 
-def _tracked_text_files() -> list[tuple[str, str]]:
-    result = subprocess.run(["git", "ls-files", "-z"], cwd=REPO_ROOT, check=True, stdout=subprocess.PIPE)
+def _tracked_text_files(repo_root: Path = REPO_ROOT) -> list[tuple[str, str]]:
+    result = subprocess.run(["git", "ls-files", "-z"], cwd=repo_root, check=True, stdout=subprocess.PIPE)
     files: list[tuple[str, str]] = []
     for rel_path in result.stdout.decode("utf-8").split("\0"):
         if not rel_path:
             continue
-        path = REPO_ROOT / rel_path
+        path = repo_root / rel_path
         if not path.is_file():
             continue  # A tracked file deleted by the current change cannot contribute text to the resulting tree.
         raw = path.read_bytes()
@@ -126,6 +126,17 @@ def _tracked_text_files() -> list[tuple[str, str]]:
             continue
         files.append((rel_path, raw.decode("utf-8", errors="ignore")))
     return files
+
+
+def test_tracked_text_files_skip_paths_deleted_from_worktree(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "present.txt").write_text("present\n", encoding="utf-8")
+    deleted = tmp_path / "deleted.txt"
+    deleted.write_text("deleted\n", encoding="utf-8")
+    subprocess.run(["git", "add", "present.txt", "deleted.txt"], cwd=tmp_path, check=True)
+    deleted.unlink()
+
+    assert _tracked_text_files(tmp_path) == [("present.txt", "present\n")]
 
 
 def test_tracked_text_files_do_not_commit_private_debug_port_family() -> None:
@@ -214,6 +225,12 @@ def test_official_env_examples_do_not_define_claude_config_takeover_keys() -> No
         "ENABLE_POLICY_HOOKS=",
         "ENABLE_PROGRAMMATIC_AGENTS=",
         "CLAUDE_SETTING_SOURCES=",
+        "DEFAULT_AGENT=",
+        "DEFAULT_SKILLS=",
+        "DEFAULT_SKILLS_MODE=",
+        "CLAUDE_ADD_DIRS=",
+        "PERMISSION_PROMPT_TOOL_NAME=",
+        "CLAUDE_EXTRA_ARGS_JSON=",
     }
     for env_file in ("docker/.env.example", "docker/.env.local-debug.example"):
         text = (REPO_ROOT / env_file).read_text(encoding="utf-8")
@@ -345,17 +362,60 @@ def test_litellm_sidecar_does_not_receive_full_runtime_env_file() -> None:
     assert "\n      API_KEY:" not in sidecar
 
 
-def test_runtime_volume_seeds_are_bound_read_only_for_api_and_worker() -> None:
+def test_runtime_volume_seeds_are_bound_read_only_for_api() -> None:
     compose = (REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8")
-    api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-worker:", 1)[0]
-    worker = compose.split("  claude-agent-worker:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
+    api = compose.split("  claude-agent-api:", 1)[1].split("\n  claude-agent-ui:", 1)[0]
 
     assert "source: ${RUNTIME_VOLUME_SEEDS_HOST_DIR:-./runtime-volume-seeds}" in compose
     assert "target: /app/docker/runtime-volume-seeds" in compose
     assert "read_only: true" in compose
     assert "create_host_path: false" in compose
     assert "- *runtime-volume-seeds" in api
-    assert "- *runtime-volume-seeds" in worker
+
+
+def test_compose_healthcheck_uses_local_liveness_without_provider_dependency() -> None:
+    compose = yaml.safe_load((REPO_ROOT / "docker/docker-compose.yml").read_text(encoding="utf-8"))
+    services = compose["services"]
+    api_health = services["claude-agent-api"]["healthcheck"]
+
+    assert api_health["test"] == [
+        "CMD",
+        "curl",
+        "--fail",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "2",
+        "http://127.0.0.1:${API_PORT:-8080}/health/live",
+    ]
+    assert api_health["timeout"] == "3s"
+    assert api_health["start_period"] == "20s"
+    assert api_health["retries"] == 12
+    assert "MODEL_PROVIDER" not in str(api_health)
+    assert services["claude-agent-ui"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert "claude-agent-worker" not in services
+
+
+def test_make_up_waits_removes_orphans_and_prints_sanitized_diagnostics() -> None:
+    makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
+    up_target = makefile.split("\nup:", 1)[1].split("\n\ndown:", 1)[0]
+    diagnose_script = (REPO_ROOT / "scripts/compose_diagnose.sh").read_text(encoding="utf-8")
+
+    assert "up -d --wait --remove-orphans" in up_target
+    assert "compose-diagnose" in up_target
+    assert "diagnose_runtime_health.py" in up_target
+    assert "compose config" not in diagnose_script
+    assert "docker inspect" in diagnose_script
+    assert "logs --no-color --tail=80" in diagnose_script
+
+
+def test_governance_ci_uses_repository_pnpm_version_without_corepack_download() -> None:
+    workflow = (REPO_ROOT / ".github/workflows/governance.yml").read_text(encoding="utf-8")
+
+    assert "uses: pnpm/action-setup@v4" in workflow
+    assert "package_json_file: frontend/package.json" in workflow
+    assert "cache-dependency-path: frontend/pnpm-lock.yaml" in workflow
+    assert "corepack enable pnpm" not in workflow
 
 
 def test_compose_uses_api_coordinator_without_runtime_init_container() -> None:
@@ -364,12 +424,9 @@ def test_compose_uses_api_coordinator_without_runtime_init_container() -> None:
     dockerfile = (REPO_ROOT / "docker/Dockerfile").read_text(encoding="utf-8")
 
     assert "agent-gov-runtime-init" not in services
-    assert services["claude-agent-worker"]["command"] == ["worker"]
-    assert services["claude-agent-worker"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
+    assert "claude-agent-worker" not in services
     assert services["claude-agent-ui"]["depends_on"]["claude-agent-api"]["condition"] == "service_healthy"
     assert "healthcheck" in services["claude-agent-api"]
-    health_command = services["claude-agent-api"]["healthcheck"]["test"][1]
-    assert 'os.environ.get("API_PORT", "8080")' in health_command
-    assert "${API_PORT" not in health_command
+    assert services["claude-agent-api"]["healthcheck"]["test"][-1].endswith("/health/live")
     assert 'ENTRYPOINT ["python", "-m", "app.runtime.service_launcher"]' in dockerfile
     assert not (REPO_ROOT / "docker/entrypoint.sh").exists()

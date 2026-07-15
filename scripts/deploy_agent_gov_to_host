@@ -393,7 +393,10 @@ if [ -n "$leftover_containers" ]; then
   docker rm -f $leftover_containers
 fi
 
-docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse up -d --force-recreate --no-build --pull never
+if ! docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse up -d --wait --wait-timeout 180 --remove-orphans --force-recreate --no-build --pull never; then
+  bash scripts/compose_diagnose.sh
+  exit 1
+fi
 docker compose --env-file docker/.env -f docker/docker-compose.yml --profile langfuse ps
 
 host_port=$(expand_remote_value "$(read_env HOST_PORT 58080)")
@@ -402,11 +405,12 @@ langfuse_port=$(expand_remote_value "$(read_env LANGFUSE_HOST_PORT 53000)")
 
 python3 - <<PY
 import json
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 import time
 
 checks = [
-    ("API health", "http://127.0.0.1:${host_port}/health", 60, True),
+    ("API liveness", "http://127.0.0.1:${host_port}/health/live", 60, True),
     ("UI", "http://127.0.0.1:${frontend_port}", 60, False),
     ("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False),
 ]
@@ -426,12 +430,16 @@ for name, url, attempts, print_body in checks:
                 if print_body:
                     print(body.decode("utf-8", "replace"))
                 break
+        except HTTPError as exc:
+            last_error = f"HTTP {exc.code}"
+            time.sleep(2)
         except Exception as exc:  # noqa: BLE001 - remote smoke reports final failure text.
             last_error = exc
             time.sleep(2)
     else:
         raise SystemExit(f"{name} failed: {url}: {last_error!r}")
 PY
+python3 scripts/diagnose_runtime_health.py --api-base "http://127.0.0.1:${host_port}" --wait-seconds 5 || true
 REMOTE_DEPLOY
 
 log "Deployment completed on ${TARGET_LABEL}:${REMOTE_PATH}"

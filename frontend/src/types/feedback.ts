@@ -4,14 +4,9 @@ type OpenApiAgentJobResponse = components["schemas"]["AgentJobResponse"];
 type OpenApiAgentRunResponse = components["schemas"]["AgentRunResponse"];
 type OpenApiEvidencePackageFileResponse = components["schemas"]["EvidencePackageFileResponse"];
 type OpenApiEvidencePackageResponse = components["schemas"]["EvidencePackageResponse"];
-type OpenApiEvalCaseGovernanceEventResponse = components["schemas"]["EvalCaseGovernanceEventResponse"];
-type OpenApiEvalCaseResponse = components["schemas"]["EvalCaseResponse"];
-type OpenApiEvalCaseRevisionResponse = components["schemas"]["EvalCaseRevisionResponse"];
 type OpenApiEvalRunResponse = components["schemas"]["EvalRunResponse"];
 type OpenApiFeedbackCaseCreateRequest = components["schemas"]["FeedbackCaseCreateRequest"];
 type OpenApiFeedbackCaseResponse = components["schemas"]["FeedbackCaseResponse"];
-type OpenApiFeedbackEvalCaseGenerateRequest = components["schemas"]["FeedbackEvalCaseGenerateRequest"];
-type OpenApiFeedbackEvalCaseUpdateRequest = components["schemas"]["FeedbackEvalCaseUpdateRequest"];
 type OpenApiFeedbackSignalCreateRequest = components["schemas"]["FeedbackSignalCreateRequest"];
 type OpenApiFeedbackSignalResponse = components["schemas"]["FeedbackSignalResponse"];
 type OpenApiFeedbackSourceRef = components["schemas"]["FeedbackSourceRef"];
@@ -19,9 +14,6 @@ type OpenApiFeedbackSourceResponse = components["schemas"]["FeedbackSourceRespon
 type OpenApiFeedbackSourceUpdateRequest = components["schemas"]["FeedbackSourceUpdateRequest"];
 type OpenApiPendingCorrelationResolveRequest = components["schemas"]["PendingCorrelationResolveRequest"];
 type OpenApiPendingCorrelationResponse = components["schemas"]["PendingCorrelationResponse"];
-type OpenApiRegressionAssetFlakyRequest = components["schemas"]["RegressionAssetFlakyRequest"];
-type OpenApiRegressionAssetGovernanceActionRequest = components["schemas"]["RegressionAssetGovernanceActionRequest"];
-type OpenApiRegressionAssetSupersedeRequest = components["schemas"]["RegressionAssetSupersedeRequest"];
 type OpenApiSocEventIngestRequest = components["schemas"]["SocEventIngestRequest"];
 type OpenApiSocEventIngestResponse = components["schemas"]["SocEventIngestResponse"];
 type OpenApiSocEventResponse = components["schemas"]["SocEventResponse"];
@@ -30,7 +22,7 @@ type OptionalClientDefaults<T, K extends keyof T> = Omit<T, K> & Partial<Pick<T,
 export type FeedbackConfidence = "low" | "medium" | "high";
 export type FeedbackSourceType = "explicit_feedback" | "implicit_feedback" | "analyst_annotation";
 export type FeedbackSourceKind = "signal" | "soc_event" | "pending_correlation";
-export type JobType = "attribution" | "optimization_plan" | "execution" | "eval_case_generation";
+export type JobType = "attribution" | "optimization_plan" | "execution" | "regression_assessment";
 export type JobStatus =
   | "created"
   | "evidence_packaging"
@@ -96,13 +88,8 @@ export type PendingCorrelationResolveRequest = OpenApiPendingCorrelationResolveR
 export type FeedbackSourceRef = OpenApiFeedbackSourceRef;
 export type FeedbackSourceRecord = OpenApiFeedbackSourceResponse;
 export type FeedbackSourceUpdateRequest = OpenApiFeedbackSourceUpdateRequest;
-export type FeedbackEvalCaseGenerateRequest = Omit<OpenApiFeedbackEvalCaseGenerateRequest, "force" | "source_refs"> & {
+export type FeedbackCaseCreateRequest = Omit<OpenApiFeedbackCaseCreateRequest, "priority" | "source_refs"> & {
   source_refs: FeedbackSourceRef[];
-  force?: boolean;
-};
-
-export type FeedbackCaseCreateRequest = Omit<OpenApiFeedbackCaseCreateRequest, "priority" | "source_ids"> & {
-  source_ids: string[];
   title?: string;
   priority?: "high" | "medium" | "low";
 };
@@ -122,14 +109,7 @@ export type FeedbackCaseRecord = OpenApiFeedbackCaseResponse & {
 
 export type EvidencePackageRecord = OpenApiEvidencePackageResponse;
 export type EvidencePackageFileRecord = OpenApiEvidencePackageFileResponse;
-export type EvalCaseRecord = OpenApiEvalCaseResponse;
-export type EvalCaseUpdateRequest = OpenApiFeedbackEvalCaseUpdateRequest;
-export type EvalCaseRevisionRecord = OpenApiEvalCaseRevisionResponse;
-export type EvalCaseGovernanceEventRecord = OpenApiEvalCaseGovernanceEventResponse;
 export type EvalRunRecord = OpenApiEvalRunResponse;
-export type RegressionAssetGovernanceActionRequest = OpenApiRegressionAssetGovernanceActionRequest;
-export type RegressionAssetFlakyRequest = OpenApiRegressionAssetFlakyRequest;
-export type RegressionAssetSupersedeRequest = OpenApiRegressionAssetSupersedeRequest;
 
 export interface FeedbackWorkbenchData {
   sources: FeedbackSourceRecord[];
@@ -138,6 +118,5 @@ export interface FeedbackWorkbenchData {
   events: SocEventRecord[];
   pending_correlations: PendingCorrelationRecord[];
   cases: FeedbackCaseRecord[];
-  eval_cases: EvalCaseRecord[];
   eval_runs: EvalRunRecord[];
 }

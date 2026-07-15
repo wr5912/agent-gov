@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import JSON, String, Text
+from sqlalchemy import JSON, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .runtime_db import Base, utc_now
@@ -42,6 +42,15 @@ class ImprovementLinkModel(Base):
     kind: Mapped[str] = mapped_column(String(32))
     ref_id: Mapped[str] = mapped_column(String(256))
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+Index(
+    "ux_improvement_links_identity",
+    ImprovementLinkModel.improvement_id,
+    ImprovementLinkModel.kind,
+    ImprovementLinkModel.ref_id,
+    unique=True,
+)
 
 
 class NormalizedFeedbackModel(Base):
@@ -92,6 +101,18 @@ class ImprovementFeedbackModel(Base):
     task_id: Mapped[str] = mapped_column(String(256), default="")
     alert_id: Mapped[str] = mapped_column(String(256), default="")
     case_id: Mapped[str] = mapped_column(String(256), default="")
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
+
+
+class ImprovementFeedbackCaseAssignmentModel(Base):
+    """Unique ownership relation from one FeedbackCase to one ImprovementItem feedback row."""
+
+    __tablename__ = "improvement_feedback_case_assignments"
+
+    feedback_case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    improvement_id: Mapped[str] = mapped_column(String(128), index=True)
+    feedback_id: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 
@@ -163,6 +184,14 @@ class ExecutionRecordModel(Base):
     applied_diff_json: Mapped[dict] = mapped_column(JSON, default=dict)
     generation_trace_id: Mapped[str] = mapped_column(String(256), default="")
     generation_trace_url: Mapped[str] = mapped_column(String(2048), default="")
+    base_commit_sha: Mapped[str] = mapped_column(String(64), default="")
+    source_optimization_plan_id: Mapped[str] = mapped_column(String(128), default="")
+    source_optimization_plan_updated_at: Mapped[str] = mapped_column(String(64), default="")
+    source_attribution_id: Mapped[str] = mapped_column(String(128), default="")
+    source_attribution_updated_at: Mapped[str] = mapped_column(String(64), default="")
+    claim_token: Mapped[str] = mapped_column(String(128), default="")
+    claim_generation: Mapped[int] = mapped_column(default=0)
+    claim_expires_at: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now)
     updated_at: Mapped[str] = mapped_column(String(64), default=utc_now)
 
@@ -171,7 +200,7 @@ class RegressionAssessmentModel(Base):
     """回归保障评估 RegressionAssessment（四阶段改进治理 §11 P3，§17.5）：治理 Agent 生成的回归测试用例候选。
 
     与改进事项 1:1。cases_json：[{prompt, expected_behavior, checkpoints[]}]。status：draft / confirmed
-    （确认=已采纳为回归资产）。generated_by：governor / heuristic。独立新表。
+    （确认=允许后续采用为 typed TestDataset）。generated_by：governor / heuristic。独立新表。
     """
 
     __tablename__ = "regression_assessments"

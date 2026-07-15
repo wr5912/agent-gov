@@ -74,7 +74,7 @@
 
 ### AGV-002 Agent Runtime、Feedback Loop、Version Governance 形成治理链路
 
-状态：`current`
+状态：`gap`
 
 目标来源：三大核心能力。
 
@@ -95,7 +95,7 @@
 
 证据要求：run、feedback、eval 或 release 的关联记录。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`。
+当前缺口：旧 batch 闭环测试已随旧链路删除；当前只有 ImprovementItem 各阶段的分段测试，尚无从 Runtime 事实到反馈、归因、执行、回归和 release 的单条端到端证据。
 
 ### AGV-003 当前前端边界不越界为最终业务门户
 
@@ -167,13 +167,13 @@
 - 受治理业务 Agent 可以作为外部协作成员参与任务流转，治理 Agent 默认不作为协作成员暴露。
 - 治理 Agent 的输出不直接变成生产事实，必须经过后端校验、评估和版本治理。
 
-证据要求：agent job 的 profile、输入输出和最终投影记录。
+证据要求：governor profile、输入输出、Trace 和最终投影记录。
 
-自动验收：`tests/test_agent_profiles_category.py`（业务/治理身份与权限边界）；治理 Agent 输出经后端投影校验由 `tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure` 覆盖。
+自动验收：`tests/test_agent_profiles_category.py`（业务/治理身份与权限边界）；治理 Agent 输出的字段所有权与后端投影由 `tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute` 覆盖。
 
 ### AGV-006 治理闭环产物覆盖数据、方法论和执行资产
 
-状态：`current`
+状态：`gap`
 
 目标来源：使命、三层资产模型。
 
@@ -183,7 +183,7 @@
 
 1. 从一次反馈中生成归因结果。
 2. 生成优化方案、SOP 或执行计划。
-3. 生成或关联 prompt、skill、playbook、eval case 或 governance rule。
+3. 生成或关联 prompt、skill、playbook、TestDataset case 或 governance rule。
 4. 检查三类资产是否被记录并可追溯。
 
 成功标准：
@@ -194,7 +194,7 @@
 
 证据要求：反馈 case、归因输出、优化方案、执行资产记录。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（一次闭环同时产出并可追溯三类资产：数据资产=feedback/eval/run 记录，方法论资产=归因/优化/评估方法契约被应用，执行资产=eval case/change set）、`tests/test_methodology_assets.py`（方法论资产层为命名+版本化+结构化契约）。三层映射：数据资产由 SQLite 记录承载、方法论资产由 `AGENT_JOB_SPECS` 治理方法的结构化 Pydantic 契约+受版本治理的治理 Agent profile 承载、执行资产由 eval case/change set/workspace 配置容器承载。
+当前缺口：typed `TestDataset` 已从通用字符串资产拆出，并具备事项来源、provenance、生命周期、修订与回归快照测试；方法论资产已有命名、版本和结构化契约测试，但仍缺一次改进事项同时产出并追溯数据、方法论和执行资产的端到端证据。
 
 ### AGV-007 外部业务系统可通过 API 接入治理能力
 
@@ -222,7 +222,7 @@
 
 ### AGV-008 真实业务运行轨迹可持续沉淀
 
-状态：`current`
+状态：`gap`
 
 目标来源：愿景、数据资产。
 
@@ -242,11 +242,15 @@
 
 证据要求：运行记录 API 响应、trace 链接或 SQLite 投影。
 
-自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
+自动验收（部分）：`tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent`
+与 `tests/test_session_history.py::test_read_session_history_projects_via_committed_sdk_store`
+证明 Playground 历史由 owning Agent 的 SDK transcript 投影，SQLite `agent_runs` 不再作为消息恢复源。
+仍缺一次真实运行将 input/output/status/error、tool/skill 活动、Trace 与后续反馈、
+归因和评估联合反查的运行态证据。
 
 ### AGV-009 失败案例可转化为组织级治理知识
 
-状态：`current`
+状态：`gap`
 
 目标来源：愿景、方法论资产。
 
@@ -256,7 +260,7 @@
 
 1. 针对失败案例收集证据。
 2. 完成归因分析并输出问题类型、证据链、影响范围和改进方向。
-3. 将改进方向沉淀为 SOP、prompt、skill、eval case 或治理规则。
+3. 将改进方向沉淀为 SOP、prompt、skill、TestDataset case 或治理规则。
 
 成功标准：
 
@@ -266,11 +270,13 @@
 
 证据要求：失败 case、归因输出、沉淀资产和后续回归结果。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`（失败反馈沉淀为 eval case/回归资产，捕获同类问题）。
+当前实现已能把确认后的 RegressionAssessment 候选采用为 typed `TestDataset`，并把反馈、归因、
+优化、执行、候选版本和有序 case 固化为 backend-owned provenance；EvalRun 只执行该数据集的
+不可变修订快照。仍缺把失败经验自动提升为 SOP、prompt、skill 或跨事项复用治理规则的联合证据。
 
 ### AGV-010 跨 Agent 共享已验证的治理经验
 
-状态：`current`
+状态：`gap`
 
 目标来源：愿景、治理成熟度路径。
 
@@ -290,11 +296,13 @@
 
 证据要求：资产复用记录、目标 Agent change set、评估结果。
 
-自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_reuse_provenance_records_source_scope_risk_and_per_agent_validation`（已验证方法论资产场景包经 copy（留存来源 copied_from）+ 跨 Agent 装配复用到 agent-a/agent-b；`GET /api/scenario-packs/{id}/reuse-provenance` 返回复用记录：来源 `source_pack_id`、适用范围 `scope_agent_ids`、风险 `risk_level`、方法论资产 `methodology_asset_refs/eval_case_ids`、跨 Agent 评估报告 `validation`——每个复用 Agent 保留独立验证结果，A passed/B needs_human_review 不混淆）。各 Agent 版本/审计边界由 B3 per-agent store 与 per-agent eval 归属保留。
+当前缺口：业务 Agent 的 TestDataset、EvalRun 和版本链已经按 Agent 隔离，但当前没有跨 Agent
+方法论包的复制、适用范围、风险和独立验证报告契约。旧场景包实现已迁移归档，不能继续作为
+该能力的验收证据。
 
 ### AGV-011 数据资产完整记录事实基础
 
-状态：`current`
+状态：`gap`
 
 目标来源：三层资产模型。
 
@@ -314,7 +322,7 @@
 
 证据要求：API 响应、数据库投影或 UI 详情页。
 
-自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
+当前缺口：运行配置诊断和非法文件路径已有局部 evidence package 测试；仍缺正常文件读取、trace 引用、完整性、幂等和归因 job 输出的一体化证据。
 
 ### AGV-012 方法论资产可被治理流程复用
 
@@ -338,15 +346,15 @@
 
 证据要求：方法论资产记录、引用关系和复用结果。
 
-自动验收：`tests/test_methodology_assets.py::test_methodology_registry_is_single_source_named_and_structured`（每个治理方法有命名 profile + 独立结构化 Pydantic 契约，单一来源复用、非散落 NL）、`tests/test_methodology_assets.py::test_methodology_assets_are_carried_by_version_governed_governance_agents`（方法论由受版本治理的治理 Agent 承载，提供版本/修订记录）。复用证据：`AGENT_JOB_SPECS` 单一来源被每个反馈 case 的同类方法应用，非每次重新发明（见闭环回归 `test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`）。
+自动验收：`tests/test_methodology_assets.py::test_methodology_registry_is_single_source_named_and_structured`（每个治理方法有命名 profile + 独立结构化 Pydantic 契约，单一来源复用、非散落 NL）、`tests/test_methodology_assets.py::test_methodology_assets_are_carried_by_version_governed_governance_agents`（方法论由受版本治理的治理 Agent 承载，提供版本/修订记录）。
 
 ### AGV-013 执行资产可被 Agent 或系统调用
 
-状态：`current`
+状态：`gap`
 
 目标来源：三层资产模型。
 
-前置条件：存在 prompt、skill、profile、playbook、eval case 或 workflow。
+前置条件：存在 prompt、skill、profile、playbook、TestDataset 或 workflow。
 
 测试步骤：
 
@@ -362,11 +370,11 @@
 
 证据要求：调用记录、资产版本和评估结果。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（eval case 执行资产经晋级后被 regression-run 在受控流程调用，impact-analysis 评估其结果）、`tests/test_api_execution_optimizer.py::test_apply_execution_job_endpoint_writes_file_and_creates_versions`（修改执行资产/workspace 配置创建 Agent 版本，进版本治理）、`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`（执行资产版本可回滚且不污染历史）。
+自动验收（部分）：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history` 证明 release 恢复不改历史。仍缺当前 execution apply API 对真实候选 worktree、文件 diff、version/change set 持久化和源 workspace 不变的端到端验收。
 
 ### AGV-014 Runtime 运行可复盘
 
-状态：`current`
+状态：`gap`
 
 目标来源：Agent Runtime、核心目标。
 
@@ -386,11 +394,15 @@
 
 证据要求：UI 详情截图或 API JSON。
 
-自动验收：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。
+自动验收（部分）：`tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent`、
+`tests/test_session_history.py::test_endpoint_projects_history` 和
+`tests/test_session_history.py::test_normalize_message_hostile_inputs_do_not_crash_or_pollute_role`
+证明前端会话历史的 API 真相来自 SDK transcript，并覆盖 owning Agent 和 hostile 消息投影。
+仍缺真实运行下 UI 回复细节对 input/output、tool/skill、错误与 Trace 的联合展示证据。
 
 ### AGV-015 Feedback Loop 形成标准化归因链路
 
-状态：`current`
+状态：`gap`
 
 目标来源：Feedback Loop、核心目标。
 
@@ -410,7 +422,7 @@
 
 证据要求：feedback case、evidence package、attribution job 输出。
 
-自动验收（部分）：`tests/test_feedback_store_cases_and_jobs.py::test_case_evidence_and_job_outputs`。证据不足需人工复核的提示部分需运行态/人工验收。
+当前缺口：归因 governor 的字段所有权和失败回退已有分段测试，但 evidence package 完整性、attribution job 完成输出与“证据不足转人工复核”尚无一条当前契约下的联合验收。
 
 ### AGV-016 Version Governance 固化能力演进
 
@@ -434,7 +446,7 @@
 
 证据要求：change set、release、rollback API 响应。
 
-自动验收：`tests/test_agent_governance_publish.py::test_candidate_committed_change_set_can_publish_directly`、`tests/test_agent_version_store.py::test_agent_version_file_diff_returns_unified_diff`。
+自动验收：`tests/test_agent_governance_publish.py::test_candidate_committed_change_set_can_publish_directly`、`tests/test_agent_git_store.py::test_git_store_file_diff_returns_unified_diff`。
 
 ### AGV-017 多业务 Agent 接入统一治理闭环
 
@@ -494,7 +506,7 @@
 
 测试步骤：
 
-1. 触发归因、方案、执行优化、用例治理或回归影响分析 job。
+1. 触发归因、方案、执行优化、用例治理或回归影响分析业务动作。
 2. 检查治理 Agent 是否只读取允许输入。
 3. 检查输出是否由后端校验和投影，不直接修改生产事实。
 
@@ -502,11 +514,11 @@
 
 - 治理 Agent 不直接修改主 Agent 配置或生产系统。
 - 输出通过 formatter、Pydantic 校验、store 投影和 API 展示。
-- 失败会写入 error_json 并投影到用户可见状态。
+- 失败会返回结构化错误或形成明确回退来源，并投影到用户可见状态。
 
-证据要求：job 输入、validated output、error_json 或投影记录。
+证据要求：业务动作输入、validated output、结构化错误或投影记录。
 
-自动验收（部分）：`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`。权限边界部分由运行时测试与人工验收覆盖。
+自动验收（部分）：`tests/test_improvement_governor_service.py::test_hostile_formatter_output_does_not_crash_or_pollute`、`tests/test_improvement_governor_service.py::test_attribution_rejects_governor_workspace_as_business_agent_evidence`。权限边界部分由运行时测试与人工验收覆盖。
 
 ### AGV-020 业务 Agent 生命周期状态可治理
 
@@ -564,12 +576,12 @@
 
 目标来源：Agent 资产 Registry。
 
-前置条件：存在 Agent 定义、prompt、skill、eval case、change set 和 release。
+前置条件：存在 Agent 定义、prompt、skill、TestDataset、change set 和 release。
 
 测试步骤：
 
 1. 查询某个 Agent 的资产 Registry。
-2. 查看该 Agent 关联的 prompt、skill、SOP、eval case、release。
+2. 查看该 Agent 关联的 prompt、skill、SOP、TestDataset、release。
 3. 从某次 feedback 追溯到优化任务和最终版本。
 
 成功标准：
@@ -580,15 +592,18 @@
 
 证据要求：Registry 查询结果或资产关系图。
 
-自动验收：`tests/test_agent_registry_store.py::test_feedback_asset_provenance_traces_agent_and_relationship`（从反馈追溯归属 Agent 与资产关系结构）。API `GET /api/asset-registry/feedback/{feedback_case_id}` 返回资产关系链而非简单清单：`agent_ids`（反馈影响了哪个 Agent）、`optimization_tasks[].target_paths`（改了哪些资产）、`applied_agent_version_id`（进入哪个版本）、`eval_case_ids`/`latest_change_set_id`（关联评估与变更集）。关系由既有 provenance link（feedback_case→signal.agent_id、`list_tasks(feedback_case_id)`→optimization_task）聚合，免迁移。
+自动验收：`tests/test_agent_registry_store.py::test_feedback_asset_provenance_traces_agent_and_relationship`
+证明 `GET /api/asset-registry/feedback/{feedback_case_id}` 返回反馈所属 `agent_ids`、关联
+`improvements[]` 及其 `change_set_ids`，未知反馈返回 404。typed TestDataset 的归属和完整
+provenance 由 Asset Registry 的数据集视图直接投影，不通过旧全局用例 ID 关联。
 
 ### AGV-023 Registry 防止资产散落和重复沉淀
 
-状态：`current`
+状态：`gap`
 
 目标来源：Agent 资产 Registry、能力域与场景包。
 
-前置条件：存在多个相似 prompt、skill、eval case 或 SOP。
+前置条件：存在多个相似 prompt、skill、TestDataset case 或 SOP。
 
 测试步骤：
 
@@ -604,11 +619,12 @@
 
 证据要求：资产治理事件和引用关系。
 
-自动验收（按三条成功标准）：①重复资产检测+治理建议——`tests/test_scenario_pack_store.py::test_scenario_pack_dedup_detect_and_merge`（`GET /api/scenario-packs/duplicates` 按规范化名检测重复并建议主资产）；②合并/废弃可审计——`POST /api/scenario-packs/{primary}/merge` 把重复并入主资产、重复包标记 `merged_into`/`merged_at` 保留不物理删除（可查=可审计）；③引用不丢失——合并并入各包关联（agent_ids/eval_case_ids/asset_refs 去重并集），重复包经 `merged_into` 重定向到主资产。
+当前证据：Asset Registry 能投影 typed TestDataset 的归属和 provenance，但尚未提供跨资产重复检测、
+合并/废弃治理事件和引用重定向契约，因此本项保持 `gap`。
 
 ### AGV-024 反馈可归属到 Agent、version、run 和场景
 
-状态：`current`
+状态：`gap`
 
 目标来源：反馈路由与归属。
 
@@ -628,11 +644,11 @@
 
 证据要求：feedback signal、feedback case 和 optimization task 关联字段。
 
-自动验收（按三条成功标准）：① 不进无归属全局池——`tests/test_feedback_store_sources.py::test_create_signal_records_business_agent_attribution`（信号恒有 agent_id 归属）；② 同一归属链路——`tests/test_feedback_store_sources.py::test_create_signal_attributes_to_run_business_agent`（反馈据匹配 run 的 agent_id 归属到产生它的业务 Agent，归因/优化经 case→signal 继承）；③ 无法归属→人工/补充上下文——`tests/test_feedback_store_sources.py::test_feedback_signal_requires_source_locator`（无锚点反馈被拒、需补充上下文）、`::test_implicit_signal_defaults_to_review`（隐式反馈标记 requires_review）。归属维度：Agent(`agent_id`)、version(`agent_version_id`)、run(`run_id`)、session(`session_id`) 均为一等字段；场景经 signal `metadata` 携带（成功标准不要求专用场景字段，场景包组织为 future AGV-026/027）。
+自动验收（部分）：`tests/test_agent_governance_publish.py::test_governance_serves_multiple_business_agents_with_isolated_closed_loops` 证明已匹配 run 的多 Agent 隔离。仍缺无 source locator 拒绝、无匹配 run 的显式人工兜底，以及 signal/case 投影归属一致性证据。
 
 ### AGV-025 反馈路由错误不会污染其他 Agent
 
-状态：`current`
+状态：`gap`
 
 目标来源：反馈路由与归属、多业务 Agent 治理。
 
@@ -652,11 +668,16 @@
 
 证据要求：错误响应、审计事件和修正记录。
 
-自动验收（按三条成功标准）：① 跨 Agent 误路由被阻止——`tests/test_feedback_store_sources.py::test_create_optimization_batch_rejects_cross_agent_misroute`（优化批次混入跨 Agent 反馈被显式拒绝）；② Agent 评估/版本不受他 Agent 反馈污染——同上误路由防护 + `::test_list_signals_filters_by_agent_dimension`（反馈按 Agent 维度隔离），使每个 Agent 的批次/评估只含自身反馈；③ 管理员可修正反馈归属并保留审计——`::test_reassign_signal_agent_corrects_attribution_with_audit`（reassign 改写 agent_id 并在 metadata.attribution_corrections 保留 from/to/operator/reason 审计）。API：POST `/api/feedback-signals/{signal_id}/reassign-agent`。
+自动验收（部分）：
+`tests/test_improvement_content.py::test_attach_feedback_case_rejects_cross_business_agent_without_side_effects`
+证明跨 Agent 挂接被拒绝且无副作用；
+`tests/test_improvement_content.py::test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref`
+证明唯一 assignment 关系和重新归属会同步权威引用。仍缺管理员修正原始 feedback signal/case
+Agent 归属时的专用 API、权限和完整审计证据，因此保留 `gap`。
 
 ### AGV-026 能力域或场景包可组织治理资产
 
-状态：`current`
+状态：`gap`
 
 目标来源：能力域与场景包。
 
@@ -665,7 +686,7 @@
 测试步骤：
 
 1. 创建一个场景包，例如“告警研判”或“客服投诉处理”。
-2. 关联 Agent 定义、prompt、skill、SOP、eval case、发布准入规则。
+2. 关联 Agent 定义、prompt、skill、SOP、TestDataset、发布准入规则。
 3. 查询场景包详情。
 
 成功标准：
@@ -676,11 +697,12 @@
 
 证据要求：场景包定义和资产关联。
 
-自动验收（按三条成功标准）：①表达业务目标/适用范围/风险等级——`tests/test_scenario_pack_store.py::test_create_and_query_scenario_pack`、`::test_scenario_pack_api_create_list_get`（ScenarioPack 实体 business_goal/scope/risk_level，迁移 0010 持久化）；②资产可迁移/复制/审计——`::test_scenario_pack_associate_and_copy`（copy 生成模板复制资产引用，关联记录可查=可审计）；③Agent 可按场景包装配能力——同测试 associate agent_ids 即 Agent 装配该包。API：`POST/GET /api/scenario-packs`、`POST /{id}/assets`（装配）、`POST /{id}/copy`（复制/迁移）。
+当前缺口：旧场景包表、store 和公开 API 已迁移归档；当前业务 Agent workspace 模板可复用，
+但尚无一等的能力域/场景资产聚合契约，不能以离线模板替代本项验收。
 
 ### AGV-027 场景包支持跨 Agent 复用
 
-状态：`current`
+状态：`gap`
 
 目标来源：能力域与场景包、治理成熟度路径。
 
@@ -700,11 +722,12 @@
 
 证据要求：场景包应用记录和两个 Agent 的评估结果。
 
-自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_cross_agent_reuse_keeps_boundary_and_eval_gate_to_active`（一个场景包经 `POST /api/scenario-packs/{id}/assets` 装配到两个 Agent=复用；两个 Agent 各自独立 change set/release、版本 store 物理隔离=保留自己的版本与审计边界、不强制完全相同；agent-b 进入 evaluating 后无通过评估时 `evaluating→active` 被拒 409、落一条 passed 评估后可激活=复用后须评估通过才能进入 active；评估门按 Agent 隔离，agent-a 无通过评估其激活仍被拒）。eval 门由 `app/routers/agents.py` 在 `evaluating→active` 处校验该 Agent 是否有 completed+passed/passed_with_notes 的评估运行（`_has_passed_eval`）。
+当前证据：多业务 Agent 的版本库、TestDataset 与 EvalRun 已按 Agent 隔离；当前没有跨 Agent
+场景资产复用记录，且 Agent active 门禁不能由已删除旧场景包链证明，因此本项保持 `gap`。
 
 ### AGV-028 反馈到资产闭环完整
 
-状态：`current`
+状态：`gap`
 
 目标来源：反馈到资产的闭环链路。
 
@@ -714,7 +737,7 @@
 
 1. 发起业务 Agent 运行并提交反馈。
 2. 反馈归属到 Agent / version / 场景。
-3. 生成证据、归因、优化方案和 eval case。
+3. 生成证据、归因、优化方案和 RegressionAssessment 候选。
 4. 创建候选 change set 并运行回归。
 5. 发布或回滚，并更新 Registry。
 
@@ -726,11 +749,11 @@
 
 证据要求：端到端链路记录。
 
-自动验收（按三条成功标准）：① 每步持久化/可审计——`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（反馈→eval case 生成→归因→优化方案→执行→change set→回归→发布每步有记录与状态）；② 任一步失败投影状态+错误——`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`（回归失败阻断发布）、AGV-029 的 error_json 回归；③ release 反查证据——同闭环测试断言发布的优化任务携带 `feedback_case_ids`+`eval_case_ids`，构成 release→change set→优化→反馈/评估的 provenance 反查链路。前置「业务 Agent 运行+反馈归属」由 AGV-004 运行时与 AGV-024 归属链路提供。
+当前缺口：现有测试分别覆盖生成、执行、回归门和发布片段，但没有当前 ImprovementItem 从反馈到 release 的单条端到端链路，也没有 release 反查全部证据与 Trace 的联合断言。
 
 ### AGV-029 闭环失败可恢复
 
-状态：`current`
+状态：`gap`
 
 目标来源：反馈到资产闭环、治理边界。
 
@@ -750,31 +773,45 @@
 
 证据要求：error_json、状态机事件、补偿或回滚记录。
 
-自动验收：`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`（失败写 error_json，不止日志）、`tests/test_agent_governance_publish.py::test_batch_regression_failed_cases_block_publish`（回归失败投影为 blocked 状态+下一步阻断）、`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`（回滚不改历史、无重复不一致资产）。
+自动验收（部分）：`tests/test_responses_stream.py::test_stream_finalization_exhaustion_interrupts_and_allows_immediate_retry`、
+`tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together`、
+`tests/test_agent_governance_publish.py::test_publish_db_finalize_failure_rolls_back_metadata_and_retry_reconciles` 和
+`tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence`、
+`tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset`、
+`tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete`
+已覆盖 Runtime finalize CAS 耗尽后的立即恢复、旧链归档与 DDL 原子回滚、publish/rollback/restore durable operation 对账，
+以及终态 worktree cleanup 的启动恢复和用户重试入口。残余缺口是完整 Improvement 闭环在任一阶段失败后的
+单条跨层恢复验收仍未统一覆盖。
 
 ### AGV-030 闭环结果能防止历史问题复发
 
-状态：`current`
+状态：`gap`
 
 目标来源：反馈到资产闭环、评估门禁。
 
-前置条件：存在由反馈生成或晋级的回归用例。
+前置条件：存在由反馈形成并采用到 typed TestDataset 的回归候选。
 
 测试步骤：
 
-1. 从历史反馈生成 eval case。
-2. 将用例加入批次或长期回归资产。
-3. 在后续优化或发布前运行回归。
+1. 从历史反馈生成并确认 RegressionAssessment 候选。
+2. 将候选采用为有 provenance 和修订的 typed TestDataset。
+3. 在后续优化或发布前执行持久化数据集快照的 EvalRun。
 
 成功标准：
 
-- 高价值历史反馈能转化为回归资产。
+- 高价值历史反馈能转化为 typed TestDataset。
 - 回归失败能解释是能力退化、用例过时、flaky 还是历史问题复发。
 - 历史高危问题复发能阻断发布或要求人工确认。
 
-证据要求：eval case、eval run、regression impact analysis。
+证据要求：RegressionAssessment、TestDataset、EvalRun 和 change set 发布门禁记录。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`。
+自动验收（部分）：`tests/test_test_datasets.py::test_adopt_test_dataset_projects_typed_backend_owned_chain`
+证明确认后的事项证据链能采用为 typed TestDataset；
+`tests/test_agent_governance_publish.py::test_change_set_regression_failed_cases_block_publish` 证明失败
+change set 会阻断发布；`tests/test_typed_dataset_eval_runs.py::test_runner_never_auto_passes_unverified_natural_language_expectations`
+证明自然语言期望无法机械验证时进入人工复核而不是误放行；
+`tests/test_agent_governance_publish.py::test_regression_human_review_approval_is_audited_idempotent_and_publishable`
+和 `test_regression_human_review_rejection_stays_blocked` 证明逐 case 决策、幂等审计、普通发布与拒绝阻断闭环。仍缺 flaky、用例过时和能力退化的自动分类解释。
 
 ### AGV-031 Agent 创建、配置、运行、治理统一入口
 
@@ -803,7 +840,7 @@
 
 ### AGV-032 运行记录支持事实、推断和建议分离
 
-状态：`current`
+状态：`gap`
 
 目标来源：核心目标 2、方法论资产。
 
@@ -823,11 +860,11 @@
 
 证据要求：输出详情和归因结果。
 
-自动验收：`tests/test_feedback_output_normalizers.py::test_attribution_distinguishes_reasoning_error_from_data_and_tool_problems`（归因把推理问题 `reasoning_error` 独立于数据缺口/工具/执行资产分类）、`tests/test_feedback_output_normalizers.py::test_attribution_formatter_output_drops_backend_owned_fields_on_reasoning_error`（字段所有权边界）。字段层面：归因输出 `evidence_refs`（事实）与 `rationale`（推断）分离、`recommended_next_step`（建议）独立，结构上不把推断伪装成事实；反馈侧 `SocEventType` 以 `evidence.*`/`case.verdict_changed`（事实/推断）与 `recommendation.*`（建议）定向具体问题。本轮新增 `reasoning_error` 类目补齐"数据/推理/工具/执行资产"四分，并经 live DeepSeek 实测：数据与工具齐全但推断出错的场景被准确归为 `reasoning_error`。
+自动验收（部分）：`tests/test_feedback_output_normalizers.py::test_attribution_formatter_output_drops_backend_owned_fields` 证明后端字段所有权边界。仍缺 `reasoning_error` 与数据、工具、执行资产问题的独立分类回归；字段形状本身不能替代该业务语义验收。
 
 ### AGV-033 反馈进入问题分类和证据链
 
-状态：`current`
+状态：`gap`
 
 目标来源：核心目标 3。
 
@@ -847,11 +884,11 @@
 
 证据要求：attribution output 和 evidence references。
 
-自动验收（部分）：`tests/test_feedback_store_cases_and_jobs.py::test_soc_event_idempotency_and_pending_correlation`。标准化分类与人工复核提示部分需运行态/人工验收。
+自动验收（部分）：`tests/test_runtime_db.py::test_feedback_store_soc_event_ingest_is_idempotent_under_concurrency` 证明并发摄取幂等。仍缺 matched/duplicate/pending 三分类响应、证据链与人工复核提示的联合验收。
 
 ### AGV-034 优化形成可执行资产而非一次性建议
 
-状态：`current`
+状态：`gap`
 
 目标来源：核心目标 4。
 
@@ -861,7 +898,7 @@
 
 1. 从归因结果生成优化方案。
 2. 检查方案是否明确产物类型。
-3. 将方案转化为 prompt、skill、SOP、playbook、eval case、governance rule 或 change set。
+3. 将方案转化为 prompt、skill、SOP、playbook、TestDataset、governance rule 或 change set。
 
 成功标准：
 
@@ -871,7 +908,11 @@
 
 证据要求：optimization task、change set 或资产记录。
 
-自动验收：`tests/test_api_execution_optimizer.py::test_apply_execution_job_endpoint_writes_file_and_creates_versions`（优化方案落为文件写操作并创建 Agent 版本，可执行资产进入版本治理，非一次性 NL 建议）、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`（优化方案进闭环并触发回归）。优化方案结构化字段（`target_summary`/`target_path` 目标对象、`acceptance_criteria` 预期效果与验证方式）由 `FeedbackOptimizationPlanFormatterOutput` 承载；任务级风险以 `confidence` + `human_review_required` 表达，执行级风险以 `ExecutionPlanFormatterOutput.risk` 承载。
+自动验收（部分）：`tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version`、
+`tests/test_improvement_execution_service.py::test_parallel_apply_creates_only_one_change_set` 和
+`tests/test_improvement_execution_service.py::test_missing_link_is_reconciled_in_same_request_after_finalize`
+证明服务层可生成候选并绑定版本，且并发申请和 finalize/link 分步失败可幂等对账。
+仍缺 execution apply HTTP API 经真实 governor、Git worktree、file diff 和 change set 投影的联合端到端证据。
 
 ### AGV-035 评估成为发布前质量闸门
 
@@ -879,23 +920,25 @@
 
 目标来源：核心目标 5。
 
-前置条件：存在候选变更和 active eval case。
+前置条件：存在候选变更和 active typed TestDataset。
 
 测试步骤：
 
 1. 创建候选 change set。
-2. 运行关联 eval case 或 regression plan。
+2. 对关联 TestDataset 执行并持久化 EvalRun。
 3. 根据结果决定发布、修复、重跑或回滚。
 
 成功标准：
 
 - 未通过回归的高风险变更不能无提示发布。
 - eval run item 能解释失败原因。
-- gate override 必须有原因和审计记录。
+- 人工复核必须绑定当前 EvalRun/case，包含操作人、原因、scope 和审计记录；不得覆盖 required check 失败。
 
 证据要求：eval run、gate result、publish decision。
 
-自动验收：`tests/test_agent_governance_publish.py::test_batch_regression_failed_cases_block_publish`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_failed_batch_regression_blocks_publish`。
+自动验收：`tests/test_agent_governance_publish.py::test_change_set_regression_failed_cases_block_publish`、
+`test_regression_human_review_approval_is_audited_idempotent_and_publishable`、
+`test_concurrent_regression_reviews_have_one_audited_winner`。
 
 ### AGV-036 版本治理提供 diff、发布、恢复和回滚
 
@@ -920,7 +963,7 @@
 
 证据要求：agent governance API 响应。
 
-自动验收：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`、`tests/test_agent_version_store.py::test_agent_version_file_diff_returns_unified_diff`。
+自动验收：`tests/test_agent_governance_publish.py::test_restore_release_switches_current_workspace_without_mutating_release_history`、`tests/test_agent_git_store.py::test_git_store_file_diff_returns_unified_diff`。
 
 ### AGV-037 外部业务系统责任边界清晰
 
@@ -953,23 +996,23 @@
 
 目标来源：Runtime、Feedback Loop、产品边界。
 
-前置条件：可触发错误请求或失败 job。
+前置条件：可触发错误请求或失败的治理模型调用。
 
 测试步骤：
 
-1. 发起无效输入、无权限请求或模拟治理 job 失败。
-2. 查询 API 响应、job 详情和 UI 状态。
+1. 发起无效输入、无权限请求或模拟治理模型调用失败。
+2. 查询 API 响应、provider readiness 和 UI 状态。
 3. 检查错误是否可用于下一步处理。
 
 成功标准：
 
 - 错误包含 error code 或明确 detail。
-- job 失败写入 error_json。
+- 模型调用失败包含 probe、reason、retryable 和 action 等可执行诊断。
 - UI 不显示误导性空态。
 
-证据要求：错误响应、job record、UI 失败态。
+证据要求：错误响应、readiness 摘要、UI 失败态。
 
-自动验收：`tests/test_api_error_handlers.py::test_feedback_store_error_handler_returns_structured_error`、`tests/test_agent_job_store.py::test_agent_job_worker_logs_claim_and_runtime_failure`。
+自动验收：`tests/test_api_error_handlers.py::test_feedback_store_error_handler_returns_structured_error`、`tests/test_model_provider_router.py::test_vllm_transport_failure_stops_agent_request_with_precise_diagnostic`、`tests/test_health_endpoints.py::test_readiness_reports_sanitized_vllm_timeout_and_recovers`。
 
 ### AGV-039 当前调试前端可观察核心治理链路
 
@@ -988,7 +1031,7 @@
 成功标准：
 
 - 前端能观察运行、反馈、评估和版本状态。
-- 关键失败态有错误详情或可追踪 job。
+- 关键失败态有错误详情或可追踪 Trace。
 - 前端不要求用户必须在 AgentGov 内完成所有业务操作。
 
 证据要求：浏览器截图、console error 记录、API request 结果。
@@ -1005,17 +1048,17 @@
 
 测试步骤：
 
-1. 启动 API、worker 和必要本地服务。
-2. 发起运行、反馈、归因或评估 job。
+1. 启动 API、UI 和必要本地服务。
+2. 发起运行、反馈、归因或评估动作。
 3. 验证流程不依赖公网远程服务。
 
 成功标准：
 
 - 必需工作流可指向本地或内网模型网关。
-- 缺少模型凭据时 job 明确失败，而不是生成 raw/offline 伪结果。
+- 缺少模型凭据时模型动作明确失败，而不是生成 raw/offline 伪结果。
 - 示例配置不泄露真实凭据。
 
-证据要求：env 配置摘要、job 结果、健康检查。
+证据要求：env 配置摘要、业务动作结果、健康检查。
 
 自动验收（示例凭据不泄露）：`tests/test_repository_env_policy.py::test_official_env_examples_do_not_ship_configured_model_provider_key`。
 
@@ -1069,7 +1112,7 @@
 
 ### AGV-043 第一阶段 main agent 样板闭环
 
-状态：`current`
+状态：`gap`
 
 目标来源：治理成熟度路径。
 
@@ -1089,7 +1132,7 @@
 
 证据要求：main agent 端到端闭环记录。
 
-自动验收：`tests/test_feedback_batch_closed_loop.py::test_fob_da60_optimization_closed_loop_runs_regression_after_promotion`、`tests/test_feedback_batch_closed_loop.py::test_fob_da60_candidate_eval_cases_require_promotion_before_regression`。
+当前缺口：main agent 的分段能力仍有测试，但旧 batch 端到端闭环已删除；当前缺少从 main 运行、反馈、归因、执行、回归到发布且可反查 provenance 的单条验收。
 
 ### AGV-044 第二阶段多业务 Agent 扩展
 
@@ -1117,27 +1160,28 @@
 
 ### AGV-045 第三与第四阶段场景包和跨 Agent 方法论沉淀
 
-状态：`current`
+状态：`gap`
 
 目标来源：治理成熟度路径、能力域与场景包。
 
-前置条件：已有多个业务 Agent 和场景包。
+前置条件：已有多个业务 Agent 和可复用方法论资产。
 
 测试步骤：
 
 1. 建立一个跨 Agent 可复用的方法论资产。
-2. 绑定到一个场景包。
+2. 绑定到一个有适用范围和风险说明的能力包。
 3. 在多个 Agent 中复用并评估。
 
 成功标准：
 
 - 方法论资产不是单 Agent 私有经验。
-- 场景包能组织 prompt、skill、SOP、eval 和版本策略。
+- 能力包能组织 prompt、skill、SOP、eval 和版本策略。
 - 跨 Agent 复用后仍保留独立审计和评估结果。
 
-证据要求：场景包、方法论资产和跨 Agent 评估报告。
+证据要求：能力包、方法论资产和跨 Agent 评估报告。
 
-自动验收：`tests/test_scenario_pack_store.py::test_scenario_pack_reuse_provenance_records_source_scope_risk_and_per_agent_validation`（方法论资产 SOP/prompt/eval 绑定到场景包 `asset_refs/eval_case_ids` 并经 copy+装配在多个 Agent 复用=非单 Agent 私有；场景包组织 prompt/skill/SOP/eval 与复用/风险策略；`reuse-provenance` 的 `validation` 字段给出跨 Agent 评估报告，每个 Agent 保留独立审计与评估结果）。与 AGV-010 共享 `GET /api/scenario-packs/{id}/reuse-provenance` 跨 Agent 复用记录能力。
+当前缺口：治理方法已有集中 typed formatter/prompt registry，多业务 Agent 也已有独立版本与评估边界；
+仍缺跨 Agent 能力包及其复用 provenance、风险和逐 Agent 验证报告。旧场景包实现已迁移归档。
 
 ### AGV-046 安全运营作为示例场景可被替换
 
@@ -1244,7 +1288,7 @@
 
 目标来源：核心目标 7、Runtime、外部 API 集成、`docs/engineering/OpenAI兼容接口能否替代原生Chat端点评估.md`。
 
-前置条件：API、worker、UI 容器已用当前代码和 `docker/.env` 配置启动；存在至少一个 runnable 业务 Agent（默认 `main-agent`）。
+前置条件：API、UI 容器已用当前代码和 `docker/.env` 配置启动；存在至少一个 runnable 业务 Agent（默认 `main-agent`）。
 
 测试步骤：
 

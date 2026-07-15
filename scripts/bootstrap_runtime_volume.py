@@ -63,7 +63,7 @@ RUNTIME_DATA_DIRS = (
     "langfuse/redis",
     "langfuse/minio",
 )
-SKIP_TEMPLATE_ROOT_FILES = {"README.md", ".template-sanitization.json"}
+SKIP_TEMPLATE_ROOT_ENTRIES = {"README.md", ".template-sanitization.json", "workspace-policy"}
 LEGACY_AGENT_GOVERNANCE_MIGRATIONS = (
     (Path("data/agent-governance/worktrees"), Path("data/business-agents/main-agent/version/worktrees")),
     (Path("data/agent-governance/releases"), Path("data/business-agents/main-agent/version/releases")),
@@ -154,7 +154,7 @@ def resolve_runtime_root(cli_value: str | None, env_file: Path, runtime_volume_m
 
 def _iter_template_entries(template_dir: Path) -> Iterable[Path]:
     for entry in sorted(template_dir.iterdir()):
-        if entry.name in SKIP_TEMPLATE_ROOT_FILES:
+        if entry.name in SKIP_TEMPLATE_ROOT_ENTRIES:
             continue
         yield entry
 

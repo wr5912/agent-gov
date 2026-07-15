@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { deleteSession, defaultRuntimeConfig, getAgentRuns, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
+import { deleteSession, defaultRuntimeConfig, getAgentChangeSets, getAgentReleases, getAgentRepositoryStatus, getConversationItems, getCurrentAgentRef, getHealth, getSessions, isLegacyDockerApiBase, listBusinessAgents, streamChat, submitClaudeUserInputDecision } from "./api/runtime";
 import { ChatPanel } from "./components/ChatPanel";
 import { ImprovementWorkbench } from "./components/ImprovementWorkbench";
-import { ReleaseWorkbench } from "./components/ReleaseWorkbench";
 import { AssetRegistry } from "./components/AssetRegistry";
 import { EVIDENCE_PANEL_DEFAULT_WIDTH, PlaygroundEvidencePanel } from "./components/PlaygroundEvidencePanel";
 import { PlaygroundRuntimeSettingsDrawer } from "./components/PlaygroundRuntimeSettingsDrawer";
@@ -14,7 +13,7 @@ import { useAgentCatalog } from "./hooks/useAgentCatalog";
 import { useConfigMapping } from "./hooks/useConfigMapping";
 import { useLocalStorage } from "./hooks/useLocalStorage";
 import { cancelWaitingUserInputRequests, claudeUserInputRequestFromData, mergeUserInputRequest, nullableString, patchUserInputRequest, sanitizedEnvelopeData, stringValue } from "./claudeUserInputState";
-import { messagesFromAgentRuns } from "./playgroundHistory";
+import { messagesFromConversationItems } from "./playgroundHistory";
 import type { AgentActivity, AgentChangeSet, AgentGitRef, AgentRelease, AgentRepositoryStatus, AgentSummary, ChatMessage, ClaudeUserInputDecisionPayload, ClaudeUserInputRequest, RuntimeClientConfig, RuntimeHealth, SessionInfo, StreamEnvelope, StreamLogEvent } from "./types/runtime";
 import { isRecord } from "./utils/records";
 import "./styles.css";
@@ -74,7 +73,7 @@ function agentActivityFromResult(value: unknown): AgentActivity | undefined {
 export default function App() {
   const runtimeDefaults = useMemo(() => defaultRuntimeConfig(), []);
   const [clientConfig, setClientConfig] = useLocalStorage<RuntimeClientConfig>("runtime-client-config", runtimeDefaults);
-  const [messagesBySession, setMessagesBySession] = useLocalStorage<Record<string, ChatMessage[]>>("playground-session-messages", {});
+  const [messagesBySession, setMessagesBySession] = useState<Record<string, ChatMessage[]>>({});
   const [activeSessionId, setActiveSessionId] = useLocalStorage<string | undefined>("playground-active-session", undefined);
 
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
@@ -98,7 +97,7 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [versionLoading, setVersionLoading] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "release" | "asset">("chat");
+  const [activeWindow, setActiveWindow] = useState<"chat" | "improvement" | "asset">("chat");
   const [playgroundDrawer, setPlaygroundDrawer] = useState<"runtime-settings" | null>(null);
   const [sessionSidebarOpen, setSessionSidebarOpen] = useState(false);
   const [evidencePanelOpen, setEvidencePanelOpen] = useState(false);
@@ -137,6 +136,10 @@ export default function App() {
 
   const activeMessages = activeSessionId ? messagesBySession[activeSessionId] || [] : [];
   const activeMessageCount = activeMessages.length;
+  const activeBackendSessionTurns = useMemo(
+    () => sessions.find((session) => session.session_id === activeSessionId)?.turns ?? 0,
+    [activeSessionId, sessions],
+  );
   const activeTraceMessage = useMemo(() => {
     if (activeTraceMessageId) {
       const selected = activeMessages.find((message) => message.id === activeTraceMessageId);
@@ -168,12 +171,15 @@ export default function App() {
     setLoading(true);
     setLastError(undefined);
     try {
-      const [healthRes, sessionsRes, businessAgentsRes] = await Promise.all([
-        getHealth(effectiveClientConfig),
+      const healthRequest = getHealth(effectiveClientConfig).then((response) => {
+        setHealth(response);
+        return response;
+      });
+      const [, sessionsRes, businessAgentsRes] = await Promise.all([
+        healthRequest,
         getSessions(effectiveClientConfig),
         listBusinessAgents(effectiveClientConfig),
       ]);
-      setHealth(healthRes);
       setSessions(sessionsRes);
       setBusinessAgents(businessAgentsRes);
       // 全局运行 Agent 必须是具体对象；跨 Agent 聚合视图由各治理页面自己的范围筛选负责。
@@ -228,15 +234,17 @@ export default function App() {
   }, [refresh]);
 
   useEffect(() => {
-    if (!activeSessionId || activeMessageCount > 0 || streaming) return;
-    const backendSession = sessions.find((session) => session.session_id === activeSessionId);
-    if (!backendSession || backendSession.turns <= 0) return;
+    window.localStorage.removeItem("playground-session-messages");
+  }, []);
 
-    let cancelled = false;
-    void getAgentRuns(effectiveClientConfig, { session_id: activeSessionId, limit: 100, include_messages: true })
-      .then((runs) => {
-        if (cancelled) return;
-        const restoredMessages = messagesFromAgentRuns(runs);
+  useEffect(() => {
+    if (!activeSessionId || activeMessageCount > 0 || streaming || activeBackendSessionTurns <= 0) return;
+
+    const controller = new AbortController();
+    void getConversationItems(effectiveClientConfig, activeSessionId, controller.signal)
+      .then((items) => {
+        if (controller.signal.aborted) return;
+        const restoredMessages = messagesFromConversationItems(items, activeSessionId);
         if (!restoredMessages.length) return;
         setMessagesBySession((prev) => {
           if ((prev[activeSessionId] || []).length > 0) return prev;
@@ -244,14 +252,14 @@ export default function App() {
         });
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (controller.signal.aborted) return;
         setLastError(error instanceof Error ? `加载历史会话失败：${error.message}` : `加载历史会话失败：${String(error)}`);
       });
 
     return () => {
-      cancelled = true;
+      controller.abort();
     };
-  }, [activeMessageCount, activeSessionId, effectiveClientConfig, sessions, setMessagesBySession, streaming]);
+  }, [activeBackendSessionTurns, activeMessageCount, activeSessionId, effectiveClientConfig, setMessagesBySession, streaming]);
 
   function updateSessionMessages(sessionId: string, updater: (messages: ChatMessage[]) => ChatMessage[]) {
     setMessagesBySession((prev) => ({
@@ -354,6 +362,10 @@ export default function App() {
     setLastError(undefined);
     try {
       const session = sessions.find((item) => item.session_id === sessionId);
+      if (session?.active_run_id || (streaming && activeSessionId === sessionId)) {
+        setLastError("会话运行中，完成或取消后才能删除。");
+        return;
+      }
       if (session) await deleteSession(effectiveClientConfig, sessionId);
       setMessagesBySession((prev) => {
         const next = { ...prev };
@@ -538,8 +550,12 @@ export default function App() {
             updateSessionMessages(sessionId, (prev) => {
               const next = [...prev];
               const last = next[next.length - 1];
-              if (last?.role === "assistant" && !last.content) {
-                next[next.length - 1] = { ...last, content: `运行失败：\n${messageText}` };
+              if (last?.role === "assistant") {
+                const failureText = `运行失败：\n${messageText}`;
+                next[next.length - 1] = {
+                  ...last,
+                  content: last.content ? `${last.content}\n\n${failureText}` : failureText,
+                };
               }
               return next;
             });
@@ -567,8 +583,12 @@ export default function App() {
         updateSessionMessages(sessionId, (prev) => {
           const next = [...prev];
           const last = next[next.length - 1];
-          if (last?.role === "assistant" && !last.content) {
-            next[next.length - 1] = { ...last, content: `运行失败：\n${messageText}` };
+          if (last?.role === "assistant") {
+            const failureText = `运行失败：\n${messageText}`;
+            next[next.length - 1] = {
+              ...last,
+              content: last.content ? `${last.content}\n\n${failureText}` : failureText,
+            };
           }
           return next;
         });
@@ -601,10 +621,6 @@ export default function App() {
 
   function showImprovementWindow() {
     setActiveWindow("improvement");
-  }
-
-  function showReleaseWindow() {
-    setActiveWindow("release");
   }
 
   function showAssetWindow() {
@@ -681,16 +697,15 @@ export default function App() {
           scopeAgentId={selectedBusinessAgentId}
           businessAgents={businessAgents}
         />
-      ) : activeWindow === "release" ? (
-        <ReleaseWorkbench
+      ) : activeWindow === "improvement" ? (
+        <ImprovementWorkbench
           clientConfig={effectiveClientConfig}
           scopeAgentId={selectedBusinessAgentId}
+          langfuseUrl={langfuseUrl}
           releases={agentReleases}
           changeSets={agentChangeSets}
-          onRefresh={refreshAll}
+          onGovernanceRefresh={refreshAll}
         />
-      ) : activeWindow === "improvement" ? (
-        <ImprovementWorkbench clientConfig={effectiveClientConfig} scopeAgentId={selectedBusinessAgentId} langfuseUrl={langfuseUrl} />
       ) : (
         <div className="playground-shell" data-testid="playground-shell">
           {sessionSidebarOpen ? (
@@ -701,6 +716,7 @@ export default function App() {
               onNewSession={createSession}
               onDeleteSession={removeSession}
               onRefresh={refresh}
+              streaming={streaming}
             />
           ) : null}
           <ChatPanel

@@ -159,6 +159,39 @@ def test_vllm_version_probe_failure_warns_sanitized_and_falls_back_to_sidecar(mo
     assert "/private" not in log_text
 
 
+def test_vllm_transport_failure_stops_agent_request_with_precise_diagnostic(monkeypatch) -> None:
+    seen: list[str] = []
+
+    def fake_urlopen(request, timeout: float):
+        seen.append(request.full_url)
+        raise URLError(TimeoutError())
+
+    monkeypatch.setattr(model_provider, "urlopen", fake_urlopen)
+    router = ModelProviderRouter(
+        _settings(
+            MODEL_PROVIDER_BACKEND="vllm",
+            MODEL_PROVIDER_API_URL="http://user:secret@vllm:8000/private?token=hidden",
+        )
+    )
+
+    with pytest.raises(ModelProviderCapabilityError) as exc_info:
+        router.ensure_agent_runtime_ready()
+
+    assert len(seen) == 1
+    assert exc_info.value.error_code == VLLM_VERSION_PROBE_FAILED
+    assert exc_info.value.raw_output_json is not None
+    assert exc_info.value.raw_output_json["probe"] == "vllm_version"
+    assert exc_info.value.raw_output_json["reason"] == "timeout"
+    assert exc_info.value.raw_output_json["endpoint"] == "http://vllm:8000"
+    assert "Agent request was not started" in str(exc_info.value)
+    assert "code=VLLM_VERSION_PROBE_FAILED" in str(exc_info.value)
+    assert "secret" not in str(exc_info.value)
+    assert "token=hidden" not in str(exc_info.value)
+    readiness = router.readiness_summary()
+    assert readiness["status"] == "degraded"
+    assert readiness["error_code"] == VLLM_VERSION_PROBE_FAILED
+
+
 def test_vllm_route_without_provider_url_fails_credentials_precheck() -> None:
     settings = _settings(MODEL_PROVIDER_BACKEND="vllm", MODEL_PROVIDER_API_URL="")
     router = ModelProviderRouter(settings)
@@ -214,6 +247,11 @@ def test_vllm_capability_gate_reports_sidecar_unavailable(monkeypatch) -> None:
     assert exc_info.value.raw_output_json is not None
     assert exc_info.value.raw_output_json["probe"] == "sidecar_readiness"
     assert exc_info.value.raw_output_json["route"] == "litellm_sidecar"
+    assert exc_info.value.raw_output_json["reason"] == "connection_error"
+    readiness = router.readiness_summary()
+    assert readiness["status"] == "degraded"
+    assert readiness["error_code"] == MODEL_PROVIDER_SIDECAR_UNAVAILABLE
+    assert readiness["reason"] == "connection_error"
 
 
 @pytest.mark.parametrize(

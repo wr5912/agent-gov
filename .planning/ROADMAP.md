@@ -1,8 +1,8 @@
 # GSD 路线图
 
-## 当前里程碑：Agent 版本治理与 Diff 对比重构
+## 已完成里程碑：Agent 版本治理与 Diff 对比重构
 
-> 状态同步：本里程碑主链路已落地（Git-backed repository、change set、event、release/restore、candidate worktree、前端/OpenAPI/生成类型迁移、旧 `/api/agent-versions/main/*` 删除），落地清单、保留项与 provider 选择（当前为 local Git provider，未启用 Gitea）见 [Agent 版本治理与 Diff 对比重构方案](../docs/Agent版本治理与Diff对比重构方案.md) §0.1。以下各阶段状态据此同步为「已落地（主链路）」；逐阶段验收细节以该方案为准。
+> 状态同步：本里程碑主链路已落地（Git-backed repository、change set、event、release/restore、candidate worktree、前端/OpenAPI/生成类型迁移、旧 `/api/agent-versions/main/*` 删除），历史落地清单见 [Agent 版本治理与 Diff 对比重构方案](../docs/archive/design/Agent版本治理与Diff对比重构方案.md)。以下各阶段只作已完成里程碑追溯。
 
 ### 阶段 0：迁移契约与 GSD 对齐
 
@@ -12,7 +12,7 @@
 
 交付：
 
-- `docs/Agent版本治理与Diff对比重构方案.md` 评审采纳版。
+- `docs/archive/design/Agent版本治理与Diff对比重构方案.md` 评审采纳历史稿。
 - `.planning/phases/agent-version-governance-diff-refactor/CONTEXT.md`
 - `.planning/phases/agent-version-governance-diff-refactor/PLAN.md`
 - 项目级 Docker 持久化默认路径说明更新。

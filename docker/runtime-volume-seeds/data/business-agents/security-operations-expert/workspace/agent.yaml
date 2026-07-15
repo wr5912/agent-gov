@@ -6,10 +6,10 @@ agent:
   language: zh-CN
   runtime: claude-code
   profile: security-operations-expert
-  # 部署契约（被运行时读取+强制）：本 Agent 的原生 Web HITL 仅作为 RO 内部执行授权握手。
+  # 本 Agent 的原生 Web HITL 由 .claude/settings.json 的 permissions.ask 单一派生，
+  # 仅作为 RO 内部执行授权握手，不在 agent.yaml 维护第二份布尔状态。
   # 用户只在 RO 界面确认一次整本剧本；proposal 阶段拒绝写工具，approved_execution
   # 阶段由 RO 对 create/manual 每次请求逐次校验批准快照并内部 allow_once。
-  requires_web_hitl: true
 
 capabilities:
   - alert_triage

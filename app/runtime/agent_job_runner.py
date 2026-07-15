@@ -44,8 +44,6 @@ class AgentJobRunner:
     def build_options(self, profile: AgentRuntimeProfile) -> Any:
         from claude_agent_sdk import ClaudeAgentOptions
 
-        from app.runtime.policy import build_default_hooks
-
         env = self.env_builder(profile)
         env.update(self.provider_router.claude_env())
 
@@ -59,21 +57,17 @@ class AgentJobRunner:
             "include_hook_events": self.settings.include_hook_events,
             "include_partial_messages": False,
             "cli_path": self.settings.claude_cli_path,
-            "add_dirs": self.settings.claude_add_dirs,
             "betas": self.settings.claude_betas,
-            "permission_prompt_tool_name": self.settings.permission_prompt_tool_name,
             "max_buffer_size": self.settings.max_buffer_size,
             "user": self.settings.claude_user,
-            "extra_args": self.settings.claude_extra_args,
             "max_thinking_tokens": self.settings.max_thinking_tokens,
             "effort": self.settings.effort,
             "enable_file_checkpointing": False,
             "session_store_flush": self.settings.session_store_flush,
             "load_timeout_ms": self.settings.load_timeout_ms,
-            # 接线：让 profile 的路径权限（readable/writable/denied）经 PreToolUse hook 真正强制，
-            # 并加载 project 的 .claude/settings.json / CLAUDE.md / skills（否则声明≠实际）。
+            # Stable permissions, hooks, MCP, skills, and subagents are project-owned.
+            # The SDK only selects project discovery; it does not duplicate that policy.
             "setting_sources": ["project"],
-            "hooks": build_default_hooks(profile),
         }
         kwargs = {key: value for key, value in kwargs.items() if value is not None}
         return ClaudeAgentOptions(**kwargs)
@@ -132,7 +126,7 @@ class AgentJobRunner:
         if langfuse is None or not plain_messages:
             return
         try:
-            children = RuntimeActivityExtractor(self.settings).sdk_child_observations(plain_messages)
+            children = RuntimeActivityExtractor().sdk_child_observations(plain_messages)
             langfuse.emit_sdk_child_observations(None, children)
         except Exception as exc:  # noqa: BLE001 — 观测失败绝不影响治理 job 主流程
             logger.warning("failed to emit governor sdk child observations: %s", exc)

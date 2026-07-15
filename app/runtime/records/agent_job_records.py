@@ -6,11 +6,9 @@ from pydantic import ConfigDict, Field, field_validator, model_validator
 
 from app.runtime.agent_job_types import AgentJobType
 from app.runtime.runtime_db import AgentJobModel
-from app.runtime.state_machines import AGENT_JOB_STATES, validate_transition
 
 from ..json_types import JsonObject
 from .base import StrictRuntimeRecord
-
 
 AgentJobStatus = Literal[
     "created",
@@ -23,6 +21,18 @@ AgentJobStatus = Literal[
     "needs_human_review",
     "timeout",
 ]
+
+HISTORICAL_AGENT_JOB_STATES = {
+    "created",
+    "queued",
+    "running",
+    "schema_validating",
+    "evidence_packaging",
+    "completed",
+    "failed",
+    "needs_human_review",
+    "timeout",
+}
 
 
 class AgentJobRecord(StrictRuntimeRecord):
@@ -61,33 +71,17 @@ class AgentJobRecord(StrictRuntimeRecord):
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str) -> str:
-        if value not in AGENT_JOB_STATES:
+        if value not in HISTORICAL_AGENT_JOB_STATES:
             raise ValueError(f"unsupported agent job status: {value}")
         return value
 
     @model_validator(mode="after")
-    def validate_timestamps(self) -> "AgentJobRecord":
+    def validate_timestamps(self) -> AgentJobRecord:
         if self.status in {"completed", "failed", "timeout"} and not self.completed_at:
             raise ValueError("completed_at is required for terminal agent job states")
         if self.status in {"running", "evidence_packaging"} and not self.started_at:
             raise ValueError("started_at is required for in-progress agent job states")
         return self
-
-    def transition_to(
-        self,
-        status: str,
-        *,
-        started_at: Optional[str] = None,
-        completed_at: Optional[str] = None,
-    ) -> "AgentJobRecord":
-        validate_transition("agent_job", self.status, status)
-        payload = self.to_payload()
-        payload["status"] = status
-        if started_at is not None:
-            payload["started_at"] = started_at
-        if completed_at is not None:
-            payload["completed_at"] = completed_at
-        return type(self).model_validate(payload)
 
     def to_payload(self) -> JsonObject:
         return self.model_dump(mode="json")
@@ -98,7 +92,7 @@ class AgentJobRecord(StrictRuntimeRecord):
         row: AgentJobModel,
         *,
         compensations: list[JsonObject] | None = None,
-    ) -> "AgentJobRecord":
+    ) -> AgentJobRecord:
         input_json = row.input_json if isinstance(row.input_json, dict) else {}
         payload: dict[str, object] = {
             "job_id": row.job_id,

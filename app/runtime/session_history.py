@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-import os
-import threading
-from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Any, Optional
 
 from .json_types import JsonObject
 
@@ -13,29 +10,7 @@ from .json_types import JsonObject
 # principle, the SDK / agent session is the single source of truth; this module does NOT
 # persist a parallel copy — it reads and projects on demand.
 
-_CONFIG_DIR_LOCK = threading.Lock()
 _REDACTED = "[redacted]"
-
-
-@contextmanager
-def _claude_config_dir(config_dir: str) -> Iterator[None]:
-    """Temporarily point the SDK session reader at ``config_dir``.
-
-    ``get_session_messages`` resolves the projects dir from the global ``CLAUDE_CONFIG_DIR``.
-    Serialized + restored so concurrent reads for different profiles do not race. Concurrent
-    chat subprocesses are unaffected: the runtime sets ``CLAUDE_CONFIG_DIR`` per profile on
-    every subprocess launch (``claude_runtime`` ``env["CLAUDE_CONFIG_DIR"]``).
-    """
-    with _CONFIG_DIR_LOCK:
-        previous = os.environ.get("CLAUDE_CONFIG_DIR")
-        os.environ["CLAUDE_CONFIG_DIR"] = config_dir
-        try:
-            yield
-        finally:
-            if previous is None:
-                os.environ.pop("CLAUDE_CONFIG_DIR", None)
-            else:
-                os.environ["CLAUDE_CONFIG_DIR"] = previous
 
 
 def normalize_message(message: object) -> JsonObject:
@@ -82,16 +57,16 @@ def _scrub_message(message: JsonObject) -> JsonObject:
     return {**message, "blocks": [_scrub_block(block) for block in blocks]}
 
 
-def read_session_history(
+async def read_session_history(
     *,
+    sdk_store: Any,
     sdk_session_id: str,
     workspace_dir: str | Path,
-    claude_config_dir: str | Path,
     scrub: bool = False,
     limit: Optional[int] = None,
     offset: int = 0,
 ) -> JsonObject:
-    """Read + project a session's conversation history from the SDK session transcript.
+    """从 committed SDK SessionStore 读取并投影会话历史。
 
     Reuses the claude-agent-sdk session API (``get_session_info`` / ``get_session_messages`` /
     ``list_subagents`` / ``get_subagent_messages``) so the agent's transcript stays the single
@@ -100,13 +75,27 @@ def read_session_history(
     import claude_agent_sdk as sdk  # lazy: heavy import, only needed for this read
 
     directory = str(workspace_dir)
-    with _claude_config_dir(str(claude_config_dir)):
-        info = sdk.get_session_info(sdk_session_id, directory=directory)
-        messages = sdk.get_session_messages(sdk_session_id, directory=directory, limit=limit, offset=offset)
-        subagent_messages = [
-            (agent_id, sdk.get_subagent_messages(sdk_session_id, agent_id, directory=directory))
-            for agent_id in sdk.list_subagents(sdk_session_id, directory=directory)
-        ]
+    info = await sdk.get_session_info_from_store(sdk_store, sdk_session_id, directory=directory)
+    messages = await sdk.get_session_messages_from_store(
+        sdk_store,
+        sdk_session_id,
+        directory=directory,
+        limit=limit,
+        offset=offset,
+    )
+    agent_ids = await sdk.list_subagents_from_store(sdk_store, sdk_session_id, directory=directory)
+    subagent_messages = [
+        (
+            agent_id,
+            await sdk.get_subagent_messages_from_store(
+                sdk_store,
+                sdk_session_id,
+                agent_id,
+                directory=directory,
+            ),
+        )
+        for agent_id in agent_ids
+    ]
 
     normalized = [normalize_message(message) for message in messages]
     subagents = [

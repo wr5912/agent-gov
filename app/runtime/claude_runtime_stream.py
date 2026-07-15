@@ -7,14 +7,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from .agent_job_runner import AgentJobRunner
-from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile
+from .agent_profiles import MAIN_AGENT_PROFILE, AgentRuntimeProfile, read_requires_web_hitl
+from .async_iterators import close_async_iterator
 from .claude_runtime import RuntimeQueryState
 from .claude_runtime_permissions import runtime_response_disposition
+from .claude_sdk_interactive import query_with_interactive_client
 from .json_types import JsonObject
 from .message_utils import to_plain
 from .response_disposition_control import permission_denial_reason, response_disposition_fields
 from .runtime_db import utc_now
 from .schemas import ChatRequest
+from .session_turn_lease import SessionTurnLeaseHeartbeat
 
 if TYPE_CHECKING:
     from .claude_runtime import ClaudeRuntime, RuntimeRequestContext
@@ -31,14 +34,17 @@ class StreamRun:
     root_metadata: JsonObject
     propagation: JsonObject
     final_output: JsonObject | None = None
-    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，finally 兜底，保证恰好一次
+    persisted: bool = False  # 幂等落库标志：ResultMessage 处先落库，非取消终止时 finally 兜底
+    persistence_attempted: bool = False
+    turn_heartbeat: SessionTurnLeaseHeartbeat | None = None
 
 
-def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
-    context = runtime._new_runtime_request_context(req, agent_id=profile.name)
+async def _new_stream_run(runtime: ClaudeRuntime, req: ChatRequest, profile: AgentRuntimeProfile) -> StreamRun:
+    context = await runtime._new_runtime_request_context(req, profile=profile, agent_id=profile.agent_id)
     web_hitl_enabled = bool(runtime.settings.enable_claude_web_hitl and runtime.user_input_service is not None)
     context.telemetry_input["claude_web_hitl_enabled"] = web_hitl_enabled
-    context.telemetry_input["permission_mode"] = "default"
+    if profile.requires_web_hitl:
+        context.telemetry_input["permission_mode"] = "default"
     return StreamRun(
         runtime=runtime,
         req=req,
@@ -57,10 +63,31 @@ async def stream_claude_runtime(
     *,
     profile: AgentRuntimeProfile | None = None,
 ) -> AsyncIterator[JsonObject]:
-    from claude_agent_sdk import ResultMessage, query
-
     selected_profile = profile or runtime.profiles[MAIN_AGENT_PROFILE]
-    stream_run = _new_stream_run(runtime, req, selected_profile)
+    stream_run = await _new_stream_run(runtime, req, selected_profile)
+    context = stream_run.request_context
+    heartbeat = SessionTurnLeaseHeartbeat(
+        runtime.session_store,
+        session_id=context.session.session_id,
+        run_id=context.run_id,
+        run_generation=context.run_generation,
+    )
+    stream_run.turn_heartbeat = heartbeat
+    async with heartbeat:
+        source = _stream_claimed_run(stream_run)
+        try:
+            async for event in source:
+                yield event
+        finally:
+            await close_async_iterator(source)
+
+
+async def _stream_claimed_run(stream_run: StreamRun) -> AsyncIterator[JsonObject]:
+    from claude_agent_sdk import ClaudeSDKClient, ResultMessage, query
+
+    runtime = stream_run.runtime
+    req = stream_run.req
+    selected_profile = stream_run.profile
     context = stream_run.request_context
     with runtime.langfuse.propagate_attributes(**stream_run.propagation):
         with runtime.langfuse.start_observation(
@@ -81,12 +108,31 @@ async def stream_claude_runtime(
             ) as generation:
                 runtime.langfuse.set_trace_attributes(generation, **stream_run.propagation)
                 event_queue: asyncio.Queue[JsonObject | None] = asyncio.Queue()
-                sdk_task = asyncio.create_task(_run_sdk_query(stream_run, event_queue, root_span, generation, query, ResultMessage))
-                async for event in _drain_stream_queue(stream_run, event_queue, sdk_task):
-                    yield event
-    runtime._flush_langfuse()
+                sdk_task = asyncio.create_task(
+                    _run_sdk_query(
+                        stream_run,
+                        event_queue,
+                        root_span,
+                        generation,
+                        query,
+                        ClaudeSDKClient,
+                        ResultMessage,
+                    )
+                )
+                source = _drain_stream_queue(stream_run, event_queue, sdk_task)
+                try:
+                    async for event in source:
+                        yield event
+                finally:
+                    await close_async_iterator(source)
+    await asyncio.to_thread(runtime._flush_langfuse)
     if stream_run.final_output is not None:
-        runtime._sync_langfuse_trace(context, stream_run.propagation, stream_run.final_output)
+        await asyncio.to_thread(
+            runtime._sync_langfuse_trace,
+            context,
+            stream_run.propagation,
+            stream_run.final_output,
+        )
 
 
 def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObject | None]) -> Any:
@@ -94,7 +140,7 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
 
     async def sdk_can_use_tool(tool_name: str, input_data: Any, sdk_context: Any) -> Any:
         response_disposition = runtime_response_disposition(stream_run.req)
-        denial = permission_denial_reason(stream_run.profile.name, tool_name, response_disposition)
+        denial = permission_denial_reason(stream_run.profile.agent_id, tool_name, response_disposition)
         if denial is not None:
             return PermissionResultDeny(message=denial)
         service = stream_run.runtime.user_input_service
@@ -104,7 +150,7 @@ def _sdk_tool_callback(stream_run: StreamRun, event_queue: asyncio.Queue[JsonObj
             return PermissionResultDeny(message=message)
         decision = await service.create_and_wait(
             event_queue=event_queue,
-            business_agent_id=stream_run.profile.name,
+            business_agent_id=stream_run.profile.agent_id,
             run_id=stream_run.request_context.run_id,
             api_session_id=stream_run.request_context.session.session_id,
             sdk_session_id=stream_run.query_state.sdk_session_id,
@@ -128,27 +174,35 @@ async def _emit_query_events(
     stream_run: StreamRun,
     event_queue: asyncio.Queue[JsonObject | None],
     query_func: Any,
+    sdk_client_factory: Any,
     result_message_type: type,
 ) -> None:
     runtime = stream_run.runtime
-    runtime.model_provider_router.ensure_agent_runtime_ready()
-    can_use_tool = _sdk_tool_callback(stream_run, event_queue)
-    options = runtime._build_options(
+    await asyncio.to_thread(runtime.model_provider_router.ensure_agent_runtime_ready)
+    native_ask_configured = await asyncio.to_thread(read_requires_web_hitl, stream_run.profile.workspace_dir)
+    can_use_tool = _sdk_tool_callback(stream_run, event_queue) if native_ask_configured else None
+    options = await asyncio.to_thread(
+        runtime._build_options,
         stream_run.req,
         stream_run.request_context.session,
+        context=stream_run.request_context,
         profile=stream_run.profile,
-        execution_mode="stream",
         can_use_tool=can_use_tool,
     )
-    # 只有实际存在 Web HITL 决策面时才保持输入流；否则兼容先消费完 prompt 再产出结果的传输实现。
-    input_done = asyncio.Event() if stream_run.web_hitl_enabled else None
-    prompt_stream = (
-        _single_prompt_stream_until_done(stream_run.request_context.prompt, input_done)
-        if input_done is not None
-        else AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt)
+    messages = (
+        query_with_interactive_client(
+            prompt=stream_run.request_context.prompt,
+            options=options,
+            sdk_client_factory=sdk_client_factory,
+        )
+        if can_use_tool is not None
+        else query_func(
+            prompt=AgentJobRunner.single_prompt_stream(stream_run.request_context.prompt),
+            options=options,
+        )
     )
     try:
-        async for msg in query_func(prompt=prompt_stream, options=options):
+        async for msg in messages:
             event, text, plain, is_result, result_errors = runtime._track_query_message(
                 msg,
                 stream_run.query_state,
@@ -156,20 +210,25 @@ async def _emit_query_events(
             )
             await event_queue.put({"event": "message", "data": {"event": event, "text": text, "raw": plain}})
             if is_result:
-                if input_done is not None:
-                    input_done.set()
+                if stream_run.query_state.mirror_errors:
+                    await asyncio.to_thread(
+                        _abort_stream_run,
+                        stream_run,
+                        terminal_status="failed",
+                        error=stream_run.query_state.mirror_errors[-1],
+                    )
+                    await event_queue.put(
+                        {
+                            "event": "error",
+                            "data": {"errors": list(stream_run.query_state.errors)},
+                        }
+                    )
+                    continue
                 # 落库先于 result 事件（-> response.completed），使 items/retrieve 在完成信号时刻即可查。
-                _persist_stream_run(stream_run)
+                await asyncio.to_thread(_persist_stream_run, stream_run)
                 await _publish_result_event(stream_run, event_queue, result_errors)
     finally:
-        if input_done is not None:
-            input_done.set()
-
-
-async def _single_prompt_stream_until_done(prompt: str, done: asyncio.Event) -> AsyncIterator[JsonObject]:
-    async for item in AgentJobRunner.single_prompt_stream(prompt):
-        yield item
-    await done.wait()
+        await close_async_iterator(messages)
 
 
 async def _publish_result_event(
@@ -180,7 +239,7 @@ async def _publish_result_event(
     runtime = stream_run.runtime
     context = stream_run.request_context
     state = stream_run.query_state
-    agent_activity = runtime.activity_extractor.agent_activity_payload(stream_run.req, state.messages)
+    agent_activity = runtime.activity_extractor.agent_activity_payload(state.messages)
     data: JsonObject = {
         "session_id": context.session.session_id,
         "sdk_session_id": state.sdk_session_id,
@@ -211,44 +270,64 @@ async def _run_sdk_query(
     root_span: Any,
     generation: Any,
     query_func: Any,
+    sdk_client_factory: Any,
     result_message_type: type,
 ) -> None:
+    cancelled = False
     try:
-        try:
-            await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
-        except Exception as exc:
-            if not stream_run.runtime._should_retry_without_sdk_resume(exc, stream_run.request_context, stream_run.query_state):
-                raise
-            stream_run.runtime._clear_stale_sdk_session(stream_run.request_context)
-            stream_run.query_state = RuntimeQueryState(sdk_session_id=None)
-            await _emit_query_events(stream_run, event_queue, query_func, result_message_type)
+        await _emit_query_events(stream_run, event_queue, query_func, sdk_client_factory, result_message_type)
+    except asyncio.CancelledError as exc:
+        cancelled = True
+        await asyncio.to_thread(
+            _abort_stream_run,
+            stream_run,
+            terminal_status="cancelled",
+            error=exc,
+        )
+        raise
     except Exception as exc:
         if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
             stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-            await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+            error_data: JsonObject = {"errors": list(stream_run.query_state.errors)}
+            error_code = getattr(exc, "error_code", None)
+            if isinstance(error_code, str) and error_code:
+                error_data["error_code"] = error_code
+                error_data["detail"] = str(exc)
+                error_details = getattr(exc, "error_details", None)
+                if isinstance(error_details, dict):
+                    error_data.update(error_details)
+                raw_output_json = getattr(exc, "raw_output_json", None)
+                if isinstance(raw_output_json, dict):
+                    error_data.update(raw_output_json)
+            await event_queue.put({"event": "error", "data": error_data})
     finally:
-        try:
-            await _complete_stream_run(stream_run, root_span, generation)
-        except Exception as exc:
-            if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
-                stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
-                await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+        if cancelled:
             if stream_run.runtime.user_input_service is not None:
                 stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
-        await event_queue.put({"event": "done", "data": "[DONE]"})
-        await event_queue.put(None)
+        else:
+            try:
+                await _complete_stream_run(stream_run, root_span, generation)
+            except Exception as exc:
+                if not stream_run.runtime._should_suppress_exception(exc, stream_run.query_state.errors):
+                    stream_run.query_state.errors.append(f"{exc.__class__.__name__}: {exc}")
+                    await event_queue.put({"event": "error", "data": {"errors": stream_run.query_state.errors}})
+                if stream_run.runtime.user_input_service is not None:
+                    stream_run.runtime.user_input_service.clear_run_grants(stream_run.request_context.run_id)
+            await event_queue.put({"event": "done", "data": "[DONE]"})
+            await event_queue.put(None)
 
 
 def _persist_stream_run(stream_run: StreamRun) -> None:
     """幂等落库：抽取 output + session save + record_run。
 
     在 ResultMessage 处（response.completed 之前）先调，使 items/retrieve 在完成信号时刻即可查；
-    ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）。
+    ``_complete_stream_run`` 的 finally 再兜底调（error/无 ResultMessage 路径）；客户端取消不落库。
     ``stream_run.persisted`` 保证一次流式请求恰好落库一次（session save 同时置 sdk_session_id+agent_id，
     满足 items 的 owning-agent 强校验，不会出现 sdk_session_id 已置而 agent_id 为空的 500 中间态）。
     """
-    if stream_run.persisted:
+    if stream_run.persisted or stream_run.persistence_attempted:
         return
+    stream_run.persistence_attempted = True
     runtime = stream_run.runtime
     answer, agent_activity, output = runtime._runtime_output_from_state(
         stream_run.req,
@@ -256,7 +335,35 @@ def _persist_stream_run(stream_run: StreamRun) -> None:
         stream_run.query_state,
     )
     stream_run.final_output = output
+    if stream_run.turn_heartbeat is not None:
+        stream_run.turn_heartbeat.stop()
     runtime._complete_runtime_request(stream_run.req, stream_run.request_context, stream_run.query_state, answer, agent_activity)
+    stream_run.persisted = True
+
+
+def _abort_stream_run(
+    stream_run: StreamRun,
+    *,
+    terminal_status: str,
+    error: BaseException | str,
+) -> None:
+    if stream_run.request_context.finalized or stream_run.request_context.finalization_attempted:
+        return
+    if stream_run.turn_heartbeat is not None:
+        stream_run.turn_heartbeat.stop()
+    answer, _, output = stream_run.runtime._runtime_output_from_state(
+        stream_run.req,
+        stream_run.request_context,
+        stream_run.query_state,
+    )
+    stream_run.final_output = output
+    stream_run.runtime._abort_runtime_request(
+        stream_run.req,
+        stream_run.request_context,
+        stream_run.query_state,
+        terminal_status=terminal_status,
+        error=error,
+    )
     stream_run.persisted = True
 
 
@@ -265,8 +372,23 @@ async def _complete_stream_run(
     root_span: Any,
     generation: Any,
 ) -> None:
+    await asyncio.to_thread(_complete_stream_run_sync, stream_run, root_span, generation)
+
+
+def _complete_stream_run_sync(
+    stream_run: StreamRun,
+    root_span: Any,
+    generation: Any,
+) -> None:
     runtime = stream_run.runtime
-    _persist_stream_run(stream_run)  # 幂等：is_result 已落则跳过；error/无 result 路径在此兜底
+    if stream_run.query_state.result_observed and not stream_run.query_state.mirror_errors:
+        _persist_stream_run(stream_run)
+    else:
+        _abort_stream_run(
+            stream_run,
+            terminal_status="failed",
+            error=(stream_run.query_state.mirror_errors[-1] if stream_run.query_state.mirror_errors else "SDK query ended without ResultMessage"),
+        )
     runtime._update_runtime_observations(
         root_span,
         generation,
@@ -308,8 +430,10 @@ async def _cancel_stream_task(stream_run: StreamRun, sdk_task: asyncio.Task[None
     if sdk_task.done():
         return
     service = stream_run.runtime.user_input_service
-    if service is not None:
-        await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
-    sdk_task.cancel()
-    with suppress(asyncio.CancelledError):
-        await sdk_task
+    try:
+        if service is not None:
+            await service.cancel_run(stream_run.request_context.run_id, decision="client_cancelled")
+    finally:
+        sdk_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await sdk_task

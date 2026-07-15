@@ -19,9 +19,9 @@ class AssetResponse(BaseModel):
 
 class AssetCreateRequest(BaseModel):
     agent_id: str = Field(description="归属业务 Agent。")
-    asset_type: str = Field(description="test_dataset / regression / methodology / execution / audit。")
+    asset_type: str = Field(description="methodology / execution / audit。测试数据集只能由专用采用 API 生成。")
     title: str = Field(description="资产标题。")
-    body: str = Field(default="", description="资产正文（方法论/回归用例/执行脚本/审计说明）。")
+    body: str = Field(default="", description="资产正文（方法论/执行脚本/审计说明）。")
     source_improvement_id: str = Field(default="", description="沉淀来源改进事项 ID（可空）。")
 
 

@@ -4,12 +4,9 @@ import type {
   AgentJobRecord,
   EvidencePackageFileRecord,
   EvidencePackageRecord,
-  EvalCaseRecord,
-  EvalCaseUpdateRequest,
   EvalRunRecord,
   FeedbackCaseCreateRequest,
   FeedbackCaseRecord,
-  FeedbackEvalCaseGenerateRequest,
   FeedbackFilters,
   FeedbackRunRecord,
   FeedbackSignalCreateRequest,
@@ -123,14 +120,6 @@ export function updateFeedbackSource(
   );
 }
 
-export function generateFeedbackSourceEvalCases(config: RuntimeClientConfig, payload: FeedbackEvalCaseGenerateRequest) {
-  return requestJson<AgentJobRecord>(config, "/api/feedback-sources/eval-cases/generate", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
 export function getFeedbackCases(config: RuntimeClientConfig, filters?: Pick<FeedbackFilters, "status" | "limit"> & { q?: string }) {
   return requestJson<FeedbackCaseRecord[]>(config, `/api/feedback-cases${feedbackQueryString(filters)}`);
 }
@@ -169,39 +158,15 @@ export function getEvidencePackageFile(config: RuntimeClientConfig, evidencePack
   );
 }
 
-export function syncFeedbackEvalDataset(config: RuntimeClientConfig, feedbackCaseId?: string) {
-  return requestJson<AgentJobRecord>(
-    config,
-    "/api/eval-datasets/feedback/sync",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ feedback_case_id: feedbackCaseId, limit: 500 }),
-    },
-  );
-}
-
-export function getEvalCases(config: RuntimeClientConfig, filters?: FeedbackFilters & { source_feedback_case_id?: string }) {
-  return requestJson<EvalCaseRecord[]>(config, `/api/eval-cases${feedbackQueryString(filters)}`);
-}
-
-export function updateEvalCase(config: RuntimeClientConfig, evalCaseId: string, payload: EvalCaseUpdateRequest) {
-  return requestJson<EvalCaseRecord>(config, `/api/eval-cases/${encodeURIComponent(evalCaseId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-}
-
 export function getEvalRuns(config: RuntimeClientConfig, filters?: FeedbackFilters & { agent_version_id?: string }) {
   return requestJson<EvalRunRecord[]>(config, `/api/eval-runs${feedbackQueryString(filters)}`);
 }
 
-export function createEvalRun(config: RuntimeClientConfig, evalCaseIds: string[] = []) {
+export function createEvalRun(config: RuntimeClientConfig, datasetId: string) {
   return requestJson<EvalRunRecord>(config, "/api/eval-runs", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ eval_case_ids: evalCaseIds }),
+    body: JSON.stringify({ dataset_id: datasetId }),
   });
 }
 
@@ -224,7 +189,6 @@ export async function getFeedbackWorkbenchData(
     events,
     pendingCorrelations,
     cases,
-    evalCases,
     evalRuns,
   ] = await Promise.all([
     optionalList(getFeedbackSources(config, { limit })),
@@ -233,7 +197,6 @@ export async function getFeedbackWorkbenchData(
     optionalList(getSocEvents(config, { limit })),
     optionalList(getPendingCorrelations(config, { limit })),
     optionalList(getFeedbackCases(config, { limit })),
-    optionalList(getEvalCases(config, { limit })),
     optionalList(getEvalRuns(config, { limit })),
   ]);
   return {
@@ -243,7 +206,6 @@ export async function getFeedbackWorkbenchData(
     events,
     pending_correlations: pendingCorrelations,
     cases,
-    eval_cases: evalCases,
     eval_runs: evalRuns,
   };
 }

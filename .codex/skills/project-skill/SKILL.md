@@ -10,7 +10,7 @@ license: "MIT-compatible adaptation with attribution"
 
 ## 来源与适配
 
-本技能结合团队通用环境、工作流和开发标准，并改写保留 `forrestchang/andrej-karpathy-skills` 的通用工程行为规则；项目专属补充应放在 `AGENTS.override.md`。
+本技能结合团队通用环境、工作流和开发标准，并改写保留 `forrestchang/andrej-karpathy-skills` 的通用工程行为规则；仓库稳定入口与项目不变量放在唯一根 `AGENTS.md`，按需流程留在专项 skill。
 
 来源仓库: https://github.com/forrestchang/andrej-karpathy-skills
 许可: MIT
@@ -19,8 +19,8 @@ license: "MIT-compatible adaptation with attribution"
 
 开始前：
 
-- 是否已经读过 `AGENTS.md` 和 `AGENTS.override.md`？
-- 是否已经读过 `.codex/rules/project.rules`、`architecture.rules` 和 `verify.rules`？
+- 是否已经读过唯一根 `AGENTS.md`？
+- 是否已经读过 `.codex/guidance/project.md`、`architecture.md` 和 `verify.md`？
 - 是否已经确认相关代码、配置、测试和文档？
 - 是否已经检查待修改文件的行数、类/函数/路由规模、复制风险、生命周期状态和 schema 表示？
 - 是否已经识别治理硬门暂未覆盖的结构风险？检查未报警不能替代架构判断。

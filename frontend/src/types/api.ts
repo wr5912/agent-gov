@@ -158,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-change-sets/{change_set_id}/regression-runs/{eval_run_id}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply an audited human review to the current regression EvalRun */
+        post: operations["review_agent_change_set_regression_api_agent_change_sets__change_set_id__regression_runs__eval_run_id__review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-change-sets/{change_set_id}/reject": {
         parameters: {
             query?: never;
@@ -169,6 +186,23 @@ export interface paths {
         put?: never;
         /** Reject an Agent change set */
         post: operations["reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agent-change-sets/{change_set_id}/worktree-cleanup/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retry durable worktree cleanup for a terminal Agent change set */
+        post: operations["retry_agent_change_set_worktree_cleanup_api_agent_change_sets__change_set_id__worktree_cleanup_retry_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -535,24 +569,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/automation-policy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get automation policy for a business agent */
-        get: operations["get_policy_api_automation_policy_get"];
-        /** Set automation policy mode (off/semi/full) */
-        put: operations["put_policy_api_automation_policy_put"];
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/chat": {
         parameters: {
             query?: never;
@@ -647,57 +663,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/eval-cases": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List feedback-derived eval cases */
-        get: operations["list_eval_cases_api_eval_cases_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/eval-cases/{eval_case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update one feedback-derived eval case */
-        patch: operations["update_eval_case_api_eval_cases__eval_case_id__patch"];
-        trace?: never;
-    };
-    "/api/eval-datasets/feedback/sync": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Queue processed feedback cases into reusable eval cases */
-        post: operations["sync_feedback_eval_dataset_api_eval_datasets_feedback_sync_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/eval-runs": {
         parameters: {
             query?: never;
@@ -708,7 +673,7 @@ export interface paths {
         /** List feedback dataset eval runs */
         get: operations["list_eval_runs_api_eval_runs_get"];
         put?: never;
-        /** Run a manual feedback dataset evaluation against the current main Agent */
+        /** Run a manual TestDataset evaluation against its owning business Agent */
         post: operations["create_eval_run_api_eval_runs_post"];
         delete?: never;
         options?: never;
@@ -888,23 +853,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/feedback-sources/eval-cases/generate": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Queue regression eval case generation for selected feedback sources */
-        post: operations["generate_feedback_source_eval_cases_api_feedback_sources_eval_cases_generate_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/feedback-sources/{source_kind}/{source_id}": {
         parameters: {
             query?: never;
@@ -1062,23 +1010,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/improvements/{improvement_id}/auto-advance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Auto-advance an improvement under its agent's automation policy */
-        post: operations["auto_advance_improvement_api_improvements__improvement_id__auto_advance_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/improvements/{improvement_id}/deletion-impact": {
         parameters: {
             query?: never;
@@ -1104,9 +1035,8 @@ export interface paths {
             cookie?: never;
         };
         /** Get execution record (404 if none) */
-        get: operations["get_exec_api_improvements__improvement_id__execution_get"];
-        /** Upsert execution record (result + applied changes + version, §107) */
-        put: operations["upsert_exec_api_improvements__improvement_id__execution_put"];
+        get: operations["get_execution_api_improvements__improvement_id__execution_get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1123,8 +1053,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Governor executes confirmed plan on isolated worktree → candidate Agent version (heuristic fallback) */
-        post: operations["apply_exec_api_improvements__improvement_id__execution_apply_post"];
+        /** Apply the confirmed plan in an isolated worktree and create a candidate Agent version */
+        post: operations["apply_execution_api_improvements__improvement_id__execution_apply_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1140,8 +1070,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm execution record */
-        post: operations["confirm_exec_api_improvements__improvement_id__execution_confirm_post"];
+        /** Confirm execution evidence bound to a candidate Agent version */
+        post: operations["confirm_execution_api_improvements__improvement_id__execution_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1192,7 +1122,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Transition an improvement item's stage (rejects illegal transitions with 409) */
+        /** Return an improvement item to an earlier refinement stage */
         post: operations["transition_improvement_api_improvements__improvement_id__lifecycle_post"];
         delete?: never;
         options?: never;
@@ -1210,8 +1140,7 @@ export interface paths {
         /** List closed-loop object links of an improvement (404 if unknown) */
         get: operations["list_links_api_improvements__improvement_id__links_get"];
         put?: never;
-        /** Link an improvement to a closed-loop object (attribution/plan/eval/change_set) */
-        post: operations["add_link_api_improvements__improvement_id__links_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1347,7 +1276,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get regression assessment (404 if none) */
-        get: operations["get_reg_api_improvements__improvement_id__regression_assessment_get"];
+        get: operations["get_regression_api_improvements__improvement_id__regression_assessment_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1365,8 +1294,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Confirm regression assessment (adopted as regression asset) */
-        post: operations["confirm_reg_api_improvements__improvement_id__regression_assessment_confirm_post"];
+        /** Confirm regression assessment for typed TestDataset adoption */
+        post: operations["confirm_regression_api_improvements__improvement_id__regression_assessment_confirm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1382,8 +1311,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Generate regression test cases via governor (heuristic fallback) */
-        post: operations["generate_reg_api_improvements__improvement_id__regression_assessment_generate_post"];
+        /** Generate regression assessment candidates through the governor */
+        post: operations["generate_regression_api_improvements__improvement_id__regression_assessment_generate_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1418,6 +1347,23 @@ export interface paths {
         put?: never;
         /** Split a source feedback ref out of this improvement into a new one */
         post: operations["split_improvement_api_improvements__improvement_id__split_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/improvements/{improvement_id}/test-dataset/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Adopt a typed TestDataset from a confirmed improvement regression chain */
+        post: operations["adopt_test_dataset_api_improvements__improvement_id__test_dataset_adopt_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1469,280 +1415,6 @@ export interface paths {
         put?: never;
         /** Resolve one pending feedback correlation */
         post: operations["resolve_pending_correlation_api_pending_correlations__pending_id__resolve_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List governed regression assets */
-        get: operations["list_regression_assets_api_regression_assets_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one governed regression asset */
-        get: operations["get_regression_asset_api_regression_assets__eval_case_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /** Update one governed regression asset */
-        patch: operations["update_regression_asset_api_regression_assets__eval_case_id__patch"];
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/archive": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Archive one regression asset */
-        post: operations["archive_regression_asset_api_regression_assets__eval_case_id__archive_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/governance-events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List governance audit events for one regression asset */
-        get: operations["list_regression_asset_governance_events_api_regression_assets__eval_case_id__governance_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/mark-flaky": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark one regression asset as flaky */
-        post: operations["mark_regression_asset_flaky_api_regression_assets__eval_case_id__mark_flaky_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/promote": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Promote one regression asset into the approved long-term suite */
-        post: operations["promote_regression_asset_api_regression_assets__eval_case_id__promote_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/revisions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List immutable revisions for one regression asset */
-        get: operations["list_regression_asset_revisions_api_regression_assets__eval_case_id__revisions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/supersede": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Supersede one regression asset with another asset */
-        post: operations["supersede_regression_asset_api_regression_assets__eval_case_id__supersede_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/regression-assets/{eval_case_id}/unmark-flaky": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Mark one regression asset as stable */
-        post: operations["unmark_regression_asset_flaky_api_regression_assets__eval_case_id__unmark_flaky_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List scenario packs */
-        get: operations["list_packs_api_scenario_packs_get"];
-        put?: never;
-        /** Create a scenario pack (capability domain) organizing governance assets */
-        post: operations["create_pack_api_scenario_packs_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/duplicates": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Detect duplicate scenario packs (by normalized name) with merge suggestions */
-        get: operations["detect_duplicates_api_scenario_packs_duplicates_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/{primary_id}/merge": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Merge duplicate scenario packs into a primary (references preserved, auditable) */
-        post: operations["merge_packs_api_scenario_packs__primary_id__merge_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/{scenario_pack_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get one scenario pack with its asset relationships */
-        get: operations["get_pack_api_scenario_packs__scenario_pack_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/{scenario_pack_id}/assets": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Associate agents/eval-cases/assets to a scenario pack (capability assembly) */
-        post: operations["associate_assets_api_scenario_packs__scenario_pack_id__assets_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/{scenario_pack_id}/copy": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** Copy a scenario pack as a reusable template (assets migratable/copyable) */
-        post: operations["copy_pack_api_scenario_packs__scenario_pack_id__copy_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/scenario-packs/{scenario_pack_id}/reuse-provenance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Cross-agent reuse provenance: source, scope, risk, methodology assets and per-agent eval report */
-        get: operations["reuse_provenance_api_scenario_packs__scenario_pack_id__reuse_provenance_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1871,6 +1543,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/test-datasets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List typed TestDatasets for one business agent */
+        get: operations["list_test_datasets_api_test_datasets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/test-datasets/{dataset_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one typed TestDataset in an Agent scope */
+        get: operations["get_test_dataset_api_test_datasets__dataset_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/test-datasets/{dataset_id}/lifecycle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Transition a TestDataset through its centralized lifecycle */
+        post: operations["transition_test_dataset_lifecycle_api_test_datasets__dataset_id__lifecycle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/test-datasets/{dataset_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List immutable lifecycle revisions for one typed TestDataset */
+        get: operations["list_test_dataset_revisions_api_test_datasets__dataset_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/health": {
         parameters: {
             query?: never;
@@ -1880,6 +1620,40 @@ export interface paths {
         };
         /** Check service health and discover API documentation URLs */
         get: operations["health_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Check API process liveness without external dependencies */
+        get: operations["liveness_health_live_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/health/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read cached model provider readiness without starting a probe */
+        get: operations["readiness_health_ready_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2081,10 +1855,41 @@ export interface components {
             /** Tag Name */
             tag_name?: string | null;
         };
+        /** AgentChangeSetRegressionReviewItemRequest */
+        AgentChangeSetRegressionReviewItemRequest: {
+            /** Dataset Case Id */
+            dataset_case_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /**
+             * Note
+             * @default
+             */
+            note: string;
+        };
+        /** AgentChangeSetRegressionReviewRequest */
+        AgentChangeSetRegressionReviewRequest: {
+            /** Decisions */
+            decisions: components["schemas"]["AgentChangeSetRegressionReviewItemRequest"][];
+            /** Operator */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /** Review Id */
+            review_id: string;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "current_eval_run";
+        };
         /** AgentChangeSetRegressionRunRequest */
         AgentChangeSetRegressionRunRequest: {
-            /** Eval Case Ids */
-            eval_case_ids?: string[] | null;
+            /** Dataset Id */
+            dataset_id: string;
         };
         /** AgentChangeSetResponse */
         AgentChangeSetResponse: {
@@ -2109,10 +1914,7 @@ export interface components {
             };
             /** Execution Job Id */
             execution_job_id?: string | null;
-            /** Latest Eval Run */
-            latest_eval_run?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
+            latest_eval_run?: components["schemas"]["EvalRunResponse"] | null;
             /** Latest Eval Run Id */
             latest_eval_run_id?: string | null;
             /** Latest Release Id */
@@ -2121,17 +1923,36 @@ export interface components {
             note?: string | null;
             /** Publication Blocker */
             publication_blocker?: string | null;
+            publication_error?: components["schemas"]["AgentPublicationErrorResponse"] | null;
+            /** Publication Provenance Blocker */
+            publication_provenance_blocker?: string | null;
+            regression_error?: components["schemas"]["AgentRegressionErrorResponse"] | null;
             /**
              * Schema Version
              * @default agent-change-set/v1
              */
             schema_version: string;
+            /** Source Attribution Id */
+            source_attribution_id?: string | null;
+            /** Source Attribution Status */
+            source_attribution_status?: string | null;
+            /** Source Improvement Id */
+            source_improvement_id?: string | null;
             /** Status */
             status: string;
             /** Title */
             title?: string | null;
             /** Updated At */
             updated_at: string;
+            /** Worktree Cleanup */
+            worktree_cleanup?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            } | null;
+            /**
+             * Worktree Cleanup Pending
+             * @default false
+             */
+            worktree_cleanup_pending: boolean;
             /** Worktree Path */
             worktree_path: string;
         } & {
@@ -2368,6 +2189,10 @@ export interface components {
          * @description 会话对象上的 AgentGov 扩展（session 专属、非 OpenAI 标准字段；OpenAI 客户端忽略）。
          */
         AgentGovConversationExtension: {
+            /** Active Run Expires At */
+            active_run_expires_at?: string | null;
+            /** Active Run Id */
+            active_run_id?: string | null;
             /** Agent Id */
             agent_id?: string | null;
             /** Sdk Session Id */
@@ -2386,19 +2211,6 @@ export interface components {
              * @default false
              */
             sdk_raw: boolean;
-        };
-        /** AgentGovHitl */
-        AgentGovHitl: {
-            /**
-             * Allow For Run
-             * @default false
-             */
-            allow_for_run: boolean;
-            /**
-             * Enabled
-             * @default false
-             */
-            enabled: boolean;
         };
         /**
          * AgentGovRequestExtension
@@ -2431,7 +2243,6 @@ export interface components {
              * @description RO-owned unique execution identifier.
              */
             execution_run_id?: string | null;
-            hitl?: components["schemas"]["AgentGovHitl"] | null;
             /**
              * Max Turns
              * @description Claude Code turn cap.
@@ -2584,6 +2395,20 @@ export interface components {
              */
             status: string;
         };
+        /** AgentPublicationErrorResponse */
+        AgentPublicationErrorResponse: {
+            /** Detail */
+            detail: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** AgentRegressionErrorResponse */
+        AgentRegressionErrorResponse: {
+            /** Error Type */
+            error_type: string;
+            /** Updated At */
+            updated_at: string;
+        };
         /** AgentReleaseResponse */
         AgentReleaseResponse: {
             /**
@@ -2603,6 +2428,8 @@ export interface components {
             created_at: string;
             /** Note */
             note?: string | null;
+            /** Previous Commit Sha */
+            previous_commit_sha?: string | null;
             /** Release Id */
             release_id: string;
             /** Rollback Of Release Id */
@@ -2612,6 +2439,8 @@ export interface components {
              * @default agent-release/v1
              */
             schema_version: string;
+            /** Source Improvement Id */
+            source_improvement_id?: string | null;
             /** Status */
             status: string;
             /** Tag Name */
@@ -2784,7 +2613,7 @@ export interface components {
             origin: string;
             /**
              * Requires Web Hitl
-             * @description 部署契约：为 true 时该 Agent 的响应处置执行（ask 型工具）依赖 ENABLE_CLAUDE_WEB_HITL；关闭时执行能力不可用（运行时 fail-loud）。
+             * @description 从 workspace project settings 的 permissions.ask 派生；为 true 时交互审批依赖 ENABLE_CLAUDE_WEB_HITL。
              * @default false
              */
             requires_web_hitl: boolean;
@@ -2806,12 +2635,12 @@ export interface components {
             agent_id: string;
             /**
              * Asset Type
-             * @description test_dataset / regression / methodology / execution / audit。
+             * @description methodology / execution / audit。测试数据集只能由专用采用 API 生成。
              */
             asset_type: string;
             /**
              * Body
-             * @description 资产正文（方法论/回归用例/执行脚本/审计说明）。
+             * @description 资产正文（方法论/执行脚本/审计说明）。
              * @default
              */
             body: string;
@@ -3000,40 +2829,6 @@ export interface components {
              */
             summary: string;
         };
-        /** AutoAdvanceResponse */
-        AutoAdvanceResponse: {
-            /**
-             * Applied Stages
-             * @description 本次自动推进经过的阶段序列。
-             */
-            applied_stages?: string[];
-            improvement: components["schemas"]["ImprovementItemResponse"];
-            /**
-             * Stopped Reason
-             * @description policy_off / archived / gate_confirmation / release_gate / terminal。
-             */
-            stopped_reason: string;
-        };
-        /** AutomationPolicyResponse */
-        AutomationPolicyResponse: {
-            /** Agent Id */
-            agent_id: string;
-            /**
-             * Mode
-             * @description off / semi / full。
-             */
-            mode: string;
-        };
-        /** AutomationPolicyUpdateRequest */
-        AutomationPolicyUpdateRequest: {
-            /** Agent Id */
-            agent_id: string;
-            /**
-             * Mode
-             * @description off / semi / full；非法值 400。
-             */
-            mode: string;
-        };
         /**
          * BusinessAgentTemplatesResponse
          * @description 业务 Agent 创建模板 catalog（可选 template_id 列表）。
@@ -3045,16 +2840,12 @@ export interface components {
         /**
          * ChatRequest
          * @example {
+         *       "agent_id": "main-agent",
          *       "max_turns": 8,
          *       "message": "请说明当前 workspace 中有哪些 subagents 和 skills"
          *     }
          */
         ChatRequest: {
-            /**
-             * Agent
-             * @description Legacy prompt hint for a subagent name; Claude Code discovers enabled subagents from project files.
-             */
-            agent?: string | null;
             /**
              * Agent Id
              * @description Business agent to run, e.g. 'main-agent' (the prebuilt default) or any id from /api/agent-registry. Required by /api/chat and /api/chat/stream — requests without it are rejected with 422.
@@ -3066,20 +2857,10 @@ export interface components {
              */
             alert_id?: string | null;
             /**
-             * Allowed Tools
-             * @description Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.
-             */
-            allowed_tools?: string[] | null;
-            /**
              * Case Id
              * @description Optional SOC case id used by the feedback loop.
              */
             case_id?: string | null;
-            /**
-             * Disallowed Tools
-             * @description Deprecated; not passed to Claude SDK execution. Configure tool permissions in .claude/settings.json.
-             */
-            disallowed_tools?: string[] | null;
             /**
              * Max Turns
              * @description Per-request turn cap. Defaults to MAX_TURNS.
@@ -3100,25 +2881,10 @@ export interface components {
              */
             model?: string | null;
             /**
-             * Permission Mode
-             * @description Deprecated for SDK execution; configure permission mode in .claude/settings.json.
-             */
-            permission_mode?: string | null;
-            /**
              * Session Id
              * @description Client-visible session id. If omitted, the API creates one.
              */
             session_id?: string | null;
-            /**
-             * Skills
-             * @description Legacy prompt hint for skill names; Claude Code discovers enabled skills from project files.
-             */
-            skills?: string[] | null;
-            /**
-             * Skills Mode
-             * @description Deprecated; not passed to Claude SDK execution.
-             */
-            skills_mode?: ("all" | "default" | "none") | null;
             /**
              * System Append
              * @description Extra instruction appended to the Claude Code preset prompt.
@@ -3324,7 +3090,7 @@ export interface components {
             /** Mappings */
             mappings: components["schemas"]["ConfigMappingItem"][];
             /** Setting Sources Effective */
-            setting_sources_effective?: string[] | null;
+            setting_sources_effective: string[];
         };
         /** Conversation */
         Conversation: {
@@ -3446,177 +3212,6 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /**
-         * DuplicateScenarioPackGroupResponse
-         * @description 一组规范化重名的疑似重复场景包及合并建议（AGV-023）。
-         */
-        DuplicateScenarioPackGroupResponse: {
-            /** Normalized Name */
-            normalized_name: string;
-            /** Scenario Pack Ids */
-            scenario_pack_ids: string[];
-            /** Suggested Primary Id */
-            suggested_primary_id: string;
-        };
-        /** EvalCaseAttributionSummaryResponse */
-        EvalCaseAttributionSummaryResponse: {
-            /** Actionability */
-            actionability?: string | null;
-            /** Confidence */
-            confidence?: string | null;
-            /** Optimization Object Type */
-            optimization_object_type?: string | null;
-            /** Problem Type */
-            problem_type?: string | null;
-            /** Rationale */
-            rationale?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** EvalCaseGovernanceEventResponse */
-        EvalCaseGovernanceEventResponse: {
-            /** Action */
-            action: string;
-            /** After */
-            after?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Before */
-            before?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Created At */
-            created_at: string;
-            /** Eval Case Id */
-            eval_case_id: string;
-            /** Event Id */
-            event_id: string;
-            /** Operator */
-            operator: string;
-            /** Reason */
-            reason: string;
-            /** Role */
-            role: string;
-        } & {
-            [key: string]: unknown;
-        };
-        /** EvalCaseOptimizationPlanSummaryResponse */
-        EvalCaseOptimizationPlanSummaryResponse: {
-            /** Changes */
-            changes?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            }[];
-            /** Risk Level */
-            risk_level?: string | null;
-            /** Summary */
-            summary?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** EvalCaseResponse */
-        EvalCaseResponse: {
-            /** Asset Layer */
-            asset_layer?: string | null;
-            attribution_summary?: components["schemas"]["EvalCaseAttributionSummaryResponse"] | null;
-            /** Blocking Policy */
-            blocking_policy?: string | null;
-            /** Checks Json */
-            checks_json?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Content Hash */
-            content_hash?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Eval Case Id */
-            eval_case_id: string;
-            /** Expected Behavior */
-            expected_behavior?: string | null;
-            /** Failure Rate */
-            failure_rate?: number | null;
-            /** Flaky Status */
-            flaky_status?: string | null;
-            /** Labels */
-            labels?: string[];
-            /** Last Result Status */
-            last_result_status?: string | null;
-            /** Last Run At */
-            last_run_at?: string | null;
-            optimization_plan_summary?: components["schemas"]["EvalCaseOptimizationPlanSummaryResponse"] | null;
-            /** Promotion Status */
-            promotion_status?: string | null;
-            /** Prompt */
-            prompt: string;
-            /** Scenario Pack */
-            scenario_pack?: string | null;
-            /** Schema Version */
-            schema_version?: string | null;
-            /** Severity */
-            severity?: string | null;
-            /** Source */
-            source?: string | null;
-            /** Source Feedback Case Id */
-            source_feedback_case_id?: string | null;
-            /** Source Id */
-            source_id?: string | null;
-            /** Source Kind */
-            source_kind?: string | null;
-            /** Source Refs */
-            source_refs?: components["schemas"]["FeedbackSourceRef"][];
-            /** Source Run Id */
-            source_run_id?: string | null;
-            source_summary?: components["schemas"]["EvalCaseSourceSummaryResponse"] | null;
-            /** Status */
-            status: string;
-            /** Superseded By Eval Case Id */
-            superseded_by_eval_case_id?: string | null;
-            /** Updated At */
-            updated_at: string;
-            /** Variant Role */
-            variant_role?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
-        /** EvalCaseRevisionResponse */
-        EvalCaseRevisionResponse: {
-            /** Content Hash */
-            content_hash?: string | null;
-            /** Created At */
-            created_at: string;
-            /** Created By */
-            created_by: string;
-            /** Eval Case Id */
-            eval_case_id: string;
-            /** Reason */
-            reason?: string | null;
-            /** Revision Id */
-            revision_id: string;
-            /** Revision Number */
-            revision_number: number;
-            /** Snapshot */
-            snapshot?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-        } & {
-            [key: string]: unknown;
-        };
-        /** EvalCaseSourceSummaryResponse */
-        EvalCaseSourceSummaryResponse: {
-            /** Comment */
-            comment?: string | null;
-            /** Feedback Comments */
-            feedback_comments?: string[];
-            /** Feedback Status */
-            feedback_status?: string | null;
-            /** Feedback Title */
-            feedback_title?: string | null;
-            /** Original Answer Summary */
-            original_answer_summary?: string | null;
-            /** Source Label */
-            source_label?: string | null;
-        } & {
-            [key: string]: unknown;
-        };
         /** EvalRunCheckResultResponse */
         EvalRunCheckResultResponse: {
             /** Detail */
@@ -3636,6 +3231,18 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** EvalRunGateResultResponse */
+        EvalRunGateResultResponse: {
+            /** Blocked Dataset Case Ids */
+            blocked_dataset_case_ids?: string[];
+            /** Note Dataset Case Ids */
+            note_dataset_case_ids?: string[];
+            /** Review Dataset Case Ids */
+            review_dataset_case_ids?: string[];
+            review_decision?: components["schemas"]["EvalRunReviewDecisionResponse"] | null;
+            /** Status */
+            status: string;
+        };
         /** EvalRunItemResponse */
         EvalRunItemResponse: {
             /** Agent Run Id */
@@ -3648,21 +3255,16 @@ export interface components {
             check_results?: components["schemas"]["EvalRunCheckResultResponse"][];
             /** Created At */
             created_at?: string | null;
+            /** Dataset Case Id */
+            dataset_case_id: string;
+            dataset_case_snapshot: components["schemas"]["TestCaseResponse"];
             error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
-            /** Eval Case Id */
-            eval_case_id: string;
-            /** Eval Case Snapshot */
-            eval_case_snapshot?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
             /** Eval Run Id */
             eval_run_id: string;
             /** Eval Run Item Id */
             eval_run_item_id: string;
             /** Score */
             score?: number | null;
-            /** Source Feedback Case Id */
-            source_feedback_case_id?: string | null;
             /** Status */
             status: string;
         } & {
@@ -3670,6 +3272,8 @@ export interface components {
         };
         /** EvalRunResponse */
         EvalRunResponse: {
+            /** Agent Id */
+            agent_id: string;
             /** Agent Version Id */
             agent_version_id?: string | null;
             /** Candidate Commit Sha */
@@ -3682,19 +3286,17 @@ export interface components {
             completed_at?: string | null;
             /** Created At */
             created_at: string;
+            /** Dataset Id */
+            dataset_id: string;
+            dataset_snapshot: components["schemas"]["TestDatasetResponse"];
             error_json?: components["schemas"]["FeedbackJobErrorResponse"] | null;
-            /** Eval Case Ids */
-            eval_case_ids?: string[];
             /** Eval Run Id */
             eval_run_id: string;
-            /** Gate Result */
-            gate_result?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Item Ids */
-            item_ids?: string[];
+            gate_result: components["schemas"]["EvalRunGateResultResponse"];
             /** Items */
             items?: components["schemas"]["EvalRunItemResponse"][];
+            /** Regression Attempt Id */
+            regression_attempt_id?: string | null;
             /** Result Status */
             result_status?: string | null;
             /** Source */
@@ -3704,6 +3306,39 @@ export interface components {
             summary?: components["schemas"]["EvalRunSummaryResponse"];
         } & {
             [key: string]: unknown;
+        };
+        /** EvalRunReviewDecisionResponse */
+        EvalRunReviewDecisionResponse: {
+            /** Created At */
+            created_at: string;
+            /** Items */
+            items: components["schemas"]["EvalRunReviewItemDecisionResponse"][];
+            /** Operator */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /** Review Id */
+            review_id: string;
+            /**
+             * Scope
+             * @constant
+             */
+            scope: "current_eval_run";
+        };
+        /** EvalRunReviewItemDecisionResponse */
+        EvalRunReviewItemDecisionResponse: {
+            /** Dataset Case Id */
+            dataset_case_id: string;
+            /**
+             * Decision
+             * @enum {string}
+             */
+            decision: "approve" | "reject";
+            /**
+             * Note
+             * @default
+             */
+            note: string;
         };
         /** EvalRunSummaryResponse */
         EvalRunSummaryResponse: {
@@ -3929,25 +3564,6 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** ExecutionUpsertRequest */
-        ExecutionUpsertRequest: {
-            /**
-             * Agent Version
-             * @description 生成的 Agent 版本标识。
-             * @default
-             */
-            agent_version: string;
-            /**
-             * Changes Applied
-             * @description 已应用变更要点。
-             */
-            changes_applied?: string[];
-            /**
-             * Summary
-             * @description 执行结果说明。
-             */
-            summary: string;
-        };
         /** FeedbackCaseCreateRequest */
         FeedbackCaseCreateRequest: {
             /**
@@ -3956,8 +3572,11 @@ export interface components {
              * @enum {string}
              */
             priority: "high" | "medium" | "low";
-            /** Source Ids */
-            source_ids?: string[];
+            /**
+             * Source Refs
+             * @description One or more typed feedback sources owned by the same business Agent.
+             */
+            source_refs: components["schemas"]["FeedbackSourceRef"][];
             /** Title */
             title?: string | null;
         };
@@ -4001,67 +3620,10 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** FeedbackEvalCaseGenerateRequest */
-        FeedbackEvalCaseGenerateRequest: {
-            /**
-             * Force
-             * @default false
-             */
-            force: boolean;
-            /** Source Refs */
-            source_refs?: components["schemas"]["FeedbackSourceRef"][];
-        };
-        /** FeedbackEvalCaseUpdateRequest */
-        FeedbackEvalCaseUpdateRequest: {
-            /** Asset Layer */
-            asset_layer?: ("candidate" | "targeted_regression" | "smoke" | "core_regression" | "scenario_pack" | "safety" | "historical_bug" | "exploratory") | null;
-            /** Blocking Policy */
-            blocking_policy?: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
-            /** Checks Json */
-            checks_json?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            } | null;
-            /** Expected Behavior */
-            expected_behavior?: string | null;
-            /** Flaky Status */
-            flaky_status?: ("stable" | "flaky") | null;
-            /** Labels */
-            labels?: string[] | null;
-            /** Operator */
-            operator?: string | null;
-            /** Promotion Status */
-            promotion_status?: ("candidate" | "needs_review" | "approved" | "rejected" | "superseded" | "archived") | null;
-            /** Prompt */
-            prompt?: string | null;
-            /** Reason */
-            reason?: string | null;
-            /** Role */
-            role?: string | null;
-            /** Scenario Pack */
-            scenario_pack?: string | null;
-            /** Severity */
-            severity?: string | null;
-            /** Status */
-            status?: ("active" | "draft" | "archived") | null;
-            /** Superseded By Eval Case Id */
-            superseded_by_eval_case_id?: string | null;
-            /** Variant Role */
-            variant_role?: string | null;
-        };
-        /** FeedbackEvalDatasetSyncRequest */
-        FeedbackEvalDatasetSyncRequest: {
-            /** Feedback Case Id */
-            feedback_case_id?: string | null;
-            /**
-             * Limit
-             * @default 100
-             */
-            limit: number;
-        };
         /** FeedbackEvalRunCreateRequest */
         FeedbackEvalRunCreateRequest: {
-            /** Eval Case Ids */
-            eval_case_ids?: string[];
+            /** Dataset Id */
+            dataset_id: string;
         };
         /** FeedbackJobErrorResponse */
         FeedbackJobErrorResponse: {
@@ -4200,8 +3762,6 @@ export interface components {
             comment?: string | null;
             /** Created At */
             created_at?: string | null;
-            /** Eval Case Id */
-            eval_case_id?: string | null;
             /** Feedback Case Id */
             feedback_case_id?: string | null;
             /** Id */
@@ -4366,7 +3926,7 @@ export interface components {
             alert_id: string;
             /**
              * Case Id
-             * @description 反馈归属的 Case ID。
+             * @description 反馈归属的业务 Case ID，不接受 FeedbackCase ID。
              * @default
              */
             case_id: string;
@@ -4396,7 +3956,7 @@ export interface components {
             session_id: string;
             /**
              * Source
-             * @description 来源：playground_run/feedback_inbox/trace 等。
+             * @description 通用反馈来源，例如 playground_run/trace；FeedbackCase 必须走专用挂接接口。
              * @default playground_run
              */
             source: string;
@@ -4484,19 +4044,6 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** ImprovementLinkRequest */
-        ImprovementLinkRequest: {
-            /**
-             * Kind
-             * @description 被引闭环对象类型：attribution/optimization_plan/eval_run/change_set/batch。
-             */
-            kind: string;
-            /**
-             * Ref Id
-             * @description 被引对象 ID。
-             */
-            ref_id: string;
-        };
         /** ImprovementLinkResponse */
         ImprovementLinkResponse: {
             /** Created At */
@@ -4544,6 +4091,79 @@ export interface components {
             stage: string;
         };
         JsonValue: unknown;
+        /** ModelProviderReadiness */
+        ModelProviderReadiness: {
+            /** Action */
+            action?: string | null;
+            /** Checked At */
+            checked_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Message */
+            message?: string | null;
+            /** Probe */
+            probe?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /** Retryable */
+            retryable?: boolean | null;
+            /** Route */
+            route?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "not_checked" | "checking" | "ready" | "degraded";
+            /** Status Code */
+            status_code?: number | null;
+        };
+        /** ModelProviderRouteHealth */
+        ModelProviderRouteHealth: {
+            /** Backend */
+            backend: string;
+            /** Claude Base Url */
+            claude_base_url?: string | null;
+            /** Formatter Api Base */
+            formatter_api_base?: string | null;
+            /** Formatter Model Prefix */
+            formatter_model_prefix?: string | null;
+            /** Provider Api Key Required */
+            provider_api_key_required: boolean;
+            /** Provider Endpoint */
+            provider_endpoint?: string | null;
+            /** Provider Endpoint Configured */
+            provider_endpoint_configured: boolean;
+            readiness: components["schemas"]["ModelProviderReadiness"];
+            /** Route */
+            route?: string | null;
+            /** Sidecar Base Url */
+            sidecar_base_url?: string | null;
+            /** Sidecar Required */
+            sidecar_required?: boolean | null;
+            version_probe?: components["schemas"]["ModelProviderVersionProbe"] | null;
+        };
+        /** ModelProviderVersionProbe */
+        ModelProviderVersionProbe: {
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Reason */
+            reason?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "skipped" | "succeeded" | "failed";
+            /** Status Code */
+            status_code?: number | null;
+            /** Version */
+            version?: string | null;
+        };
         /** NormalizedFeedbackResponse */
         NormalizedFeedbackResponse: {
             /** Created At */
@@ -4772,7 +4392,7 @@ export interface components {
              * Changes
              * @description 变更项列表。
              */
-            changes?: components["schemas"]["OptimizationChange"][];
+            changes: components["schemas"]["OptimizationChange"][];
             /**
              * Summary
              * @description 方案正文。
@@ -4861,57 +4481,6 @@ export interface components {
             summary: string;
             /** Updated At */
             updated_at: string;
-        };
-        /** RegressionAssetFlakyRequest */
-        RegressionAssetFlakyRequest: {
-            /**
-             * Operator
-             * @default system
-             */
-            operator: string;
-            /** Reason */
-            reason: string;
-            /**
-             * Role
-             * @default developer
-             */
-            role: string;
-        };
-        /** RegressionAssetGovernanceActionRequest */
-        RegressionAssetGovernanceActionRequest: {
-            /** Asset Layer */
-            asset_layer?: ("targeted_regression" | "smoke" | "core_regression" | "scenario_pack" | "safety" | "historical_bug" | "exploratory") | null;
-            /** Blocking Policy */
-            blocking_policy?: ("blocking" | "blocking_if_relevant" | "non_blocking") | null;
-            /**
-             * Operator
-             * @default system
-             */
-            operator: string;
-            /** Reason */
-            reason: string;
-            /**
-             * Role
-             * @default developer
-             */
-            role: string;
-        };
-        /** RegressionAssetSupersedeRequest */
-        RegressionAssetSupersedeRequest: {
-            /**
-             * Operator
-             * @default system
-             */
-            operator: string;
-            /** Reason */
-            reason: string;
-            /**
-             * Role
-             * @default developer
-             */
-            role: string;
-            /** Superseded By Eval Case Id */
-            superseded_by_eval_case_id: string;
         };
         /** RegressionCase */
         RegressionCase: {
@@ -5105,10 +4674,6 @@ export interface components {
             claude_web_hitl_enabled: boolean;
             /** Data Dir */
             data_dir: string;
-            /** Default Agent */
-            default_agent?: string | null;
-            /** Default Skills Mode */
-            default_skills_mode?: ("all" | "default" | "none") | null;
             docs: components["schemas"]["RuntimeDocsResponse"];
             /** Feedback Debug Evidence */
             feedback_debug_evidence: boolean;
@@ -5126,16 +4691,9 @@ export interface components {
             langfuse_public_key_configured: boolean;
             /** Langfuse Secret Key Configured */
             langfuse_secret_key_configured: boolean;
-            /** Legacy File Store Enabled */
-            legacy_file_store_enabled: boolean;
             /** Model */
             model?: string | null;
-            /** Model Provider Route */
-            model_provider_route?: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /** Programmatic Agents */
-            programmatic_agents: boolean;
+            model_provider_route: components["schemas"]["ModelProviderRouteHealth"];
             /** Provider Api Key Configured */
             provider_api_key_configured: boolean;
             /** Provider Api Url Configured */
@@ -5146,7 +4704,7 @@ export interface components {
             runtime_db_path: string;
             runtime_dependency_versions?: components["schemas"]["RuntimeDependencyVersions"];
             /** Setting Sources Effective */
-            setting_sources_effective?: string[] | null;
+            setting_sources_effective: string[];
             /** Status */
             status: string;
             /** Workspace Dir */
@@ -5154,169 +4712,27 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
-        /**
-         * ScenarioPackAgentValidation
-         * @description 跨 Agent 复用的单 Agent 验证结果（评估报告）。
-         */
-        ScenarioPackAgentValidation: {
-            /** Agent Id */
-            agent_id: string;
+        /** RuntimeLivenessResponse */
+        RuntimeLivenessResponse: {
+            /** Runtime Version */
+            runtime_version: string;
             /**
-             * Eval Runs
-             * @description 该 Agent 已完成的评估运行数。
-             * @default 0
+             * Status
+             * @default ok
+             * @constant
              */
-            eval_runs: number;
-            /**
-             * Latest Result Status
-             * @description 最近一次完成评估的结果状态。
-             */
-            latest_result_status?: string | null;
-            /**
-             * Passed Eval Runs
-             * @description 其中通过（passed/passed_with_notes）的评估运行数。
-             * @default 0
-             */
-            passed_eval_runs: number;
+            status: "ok";
         };
-        /** ScenarioPackAssociateRequest */
-        ScenarioPackAssociateRequest: {
+        /** RuntimeReadinessResponse */
+        RuntimeReadinessResponse: {
+            model_provider: components["schemas"]["ModelProviderReadiness"];
+            /** Runtime Version */
+            runtime_version: string;
             /**
-             * Agent Ids
-             * @description 装配该场景包的 Agent（追加）。
+             * Status
+             * @enum {string}
              */
-            agent_ids?: string[] | null;
-            /**
-             * Asset Refs
-             * @description 关联的资产引用（追加）。
-             */
-            asset_refs?: string[] | null;
-            /**
-             * Eval Case Ids
-             * @description 关联的 eval case（追加）。
-             */
-            eval_case_ids?: string[] | null;
-        };
-        /** ScenarioPackCopyRequest */
-        ScenarioPackCopyRequest: {
-            /**
-             * Name
-             * @description 复制出的新场景包名称。
-             */
-            name: string;
-        };
-        /** ScenarioPackCreateRequest */
-        ScenarioPackCreateRequest: {
-            /**
-             * Business Goal
-             * @description 场景包的业务目标。
-             * @default
-             */
-            business_goal: string;
-            /** Name */
-            name: string;
-            /**
-             * Risk Level
-             * @description 风险等级：low/medium/high。
-             * @default medium
-             */
-            risk_level: string;
-            /**
-             * Scope
-             * @description 适用范围。
-             * @default
-             */
-            scope: string;
-        };
-        /** ScenarioPackMergeRequest */
-        ScenarioPackMergeRequest: {
-            /**
-             * Duplicate Ids
-             * @description 并入主资产的重复场景包 id 列表。
-             */
-            duplicate_ids: string[];
-        };
-        /**
-         * ScenarioPackResponse
-         * @description 场景包/能力域（AGV-026/027）：业务目标+适用范围+风险等级，关联 Agent/eval/资产。
-         */
-        ScenarioPackResponse: {
-            /**
-             * Agent Ids
-             * @description 装配了该场景包能力的 Agent。
-             */
-            agent_ids?: string[];
-            /**
-             * Asset Refs
-             * @description 关联的 prompt/skill/SOP/发布准入规则等资产引用。
-             */
-            asset_refs?: string[];
-            /**
-             * Business Goal
-             * @default
-             */
-            business_goal: string;
-            /** Created At */
-            created_at: string;
-            /** Eval Case Ids */
-            eval_case_ids?: string[];
-            /**
-             * Merged Into
-             * @description 若被合并，指向主资产场景包 id（引用经此重定向，不丢失）。
-             */
-            merged_into?: string | null;
-            /** Name */
-            name: string;
-            /**
-             * Risk Level
-             * @default medium
-             */
-            risk_level: string;
-            /** Scenario Pack Id */
-            scenario_pack_id: string;
-            /**
-             * Scope
-             * @default
-             */
-            scope: string;
-        };
-        /**
-         * ScenarioPackReuseProvenanceResponse
-         * @description 场景包跨 Agent 复用记录（AGV-010/045）：来源、适用范围、风险、方法论资产与跨 Agent 评估报告。
-         */
-        ScenarioPackReuseProvenanceResponse: {
-            /**
-             * Methodology Asset Refs
-             * @description 可复用方法论资产引用（prompt/skill/SOP/发布策略）。
-             */
-            methodology_asset_refs?: string[];
-            /**
-             * Methodology Eval Case Ids
-             * @description 可复用评估用例（方法论资产）。
-             */
-            methodology_eval_case_ids?: string[];
-            /**
-             * Risk Level
-             * @description 复用风险等级。
-             */
-            risk_level: string;
-            /** Scenario Pack Id */
-            scenario_pack_id: string;
-            /**
-             * Scope Agent Ids
-             * @description 复用范围：装配该场景包的业务 Agent。
-             */
-            scope_agent_ids?: string[];
-            /**
-             * Source Pack Id
-             * @description 复用来源场景包（copied_from）；原创为 null。
-             */
-            source_pack_id?: string | null;
-            /**
-             * Validation
-             * @description 跨 Agent 评估报告：每个复用 Agent 保留独立评估结果。
-             */
-            validation?: components["schemas"]["ScenarioPackAgentValidation"][];
+            status: "ready" | "not_ready";
         };
         /** SessionDeleteResponse */
         SessionDeleteResponse: {
@@ -5327,6 +4743,10 @@ export interface components {
         };
         /** SessionInfo */
         SessionInfo: {
+            /** Active Run Expires At */
+            active_run_expires_at?: string | null;
+            /** Active Run Id */
+            active_run_id?: string | null;
             /** Agent Id */
             agent_id?: string | null;
             /** Created At */
@@ -5460,6 +4880,8 @@ export interface components {
             after?: {
                 [key: string]: components["schemas"]["JsonValue"];
             } | null;
+            /** Agent Id */
+            agent_id?: string | null;
             /** Alert Id */
             alert_id?: string | null;
             /**
@@ -5508,6 +4930,141 @@ export interface components {
             timestamp: string;
         } & {
             [key: string]: unknown;
+        };
+        /** TestCaseResponse */
+        TestCaseResponse: {
+            /** Case Id */
+            case_id: string;
+            /** Checkpoints */
+            checkpoints?: string[];
+            /** Expected Behavior */
+            expected_behavior: string;
+            /** Position */
+            position: number;
+            /** Prompt */
+            prompt: string;
+        };
+        /**
+         * TestDatasetAdoptRequest
+         * @description Adoption is derived from backend-owned improvement artifacts; no client fields are accepted.
+         */
+        TestDatasetAdoptRequest: Record<string, never>;
+        /** TestDatasetLifecycleRequest */
+        TestDatasetLifecycleRequest: {
+            /** Expected Revision */
+            expected_revision: number;
+            /** Operator */
+            operator: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Target State
+             * @enum {string}
+             */
+            target_state: "draft" | "active" | "evaluating" | "deprecated" | "archived";
+        };
+        /** TestDatasetProvenanceResponse */
+        TestDatasetProvenanceResponse: {
+            /** Attribution Id */
+            attribution_id: string;
+            /** Attribution Updated At */
+            attribution_updated_at: string;
+            /**
+             * Baseline Agent Version Id
+             * @default
+             */
+            baseline_agent_version_id: string;
+            /** Candidate Agent Version Id */
+            candidate_agent_version_id: string;
+            /** Execution Id */
+            execution_id: string;
+            /** Execution Updated At */
+            execution_updated_at: string;
+            /** Normalized Feedback Id */
+            normalized_feedback_id: string;
+            /** Normalized Feedback Updated At */
+            normalized_feedback_updated_at: string;
+            /** Optimization Plan Id */
+            optimization_plan_id: string;
+            /** Optimization Plan Updated At */
+            optimization_plan_updated_at: string;
+            /** Regression Assessment Id */
+            regression_assessment_id: string;
+            /** Regression Assessment Updated At */
+            regression_assessment_updated_at: string;
+            /** Source Feedback Ids */
+            source_feedback_ids?: string[];
+        };
+        /** TestDatasetResponse */
+        TestDatasetResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Cases */
+            cases: components["schemas"]["TestCaseResponse"][];
+            /** Created At */
+            created_at: string;
+            /** Dataset Id */
+            dataset_id: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Lifecycle State
+             * @enum {string}
+             */
+            lifecycle_state: "draft" | "active" | "evaluating" | "deprecated" | "archived";
+            /** Name */
+            name: string;
+            /** Owner Id */
+            owner_id: string;
+            /**
+             * Owner Kind
+             * @constant
+             */
+            owner_kind: "business_agent";
+            provenance: components["schemas"]["TestDatasetProvenanceResponse"];
+            /** Quality Tags */
+            quality_tags?: string[];
+            /** Revision */
+            revision: number;
+            /** Scope */
+            scope: string;
+            /** Source Improvement Id */
+            source_improvement_id: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /** TestDatasetRevisionResponse */
+        TestDatasetRevisionResponse: {
+            /** After */
+            after?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Before */
+            before?: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Created At */
+            created_at: string;
+            /** Dataset Id */
+            dataset_id: string;
+            /**
+             * Lifecycle State
+             * @enum {string}
+             */
+            lifecycle_state: "draft" | "active" | "evaluating" | "deprecated" | "archived";
+            /** Operator */
+            operator: string;
+            /** Previous Lifecycle State */
+            previous_lifecycle_state?: ("draft" | "active" | "evaluating" | "deprecated" | "archived") | null;
+            /** Reason */
+            reason: string;
+            /** Revision */
+            revision: number;
+            /** Revision Id */
+            revision_id: string;
         };
         /** ValidationError */
         ValidationError: {
@@ -6128,7 +5685,159 @@ export interface operations {
             };
         };
     };
+    review_agent_change_set_regression_api_agent_change_sets__change_set_id__regression_runs__eval_run_id__review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+                eval_run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetRegressionReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EvalRunResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Configured runtime or model/agent target is temporarily unavailable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+        };
+    };
     reject_agent_change_set_api_agent_change_sets__change_set_id__reject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_set_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentChangeSetActionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentChangeSetResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    retry_agent_change_set_worktree_cleanup_api_agent_change_sets__change_set_id__worktree_cleanup_retry_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -7198,7 +6907,7 @@ export interface operations {
                 case_id?: string | null;
                 agent_id?: string | null;
                 limit?: number;
-                /** @description Return full SDK messages and reconstructed assistant answer for Playground session restore. */
+                /** @description Include full SDK messages and reconstructed answer for explicit debug or audit inspection. */
                 include_messages?: boolean;
             };
             header?: never;
@@ -7574,107 +7283,6 @@ export interface operations {
             };
         };
     };
-    get_policy_api_automation_policy_get: {
-        parameters: {
-            query: {
-                /** @description 业务 Agent ID */
-                agent_id: string;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AutomationPolicyResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    put_policy_api_automation_policy_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["AutomationPolicyUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AutomationPolicyResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
     chat_api_chat_post: {
         parameters: {
             query?: never;
@@ -7953,183 +7561,6 @@ export interface operations {
             };
             /** @description Requested AgentGov resource was not found. */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    list_eval_cases_api_eval_cases_get: {
-        parameters: {
-            query?: {
-                status?: string | null;
-                source_feedback_case_id?: string | null;
-                asset_layer?: string | null;
-                promotion_status?: string | null;
-                blocking_policy?: string | null;
-                flaky_status?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    update_eval_case_api_eval_cases__eval_case_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackEvalCaseUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    sync_feedback_eval_dataset_api_eval_datasets_feedback_sync_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackEvalDatasetSyncRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentJobResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -8479,6 +7910,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
             /** @description Request conflicts with the current resource state. */
@@ -8870,66 +8310,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    generate_feedback_source_eval_cases_api_feedback_sources_eval_cases_generate_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackEvalCaseGenerateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AgentJobResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
             /** @description Request validation error or route-level semantic validation error. */
@@ -9751,73 +9131,6 @@ export interface operations {
             };
         };
     };
-    auto_advance_improvement_api_improvements__improvement_id__auto_advance_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                improvement_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["AutoAdvanceResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
     deletion_impact_api_improvements__improvement_id__deletion_impact_get: {
         parameters: {
             query?: never;
@@ -9867,7 +9180,7 @@ export interface operations {
             };
         };
     };
-    get_exec_api_improvements__improvement_id__execution_get: {
+    get_execution_api_improvements__improvement_id__execution_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -9916,78 +9229,7 @@ export interface operations {
             };
         };
     };
-    upsert_exec_api_improvements__improvement_id__execution_put: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                improvement_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ExecutionUpsertRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ExecutionResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    apply_exec_api_improvements__improvement_id__execution_apply_post: {
+    apply_execution_api_improvements__improvement_id__execution_apply_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -10063,7 +9305,7 @@ export interface operations {
             };
         };
     };
-    confirm_exec_api_improvements__improvement_id__execution_confirm_post: {
+    confirm_execution_api_improvements__improvement_id__execution_confirm_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -10431,84 +9673,6 @@ export interface operations {
             };
             /** @description Requested AgentGov resource was not found. */
             404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    add_link_api_improvements__improvement_id__links_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                improvement_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImprovementLinkRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ImprovementLinkResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11124,7 +10288,7 @@ export interface operations {
             };
         };
     };
-    get_reg_api_improvements__improvement_id__regression_assessment_get: {
+    get_regression_api_improvements__improvement_id__regression_assessment_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -11173,7 +10337,7 @@ export interface operations {
             };
         };
     };
-    confirm_reg_api_improvements__improvement_id__regression_assessment_confirm_post: {
+    confirm_regression_api_improvements__improvement_id__regression_assessment_confirm_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -11240,7 +10404,7 @@ export interface operations {
             };
         };
     };
-    generate_reg_api_improvements__improvement_id__regression_assessment_generate_post: {
+    generate_regression_api_improvements__improvement_id__regression_assessment_generate_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -11394,6 +10558,77 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImprovementItemResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    adopt_test_dataset_api_improvements__improvement_id__test_dataset_adopt_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                improvement_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestDatasetAdoptRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDatasetResponse"];
                 };
             };
             /** @description Business rule violation or malformed domain request. */
@@ -11606,1068 +10841,6 @@ export interface operations {
             };
         };
     };
-    list_regression_assets_api_regression_assets_get: {
-        parameters: {
-            query?: {
-                status?: string | null;
-                asset_layer?: string | null;
-                promotion_status?: string | null;
-                blocking_policy?: string | null;
-                scenario_pack?: string | null;
-                flaky_status?: string | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    get_regression_asset_api_regression_assets__eval_case_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    update_regression_asset_api_regression_assets__eval_case_id__patch: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FeedbackEvalCaseUpdateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    archive_regression_asset_api_regression_assets__eval_case_id__archive_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegressionAssetGovernanceActionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    list_regression_asset_governance_events_api_regression_assets__eval_case_id__governance_events_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseGovernanceEventResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    mark_regression_asset_flaky_api_regression_assets__eval_case_id__mark_flaky_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegressionAssetFlakyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    promote_regression_asset_api_regression_assets__eval_case_id__promote_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegressionAssetGovernanceActionRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    list_regression_asset_revisions_api_regression_assets__eval_case_id__revisions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseRevisionResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    supersede_regression_asset_api_regression_assets__eval_case_id__supersede_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegressionAssetSupersedeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    unmark_regression_asset_flaky_api_regression_assets__eval_case_id__unmark_flaky_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                eval_case_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegressionAssetFlakyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvalCaseResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    list_packs_api_scenario_packs_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    create_pack_api_scenario_packs_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScenarioPackCreateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    detect_duplicates_api_scenario_packs_duplicates_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DuplicateScenarioPackGroupResponse"][];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    merge_packs_api_scenario_packs__primary_id__merge_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                primary_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScenarioPackMergeRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    get_pack_api_scenario_packs__scenario_pack_id__get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenario_pack_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    associate_assets_api_scenario_packs__scenario_pack_id__assets_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenario_pack_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScenarioPackAssociateRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    copy_pack_api_scenario_packs__scenario_pack_id__copy_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenario_pack_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ScenarioPackCopyRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Successful Response */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackResponse"];
-                };
-            };
-            /** @description Business rule violation or malformed domain request. */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request conflicts with the current resource state. */
-            409: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
-    reuse_provenance_api_scenario_packs__scenario_pack_id__reuse_provenance_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                scenario_pack_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ScenarioPackReuseProvenanceResponse"];
-                };
-            };
-            /** @description Invalid or missing Bearer API key. */
-            401: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description Requested AgentGov resource was not found. */
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DomainErrorResponse"];
-                };
-            };
-            /** @description Request validation error or route-level semantic validation error. */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-        };
-    };
     list_sessions_api_sessions_get: {
         parameters: {
             query?: never;
@@ -12778,6 +10951,15 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
             /** @description Request validation error or route-level semantic validation error. */
             422: {
                 headers: {
@@ -12785,15 +10967,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description AgentGov data integrity error returned through the HTTP error envelope. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
         };
@@ -13120,6 +11293,272 @@ export interface operations {
             };
         };
     };
+    list_test_datasets_api_test_datasets_get: {
+        parameters: {
+            query: {
+                /** @description 权威业务 Agent 归属。 */
+                agent_id: string;
+                /** @description 按来源改进事项过滤。 */
+                source_improvement_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDatasetResponse"][];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    get_test_dataset_api_test_datasets__dataset_id__get: {
+        parameters: {
+            query: {
+                /** @description 权威业务 Agent 归属。 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDatasetResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    transition_test_dataset_lifecycle_api_test_datasets__dataset_id__lifecycle_post: {
+        parameters: {
+            query: {
+                /** @description 权威业务 Agent 归属。 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TestDatasetLifecycleRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDatasetResponse"];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
+    list_test_dataset_revisions_api_test_datasets__dataset_id__revisions_get: {
+        parameters: {
+            query: {
+                /** @description 权威业务 Agent 归属。 */
+                agent_id: string;
+            };
+            header?: never;
+            path: {
+                dataset_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestDatasetRevisionResponse"][];
+                };
+            };
+            /** @description Business rule violation or malformed domain request. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Invalid or missing Bearer API key. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HttpErrorResponse"];
+                };
+            };
+            /** @description Requested AgentGov resource was not found. */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
+            /** @description Request validation error or route-level semantic validation error. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
+                };
+            };
+        };
+    };
     health_health_get: {
         parameters: {
             query?: never;
@@ -13136,6 +11575,55 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RuntimeHealthResponse"];
+                };
+            };
+        };
+    };
+    liveness_health_live_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeLivenessResponse"];
+                };
+            };
+        };
+    };
+    readiness_health_ready_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeReadinessResponse"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RuntimeReadinessResponse"];
                 };
             };
         };
@@ -13436,8 +11924,8 @@ export interface operations {
             query?: {
                 after?: string | null;
                 limit?: number;
-                /** @description Chronological asc supported; desc reserved. */
-                order?: string;
+                /** @description Chronological order. */
+                order?: "asc";
                 /** @description OpenAI-shape passthrough; currently a no-op. */
                 include?: string | null;
             };
@@ -13476,6 +11964,15 @@ export interface operations {
                     "application/json": components["schemas"]["DomainErrorResponse"];
                 };
             };
+            /** @description Request conflicts with the current resource state. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DomainErrorResponse"];
+                };
+            };
             /** @description Request validation error or route-level semantic validation error. */
             422: {
                 headers: {
@@ -13483,15 +11980,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"] | components["schemas"]["HttpErrorResponse"];
-                };
-            };
-            /** @description AgentGov data integrity error returned through the HTTP error envelope. */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HttpErrorResponse"];
                 };
             };
         };

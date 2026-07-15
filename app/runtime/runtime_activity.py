@@ -4,12 +4,10 @@ import json
 from typing import Any, Optional
 
 from .collection_utils import unique_strings
-from .message_utils import to_plain
 from .json_types import JsonObject
-from .schemas import ChatRequest
-from .settings import AppSettings
+from .message_utils import to_plain
 
-# 开发调试观测面保留完整 I/O（CLAUDE.project.md §25），此上限只作 Langfuse 摄取安全阀，从宽。
+# 开发调试观测面保留完整 I/O（.claude/rules/agentgov-project.md），此上限只作 Langfuse 摄取安全阀，从宽。
 _LANGFUSE_IO_MAX_CHARS = 200_000
 
 
@@ -28,11 +26,7 @@ def _io_payload(value: Any) -> Any:
 class RuntimeActivityExtractor:
     """Extracts tool and skill activity from Claude SDK message payloads."""
 
-    def __init__(self, settings: AppSettings) -> None:
-        self.settings = settings
-
-    def agent_activity_payload(self, req: ChatRequest, messages: list[JsonObject]) -> JsonObject:
-        requested_skills = req.skills if req.skills is not None else self.settings.default_skills
+    def agent_activity_payload(self, messages: list[JsonObject]) -> JsonObject:
         tool_calls: list[JsonObject] = []
         tool_results: list[JsonObject] = []
         seen_calls: set[str] = set()
@@ -48,22 +42,10 @@ class RuntimeActivityExtractor:
                 if tool_result:
                     self._append_unique(tool_results, tool_result, seen_results)
 
-        tool_names = self._unique_strings(
-            name for call in tool_calls for name in [self._string_value(call.get("name"))] if name
-        )
-        skill_calls = [
-            skill_call
-            for call in tool_calls
-            for skill_call in [self._skill_call_from_tool_call(call)]
-            if skill_call
-        ]
+        tool_names = self._unique_strings(name for call in tool_calls for name in [self._string_value(call.get("name"))] if name)
+        skill_calls = [skill_call for call in tool_calls for skill_call in [self._skill_call_from_tool_call(call)] if skill_call]
 
         return {
-            "requested_skills": list(requested_skills or []),
-            "skills_mode": req.skills_mode or self.settings.default_skills_mode,
-            "allowed_tools": None,
-            "disallowed_tools": None,
-            "claude_config_source": "official_files",
             "tool_names": tool_names,
             "tool_calls": tool_calls,
             "tool_results": tool_results,
@@ -265,11 +247,7 @@ class RuntimeActivityExtractor:
         return entry
 
     def _tool_name(self, record: JsonObject) -> str | None:
-        direct = (
-            self._string_value(record.get("name"))
-            or self._string_value(record.get("tool_name"))
-            or self._string_value(record.get("toolName"))
-        )
+        direct = self._string_value(record.get("name")) or self._string_value(record.get("tool_name")) or self._string_value(record.get("toolName"))
         if direct:
             return direct
 
@@ -279,10 +257,7 @@ class RuntimeActivityExtractor:
         return None
 
     def _hook_event(self, record: JsonObject) -> str | None:
-        direct = (
-            self._string_value(record.get("hook_event_name"))
-            or self._string_value(record.get("hook_event"))
-        )
+        direct = self._string_value(record.get("hook_event_name")) or self._string_value(record.get("hook_event"))
         if direct:
             return direct
 

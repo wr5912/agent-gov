@@ -4,6 +4,8 @@ import json
 
 from sqlalchemy.engine import Connection
 
+from .runtime_db_base import utc_now
+
 AGENT_JOB_COLUMNS_WITHOUT_OUTPUT_CONTRACT = (
     "job_id",
     "job_type",
@@ -474,50 +476,307 @@ def migrate_0025_agent_governance_legacy_paths(connection: Connection) -> None:
 
 
 def migrate_0027_agent_registry_requires_web_hitl(connection: Connection) -> None:
-    """部署契约：业务 Agent 注册表加 requires_web_hitl（agent.yaml 声明其执行能力依赖 web HITL）。
+    """历史迁移：业务 Agent 注册表曾缓存 Web HITL 观测字段。
 
-    已存在行默认 0；启动 sync 按 profile.requires_web_hitl（读 workspace/agent.yaml）幂等校正。
+    0038 会删除该列；保留本步骤仅保证旧迁移序列可重复重放。
     """
     if "requires_web_hitl" not in _table_columns(connection, "agent_registry"):
         connection.exec_driver_sql("ALTER TABLE agent_registry ADD COLUMN requires_web_hitl BOOLEAN DEFAULT 0")
     connection.exec_driver_sql("UPDATE agent_registry SET requires_web_hitl = 0 WHERE requires_web_hitl IS NULL")
 
 
-def migrate_0028_response_disposition_claims(connection: Connection) -> None:
-    """Add the one-shot AgentGov approval consumption ledger.
+def migrate_0028_remove_improvement_automation_policy(connection: Connection) -> None:
+    """Delete the obsolete stage-only automation policy table."""
+    connection.exec_driver_sql("DROP TABLE IF EXISTS automation_policies")
 
-    The response orchestrator remains the playbook authority.  This table stores
-    only the minimal replay-prevention and execution-audit facts needed by the
-    AgentGov runtime.
-    """
+
+_IMPROVEMENT_STAGE_REPAIR_SQL = """
+UPDATE improvement_items
+SET improvement_stage = CASE
+        WHEN __RELEASE_CLAUSE__ THEN 'release'
+        WHEN EXISTS (
+            SELECT 1 FROM regression_assessments AS r
+            WHERE r.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(r.summary, '')) != ''
+              AND EXISTS (
+                SELECT 1 FROM json_each(COALESCE(r.cases_json, '[]')) AS regression_case
+                WHERE TRIM(COALESCE(json_extract(regression_case.value, '$.prompt'), '')) != ''
+              )
+        ) AND EXISTS (
+            SELECT 1 FROM execution_records AS e
+            WHERE e.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(e.summary, '')) != ''
+              AND (
+                (
+                  TRIM(COALESCE(e.change_set_id, '')) != ''
+                  AND TRIM(COALESCE(e.applied_agent_version_id, '')) != ''
+                  AND COALESCE(e.applied_diff_json, '{}') NOT IN ('{}', 'null', '')
+                )
+                OR (
+                  TRIM(COALESCE(e.agent_version, '')) != ''
+                  AND COALESCE(e.changes_applied_json, '[]') NOT IN ('[]', 'null', '')
+                )
+              )
+        ) THEN 'regression'
+        WHEN EXISTS (
+            SELECT 1 FROM execution_records AS e
+            WHERE e.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(e.summary, '')) != ''
+              AND (
+                (
+                  TRIM(COALESCE(e.change_set_id, '')) != ''
+                  AND TRIM(COALESCE(e.applied_agent_version_id, '')) != ''
+                  AND COALESCE(e.applied_diff_json, '{}') NOT IN ('{}', 'null', '')
+                )
+                OR (
+                  TRIM(COALESCE(e.agent_version, '')) != ''
+                  AND COALESCE(e.changes_applied_json, '[]') NOT IN ('[]', 'null', '')
+                )
+              )
+        ) THEN 'execution'
+        WHEN EXISTS (
+            SELECT 1 FROM optimization_plans AS p
+            WHERE p.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(p.summary, '')) != ''
+              AND EXISTS (
+                SELECT 1 FROM json_each(COALESCE(p.changes_json, '[]')) AS plan_change
+                WHERE TRIM(COALESCE(json_extract(plan_change.value, '$.target'), '')) != ''
+                  AND TRIM(COALESCE(json_extract(plan_change.value, '$.change'), '')) != ''
+              )
+        ) THEN 'optimization'
+        WHEN EXISTS (
+            SELECT 1 FROM attributions AS a
+            WHERE a.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(a.summary, '')) != ''
+        ) THEN 'attribution'
+        WHEN EXISTS (
+            SELECT 1 FROM normalized_feedbacks AS n
+            WHERE n.improvement_id = improvement_items.improvement_id
+              AND TRIM(COALESCE(n.problem, '')) != ''
+        ) THEN 'triage'
+        ELSE 'feedback_intake'
+    END,
+    improvement_status = CASE
+        WHEN improvement_status = 'archived' THEN 'archived'
+        WHEN __RELEASE_CLAUSE__ THEN 'done'
+        ELSE 'active'
+    END
+"""
+
+
+def migrate_0033_repair_improvement_stages_from_artifacts(connection: Connection) -> None:
+    """Repair stage/status shells left by the removed stage-only automation."""
+    required_tables = {
+        "improvement_items",
+        "normalized_feedbacks",
+        "attributions",
+        "optimization_plans",
+        "execution_records",
+        "regression_assessments",
+    }
+    if any(not _table_columns(connection, table) for table in required_tables):
+        return
+    release_clause = "0"
+    if {"status", "payload_json"}.issubset(_table_columns(connection, "agent_releases")):
+        release_clause = """
+            EXISTS (
+                SELECT 1 FROM agent_releases AS rel
+                WHERE rel.status = 'published'
+                  AND json_extract(rel.payload_json, '$.source_improvement_id') = improvement_items.improvement_id
+            )
+        """
+    connection.exec_driver_sql(_IMPROVEMENT_STAGE_REPAIR_SQL.replace("__RELEASE_CLAUSE__", release_clause))
+
+
+def migrate_0030_improvement_execution_intents(connection: Connection) -> None:
+    """补齐执行 intent/fencing，并把 improvement link 收口为幂等身份引用。"""
+    execution_columns = _table_columns(connection, "execution_records")
+    for column_name, ddl in {
+        "base_commit_sha": "VARCHAR(64) DEFAULT ''",
+        "source_optimization_plan_id": "VARCHAR(128) DEFAULT ''",
+        "source_optimization_plan_updated_at": "VARCHAR(64) DEFAULT ''",
+        "source_attribution_id": "VARCHAR(128) DEFAULT ''",
+        "source_attribution_updated_at": "VARCHAR(64) DEFAULT ''",
+        "claim_token": "VARCHAR(128) DEFAULT ''",
+        "claim_generation": "INTEGER DEFAULT 0",
+        "claim_expires_at": "VARCHAR(64) DEFAULT ''",
+    }.items():
+        if execution_columns and column_name not in execution_columns:
+            connection.exec_driver_sql(f"ALTER TABLE execution_records ADD COLUMN {column_name} {ddl}")
+    if _table_columns(connection, "improvement_links"):
+        connection.exec_driver_sql(
+            """
+            DELETE FROM improvement_links
+            WHERE rowid NOT IN (
+                SELECT MIN(rowid)
+                FROM improvement_links
+                GROUP BY improvement_id, kind, ref_id
+            )
+            """
+        )
+        connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_improvement_links_identity ON improvement_links (improvement_id, kind, ref_id)")
+
+
+def migrate_0032_improvement_execution_source_revisions(connection: Connection) -> None:
+    """Add source revisions separately for databases that already applied migration 0030."""
+    execution_columns = _table_columns(connection, "execution_records")
+    for column_name, ddl in {
+        "source_optimization_plan_id": "VARCHAR(128) DEFAULT ''",
+        "source_optimization_plan_updated_at": "VARCHAR(64) DEFAULT ''",
+        "source_attribution_id": "VARCHAR(128) DEFAULT ''",
+        "source_attribution_updated_at": "VARCHAR(64) DEFAULT ''",
+    }.items():
+        if execution_columns and column_name not in execution_columns:
+            connection.exec_driver_sql(f"ALTER TABLE execution_records ADD COLUMN {column_name} {ddl}")
+
+
+def _ensure_feedback_case_assignment_tables(connection: Connection) -> None:
     connection.exec_driver_sql(
         """
-        CREATE TABLE IF NOT EXISTS response_disposition_claims (
-            approval_request_id VARCHAR(256) NOT NULL PRIMARY KEY,
-            case_id VARCHAR(256) NOT NULL,
-            playbook_digest VARCHAR(64) NOT NULL,
-            execution_run_id VARCHAR(256) NOT NULL,
-            response_id VARCHAR(256),
-            agent_run_id VARCHAR(128),
-            status VARCHAR(32) NOT NULL,
-            create_authorized BOOLEAN NOT NULL DEFAULT 0,
-            manual_authorized BOOLEAN NOT NULL DEFAULT 0,
-            failure_reason VARCHAR(1024),
-            created_at VARCHAR(64) NOT NULL,
-            updated_at VARCHAR(64) NOT NULL,
-            completed_at VARCHAR(64),
-            UNIQUE (execution_run_id)
+        CREATE TABLE IF NOT EXISTS improvement_feedback_case_assignments (
+            feedback_case_id VARCHAR(128) PRIMARY KEY,
+            improvement_id VARCHAR(128) NOT NULL,
+            feedback_id VARCHAR(128) NOT NULL UNIQUE,
+            agent_id VARCHAR(128) NOT NULL,
+            created_at VARCHAR(64) NOT NULL
         )
         """
     )
-    for statement in (
-        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claim_status ON response_disposition_claims (status, created_at)",
-        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claim_case ON response_disposition_claims (case_id, created_at)",
-        "CREATE UNIQUE INDEX IF NOT EXISTS ix_response_disposition_claims_execution_run_id ON response_disposition_claims (execution_run_id)",
-        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claims_response_id ON response_disposition_claims (response_id)",
-        "CREATE INDEX IF NOT EXISTS ix_response_disposition_claims_agent_run_id ON response_disposition_claims (agent_run_id)",
-    ):
-        connection.exec_driver_sql(statement)
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS improvement_feedback_case_assignment_conflicts (
+            feedback_id VARCHAR(128) PRIMARY KEY,
+            feedback_case_id VARCHAR(128) NOT NULL,
+            improvement_id VARCHAR(128) NOT NULL,
+            agent_id VARCHAR(128) NOT NULL,
+            detected_at VARCHAR(64) NOT NULL
+        )
+        """
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_improvement_feedback_case_assignments_improvement_id ON improvement_feedback_case_assignments (improvement_id)"
+    )
+    connection.exec_driver_sql(
+        "CREATE INDEX IF NOT EXISTS ix_improvement_feedback_case_assignments_agent_id ON improvement_feedback_case_assignments (agent_id)"
+    )
+
+
+def _repair_feedback_case_assignment_conflicts(connection: Connection) -> bool:
+    feedback_columns = _table_columns(connection, "improvement_feedbacks")
+    required_feedback = {"feedback_id", "improvement_id", "agent_id", "source", "case_id", "created_at"}
+    if not required_feedback.issubset(feedback_columns):
+        return False
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO improvement_feedback_case_assignments
+            (feedback_case_id, improvement_id, feedback_id, agent_id, created_at)
+        SELECT case_id, improvement_id, feedback_id, agent_id, created_at
+        FROM improvement_feedbacks
+        WHERE source = 'feedback_inbox' AND case_id IS NOT NULL AND case_id != ''
+        ORDER BY created_at ASC, feedback_id ASC
+        """
+    )
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO improvement_feedback_case_assignment_conflicts
+            (feedback_id, feedback_case_id, improvement_id, agent_id, detected_at)
+        SELECT f.feedback_id, f.case_id, f.improvement_id, f.agent_id, ?
+        FROM improvement_feedbacks AS f
+        LEFT JOIN improvement_feedback_case_assignments AS a ON a.feedback_id = f.feedback_id
+        WHERE f.source = 'feedback_inbox' AND f.case_id IS NOT NULL AND f.case_id != ''
+          AND a.feedback_id IS NULL
+        """,
+        (utc_now(),),
+    )
+    connection.exec_driver_sql(
+        """
+        UPDATE improvement_feedbacks
+        SET source = 'feedback_inbox_conflict_snapshot', status = 'standalone', case_id = ''
+        WHERE feedback_id IN (SELECT feedback_id FROM improvement_feedback_case_assignment_conflicts)
+        """
+    )
+    return True
+
+
+def _rebuild_feedback_case_item_refs(connection: Connection) -> None:
+    item_columns = _table_columns(connection, "improvement_items")
+    if not {"improvement_id", "source_feedback_refs_json"}.issubset(item_columns):
+        return
+    assignments = connection.exec_driver_sql("SELECT feedback_case_id, improvement_id FROM improvement_feedback_case_assignments").fetchall()
+    owner_by_case = {str(case_id): str(improvement_id) for case_id, improvement_id in assignments}
+    assigned_case_ids = set(owner_by_case)
+    rows = connection.exec_driver_sql("SELECT improvement_id, source_feedback_refs_json FROM improvement_items").fetchall()
+    for improvement_id, raw_refs in rows:
+        refs = [ref for ref in _json_string_list(raw_refs) if ref not in assigned_case_ids]
+        refs.extend(case_id for case_id, owner_id in owner_by_case.items() if owner_id == str(improvement_id) and case_id not in refs)
+        connection.exec_driver_sql(
+            "UPDATE improvement_items SET source_feedback_refs_json = ? WHERE improvement_id = ?",
+            (json.dumps(refs, ensure_ascii=False), improvement_id),
+        )
+
+
+def migrate_0031_feedback_case_assignments(connection: Connection) -> None:
+    """Backfill unique FeedbackCase ownership and rebuild its item-ref projection."""
+    _ensure_feedback_case_assignment_tables(connection)
+    if _repair_feedback_case_assignment_conflicts(connection):
+        _rebuild_feedback_case_item_refs(connection)
+
+
+def migrate_0034_repair_feedback_case_assignments(connection: Connection) -> None:
+    """Re-run the idempotent ownership repair for databases that recorded the initial 0031."""
+    migrate_0031_feedback_case_assignments(connection)
+
+
+def migrate_0035_session_active_run_lease(connection: Connection) -> None:
+    """Fence session deletion and concurrent turns while an SDK query is active."""
+    session_columns = _table_columns(connection, "sessions")
+    for column_name, ddl in {
+        "active_run_id": "VARCHAR(128)",
+        "active_run_expires_at": "VARCHAR(64)",
+    }.items():
+        if session_columns and column_name not in session_columns:
+            connection.exec_driver_sql(f"ALTER TABLE sessions ADD COLUMN {column_name} {ddl}")
+    if session_columns:
+        connection.exec_driver_sql(
+            "CREATE INDEX IF NOT EXISTS ix_sessions_active_run_id ON sessions (active_run_id)"
+        )
+
+def migrate_0029_agent_release_tag_claims(connection: Connection) -> None:
+    """Persist one release-tag owner per Agent while preserving conflicting legacy rows for audit."""
+    connection.exec_driver_sql(
+        """
+        CREATE TABLE IF NOT EXISTS agent_release_tag_claims (
+            agent_id VARCHAR(128) NOT NULL,
+            tag_name VARCHAR(256) NOT NULL,
+            change_set_id VARCHAR(128) NOT NULL,
+            release_id VARCHAR(128) NOT NULL,
+            created_at VARCHAR(64) NOT NULL,
+            PRIMARY KEY (agent_id, tag_name)
+        )
+        """
+    )
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_release_tag_claims_change_set ON agent_release_tag_claims (change_set_id)")
+    connection.exec_driver_sql("CREATE UNIQUE INDEX IF NOT EXISTS ux_agent_release_tag_claims_release ON agent_release_tag_claims (release_id)")
+    release_columns = _table_columns(connection, "agent_releases")
+    required = {"agent_id", "tag_name", "change_set_id", "release_id", "created_at"}
+    if not required.issubset(release_columns):
+        return
+    connection.exec_driver_sql(
+        """
+        INSERT OR IGNORE INTO agent_release_tag_claims
+            (agent_id, tag_name, change_set_id, release_id, created_at)
+        SELECT
+            COALESCE(NULLIF(agent_id, ''), 'main-agent'),
+            tag_name,
+            change_set_id,
+            release_id,
+            created_at
+        FROM agent_releases
+        WHERE tag_name IS NOT NULL AND tag_name != ''
+          AND change_set_id IS NOT NULL AND change_set_id != ''
+        ORDER BY created_at ASC, release_id ASC
+        """
+    )
 
 
 def _json_string_list(value: object) -> list[str]:

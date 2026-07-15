@@ -16,3 +16,13 @@
 | `docs/反馈闭环机制全景画像.md` | `docs/archive/obsolete/反馈闭环机制全景画像.md` | `docs/反馈闭环当前实现基线.md` | `2026-06-23` |
 | `docs/反馈闭环长期回归资产升级方案.md` 旧完整稿 | `docs/archive/obsolete/反馈闭环长期回归资产升级方案_旧完整稿.md` | `docs/反馈闭环长期回归资产升级方案.md` | `2026-06-23` |
 | `docs/design_review_report/反馈闭环长期回归资产升级方案评审报告.md` | `docs/archive/design/反馈闭环长期回归资产升级方案评审报告.md` | `docs/反馈闭环长期回归资产升级方案.md` | `2026-06-23` |
+| `docs/engineering/Claude原生业务Agent人类确认机制整改实现方案.md` | `docs/archive/design/Claude原生业务Agent人类确认机制整改实现方案.md` | `docs/AgentGov集成指南.md` | `2026-07-10` |
+| `docs/engineering/Claude原生业务Agent人类确认机制对抗审查整改计划.md` | `docs/archive/design/Claude原生业务Agent人类确认机制对抗审查整改计划.md` | `docs/AgentGov集成指南.md` | `2026-07-10` |
+| `docs/engineering/AgentGov目标达成分阶段执行计划.md` | `docs/archive/design/AgentGov目标达成分阶段执行计划.md` | `docs/AgentGov核心功能测试用例.md` | `2026-07-10` |
+| `docs/多业务Agent治理基座设计.md` | `docs/archive/design/多业务Agent治理基座设计.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
+| `docs/Agent版本治理与Diff对比重构方案.md` | `docs/archive/design/Agent版本治理与Diff对比重构方案.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
+| `docs/engineering/Governor合并设计.md` | `docs/archive/design/Governor合并设计.md` | `docs/反馈闭环当前实现基线.md` | `2026-07-10` |
+
+## 归档图片资产
+
+- `docs/archive/assets/0601反馈优化闭环机制全景图.png`：仅用于归档文档 `反馈闭环机制全景画像.md` 的历史全景图。

@@ -43,7 +43,7 @@ def test_restart_script_uses_full_compose_stack_without_rebuilding_or_pulling() 
     text = _script_text()
 
     assert "--profile langfuse down --remove-orphans" in text
-    assert "--profile langfuse up -d --force-recreate --no-build --pull never" in text
+    assert "--profile langfuse up -d --wait --wait-timeout 180 --remove-orphans --force-recreate --no-build --pull never" in text
     assert "container_name_prefix=$(read_env CONTAINER_NAME_PREFIX agent-gov)" in text
     assert 'docker ps -aq --filter "name=${container_name_prefix}-"' in text
     assert 'docker ps -aq --filter "name=agent-gov"' not in text
@@ -71,7 +71,9 @@ def test_restart_script_reuses_container_runtime_root_and_python_health_checks()
     assert "runtime_root=$(expand_remote_value" in text
     assert "HOST_RUNTIME_VOLUME_ROOT" in text
     assert "from urllib.request import Request, urlopen" in text
-    assert '("API health", "http://127.0.0.1:${host_port}/health", 60, True)' in text
+    assert '("API liveness", "http://127.0.0.1:${host_port}/health/live", 60, True)' in text
     assert '("UI", "http://127.0.0.1:${frontend_port}", 60, False)' in text
     assert '("Langfuse", "http://127.0.0.1:${langfuse_port}", 90, False)' in text
     assert "curl " not in text
+    assert "diagnose_runtime_health.py" in text
+    assert "bash scripts/compose_diagnose.sh" in text

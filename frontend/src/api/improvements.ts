@@ -8,8 +8,6 @@ import type { RuntimeClientConfig } from "../types/runtime";
 export type ImprovementItem = components["schemas"]["ImprovementItemResponse"];
 export type ImprovementCreateRequest = components["schemas"]["ImprovementCreateRequest"];
 export type ImprovementStageTransitionRequest = components["schemas"]["ImprovementStageTransitionRequest"];
-export type AutomationPolicy = components["schemas"]["AutomationPolicyResponse"];
-export type AutoAdvanceResult = components["schemas"]["AutoAdvanceResponse"];
 export type ImprovementSimilarItem = components["schemas"]["ImprovementSimilarItem"];
 export type ImprovementLink = components["schemas"]["ImprovementLinkResponse"];
 export type NormalizedFeedback = components["schemas"]["NormalizedFeedbackResponse"];
@@ -87,9 +85,6 @@ export function generateOptimizationPlan(config: RuntimeClientConfig, id: string
 export function getExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`);
 }
-export function upsertExecution(config: RuntimeClientConfig, id: string, body: components["schemas"]["ExecutionUpsertRequest"]) {
-  return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution`, { method: "PUT", headers: jsonHeaders, body: JSON.stringify(body) });
-}
 export function confirmExecution(config: RuntimeClientConfig, id: string) {
   return requestJson<ExecutionRecord>(config, `/api/improvements/${encodeURIComponent(id)}/execution/confirm`, { method: "POST", headers: jsonHeaders });
 }
@@ -110,14 +105,6 @@ export function confirmRegressionAssessment(config: RuntimeClientConfig, id: str
 
 export function listImprovementLinks(config: RuntimeClientConfig, improvementId: string) {
   return requestJson<ImprovementLink[]>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`);
-}
-
-export function addImprovementLink(config: RuntimeClientConfig, improvementId: string, kind: string, refId: string) {
-  return requestJson<ImprovementLink>(config, `/api/improvements/${encodeURIComponent(improvementId)}/links`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind, ref_id: refId }),
-  });
 }
 
 export function findSimilarImprovements(config: RuntimeClientConfig, improvementId: string) {
@@ -174,26 +161,6 @@ export function archiveImprovement(config: RuntimeClientConfig, improvementId: s
   return requestJson<ImprovementItem>(
     config,
     `/api/improvements/${encodeURIComponent(improvementId)}/archive`,
-    { method: "POST", headers: { "Content-Type": "application/json" } },
-  );
-}
-
-export function getAutomationPolicy(config: RuntimeClientConfig, agentId: string) {
-  return requestJson<AutomationPolicy>(config, `/api/automation-policy?agent_id=${encodeURIComponent(agentId)}`);
-}
-
-export function setAutomationPolicy(config: RuntimeClientConfig, agentId: string, mode: string) {
-  return requestJson<AutomationPolicy>(config, "/api/automation-policy", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ agent_id: agentId, mode }),
-  });
-}
-
-export function autoAdvanceImprovement(config: RuntimeClientConfig, improvementId: string) {
-  return requestJson<AutoAdvanceResult>(
-    config,
-    `/api/improvements/${encodeURIComponent(improvementId)}/auto-advance`,
     { method: "POST", headers: { "Content-Type": "application/json" } },
   );
 }

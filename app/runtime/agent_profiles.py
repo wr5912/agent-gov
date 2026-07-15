@@ -1,31 +1,30 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
-
-import yaml
 
 from .agent_paths import InvalidAgentId, business_agent_layout, business_agents_root, validate_agent_id
 from .settings import AppSettings
 
 
 def read_requires_web_hitl(workspace_dir: Path) -> bool:
-    """读 workspace/agent.yaml 的部署契约 ``requires_web_hitl``（顶层或 ``agent.`` 下），缺失/异常按 False。"""
-    path = workspace_dir / "agent.yaml"
+    """从 Claude 原生 project settings 派生是否存在需要 Web HITL 的 ``ask`` 规则。"""
+    path = workspace_dir / ".claude" / "settings.json"
     if not path.exists():
         return False
     try:
-        loaded = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    except Exception:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
         return False
     if not isinstance(loaded, dict):
         return False
-    agent = loaded.get("agent")
-    value = agent.get("requires_web_hitl") if isinstance(agent, dict) else None
-    if value is None:
-        value = loaded.get("requires_web_hitl")
-    return value is True
+    permissions = loaded.get("permissions")
+    if not isinstance(permissions, dict):
+        return False
+    ask = permissions.get("ask")
+    return isinstance(ask, list) and any(isinstance(rule, str) and rule.strip() for rule in ask)
 
 
 AgentRole = Literal[
@@ -58,42 +57,10 @@ PROFILE_VERSION_IDS: dict[AgentRole, str] = {
 }
 
 
-def _business_agent_readable_paths(settings: AppSettings, workspace_dir: Path) -> tuple[Path, ...]:
-    return (
-        workspace_dir,
-        settings.data_dir / "uploads",
-        settings.data_dir / "outputs",
-        settings.data_dir / "soc-events",
-        settings.data_dir / "agent-memory",
-    )
-
-
-def _business_agent_denied_paths(
-    settings: AppSettings,
-    *,
-    agent_id: str,
-    claude_root: Path,
-    deny_version_base: bool,
-) -> tuple[Path, ...]:
-    layout = business_agent_layout(settings.data_dir, agent_id)
-    denied = [
-        settings.governor_claude_root,
-        claude_root,
-        settings.data_dir / "agent-governance",
-        settings.data_dir / ".runtime-tmp",
-        settings.runtime_db_path,
-        settings.data_dir / "runtime.sqlite3-wal",
-        settings.data_dir / "runtime.sqlite3-shm",
-        settings.data_dir / "runtime.sqlite3.schema.lock",
-    ]
-    if deny_version_base:
-        denied.append(layout.version_base)
-    return tuple(denied)
-
-
 @dataclass(frozen=True)
 class AgentRuntimeProfile:
     name: str
+    agent_id: str
     role: AgentRole
     workspace_dir: Path
     claude_root: Path
@@ -102,14 +69,10 @@ class AgentRuntimeProfile:
     mcp_config_path: Path
     project_settings_path: Path
     langfuse_observation_name: str
-    readable_paths: tuple[Path, ...]
-    writable_paths: tuple[Path, ...]
-    denied_paths: tuple[Path, ...]
     max_turns: int | None = None
     max_runtime_seconds: int = 300
     max_output_bytes: int = 2_000_000
-    # 部署契约：agent.yaml 声明 requires_web_hitl:true 时，其 ask 型工具（如 soc-playbook-execution）
-    # 需 ENABLE_CLAUDE_WEB_HITL 人审；HITL 关闭时运行时对该 Agent 的 ask 工具 fail-loud（不静默 deny/放行）。
+    # 只读观测值，从 .claude/settings.json 的 permissions.ask 派生，不是第二份权限声明。
     requires_web_hitl: bool = False
 
     @property
@@ -119,7 +82,7 @@ class AgentRuntimeProfile:
 
 
 def agents_requiring_web_hitl(profiles: dict[str, AgentRuntimeProfile]) -> list[str]:
-    """声明 ``requires_web_hitl`` 的 Agent id（排序）。启动契约告警据此点名：HITL 关时其执行能力不可用。"""
+    """原生 project settings 含 ``ask`` 规则的 Agent id（排序）。"""
     return sorted(name for name, profile in profiles.items() if profile.requires_web_hitl)
 
 
@@ -150,17 +113,17 @@ def discover_seeded_business_agents(settings: AppSettings) -> list[AgentRuntimeP
     """
     root = business_agents_root(settings.data_dir)
     discovered: list[AgentRuntimeProfile] = []
-    if not root.is_dir():
+    if root.is_symlink() or not root.is_dir():
         return discovered
     for child in sorted(root.iterdir()):
-        if not child.is_dir():
+        if child.is_symlink() or not child.is_dir():
             continue
         try:
             agent_id = validate_agent_id(child.name)
         except InvalidAgentId:
             continue
         layout = business_agent_layout(settings.data_dir, agent_id)
-        if not layout.workspace.is_dir():
+        if layout.workspace.is_symlink() or not layout.workspace.is_dir():
             continue
         discovered.append(build_business_agent_profile(settings, agent_id=agent_id, workspace_dir=layout.workspace))
     return discovered
@@ -173,11 +136,12 @@ def seed_business_agent_ids() -> frozenset[str]:
     seed 目录是「出生配置」声明源，与运行卷的活配置无关（卷配置被反馈优化闭环修改、不可覆盖）。
     """
     seed_root = Path(__file__).resolve().parents[2] / "docker" / "runtime-volume-seeds" / "data" / "business-agents"
-    if not seed_root.is_dir():
+    if seed_root.is_symlink() or not seed_root.is_dir():
         return frozenset()
     ids: set[str] = set()
     for child in sorted(seed_root.iterdir()):
-        if not child.is_dir() or not (child / "workspace").is_dir():
+        workspace = child / "workspace"
+        if child.is_symlink() or not child.is_dir() or workspace.is_symlink() or not workspace.is_dir():
             continue
         try:
             ids.add(validate_agent_id(child.name))
@@ -193,6 +157,7 @@ def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Pa
     claude_root = business_agent_layout(settings.data_dir, agent_id).version_base / "candidate-claude-roots" / candidate_id
     return AgentRuntimeProfile(
         name=f"{agent_id}-candidate",
+        agent_id=agent_id,
         role=BUSINESS_AGENT_ROLE,
         workspace_dir=workspace_dir,
         claude_root=claude_root,
@@ -201,14 +166,6 @@ def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Pa
         mcp_config_path=workspace_dir / ".mcp.json",
         project_settings_path=workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name=f"runtime.candidate.{agent_id}",
-        readable_paths=_business_agent_readable_paths(settings, workspace_dir),
-        writable_paths=base.writable_paths,
-        denied_paths=_business_agent_denied_paths(
-            settings,
-            agent_id=agent_id,
-            claude_root=claude_root,
-            deny_version_base=False,
-        ),
         max_turns=base.max_turns,
         max_runtime_seconds=base.max_runtime_seconds,
         max_output_bytes=base.max_output_bytes,
@@ -218,13 +175,13 @@ def candidate_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Pa
 def build_business_agent_profile(settings: AppSettings, *, agent_id: str, workspace_dir: Path) -> AgentRuntimeProfile:
     """为一个注册业务 Agent 动态构造运行时 profile（AGV-004 运行态）。
 
-    业务 Agent 是被治理对象：可读自身 workspace 与必要共享 I/O 目录、可写输出目录，
-    但不得读取运行态凭据、版本治理工件、SQLite 或治理 Agent 根目录。
-    role 统一为 business-agent，name 为 agent_id。
+    业务 Agent 是被治理对象；工具权限、路径边界、hooks 与 sandbox 由 workspace 的
+    ``.claude/settings.json`` 原生声明。role 统一为 business-agent，name 为 agent_id。
     """
     claude_root = business_agent_layout(settings.data_dir, agent_id).claude_root
     return AgentRuntimeProfile(
         name=agent_id,
+        agent_id=agent_id,
         role=BUSINESS_AGENT_ROLE,
         workspace_dir=workspace_dir,
         claude_root=claude_root,
@@ -233,15 +190,6 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
         mcp_config_path=workspace_dir / ".mcp.json",
         project_settings_path=workspace_dir / ".claude" / "settings.json",
         langfuse_observation_name=f"runtime.business_agent.{agent_id}",
-        readable_paths=_business_agent_readable_paths(settings, workspace_dir),
-        writable_paths=(settings.data_dir / "outputs",),
-        # denied 在 policy.py 优先于 readable；即便未来误扩 readable，也不能读运行态敏感目录。
-        denied_paths=_business_agent_denied_paths(
-            settings,
-            agent_id=agent_id,
-            claude_root=claude_root,
-            deny_version_base=True,
-        ),
         requires_web_hitl=read_requires_web_hitl(workspace_dir),
     )
 
@@ -249,10 +197,9 @@ def build_business_agent_profile(settings: AppSettings, *, agent_id: str, worksp
 def _governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
     """单一治理 Agent profile：按 job_type 承担归因/方案/执行/用例/回归影响分析。
 
-    它对所有业务 Agent 有**完全读取权限**：可 Read/Glob/Grep `data_dir` 下任意业务 Agent workspace
-    的全部内容（含 .env/secrets），用于归因/优化的按需读取。但**不持有可写工作区**
-    （``writable_paths=()`` + 接线的 PreToolUse hook 硬阻断自身 Write/Edit/Bash）——写业务配置只能走
-    受治理 apply（隔离 worktree→operations→applier 护栏→change set→审批门）。各 job 的 prompt 与输出契约按 job_type 选择。
+    它对业务 Agent 的读取范围与禁止写入规则均由 governor workspace 的项目设置声明；
+    写业务配置只能走受治理 apply（隔离 worktree→operations→applier 护栏→change set→审批门）。
+    各 job 的 prompt 与输出契约按 job_type 选择。
     """
     return AgentRuntimeProfile(
         **_readonly_feedback_kwargs(
@@ -263,8 +210,6 @@ def _governor_profile(settings: AppSettings) -> AgentRuntimeProfile:
             max_turns=16,
             settings=settings,
             max_runtime_seconds=settings.governance_agent_timeout_seconds,
-            readable_paths=(settings.data_dir, settings.governor_workspace_dir, settings.governor_claude_root),
-            denied_paths=(),
         )
     )
 
@@ -278,11 +223,10 @@ def _readonly_feedback_kwargs(
     max_turns: int | None,
     settings: AppSettings,
     max_runtime_seconds: int,
-    readable_paths: tuple[Path, ...] | None = None,
-    denied_paths: tuple[Path, ...] | None = None,
 ) -> dict[str, object]:
     return {
         "name": name,
+        "agent_id": name,
         "role": name,
         "workspace_dir": workspace_dir,
         "claude_root": claude_root,
@@ -291,9 +235,6 @@ def _readonly_feedback_kwargs(
         "mcp_config_path": workspace_dir / ".mcp.json",
         "project_settings_path": workspace_dir / ".claude" / "settings.json",
         "langfuse_observation_name": observation,
-        "readable_paths": readable_paths if readable_paths is not None else (),
-        "writable_paths": (),
-        "denied_paths": denied_paths if denied_paths is not None else (business_agents_root(settings.data_dir),),
         "max_turns": max_turns,
         "max_runtime_seconds": max_runtime_seconds,
     }

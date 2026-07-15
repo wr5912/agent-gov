@@ -138,80 +138,14 @@ services:
       - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
       - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
       - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "2", "http://127.0.0.1:${API_PORT:-8080}/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
     depends_on:
       - agent-gov-litellm-sidecar
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          python -c 'import json, os, urllib.request;
-          port = os.environ.get("API_PORT", "8080");
-          response = urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3);
-          payload = json.load(response);
-          assert 200 <= response.status < 300 and payload.get("status") == "ok"'
-      interval: 3s
-      timeout: 5s
-      retries: 20
-      start_period: 5s
-    restart: unless-stopped
-    logging: *default-logging
-
-  claude-agent-worker:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile
-    image: agent-gov-api:${APP_VERSION:-dev}
-    container_name: ${CONTAINER_NAME_PREFIX:-agent-gov}-worker
-    command: ["worker"]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    env_file:
-      - .env
-    environment:
-      RUNTIME_CONTAINER: "1"
-      HOST_RUNTIME_VOLUME_ROOT: ${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}
-      HOST_DATA_MOUNT: ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}
-      AGENT_GIT_SERVICE_PROVIDER: ${AGENT_GIT_SERVICE_PROVIDER:-local}
-      AGENT_GIT_SERVICE_URL: ${AGENT_GIT_SERVICE_URL:-}
-      AGENT_GIT_SERVICE_PUBLIC_URL: ${AGENT_GIT_SERVICE_PUBLIC_URL:-}
-      AGENT_GIT_REPOSITORY_NAME: ${AGENT_GIT_REPOSITORY_NAME:-main-agent-config}
-      AGENT_GIT_WORKTREES_DIR: ${AGENT_GIT_WORKTREES_DIR:-/data/business-agents/main-agent/version/worktrees}
-      AGENT_RELEASE_ARCHIVES_DIR: ${AGENT_RELEASE_ARCHIVES_DIR:-/data/business-agents/main-agent/version/releases}
-      GOVERNOR_WORKSPACE_DIR: ${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
-      DATA_DIR: ${DATA_DIR:-/data}
-      GOVERNOR_CLAUDE_ROOT: ${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
-      MODEL_PROVIDER_BACKEND: ${MODEL_PROVIDER_BACKEND:-anthropic_compatible}
-      MODEL_PROVIDER_API_KEY: ${MODEL_PROVIDER_API_KEY:-}
-      MODEL_PROVIDER_API_URL: ${MODEL_PROVIDER_API_URL:-}
-      MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD: ${MODEL_PROVIDER_VLLM_SIDECAR_THRESHOLD:-0.23.0}
-      MODEL_PROVIDER_VLLM_ALLOW_DIRECT: ${MODEL_PROVIDER_VLLM_ALLOW_DIRECT:-false}
-      MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS: ${MODEL_PROVIDER_PROBE_TIMEOUT_SECONDS:-30}
-      MODEL_PROVIDER_WARNING_TTL_SECONDS: ${MODEL_PROVIDER_WARNING_TTL_SECONDS:-300}
-      GOVERNANCE_AGENT_TIMEOUT_SECONDS: ${GOVERNANCE_AGENT_TIMEOUT_SECONDS:-300}
-      HITL_TIMEOUT_SECONDS: ${HITL_TIMEOUT_SECONDS:-300}
-      MCP_SERVER_URL: ${MCP_SERVER_URL:-http://host.docker.internal:58001/mcp}
-      SEC_OPS_MCP_URL: ${SEC_OPS_MCP_URL:-http://host.docker.internal:58001/mcp}
-      RESPONSE_ORCHESTRATOR_API_KEY: ${RESPONSE_ORCHESTRATOR_API_KEY:-}
-      CLAUDE_ENV_JSON: ${CLAUDE_ENV_JSON:-{}}
-      NO_PROXY: ${NO_PROXY:-}
-      no_proxy: ${no_proxy:-}
-      AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS: ${AGENT_JOB_WORKER_POLL_INTERVAL_SECONDS:-2}
-      LITELLM_LOCAL_MODEL_COST_MAP: ${LITELLM_LOCAL_MODEL_COST_MAP:-True}
-      PIP_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
-      PIP_TRUSTED_HOST: mirrors.aliyun.com
-      UV_INDEX_URL: https://mirrors.aliyun.com/pypi/simple/
-      UV_DEFAULT_INDEX: https://mirrors.aliyun.com/pypi/simple/
-      NPM_CONFIG_REGISTRY: https://registry.npmmirror.com
-    volumes:
-      - *runtime-volume-seeds
-      - ${HOST_GOVERNOR_WORKSPACE_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/governor-workspace}:${GOVERNOR_WORKSPACE_DIR:-/governor-workspace}
-      - ${HOST_DATA_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/data}:${DATA_DIR:-/data}
-      - ${HOST_GOVERNOR_CLAUDE_ROOT_MOUNT:-${HOST_RUNTIME_VOLUME_ROOT:-${HOME}/volume-agent-gov}/claude-roots/governor}:${GOVERNOR_CLAUDE_ROOT:-/claude-roots/governor}
-    depends_on:
-      agent-gov-litellm-sidecar:
-        condition: service_started
-      claude-agent-api:
-        condition: service_healthy
     restart: unless-stopped
     logging: *default-logging
 

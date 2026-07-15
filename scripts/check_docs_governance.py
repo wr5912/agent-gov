@@ -15,6 +15,12 @@ import sys
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+if __package__:
+    from .check_test_coverage_policy import _validate_pytest_nodeid, collect_pytest_nodeids
+else:
+    from check_test_coverage_policy import _validate_pytest_nodeid, collect_pytest_nodeids
 
 DOCS_INDEX = "docs/README.md"
 ARCHIVE_INDEX = "docs/archive/README.md"
@@ -48,6 +54,8 @@ _WORD_UNFINISHED_MARKERS = ("TODO", "TBD", "placeholder", "xxx", "XXX")
 _WORD_UNFINISHED_PATTERN = re.compile(r"\b(?:" + "|".join(_WORD_UNFINISHED_MARKERS) + r")\b")
 _ARCHIVE_ORIGINAL_PATH_PATTERN = re.compile(r"`(docs/[^`]+\.md)`")
 _LEGACY_GOVERNANCE_AGENT_PATTERN = re.compile(r"(?:attribution|proposal|execution|eval-case|regression-impact).{0,120}治理 Agent")
+_MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
+_PYTEST_NODEID_PATTERN = re.compile(r"`(tests/[A-Za-z0-9_./-]+\.py(?:::[^`\s]+)+)`")
 
 
 @dataclass(frozen=True)
@@ -78,14 +86,8 @@ def _git_show(root: Path, ref: str, rel_path: str) -> str | None:
 def _repo_paths(root: Path) -> set[str]:
     result = _git(root, ["ls-files", "--cached", "--others", "--exclude-standard"])
     if result.returncode == 0:
-        return {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        return {rel_path for line in result.stdout.splitlines() if (rel_path := line.strip()) and (root / rel_path).is_file()}
     return {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file() and ".git" not in path.parts}
-
-
-def _is_new_path(root: Path, base_ref: str | None, rel_path: str) -> bool:
-    if base_ref is None:
-        return True
-    return _git_show(root, base_ref, rel_path) is None
 
 
 def _is_changed_path(root: Path, base_ref: str | None, rel_path: str) -> bool:
@@ -130,29 +132,88 @@ def collect_mirrored_skill_pairs(root: Path) -> tuple[tuple[str, str], ...]:
     return tuple((f"{CODEX_SKILLS_ROOT}/{name}/SKILL.md", f"{CLAUDE_SKILLS_ROOT}/{name}/SKILL.md") for name in names)
 
 
-def _new_paths(root: Path, base_ref: str | None, paths: Iterable[str]) -> list[str]:
-    return sorted(path for path in paths if _is_new_path(root, base_ref, path))
-
-
-def _active_doc_index_issues(root: Path, new_active_docs: list[str]) -> list[DocsGovernanceIssue]:
-    if not new_active_docs:
+def _active_doc_index_issues(root: Path, active_docs: list[str]) -> list[DocsGovernanceIssue]:
+    if not active_docs:
         return []
     index = _read_existing(root, DOCS_INDEX)
     if not index:
-        return [DocsGovernanceIssue(DOCS_INDEX, "docs index is required when adding active docs")]
-    return [DocsGovernanceIssue(path, f"new active docs file is not linked from {DOCS_INDEX}") for path in new_active_docs if path not in index]
+        return [DocsGovernanceIssue(DOCS_INDEX, "docs index is required when active docs exist")]
+    return [DocsGovernanceIssue(path, f"active docs file is not linked from {DOCS_INDEX}") for path in active_docs if path not in index]
 
 
-def _archive_index_issues(root: Path, new_archive_docs: list[str]) -> list[DocsGovernanceIssue]:
-    if not new_archive_docs:
+def _archive_index_issues(root: Path, archive_docs: list[str]) -> list[DocsGovernanceIssue]:
+    if not archive_docs:
         return []
     index = _read_existing(root, ARCHIVE_INDEX)
     if not index:
-        return [DocsGovernanceIssue(ARCHIVE_INDEX, "archive index is required when adding archived docs")]
+        return [DocsGovernanceIssue(ARCHIVE_INDEX, "archive index is required when archived docs exist")]
     issues = [
         DocsGovernanceIssue(ARCHIVE_INDEX, f"archive index is missing required column: {header}") for header in ARCHIVE_INDEX_HEADERS if header not in index
     ]
-    issues.extend(DocsGovernanceIssue(path, f"new archived docs file is not listed in {ARCHIVE_INDEX}") for path in new_archive_docs if path not in index)
+    issues.extend(DocsGovernanceIssue(path, f"archived docs file is not listed in {ARCHIVE_INDEX}") for path in archive_docs if path not in index)
+    return issues
+
+
+def _markdown_link_target(raw_target: str) -> str | None:
+    target = raw_target.strip()
+    if target.startswith("<"):
+        end = target.find(">")
+        if end == -1:
+            return None
+        target = target[1:end]
+    else:
+        target = target.split(maxsplit=1)[0]
+    if not target or target.startswith("#"):
+        return None
+    parsed = urlsplit(target)
+    if parsed.scheme or parsed.netloc or target.startswith("/"):
+        return None
+    return unquote(parsed.path)
+
+
+def _local_link_issues(root: Path, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
+    issues: list[DocsGovernanceIssue] = []
+    markdown_paths = sorted(path for path in paths if _is_markdown_doc(path))
+    for rel_path in markdown_paths:
+        source = root / rel_path
+        in_fence = False
+        for line_number, line in enumerate(_read_existing(root, rel_path).splitlines(), start=1):
+            stripped = line.lstrip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            searchable = re.sub(r"`[^`]*`", "", line)
+            for raw_target in _MARKDOWN_LINK_PATTERN.findall(searchable):
+                target = _markdown_link_target(raw_target)
+                if not target:
+                    continue
+                resolved = (source.parent / target).resolve()
+                if resolved.exists():
+                    continue
+                issues.append(
+                    DocsGovernanceIssue(
+                        rel_path,
+                        f"local Markdown link target does not exist at line {line_number}: {raw_target}",
+                    )
+                )
+    return issues
+
+
+def _documented_pytest_nodeids(root: Path, paths: Iterable[str]) -> list[str]:
+    nodeids: set[str] = set()
+    for rel_path in sorted(path for path in paths if _is_active_doc(path)):
+        text = _read_existing(root, rel_path)
+        nodeids.update(_PYTEST_NODEID_PATTERN.findall(text))
+    return sorted(nodeids)
+
+
+def _documented_pytest_nodeid_issues(root: Path, paths: Iterable[str]) -> list[DocsGovernanceIssue]:
+    issues: list[DocsGovernanceIssue] = []
+    for nodeid in _documented_pytest_nodeids(root, paths):
+        for error in _validate_pytest_nodeid(nodeid, repo_root=root):
+            issues.append(DocsGovernanceIssue("docs/", f"documented {error}"))
     return issues
 
 
@@ -305,14 +366,15 @@ def _local_artifact_path_issues(root: Path, base_ref: str | None, paths: Iterabl
 
 def collect_docs_governance_issues(root: Path, base_ref: str | None) -> list[DocsGovernanceIssue]:
     paths = _repo_paths(root)
-    new_paths = _new_paths(root, base_ref, paths)
-    new_active_docs = [path for path in new_paths if _is_active_doc(path)]
-    new_archive_docs = [path for path in new_paths if _is_archive_doc(path)]
+    active_docs = sorted(path for path in paths if _is_active_doc(path))
+    archive_docs = sorted(path for path in paths if _is_archive_doc(path))
     issues: list[DocsGovernanceIssue] = []
-    issues.extend(_active_doc_index_issues(root, new_active_docs))
-    issues.extend(_archive_index_issues(root, new_archive_docs))
+    issues.extend(_active_doc_index_issues(root, active_docs))
+    issues.extend(_archive_index_issues(root, archive_docs))
     issues.extend(_archived_original_reference_issues(root, paths))
     issues.extend(_long_term_authority_term_issues(root, paths))
+    issues.extend(_local_link_issues(root, paths))
+    issues.extend(_documented_pytest_nodeid_issues(root, paths))
     issues.extend(_skill_mirror_issues(root))
     issues.extend(_unfinished_marker_issues(root, base_ref, paths))
     issues.extend(_local_artifact_path_issues(root, base_ref, paths))
@@ -332,6 +394,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check docs governance rules.")
     parser.add_argument("--root", type=Path, default=Path.cwd(), help="Repository root.")
     parser.add_argument("--base-ref", help="Git ref to compare against. Defaults to HEAD.")
+    parser.add_argument("--collect-pytest", action="store_true", help="Ask pytest to collect every nodeid referenced by active docs.")
     return parser.parse_args(argv)
 
 
@@ -340,6 +403,9 @@ def main(argv: list[str] | None = None) -> int:
     root = args.root.resolve()
     base_ref = _resolve_base_ref(root, args.base_ref)
     issues = collect_docs_governance_issues(root, base_ref)
+    if args.collect_pytest and not issues:
+        paths = _repo_paths(root)
+        issues.extend(DocsGovernanceIssue("docs/", error) for error in collect_pytest_nodeids(_documented_pytest_nodeids(root, paths), repo_root=root))
     if not issues:
         print("OK: no docs governance issues found.")
         return 0

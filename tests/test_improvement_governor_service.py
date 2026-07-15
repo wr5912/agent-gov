@@ -6,9 +6,13 @@ import asyncio
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from app.runtime.errors import BusinessRuleViolation
 from app.runtime.runtime_db import make_session_factory
 from app.runtime.stores.improvement_content_store import ImprovementContentStore
 from app.services.improvement_governor_service import ImprovementGovernorService
+
+from feedback_store_test_utils import _seed_execution_record
 
 
 def _content(tmp_path: Path) -> ImprovementContentStore:
@@ -237,10 +241,11 @@ def test_optimization_plan_rejects_governor_workspace_target(tmp_path: Path) -> 
 
 
 def test_regression_governor_maps_eval_cases(tmp_path: Path) -> None:
-    """governor EVAL_CASE_GENERATION → 回归用例候选；prompt 由后端原始输入覆盖。"""
+    """governor REGRESSION_ASSESSMENT 生成候选；prompt 由后端原始输入覆盖。"""
     seen: dict[str, object] = {}
 
     async def fake_run(**kwargs):
+        assert kwargs["job_type"] == "regression_assessment"
         seen.update(kwargs["job_input"])
         kwargs["trace_callback"]({"trace_id": "tr-regression", "trace_url": "http://lf/tr-regression"})
         return {"eval_cases": [
@@ -296,11 +301,10 @@ def test_regression_without_original_input_does_not_fabricate_prompt(tmp_path: P
         run_profile_json=boom,
         data_dir=Path("/data"),
     )
-    rec = asyncio.run(svc.generate_regression_assessment("imp-1"))
+    with pytest.raises(BusinessRuleViolation, match="requires at least one case"):
+        asyncio.run(svc.generate_regression_assessment("imp-1"))
 
-    assert rec.generated_by == "heuristic"
-    assert rec.cases == []
-    assert "缺少原始输入" in rec.summary
+    assert content.get_regression_assessment("imp-1") is None
 
 
 def test_optimization_plan_heuristic_fallback(tmp_path: Path) -> None:
@@ -386,7 +390,8 @@ def test_regression_heuristic_provides_default_gate_thresholds(tmp_path: Path) -
 def test_execution_store_roundtrips_risk_and_rollback(tmp_path: Path) -> None:
     """执行记录新增 risk_level/rollback_strategy/rollback_instructions 的 DB 列 + Record 映射回环。"""
     content = _content(tmp_path)
-    content.upsert_execution(
+    _seed_execution_record(
+        content,
         "imp-1", summary="已应用", risk_level="中",
         rollback_strategy="回滚到执行前基线 Agent 版本", rollback_instructions=["放弃 change_set", "恢复版本"],
     )

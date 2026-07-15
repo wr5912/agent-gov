@@ -189,24 +189,22 @@ async function main() {
     const assistantText = (assistantTexts.at(-1) || "").trim();
     assert(assistantText.length > 0, "assistant response text did not render");
     assert(!assistantText.includes("运行失败"), `assistant response rendered as failure: ${assistantText.slice(0, 300)}`);
+    assert(
+      assistantText.includes("AGENTGOV_OPENAI_E2E_OK"),
+      `assistant response did not contain the requested live-model sentinel: ${assistantText.slice(0, 300)}`,
+    );
 
-    const localState = await page.evaluate(() => {
-      const messagesBySession = JSON.parse(window.localStorage.getItem("playground-session-messages") || "{}");
-      const activeSession = JSON.parse(window.localStorage.getItem("playground-active-session") || "null");
-      return { messagesBySession, activeSession };
-    });
-    const activeMessages = Array.isArray(localState.messagesBySession?.[localState.activeSession])
-      ? localState.messagesBySession[localState.activeSession]
-      : [];
-    const assistantMessage = [...activeMessages].reverse().find((message) => message?.role === "assistant");
-    assert(assistantMessage?.runId, "assistant message did not receive runId from agentgov.result");
-    const sessionId = assistantMessage.sessionId || localState.activeSession;
-    assert(sessionId, "assistant message did not retain a session id");
+    const sessionId = runBody.conversation.slice("conv_".length);
+    const runs = await api(`/api/agent-runs?session_id=${encodeURIComponent(sessionId)}&limit=1`);
+    const latestRun = Array.isArray(runs.data) ? runs.data[0] : null;
+    assert(latestRun?.run_id, "persisted run did not expose a run id after response completion");
+    const localMessageCache = await page.evaluate(() => window.localStorage.getItem("playground-session-messages"));
+    assert(localMessageCache === null, "Playground still persisted a parallel local message history");
 
-    const response = await api(`/v1/responses/${encodeURIComponent(`resp_${assistantMessage.runId}`)}`);
+    const response = await api(`/v1/responses/${encodeURIComponent(`resp_${latestRun.run_id}`)}`);
     assert(response.data?.object === "response", "retrieve did not return a response object");
     assert(response.data?.status === "completed", `retrieve status was not completed: ${response.data?.status}`);
-    assert(response.data?.agentgov?.run_id === assistantMessage.runId, "retrieve did not map resp_<run_id> back to the run");
+    assert(response.data?.agentgov?.run_id === latestRun.run_id, "retrieve did not map resp_<run_id> back to the run");
 
     const items = await api(`/v1/conversations/${encodeURIComponent(`conv_${sessionId}`)}/items?limit=1&order=asc&include=messages`);
     assert(items.data?.object === "list", "conversation items did not return a list object");

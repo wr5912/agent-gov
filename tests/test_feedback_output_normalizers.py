@@ -6,18 +6,17 @@ from app.runtime.agent_job_types import AgentJobType
 from app.runtime.feedback_schemas import (
     AttributionFormatterOutput,
     ExecutionPlanFormatterOutput,
-    FeedbackEvalCaseGenerationFormatterOutput,
     ImprovementOptimizationPlanFormatterOutput,
+    RegressionAssessmentFormatterOutput,
     validate_execution_plan_output,
-    validate_feedback_eval_case_generation_output,
 )
 from app.runtime.normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
-    normalize_feedback_eval_case_generation_output,
 )
 from app.runtime.normalizers.feedback_output_records import NormalizedExecutionPlanOutput
 from app.runtime.output_formatter import DSPyOutputFormatter, OutputFormatterError
+from pydantic import ValidationError
 
 from feedback_store_test_utils import _settings
 
@@ -257,7 +256,9 @@ def test_formatter_models_run_current_normalizers_before_strict_validation():
             "no_action_reason": "target_paths 为空。",
         }
     )
-    eval_generation = FeedbackEvalCaseGenerationFormatterOutput.model_validate({})
+    regression = RegressionAssessmentFormatterOutput.model_validate(
+        {"no_action_reason": "证据不足，无法形成回归评估候选。"}
+    )
 
     assert attribution.problem_type == "tool_data_quality"
     assert attribution.optimization_object_type == "main_agent_claude_md"
@@ -265,7 +266,7 @@ def test_formatter_models_run_current_normalizers_before_strict_validation():
     assert attribution.recommended_next_step == "needs_human_review"
     assert attribution.responsibility_boundary.owner == "sec-ops-data"
     assert execution.status == "needs_human_review"
-    assert eval_generation.no_action_reason == "eval-case-governor 未生成可用评估用例。"
+    assert regression.no_action_reason == "证据不足，无法形成回归评估候选。"
 
 
 def test_normalize_attribution_output_uses_intermediate_record_for_agent_shapes():
@@ -333,35 +334,39 @@ def test_normalize_execution_plan_output_uses_intermediate_operation_records_and
     assert "agent_note" not in normalized["operations"][0]
 
 
-def test_normalize_feedback_eval_case_generation_output_uses_intermediate_case_records():
-    normalized = normalize_feedback_eval_case_generation_output(
+def test_regression_assessment_formatter_drops_backend_owned_and_case_extra_fields():
+    output = RegressionAssessmentFormatterOutput.model_validate(
         {
             "eval_cases": [
-                "not-an-object",
                 {
-                    "title": "复现工具数据缺失",
+                    "expected_behavior": "应说明数据缺失并请求补充。",
+                    "labels": ["tool-data"],
+                    "checks_json": {"requires_non_empty_answer": True},
+                    "prompt": "hostile prompt",
+                    "case_id": "case-hostile",
                     "status": "approved",
-                    "expected_behavior": {"text": "应说明数据缺失并请求补充。"},
-                    "labels": "tool-data",
-                    "checks_json": ["not", "object"],
-                    "agent_note": {"source": "eval-case-governor"},
                 },
             ],
+            "job_id": "job-hostile",
+            "scope_id": "scope-hostile",
+            "status": "completed",
         }
     )
 
-    assert normalized["status"] == "completed"
-    assert len(normalized["eval_cases"]) == 1
-    case = normalized["eval_cases"][0]
-    assert case["asset_layer"] == "candidate"
-    assert case["prompt"] == "复现工具数据缺失"
-    assert case["expected_behavior"].startswith("{")
-    assert case["labels"] == ["tool-data"]
-    assert case["checks_json"] == {}
-    assert "agent_note" not in case
+    dumped = output.model_dump()
+    assert dumped["eval_cases"] == [
+        {
+            "expected_behavior": "应说明数据缺失并请求补充。",
+            "checks_json": {"requires_non_empty_answer": True},
+            "labels": ["tool-data"],
+        }
+    ]
+    assert "job_id" not in dumped
+    assert "scope_id" not in dumped
+    assert "status" not in dumped
 
 
-def test_validated_execution_and_eval_outputs_drop_agent_extra_fields():
+def test_validated_execution_output_drops_agent_extra_fields():
     execution, execution_error = validate_execution_plan_output(
         {
             "status": "ready",
@@ -376,23 +381,13 @@ def test_validated_execution_and_eval_outputs_drop_agent_extra_fields():
             ],
         }
     )
-    eval_cases, eval_error = validate_feedback_eval_case_generation_output(
-        {
-            "status": "completed",
-            "eval_cases": [
-                {
-                    "prompt": "复现问题",
-                    "expected_behavior": "应说明缺失数据。",
-                    "agent_note": {"source": "eval-case-governor"},
-                }
-            ],
-        }
-    )
-
     assert execution_error is None
-    assert eval_error is None
     assert "agent_note" not in execution["operations"][0]
-    assert "agent_note" not in eval_cases["eval_cases"][0]
+
+
+def test_regression_assessment_requires_case_or_no_action_reason():
+    with pytest.raises(ValidationError, match="eval_cases or no_action_reason"):
+        RegressionAssessmentFormatterOutput.model_validate({})
 
 
 def test_normalized_output_record_drops_extra_agent_fields():

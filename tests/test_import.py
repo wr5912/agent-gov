@@ -20,6 +20,8 @@ def test_import_app(tmp_path, monkeypatch):
     assert "/api/improvements/{improvement_id}/optimization-plan" in paths
     assert "/api/improvements/{improvement_id}/attribution/generate" in paths
     assert "/api/improvements/{improvement_id}/optimization-plan/generate" in paths
+    assert "/api/automation-policy" not in paths
+    assert "/api/improvements/{improvement_id}/auto-advance" not in paths
     assert "/api/feedback-cases/{feedback_case_id}/optimization-plan" not in paths
     assert "/api/feedback-cases/{feedback_case_id}/proposal-jobs" not in paths
     assert "/api/optimization-proposals/{proposal_id}" not in paths

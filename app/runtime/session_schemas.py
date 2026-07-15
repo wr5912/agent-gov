@@ -22,6 +22,8 @@ class SessionInfo(BaseModel):
     title: Optional[str] = None
     turns: int = 0
     metadata: JsonObject = Field(default_factory=dict)
+    active_run_id: Optional[str] = None
+    active_run_expires_at: Optional[str] = None
 
 
 class SessionDeleteResponse(BaseModel):

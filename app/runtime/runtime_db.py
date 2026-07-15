@@ -7,7 +7,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Optional
 
-from sqlalchemy import JSON, Float, ForeignKey, Index, String, create_engine, event
+from sqlalchemy import JSON, Float, ForeignKey, Index, String, Text, create_engine, event, text
 from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Mapped, mapped_column, sessionmaker
 from sqlalchemy.pool import QueuePool
@@ -37,15 +37,42 @@ from .runtime_db_migrations import (
     migrate_0025_agent_governance_legacy_paths,
     migrate_0026_normalized_feedback_generation_refs,
     migrate_0027_agent_registry_requires_web_hitl,
-    migrate_0028_response_disposition_claims,
+    migrate_0028_remove_improvement_automation_policy,
+    migrate_0029_agent_release_tag_claims,
+    migrate_0030_improvement_execution_intents,
+    migrate_0031_feedback_case_assignments,
+    migrate_0032_improvement_execution_source_revisions,
+    migrate_0033_repair_improvement_stages_from_artifacts,
+    migrate_0034_repair_feedback_case_assignments,
+    migrate_0035_session_active_run_lease,
 )
+from .runtime_db_migrations_0036 import migrate_0036_agent_maintenance_feedback_and_session_reconciliation
+from .runtime_db_migrations_0037 import migrate_0037_eval_runs_use_typed_dataset_snapshots
+from .runtime_db_migrations_0038 import migrate_0038_remove_agent_registry_requires_web_hitl
+from .runtime_db_migrations_0039 import migrate_0039_test_dataset_revision_provenance
+from .runtime_db_migrations_0040 import migrate_0040_archive_and_remove_legacy_evaluation_chain
+from .runtime_db_migrations_0041 import migrate_0041_agent_registry_provisioning_saga
+from .runtime_db_migrations_0042 import migrate_0042_retire_persisted_agent_job_queue
+from .runtime_db_migrations_0043 import migrate_0043_response_disposition_claims
+from .runtime_db_migrations_0044 import migrate_0044_agent_release_source_claims
 from .schema_self_heal import sync_missing_columns
 
 _ENGINE_CACHE: dict[Path, Engine] = {}
 _ENGINE_CACHE_LOCK = RLock()
 
+from .agent_maintenance_db import (  # noqa: E402,F401
+    AgentAdmissionStateModel,
+    AgentReleaseOperationModel,
+    AgentWorktreeCleanupTaskModel,
+)
 from .claude_user_input_db import ClaudeUserInputRequestModel  # noqa: E402,F401
 from .response_disposition_db import ResponseDispositionClaimModel  # noqa: E402,F401
+from .test_dataset_db import (  # noqa: E402,F401
+    ArchivedTestDatasetAssetModel,
+    TestDatasetCaseModel,
+    TestDatasetModel,
+    TestDatasetRevisionModel,
+)
 
 
 class SchemaMigration(Base):
@@ -60,7 +87,7 @@ class SessionRecordModel(Base):
 
     session_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     sdk_session_id: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
-    # Backend-owned owning agent (profile.name: "main-agent" or a business agent id), set by the
+    # Backend-owned owning agent (profile.agent_id: "main-agent" or a business agent id), set by the
     # runtime at chat time. Authoritative source for resolving a session's transcript directory.
     agent_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
@@ -68,6 +95,15 @@ class SessionRecordModel(Base):
     title: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
     turns: Mapped[int] = mapped_column(default=0)
     metadata_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+    active_run_id: Mapped[Optional[str]] = mapped_column(String(128), nullable=True, index=True)
+    active_run_expires_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    active_run_generation: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    sdk_project_key: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    sdk_store_ready_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    sdk_store_migration_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+from .sdk_session_db import SdkSessionEntryModel, SessionTurnIntentModel  # noqa: E402,F401
 
 
 class AgentRunModel(Base):
@@ -107,6 +143,7 @@ class SocEventModel(Base):
     event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     event_type: Mapped[str] = mapped_column(String(128), index=True)
     source_system: Mapped[str] = mapped_column(String(128), index=True)
+    agent_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     matched_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     session_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
@@ -162,6 +199,22 @@ class FeedbackCaseModel(Base):
     session_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     alert_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
     case_ids_json: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class FeedbackCaseSourceModel(Base):
+    __tablename__ = "feedback_case_sources"
+
+    source_kind: Mapped[str] = mapped_column(String(32), primary_key=True)
+    source_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    case_id: Mapped[str] = mapped_column(
+        String(128),
+        ForeignKey("feedback_cases.feedback_case_id", ondelete="CASCADE"),
+        index=True,
+    )
+    agent_id: Mapped[str] = mapped_column(String(128), index=True)
+    is_direct: Mapped[bool] = mapped_column(default=True)
+    direct_position: Mapped[Optional[int]] = mapped_column(nullable=True)
+    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
 
 
 class EvidencePackageModel(Base):
@@ -271,68 +324,32 @@ class AgentReleaseModel(Base):
 Index("ix_agent_releases_status_created", AgentReleaseModel.status, AgentReleaseModel.created_at)
 
 
-class EvalCaseModel(Base):
-    __tablename__ = "eval_cases"
+class AgentReleaseTagClaimModel(Base):
+    __tablename__ = "agent_release_tag_claims"
 
-    eval_case_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    tag_name: Mapped[str] = mapped_column(String(256), primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(String(128), index=True)
+    release_id: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    updated_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    status: Mapped[str] = mapped_column(String(64), index=True)
-    source_feedback_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    source_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    asset_layer: Mapped[str] = mapped_column(String(64), default="candidate", index=True)
-    promotion_status: Mapped[str] = mapped_column(String(64), default="candidate", index=True)
-    blocking_policy: Mapped[str] = mapped_column(String(64), default="non_blocking", index=True)
-    scenario_pack: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    severity: Mapped[str] = mapped_column(String(64), default="medium", index=True)
-    flaky_status: Mapped[str] = mapped_column(String(64), default="stable", index=True)
-    variant_role: Mapped[str] = mapped_column(String(64), default="original_reproduction", index=True)
-    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
-    last_run_at: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
-    last_result_status: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
-    failure_rate: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    superseded_by_eval_case_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
-    labels_json: Mapped[list[str]] = mapped_column(JSON, default=list)
-    payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
-Index(
-    "ix_eval_cases_source_variant_hash",
-    EvalCaseModel.source_feedback_case_id,
-    EvalCaseModel.variant_role,
-    EvalCaseModel.content_hash,
-    unique=True,
-)
+Index("ux_agent_release_tag_claims_change_set", AgentReleaseTagClaimModel.change_set_id, unique=True)
+Index("ux_agent_release_tag_claims_release", AgentReleaseTagClaimModel.release_id, unique=True)
 
 
-class EvalCaseRevisionModel(Base):
-    __tablename__ = "eval_case_revisions"
+class AgentReleaseSourceClaimModel(Base):
+    __tablename__ = "agent_release_source_claims"
 
-    revision_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id", ondelete="CASCADE"), index=True)
-    revision_number: Mapped[int] = mapped_column(index=True)
+    agent_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    source_improvement_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    change_set_id: Mapped[str] = mapped_column(String(128), index=True)
+    release_id: Mapped[str] = mapped_column(String(128), index=True)
     created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    created_by: Mapped[str] = mapped_column(String(128), index=True)
-    reason: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
-    content_hash: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
-    snapshot_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
 
 
-Index("ix_eval_case_revisions_case_number", EvalCaseRevisionModel.eval_case_id, EvalCaseRevisionModel.revision_number, unique=True)
-
-
-class EvalCaseGovernanceEventModel(Base):
-    __tablename__ = "eval_case_governance_events"
-
-    event_id: Mapped[str] = mapped_column(String(128), primary_key=True)
-    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id", ondelete="CASCADE"), index=True)
-    action: Mapped[str] = mapped_column(String(64), index=True)
-    operator: Mapped[str] = mapped_column(String(128), index=True)
-    role: Mapped[str] = mapped_column(String(128), default="developer", index=True)
-    reason: Mapped[str] = mapped_column(String(2048))
-    created_at: Mapped[str] = mapped_column(String(64), default=utc_now, index=True)
-    before_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
-    after_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+Index("ux_agent_release_source_claims_change_set", AgentReleaseSourceClaimModel.change_set_id, unique=True)
+Index("ux_agent_release_source_claims_release", AgentReleaseSourceClaimModel.release_id, unique=True)
 
 
 class EvalRunModel(Base):
@@ -343,6 +360,7 @@ class EvalRunModel(Base):
     completed_at: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     agent_id: Mapped[str] = mapped_column(String(128), default="main-agent", index=True)
+    dataset_id: Mapped[str] = mapped_column(String(128), ForeignKey("test_datasets.dataset_id"), index=True)
     agent_version_id: Mapped[Optional[str]] = mapped_column(String(256), index=True, nullable=True)
     source: Mapped[str] = mapped_column(String(128), index=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
@@ -353,11 +371,19 @@ class EvalRunItemModel(Base):
 
     eval_run_item_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     eval_run_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_runs.eval_run_id", ondelete="CASCADE"), index=True)
-    eval_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("eval_cases.eval_case_id"), index=True)
+    dataset_case_id: Mapped[str] = mapped_column(String(128), ForeignKey("test_dataset_cases.case_id"), index=True)
     agent_run_id: Mapped[Optional[str]] = mapped_column(String(128), index=True, nullable=True)
     status: Mapped[str] = mapped_column(String(64), index=True)
     score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     payload_json: Mapped[JsonObject] = mapped_column(JSON, default=dict)
+
+
+Index(
+    "ux_eval_run_items_run_dataset_case",
+    EvalRunItemModel.eval_run_id,
+    EvalRunItemModel.dataset_case_id,
+    unique=True,
+)
 
 
 class RuntimeSettingModel(Base):
@@ -476,7 +502,44 @@ def _run_runtime_migrations(engine: Engine) -> None:
         ("0025_agent_governance_legacy_paths", migrate_0025_agent_governance_legacy_paths),
         ("0026_normalized_feedback_generation_refs", migrate_0026_normalized_feedback_generation_refs),
         ("0027_agent_registry_requires_web_hitl", migrate_0027_agent_registry_requires_web_hitl),
-        ("0028_response_disposition_claims", migrate_0028_response_disposition_claims),
+        ("0028_remove_improvement_automation_policy", migrate_0028_remove_improvement_automation_policy),
+        ("0029_agent_release_tag_claims", migrate_0029_agent_release_tag_claims),
+        ("0030_improvement_execution_intents", migrate_0030_improvement_execution_intents),
+        ("0031_feedback_case_assignments", migrate_0031_feedback_case_assignments),
+        ("0032_improvement_execution_source_revisions", migrate_0032_improvement_execution_source_revisions),
+        ("0033_repair_improvement_stages_from_artifacts", migrate_0033_repair_improvement_stages_from_artifacts),
+        ("0034_repair_feedback_case_assignments", migrate_0034_repair_feedback_case_assignments),
+        ("0035_session_active_run_lease", migrate_0035_session_active_run_lease),
+        (
+            "0036_agent_maintenance_feedback_and_session_reconciliation",
+            migrate_0036_agent_maintenance_feedback_and_session_reconciliation,
+        ),
+        (
+            "0037_eval_runs_use_typed_dataset_snapshots",
+            migrate_0037_eval_runs_use_typed_dataset_snapshots,
+        ),
+        (
+            "0038_remove_agent_registry_requires_web_hitl",
+            migrate_0038_remove_agent_registry_requires_web_hitl,
+        ),
+        (
+            "0039_test_dataset_revision_provenance",
+            migrate_0039_test_dataset_revision_provenance,
+        ),
+        (
+            "0040_archive_and_remove_legacy_evaluation_chain",
+            migrate_0040_archive_and_remove_legacy_evaluation_chain,
+        ),
+        (
+            "0041_agent_registry_provisioning_saga",
+            migrate_0041_agent_registry_provisioning_saga,
+        ),
+        (
+            "0042_retire_persisted_agent_job_queue",
+            migrate_0042_retire_persisted_agent_job_queue,
+        ),
+        ("0043_response_disposition_claims", migrate_0043_response_disposition_claims),
+        ("0044_agent_release_source_claims", migrate_0044_agent_release_source_claims),
     ):
         if version in applied:
             continue
@@ -490,6 +553,8 @@ def _run_runtime_migrations(engine: Engine) -> None:
 def _migrate_0002_regression_assets(connection: Connection) -> None:
     connection.exec_driver_sql("DROP INDEX IF EXISTS ix_eval_cases_source_feedback_case_unique")
     columns = _table_columns(connection, "eval_cases")
+    if not columns:
+        return
     for column_name, ddl in {
         "asset_layer": "VARCHAR(64) DEFAULT 'candidate'",
         "promotion_status": "VARCHAR(64) DEFAULT 'candidate'",

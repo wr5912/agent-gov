@@ -1,6 +1,6 @@
 ---
 name: "codex-config-optimizer"
-description: "治理和优化 Codex 配置、AGENTS.md、.codex/rules、hooks、project-skill 或 Agent Skills。用户提到 Codex 配置优化、skill 优化、配置越改越重、触发不准、上下文噪声、规则重复、治理配置审计、把失败经验沉淀到 skill/hook/script 时使用。"
+description: "治理和优化 Codex/Claude 配置、AGENTS.md、CLAUDE.md、guidance/rules、hooks、agents、project-skill 或 Agent Skills。用户提到配置优化、skill 优化、配置越改越重、触发不准、上下文噪声、规则重复、治理配置审计、把失败经验沉淀到 skill/hook/script 时使用。"
 ---
 
 # Codex 配置治理
@@ -9,7 +9,7 @@ description: "治理和优化 Codex 配置、AGENTS.md、.codex/rules、hooks、
 
 ## 工作流
 
-1. 读取当前仓库的 `AGENTS.md`、项目覆盖说明、`.codex/README.md`、`.codex/config.toml`、`.codex/hooks.json`、`.codex/rules/*.rules` 和相关 `SKILL.md`。
+1. 读取当前仓库唯一根 `AGENTS.md`、`CLAUDE.md`，以及 `.codex` / `.claude` 下的 README、settings/config、hooks、guidance/rules、agents 和相关 `SKILL.md`。
 2. 如果可运行，先执行只读审计脚本：
 
    ```bash
@@ -27,7 +27,7 @@ description: "治理和优化 Codex 配置、AGENTS.md、.codex/rules、hooks、
 | 矩阵 | 必须区分 | 决策用途 |
 | --- | --- | --- |
 | 治理对象矩阵 | 业务 Agent、治理 Agent、`main` 样板、runtime data、template workspace、开发者离线工具 | 防止把产品对象、运行态数据和离线工具混成一个修改目标 |
-| 配置面矩阵 | 当前 prompt、`AGENTS.override.md` / `CLAUDE.project.md`、rules、skill、script、hook、docs、memory | 防止把按需流程写进常驻规则，或把可机械检查的问题留成人工提醒 |
+| 配置面矩阵 | 当前 prompt、唯一根 `AGENTS.md` / `CLAUDE.md` / 项目 `.claude/rules`、guidance/rules、skill、script、hook、docs、memory | 防止把按需流程写进常驻规则，或把可机械检查的问题留成人工提醒 |
 | 验收矩阵 | docs/skill 治理、runtime/env、主流程、live 容器验收、发版远端校验 | 防止对小配置改动跑过重测试，或对 live 能力用 local-debug 伪验收 |
 
 ## 何时读取 References

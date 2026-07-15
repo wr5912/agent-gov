@@ -13,9 +13,70 @@
       "scenarios": [
         {
           "id": "improvement_item_single_source_lifecycle",
-          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情、经状态机推进阶段并拒绝非法阶段跳转。",
+          "description": "创建改进事项、按业务 Agent scoping 列表、读取详情；业务产物成功后推进阶段，通用 lifecycle 只允许返工并拒绝前推。",
           "pytest": [
-            "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle"
+            "tests/test_improvement_api.py::test_improvement_item_single_source_lifecycle",
+            "tests/test_improvement_content.py::test_failed_business_artifact_does_not_advance_stage",
+            "tests/test_improvement_content.py::test_business_artifact_prerequisites_fail_closed",
+            "tests/test_improvement_content.py::test_unapplied_execution_record_does_not_advance_or_unlock_regression",
+            "tests/test_improvement_content.py::test_artifact_and_stage_roll_back_together_when_stage_write_fails",
+            "tests/test_improvement_content.py::test_refinement_invalidates_downstream_artifacts_and_stale_confirm_cannot_advance",
+            "tests/test_improvement_content.py::test_advanced_item_rejects_upstream_artifact_and_source_scope_mutation",
+            "tests/test_improvement_content.py::test_structural_artifacts_reject_whitespace_only_business_fields",
+            "tests/test_runtime_db.py::test_runtime_db_drops_obsolete_improvement_automation_policy",
+            "tests/test_runtime_db.py::test_runtime_db_repairs_stage_shell_even_when_0028_was_already_applied"
+          ]
+        },
+        {
+          "id": "feedback_case_attachment_is_agent_scoped",
+          "description": "来源 FeedbackCase 只出现在同一业务 Agent 的可选池中，且挂接端点再次校验归属；跨 Agent 请求失败且不产生反馈或 source ref 副作用，反馈/SOC ingest 请求也拒绝客户端污染 backend-owned agent_id。",
+          "pytest": [
+            "tests/test_improvement_content.py::test_attach_feedback_case_accepts_same_business_agent",
+            "tests/test_improvement_content.py::test_attach_feedback_case_rejects_cross_business_agent_without_side_effects",
+            "tests/test_improvement_content.py::test_generic_feedback_api_rejects_feedback_case_semantics_without_side_effects",
+            "tests/test_improvement_content.py::test_generic_feedback_store_rejects_feedback_case_semantics_without_side_effects",
+            "tests/test_improvement_content.py::test_feedback_case_assignment_is_unique_and_reassign_moves_authoritative_ref",
+            "tests/test_improvement_content.py::test_merge_and_split_keep_feedback_case_assignment_and_feedback_row_colocated",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_case_create_contract_rejects_legacy_untyped_source_ids",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_case_rejects_sources_owned_by_different_agents_without_writes",
+            "tests/test_feedback_case_agent_ownership.py::test_unmatched_signal_stays_unassigned_and_cannot_create_case",
+            "tests/test_feedback_case_agent_ownership.py::test_session_locator_and_soc_event_persist_business_agent_owner",
+            "tests/test_feedback_case_agent_ownership.py::test_resolved_pending_updates_event_owner_before_case_creation",
+            "tests/test_feedback_case_agent_ownership.py::test_case_creation_and_reassignment_are_serialized_without_owner_split",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_source_can_belong_to_only_one_case",
+            "tests/test_feedback_case_agent_ownership.py::test_concurrent_ensure_case_for_source_is_idempotent",
+            "tests/test_feedback_case_agent_ownership.py::test_case_rejects_source_owned_by_unregistered_agent",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_signal_create_is_idempotent_only_for_identical_content",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_signal_create_cannot_overwrite_case_owned_identity",
+            "tests/test_feedback_case_agent_ownership.py::test_concurrent_feedback_signal_id_collision_has_one_immutable_winner",
+            "tests/test_feedback_case_agent_ownership.py::test_case_source_kind_prevents_cross_table_id_collision",
+            "tests/test_feedback_case_agent_ownership.py::test_feedback_ingest_requests_forbid_backend_owned_agent_id",
+            "tests/test_runtime_db.py::test_feedback_case_assignment_migration_downgrades_duplicate_legacy_binding",
+            "tests/test_runtime_db.py::test_runtime_db_repairs_feedback_case_conflicts_when_0031_was_already_applied"
+          ]
+        },
+        {
+          "id": "historical_agent_job_queue_is_retired",
+          "description": "已退役的持久化 Agent job 队列不再暴露写路径；迁移把未完成记录稳定关闭，同时保留历史输入、输出与错误证据供只读查询。",
+          "pytest": [
+            "tests/test_runtime_db_0042.py::test_0042_retires_non_terminal_queue_rows_without_losing_evidence",
+            "tests/test_agent_job_history.py::test_historical_agent_jobs_remain_read_only_and_queryable"
+          ]
+        },
+        {
+          "id": "feedback_case_claim_reconciliation_is_fail_closed",
+          "description": "0036 在单事务中从 typed source 图建立唯一 FeedbackCase claim，按运行时 claim 顺序规范化数组，安全修复尚无下游的 event-only owner 并排除无 claim loser；owner 未注册、已删除、不明、mixed owner、pending-event claim group 拆分或 loser 已有 Evidence 时整体回滚。运行态 Case、source lookup 与 Evidence 只从 claim 投影，不再消费重复或跨 Agent 的旧数组。",
+          "pytest": [
+            "tests/test_feedback_case_agent_ownership.py::test_case_and_evidence_projection_use_claims_and_exclude_unclaimed_loser",
+            "tests/test_runtime_db_0036.py::test_0036_backfills_soc_event_owner_and_audits_duplicate_case_claims_idempotently",
+            "tests/test_runtime_db_0036.py::test_0036_rejects_unassigned_source_owner_without_partial_claim_writes",
+            "tests/test_runtime_db_0036.py::test_0036_rejects_case_with_multiple_source_owners",
+            "tests/test_runtime_db_0036.py::test_0036_rejects_non_public_registered_source_owner",
+            "tests/test_runtime_db_0036.py::test_0036_normalizes_typed_arrays_to_runtime_claim_order",
+            "tests/test_runtime_db_0036.py::test_0036_rejects_duplicate_loser_with_existing_evidence_and_rolls_back",
+            "tests/test_runtime_db_0036.py::test_0036_pending_claim_keeps_direct_source_and_implicit_event_roles",
+            "tests/test_runtime_db_0036.py::test_0036_rejects_pending_event_claim_group_split",
+            "tests/test_runtime_db_0036.py::test_0036_ddl_rolls_back_as_one_sqlite_transaction"
           ]
         },
         {
@@ -33,6 +94,7 @@
             "tests/test_improvement_governor_service.py::test_optimization_plan_rejects_governor_workspace_target",
             "tests/test_improvement_governor_service.py::test_regression_governor_maps_eval_cases",
             "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
+            "tests/test_improvement_execution_target_scope.py::test_execution_recommendations_only_reference_current_editable_targets",
             "tests/test_improvement_execution_service.py::test_apply_failure_abandons_change_set_and_falls_back",
             "tests/test_improvement_execution_service.py::test_idempotent_when_already_applied",
             "tests/test_langfuse_tool_projection.py::test_projects_tool_and_generation_children",
@@ -50,14 +112,120 @@
             "tests/test_normalized_feedback_generation.py::test_llm_organizes_title_problem_and_backfills",
             "tests/test_normalized_feedback_generation.py::test_hostile_formatter_missing_problem_falls_back",
             "tests/test_normalized_feedback_generation.py::test_backfill_does_not_overwrite_user_edited_title",
-            "tests/test_agent_profiles_category.py::test_governor_has_full_read_of_business_agents_and_no_write",
-            "tests/test_agent_profiles_category.py::test_governor_build_options_wires_hooks_and_setting_sources",
+            "tests/test_agent_profiles_category.py::test_governor_workspace_owns_read_only_policy",
+            "tests/test_agent_profiles_category.py::test_governor_build_options_uses_project_discovery_without_policy_injection",
+            "tests/test_managed_agent_policy.py::test_seeded_business_agent_workspaces_match_managed_policy",
+            "tests/test_managed_agent_policy.py::test_symlinked_hook_parent_is_rejected_without_reading_external_content",
+            "tests/test_agent_governance_publish.py::test_publish_rejects_candidate_that_drifts_managed_pre_tool_guard",
+            "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_invalid_input_blocks_with_exit_two",
+            "tests/test_native_workspace_policy.py::test_native_pre_tool_guard_ignores_valid_non_bash_events",
+            "tests/test_runtime_coordination.py::test_clean_historical_workspace_is_migrated_with_git_snapshot",
             "tests/test_improvement_governor_service.py::test_attribution_accepts_relative_claude_md_evidence",
             "tests/test_improvement_governor_service.py::test_attribution_rejects_path_traversal_evidence",
             "tests/test_improvement_governor_service.py::test_guard_rejection_is_logged_not_silent",
-            "tests/test_improvement_execution_service.py::test_idempotent_when_change_set_still_valid",
+            "tests/test_improvement_execution_service.py::test_existing_unapplied_change_set_resumes_instead_of_false_idempotence",
             "tests/test_improvement_execution_service.py::test_reapply_when_change_set_invalidated",
             "tests/test_improvement_execution_service.py::test_runtime_unavailable_surfaces_not_heuristic"
+          ]
+        },
+        {
+          "id": "improvement_execution_saga_is_recoverable",
+          "description": "执行优化在 Git 副作用前持久化稳定 intent 与 confirmed plan/attribution revision；并发申请、来源编辑、stale takeover、commit/mark/finalize/link 断点均通过 fencing 与同一 change set 对账，请求内恢复失败会释放 applying，进程崩溃后的过期 claim 由后台对账器自愈；no-action 不推进阶段且 abandoned worktree 被补偿清理。",
+          "pytest": [
+            "tests/test_improvement_execution_service.py::test_draft_plan_blocks_execution_until_separately_confirmed",
+            "tests/test_improvement_execution_service.py::test_draft_attribution_blocks_execution_before_change_set_creation",
+            "tests/test_improvement_execution_service.py::test_applied_execution_is_not_reused_for_a_new_plan_revision",
+            "tests/test_improvement_execution_service.py::test_git_infrastructure_failure_surfaces_after_safe_compensation",
+            "tests/test_improvement_execution_service.py::test_execution_claim_rejects_parallel_request_and_fences_stale_owner",
+            "tests/test_improvement_execution_service.py::test_archive_and_delete_reject_active_execution_claim",
+            "tests/test_improvement_execution_service.py::test_parallel_apply_creates_only_one_change_set",
+            "tests/test_improvement_execution_service.py::test_plan_and_attribution_cannot_change_while_execution_is_applying",
+            "tests/test_improvement_execution_service.py::test_source_revision_fences_finalize_and_same_change_set_takeover",
+            "tests/test_improvement_execution_service.py::test_candidate_reconciles_in_same_request_after_execution_finalize_failure",
+            "tests/test_improvement_execution_service.py::test_unmarked_worktree_commit_is_reconciled_in_same_request",
+            "tests/test_improvement_execution_service.py::test_deterministic_candidate_reconciliation_failure_releases_applying_claim",
+            "tests/test_improvement_execution_service.py::test_background_reconciler_recovers_expired_candidate_after_process_crash",
+            "tests/test_improvement_execution_service.py::test_missing_link_is_reconciled_in_same_request_after_finalize",
+            "tests/test_improvement_store.py::test_add_link_is_idempotent_by_business_identity",
+            "tests/test_improvement_store.py::test_refine_archive_and_delete_require_explicit_abandonment[rejected]",
+            "tests/test_improvement_store.py::test_refine_archive_and_delete_require_explicit_abandonment[failed]",
+            "tests/test_agent_governance_publish.py::test_stable_change_set_intent_is_idempotent_and_candidate_is_immutable",
+            "tests/test_agent_governance_publish.py::test_publish_cleans_candidate_worktree_and_retry_remains_idempotent",
+            "tests/test_agent_governance_publish.py::test_abandon_cleans_worktree_but_keeps_unpublished_candidate_branch_for_audit",
+            "tests/test_api_error_handlers.py::test_agent_change_set_abandon_cleans_worktree_and_cancels_execution_claim",
+            "tests/test_agent_git_store.py::test_git_store_resets_and_removes_abandoned_worktree",
+            "tests/test_runtime_db.py::test_runtime_db_migrates_execution_intents_and_deduplicates_links",
+            "tests/test_runtime_db.py::test_runtime_db_adds_source_revisions_after_execution_intent_migration"
+          ]
+        },
+        {
+          "id": "typed_test_dataset_adoption_and_eval_binding",
+          "description": "确认回归链采用独立 typed TestDataset；同证据链并发采用幂等，事项返工的新 execution/回归评估形成新 dataset 版本且旧快照不变。候选回归在 preflight 与创建事务中精确绑定真实 change set 的 Agent、execution、improvement、candidate 与 worktree；仅 active 可启动，EvalRun 原子占用 evaluating，并以 CAS 在完成、失败、取消、并发终态或重启恢复时只释放一次。EvalRun 持久化 backend-owned regression_attempt_id 和不可变完整 case snapshot；自然语言期望进入独立 review_required 状态，专用 review API 必须完整绑定当前 run/case、幂等 review_id、操作人、原因和 scope，同事务更新 EvalRun、change set 与审计事件，全接受后才允许普通发布。UI 只选择当前完整产物链及 candidate/execution 的 active 数据集，用 revision CAS 管理人工生命周期，公开请求不接受客户端结果或全局 eval_case_ids。",
+          "pytest": [
+            "tests/test_test_datasets.py::test_adopt_test_dataset_projects_typed_backend_owned_chain",
+            "tests/test_test_datasets.py::test_adopt_test_dataset_is_concurrently_idempotent",
+            "tests/test_test_datasets.py::test_reworked_improvement_adopts_new_dataset_version_without_mutating_history",
+            "tests/test_test_datasets.py::test_adopt_test_dataset_rejects_execution_dependency_drift",
+            "tests/test_test_datasets.py::test_adopt_test_dataset_rejects_unbound_execution_change_set",
+            "tests/test_test_datasets.py::test_adopt_test_dataset_rejects_unproven_source_feedback_ref",
+            "tests/test_test_datasets.py::test_test_dataset_projection_rejects_incomplete_core_provenance",
+            "tests/test_test_datasets.py::test_test_dataset_lifecycle_cas_and_agent_scope_fail_closed",
+            "tests/test_state_machines.py::test_test_dataset_uses_central_lifecycle_state_machine",
+            "tests/test_test_datasets.py::test_test_dataset_rejects_cross_agent_source_chain",
+            "tests/test_test_datasets.py::test_eval_run_requires_active_typed_dataset_with_matching_agent",
+            "tests/test_test_datasets.py::test_test_dataset_api_rejects_generic_and_hostile_paths",
+            "tests/test_runtime_db_0036.py::test_0036_archives_malformed_legacy_test_dataset_body_verbatim",
+            "tests/test_runtime_db_0037.py::test_0037_archives_legacy_eval_rows_and_rebuilds_typed_foreign_keys",
+            "tests/test_runtime_db_0037.py::test_0037_ddl_and_archival_roll_back_as_one_sqlite_transaction",
+            "tests/test_runtime_db_0037.py::test_fresh_schema_uses_typed_eval_foreign_keys",
+            "tests/test_runtime_db_0037.py::test_0037_rejects_partial_eval_schema",
+            "tests/test_typed_dataset_eval_runs.py::test_runner_executes_only_the_persisted_typed_dataset_snapshot",
+            "tests/test_typed_dataset_eval_runs.py::test_runner_never_auto_passes_unverified_natural_language_expectations",
+            "tests/test_typed_dataset_eval_runs.py::test_runner_persists_terminal_eval_run_before_propagating_cancellation",
+            "tests/test_typed_dataset_eval_runs.py::test_runner_fails_closed_on_chat_response_agent_version_pollution",
+            "tests/test_typed_dataset_eval_runs.py::test_runner_records_typed_item_runtime_error_without_legacy_eval_case_code",
+            "tests/test_typed_dataset_eval_runs.py::test_eval_run_rejects_empty_archived_and_cross_agent_datasets",
+            "tests/test_typed_dataset_eval_runs.py::test_eval_run_rejects_every_non_active_dataset_state",
+            "tests/test_typed_dataset_eval_runs.py::test_eval_run_owns_dataset_lifecycle_until_terminal_state",
+            "tests/test_typed_dataset_eval_runs.py::test_runtime_reconciliation_only_fails_expired_eval_run_and_releases_dataset",
+            "tests/test_typed_dataset_eval_runs.py::test_concurrent_eval_run_start_has_one_dataset_lifecycle_owner",
+            "tests/test_typed_dataset_eval_runs.py::test_concurrent_eval_run_terminal_writers_share_one_immutable_outcome",
+            "tests/test_typed_dataset_eval_runs.py::test_regression_eval_run_creation_rejects_unbound_backend_fields",
+            "tests/test_typed_dataset_eval_runs.py::test_regression_eval_run_rejects_dataset_provenance_drift_before_persisting",
+            "tests/test_typed_dataset_eval_runs.py::test_eval_run_item_is_fenced_to_one_snapshot_case_under_concurrency",
+            "tests/test_typed_dataset_eval_runs.py::test_eval_run_item_requires_exact_agent_version_binding",
+            "tests/test_agent_governance_publish.py::test_bound_persisted_regression_can_publish",
+            "tests/test_agent_governance_publish.py::test_startup_reconciles_terminal_and_missing_regression_attempts",
+            "tests/test_agent_governance_publish.py::test_regression_completion_service_contract_only_accepts_persisted_eval_run_id",
+            "tests/test_agent_governance_publish.py::test_complete_regression_rejects_unbound_persisted_eval_run",
+            "tests/test_agent_governance_publish.py::test_stale_regression_owner_cannot_overwrite_retry",
+            "tests/test_agent_governance_publish.py::test_regression_human_review_approval_is_audited_idempotent_and_publishable",
+            "tests/test_agent_governance_publish.py::test_regression_human_review_rejection_stays_blocked",
+            "tests/test_agent_governance_publish.py::test_regression_human_review_requires_exact_current_case_scope",
+            "tests/test_agent_governance_publish.py::test_concurrent_regression_reviews_have_one_audited_winner",
+            "tests/test_agent_governance_publish.py::test_startup_regression_reconciliation_has_no_fixed_500_row_cap",
+            "tests/test_multi_business_agent_governance.py::test_eval_runner_threads_snapshot_agent_id_to_candidate_and_fails_closed_when_missing",
+            "tests/test_test_dataset_frontend_contract.py::test_improvement_workbench_uses_typed_test_dataset_api_without_dual_ids",
+            "tests/test_test_dataset_frontend_contract.py::test_registry_and_regression_run_consume_active_candidate_bound_dataset",
+            "tests/test_release_workbench_contract.py::test_release_workbench_requires_complete_dedicated_regression_review",
+            "tests/test_release_workbench_contract.py::test_regression_review_request_forbids_missing_audit_and_backend_binding_fields"
+          ],
+          "ui_scripts": [
+            "verify:design-parity",
+            "verify:asset-registry"
+          ],
+          "real_container_ui_target": "ui-feedback-smoke"
+        },
+        {
+          "id": "legacy_evaluation_chain_is_archived_and_removed",
+          "description": "0040 在单一 SQLite 写事务中完整归档并删除旧全局用例、场景包、通用 regression 资产和旧生成 job；迁移可幂等、失败可回滚，fresh schema 与 OpenAPI 只保留 typed TestDataset、EvalRun 和四阶段 RegressionAssessment。",
+          "pytest": [
+            "tests/test_runtime_db_0040.py::test_0040_archives_complete_raw_rows_then_removes_legacy_chain",
+            "tests/test_runtime_db_0040.py::test_0040_is_idempotent_after_source_tables_are_removed",
+            "tests/test_runtime_db_0040.py::test_0040_archive_and_destructive_changes_roll_back_together",
+            "tests/test_runtime_db_0040.py::test_fresh_schema_has_only_typed_evaluation_tables",
+            "tests/test_agent_job_history.py::test_removed_eval_case_generation_job_type_is_rejected",
+            "tests/test_openapi_export.py::test_export_openapi_script_writes_current_schema"
           ]
         },
         {
@@ -76,11 +244,61 @@
           ]
         },
         {
-          "id": "improvement_design_parity_and_message_actions",
-          "description": "Playground、Trace、HITL、四阶段改进事项工作台、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "id": "agent_change_set_publication_is_recoverable",
+          "description": "change set 发布先持久化 intent 与来源改进事项唯一声明，Git merge/tag/archive 任一断点及 release/change-set/source improvement DB finalize 失败均可重试对账；第二个 change set 在 Git 副作用前被拒绝，重复请求只返回同一 release；发布工作台动作绑定选中候选，来源门禁只认后端执行/方案/归因 revision 投影。",
           "pytest": [
-            "tests/test_agent_runs_api.py::test_agent_runs_can_include_messages_for_playground_session_restore",
-            "tests/test_claude_runtime_hitl.py::test_stream_hitl_emits_wait_event_and_resumes_sdk_after_allow",
+            "tests/test_agent_governance_publish.py::test_publish_retries_after_archive_failure_without_duplicate_release",
+            "tests/test_agent_governance_publish.py::test_publish_db_finalize_failure_rolls_back_metadata_and_retry_reconciles",
+            "tests/test_agent_governance_publish.py::test_publish_retry_finalizes_older_tag_after_newer_release_advances_head",
+            "tests/test_agent_governance_publish.py::test_divergent_candidate_publish_failure_cancels_intent_and_tag_claim",
+            "tests/test_agent_governance_publish.py::test_source_claim_blocks_second_publication_before_git_side_effect",
+            "tests/test_agent_governance_publish.py::test_repeated_publish_returns_same_release_and_rejects_conflicting_tag",
+            "tests/test_agent_governance_publish.py::test_release_tag_is_owned_by_one_change_set_per_agent",
+            "tests/test_agent_governance_publish.py::test_concurrent_publish_reserves_one_intent_and_one_audit_event",
+            "tests/test_agent_governance_publish.py::test_concurrent_publish_with_different_tags_is_fenced_before_db_reservation",
+            "tests/test_agent_governance_publish.py::test_invalid_explicit_tag_is_rejected_before_intent_is_reserved",
+            "tests/test_agent_governance_publish.py::test_publish_reconciles_legacy_release_row_without_duplicate",
+            "tests/test_agent_governance_publish.py::test_manual_change_set_has_no_fabricated_improvement_attribution",
+            "tests/test_runtime_db_0044.py::test_0044_backfills_one_durable_claim_for_historical_duplicate_releases",
+            "tests/test_agent_governance_publish.py::test_improvement_publication_rejects_unconfirmed_or_revised_provenance_even_with_force",
+            "tests/test_agent_governance_publish.py::test_stale_regression_owner_cannot_overwrite_retry",
+            "tests/test_improvement_execution_service.py::test_governor_success_applies_and_binds_version",
+            "tests/test_api_error_handlers.py::test_agent_change_set_regression_runtime_failure_is_retryable",
+            "tests/test_release_workbench_contract.py::test_change_set_response_hides_publication_intent_and_types_error",
+            "tests/test_release_workbench_contract.py::test_release_workbench_separates_publish_retry_and_force_actions"
+          ],
+          "ui_scripts": [
+            "verify:design-parity"
+          ]
+        },
+        {
+          "id": "agent_version_maintenance_is_durable_and_recoverable",
+          "description": "同一 Agent 的 runtime turn 与发布、回滚、恢复、配置更新和 worktree 清理通过 SQLite lease/token/generation 原子互斥；跨 Agent 不互阻，Git expected HEAD CAS 拒绝旧 owner，崩溃后依据 durable operation/task 幂等补写。",
+          "pytest": [
+            "tests/test_agent_version_maintenance.py::test_durable_maintenance_blocks_runtime_for_only_its_agent",
+            "tests/test_agent_version_maintenance.py::test_active_runtime_turn_blocks_maintenance_but_not_another_agent",
+            "tests/test_agent_version_maintenance.py::test_expired_maintenance_takeover_fences_stale_heartbeat_and_release",
+            "tests/test_agent_version_maintenance.py::test_expired_runtime_with_running_intent_fails_closed_until_reconciled",
+            "tests/test_agent_version_maintenance.py::test_sqlite_write_barrier_serializes_runtime_claim_before_maintenance",
+            "tests/test_agent_maintenance_recovery.py::test_restore_reconciles_crash_after_git_before_operation_persistence",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_applies_expired_reserved_rollback_before_git",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_git_applied_without_repeating_reset",
+            "tests/test_agent_maintenance_recovery.py::test_reconciler_completes_expired_restore_after_git_without_repeating_reset",
+            "tests/test_agent_maintenance_recovery.py::test_release_reconciler_isolates_unexpected_operation_failure",
+            "tests/test_agent_maintenance_recovery.py::test_restore_expected_head_cas_rejects_intervening_git_change",
+            "tests/test_agent_maintenance_recovery.py::test_worktree_cleanup_reconciles_crash_after_idempotent_git_delete",
+            "tests/test_agent_maintenance_recovery.py::test_rollback_rejects_non_current_release_without_resetting_newer_head",
+            "tests/test_agent_maintenance_recovery.py::test_completed_rollback_cache_cannot_report_success_after_restore",
+            "tests/test_agent_maintenance_recovery.py::test_publish_revalidates_durable_claim_before_git_side_effect",
+            "tests/test_agent_config_maintenance.py::test_config_update_is_fenced_by_same_agent_runtime_but_allows_other_agent"
+          ]
+        },
+        {
+          "id": "improvement_design_parity_and_message_actions",
+          "description": "Playground 从 SDK transcript 恢复历史、Trace、HITL、四阶段改进事项工作台、非法返回动作清零、来源反馈管理、决策卡、ContextPackage、Asset Registry provenance 和 UI 语义负向断言的浏览器验收。",
+          "pytest": [
+            "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
+            "tests/test_claude_runtime_hitl.py::test_stream_hitl_consumes_prompt_eof_then_resumes_sdk_after_allow",
             "tests/test_claude_runtime_hitl.py::test_stream_finishes_when_completion_step_raises",
             "tests/test_claude_runtime_hitl.py::test_stream_fail_loud_when_hitl_required_but_disabled",
             "tests/test_claude_runtime_hitl.py::test_run_fail_loud_when_hitl_required",
@@ -97,7 +315,8 @@
             "verify:claude-user-input",
             "verify:remote-api-base",
             "verify:message-actions-browser"
-          ]
+          ],
+          "real_container_ui_target": "ui-feedback-smoke"
         }
       ]
     },
@@ -114,6 +333,17 @@
             "tests/test_model_provider_router.py::test_vllm_capability_gate_reports_sidecar_unavailable",
             "tests/test_claude_runtime.py::test_vllm_feedback_job_options_use_derived_litellm_sidecar"
           ]
+        },
+        {
+          "id": "provider_failure_does_not_block_control_plane_liveness",
+          "description": "外部 vLLM 探测超时只降级模型 readiness；API/UI liveness 保持快速可用，诊断快照和模型动作向 UI 投影脱敏的稳定 code、reason、probe 与 action。真实容器 Playwright 入口为 make container-health-e2e。",
+          "pytest": [
+            "tests/test_health_endpoints.py::test_health_endpoints_remain_fast_while_external_vllm_probe_is_stuck",
+            "tests/test_health_endpoints.py::test_readiness_reports_sanitized_vllm_timeout_and_recovers",
+            "tests/test_runtime_health_diagnose.py::test_diagnose_prints_specific_degraded_provider_reason",
+            "tests/test_repository_env_policy.py::test_compose_healthcheck_uses_local_liveness_without_provider_dependency"
+          ],
+          "real_container_ui_target": "container-health-e2e"
         }
       ]
     },
@@ -123,7 +353,7 @@
       "scenarios": [
         {
           "id": "seeded_business_agent_bootstrap_registry",
-          "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表，Playground 依赖的 /api/agent-registry 可见。",
+          "description": "预置业务 Agent seed 能被 bootstrap 到运行卷、启动发现并同步进注册表；已有 workspace 保持 Git 真相源，不按已退役 seed 清单逐文件删除或回灌。",
           "pytest": [
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_bootstraps_into_registry_for_playground",
             "tests/test_seeded_business_agent_configs.py::test_ai_soc_gap_analyzer_seed_routes_through_openai_responses",
@@ -131,7 +361,8 @@
             "tests/test_seeded_business_agent_configs.py::test_security_operations_expert_seed_routes_through_openai_responses",
             "tests/test_seeded_business_agent_configs.py::test_hitl_required_deployment_contract_and_low_fixes",
             "tests/test_agent_registry_store.py::test_lifespan_auto_registers_seeded_business_agents",
-            "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent"
+            "tests/test_agent_registry_store.py::test_chat_routes_to_registered_business_agent",
+            "tests/test_bootstrap_business_agent_protection.py::test_bootstrap_preserves_optimized_business_agent_and_renders_new_seed"
           ]
         },
         {
@@ -148,6 +379,21 @@
             "tests/test_claude_runtime_hitl.py::test_stream_security_operations_expert_disabled_hitl_denies_approved_tools_and_execute",
             "tests/test_claude_runtime_hitl.py::test_run_security_operations_expert_denies_all_permission_requests_without_stream_hitl",
             "tests/test_claude_user_input.py::test_protected_soc_decision_requires_ro_one_shot_updated_input"
+          ]
+        },
+        {
+          "id": "dynamic_business_agent_provisioning_saga",
+          "description": "动态 Agent 创建先持久化不可见 reservation，再以 no-follow 原子文件日志落盘并 finalize；失败、重启和同 ID 并发均不会暴露半成品，崩溃遗留 partial workspace 在所有权无法证明时禁止同 ID 混合复用且不删除外部替换，HITL 始终从已落盘 settings 动态派生。",
+          "pytest": [
+            "tests/test_agent_provisioning_saga.py::test_reservation_is_hidden_from_list_get_and_chat_resolution",
+            "tests/test_agent_provisioning_saga.py::test_post_and_list_derive_the_same_live_hitl_value",
+            "tests/test_agent_provisioning_saga.py::test_post_rejects_workspace_symlink_and_agent_never_becomes_runnable",
+            "tests/test_agent_provisioning_saga.py::test_finalize_failure_rolls_back_new_workspace_and_deletes_new_row",
+            "tests/test_agent_provisioning_saga.py::test_rollback_preserves_file_replaced_by_external_writer_and_keeps_tombstone",
+            "tests/test_agent_provisioning_saga.py::test_apply_failure_preserves_preexisting_workspace_and_tombstones_new_row",
+            "tests/test_agent_provisioning_saga.py::test_concurrent_same_agent_id_has_exactly_one_winner",
+            "tests/test_agent_provisioning_saga.py::test_startup_recovery_restores_tombstone_and_hides_new_orphan",
+            "tests/test_agent_provisioning_saga.py::test_crash_recovery_blocks_partial_workspace_reuse_until_verified_cleanup"
           ]
         }
       ]
@@ -190,6 +436,41 @@
           ]
         },
         {
+          "id": "responses_session_owner_and_cas",
+          "description": "previous_response/conversation 只能由原业务 Agent 续接；session owner 首次原子认领后不可变；SDK opaque transcript 先按 run staging，Result 后与 session/run/intent 原子发布；active turn 由 run_id+generation fencing 的 lease 与 heartbeat 保护，过期 intent 可幂等对账。",
+          "pytest": [
+            "tests/test_responses_api.py::test_previous_response_id_rejects_cross_agent_owner_409",
+            "tests/test_responses_api.py::test_previous_response_id_without_session_fails_closed_409",
+            "tests/test_responses_api.py::test_previous_response_id_with_deleted_session_mapping_fails_closed_409",
+            "tests/test_responses_api.py::test_conversation_rejects_cross_agent_session_owner_409",
+            "tests/test_responses_api.py::test_conversation_rejects_historical_session_without_owner_409",
+            "tests/test_claude_runtime_session_resume.py::test_session_owner_is_claimed_once_and_cannot_change",
+            "tests/test_claude_runtime_session_resume.py::test_historical_session_without_owner_cannot_be_claimed",
+            "tests/test_claude_runtime_session_resume.py::test_active_turn_blocks_delete_until_claim_is_released",
+            "tests/test_claude_runtime_session_resume.py::test_turn_lease_renewal_extends_persisted_turn_expiry",
+            "tests/test_claude_runtime_session_resume.py::test_turn_lease_renewal_rejects_wrong_run_id",
+            "tests/test_claude_runtime_session_resume.py::test_non_stream_turn_renews_lease_while_sdk_query_runs",
+            "tests/test_claude_runtime_session_resume.py::test_stream_turn_fails_closed_when_lease_renewal_loses_ownership",
+            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_and_discards_unfinished_turn[runtime]",
+            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_and_discards_unfinished_turn[responses-sse]",
+            "tests/test_claude_runtime_session_resume.py::test_client_cancel_closes_sdk_task_when_hitl_cleanup_fails",
+            "tests/test_claude_runtime_hitl.py::test_interactive_stream_client_cancel_closes_sdk_and_aborts_turn",
+            "tests/test_claude_runtime_hitl.py::test_interactive_stream_lease_loss_cancels_sdk_and_aborts_turn",
+            "tests/test_claude_runtime_session_resume.py::test_blocking_sdk_stream_cannot_lose_session_mapping_to_concurrent_delete",
+            "tests/test_sdk_session_store.py::test_turn_store_hides_staged_entries_until_atomic_promotion",
+            "tests/test_sdk_session_store.py::test_late_append_is_rejected_after_turn_ownership_is_lost[intent]",
+            "tests/test_session_turn_persistence.py::test_complete_publishes_transcript_session_run_and_intent_atomically",
+            "tests/test_session_turn_persistence.py::test_complete_rejects_result_without_staged_sdk_transcript",
+            "tests/test_session_turn_persistence.py::test_finalize_exception_rolls_back_every_projection",
+            "tests/test_session_turn_persistence.py::test_expired_reconcile_is_idempotent_and_fences_late_completion",
+            "tests/test_sdk_session_migration.py::test_legacy_import_promotes_official_sdk_transcript_once",
+            "tests/test_sdk_session_migration.py::test_import_claim_is_cross_connection_fenced_and_expired_owner_cannot_finalize",
+            "tests/test_sdk_session_migration.py::test_mapping_invalidation_discards_inflight_import_staging[clear]",
+            "tests/test_sdk_session_migration.py::test_mapping_invalidation_discards_inflight_import_staging[delete]",
+            "tests/test_runtime_db.py::test_runtime_db_adds_session_active_run_lease_without_rewriting_rows"
+          ]
+        },
+        {
           "id": "response_disposition_ro_two_phase_contract",
           "description": "RO 专用凭据驱动 proposal/approved_execution；批准执行要求 stream+HITL+完整绑定，一次性 claim 防回放，backend-owned metadata 不可伪造，claim 按 completed/failed/cancelled 收口。",
           "pytest": [
@@ -212,12 +493,20 @@
         },
         {
           "id": "responses_streaming_sse",
-          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、error->failed、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
+          "description": "stream=true 的 Responses-style SSE 投影：response.* 标准通道两模式都发、agentgov.* 控制信封仅 control、heartbeat 转 SSE comment、SDK Result/运行错误只产生一个 failed 终态并投影 UI 错误、tool_step 投影、HITL confirmation 投影（requested 保 decision_token、resolved 不带）、端点返回 text/event-stream。",
           "pytest": [
             "tests/test_responses_stream.py::test_control_stream_maps_core_events",
             "tests/test_responses_stream.py::test_strict_stream_emits_no_agentgov",
             "tests/test_responses_stream.py::test_heartbeat_becomes_sse_comment",
             "tests/test_responses_stream.py::test_error_maps_to_failed",
+            "tests/test_responses_stream.py::test_result_errors_map_to_one_failed_terminal_and_control_error",
+            "tests/test_responses_stream.py::test_done_without_result_emits_one_failed_terminal",
+            "tests/test_responses_stream.py::test_frames_after_done_are_ignored",
+            "tests/test_responses_stream.py::test_frames_after_failed_terminal_are_ignored_until_done",
+            "tests/test_responses_stream.py::test_source_eof_without_done_or_result_still_emits_failed_terminal",
+            "tests/test_responses_stream.py::test_source_exception_before_session_emits_one_standard_failed_terminal",
+            "tests/test_responses_stream.py::test_projection_closes_upstream_when_client_stops_consuming",
+            "tests/test_responses_stream.py::test_projection_accepts_async_iterator_without_aclose",
             "tests/test_responses_stream.py::test_tool_step_from_raw",
             "tests/test_responses_stream.py::test_confirmation_projection_keeps_token_and_renames",
             "tests/test_responses_stream.py::test_endpoint_stream_control",
@@ -227,10 +516,12 @@
             "tests/test_responses_stream.py::test_endpoint_stream_control_maps_request_fields",
             "tests/test_responses_stream.py::test_endpoint_stream_strict_uses_configured_agent_without_agentgov_events",
             "tests/test_responses_stream.py::test_endpoint_stream_projects_hitl_confirmation",
-            "tests/test_responses_stream.py::test_endpoint_stream_retries_stale_previous_response_session",
+            "tests/test_responses_stream.py::test_endpoint_stream_fails_closed_for_unmigratable_previous_response_session",
             "tests/test_responses_stream.py::test_stream_persists_session_and_run_before_response_completed",
+            "tests/test_responses_stream.py::test_stream_run_write_failure_rolls_back_session_completion",
             "tests/test_responses_stream.py::test_stream_persists_exactly_once",
-            "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally"
+            "tests/test_responses_stream.py::test_stream_error_path_persists_once_in_finally",
+            "tests/test_responses_stream.py::test_endpoint_sdk_result_error_is_failed_terminal_for_playground"
           ]
         },
         {
@@ -238,14 +529,18 @@
           "description": "/v1/conversations：create/list/get/delete（会话对象投影自 SDK session，conv_<sid>）+ items（投影自 SDK transcript blocks、owning-agent 解析无静默 fallback、cursor after->offset、not-found 404、保留 metadata 剥离）。",
           "pytest": [
             "tests/test_conversations_api.py::test_create_get_list_delete",
+            "tests/test_conversations_api.py::test_active_turn_blocks_both_session_delete_surfaces",
             "tests/test_conversations_api.py::test_create_strips_reserved_metadata",
             "tests/test_conversations_api.py::test_response_orchestrator_can_only_create_conversation_mapping",
             "tests/test_conversations_api.py::test_get_unknown_conversation_404",
             "tests/test_conversations_api.py::test_items_empty_when_no_transcript",
+            "tests/test_conversations_api.py::test_items_ownerless_transcript_is_session_conflict_409",
             "tests/test_conversations_api.py::test_items_project_transcript_via_owning_agent",
             "tests/test_conversations_api.py::test_items_cursor_maps_to_offset",
             "tests/test_conversations_api.py::test_items_missing_owning_agent_404",
-            "tests/test_conversations_api.py::test_items_has_more_when_page_full"
+            "tests/test_conversations_api.py::test_items_has_more_when_page_full",
+            "tests/test_session_history.py::test_endpoint_missing_owning_agent_is_session_conflict_409",
+            "tests/test_session_history.py::test_frontend_history_loader_does_not_restart_for_equivalent_session_refreshes"
           ]
         }
       ]

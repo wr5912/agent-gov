@@ -1,7 +1,7 @@
 import { authHeaders, makeUrl, readError, requestJson } from "./request";
+import { GOVERNANCE_AGENT_TIMEOUT_MS } from "./timeouts";
 export { defaultRuntimeConfig, isLegacyDockerApiBase } from "./request";
 export * from "./feedback";
-export * from "./regressionAssets";
 import type {
   AgentInfo,
   AgentSummary,
@@ -30,6 +30,8 @@ import type {
   ClaudeUserInputDecisionPayload,
   ClaudeUserInputDecisionResponse,
   ConfigMappingResponse,
+  ConversationItem,
+  ConversationItemList,
   EvalRunResponse,
   OpenAICompatAgentConfig,
   RuntimeClientConfig,
@@ -63,6 +65,39 @@ export function deleteSession(config: RuntimeClientConfig, sessionId: string) {
   );
 }
 
+export async function getConversationItems(
+  config: RuntimeClientConfig,
+  sessionId: string,
+  signal?: AbortSignal,
+): Promise<ConversationItem[]> {
+  // Callers hold the internal session id. Always add the public prefix once,
+  // including when a legacy client chose a session id that starts with "conv_".
+  const conversationId = `conv_${sessionId}`;
+  const items: ConversationItem[] = [];
+  const seenCursors = new Set<string>();
+  let after: string | undefined;
+
+  while (true) {
+    const query = new URLSearchParams({ limit: "100", order: "asc" });
+    if (after) query.set("after", after);
+    const page = await requestJson<ConversationItemList>(
+      config,
+      `/v1/conversations/${encodeURIComponent(conversationId)}/items?${query.toString()}`,
+      { signal },
+    );
+    const pageItems = Array.isArray(page.data) ? page.data : [];
+    items.push(...pageItems);
+    if (!page.has_more) return items;
+
+    const cursor = page.last_id || pageItems.at(-1)?.id;
+    if (!cursor || seenCursors.has(cursor)) {
+      throw new Error("Conversation items pagination returned an invalid cursor");
+    }
+    seenCursors.add(cursor);
+    after = cursor;
+  }
+}
+
 function conversationToSessionInfo(value: unknown): SessionInfo | null {
   if (!isRecord(value) || typeof value.id !== "string") return null;
   const sessionId = value.id.startsWith("conv_") ? value.id.slice("conv_".length) : value.id;
@@ -79,6 +114,8 @@ function conversationToSessionInfo(value: unknown): SessionInfo | null {
     title: typeof value.title === "string" ? value.title : undefined,
     turns: typeof ag.turns === "number" ? ag.turns : 0,
     metadata: isRecord(value.metadata) ? value.metadata : {},
+    active_run_id: typeof ag.active_run_id === "string" ? ag.active_run_id : null,
+    active_run_expires_at: typeof ag.active_run_expires_at === "string" ? ag.active_run_expires_at : null,
   } as SessionInfo;
 }
 
@@ -255,14 +292,67 @@ export function rejectAgentChangeSet(config: RuntimeClientConfig, changeSetId: s
   );
 }
 
-export function runAgentChangeSetRegression(config: RuntimeClientConfig, changeSetId: string, evalCaseIds?: string[]) {
+export function runAgentChangeSetRegression(
+  config: RuntimeClientConfig,
+  changeSetId: string,
+  datasetId: string,
+  caseCount: number,
+) {
+  const normalizedCaseCount = Number.isFinite(caseCount) && caseCount > 0 ? Math.floor(caseCount) : 1;
+  const timeoutMs = Math.min(
+    2_147_000_000,
+    normalizedCaseCount * GOVERNANCE_AGENT_TIMEOUT_MS + 30_000,
+  );
   return requestJson<EvalRunResponse>(
     config,
     `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eval_case_ids: evalCaseIds }),
+      body: JSON.stringify({ dataset_id: datasetId }),
+      timeoutMs,
+    },
+  );
+}
+
+export type RegressionReviewDecision = {
+  dataset_case_id: string;
+  decision: "approve" | "reject";
+};
+
+export type AgentChangeSetRegressionReviewRequest = {
+  review_id: string;
+  operator: string;
+  reason: string;
+  scope: "current_eval_run";
+  decisions: RegressionReviewDecision[];
+};
+
+export function reviewAgentChangeSetRegression(
+  config: RuntimeClientConfig,
+  changeSetId: string,
+  evalRunId: string,
+  payload: AgentChangeSetRegressionReviewRequest,
+) {
+  return requestJson<EvalRunResponse>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/regression-runs/${encodeURIComponent(evalRunId)}/review`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function retryAgentChangeSetWorktreeCleanup(config: RuntimeClientConfig, changeSetId: string) {
+  return requestJson<AgentChangeSet>(
+    config,
+    `/api/agent-change-sets/${encodeURIComponent(changeSetId)}/worktree-cleanup/retry`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operator: "ui" }),
     },
   );
 }
@@ -375,6 +465,27 @@ export async function streamChat(
     const reader = res.body.getReader();
     const decoder = new TextDecoder("utf-8");
     let buffer = "";
+    let terminalReceived = false;
+    let doneEnvelope: StreamEnvelope | null = null;
+    let controlFailureReceived = false;
+    let standardFailure: unknown;
+    const consumeEvent = (parsed: StreamEnvelope) => {
+      if (parsed.event === "response.completed" || parsed.event === "response.failed") {
+        terminalReceived = true;
+      }
+      if (parsed.event === "response.failed") {
+        standardFailure = isRecord(parsed.data) && "error" in parsed.data ? parsed.data.error : parsed.data;
+      }
+      if (parsed.event === "agentgov.error") controlFailureReceived = true;
+      idleMs = idleFromSessionFrame(parsed, idleMs);
+      const envelope = translateResponsesEnvelope(parsed);
+      if (!envelope) return;
+      if (envelope.event === "done") {
+        doneEnvelope = envelope;
+        return;
+      }
+      dispatchEnvelope(envelope, handlers);
+    };
 
     try {
       while (true) {
@@ -387,17 +498,20 @@ export async function streamChat(
         for (const rawEvent of events) {
           const parsed = parseSse(rawEvent);
           if (!parsed) continue;
-          idleMs = idleFromSessionFrame(parsed, idleMs);
-          const envelope = translateResponsesEnvelope(parsed);
-          if (envelope) dispatchEnvelope(envelope, handlers);
+          consumeEvent(parsed);
         }
       }
 
       if (buffer.trim()) {
         const parsed = parseSse(buffer);
-        const envelope = parsed ? translateResponsesEnvelope(parsed) : null;
-        if (envelope) dispatchEnvelope(envelope, handlers);
+        if (parsed) consumeEvent(parsed);
       }
+      if (standardFailure !== undefined && !controlFailureReceived) {
+        dispatchEnvelope({ event: "error", data: standardFailure }, handlers);
+      }
+      if (!terminalReceived) throw new Error("Stream ended before terminal event");
+      if (!doneEnvelope) throw new Error("Stream ended before agentgov.done");
+      dispatchEnvelope(doneEnvelope, handlers);
     } finally {
       reader.releaseLock();
     }
@@ -512,9 +626,7 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   }
 
   if (envelope.event === "error") {
-    const errors = isRecord(envelope.data) && Array.isArray(envelope.data.errors)
-      ? envelope.data.errors.map(String).join("\n")
-      : JSON.stringify(envelope.data);
+    const errors = formatStreamError(envelope.data);
     handlers.onError?.(errors, envelope.data);
     return;
   }
@@ -522,6 +634,29 @@ function dispatchEnvelope(envelope: StreamEnvelope, handlers: StreamChatHandlers
   if (envelope.event === "done") {
     handlers.onDone?.();
   }
+}
+
+function formatStreamError(data: unknown): string {
+  if (!isRecord(data)) return JSON.stringify(data);
+  const errorCode = stringOrUndefined(data.error_code);
+  if (!errorCode) {
+    return Array.isArray(data.errors) ? data.errors.map(String).join("\n") : JSON.stringify(data);
+  }
+  const detail = stringOrUndefined(data.message) || stringOrUndefined(data.detail) || "Model-backed runtime request failed.";
+  const lines = [`${errorCode}: ${detail}`];
+  const probe = stringOrUndefined(data.probe);
+  const reason = stringOrUndefined(data.reason);
+  const endpoint = stringOrUndefined(data.endpoint);
+  if (probe || reason || endpoint) {
+    lines.push([
+      `probe=${probe || "unknown"}`,
+      `reason=${reason || "unknown"}`,
+      ...(endpoint ? [`endpoint=${endpoint}`] : []),
+    ].join(" "));
+  }
+  const action = stringOrUndefined(data.action);
+  if (action) lines.push(`action=${action}`);
+  return lines.join("\n");
 }
 
 function stringOrUndefined(value: unknown): string | undefined {

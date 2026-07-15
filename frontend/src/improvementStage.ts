@@ -43,9 +43,7 @@ const VISIBLE_STAGE_BY_INTERNAL: Record<string, VisibleImprovementStageKey> = {
 const BACK_ACTION: Partial<Record<string, { stage: string; label: string }>> = {
   attribution: { stage: "triage", label: "返回反馈整理" },
   optimization: { stage: "attribution", label: "返回归因分析" },
-  execution: { stage: "attribution", label: "返回归因分析" },
   regression: { stage: "execution", label: "返回优化执行" },
-  release: { stage: "execution", label: "返回优化执行" },
 };
 
 export interface ImprovementStageView {

@@ -1,17 +1,24 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
-    "allow": [
-      "Read(./.env*)",
-      "Read(./**/.env*)",
-      "Edit(./.env*)",
-      "Edit(./**/.env*)",
-      "Write(./.env*)",
-      "Write(./**/.env*)"
+    "ask": [
+      "Edit(/docker/.env)",
+      "Edit(/docker/.env.local-debug)",
+      "Edit(/frontend/.env.local)",
+      "Write(/docker/.env)",
+      "Write(/docker/.env.local-debug)",
+      "Write(/frontend/.env.local)"
     ],
     "deny": [
-      "Read(./secrets/**)",
-      "Read(./**/*credentials*.json)",
-      "Read(./**/*.pem)"
+      "Read(/.env)",
+      "Read(/.env.local)",
+      "Read(/docker/.env)",
+      "Read(/docker/.env.local-debug)",
+      "Read(/docker/.env.bak*)",
+      "Read(/frontend/.env.local)",
+      "Read(/secrets/**)",
+      "Read(/**/*credentials*.json)",
+      "Read(/**/*.pem)"
     ]
   },
   "hooks": {
@@ -21,6 +28,21 @@
           {
             "type": "command",
             "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"SessionStart\",\"additionalContext\":\"中文优先：所有对话、文档、代码注释和提交说明默认使用中文；代码标识符、命令、日志关键字和第三方 API 名称保留原文。\"}}'"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.codex/hooks/codex_governance_stop.py"
+            ],
+            "timeout": 120,
+            "statusMessage": "运行 AgentGov 治理硬门"
           }
         ]
       }

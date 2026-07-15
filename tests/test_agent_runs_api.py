@@ -42,7 +42,7 @@ def _load_app(monkeypatch, tmp_path):
     return importlib.import_module("app.main")
 
 
-def test_agent_runs_can_include_messages_for_playground_session_restore(monkeypatch, tmp_path):
+def test_agent_runs_include_messages_is_an_explicit_debug_projection(monkeypatch, tmp_path):
     module = _load_app(monkeypatch, tmp_path)
     module.feedback_store.record_run(
         {

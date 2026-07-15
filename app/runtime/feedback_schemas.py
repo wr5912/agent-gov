@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Literal, Optional, TypeVar, cast
+from typing import Literal, Optional, cast
 
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -9,20 +9,16 @@ from .json_types import JsonObject
 from .normalizers.feedback_output_normalizers import (
     normalize_attribution_output,
     normalize_execution_plan_output,
-    normalize_feedback_eval_case_generation_output,
 )
 from .normalizers.feedback_output_records import (
     NormalizedAttributionOutput,
     NormalizedEvidenceRef,
     NormalizedExecutionOperation,
     NormalizedExecutionPlanOutput,
-    NormalizedFeedbackEvalCaseGenerationOutput,
-    NormalizedGeneratedEvalCase,
     NormalizedOutputRecord,
     NormalizedResponsibilityBoundary,
 )
 
-TOutputModel = TypeVar("TOutputModel", bound=BaseModel)
 FormatterAgentOutputNormalizer = Callable[[JsonObject], JsonObject]
 
 def _normalize_formatter_agent_output(value: object, normalizer: FormatterAgentOutputNormalizer) -> object:
@@ -54,7 +50,7 @@ OptimizationObjectType = Literal[
     "mcp_config",
     "mcp_description",
     "output_style",
-    "eval_case",
+    "test_dataset",
     "runtime_code",
     "external_mcp_service",
     "soc_process",
@@ -179,30 +175,6 @@ def _validated_payload(model: type[NormalizedOutputRecord], normalized: JsonObje
     return output_model_payload(model.model_validate(normalized))
 
 
-def _coerce_output_model(
-    value: BaseModel | JsonObject,
-    *,
-    model: type[TOutputModel],
-    normalizer: object,
-) -> tuple[TOutputModel | None, str | None]:
-    if isinstance(value, model):
-        return value, None
-    payload = value.model_dump(mode="json") if isinstance(value, BaseModel) else value
-    try:
-        normalized = normalizer(payload)  # type: ignore[operator]
-        return model.model_validate(normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
-def validate_attribution_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_attribution_output(payload)
-    try:
-        return _validated_payload(AttributionOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-
-
 class ExecutionOperation(NormalizedExecutionOperation):
     operation: Literal["append_text", "replace_file", "create_file", "noop"]
     path: str
@@ -261,95 +233,37 @@ def validate_execution_plan_output(payload: JsonObject) -> tuple[JsonObject | No
         return None, exc.json()
 
 
-class GeneratedEvalCaseOutput(NormalizedGeneratedEvalCase):
-    eval_case_id: Optional[str] = None
-    status: Literal["active", "draft", "archived"] = "draft"
-    source: Optional[str] = "eval_case_governor"
-    source_feedback_case_id: Optional[str] = None
-    source_run_id: Optional[str] = None
-    source_kind: Optional[str] = None
-    source_id: Optional[str] = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
-    asset_layer: Optional[str] = "candidate"
-    promotion_status: Optional[str] = "candidate"
-    blocking_policy: Optional[str] = "non_blocking"
-    scenario_pack: Optional[str] = None
-    severity: Optional[str] = "medium"
-    flaky_status: Optional[str] = "stable"
-    variant_role: Optional[str] = "original_reproduction"
-    prompt: str
-    expected_behavior: Optional[str] = None
+class RegressionAssessmentCaseFormatterOutput(NormalizedOutputRecord):
+    expected_behavior: str
     checks_json: JsonObject = Field(default_factory=dict)
     labels: list[str] = Field(default_factory=list)
-    source_summary: Optional[JsonObject] = None
-    attribution_summary: Optional[JsonObject] = None
-    optimization_plan_summary: Optional[JsonObject] = None
 
 
-class GeneratedEvalCaseFormatterOutput(NormalizedOutputRecord):
-    source_feedback_case_id: Optional[str] = None
-    source_kind: Optional[str] = None
-    source_id: Optional[str] = None
-    source_refs: list[JsonObject] = Field(default_factory=list)
-    scenario_pack: Optional[str] = None
-    prompt: str
-    expected_behavior: Optional[str] = None
-    checks_json: JsonObject = Field(default_factory=dict)
-    labels: list[str] = Field(default_factory=list)
-    source_summary: Optional[JsonObject] = None
-    attribution_summary: Optional[JsonObject] = None
-    optimization_plan_summary: Optional[JsonObject] = None
-
-
-class FeedbackEvalCaseGenerationFormatterOutput(NormalizedOutputRecord):
-    eval_cases: list[GeneratedEvalCaseFormatterOutput] = Field(default_factory=list)
+class RegressionAssessmentFormatterOutput(NormalizedOutputRecord):
+    eval_cases: list[RegressionAssessmentCaseFormatterOutput] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
     suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict)
 
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_formatter_output(cls, value: object) -> object:
-        return _normalize_formatter_agent_output(value, normalize_feedback_eval_case_generation_output)
-
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> FeedbackEvalCaseGenerationFormatterOutput:
+    def _has_eval_cases_or_reason(self) -> RegressionAssessmentFormatterOutput:
         if not self.eval_cases and not self.no_action_reason:
-            raise ValueError("eval case generation output must include eval_cases or no_action_reason")
+            raise ValueError("regression assessment must include eval_cases or no_action_reason")
         return self
 
 
-class FeedbackEvalCaseGenerationOutput(NormalizedFeedbackEvalCaseGenerationOutput):
-    job_id: Optional[str] = None
-    scope_kind: Optional[str] = None
-    scope_id: Optional[str] = None
-    status: Literal["completed", "needs_human_review"] = "completed"
-    eval_cases: list[GeneratedEvalCaseOutput] = Field(default_factory=list)
-    results: list[JsonObject] = Field(default_factory=list)
+class RegressionAssessmentCaseOutput(NormalizedOutputRecord):
+    expected_behavior: str
+    checks_json: JsonObject = Field(default_factory=dict)
+    labels: list[str] = Field(default_factory=list)
+
+
+class RegressionAssessmentOutput(NormalizedOutputRecord):
+    eval_cases: list[RegressionAssessmentCaseOutput] = Field(default_factory=list)
     no_action_reason: Optional[str] = None
+    suggested_gate_thresholds: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def _has_eval_cases_or_reason(self) -> FeedbackEvalCaseGenerationOutput:
+    def _has_eval_cases_or_reason(self) -> RegressionAssessmentOutput:
         if not self.eval_cases and not self.no_action_reason:
-            raise ValueError("eval case generation output must include eval_cases or no_action_reason")
-        if not self.eval_cases:
-            self.status = "needs_human_review"
+            raise ValueError("regression assessment must include eval_cases or no_action_reason")
         return self
-
-
-def validate_feedback_eval_case_generation_output(payload: JsonObject) -> tuple[JsonObject | None, str | None]:
-    normalized = normalize_feedback_eval_case_generation_output(payload)
-    try:
-        return _validated_payload(FeedbackEvalCaseGenerationOutput, normalized), None
-    except ValidationError as exc:
-        return None, exc.json()
-def coerce_attribution_output_model(value: BaseModel | JsonObject) -> tuple[AttributionOutput | None, str | None]:
-    return _coerce_output_model(value, model=AttributionOutput, normalizer=normalize_attribution_output)
-
-def coerce_execution_plan_output_model(value: BaseModel | JsonObject) -> tuple[ExecutionPlanOutput | None, str | None]:
-    return _coerce_output_model(value, model=ExecutionPlanOutput, normalizer=normalize_execution_plan_output)
-
-
-def coerce_feedback_eval_case_generation_output_model(
-    value: BaseModel | JsonObject,
-) -> tuple[FeedbackEvalCaseGenerationOutput | None, str | None]:
-    return _coerce_output_model(value, model=FeedbackEvalCaseGenerationOutput, normalizer=normalize_feedback_eval_case_generation_output)

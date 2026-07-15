@@ -20,9 +20,9 @@
 - `ai-soc-gap-analyzer`：AI SOC 差距评估业务 Agent，基于能力模型和证据快照输出成熟度评分、差距、风险和下一步行动。
 - `security-operations-expert`：网络安全运营专家业务 Agent，面向告警分流、事件调查、威胁狩猎和响应处置闭环；响应处置部分融合 `response-disposal` 的 MCP、skill、subagent、权限和审计配置。
 
-> 通用业务 Agent 的 `Bash(*)` 基线放在 `ask`；流式 Web HITL 只可按本次 run 的低风险命令类别授权，高风险或未分类请求不得整轮放行。`response-disposal` 与 `security-operations-expert` 的 agent.yaml 声明 `requires_web_hitl: true`。其中 `security-operations-expert` 是受控例外：只有 RO 认证的 `approved_execution` 可对精确的 `mcp__sec-ops__soc_api__create` / `manual` 请求逐次 `allow_once`，`execute` 和其他 mutation 始终拒绝。非流式入口对所有权限询问 fail-closed；关闭 HITL 时流式入口也显式拒绝 ask 请求。
+> 业务 Agent 的权限只由 workspace `.claude/settings.json` 声明，`agent.yaml` 不保存第二份 HITL 布尔状态。通用业务 Agent 的 `Bash(*)` 基线放在 `ask`；流式 Web HITL 只可按本次 run 的低风险命令类别授权，高风险或未分类请求不得整轮放行。`security-operations-expert` 是受控例外：只有 RO 认证的 `approved_execution` 可对精确的 `mcp__sec-ops__soc_api__create` / `manual` 请求逐次 `allow_once`，`execute` 和其他 mutation 始终拒绝。非流式入口对权限询问 fail-closed；关闭 HITL 时流式入口也显式拒绝 ask 请求。
 
-API 是共享运行卷的启动协调者，worker 只消费已完成的 receipt。API/worker 活跃期持有共享租约；bootstrap 与受管策略迁移持有独占租约。已有 workspace 只有在 Git 工作树干净、且没有未终结 change set 时才自动迁移，并为每个受影响 Agent 创建 Git 快照；脏工作树或开放 change set 会阻断启动。`security-operations-expert` 的专用响应处置契约与通用 Bash/MCP/sandbox 基线共用这一策略入口，SDK 执行、配置编辑、候选发布和回滚也会 fail-closed 校验。
+API 是共享运行卷的启动协调者；持久化 Agent job 队列和独立 worker 已退役。API 活跃期持有共享租约，bootstrap 与受管策略迁移持有独占租约。已有 workspace 只有在 Git 工作树干净、且没有未终结 change set 时才自动迁移，并为每个受影响 Agent 创建 Git 快照；脏工作树或开放 change set 会阻断启动。专用响应处置契约与通用 Bash/MCP/sandbox 基线共用这一策略入口，SDK 执行、配置编辑、候选发布和回滚也会 fail-closed 校验。
 
 ## 占位符
 

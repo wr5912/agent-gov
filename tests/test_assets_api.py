@@ -18,14 +18,20 @@ def test_asset_registry_and_inheritance(monkeypatch, tmp_path: Path) -> None:
         # 列表按 agent + type 过滤。
         assert asset_id in {a["asset_id"] for a in client.get("/api/assets", params={"agent_id": "soc-ops"}).json()}
         assert asset_id in {a["asset_id"] for a in client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "methodology"}).json()}
-        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "regression"}).json() == []
+        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "regression"}).status_code == 400
+        assert (
+            client.post(
+                "/api/assets",
+                json={"agent_id": "soc-ops", "asset_type": "regression", "title": "旧独立回归资产"},
+            ).status_code
+            == 400
+        )
         dataset = client.post(
             "/api/assets",
             json={"agent_id": "soc-ops", "asset_type": "test_dataset", "title": "时间窗口测试数据集", "body": '{"test_dataset_id":"tds-1"}'},
         )
-        assert dataset.status_code == 201
-        assert dataset.json()["asset_type"] == "test_dataset"
-        assert [a["asset_id"] for a in client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "test_dataset"}).json()] == [dataset.json()["asset_id"]]
+        assert dataset.status_code == 400
+        assert client.get("/api/assets", params={"agent_id": "soc-ops", "asset_type": "test_dataset"}).status_code == 400
         # 详情 404。
         assert client.get("/api/assets/ast-nope").status_code == 404
         # 非法类型 400。

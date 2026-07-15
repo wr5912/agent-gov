@@ -82,8 +82,8 @@ def _kind(children):
     return [(c["kind"], c["name"]) for c in children]
 
 
-def test_projects_tool_and_generation_children(tmp_path):
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(_messages())
+def test_projects_tool_and_generation_children():
+    children = RuntimeActivityExtractor().sdk_child_observations(_messages())
 
     tools = [c for c in children if c["kind"] == "tool"]
     gens = [c for c in children if c["kind"] == "generation"]
@@ -103,7 +103,7 @@ def test_projects_tool_and_generation_children(tmp_path):
     assert gens[1]["usage_details"] == {"input_tokens": 200, "output_tokens": 50}
 
 
-def test_missing_result_yields_null_output(tmp_path):
+def test_missing_result_yields_null_output():
     messages = [
         {
             "content": [{"id": "call_x", "name": "Bash", "input": {"command": "ls"}}],
@@ -111,13 +111,13 @@ def test_missing_result_yields_null_output(tmp_path):
             "event": "AssistantMessage",
         },
     ]
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(messages)
+    children = RuntimeActivityExtractor().sdk_child_observations(messages)
     tool = [c for c in children if c["kind"] == "tool"][0]
     assert tool["input"] == {"command": "ls"}
     assert tool.get("output") is None       # 无结果 → output 缺省/空
 
 
-def test_tool_error_maps_to_error_level(tmp_path):
+def test_tool_error_maps_to_error_level():
     messages = [
         {
             "content": [{"id": "call_e", "name": "Bash", "input": {"command": "boom"}}],
@@ -126,28 +126,28 @@ def test_tool_error_maps_to_error_level(tmp_path):
         },
         {"content": [{"tool_use_id": "call_e", "content": "boom: not found", "is_error": True}], "event": "UserMessage"},
     ]
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(messages)
+    children = RuntimeActivityExtractor().sdk_child_observations(messages)
     tool = [c for c in children if c["kind"] == "tool"][0]
     assert tool["level"] == "ERROR"
     assert tool["output"] == "boom: not found"
 
 
-def test_orphan_result_still_projected(tmp_path):
+def test_orphan_result_still_projected():
     messages = [
         {"content": [{"tool_use_id": "ghost", "content": "orphan result", "is_error": False}], "event": "UserMessage"},
     ]
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(messages)
+    children = RuntimeActivityExtractor().sdk_child_observations(messages)
     tools = [c for c in children if c["kind"] == "tool"]
     assert len(tools) == 1
     assert tools[0].get("input") is None
     assert tools[0]["output"] == "orphan result"
 
 
-def test_empty_messages(tmp_path):
-    assert RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations([]) == []
+def test_empty_messages():
+    assert RuntimeActivityExtractor().sdk_child_observations([]) == []
 
 
-def test_hostile_content_shapes_do_not_crash(tmp_path):
+def test_hostile_content_shapes_do_not_crash():
     messages = [
         {"content": None, "event": "UserMessage"},
         {"content": [{"id": "c", "name": "X", "input": [1, 2, {"nested": True}]}], "model": 123, "event": "AssistantMessage"},
@@ -156,12 +156,12 @@ def test_hostile_content_shapes_do_not_crash(tmp_path):
         {"weird": object()},
     ]
     # 不得抛异常
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(messages)
+    children = RuntimeActivityExtractor().sdk_child_observations(messages)
     assert any(c["kind"] == "tool" and c["name"] == "sdk.tool.X" for c in children)
 
 
 def test_emit_uses_parent_start_observation_and_ends(tmp_path):
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(_messages())
+    children = RuntimeActivityExtractor().sdk_child_observations(_messages())
     parent = FakeParent()
     RuntimeLangfuseClient(_settings(tmp_path)).emit_sdk_child_observations(parent, children)
 
@@ -185,7 +185,7 @@ def test_emit_falls_back_to_client_when_no_parent(tmp_path, monkeypatch):
     captured = FakeParent()  # 复用其 start_observation 作 client 级工厂
     client = RuntimeLangfuseClient(_settings(tmp_path))
     monkeypatch.setattr(client, "get_client", lambda: captured)
-    children = RuntimeActivityExtractor(_settings(tmp_path)).sdk_child_observations(_messages())
+    children = RuntimeActivityExtractor().sdk_child_observations(_messages())
     client.emit_sdk_child_observations(None, children)
     assert len(captured.children) == len(children)  # None parent → 走 ambient client 工厂
 

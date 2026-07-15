@@ -20,6 +20,8 @@
 
   display: grid;
   grid-template-columns: 340px minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
   gap: 16px;
   height: 100%;
   min-height: 0;
@@ -329,7 +331,7 @@
 .iw-feedback-table th, .iw-feedback-table td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border-subtle); vertical-align: top; }
 .iw-feedback-table th { color: var(--text-secondary); font-weight: 600; }
 .iw-feedback-table td:first-child, .iw-feedback-table th:first-child { width: 28px; color: var(--text-muted); }
-/* 四阶段改进治理 改进详情收纳：高级（自动化/相似/链接）默认折叠 */
+/* 四阶段改进治理 改进详情收纳：高级（相似归并/关联对象）默认折叠 */
 .iw-advanced { margin-top: 12px; border-top: 1px solid var(--border-subtle); padding-top: 8px; }
 .iw-advanced > summary { cursor: pointer; font-size: 12px; color: var(--text-secondary); list-style: revert; padding: 4px 0; }
 .iw-advanced > summary:hover { color: var(--text-primary); }
@@ -345,16 +347,45 @@
 .iw-trace-summary { background: var(--bg-debug); border-radius: 8px; padding: 10px 12px; margin-top: 6px; }
 
 /* 四阶段改进治理 发布门禁台 */
-.release-workbench-grid { grid-template-columns: minmax(320px, 420px) minmax(0, 1fr); }
-.release-candidate-panel .iw-panel-body { display: flex; flex-direction: column; gap: 12px; }
-.release-gate-summary { margin-top: 0; }
-.release-changeset-button { color: inherit; font: inherit; }
-.release-detail-stack { display: flex; flex-direction: column; gap: 12px; }
+.release-stage-workbench { display: grid; gap: 0; margin-top: 12px; border-top: 1px solid var(--border-subtle); }
+.release-stage-band { display: grid; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border-subtle); }
+.release-stage-heading { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; min-width: 0; }
+.release-stage-heading h4 { margin: 0; color: var(--text-primary); }
+.release-stage-heading > span:last-child { color: var(--text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .release-candidate-detail { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--text-secondary); }
 .release-candidate-detail strong { color: var(--text-primary); font-size: 15px; }
 .release-diff-summary { max-height: 260px; border-radius: 8px; margin-top: 6px; }
 .release-force-button { color: #dc2626; border-color: #fecaca; }
 .release-force-button:hover { border-color: #fca5a5; }
+.release-review-items { display: grid; gap: 8px; }
+.release-review-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  background: var(--bg-surface-muted);
+}
+.release-review-item-copy { display: grid; gap: 4px; min-width: 0; }
+.release-review-item-copy span,
+.release-review-item-copy small { color: var(--text-secondary); overflow-wrap: anywhere; }
+.release-review-choices { display: grid; grid-template-columns: repeat(2, minmax(68px, 1fr)); gap: 6px; }
+.release-review-choice { min-width: 68px; }
+.release-review-choice.is-selected[data-decision="approve"] {
+  color: var(--color-success);
+  border-color: #86efac;
+  background: var(--color-success-soft);
+}
+.release-review-choice.is-selected[data-decision="reject"] {
+  color: #dc2626;
+  border-color: #fca5a5;
+  background: #fef2f2;
+}
+.release-review-form { display: grid; grid-template-columns: minmax(160px, 0.35fr) minmax(260px, 1fr) auto; gap: 10px; align-items: end; }
+.release-review-form label { display: grid; gap: 5px; min-width: 0; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
+.release-review-form textarea { resize: vertical; }
 
 /* 四阶段改进治理 资产 Registry 浏览优先 */
 .asset-browser-toolbar { margin-top: 0; }
@@ -799,8 +830,14 @@
   .iw-stage-panel-grid.test-release { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 900px) {
-  .improvement-workbench { grid-template-columns: 1fr; overflow: auto; }
-  .iw-decision-grid, .iw-decision-meta, .iw-form-grid { grid-template-columns: 1fr; }
+  .improvement-workbench { grid-template-columns: minmax(0, 1fr); overflow: auto; }
+  .iw-list-panel, .iw-detail-panel { min-width: 0; }
+  .iw-list-panel > .iw-panel-body { min-height: 96px; max-height: 220px; }
+  .iw-panel-head, .iw-scope-row, .iw-create-row { flex-wrap: wrap; }
+  .iw-scope-row .iw-select { flex: 1 1 180px; }
+  .iw-create-row .iw-input { flex: 1 1 200px; }
+  .iw-list-item-title, .iw-list-item-decision, .iw-list-item-meta { overflow-wrap: anywhere; }
+  .iw-decision-grid, .iw-decision-meta, .iw-form-grid, .iw-test-plan-card-body { grid-template-columns: 1fr; }
   .iw-four-stage-spine,
   .iw-stage-panel-grid,
   .iw-stage-panel-grid.three,
@@ -808,8 +845,42 @@
   .iw-stage-panel-grid.optimization,
   .iw-stage-panel-grid.test-release,
   .iw-record-track { grid-template-columns: 1fr; }
+  .iw-stage-panel-grid.test-release .iw-stage-card.is-stage-wide { grid-column: auto; }
   .iw-four-stage-step:not(:last-child)::after,
   .iw-record-node:not(:last-child)::after { display: none; }
   .iw-decision-card { grid-template-columns: 1fr; }
   .iw-decision-score { border-left: 0; border-top: 1px solid var(--border-subtle); padding-top: 12px; }
+}
+
+@media (max-width: 560px) {
+  .improvement-workbench { gap: 10px; padding: 10px; }
+  .iw-list-panel { min-height: 440px; }
+  .iw-scope-row strong { flex: 1 1 100%; }
+  .release-stage-workbench,
+  .release-stage-band {
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    width: 100%;
+  }
+  .iw-stage-toolbar {
+    min-width: 0;
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+  .release-stage-workbench .iw-action-row {
+    min-width: 0;
+    width: 100%;
+  }
+  .release-stage-workbench .iw-select {
+    width: 100%;
+    max-width: 100%;
+  }
+  .release-review-item,
+  .release-review-form { grid-template-columns: minmax(0, 1fr); }
+  .release-review-choices { width: 100%; }
+  .asset-browser-toolbar .iw-automation-row > * {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+    min-width: 0 !important;
+  }
 }

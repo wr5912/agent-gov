@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import cast
 
@@ -147,15 +150,45 @@ def _frontend_package_scripts(repo_root: Path) -> set[str]:
 def _validate_pytest_nodeid(nodeid: str, *, repo_root: Path) -> list[str]:
     if "::" not in nodeid:
         return [f"pytest binding {nodeid} must include a test function"]
-    path_text, test_part = nodeid.split("::", 1)
+    path_text, *selectors = nodeid.split("::")
     path = repo_root / path_text
     if not path.exists():
         return [f"pytest binding {nodeid} references missing file {path_text}"]
-    function_name = test_part.split("[", 1)[0].split("::", 1)[0]
-    source = path.read_text(encoding="utf-8")
-    if f"def {function_name}(" not in source and f"async def {function_name}(" not in source:
-        return [f"pytest binding {nodeid} references missing test function {function_name}"]
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=path_text)
+    except SyntaxError as exc:
+        return [f"pytest binding {nodeid} references unparseable test file {path_text}:{exc.lineno}"]
+
+    scope: list[ast.stmt] = tree.body
+    for index, raw_selector in enumerate(selectors):
+        selector = raw_selector.split("[", 1)[0]
+        is_last = index == len(selectors) - 1
+        expected_types = (ast.FunctionDef, ast.AsyncFunctionDef) if is_last else (ast.ClassDef,)
+        match = next((node for node in scope if isinstance(node, expected_types) and node.name == selector), None)
+        if match is None:
+            kind = "test function" if is_last else "test class"
+            return [f"pytest binding {nodeid} references missing {kind} {selector}"]
+        scope = match.body
     return []
+
+
+def collect_pytest_nodeids(nodeids: list[str], *, repo_root: Path, python_executable: str = sys.executable) -> list[str]:
+    unique_nodeids = sorted(set(nodeids))
+    if not unique_nodeids:
+        return []
+    result = subprocess.run(
+        [python_executable, "-m", "pytest", "--collect-only", "-q", "--disable-warnings", *unique_nodeids],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return []
+    output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+    if len(output) > 6000:
+        output = f"{output[:6000]}\n... collection output truncated ..."
+    return [f"pytest could not collect one or more bound nodeids:\n{output}"]
 
 
 def _mapping(value: object, context: str) -> JsonObject:
@@ -211,11 +244,13 @@ def main() -> int:
         return 1
     coverage_data = None if args.manifest_only else load_json(args.coverage_json)
     errors = evaluate_policy(coverage_data=coverage_data, policy=policy, repo_root=repo_root)
+    pytest_nodes, ui_scripts = main_flow_test_bindings(policy)
+    if not errors:
+        errors.extend(collect_pytest_nodeids(pytest_nodes, repo_root=repo_root))
     if errors:
         for error in errors:
             print(f"COVERAGE_POLICY_FAIL: {error}")
         return 1
-    pytest_nodes, ui_scripts = main_flow_test_bindings(policy)
     suffix = f"main_flow_pytest={len(pytest_nodes)} main_flow_ui={len(ui_scripts)}"
     if coverage_data is None:
         print(f"coverage policy OK: manifest-only {suffix}")

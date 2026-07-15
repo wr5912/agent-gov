@@ -23,6 +23,11 @@ def test_governance_workflow_has_parallel_blocking_lanes_and_same_run_gate() -> 
     assert "--expected-job backend-main-full" in text
     assert "--skip-collection" not in text
     assert "backend-main-full-evidence-${{ github.run_attempt }}" in text
+    for path in (REPO_ROOT / ".github/workflows").glob("*.yml"):
+        workflow_text = path.read_text(encoding="utf-8")
+        if "astral-sh/setup-uv@" in workflow_text:
+            assert "astral-sh/setup-uv@v8.3.2" in workflow_text
+            assert "astral-sh/setup-uv@v8\n" not in workflow_text
 
 
 def test_shadow_workflow_keeps_serial_sentinel_and_all_declared_xdist_configs() -> None:
